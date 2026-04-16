@@ -10,7 +10,7 @@
 //! - `test_diagnostic_hint_without_vv`: Hint tells user to use -vv
 //! - `test_diagnostic_contains_required_sections`: All sections present
 //! - `test_diagnostic_context_has_no_ansi_codes`: ANSI stripped for GitHub
-//! - `test_diagnostic_verbose_log_contains_git_commands`: Log has useful data
+//! - `test_diagnostic_trace_log_contains_git_commands`: Log has useful data
 //! - `test_diagnostic_saved_message_with_vv`: Output shows "Diagnostic saved" with -vv
 //! - `test_diagnostic_written_to_correct_location`: File in .git/wt/logs/
 //! - `test_diagnostic_gh_hint_with_vv`: Hint shows gist and issue URL when gh installed
@@ -67,8 +67,8 @@ fn test_diagnostic_report_file_format(mut repo: TestRepo) {
 
     // Verify verbose log section is present (requires -v or higher)
     assert!(
-        content.contains("<summary>Verbose log</summary>"),
-        "Diagnostic should include verbose log section when run with -vv"
+        content.contains("<summary>Trace log</summary>"),
+        "Diagnostic should include trace log section when run with -vv"
     );
 
     let settings = setup_snapshot_settings(&repo);
@@ -183,10 +183,10 @@ fn test_diagnostic_contains_required_sections(mut repo: TestRepo) {
         "Should have config section"
     );
 
-    // Verbose log section
+    // Trace log section
     assert!(
-        content.contains("<summary>Verbose log</summary>"),
-        "Should have verbose log section"
+        content.contains("<summary>Trace log</summary>"),
+        "Should have trace log section"
     );
 }
 
@@ -217,9 +217,9 @@ fn test_diagnostic_context_has_no_ansi_codes(mut repo: TestRepo) {
     );
 }
 
-/// Verbose log should contain git command traces for debugging.
+/// Trace log should contain git command traces for debugging.
 #[rstest]
-fn test_diagnostic_verbose_log_contains_git_commands(mut repo: TestRepo) {
+fn test_diagnostic_trace_log_contains_git_commands(mut repo: TestRepo) {
     repo.add_worktree("feature");
     corrupt_worktree_head(&repo, "feature");
 
@@ -233,28 +233,28 @@ fn test_diagnostic_verbose_log_contains_git_commands(mut repo: TestRepo) {
     )
     .unwrap();
 
-    // Extract verbose log section
-    let verbose_start = content
-        .find("<summary>Verbose log</summary>")
-        .expect("Should have verbose log");
-    let verbose_section = &content[verbose_start..];
+    // Extract trace log section
+    let trace_start = content
+        .find("<summary>Trace log</summary>")
+        .expect("Should have trace log");
+    let trace_section = &content[trace_start..];
 
     // Should contain git command traces
     assert!(
-        verbose_section.contains("git worktree list"),
-        "Verbose log should contain git worktree list command"
+        trace_section.contains("git worktree list"),
+        "Trace log should contain git worktree list command"
     );
     assert!(
-        verbose_section.contains("[wt-trace]"),
-        "Verbose log should contain wt-trace entries"
+        trace_section.contains("[wt-trace]"),
+        "Trace log should contain wt-trace entries"
     );
     assert!(
-        verbose_section.contains("dur_us="),
-        "Verbose log should contain command durations in microseconds"
+        trace_section.contains("dur_us="),
+        "Trace log should contain command durations in microseconds"
     );
     assert!(
-        verbose_section.contains("ok="),
-        "Verbose log should contain success/failure indicators"
+        trace_section.contains("ok="),
+        "Trace log should contain success/failure indicators"
     );
 }
 
@@ -302,29 +302,164 @@ fn test_diagnostic_written_to_correct_location(mut repo: TestRepo) {
     );
 }
 
-/// Verbose log file should also be created alongside diagnostic.
+/// Both log files (`trace.log` and `output.log`) should be created at `-vv`.
 #[rstest]
-fn test_verbose_log_file_created(mut repo: TestRepo) {
+fn test_log_files_created(mut repo: TestRepo) {
     repo.add_worktree("feature");
     corrupt_worktree_head(&repo, "feature");
 
     repo.wt_command().args(["list", "-vv"]).output().unwrap();
 
-    let verbose_log_path = repo
-        .root_path()
-        .join(".git")
-        .join("wt/logs")
-        .join("verbose.log");
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+    let trace_log = logs_dir.join("trace.log");
+    let output_log = logs_dir.join("output.log");
+    assert!(trace_log.exists(), "trace.log should be created with -vv");
+    assert!(output_log.exists(), "output.log should be created with -vv");
+
+    let trace = fs::read_to_string(&trace_log).unwrap();
+    assert!(!trace.is_empty(), "trace.log should not be empty");
     assert!(
-        verbose_log_path.exists(),
-        "verbose.log should be created with -vv"
+        trace.contains("[wt-trace]"),
+        "trace.log should contain trace entries"
+    );
+}
+
+/// At `-vv`, the full (uncapped) subprocess stdout/stderr should land in
+/// `output.log` via `shell_exec::SUBPROCESS_FULL_TARGET` — not in `trace.log`.
+/// `trace.log` gets the bounded preview alongside trace records.
+#[rstest]
+fn test_vv_splits_full_and_bounded_output(repo: TestRepo) {
+    repo.wt_command().args(["list", "-vv"]).output().unwrap();
+
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+    let trace = fs::read_to_string(logs_dir.join("trace.log")).unwrap();
+    let output = fs::read_to_string(logs_dir.join("output.log")).unwrap();
+
+    assert!(
+        trace.contains("[wt-trace]"),
+        "trace.log should contain [wt-trace] records at -vv"
+    );
+    // Captured stdout is emitted line-by-line with the `  ` / `  ! `
+    // continuation prefix used by log_output. Full subprocess output lives
+    // in output.log.
+    assert!(
+        output.lines().any(|l| l.contains("  worktree ")),
+        "output.log should contain `git worktree list --porcelain` stdout lines at -vv"
+    );
+    // Structured trace records stay in trace.log only, not output.log.
+    assert!(
+        !output.contains("[wt-trace]"),
+        "output.log should not contain [wt-trace] records"
+    );
+}
+
+/// At `-vv`, when a single subprocess produces more than the line cap, stderr
+/// and `trace.log` must show the elision marker while `output.log` holds the
+/// full body without any elision. This guards the bounded-stderr invariant —
+/// a regression that routed full output to stderr would silently fail to
+/// elide.
+#[rstest]
+fn test_vv_bounded_on_stderr_full_in_output_log(repo: TestRepo) {
+    // `wt list` runs `git for-each-ref refs/heads/` (captured via `Cmd::run`),
+    // so its output flows through `log_output` and exercises the split.
+    // Populate packed-refs with 250 fake branches pointing at HEAD — far more
+    // than LOG_OUTPUT_MAX_LINES (200), which guarantees elision on stderr.
+    let head_out = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .run()
+        .unwrap();
+    let head = String::from_utf8(head_out.stdout)
+        .unwrap()
+        .trim()
+        .to_string();
+    let mut content = String::from("# pack-refs with: peeled fully-peeled sorted\n");
+    for i in 0..250 {
+        use std::fmt::Write as _;
+        writeln!(&mut content, "{head} refs/heads/many-branch-{i:03}").unwrap();
+    }
+    std::fs::write(repo.root_path().join(".git/packed-refs"), content).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["list", "-vv"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("wt list");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Elision marker appears on stderr (bounded preview) and in trace.log.
+    let marker = "more lines, ";
+    assert!(
+        stderr.contains(marker),
+        "stderr should contain elision marker for >200-line subprocess output: {stderr}"
     );
 
-    let content = fs::read_to_string(&verbose_log_path).unwrap();
-    assert!(!content.is_empty(), "verbose.log should not be empty");
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+    let trace = fs::read_to_string(logs_dir.join("trace.log")).unwrap();
+    let raw = fs::read_to_string(logs_dir.join("output.log")).unwrap();
+
     assert!(
-        content.contains("[wt-trace]"),
-        "verbose.log should contain trace entries"
+        trace.contains(marker),
+        "trace.log mirrors stderr and should include the elision marker"
+    );
+    assert!(
+        !raw.contains(marker),
+        "output.log holds full output and must not contain an elision marker"
+    );
+    // The tail refs only appear in the full log.
+    let tail_ref = "many-branch-249";
+    assert!(
+        raw.contains(tail_ref),
+        "output.log should contain the full for-each-ref stdout (last ref)"
+    );
+    assert!(
+        !stderr.contains(tail_ref),
+        "stderr preview should be bounded before the last ref"
+    );
+    assert!(
+        !trace.contains(tail_ref),
+        "trace.log mirrors stderr and should be bounded too"
+    );
+}
+
+/// `RUST_LOG=debug` at `-v 0` activates Debug logging without creating the
+/// on-disk log files. Stderr receives the **bounded** preview
+/// (`SUBPROCESS_TERMINAL_TARGET`); the uncapped `SUBPROCESS_FULL_TARGET`
+/// records are dropped so raw bodies don't flood the terminal.
+#[rstest]
+fn test_rust_log_debug_fallback_without_vv(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args(["list"])
+        .env("RUST_LOG", "debug")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("wt list");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // No log files were created — `-vv` is what opens them.
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+    assert!(
+        !logs_dir.join("trace.log").exists(),
+        "trace.log should NOT be created without -vv"
+    );
+    assert!(
+        !logs_dir.join("output.log").exists(),
+        "output.log should NOT be created without -vv"
+    );
+
+    // Subprocess stdout still reaches stderr via the bounded preview —
+    // look for captured `git worktree list --porcelain` stdout lines.
+    assert!(
+        stderr.lines().any(|l| l.contains("  worktree ")),
+        "stderr should contain subprocess stdout via bounded preview: {stderr}"
+    );
+    // For small outputs (git worktree list --porcelain is a handful of lines)
+    // the bounded preview fits under the cap without an elision marker.
+    assert!(
+        !stderr.contains("more lines, "),
+        "short subprocess output should not trip the elision marker: {stderr}"
     );
 }
 
@@ -397,28 +532,23 @@ fn test_vv_writes_diagnostic_on_error(mut repo: TestRepo) {
     );
 }
 
-/// With just -v (not -vv), no logging files should be written.
-/// -v is reserved for future use; -vv is required for debug logging.
+/// With just -v, info-level logging goes to stderr but no log files are written.
+/// `-vv` is the threshold for `trace.log`, `output.log`, and `diagnostic.md`.
 #[rstest]
-fn test_v_does_not_enable_logging(repo: TestRepo) {
+fn test_v_does_not_write_log_files(repo: TestRepo) {
     // Run a successful command with just -v
     let output = repo.wt_command().args(["list", "-v"]).output().unwrap();
 
     assert!(output.status.success(), "Command should succeed");
 
-    // Neither diagnostic.md nor verbose.log should exist with just -v
+    // None of the -vv diagnostic files should exist with just -v
     let wt_logs = repo.root_path().join(".git").join("wt/logs");
-    let diagnostic_path = wt_logs.join("diagnostic.md");
-    let verbose_log_path = wt_logs.join("verbose.log");
-
-    assert!(
-        !diagnostic_path.exists(),
-        "Diagnostic file should NOT be created with just -v"
-    );
-    assert!(
-        !verbose_log_path.exists(),
-        "verbose.log should NOT be created with just -v (requires -vv)"
-    );
+    for name in ["diagnostic.md", "trace.log", "output.log"] {
+        assert!(
+            !wt_logs.join(name).exists(),
+            "{name} should NOT be created with just -v (requires -vv)"
+        );
+    }
 }
 
 /// With -vv outside a git repo, command should still work (no crash).
@@ -544,11 +674,13 @@ fn normalize_report(content: &str) -> String {
         .replace_all(&result, "Project config: _REPO_/.config/wt.toml")
         .to_string();
 
-    // Normalize temp paths in context (repo paths) - handles both Unix and Windows paths
-    // Unix: /var/folders/.../repo.xxx or /tmp/.../repo.xxx
-    // Windows: D:\a\worktrunk\worktrunk\... or C:\Users\...\repo.xxx
-    // Match Windows paths first (drive letter + colon + any path chars)
-    result = regex::Regex::new(r"([A-Z]:[^\s)]+|/[^\s)]+/repo\.[^\s)]+)")
+    // Normalize worktree temp paths (paths that contain `/repo.<name>` or
+    // `\repo.<name>` — the convention used by TestRepo for linked worktrees).
+    // Both branches require the `repo.` segment so the main-worktree path
+    // (which is `.../repo` without a dot) falls through to insta's prefix
+    // filter instead. Stop at whitespace, `)`, or a backtick so paths inlined
+    // in markdown code spans don't eat the closing backtick.
+    result = regex::Regex::new(r"([A-Z]:[^\s)`]+[\\/]repo\.[^\s)`]+|/[^\s)`]+/repo\.[^\s)`]+)")
         .unwrap()
         .replace_all(&result, "[REPO_PATH]")
         .to_string();
@@ -561,17 +693,17 @@ fn normalize_report(content: &str) -> String {
         .replace_all(&result, "$1 $2")
         .to_string();
 
-    // Truncate verbose log section - it has parallel git commands that interleave
+    // Truncate trace log section - it has parallel git commands that interleave
     // in different orders, making exact snapshot comparison flaky.
     // We verify the section exists separately in the test.
-    if let Some(start) = result.find("<summary>Verbose log</summary>") {
+    if let Some(start) = result.find("<summary>Trace log</summary>") {
         // Find the closing </details> after this point
         if let Some(end_offset) = result[start..].find("</details>") {
             let end = start + end_offset + "</details>".len();
             let before = &result[..start];
             let after = &result[end..];
             result = format!(
-                "{}<summary>Verbose log</summary>\n\n[VERBOSE_LOG_CONTENT]\n</details>{}",
+                "{}<summary>Trace log</summary>\n\n[TRACE_LOG_CONTENT]\n</details>{}",
                 before, after
             );
         }

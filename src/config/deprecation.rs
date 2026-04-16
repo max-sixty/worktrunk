@@ -1,36 +1,36 @@
-//! Deprecation detection and migration
+//! Deprecation detection and migration.
 //!
-//! Scans config files for deprecated patterns and generates migration files:
+//! Scans config files for deprecated patterns and surfaces them to the user:
 //! - Deprecated template variables (repo_root → repo_path, etc.)
 //! - Deprecated config sections (\[commit-generation\] → \[commit.generation\])
 //! - Deprecated fields (args merged into command)
 //! - Deprecated approved-commands in \[projects\] (moved to approvals.toml)
 //!
-//! Migration file write behavior:
-//! - First time a deprecation is detected: file is written automatically
-//! - Subsequent runs (for commands other than `wt config show`): brief warning only
-//! - `wt config show`: always writes/regenerates the migration file with full details
+//! Detection is purely in-memory — nothing writes to the filesystem from a
+//! config load path. `check_and_migrate` returns the structurally migrated
+//! content (for serde) and a `DeprecationInfo` describing what needs fixing.
+//! Users materialize migrations explicitly via `wt config update` (which
+//! overwrites the config file and copies approved-commands to `approvals.toml`)
+//! or inspect them via `wt config show` / `wt config update --print`.
 //!
-//! The hint system (`worktrunk.hints.deprecated-config` in git config) tracks whether
-//! a deprecation has been warned about before. User config (no repo context) always
-//! writes the migration file since there's no persistent hint tracking.
+//! Per-path warning dedup still applies within a process so `wt list` doesn't
+//! spam the same deprecation message from multiple config layers.
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use color_print::cformat;
 use minijinja::Environment;
-use path_slash::PathExt as _;
 use regex::Regex;
 use shell_escape::unix::escape;
 
 use crate::config::WorktrunkConfig;
 use crate::shell_exec::Cmd;
 use crate::styling::{
-    eprintln, format_bash_with_gutter, format_with_gutter, hint_message, suggest_command_in_dir,
+    eprintln, format_with_gutter, hint_message, info_message, suggest_command_in_dir,
     warning_message,
 };
 
@@ -38,6 +38,23 @@ use crate::styling::{
 /// Prevents repeated warnings when config is loaded multiple times.
 static WARNED_DEPRECATED_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Set once the "Run wt config show..." hint has been emitted this process,
+/// so multiple deprecated configs (user + project) share a single hint line.
+static DEPRECATION_HINT_EMITTED: OnceLock<()> = OnceLock::new();
+
+/// Latch that silences config deprecation/unknown-field warnings for the rest
+/// of the process. Set by shell completion, picker, statusline, and help paths
+/// — surfaces where stderr output would appear above the user's prompt or TUI.
+static SUPPRESS_WARNINGS: OnceLock<()> = OnceLock::new();
+
+pub fn suppress_warnings() {
+    let _ = SUPPRESS_WARNINGS.set(());
+}
+
+fn warnings_suppressed() -> bool {
+    SUPPRESS_WARNINGS.get().is_some()
+}
 
 /// Pre-compiled regexes for deprecated variable word-boundary matching.
 /// Compiled once on first use, shared across all calls to normalize/replace.
@@ -56,9 +73,6 @@ static DEPRECATED_VAR_REGEXES: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::
 static WARNED_UNKNOWN_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
-/// Hint name for config deprecation warnings
-const HINT_DEPRECATED_CONFIG: &str = "deprecated-config";
-
 /// Mapping from deprecated variable name to its replacement
 const DEPRECATED_VARS: &[(&str, &str)] = &[
     ("repo_root", "repo_path"),
@@ -67,9 +81,41 @@ const DEPRECATED_VARS: &[(&str, &str)] = &[
     ("main_worktree_path", "primary_worktree_path"),
 ];
 
-/// Top-level section keys that are deprecated and handled separately.
-/// Callers should filter these out before calling `warn_unknown_fields` to avoid duplicate warnings.
-pub const DEPRECATED_SECTION_KEYS: &[&str] = &["commit-generation", "select"];
+/// Metadata for a deprecated top-level section key.
+#[derive(Debug)]
+pub struct DeprecatedSection {
+    /// The deprecated key name (e.g., "commit-generation")
+    pub key: &'static str,
+    /// The canonical top-level key that replaces this, for determining which config type
+    /// it belongs to via `WorktrunkConfig::is_valid_key()` (e.g., "commit")
+    pub canonical_top_key: &'static str,
+    /// Human-readable canonical form for display (e.g., "[commit.generation]")
+    pub canonical_display: &'static str,
+}
+
+/// Top-level section keys that are deprecated and handled by the deprecation system.
+///
+/// When a deprecated key appears in the config type where its canonical replacement
+/// is valid, `warn_unknown_fields` skips it (the deprecation system provides better
+/// messaging). When it appears in the wrong config type, `warn_unknown_fields`
+/// warns that it belongs in the other config with the canonical form.
+pub const DEPRECATED_SECTION_KEYS: &[DeprecatedSection] = &[
+    DeprecatedSection {
+        key: "commit-generation",
+        canonical_top_key: "commit",
+        canonical_display: "[commit.generation]",
+    },
+    DeprecatedSection {
+        key: "select",
+        canonical_top_key: "switch",
+        canonical_display: "[switch.picker]",
+    },
+    DeprecatedSection {
+        key: "ci",
+        canonical_top_key: "forge",
+        canonical_display: "[forge]",
+    },
+];
 
 /// Normalize a template string by replacing deprecated variables with their canonical names.
 ///
@@ -94,27 +140,19 @@ pub fn normalize_template_vars(template: &str) -> Cow<'_, str> {
     Cow::Owned(result)
 }
 
-/// Find all deprecated variables used in the content
-///
-/// Parses TOML to extract string values, then uses minijinja to detect
-/// which template variables are referenced.
-///
-/// Returns a deduplicated list of (deprecated_name, replacement_name) pairs
-pub fn find_deprecated_vars(content: &str) -> Vec<(&'static str, &'static str)> {
-    // Parse TOML and extract all string values that might contain templates
-    let template_strings = extract_template_strings(content);
-
-    // Collect all variables used across all templates
+/// Core logic for deprecated var detection, operating on pre-extracted template strings
+fn find_deprecated_vars_from_strings(
+    template_strings: &[String],
+) -> Vec<(&'static str, &'static str)> {
     let mut used_vars = HashSet::new();
     let env = Environment::new();
 
     for template_str in template_strings {
-        if let Ok(template) = env.template_from_str(&template_str) {
+        if let Ok(template) = env.template_from_str(template_str) {
             used_vars.extend(template.undeclared_variables(false));
         }
     }
 
-    // Check which deprecated variables are used
     DEPRECATED_VARS
         .iter()
         .filter(|(old, _)| used_vars.contains(*old))
@@ -122,47 +160,63 @@ pub fn find_deprecated_vars(content: &str) -> Vec<(&'static str, &'static str)> 
         .collect()
 }
 
-/// Extract all string values from TOML content that might contain templates
-fn extract_template_strings(content: &str) -> Vec<String> {
-    let Ok(table) = content.parse::<toml::Table>() else {
-        return vec![];
-    };
-
+/// Extract all string values from an already-parsed TOML document
+fn extract_template_strings_from_doc(doc: &toml_edit::DocumentMut) -> Vec<String> {
     let mut strings = Vec::new();
-    collect_strings_from_value(&toml::Value::Table(table), &mut strings);
+    collect_strings_from_edit_table(doc.as_table(), &mut strings);
     strings
 }
 
-/// Recursively collect all string values from a TOML value
-fn collect_strings_from_value(value: &toml::Value, strings: &mut Vec<String>) {
-    match value {
-        toml::Value::String(s) => strings.push(s.clone()),
-        toml::Value::Array(arr) => {
-            for v in arr {
-                collect_strings_from_value(v, strings);
-            }
-        }
-        toml::Value::Table(table) => {
-            for v in table.values() {
-                collect_strings_from_value(v, strings);
+/// Recursively collect all string values from a toml_edit table
+fn collect_strings_from_edit_table(table: &toml_edit::Table, strings: &mut Vec<String>) {
+    for (_, item) in table.iter() {
+        collect_strings_from_edit_item(item, strings);
+    }
+}
+
+/// Recursively collect all string values from a toml_edit item
+fn collect_strings_from_edit_item(item: &toml_edit::Item, strings: &mut Vec<String>) {
+    match item {
+        toml_edit::Item::Value(v) => collect_strings_from_edit_value(v, strings),
+        toml_edit::Item::Table(t) => collect_strings_from_edit_table(t, strings),
+        toml_edit::Item::ArrayOfTables(arr) => {
+            for t in arr.iter() {
+                collect_strings_from_edit_table(t, strings);
             }
         }
         _ => {}
     }
 }
 
-/// Replace all deprecated variables with their new names
-pub fn replace_deprecated_vars(content: &str) -> String {
-    let strings = extract_template_strings(content);
+/// Recursively collect all string values from a toml_edit value
+fn collect_strings_from_edit_value(value: &toml_edit::Value, strings: &mut Vec<String>) {
+    match value {
+        toml_edit::Value::String(s) => strings.push(s.value().clone()),
+        toml_edit::Value::Array(arr) => {
+            for v in arr.iter() {
+                collect_strings_from_edit_value(v, strings);
+            }
+        }
+        toml_edit::Value::InlineTable(t) => {
+            for (_, v) in t.iter() {
+                collect_strings_from_edit_value(v, strings);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Core logic for variable replacement, operating on pre-extracted template strings
+fn replace_deprecated_vars_from_strings(content: &str, template_strings: &[String]) -> String {
     let mut result = content.to_string();
 
-    for original in strings {
+    for original in template_strings {
         let mut modified = original.clone();
         for (re, new) in DEPRECATED_VAR_REGEXES.iter() {
             modified = re.replace_all(&modified, *new).into_owned();
         }
-        if modified != original {
-            result = result.replace(&original, &modified);
+        if modified != *original {
+            result = result.replace(original, &modified);
         }
     }
 
@@ -200,6 +254,16 @@ pub struct Deprecations {
     pub select: bool,
     /// Has `[hooks.post-create]` (renamed to `[hooks.pre-start]`)
     pub post_create: bool,
+    /// Has `[ci]` section (moved to `[forge]`)
+    pub ci_section: bool,
+    /// Has `no-ff` in `[merge]` section (use `ff` instead)
+    pub no_ff: bool,
+    /// Has `no-cd` in `[switch]` section (use `cd` instead)
+    pub no_cd: bool,
+    /// Pre-* hooks using multi-entry table form (will become concurrent in a future version)
+    pub pre_hook_table_form: Vec<String>,
+    /// Has `timeout-ms` under `[switch.picker]` (removed — picker now renders progressively)
+    pub switch_picker_timeout_ms: bool,
 }
 
 impl Deprecations {
@@ -210,31 +274,49 @@ impl Deprecations {
             && !self.approved_commands
             && !self.select
             && !self.post_create
+            && !self.ci_section
+            && !self.no_ff
+            && !self.no_cd
+            && self.pre_hook_table_form.is_empty()
+            && !self.switch_picker_timeout_ms
     }
 }
 
 /// Detect deprecations in config content. Pure function, no I/O.
 ///
+/// Parses the TOML content once and checks all deprecation types against the
+/// parsed document.
+///
 /// Returns a `Deprecations` struct containing all detected deprecation issues.
 /// This is the recommended entry point for deprecation detection.
 pub fn detect_deprecations(content: &str) -> Deprecations {
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return Deprecations::default();
+    };
+    let template_strings = extract_template_strings_from_doc(&doc);
+    detect_deprecations_from_doc(&doc, &template_strings)
+}
+
+/// Detect deprecations from an already-parsed document and pre-extracted template strings.
+fn detect_deprecations_from_doc(
+    doc: &toml_edit::DocumentMut,
+    template_strings: &[String],
+) -> Deprecations {
     Deprecations {
-        vars: find_deprecated_vars(content),
-        commit_gen: find_commit_generation_deprecations(content),
-        approved_commands: find_approved_commands_deprecation(content),
-        select: find_select_deprecation(content),
-        post_create: find_post_create_deprecation(content),
+        vars: find_deprecated_vars_from_strings(template_strings),
+        commit_gen: find_commit_generation_from_doc(doc),
+        approved_commands: find_approved_commands_from_doc(doc),
+        select: find_select_from_doc(doc),
+        post_create: find_post_create_from_doc(doc),
+        ci_section: find_ci_section_from_doc(doc),
+        no_ff: find_negated_bool_from_doc(doc, "merge", "no-ff", "ff"),
+        no_cd: find_negated_bool_from_doc(doc, "switch", "no-cd", "cd"),
+        pre_hook_table_form: find_pre_hook_table_form_from_doc(doc),
+        switch_picker_timeout_ms: find_switch_picker_timeout_from_doc(doc),
     }
 }
 
-/// Check if any `[projects."..."]` section has a non-empty `approved-commands` array.
-///
-/// These have moved to `approvals.toml` and should be removed from config.toml.
-pub fn find_approved_commands_deprecation(content: &str) -> bool {
-    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return false;
-    };
-
+fn find_approved_commands_from_doc(doc: &toml_edit::DocumentMut) -> bool {
     let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) else {
         return false;
     };
@@ -251,16 +333,7 @@ pub fn find_approved_commands_deprecation(content: &str) -> bool {
     false
 }
 
-/// Find deprecated [commit-generation] sections in config
-///
-/// Returns information about:
-/// - Top-level [commit-generation] section
-/// - Project-level [projects."...".commit-generation] sections
-pub fn find_commit_generation_deprecations(content: &str) -> CommitGenerationDeprecations {
-    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return CommitGenerationDeprecations::default();
-    };
-
+fn find_commit_generation_from_doc(doc: &toml_edit::DocumentMut) -> CommitGenerationDeprecations {
     let mut result = CommitGenerationDeprecations::default();
 
     // Check if new [commit.generation] already exists as a valid table
@@ -314,17 +387,7 @@ pub fn find_commit_generation_deprecations(content: &str) -> CommitGenerationDep
     result
 }
 
-/// Migrate [commit-generation] sections to [commit.generation]
-///
-/// Performs the following migrations:
-/// - Renames [commit-generation] to [commit.generation]
-/// - Merges args field into command (if present)
-/// - Renames [projects."...".commit-generation] to [projects."...".commit.generation]
-pub fn migrate_commit_generation_sections(content: &str) -> String {
-    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return content.to_string();
-    };
-
+fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     let mut modified = false;
 
     // Check if new [commit.generation] already exists as a valid table - if so, skip migration
@@ -415,11 +478,7 @@ pub fn migrate_commit_generation_sections(content: &str) -> String {
         }
     }
 
-    if modified {
-        doc.to_string()
-    } else {
-        content.to_string()
-    }
+    modified
 }
 
 /// Remove `approved-commands` from all `\[projects."..."\]` sections.
@@ -427,11 +486,7 @@ pub fn migrate_commit_generation_sections(content: &str) -> String {
 /// For each project section, removes the `approved-commands` key.
 /// If a project section becomes empty after removal, removes the project entry.
 /// If the `\[projects\]` table becomes empty, removes it.
-pub fn remove_approved_commands_from_config(content: &str) -> String {
-    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return content.to_string();
-    };
-
+fn remove_approved_commands_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     let mut modified = false;
 
     if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
@@ -475,23 +530,31 @@ pub fn remove_approved_commands_from_config(content: &str) -> String {
         modified = true;
     }
 
-    if modified {
-        doc.to_string()
-    } else {
-        content.to_string()
-    }
+    modified
 }
 
-/// Check if config has a deprecated `[select]` section without a corresponding `[switch.picker]`.
-///
-/// Returns true if `[select]` exists, is non-empty, and `[switch.picker]` does not exist.
-pub fn find_select_deprecation(content: &str) -> bool {
-    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return false;
-    };
+fn find_select_from_doc(doc: &toml_edit::DocumentMut) -> bool {
+    if has_select_without_picker(doc) {
+        return true;
+    }
 
-    // Check if new [switch.picker] already exists
-    let has_new_section = doc
+    // Check project-level sections
+    if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
+        for (_key, project_value) in projects.iter() {
+            if let Some(project_table) = project_value.as_table()
+                && has_select_without_picker(project_table)
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Check if a table has a non-empty `select` section without `switch.picker`.
+fn has_select_without_picker(table: &toml_edit::Table) -> bool {
+    let has_new_section = table
         .get("switch")
         .and_then(|s| s.as_table())
         .and_then(|t| t.get("picker"))
@@ -501,50 +564,32 @@ pub fn find_select_deprecation(content: &str) -> bool {
         return false;
     }
 
-    // Check if [select] exists and is non-empty
-    if let Some(section) = doc.get("select") {
-        if let Some(table) = section.as_table() {
-            return !table.is_empty();
+    if let Some(section) = table.get("select") {
+        if let Some(t) = section.as_table() {
+            return !t.is_empty();
         }
-        if let Some(inline) = section.as_inline_table() {
-            return !inline.is_empty();
+        if let Some(t) = section.as_inline_table() {
+            return !t.is_empty();
         }
     }
 
     false
 }
 
-/// Check if config has a deprecated `post-create` hook without a corresponding `pre-start`.
-///
-/// Checks both top-level hooks (`post-create = "..."`) and project hooks
-/// (`[projects."...".hooks] post-create = "..."`). This handles both user config
-/// and project config formats. Empty tables are ignored (no-op configs don't
-/// need migration warnings).
-pub fn find_post_create_deprecation(content: &str) -> bool {
-    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return false;
-    };
-
-    // Check top-level hooks section (project config: `post-create = "..."`)
+fn find_post_create_from_doc(doc: &toml_edit::DocumentMut) -> bool {
+    // Top-level (user config or project config): hooks are flattened here
     if doc.get("pre-start").is_none() && doc.get("post-create").is_some_and(is_non_empty_item) {
         return true;
     }
 
-    // Check [hooks] section (user config: `[hooks] post-create = "..."`)
-    if let Some(hooks) = doc.get("hooks").and_then(|h| h.as_table())
-        && hooks.get("pre-start").is_none()
-        && hooks.get("post-create").is_some_and(is_non_empty_item)
-    {
-        return true;
-    }
-
-    // Check project-level hooks
+    // Per-project overrides (user config): hooks are flattened into `[projects."id"]`
     if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
         for (_key, project_value) in projects.iter() {
             if let Some(project_table) = project_value.as_table()
-                && let Some(hooks) = project_table.get("hooks").and_then(|h| h.as_table())
-                && hooks.get("pre-start").is_none()
-                && hooks.get("post-create").is_some_and(is_non_empty_item)
+                && project_table.get("pre-start").is_none()
+                && project_table
+                    .get("post-create")
+                    .is_some_and(is_non_empty_item)
             {
                 return true;
             }
@@ -566,14 +611,10 @@ fn is_non_empty_item(item: &toml_edit::Item) -> bool {
 /// Migrate `post-create` hooks to `pre-start`.
 ///
 /// Renames `post-create` to `pre-start` in hooks sections. Skips if `pre-start` already exists.
-pub fn migrate_post_create_to_pre_start(content: &str) -> String {
-    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return content.to_string();
-    };
-
+fn migrate_post_create_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     let mut modified = false;
 
-    // Top-level (project config format)
+    // Top-level (user config or project config)
     if doc.get("pre-start").is_none()
         && let Some(value) = doc.remove("post-create")
     {
@@ -581,61 +622,58 @@ pub fn migrate_post_create_to_pre_start(content: &str) -> String {
         modified = true;
     }
 
-    // [hooks] section (user config format)
-    if let Some(hooks) = doc.get_mut("hooks").and_then(|h| h.as_table_mut())
-        && hooks.get("pre-start").is_none()
-        && let Some(value) = hooks.remove("post-create")
-    {
-        hooks.insert("pre-start", value);
-        modified = true;
-    }
-
-    // Project-level hooks
+    // Per-project overrides (user config)
     if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
         for (_key, project_value) in projects.iter_mut() {
             if let Some(project_table) = project_value.as_table_mut()
-                && let Some(hooks) = project_table
-                    .get_mut("hooks")
-                    .and_then(|h| h.as_table_mut())
-                && hooks.get("pre-start").is_none()
-                && let Some(value) = hooks.remove("post-create")
+                && project_table.get("pre-start").is_none()
+                && let Some(value) = project_table.remove("post-create")
             {
-                hooks.insert("pre-start", value);
+                project_table.insert("pre-start", value);
                 modified = true;
             }
         }
     }
 
-    if modified {
-        doc.to_string()
-    } else {
-        content.to_string()
-    }
+    modified
 }
 
-/// Migrate `[select]` section to `[switch.picker]`.
+/// Migrate `[select]` sections to `[switch.picker]`.
 ///
-/// Renames `[select]` to `[switch.picker]`, preserving all fields.
-/// Skips migration if `[switch.picker]` already exists.
-pub fn migrate_select_to_switch_picker(content: &str) -> String {
-    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return content.to_string();
-    };
+/// Handles both top-level and project-level `[projects."...".select]` sections.
+/// Skips each migration if `[switch.picker]` already exists at that level.
+fn migrate_select_doc(doc: &mut toml_edit::DocumentMut) -> bool {
+    let mut modified = false;
 
-    // Check if [switch.picker] already exists
-    let has_new_section = doc
+    // Migrate top-level [select] → [switch.picker]
+    migrate_select_table(doc.as_table_mut(), &mut modified);
+
+    // Migrate project-level [projects."...".select] → [projects."...".switch.picker]
+    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
+        for (_key, project_value) in projects.iter_mut() {
+            if let Some(project_table) = project_value.as_table_mut() {
+                migrate_select_table(project_table, &mut modified);
+            }
+        }
+    }
+
+    modified
+}
+
+/// Migrate a `select` key to `switch.picker` within a table.
+fn migrate_select_table(table: &mut toml_edit::Table, modified: &mut bool) {
+    let has_new_section = table
         .get("switch")
         .and_then(|s| s.as_table())
         .and_then(|t| t.get("picker"))
         .is_some_and(|p| p.is_table() || p.is_inline_table());
 
     if has_new_section {
-        return content.to_string();
+        return;
     }
 
-    // Remove [select] and migrate to [switch.picker]
-    let Some(old_section) = doc.remove("select") else {
-        return content.to_string();
+    let Some(old_section) = table.remove("select") else {
+        return;
     };
 
     let table_opt = match old_section {
@@ -644,34 +682,394 @@ pub fn migrate_select_to_switch_picker(content: &str) -> String {
         _ => None,
     };
 
-    let Some(table) = table_opt else {
-        return content.to_string();
+    let Some(select_table) = table_opt else {
+        return;
     };
 
-    // Ensure [switch] section exists (implicit so only [switch.picker] renders)
-    if !doc.contains_key("switch") {
+    if !table.contains_key("switch") {
         let mut switch_table = toml_edit::Table::new();
         switch_table.set_implicit(true);
-        doc.insert("switch", toml_edit::Item::Table(switch_table));
+        table.insert("switch", toml_edit::Item::Table(switch_table));
     }
 
-    // Move to [switch.picker]
-    if let Some(switch_table) = doc["switch"].as_table_mut() {
-        switch_table.insert("picker", toml_edit::Item::Table(table));
+    if let Some(switch_table) = table["switch"].as_table_mut() {
+        switch_table.insert("picker", toml_edit::Item::Table(select_table));
     }
 
-    doc.to_string()
+    *modified = true;
+}
+
+/// The 5 canonical pre-* hook keys.
+const PRE_HOOK_KEYS: &[&str] = &[
+    "pre-switch",
+    "pre-start",
+    "pre-commit",
+    "pre-merge",
+    "pre-remove",
+];
+
+/// Check if a table has a multi-entry pre-* hook (table form with 2+ named commands).
+fn collect_pre_hook_table_form_keys(
+    table: &toml_edit::Table,
+    prefix: &str,
+    found: &mut Vec<String>,
+) {
+    for &key in PRE_HOOK_KEYS {
+        if let Some(item) = table.get(key)
+            && item.as_table().is_some_and(|t| t.len() >= 2)
+        {
+            if prefix.is_empty() {
+                found.push(key.to_string());
+            } else {
+                found.push(format!("{prefix}.{key}"));
+            }
+        }
+    }
+}
+
+/// Find pre-* hooks using multi-entry table form.
+///
+/// Hooks are flattened into the top level of user config, project config, and
+/// each `[projects."id"]` subtree. Returns display paths for each deprecated
+/// hook found.
+fn find_pre_hook_table_form_from_doc(doc: &toml_edit::DocumentMut) -> Vec<String> {
+    let mut found = Vec::new();
+
+    // Top-level (user config or project config)
+    collect_pre_hook_table_form_keys(doc.as_table(), "", &mut found);
+
+    // Per-project overrides (user config)
+    if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
+        for (project_key, project_value) in projects.iter() {
+            if let Some(project_table) = project_value.as_table() {
+                let prefix = format!("projects.\"{project_key}\"");
+                collect_pre_hook_table_form_keys(project_table, &prefix, &mut found);
+            }
+        }
+    }
+
+    found
+}
+
+fn find_ci_section_from_doc(doc: &toml_edit::DocumentMut) -> bool {
+    // Skip if [forge] already exists
+    if doc
+        .get("forge")
+        .is_some_and(|f| f.is_table() || f.is_inline_table())
+    {
+        return false;
+    }
+
+    // Check if [ci] exists with a non-empty platform field
+    doc.get("ci")
+        .and_then(|ci| ci.as_table())
+        .and_then(|t| t.get("platform"))
+        .is_some_and(|p| p.as_str().is_some_and(|s| !s.is_empty()))
+}
+
+/// Migrate `[ci]` section to `[forge]`.
+///
+/// Moves `platform` from `[ci]` to `[forge]`, preserving the value.
+/// Removes `[ci]` if `platform` was its only field.
+/// Skips migration if `[forge]` already exists.
+fn migrate_ci_doc(doc: &mut toml_edit::DocumentMut) -> bool {
+    // Skip if [forge] already exists
+    if doc
+        .get("forge")
+        .is_some_and(|f| f.is_table() || f.is_inline_table())
+    {
+        return false;
+    }
+
+    // Get platform value from [ci]
+    let platform = doc
+        .get("ci")
+        .and_then(|ci| ci.as_table())
+        .and_then(|t| t.get("platform"))
+        .and_then(|p| p.as_str())
+        .map(String::from);
+
+    let Some(platform) = platform else {
+        return false;
+    };
+
+    // Remove [ci] section (it only has platform)
+    doc.remove("ci");
+
+    // Create [forge] section with platform
+    let mut forge_table = toml_edit::Table::new();
+    forge_table.insert("platform", toml_edit::value(platform));
+    doc.insert("forge", toml_edit::Item::Table(forge_table));
+
+    true
+}
+
+/// Check if a section has a deprecated negated boolean field (e.g., `no-ff` without `ff`).
+///
+/// Checks both the top-level section and project-level sections.
+fn find_negated_bool_from_doc(
+    doc: &toml_edit::DocumentMut,
+    section: &str,
+    old_key: &str,
+    new_key: &str,
+) -> bool {
+    // Check top-level section
+    if let Some(table) = doc.get(section).and_then(|s| s.as_table())
+        && !table.contains_key(new_key)
+        && table.contains_key(old_key)
+    {
+        return true;
+    }
+
+    // Check project-level sections
+    if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
+        for (_key, project_value) in projects.iter() {
+            if let Some(table) = project_value
+                .as_table()
+                .and_then(|t| t.get(section))
+                .and_then(|s| s.as_table())
+                && !table.contains_key(new_key)
+                && table.contains_key(old_key)
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Migrate a negated boolean field within a table (e.g., `no-ff = true` → `ff = false`).
+///
+/// Returns true if a migration was performed.
+fn migrate_negated_bool(table: &mut toml_edit::Table, old_key: &str, new_key: &str) -> bool {
+    if table.contains_key(new_key) {
+        // New key takes precedence; remove the old one if present
+        return table.remove(old_key).is_some();
+    }
+    let Some(old_item) = table.remove(old_key) else {
+        return false;
+    };
+    if let Some(bool_val) = old_item.as_value().and_then(|v| v.as_bool()) {
+        table.insert(new_key, toml_edit::value(!bool_val));
+        true
+    } else {
+        // Put it back if we can't parse it
+        table.insert(old_key, old_item);
+        false
+    }
+}
+
+/// Migrate a negated boolean field in a section and its project-level counterparts.
+fn migrate_negated_bool_doc(
+    doc: &mut toml_edit::DocumentMut,
+    section: &str,
+    old_key: &str,
+    new_key: &str,
+) -> bool {
+    let mut modified = false;
+
+    // Top-level section
+    if let Some(table) = doc.get_mut(section).and_then(|s| s.as_table_mut())
+        && migrate_negated_bool(table, old_key, new_key)
+    {
+        modified = true;
+    }
+
+    // Project-level sections
+    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
+        for (_key, project_value) in projects.iter_mut() {
+            if let Some(table) = project_value
+                .as_table_mut()
+                .and_then(|t| t.get_mut(section))
+                .and_then(|s| s.as_table_mut())
+                && migrate_negated_bool(table, old_key, new_key)
+            {
+                modified = true;
+            }
+        }
+    }
+
+    modified
+}
+
+/// Convert a multi-entry pre-* table section into an array-of-tables pipeline.
+///
+/// Removes `[key]` as a table section and inserts `[[key]]` blocks —
+/// one block per named step, preserving insertion order.
+///
+/// Iterates pre-* keys in document order (not [`PRE_HOOK_KEYS`] order) so
+/// migrated sections land in the same relative position they had in the
+/// source file.
+fn migrate_pre_hook_table_in(table: &mut toml_edit::Table, modified: &mut bool) {
+    let keys_to_migrate: Vec<String> = table
+        .iter()
+        .filter(|(k, v)| {
+            PRE_HOOK_KEYS.contains(k)
+                && v.as_table()
+                    .is_some_and(|t| t.len() >= 2 && t.iter().all(|(_, v)| v.as_str().is_some()))
+        })
+        .map(|(k, _)| k.to_string())
+        .collect();
+
+    for key in keys_to_migrate {
+        let item = table.get_mut(&key).unwrap();
+        let entries = item.as_table().unwrap();
+
+        let mut arr = toml_edit::ArrayOfTables::new();
+        for (name, value) in entries.iter() {
+            let mut block = toml_edit::Table::new();
+            block.insert(name, toml_edit::value(value.as_str().unwrap()));
+            arr.push(block);
+        }
+
+        *item = toml_edit::Item::ArrayOfTables(arr);
+        *modified = true;
+    }
+}
+
+/// Migrate multi-entry pre-* hook table sections to pipeline arrays.
+///
+/// Hooks are flattened into the top level of user config, project config, and
+/// each `[projects."id"]` subtree.
+fn migrate_pre_hook_table_form_doc(doc: &mut toml_edit::DocumentMut) -> bool {
+    let mut modified = false;
+
+    // Top-level (user config or project config)
+    migrate_pre_hook_table_in(doc.as_table_mut(), &mut modified);
+
+    // Per-project overrides (user config)
+    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
+        for (_key, project_value) in projects.iter_mut() {
+            if let Some(project_table) = project_value.as_table_mut() {
+                migrate_pre_hook_table_in(project_table, &mut modified);
+            }
+        }
+    }
+
+    modified
+}
+
+/// Apply all structural TOML migrations to a parsed document.
+///
+/// This is the single source of truth for config migration. Returns true if
+/// any modifications were made.
+///
+/// Note: `replace_deprecated_vars` and `remove_approved_commands` are NOT
+/// included here — template variable renaming is cosmetic (would break
+/// `--var` overrides), and approved-commands is still a valid serde field.
+fn migrate_content_doc(doc: &mut toml_edit::DocumentMut) -> bool {
+    let mut modified = false;
+    modified |= migrate_commit_generation_doc(doc);
+    modified |= migrate_select_doc(doc);
+    modified |= migrate_post_create_doc(doc);
+    modified |= migrate_pre_hook_table_form_doc(doc);
+    modified |= migrate_ci_doc(doc);
+    modified |= migrate_negated_bool_doc(doc, "merge", "no-ff", "ff");
+    modified |= migrate_negated_bool_doc(doc, "switch", "no-cd", "cd");
+    modified |= migrate_switch_picker_timeout_doc(doc);
+    modified
+}
+
+/// Check if a table has `timeout-ms` under `[switch.picker]`.
+///
+/// `[switch.picker]` can be written either as a section (regular table) or
+/// inline (`picker = { ... }`); `toml_edit` surfaces these as different node
+/// types, so both branches are needed.
+fn has_switch_picker_timeout(table: &toml_edit::Table) -> bool {
+    table
+        .get("switch")
+        .and_then(|s| s.as_table())
+        .and_then(|t| t.get("picker"))
+        .and_then(|p| match p {
+            toml_edit::Item::Table(t) => Some(t.contains_key("timeout-ms")),
+            toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) => {
+                Some(it.contains_key("timeout-ms"))
+            }
+            _ => None,
+        })
+        .unwrap_or(false)
+}
+
+fn find_switch_picker_timeout_from_doc(doc: &toml_edit::DocumentMut) -> bool {
+    if has_switch_picker_timeout(doc.as_table()) {
+        return true;
+    }
+    if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
+        for (_key, project_value) in projects.iter() {
+            if let Some(project_table) = project_value.as_table()
+                && has_switch_picker_timeout(project_table)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Remove `timeout-ms` from `[switch.picker]` in a table (top-level or project).
+fn remove_switch_picker_timeout_in(table: &mut toml_edit::Table) -> bool {
+    let Some(picker) = table
+        .get_mut("switch")
+        .and_then(|s| s.as_table_mut())
+        .and_then(|t| t.get_mut("picker"))
+    else {
+        return false;
+    };
+    match picker {
+        toml_edit::Item::Table(t) => t.remove("timeout-ms").is_some(),
+        toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) => {
+            it.remove("timeout-ms").is_some()
+        }
+        _ => false,
+    }
+}
+
+/// Remove deprecated `timeout-ms` from `[switch.picker]` sections.
+///
+/// Strips the key at both the top level and under `[projects."..."]`. Empty
+/// `[switch.picker]` sections are left in place — they round-trip harmlessly.
+fn migrate_switch_picker_timeout_doc(doc: &mut toml_edit::DocumentMut) -> bool {
+    let mut modified = remove_switch_picker_timeout_in(doc.as_table_mut());
+    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
+        for (_key, project_value) in projects.iter_mut() {
+            if let Some(project_table) = project_value.as_table_mut() {
+                modified |= remove_switch_picker_timeout_in(project_table);
+            }
+        }
+    }
+    modified
+}
+
+fn migrate_content_from_doc(content: &str, mut doc: toml_edit::DocumentMut) -> String {
+    if migrate_content_doc(&mut doc) {
+        doc.to_string()
+    } else {
+        content.to_string()
+    }
+}
+
+/// Apply all TOML-level migrations to config content.
+///
+/// Parses the TOML, applies all structural migrations, and returns the result.
+/// Called by load paths that only need structural migration. `check_and_migrate()`
+/// reuses the same migration path when it also needs to emit warnings.
+pub fn migrate_content(content: &str) -> String {
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return content.to_string();
+    };
+    migrate_content_from_doc(content, doc)
 }
 
 /// Copy approved-commands from config.toml to approvals.toml.
 ///
-/// Called during migration to ensure approved-commands are preserved before
-/// the migration file removes them from config.toml. Without this, applying
-/// `mv config.toml.new config.toml` would lose approval data.
+/// Called by `wt config update` before overwriting the config with migrated
+/// content, so the approvals data survives the rewrite. No-op if
+/// `approvals.toml` already exists (already authoritative) or the config has
+/// no approved-commands entries.
 ///
-/// Returns `Some(path)` if approvals.toml was created, `None` if it already
-/// existed or there was nothing to copy.
-fn copy_approved_commands_to_approvals_file(config_path: &Path) -> Option<PathBuf> {
+/// Returns `Some(path)` if approvals.toml was created, `None` otherwise.
+pub fn copy_approved_commands_to_approvals_file(config_path: &Path) -> Option<PathBuf> {
     let approvals_path = config_path.with_file_name("approvals.toml");
     if approvals_path.exists() {
         return None; // Already authoritative, don't overwrite
@@ -737,22 +1135,20 @@ fn shell_join(args: &[&str]) -> String {
 
 /// Information about deprecated config patterns that were found.
 ///
-/// Used by `wt config show` to display full deprecation details including inline diff.
-/// This struct combines detection results with context (paths, labels) for display.
+/// Detection result plus display context (paths, labels). No filesystem side
+/// effects — `check_and_migrate` never touches the filesystem; `wt config
+/// update` rewrites the config and copies approvals under an explicit user
+/// action.
 #[derive(Debug)]
 pub struct DeprecationInfo {
     /// Path to the config file with deprecations
     pub config_path: PathBuf,
-    /// Path to the generated migration file (if written)
-    pub migration_path: Option<PathBuf>,
     /// All detected deprecations
     pub deprecations: Deprecations,
     /// Label for this config (e.g., "User config", "Project config")
     pub label: String,
     /// Main worktree path when viewing from a linked worktree (for `-C` in hints)
     pub main_worktree_path: Option<PathBuf>,
-    /// Path to approvals.toml if approved-commands were copied there during migration
-    pub approvals_copied_to: Option<PathBuf>,
 }
 
 impl DeprecationInfo {
@@ -762,77 +1158,77 @@ impl DeprecationInfo {
     }
 }
 
-fn migration_path(path: &Path) -> PathBuf {
-    // config.toml -> config.toml.new
-    // config -> config.new
-    match path.extension() {
-        Some(ext) => path.with_extension(format!("{}.new", ext.to_string_lossy())),
-        None => path.with_extension("new"),
-    }
+/// Result of checking config content for deprecations.
+///
+/// `migrated_content` is the structurally migrated TOML used for serde loading.
+/// `info` is present only when user-visible deprecations were detected.
+#[derive(Debug)]
+pub struct CheckAndMigrateResult {
+    pub info: Option<DeprecationInfo>,
+    pub migrated_content: String,
 }
 
-/// Check config content for deprecated patterns and optionally create migration file
+/// Check config content for deprecated patterns.
 ///
-/// Detects and migrates:
+/// Detects:
 /// - Deprecated template variables (repo_root → repo_path, etc.)
 /// - Deprecated [commit-generation] sections → [commit.generation]
 /// - Deprecated args field (merged into command)
 /// - Deprecated approved-commands in \[projects\] (moved to approvals.toml)
 ///
-/// If deprecations are found and `warn_and_migrate` is true:
-/// 1. Emits warnings listing the deprecated patterns
-/// 2. Creates a single `.new` file with all migrations applied
+/// Pure with respect to the filesystem — never rewrites config or copies
+/// approvals. The user materializes migrations by running `wt config update`
+/// (or `wt config update --print`). Deprecation warnings still go to stderr
+/// when `emit_inline_warnings` is set.
 ///
-/// Set `warn_and_migrate` to false for project config on feature worktrees - the warning
-/// is only actionable from the main worktree where the migration file can be applied.
+/// Set `warn_and_migrate` to false for project config on feature worktrees —
+/// the warning is only actionable from the main worktree where the user would
+/// run `wt config update`.
 ///
 /// The `label` is used in the warning message (e.g., "User config" or "Project config").
 ///
-/// `repo` should be provided for project config to use the hint system. For user config
-/// (global, not repo-specific), pass `None` and the function will check if the `.new`
-/// file already exists instead.
+/// `repo` is used to resolve the primary worktree path for the "run this from
+/// the main worktree" hint when viewing project config from a linked worktree.
 ///
-/// When `show_brief_warning` is true, only a brief pointer to `wt config show` is emitted
-/// instead of full deprecation details. Use this for commands other than `config show`.
+/// When `emit_inline_warnings` is true, per-kind deprecation warnings are printed to stderr
+/// with a hint pointing at `wt config show`/`wt config update`. When false, nothing is
+/// printed and the caller is expected to render via `format_deprecation_details`. Use this for commands other than `config show`.
 ///
 /// Warnings are deduplicated per path per process.
 ///
-/// Returns `Ok(Some(info))` if deprecations were found, `Ok(None)` otherwise.
+/// Returns the structurally migrated content for serde loading, plus optional
+/// deprecation info when user-visible deprecations were found.
 pub fn check_and_migrate(
     path: &Path,
     content: &str,
     warn_and_migrate: bool,
     label: &str,
     repo: Option<&crate::git::Repository>,
-    show_brief_warning: bool,
-) -> anyhow::Result<Option<DeprecationInfo>> {
-    // Detect all deprecation types
-    let deprecations = detect_deprecations(content);
+    emit_inline_warnings: bool,
+) -> anyhow::Result<CheckAndMigrateResult> {
+    // Parse once — shared by detection and migration.
+    // Contract: unparsable content collapses to empty deprecations so downstream
+    // `compute_migrated_content` (invoked by `config show`/`config update` only when
+    // `info` is `Some`) can assume the content parses.
+    let (deprecations, migrated_content) = match content.parse::<toml_edit::DocumentMut>() {
+        Ok(doc) => {
+            let template_strings = extract_template_strings_from_doc(&doc);
+            let deprecations = detect_deprecations_from_doc(&doc, &template_strings);
+            let migrated_content = migrate_content_from_doc(content, doc);
+            (deprecations, migrated_content)
+        }
+        Err(_) => (Deprecations::default(), content.to_string()),
+    };
 
     if deprecations.is_empty() {
-        // Config is clean - clear hint so future deprecations get full treatment.
-        // This handles the case where a user fixes their config today, then months
-        // later a new deprecation is introduced - they should get the full warning.
-        // TODO: We want to avoid gunking up config loading with too many checks,
-        // but a single git config --unset seems acceptable for now.
-        if let Some(repo) = repo {
-            let _ = repo.clear_hint(HINT_DEPRECATED_CONFIG);
-        }
-        return Ok(None);
+        return Ok(CheckAndMigrateResult {
+            info: None,
+            migrated_content,
+        });
     }
 
-    let new_path = migration_path(path);
-
-    // Skip writing if: (a) this is a brief warning (not `wt config show`), AND
-    //                  (b) migration file already exists
-    // This means first-time deprecation gets automatic file write, after that
-    // users run `wt config show` to get/update the migration file.
-    let should_skip_write = show_brief_warning && new_path.exists();
-
-    // Build deprecation info for return
-    let mut info = DeprecationInfo {
+    let info = DeprecationInfo {
         config_path: path.to_path_buf(),
-        migration_path: None,
         deprecations,
         label: label.to_string(),
         main_worktree_path: if !warn_and_migrate {
@@ -841,153 +1237,130 @@ pub fn check_and_migrate(
         } else {
             None
         },
-        approvals_copied_to: None,
     };
 
     // Skip warning entirely if not in main worktree (for project config)
     if !warn_and_migrate {
-        return Ok(Some(info));
+        return Ok(CheckAndMigrateResult {
+            info: Some(info),
+            migrated_content,
+        });
     }
 
     // Deduplicate warnings per path per process
     let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     {
-        let mut guard = WARNED_DEPRECATED_PATHS.lock().unwrap();
+        let mut guard = WARNED_DEPRECATED_PATHS
+            .lock()
+            .map_err(|e| anyhow::anyhow!("failed to lock deprecation warning tracker: {e}"))?;
         if guard.contains(&canonical_path) {
-            // Already warned, but still set migration_path if file exists
-            if new_path.exists() {
-                info.migration_path = Some(new_path);
-            }
-            return Ok(Some(info));
+            return Ok(CheckAndMigrateResult {
+                info: Some(info),
+                migrated_content,
+            });
         }
-        guard.insert(canonical_path.clone());
+        guard.insert(canonical_path);
     }
 
-    // Copy approved-commands to approvals.toml before generating the migration
-    // file that removes them from config.toml. Without this, applying the
-    // migration (`mv config.toml.new config.toml`) would lose approval data.
-    if info.deprecations.approved_commands {
-        info.approvals_copied_to = copy_approved_commands_to_approvals_file(path);
-    }
-
-    // For brief warnings (non-config-show commands), just show a pointer
-    if show_brief_warning {
-        eprintln!("{}", format_brief_warning(label));
-
-        if let Some(approvals_path) = &info.approvals_copied_to {
-            let approvals_filename = approvals_path
-                .file_name()
-                .map(|n| n.to_string_lossy())
-                .unwrap_or_default();
+    // For non-config-show commands, emit per-kind warnings but skip the diff.
+    // The diff is reserved for `wt config show`, where the user has opted into details.
+    if emit_inline_warnings && !warnings_suppressed() {
+        eprint!("{}", format_deprecation_warnings(&info));
+        if DEPRECATION_HINT_EMITTED.set(()).is_ok() {
             eprintln!(
                 "{}",
                 hint_message(cformat!(
-                    "Copied approved commands to <underline>{approvals_filename}</>"
+                    "To see details, run <underline>wt config show</>; to apply updates, run <underline>wt config update</>"
                 ))
             );
         }
-
-        // Still write migration file if needed (first time only)
-        // The file is needed for `wt config update` / `wt config show` to work
-        if !should_skip_write {
-            info.migration_path = write_migration_file(path, content, &info.deprecations, repo);
-        }
-
         std::io::stderr().flush().ok();
-        return Ok(Some(info));
     }
 
-    // Silent mode for `wt config show` - just write migration file and return info
-    // The caller will use format_deprecation_details() to add output to its buffer
-    if !should_skip_write {
-        info.migration_path = write_migration_file(path, content, &info.deprecations, repo);
-    }
-
-    Ok(Some(info))
+    Ok(CheckAndMigrateResult {
+        info: Some(info),
+        migrated_content,
+    })
 }
 
-/// Format brief warning for normal config loading.
+/// Apply all deprecation fixes to `content` in memory and return the migrated
+/// TOML string.
 ///
-/// Returns a formatted warning string. Does not print anything;
-/// caller is responsible for output.
-pub fn format_brief_warning(label: &str) -> String {
-    warning_message(cformat!(
-        "{} has deprecated settings. Run <bold>wt config show</> for details or <bold>wt config update</> to apply updates",
-        label
-    ))
-    .to_string()
-}
+/// Applies variable renames (cosmetic, string-level), structural section and
+/// field migrations, and removes `approved-commands` under `[projects]` (which
+/// `wt config update` copies to `approvals.toml` before overwriting).
+///
+/// Pure function — no filesystem access. Idempotent: feeding its own output
+/// back in is a no-op. Callers materialize the result via `wt config update`
+/// or display it via `wt config show`.
+pub fn compute_migrated_content(content: &str) -> String {
+    // Parse once to extract template strings and detect what needs migrating.
+    // Callers (`wt config show`, `wt config update`, `format_deprecation_details`)
+    // all run content through `check_and_migrate` first, so it is known to parse.
+    let doc = content
+        .parse::<toml_edit::DocumentMut>()
+        .expect("compute_migrated_content called with content that failed TOML parse; callers must funnel through check_and_migrate first");
+    let template_strings = extract_template_strings_from_doc(&doc);
+    let deprecations = detect_deprecations_from_doc(&doc, &template_strings);
 
-/// Write migration file with all fixes applied.
-///
-/// Applies all deprecation fixes (variable renames, section migrations) and writes
-/// the result to a `.new` file alongside the original config.
-///
-/// Returns `Some(path)` if file was written successfully, `None` otherwise.
-///
-/// # Arguments
-/// * `path` - Path to the original config file
-/// * `content` - Content of the config file
-/// * `deprecations` - Detected deprecations to fix
-/// * `repo` - Optional repository for hint tracking (project config only)
-pub fn write_migration_file(
-    path: &Path,
-    content: &str,
-    deprecations: &Deprecations,
-    repo: Option<&crate::git::Repository>,
-) -> Option<PathBuf> {
-    let new_path = migration_path(path);
+    // Apply string-level var replacement first (cosmetic, operates on raw content)
+    let after_vars = if !deprecations.vars.is_empty() {
+        replace_deprecated_vars_from_strings(content, &template_strings)
+    } else {
+        content.to_string()
+    };
 
-    // Apply all migrations to generate new content
-    let mut new_content = content.to_string();
-    if !deprecations.vars.is_empty() {
-        new_content = replace_deprecated_vars(&new_content);
-    }
-    if !deprecations.commit_gen.is_empty() {
-        new_content = migrate_commit_generation_sections(&new_content);
-    }
+    // Re-parse for structural migrations (which operate on toml_edit::DocumentMut).
+    // `replace_deprecated_vars_from_strings` substitutes one identifier for another
+    // inside `template_strings`, which are values extracted from string literals —
+    // they cannot collide with TOML syntactic tokens, so the replacement preserves
+    // validity.
+    let mut doc = after_vars
+        .parse::<toml_edit::DocumentMut>()
+        .expect("template-var replacement preserves TOML structure");
+    let mut modified = migrate_content_doc(&mut doc);
+    // Additionally remove approved-commands (not part of migrate_content because
+    // approved-commands is still a valid serde field at runtime).
     if deprecations.approved_commands {
-        new_content = remove_approved_commands_from_config(&new_content);
+        modified |= remove_approved_commands_doc(&mut doc);
     }
-    if deprecations.select {
-        new_content = migrate_select_to_switch_picker(&new_content);
+    if modified {
+        doc.to_string()
+    } else {
+        after_vars
     }
-    if deprecations.post_create {
-        new_content = migrate_post_create_to_pre_start(&new_content);
-    }
+}
 
-    if let Err(e) = std::fs::write(&new_path, &new_content) {
-        // Log write failure but don't block config loading
-        log::warn!("Could not write migration file: {}", e);
+/// Render a colored unified diff between `original` and `migrated`, with
+/// `label` shown as the file name in the diff header (e.g. `config.toml`).
+///
+/// Uses a private tempdir containing two files named `<label>/current` and
+/// `<label>/migrated`; `git diff --no-index` is invoked from inside that
+/// tempdir so the diff header shows clean relative paths. The tempdir is
+/// dropped on return. Returns `None` when the contents match.
+pub fn format_migration_diff(original: &str, migrated: &str, label: &str) -> Option<String> {
+    let dir = tempfile::tempdir().expect("failed to create tempdir for migration diff");
+    let subdir = dir.path().join(label);
+    std::fs::create_dir(&subdir).expect("failed to create subdir in fresh tempdir");
+    let current = subdir.join("current");
+    let migrated_path = subdir.join("migrated");
+    std::fs::write(&current, original).expect("failed to write current config to tempfile");
+    std::fs::write(&migrated_path, migrated).expect("failed to write migrated config to tempfile");
+
+    let output = Cmd::new("git")
+        .args(["diff", "--no-index", "--color=always", "-U3", "--"])
+        .arg(format!("{label}/current"))
+        .arg(format!("{label}/migrated"))
+        .current_dir(dir.path())
+        .run()
+        .expect("git diff --no-index failed");
+
+    // git diff --no-index exits 1 when files differ, which is expected.
+    let diff_output = String::from_utf8_lossy(&output.stdout);
+    if diff_output.is_empty() {
         return None;
     }
-
-    // Mark hint as shown for project config
-    if let Some(repo) = repo {
-        let _ = repo.mark_hint_shown(HINT_DEPRECATED_CONFIG);
-    }
-
-    Some(new_path)
-}
-
-/// Format the diff between original and migrated config files as a string
-pub fn format_migration_diff(original_path: &Path, new_path: &Path) -> Option<String> {
-    // Run git diff and return the formatted output
-    // -U3: Show 3 lines of context (git default)
-    // Use -- to separate options from file paths (guards against filenames starting with -)
-    if let Ok(output) = Cmd::new("git")
-        .args(["diff", "--no-index", "--color=always", "-U3", "--"])
-        .arg(original_path.to_slash_lossy().into_owned())
-        .arg(new_path.to_slash_lossy().into_owned())
-        .run()
-    {
-        // git diff --no-index exits 1 when files differ, which is expected
-        let diff_output = String::from_utf8_lossy(&output.stdout);
-        if !diff_output.is_empty() {
-            return Some(format_with_gutter(diff_output.trim_end(), None));
-        }
-    }
-    None
+    Some(format_with_gutter(diff_output.trim_end(), None))
 }
 
 /// Format deprecation warning lines (without apply hints or diff).
@@ -999,42 +1372,35 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
     use std::fmt::Write;
     let mut out = String::new();
 
-    if !info.deprecations.vars.is_empty() {
-        let var_list: Vec<String> = info
-            .deprecations
-            .vars
-            .iter()
-            .map(|(old, new)| cformat!("<dim>{}</> → <bold>{}</>", old, new))
-            .collect();
+    for (old, new) in &info.deprecations.vars {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated template variables: {}",
-                info.label,
-                var_list.join(", ")
+            warning_message(cformat!(
+                "{label}: template variable <bold>{old}</> is deprecated in favor of <bold>{new}</>",
+                label = info.label,
             ))
         );
     }
 
-    if !info.deprecations.commit_gen.is_empty() {
-        let mut parts = Vec::new();
-        if info.deprecations.commit_gen.has_top_level {
-            parts.push("[commit-generation] → [commit.generation]".to_string());
-        }
-        for project_key in &info.deprecations.commit_gen.project_keys {
-            parts.push(format!(
-                "[projects.\"{}\".commit-generation] → [projects.\"{}\".commit.generation]",
-                project_key, project_key
-            ));
-        }
+    if info.deprecations.commit_gen.has_top_level {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated config sections: {}",
-                info.label,
-                parts.join(", ")
+            warning_message(cformat!(
+                "{}: <bold>[commit-generation]</> is deprecated in favor of <bold>[commit.generation]</>",
+                info.label
+            ))
+        );
+    }
+    for project_key in &info.deprecations.commit_gen.project_keys {
+        let _ = writeln!(
+            out,
+            "{}",
+            warning_message(cformat!(
+                "{label}: <bold>[projects.\"{k}\".commit-generation]</> is deprecated in favor of <bold>[projects.\"{k}\".commit.generation]</>",
+                label = info.label,
+                k = project_key
             ))
         );
     }
@@ -1043,32 +1409,19 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} has approved-commands in [projects] sections (moved to approvals.toml)",
+            warning_message(cformat!(
+                "{}: <bold>approved-commands</> under <bold>[projects]</> is deprecated in favor of <bold>approvals.toml</>",
                 info.label
             ))
         );
-        if let Some(approvals_path) = &info.approvals_copied_to {
-            let approvals_filename = approvals_path
-                .file_name()
-                .map(|n| n.to_string_lossy())
-                .unwrap_or_default();
-            let _ = writeln!(
-                out,
-                "{}",
-                hint_message(cformat!(
-                    "Copied approved commands to <underline>{approvals_filename}</>"
-                ))
-            );
-        }
     }
 
     if info.deprecations.select {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated config section: [select] → [switch.picker]",
+            warning_message(cformat!(
+                "{}: <bold>[select]</> is deprecated in favor of <bold>[switch.picker]</>",
                 info.label
             ))
         );
@@ -1078,9 +1431,75 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
         let _ = writeln!(
             out,
             "{}",
-            warning_message(format!(
-                "{} uses deprecated hook name: post-create → pre-start",
+            warning_message(cformat!(
+                "{}: <bold>post-create</> hook is deprecated in favor of <bold>pre-start</>",
                 info.label
+            ))
+        );
+    }
+
+    if info.deprecations.ci_section {
+        let _ = writeln!(
+            out,
+            "{}",
+            warning_message(cformat!(
+                "{}: <bold>[ci]</> is deprecated in favor of <bold>[forge]</>",
+                info.label
+            ))
+        );
+    }
+
+    if info.deprecations.no_ff {
+        let _ = writeln!(
+            out,
+            "{}",
+            warning_message(cformat!(
+                "{}: <bold>merge.no-ff</> is deprecated in favor of <bold>merge.ff</> (inverted)",
+                info.label
+            ))
+        );
+    }
+
+    if info.deprecations.no_cd {
+        let _ = writeln!(
+            out,
+            "{}",
+            warning_message(cformat!(
+                "{}: <bold>switch.no-cd</> is deprecated in favor of <bold>switch.cd</> (inverted)",
+                info.label
+            ))
+        );
+    }
+
+    if info.deprecations.switch_picker_timeout_ms {
+        let _ = writeln!(
+            out,
+            "{}",
+            warning_message(cformat!(
+                "{}: <bold>switch.picker.timeout-ms</> is no longer used — the picker now renders progressively",
+                info.label
+            ))
+        );
+    }
+
+    if !info.deprecations.pre_hook_table_form.is_empty() {
+        let hook_list = info
+            .deprecations
+            .pre_hook_table_form
+            .iter()
+            .map(|h| cformat!("<bold>{h}</>"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let _ = writeln!(
+            out,
+            "{}",
+            warning_message(cformat!(
+                "{}: table form for {} is deprecated in favor of the pipeline form. \
+                 We're unifying pre-hooks, post-hooks, and aliases so that list form always runs serially \
+                 and table form always runs in parallel — migrate now to keep the current serial behavior \
+                 once the table form is repurposed.",
+                info.label,
+                hook_list
             ))
         );
     }
@@ -1094,24 +1513,40 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
 /// - Warning message listing deprecated patterns
 /// - Migration hint with apply command
 /// - Inline diff showing the changes
-pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
+///
+/// `original_content` is the current on-disk config; the migrated content is
+/// derived in memory via [`compute_migrated_content`] so this function has no
+/// filesystem side effects other than the tempdir used briefly for `git diff`.
+pub fn format_deprecation_details(info: &DeprecationInfo, original_content: &str) -> String {
     use std::fmt::Write;
     let mut out = format_deprecation_warnings(info);
 
-    // Migration hint with apply command
-    if let Some(new_path) = &info.migration_path {
-        let _ = writeln!(out, "{}", hint_message("To apply:"));
-        let _ = writeln!(out, "{}", format_bash_with_gutter("wt config update"));
-
-        // Inline diff — git diff header shows the file paths
-        if let Some(diff) = format_migration_diff(&info.config_path, new_path) {
-            let _ = writeln!(out, "{diff}");
-        }
-    } else if let Some(main_path) = &info.main_worktree_path {
-        // In linked worktree — include -C so the command works from here
+    if let Some(main_path) = &info.main_worktree_path {
+        // In a linked worktree — the user needs to run update from the primary.
         let cmd = suggest_command_in_dir(main_path, "config", &["update"], &[]);
-        let _ = writeln!(out, "{}", hint_message("To apply:"));
-        let _ = writeln!(out, "{}", format_bash_with_gutter(&cmd));
+        let _ = writeln!(
+            out,
+            "{}",
+            hint_message(cformat!("To apply: <underline>{cmd}</>"))
+        );
+        return out;
+    }
+
+    let _ = writeln!(
+        out,
+        "{}",
+        hint_message(cformat!("To apply: <underline>wt config update</>"))
+    );
+
+    let migrated = compute_migrated_content(original_content);
+    let label = info
+        .config_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "config".to_string());
+    if let Some(diff) = format_migration_diff(original_content, &migrated, &label) {
+        let _ = writeln!(out, "{}", info_message("Proposed diff:"));
+        let _ = writeln!(out, "{diff}");
     }
 
     out
@@ -1122,28 +1557,63 @@ pub fn format_deprecation_details(info: &DeprecationInfo) -> String {
 /// Generic over `C`, the config type where the key was found. If the key would
 /// be valid in `C::Other`, returns that config's description.
 ///
-/// For example, `key_belongs_in::<ProjectConfig>("commit-generation")` returns
-/// `Some("user config")`.
+/// For example, `key_belongs_in::<ProjectConfig>("skip-shell-integration-prompt")`
+/// returns `Some("user config")`.
 /// Returns `None` if the key is truly unknown (not valid in either config).
 pub fn key_belongs_in<C: WorktrunkConfig>(key: &str) -> Option<&'static str> {
     C::Other::is_valid_key(key).then(C::Other::description)
 }
 
-/// Warn about unknown fields in config file
+/// Classification of an unknown config key for warning purposes.
+pub enum UnknownKeyKind {
+    /// Deprecated key in its correct config type — deprecation system handles it
+    DeprecatedHandled,
+    /// Deprecated key in the wrong config type
+    DeprecatedWrongConfig {
+        other_description: &'static str,
+        canonical_display: &'static str,
+    },
+    /// Non-deprecated key that belongs in the other config type
+    WrongConfig { other_description: &'static str },
+    /// Truly unknown key (not valid in either config type)
+    Unknown,
+}
+
+/// Classify an unknown config key: deprecated (right/wrong file), misplaced, or unknown.
+pub fn classify_unknown_key<C: WorktrunkConfig>(key: &str) -> UnknownKeyKind {
+    if let Some(dep) = DEPRECATED_SECTION_KEYS.iter().find(|d| d.key == key) {
+        return if C::is_valid_key(dep.canonical_top_key) {
+            UnknownKeyKind::DeprecatedHandled
+        } else {
+            UnknownKeyKind::DeprecatedWrongConfig {
+                other_description: C::Other::description(),
+                canonical_display: dep.canonical_display,
+            }
+        };
+    }
+    match key_belongs_in::<C>(key) {
+        Some(other) => UnknownKeyKind::WrongConfig {
+            other_description: other,
+        },
+        None => UnknownKeyKind::Unknown,
+    }
+}
+
+/// Warn about unknown fields in a config file.
 ///
-/// Generic over `C`, the config type being loaded. Emits a warning for each
-/// unknown field, deduplicated per path per process.
+/// Generic over `C`, the config type being loaded. Classification is shared
+/// with `config show` via [`collect_unknown_warnings`](crate::config::collect_unknown_warnings);
+/// this wrapper adds per-path deduplication and stderr emission.
 ///
-/// When an unknown key belongs in the other config type (`C::Other`),
-/// the warning includes a hint about where to move it.
-///
-/// The `label` is used in the warning message (e.g., "User config" or "Project config").
-pub fn warn_unknown_fields<C: WorktrunkConfig>(
-    path: &Path,
-    unknown_keys: &HashMap<String, toml::Value>,
-    label: &str,
-) {
-    if unknown_keys.is_empty() {
+/// The `label` is used in the warning message (e.g., "User config" or
+/// "Project config").
+pub fn warn_unknown_fields<C: WorktrunkConfig>(raw_contents: &str, path: &Path, label: &str) {
+    if warnings_suppressed() {
+        return;
+    }
+
+    let warnings = crate::config::collect_unknown_warnings::<C>(raw_contents);
+    if warnings.is_empty() {
         return;
     }
 
@@ -1157,35 +1627,135 @@ pub fn warn_unknown_fields<C: WorktrunkConfig>(
         guard.insert(canonical_path);
     }
 
-    // Sort keys for deterministic output order
-    let mut keys: Vec<_> = unknown_keys.keys().collect();
-    keys.sort();
-
-    for key in keys {
-        if let Some(other_location) = key_belongs_in::<C>(key) {
-            eprintln!(
-                "{}",
-                warning_message(cformat!(
-                    "{label} has key <bold>{key}</> which belongs in {other_location} (will be ignored)"
-                ))
-            );
-        } else {
-            eprintln!(
-                "{}",
-                warning_message(cformat!(
-                    "{label} has unknown field <bold>{key}</> (will be ignored)"
-                ))
-            );
-        }
+    for warning in warnings {
+        eprintln!("{}", warning_message(format_load_warning(label, &warning)));
     }
 
     // Flush stderr to ensure output appears before any subsequent messages
     std::io::stderr().flush().ok();
 }
 
+fn format_load_warning(label: &str, warning: &crate::config::UnknownWarning) -> String {
+    use crate::config::UnknownWarning;
+    match warning {
+        UnknownWarning::TopLevelUnknown { key } => {
+            cformat!("{label} has unknown field <bold>{key}</> (will be ignored)")
+        }
+        UnknownWarning::TopLevelWrongConfig {
+            key,
+            other_description,
+        } => cformat!(
+            "{label} has key <bold>{key}</> which belongs in {other_description} (will be ignored)"
+        ),
+        UnknownWarning::TopLevelDeprecatedWrongConfig {
+            key,
+            other_description,
+            canonical_display,
+        } => cformat!(
+            "{label} has key <bold>{key}</> which belongs in {other_description} as {canonical_display}"
+        ),
+        UnknownWarning::NestedUnknown { path } => {
+            cformat!("{label} has unknown field <bold>{path}</> (will be ignored)")
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Test helpers that parse from string and delegate to the internal functions.
+    // These mirror the former pub wrappers that were inlined into
+    // `detect_deprecations` and `compute_migrated_content`.
+
+    fn extract_template_strings(content: &str) -> Vec<String> {
+        let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+            return vec![];
+        };
+        extract_template_strings_from_doc(&doc)
+    }
+
+    fn replace_deprecated_vars(content: &str) -> String {
+        let strings = extract_template_strings(content);
+        replace_deprecated_vars_from_strings(content, &strings)
+    }
+
+    fn find_deprecated_vars(content: &str) -> Vec<(&'static str, &'static str)> {
+        let strings = extract_template_strings(content);
+        find_deprecated_vars_from_strings(&strings)
+    }
+
+    fn find_commit_generation_deprecations(content: &str) -> CommitGenerationDeprecations {
+        content
+            .parse::<toml_edit::DocumentMut>()
+            .map(|doc| find_commit_generation_from_doc(&doc))
+            .unwrap_or_default()
+    }
+
+    fn find_approved_commands_deprecation(content: &str) -> bool {
+        content
+            .parse::<toml_edit::DocumentMut>()
+            .ok()
+            .is_some_and(|doc| find_approved_commands_from_doc(&doc))
+    }
+
+    fn find_select_deprecation(content: &str) -> bool {
+        content
+            .parse::<toml_edit::DocumentMut>()
+            .ok()
+            .is_some_and(|doc| find_select_from_doc(&doc))
+    }
+
+    fn find_post_create_deprecation(content: &str) -> bool {
+        content
+            .parse::<toml_edit::DocumentMut>()
+            .ok()
+            .is_some_and(|doc| find_post_create_from_doc(&doc))
+    }
+
+    fn migrate_commit_generation_sections(content: &str) -> String {
+        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+            return content.to_string();
+        };
+        if migrate_commit_generation_doc(&mut doc) {
+            doc.to_string()
+        } else {
+            content.to_string()
+        }
+    }
+
+    fn remove_approved_commands_from_config(content: &str) -> String {
+        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+            return content.to_string();
+        };
+        if remove_approved_commands_doc(&mut doc) {
+            doc.to_string()
+        } else {
+            content.to_string()
+        }
+    }
+
+    fn migrate_select_to_switch_picker(content: &str) -> String {
+        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+            return content.to_string();
+        };
+        if migrate_select_doc(&mut doc) {
+            doc.to_string()
+        } else {
+            content.to_string()
+        }
+    }
+
+    fn migrate_post_create_to_pre_start(content: &str) -> String {
+        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+            return content.to_string();
+        };
+        if migrate_post_create_doc(&mut doc) {
+            doc.to_string()
+        } else {
+            content.to_string()
+        }
+    }
 
     #[test]
     fn test_find_deprecated_vars_empty() {
@@ -1426,6 +1996,17 @@ post-create = "echo hello"
     // Tests for approved-commands array handling
 
     #[test]
+    fn test_find_deprecated_vars_in_array_of_tables() {
+        // Exercises the ArrayOfTables arm in collect_strings_from_edit_item
+        let content = r#"
+[[hooks]]
+command = "ln -sf {{ repo_root }}/node_modules"
+"#;
+        let found = find_deprecated_vars(content);
+        assert_eq!(found, vec![("repo_root", "repo_path")]);
+    }
+
+    #[test]
     fn test_find_deprecated_vars_in_approved_commands() {
         let content = r#"
 [projects."github.com/user/repo"]
@@ -1473,7 +2054,7 @@ approved-commands = [
         let result =
             check_and_migrate(non_existent_path, content, true, "Test config", None, false);
         assert!(result.is_ok());
-        assert!(result.unwrap().is_some());
+        assert!(result.unwrap().info.is_some());
     }
 
     #[test]
@@ -1486,37 +2067,33 @@ approved-commands = [
         // First call should process normally
         let result1 = check_and_migrate(unique_path, content, true, "Test config", None, false);
         assert!(result1.is_ok());
-        assert!(result1.unwrap().is_some());
+        assert!(result1.unwrap().info.is_some());
 
         // Second call with same path should early-return (hits the deduplication branch)
         let result2 = check_and_migrate(unique_path, content, true, "Test config", None, false);
         assert!(result2.is_ok());
-        assert!(result2.unwrap().is_some());
+        assert!(result2.unwrap().info.is_some());
     }
 
     #[test]
-    fn test_migration_path_with_extension() {
-        // config.toml -> config.toml.new
-        let path = std::path::Path::new("/tmp/config.toml");
-        let new_path = migration_path(path);
-        assert_eq!(new_path.to_str().unwrap(), "/tmp/config.toml.new");
-    }
+    fn test_check_and_migrate_returns_migrated_content() {
+        let content = r#"
+[select]
+pager = "delta"
+"#;
 
-    #[test]
-    fn test_migration_path_without_extension() {
-        // config -> config.new (not config..new)
-        let path = std::path::Path::new("/tmp/config");
-        let new_path = migration_path(path);
-        assert_eq!(new_path.to_str().unwrap(), "/tmp/config.new");
-    }
+        let result = check_and_migrate(
+            std::path::Path::new("/tmp/config.toml"),
+            content,
+            true,
+            "Test config",
+            None,
+            false,
+        )
+        .unwrap();
 
-    #[test]
-    fn test_migration_path_hidden_file() {
-        // .hidden -> .hidden.new (not .hidden..new)
-        // Note: .hidden has no extension (the dot is part of the filename)
-        let path = std::path::Path::new("/tmp/.hidden");
-        let new_path = migration_path(path);
-        assert_eq!(new_path.to_str().unwrap(), "/tmp/.hidden.new");
+        assert_eq!(result.migrated_content, migrate_content(content));
+        assert!(result.info.is_some());
     }
 
     // Tests for commit-generation section migration
@@ -1684,7 +2261,7 @@ command = "old-command"
 
     #[test]
     fn test_shell_join_with_quotes() {
-        assert_eq!(shell_join(&["echo", "it's"]), "echo 'it'\\''s'");
+        assert_eq!(shell_join(&["echo", "it's"]), r"echo 'it'\''s'");
     }
 
     #[test]
@@ -2115,21 +2692,28 @@ approved-commands = ["npm install"]
 
     #[test]
     fn test_format_deprecation_details_approved_commands() {
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install"]
+"#;
         let info = DeprecationInfo {
             config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
-            migration_path: None,
             deprecations: Deprecations {
                 vars: vec![],
                 commit_gen: CommitGenerationDeprecations::default(),
                 approved_commands: true,
                 select: false,
                 post_create: false,
+                ci_section: false,
+                no_ff: false,
+                no_cd: false,
+                pre_hook_table_form: vec![],
+                switch_picker_timeout_ms: false,
             },
             label: "User config".to_string(),
             main_worktree_path: None,
-            approvals_copied_to: None,
         };
-        let output = format_deprecation_details(&info);
+        let output = format_deprecation_details(&info, content);
         assert!(
             output.contains("approved-commands"),
             "Should mention approved-commands in output: {}",
@@ -2143,54 +2727,13 @@ approved-commands = ["npm install"]
     }
 
     #[test]
-    fn test_format_deprecation_details_approvals_copied() {
-        let info = DeprecationInfo {
-            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
-            migration_path: None,
-            deprecations: Deprecations {
-                vars: vec![],
-                commit_gen: CommitGenerationDeprecations::default(),
-                approved_commands: true,
-                select: false,
-                post_create: false,
-            },
-            label: "User config".to_string(),
-            main_worktree_path: None,
-            approvals_copied_to: Some(std::path::PathBuf::from("/tmp/approvals.toml")),
-        };
-        let output = format_deprecation_details(&info);
-        assert!(
-            output.contains("Copied approved commands"),
-            "Should mention approvals were copied: {}",
-            output
-        );
-    }
-
-    #[test]
-    fn test_write_migration_file_with_approved_commands() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
+    fn test_compute_migrated_content_removes_approved_commands() {
         let content = r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 
 [projects."github.com/user/repo"]
 approved-commands = ["npm install"]
 "#;
-        std::fs::write(&config_path, content).unwrap();
-
-        let deprecations = Deprecations {
-            vars: vec![],
-            commit_gen: CommitGenerationDeprecations::default(),
-            approved_commands: true,
-            select: false,
-            post_create: false,
-        };
-        let result = write_migration_file(&config_path, content, &deprecations, None);
-        assert!(
-            result.is_some(),
-            "Should write migration file for approved-commands"
-        );
-        let migration_path = result.unwrap();
-        let migrated = std::fs::read_to_string(&migration_path).unwrap();
+        let migrated = compute_migrated_content(content);
         assert!(!migrated.contains("approved-commands"));
     }
 
@@ -2433,21 +2976,27 @@ branches = true
 
     #[test]
     fn test_format_deprecation_details_select() {
+        let content = r#"[select]
+pager = "delta --paging=never"
+"#;
         let info = DeprecationInfo {
             config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
-            migration_path: None,
             deprecations: Deprecations {
                 vars: vec![],
                 commit_gen: CommitGenerationDeprecations::default(),
                 approved_commands: false,
                 select: true,
                 post_create: false,
+                ci_section: false,
+                no_ff: false,
+                no_cd: false,
+                pre_hook_table_form: vec![],
+                switch_picker_timeout_ms: false,
             },
             label: "User config".to_string(),
             main_worktree_path: None,
-            approvals_copied_to: None,
         };
-        let output = format_deprecation_details(&info);
+        let output = format_deprecation_details(&info, content);
         assert!(
             output.contains("[select]"),
             "Should mention [select] in output: {output}"
@@ -2459,27 +3008,13 @@ branches = true
     }
 
     #[test]
-    fn test_write_migration_file_with_select() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
+    fn test_compute_migrated_content_renames_select() {
         let content = r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 
 [select]
 pager = "delta --paging=never"
 "#;
-        std::fs::write(&config_path, content).unwrap();
-
-        let deprecations = Deprecations {
-            vars: vec![],
-            commit_gen: CommitGenerationDeprecations::default(),
-            approved_commands: false,
-            select: true,
-            post_create: false,
-        };
-        let result = write_migration_file(&config_path, content, &deprecations, None);
-        assert!(result.is_some(), "Should write migration file for select");
-        let migration_path = result.unwrap();
-        let migrated = std::fs::read_to_string(&migration_path).unwrap();
+        let migrated = compute_migrated_content(content);
         assert!(
             migrated.contains("[switch.picker]"),
             "Migrated content should have [switch.picker]: {migrated}"
@@ -2511,20 +3046,10 @@ post-create = "npm install"
     }
 
     #[test]
-    fn test_find_post_create_deprecation_hooks_section() {
-        // User config format: under [hooks]
-        let content = r#"
-[hooks]
-post-create = "npm install"
-"#;
-        assert!(find_post_create_deprecation(content));
-    }
-
-    #[test]
     fn test_find_post_create_deprecation_project_level() {
-        // User config format: under [projects."...".hooks]
+        // User config format: hooks flattened into [projects."..."]
         let content = r#"
-[projects."my-project".hooks]
+[projects."my-project"]
 post-create = "npm install"
 "#;
         assert!(find_post_create_deprecation(content));
@@ -2561,21 +3086,10 @@ pre-start = "new"
     }
 
     #[test]
-    fn test_find_post_create_deprecation_skips_when_pre_start_exists_hooks() {
-        // Both present in [hooks] — don't flag
-        let content = r#"
-[hooks]
-post-create = "old"
-pre-start = "new"
-"#;
-        assert!(!find_post_create_deprecation(content));
-    }
-
-    #[test]
     fn test_find_post_create_deprecation_skips_when_pre_start_exists_project() {
         // Both present in project hooks — don't flag
         let content = r#"
-[projects."my-project".hooks]
+[projects."my-project"]
 post-create = "old"
 pre-start = "new"
 "#;
@@ -2606,26 +3120,9 @@ server = "npm run dev"
     }
 
     #[test]
-    fn test_migrate_post_create_hooks_section() {
-        let content = r#"
-[hooks]
-post-create = "npm install"
-"#;
-        let result = migrate_post_create_to_pre_start(content);
-        assert!(
-            result.contains("pre-start"),
-            "Should have pre-start: {result}"
-        );
-        assert!(
-            !result.contains("post-create"),
-            "Should not have post-create: {result}"
-        );
-    }
-
-    #[test]
     fn test_migrate_post_create_project_level() {
         let content = r#"
-[projects."my-project".hooks]
+[projects."my-project"]
 post-create = "npm install"
 "#;
         let result = migrate_post_create_to_pre_start(content);
@@ -2690,6 +3187,139 @@ pre-start = "npm install"
         assert_eq!(result, content, "No post-create means no migration");
     }
 
+    fn migrate_switch_picker_timeout(content: &str) -> String {
+        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+            return content.to_string();
+        };
+        if migrate_switch_picker_timeout_doc(&mut doc) {
+            doc.to_string()
+        } else {
+            content.to_string()
+        }
+    }
+
+    #[test]
+    fn test_detect_switch_picker_timeout_top_level() {
+        let content = r#"
+[switch.picker]
+pager = "delta"
+timeout-ms = 500
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(deprecations.switch_picker_timeout_ms);
+        assert!(!deprecations.is_empty());
+    }
+
+    #[test]
+    fn test_detect_switch_picker_timeout_project_level() {
+        let content = r#"
+[projects."github.com/user/repo".switch.picker]
+timeout-ms = 300
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(deprecations.switch_picker_timeout_ms);
+    }
+
+    #[test]
+    fn test_detect_switch_picker_timeout_inline_table() {
+        let content = r#"
+[switch]
+picker = { pager = "delta", timeout-ms = 500 }
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(deprecations.switch_picker_timeout_ms);
+    }
+
+    #[test]
+    fn test_migrate_switch_picker_timeout_inline_table() {
+        let content = r#"
+[switch]
+picker = { pager = "delta", timeout-ms = 500 }
+"#;
+        let result = migrate_switch_picker_timeout(content);
+        assert!(!result.contains("timeout-ms"));
+        assert!(result.contains("pager"));
+    }
+
+    #[test]
+    fn test_detect_switch_picker_timeout_absent() {
+        let content = r#"
+[switch.picker]
+pager = "delta"
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(!deprecations.switch_picker_timeout_ms);
+    }
+
+    #[test]
+    fn test_migrate_switch_picker_timeout_removes_key() {
+        let content = r#"
+[switch.picker]
+pager = "delta"
+timeout-ms = 500
+"#;
+        let result = migrate_switch_picker_timeout(content);
+        assert!(
+            !result.contains("timeout-ms"),
+            "Should strip timeout-ms: {result}"
+        );
+        assert!(
+            result.contains("pager"),
+            "Should preserve sibling keys: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_switch_picker_timeout_project_level() {
+        let content = r#"
+[projects."github.com/user/repo".switch.picker]
+pager = "bat"
+timeout-ms = 100
+"#;
+        let result = migrate_switch_picker_timeout(content);
+        assert!(!result.contains("timeout-ms"));
+        assert!(result.contains("pager"));
+    }
+
+    #[test]
+    fn test_migrate_switch_picker_timeout_noop_when_absent() {
+        let content = r#"
+[switch.picker]
+pager = "delta"
+"#;
+        let result = migrate_switch_picker_timeout(content);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_migrate_switch_picker_timeout_invalid_toml() {
+        let content = "this is { not valid toml";
+        let result = migrate_switch_picker_timeout(content);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_format_deprecation_warnings_switch_picker_timeout() {
+        let info = DeprecationInfo {
+            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
+            deprecations: Deprecations {
+                switch_picker_timeout_ms: true,
+                ..Deprecations::default()
+            },
+            label: "User config".to_string(),
+            main_worktree_path: None,
+        };
+        let output = format_deprecation_warnings(&info);
+        assert!(
+            output.contains("switch.picker.timeout-ms"),
+            "Should mention the field: {output}"
+        );
+        assert!(
+            output.contains("no longer used"),
+            "Should explain deprecation reason: {output}"
+        );
+    }
+
     #[test]
     fn test_detect_deprecations_includes_post_create() {
         let content = r#"
@@ -2713,21 +3343,26 @@ server = "npm run dev"
 
     #[test]
     fn test_format_deprecation_details_post_create() {
+        let content = r#"post-create = "npm install"
+"#;
         let info = DeprecationInfo {
             config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
-            migration_path: None,
             deprecations: Deprecations {
                 vars: vec![],
                 commit_gen: CommitGenerationDeprecations::default(),
                 approved_commands: false,
                 select: false,
                 post_create: true,
+                ci_section: false,
+                no_ff: false,
+                no_cd: false,
+                pre_hook_table_form: vec![],
+                switch_picker_timeout_ms: false,
             },
             label: "Project config".to_string(),
             main_worktree_path: None,
-            approvals_copied_to: None,
         };
-        let output = format_deprecation_details(&info);
+        let output = format_deprecation_details(&info, content);
         assert!(
             output.contains("post-create"),
             "Should mention post-create: {output}"
@@ -2739,30 +3374,13 @@ server = "npm run dev"
     }
 
     #[test]
-    fn test_write_migration_file_with_post_create() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("wt.toml");
+    fn test_compute_migrated_content_renames_post_create() {
         let content = r#"post-create = "npm install"
 
 [post-start]
 server = "npm run dev"
 "#;
-        std::fs::write(&config_path, content).unwrap();
-
-        let deprecations = Deprecations {
-            vars: vec![],
-            commit_gen: CommitGenerationDeprecations::default(),
-            approved_commands: false,
-            select: false,
-            post_create: true,
-        };
-        let result = write_migration_file(&config_path, content, &deprecations, None);
-        assert!(
-            result.is_some(),
-            "Should write migration file for post_create"
-        );
-        let migration_path = result.unwrap();
-        let migrated = std::fs::read_to_string(&migration_path).unwrap();
+        let migrated = compute_migrated_content(content);
         assert!(
             migrated.contains("pre-start"),
             "Migrated content should have pre-start: {migrated}"
@@ -2771,5 +3389,407 @@ server = "npm run dev"
             !migrated.contains("post-create"),
             "Migrated content should not have post-create: {migrated}"
         );
+    }
+
+    // ==================== negated bool format + migration tests ====================
+
+    #[test]
+    fn test_format_deprecation_warnings_no_ff_and_no_cd() {
+        let info = DeprecationInfo {
+            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
+            deprecations: Deprecations {
+                vars: vec![],
+                commit_gen: CommitGenerationDeprecations::default(),
+                approved_commands: false,
+                select: false,
+                post_create: false,
+                ci_section: false,
+                no_ff: true,
+                no_cd: true,
+                pre_hook_table_form: vec![],
+                switch_picker_timeout_ms: false,
+            },
+            label: "User config".to_string(),
+            main_worktree_path: None,
+        };
+        let output = format_deprecation_warnings(&info);
+        assert!(output.contains("no-ff"), "Should mention no-ff: {output}");
+        assert!(output.contains("no-cd"), "Should mention no-cd: {output}");
+    }
+
+    #[test]
+    fn test_detect_no_ff_deprecation() {
+        let deprecations = detect_deprecations("[merge]\nno-ff = true\n");
+        assert!(deprecations.no_ff);
+    }
+
+    #[test]
+    fn test_detect_no_ff_not_flagged_when_ff_exists() {
+        let deprecations = detect_deprecations("[merge]\nff = true\nno-ff = true\n");
+        assert!(!deprecations.no_ff);
+    }
+
+    #[test]
+    fn test_detect_no_cd_deprecation() {
+        let deprecations = detect_deprecations("[switch]\nno-cd = true\n");
+        assert!(deprecations.no_cd);
+    }
+
+    #[test]
+    fn test_detect_no_ff_project_level() {
+        let content = r#"
+[projects."github.com/user/repo".merge]
+no-ff = true
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(deprecations.no_ff);
+    }
+
+    #[test]
+    fn test_migrate_no_ff_to_ff() {
+        let content = "[merge]\nno-ff = true\n";
+        let result = migrate_content(content);
+        assert!(result.contains("ff = false"), "Should invert: {result}");
+        assert!(!result.contains("no-ff"), "Should remove no-ff: {result}");
+    }
+
+    #[test]
+    fn test_migrate_no_cd_to_cd() {
+        let content = "[switch]\nno-cd = false\n";
+        let result = migrate_content(content);
+        assert!(result.contains("cd = true"), "Should invert: {result}");
+        assert!(!result.contains("no-cd"), "Should remove no-cd: {result}");
+    }
+
+    #[test]
+    fn test_migrate_no_ff_project_level() {
+        let content = r#"
+[projects."github.com/user/repo".merge]
+no-ff = true
+"#;
+        let result = migrate_content(content);
+        assert!(result.contains("ff = false"), "Should migrate: {result}");
+        assert!(!result.contains("no-ff"), "Should remove no-ff: {result}");
+    }
+
+    #[test]
+    fn test_migrate_negated_bool_non_boolean_value_preserved() {
+        // Non-boolean `no-ff` value should be left alone
+        let content = "[merge]\nno-ff = \"not-a-bool\"\n";
+        let result = migrate_content(content);
+        assert!(
+            result.contains("no-ff"),
+            "Non-boolean value should be preserved: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_no_ff_skips_when_ff_exists() {
+        let content = "[merge]\nff = true\nno-ff = true\n";
+        let result = migrate_content(content);
+        assert!(result.contains("ff = true"), "ff should be kept: {result}");
+        assert!(
+            !result.contains("no-ff"),
+            "no-ff should be removed: {result}"
+        );
+    }
+
+    // ==================== project-level select migration tests ====================
+
+    #[test]
+    fn test_detect_select_project_level() {
+        let content = r#"
+[projects."github.com/user/repo".select]
+pager = "bat"
+"#;
+        let deprecations = detect_deprecations(content);
+        assert!(deprecations.select);
+    }
+
+    #[test]
+    fn test_migrate_select_project_level() {
+        let content = r#"
+[projects."github.com/user/repo".select]
+pager = "bat"
+"#;
+        let result = migrate_content(content);
+        assert!(
+            result.contains("[projects.\"github.com/user/repo\".switch.picker]"),
+            "Should migrate project select: {result}"
+        );
+        assert!(
+            !result.contains("[projects.\"github.com/user/repo\".select]"),
+            "Should remove project select: {result}"
+        );
+    }
+
+    // ==================== migrate_content tests ====================
+
+    #[test]
+    fn test_migrate_content_applies_all_structural_migrations() {
+        let content = r#"
+[commit-generation]
+command = "llm"
+
+[select]
+pager = "delta"
+
+[merge]
+no-ff = true
+
+[switch]
+no-cd = true
+"#;
+        let result = migrate_content(content);
+        assert!(
+            result.contains("[commit.generation]"),
+            "commit-generation: {result}"
+        );
+        assert!(
+            result.contains("[switch.picker]"),
+            "select to switch.picker: {result}"
+        );
+        assert!(result.contains("ff = false"), "no-ff to ff: {result}");
+        assert!(result.contains("cd = false"), "no-cd to cd: {result}");
+    }
+
+    #[test]
+    fn test_migrate_content_is_no_op_for_canonical_config() {
+        let content = r#"
+[commit.generation]
+command = "llm"
+
+[merge]
+ff = true
+"#;
+        let result = migrate_content(content);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_warn_unknown_fields_deprecated_key_in_wrong_config() {
+        use crate::config::{ProjectConfig, UserConfig};
+
+        // commit-generation in project config → should warn "belongs in user config"
+        let path = std::env::temp_dir().join("test-deprecated-wrong-config-project.toml");
+        warn_unknown_fields::<ProjectConfig>(
+            "[commit-generation]\ncommand = \"llm\"\n",
+            &path,
+            "Project config",
+        );
+
+        // ci in user config → should warn "belongs in project config"
+        let path = std::env::temp_dir().join("test-deprecated-wrong-config-user.toml");
+        warn_unknown_fields::<UserConfig>("[ci]\nplatform = \"github\"\n", &path, "User config");
+    }
+
+    // ==================== pre-hook table form tests ====================
+
+    fn find_pre_hook_table_form(content: &str) -> Vec<String> {
+        content
+            .parse::<toml_edit::DocumentMut>()
+            .map(|doc| find_pre_hook_table_form_from_doc(&doc))
+            .unwrap_or_default()
+    }
+
+    fn migrate_pre_hook_table_form(content: &str) -> String {
+        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+            return content.to_string();
+        };
+        if migrate_pre_hook_table_form_doc(&mut doc) {
+            doc.to_string()
+        } else {
+            content.to_string()
+        }
+    }
+
+    #[test]
+    fn test_detect_pre_hook_table_form() {
+        // Multi-entry table → detected
+        let found = find_pre_hook_table_form("[pre-merge]\ntest = \"t\"\nlint = \"l\"\n");
+        assert_eq!(found, vec!["pre-merge"]);
+
+        // Single-entry table → not detected
+        let found = find_pre_hook_table_form("[pre-merge]\ntest = \"t\"\n");
+        assert!(found.is_empty());
+
+        // String form → not detected
+        let found = find_pre_hook_table_form("pre-merge = \"cargo test\"\n");
+        assert!(found.is_empty());
+
+        // Array/pipeline form → not detected
+        let found = find_pre_hook_table_form("pre-merge = [{test = \"t\"}, {lint = \"l\"}]\n");
+        assert!(found.is_empty());
+
+        // Post-* hooks → not detected (table form is canonical for post-*)
+        let found = find_pre_hook_table_form("[post-merge]\ntest = \"t\"\nlint = \"l\"\n");
+        assert!(found.is_empty());
+
+        // All 5 pre-* keys detected
+        let content = r#"
+[pre-switch]
+a = "1"
+b = "2"
+
+[pre-start]
+a = "1"
+b = "2"
+
+[pre-commit]
+a = "1"
+b = "2"
+
+[pre-merge]
+a = "1"
+b = "2"
+
+[pre-remove]
+a = "1"
+b = "2"
+"#;
+        let found = find_pre_hook_table_form(content);
+        assert_eq!(
+            found,
+            vec![
+                "pre-switch",
+                "pre-start",
+                "pre-commit",
+                "pre-merge",
+                "pre-remove"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_detect_pre_hook_table_form_per_project() {
+        // Per-project overrides: hooks are flattened under [projects."id"]
+        let content = r#"
+[projects."github.com/user/repo".pre-start]
+install = "npm ci"
+build = "npm run build"
+"#;
+        let found = find_pre_hook_table_form(content);
+        assert_eq!(found, vec!["projects.\"github.com/user/repo\".pre-start"]);
+    }
+
+    #[test]
+    fn test_migrate_pre_hook_table_form_converts_to_pipeline() {
+        let content = r#"
+[pre-merge]
+test = "cargo test"
+lint = "cargo clippy"
+"#;
+        let result = migrate_pre_hook_table_form(content);
+        // Should produce `[[pre-merge]]` array-of-tables blocks
+        assert!(
+            result.contains("[[pre-merge]]"),
+            "Should emit [[pre-merge]] blocks: {result}"
+        );
+        // Verify it parses back as valid TOML with the right structure
+        let doc: toml_edit::DocumentMut = result.parse().unwrap();
+        let arr = doc["pre-merge"]
+            .as_array_of_tables()
+            .expect("should be array of tables");
+        assert_eq!(arr.len(), 2);
+        let first = arr.get(0).unwrap();
+        assert_eq!(first.get("test").unwrap().as_str().unwrap(), "cargo test");
+        let second = arr.get(1).unwrap();
+        assert_eq!(
+            second.get("lint").unwrap().as_str().unwrap(),
+            "cargo clippy"
+        );
+    }
+
+    #[test]
+    fn test_migrate_pre_hook_table_form_preserves_order() {
+        let content = r#"
+[pre-merge]
+first = "1"
+second = "2"
+third = "3"
+"#;
+        let result = migrate_pre_hook_table_form(content);
+        let doc: toml_edit::DocumentMut = result.parse().unwrap();
+        let arr = doc["pre-merge"].as_array_of_tables().unwrap();
+        let names: Vec<&str> = arr.iter().map(|t| t.iter().next().unwrap().0).collect();
+        assert_eq!(names, vec!["first", "second", "third"]);
+    }
+
+    #[test]
+    fn test_migrate_pre_hook_table_form_single_entry_untouched() {
+        let content = "[pre-merge]\ntest = \"t\"\n";
+        let result = migrate_pre_hook_table_form(content);
+        assert_eq!(result, content, "Single-entry table should not be migrated");
+    }
+
+    #[test]
+    fn test_migrate_pre_hook_table_form_per_project() {
+        let content = r#"
+[projects."web".pre-start]
+install = "npm ci"
+build = "npm run build"
+"#;
+        let result = migrate_pre_hook_table_form(content);
+        let doc: toml_edit::DocumentMut = result.parse().unwrap();
+        let project = doc["projects"]["web"].as_table().unwrap();
+        let arr = project["pre-start"]
+            .as_array_of_tables()
+            .expect("should be array of tables");
+        assert_eq!(arr.len(), 2);
+    }
+
+    #[test]
+    fn test_migrate_pre_hook_table_form_after_post_create_rename() {
+        // post-create → pre-start rename should happen first, then table form migration
+        let content = r#"
+[post-create]
+install = "npm ci"
+build = "npm run build"
+"#;
+        let result = migrate_content(content);
+        // post-create should be renamed to pre-start AND converted to pipeline
+        assert!(
+            !result.contains("post-create"),
+            "post-create should be renamed: {result}"
+        );
+        let doc: toml_edit::DocumentMut = result.parse().unwrap();
+        let arr = doc["pre-start"]
+            .as_array_of_tables()
+            .expect("should be pipeline array of tables");
+        assert_eq!(arr.len(), 2);
+    }
+
+    #[test]
+    fn test_migrate_content_includes_pre_hook_table_form() {
+        let content = r#"
+[pre-merge]
+test = "cargo test"
+lint = "cargo clippy"
+
+[merge]
+no-ff = true
+"#;
+        let result = migrate_content(content);
+        assert!(
+            result.contains("[[pre-merge]]"),
+            "Table section should become [[pre-merge]] blocks: {result}"
+        );
+        assert!(
+            result.contains("ff = false"),
+            "no-ff should also migrate: {result}"
+        );
+    }
+
+    #[test]
+    fn snapshot_migrate_pre_hook_table_form() {
+        let content = r#"[pre-merge]
+test = "cargo test"
+lint = "cargo clippy"
+
+[post-start]
+server = "npm run dev"
+"#;
+        let result = migrate_pre_hook_table_form(content);
+        insta::assert_snapshot!(migration_diff(content, &result));
     }
 }

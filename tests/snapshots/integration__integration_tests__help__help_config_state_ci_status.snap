@@ -25,14 +25,13 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt config state ci-status - CI status cache
 
 Usage: [1m[36mwt config state ci-status[0m [36m[OPTIONS][0m [36m[COMMAND][0m
@@ -45,6 +44,10 @@ Usage: [1m[36mwt config state ci-status[0m [36m[OPTIONS][0m [36m[COMMAND]
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
+[1m[32mOutput:[0m
+      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
+          Output format (text, json) [default: text]
+
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
@@ -53,11 +56,11 @@ Usage: [1m[36mwt config state ci-status[0m [36m[OPTIONS][0m [36m[COMMAND]
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
 
 Caches GitHub/GitLab CI status for display in [2mwt list[0m.
 
-Requires [2mgh[0m (GitHub) or [2mglab[0m (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with [2mci.platform = "github"[0m in [2m.config/wt.toml[0m for self-hosted instances.
+Requires [2mgh[0m (GitHub) or [2mglab[0m (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with [2mforge.platform = "github"[0m in [2m.config/wt.toml[0m for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set [2mforge.hostname[0m.
 
 Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
 
@@ -77,3 +80,5 @@ Results cache for 30-60 seconds. Indicators dim when local changes haven't been 
 See [2mwt list[0m CI status for display symbols and colors.
 
 Without a subcommand, runs [2mget[0m for the current branch. Use [2mclear[0m to reset cache for a branch or [2mclear --all[0m to reset all.
+
+----- stderr -----

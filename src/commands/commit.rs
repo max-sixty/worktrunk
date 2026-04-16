@@ -7,10 +7,9 @@ use worktrunk::styling::{
 };
 
 use super::command_executor::CommandContext;
-use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, prepare_background_hooks, spawn_prepared_hooks,
-};
-use super::repository_ext::RepositoryCliExt;
+use super::command_executor::FailureStrategy;
+use super::hooks::{HookCommandSpec, prepare_background_hooks, spawn_hook_pipeline};
+use super::repository_ext::warn_about_untracked_files;
 
 // Re-export StageMode from config for use by CLI
 pub use worktrunk::config::StageMode;
@@ -168,10 +167,7 @@ impl CommitOptions<'_> {
 
         // Show skip message
         if !self.verify && any_hooks_exist {
-            eprintln!(
-                "{}",
-                info_message("Skipping pre-commit hooks (--no-verify)")
-            );
+            eprintln!("{}", info_message("Skipping pre-commit hooks (--no-hooks)"));
         }
 
         if self.verify {
@@ -189,32 +185,35 @@ impl CommitOptions<'_> {
                     project_config: proj_cfg,
                     hook_type: HookType::PreCommit,
                     extra_vars: &extra_vars,
-                    name_filter: None,
+                    name_filters: &[],
                     display_path: crate::output::pre_hook_display_path(self.ctx.worktree_path),
                 },
-                HookFailureStrategy::FailFast,
+                FailureStrategy::FailFast,
             )
             .map_err(worktrunk::git::add_hook_skip_hint)?;
         }
 
+        // Use the worktree path from context — this is the target worktree when
+        // --branch is specified, or the current worktree otherwise.
+        let wt = self.ctx.repo.worktree_at(self.ctx.worktree_path);
+
         if self.warn_about_untracked && self.stage_mode == StageMode::All {
-            self.ctx.repo.warn_if_auto_staging_untracked()?;
+            let status = wt
+                .run_command(&["status", "--porcelain", "-z"])
+                .context("Failed to get status")?;
+            warn_about_untracked_files(&status)?;
         }
 
         // Stage changes based on mode
         match self.stage_mode {
             StageMode::All => {
                 // Stage everything: tracked modifications + untracked files
-                self.ctx
-                    .repo
-                    .run_command(&["add", "-A"])
+                wt.run_command(&["add", "-A"])
                     .context("Failed to stage changes")?;
             }
             StageMode::Tracked => {
                 // Stage tracked modifications only (no untracked files)
-                self.ctx
-                    .repo
-                    .run_command(&["add", "-u"])
+                wt.run_command(&["add", "-u"])
                     .context("Failed to stage tracked changes")?;
             }
             StageMode::None => {
@@ -223,7 +222,6 @@ impl CommitOptions<'_> {
         }
 
         let effective_config = self.ctx.commit_generation();
-        let wt = self.ctx.repo.current_worktree();
         CommitGenerator::new(&effective_config).commit_staged_changes(
             &wt,
             true, // show_progress
@@ -231,16 +229,18 @@ impl CommitOptions<'_> {
             self.stage_mode,
         )?;
 
-        // Spawn post-commit hooks in background (respects --no-verify)
+        // Spawn post-commit hooks in background (respects --no-hooks)
         if self.verify {
             let extra_vars: Vec<(&str, &str)> = self
                 .target_branch
                 .into_iter()
                 .map(|target| ("target", target))
                 .collect();
-            let hooks =
-                prepare_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?;
-            spawn_prepared_hooks(self.ctx, hooks)?;
+            for steps in
+                prepare_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?
+            {
+                spawn_hook_pipeline(self.ctx, steps)?;
+            }
         }
 
         Ok(())

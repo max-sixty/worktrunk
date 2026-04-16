@@ -1,61 +1,61 @@
 # wt merge
 
-Merge current branch into target. Squash & rebase, fast-forward target, remove the worktree.
+Merge current branch into the target branch. Squash & rebase, fast-forward the target branch, remove the worktree.
 
-Unlike `git merge`, this merges current into target (not target into current). Similar to clicking "Merge pull request" on GitHub, but locally. Target defaults to the default branch.
+Unlike `git merge`, this merges the current branch into the target branch — not the target into current. Similar to clicking "Merge pull request" on GitHub, but locally. The target defaults to the default branch.
 
 ## Examples
 
 Merge to the default branch:
 
 ```bash
-wt merge
+$ wt merge
 ```
 
 Merge to a different branch:
 
 ```bash
-wt merge develop
+$ wt merge develop
 ```
 
 Keep the worktree after merging:
 
 ```bash
-wt merge --no-remove
+$ wt merge --no-remove
 ```
 
 Preserve commit history (no squash):
 
 ```bash
-wt merge --no-squash
+$ wt merge --no-squash
 ```
 
-Create a merge commit (semi-linear history):
+Create a merge commit — semi-linear history:
 
 ```bash
-wt merge --no-ff
+$ wt merge --no-ff
 ```
 
 Skip committing/squashing (rebase still runs unless --no-rebase):
 
 ```bash
-wt merge --no-commit
+$ wt merge --no-commit
 ```
 
 ## Pipeline
 
 `wt merge` runs these steps:
 
-1. **Commit** — Pre-commit hooks run, then uncommitted changes are committed. Post-commit hooks run in background. With `--no-squash`, this is the only commit step; with squash (default), this is skipped and changes are staged during squash instead.
+1. **Commit** — Pre-commit hooks run, then uncommitted changes are committed. Post-commit hooks run in background. Skipped when squashing (the default) — changes are staged during the squash step instead. With `--no-squash`, this is the only commit step.
 2. **Squash** — Combines all commits since target into one (like GitHub's "Squash and merge"). Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. A backup ref is saved to `refs/wt-backup/<branch>`. With `--no-squash`, individual commits are preserved.
 3. **Rebase** — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
 4. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [`wt hook`](https://worktrunk.dev/hook/).
-5. **Merge** — Fast-forward merge to the target branch. With `--no-ff`, a merge commit is created instead (semi-linear history: rebased commits plus a merge commit). Non-fast-forward merges are rejected.
+5. **Merge** — Fast-forward merge to the target branch. With `--no-ff`, a merge commit is created instead — semi-linear history with rebased commits plus a merge commit. Non-fast-forward merges are rejected.
 6. **Pre-remove hooks** — Hooks run before removing worktree. Failures abort.
 7. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the primary worktree, the worktree is preserved.
 8. **Post-remove + post-merge hooks** — Run in background after cleanup.
 
-Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is passed. Useful after preparing commits manually with `wt step`. Requires a clean working tree.
+Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is passed. Useful after preparing commits manually with `wt step commit`. Requires a clean working tree.
 
 ## Local CI
 
@@ -66,66 +66,79 @@ Historically, ensuring tests ran before merging was difficult to enforce locally
 The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run `wt merge`, move on. Pre-merge hooks validate before merging — if they pass, the branch goes to the default branch and the worktree cleans up.
 
 ```toml
-[pre-merge]
+[[pre-merge]]
 test = "cargo test"
 lint = "cargo clippy"
 ```
 
 ## Command reference
 
-wt merge - Merge current branch into target
+```
+wt merge - Merge current branch into the target branch
 
-Squash &amp; rebase, fast-forward target, remove the worktree.
+Squash & rebase, fast-forward the target branch, remove the worktree.
 
-Usage: <b><span class=c>wt merge</span></b> <span class=c>[OPTIONS]</span> <span class=c>[TARGET]</span>
+Usage: wt merge [OPTIONS] [TARGET]
 
-<b><span class=g>Arguments:</span></b>
-  <span class=c>[TARGET]</span>
+Arguments:
+  [TARGET]
           Target branch
 
           Defaults to default branch.
 
-<b><span class=g>Options:</span></b>
-      <b><span class=c>--no-squash</span></b>
+Options:
+      --no-squash
           Skip commit squashing
 
-      <b><span class=c>--no-commit</span></b>
+      --no-commit
           Skip commit and squash
 
-      <b><span class=c>--no-rebase</span></b>
+      --no-rebase
           Skip rebase (fail if not already rebased)
 
-      <b><span class=c>--no-remove</span></b>
+      --no-remove
           Keep worktree after merge
 
-      <b><span class=c>--no-ff</span></b>
+      --no-ff
           Create a merge commit (no fast-forward)
 
-      <b><span class=c>--stage</span></b><span class=c> &lt;STAGE&gt;</span>
+      --stage <STAGE>
           What to stage before committing [default: all]
 
           Possible values:
-          - <b><span class=c>all</span></b>:     Stage everything: untracked files + unstaged tracked
-            changes
-          - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
-          - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
+          - all:     Stage everything: untracked files + unstaged tracked changes
+          - tracked: Stage tracked changes only (like git add -u)
+          - none:    Stage nothing, commit only what's already in the index
 
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
+  -h, --help
+          Print help (see a summary with '-h')
 
-<b><span class=g>Automation:</span></b>
-  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+Automation:
+  -y, --yes
           Skip approval prompts
 
-      <b><span class=c>--no-verify</span></b>
+      --no-hooks
           Skip hooks
 
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+      --format <FORMAT>
+          Output format
+
+          JSON prints structured result to stdout after merge completes.
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
+
+Global Options:
+  -C <path>
           Working directory for this command
 
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+      --config <path>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+  -v, --verbose...
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
+```

@@ -12,21 +12,21 @@ Git's built-in worktree commands work but require manual lifecycle management:
 
 ```bash
 # Plain git worktree workflow
-git worktree add -b feature-branch ../myapp-feature main
-cd ../myapp-feature
+$ git worktree add -b feature-branch ../myapp-feature main
+$ cd ../myapp-feature
 # ...work, commit, push...
-cd ../myapp
-git merge feature-branch
-git worktree remove ../myapp-feature
-git branch -d feature-branch
+$ cd ../myapp
+$ git merge feature-branch
+$ git worktree remove ../myapp-feature
+$ git branch -d feature-branch
 ```
 
 Worktrunk automates the full lifecycle:
 
 ```bash
-wt switch --create feature-branch  # Creates worktree, runs setup hooks
+$ wt switch --create feature-branch  # Creates worktree, runs setup hooks
 # ...work...
-wt merge                            # Merges into default branch, cleans up
+$ wt merge                            # Merges into default branch, cleans up
 ```
 
 No cd back to main — `wt merge` runs from the feature worktree and merges into the target, like GitHub's merge button.
@@ -50,6 +50,10 @@ These tools can be used together—run git-machete or git-town inside individual
 ### vs. Git TUIs (lazygit, gh-dash, etc.)
 
 Git TUIs operate on a single repository. Worktrunk manages multiple worktrees, runs automation hooks, and aggregates status across branches. TUIs work inside each worktree directory.
+
+## Does Worktrunk support stacked branches?
+
+Not natively — stacked-branch workflows are a large design space, so Worktrunk treats them as an extension rather than a built-in. [`worktrunk-sync`](https://github.com/pablospe/worktrunk-sync) is a community tool that auto-detects the branch dependency tree from git history and rebases each branch onto its parent in topological order. Install with `cargo install worktrunk-sync` and run as `wt sync` (via [external subcommands](https://worktrunk.dev/extending/#external-subcommands)).
 
 ## There's an issue with my shell setup
 
@@ -106,21 +110,25 @@ Worktrunk stores small amounts of cache and log data in the repository's `.git/`
 
 | Location | Purpose | Created by |
 |----------|---------|------------|
-| `.git/config` keys under `worktrunk.*` | Cached default branch, switch history, branch markers | Various commands |
-| `.git/wt/cache/ci-status/*.json` | CI status cache (~1KB each) | `wt list` when `gh` or `glab` CLI is installed |
-| `.git/wt/logs/*.log` | Background command output | Hooks, background `wt remove` |
+| `git config worktrunk.*` | Cached default branch, switch history, branch markers, custom variables | Various commands |
+| `.git/wt/cache/{kind}/*.json` | Cached CI status and git command results (merge-tree, integration probes, diff stats, ancestry checks) | `wt list`, `wt merge`, `wt remove` |
+| `.git/wt/logs/{branch}/**/*.log` | Background hook output (nested per branch) | Hooks, background `wt remove` |
 | `.git/wt/logs/commands.jsonl` | Command audit log (~2MB max) | Hooks, LLM commands |
+| `.git/wt/logs/trace.log` | Debug log (mirrors stderr) for issue reporting | Running with `-vv` |
+| `.git/wt/logs/output.log` | Raw uncapped subprocess stdout/stderr (may be multi-MB) | Running with `-vv` |
+| `.git/wt/logs/diagnostic.md` | Diagnostic report for issue reporting | Running with `-vv` when warnings occur |
+| `.git/wt/trash/<name>-<timestamp>` | Staged worktree contents pending background deletion | `wt remove` |
 
 None of this is tracked by git or pushed to remotes.
 
-**To remove:** `wt config state clear` removes all worktrunk keys from `.git/config`, deletes CI cache, and clears logs.
+**To remove:** `wt config state clear` removes all worktrunk data — config keys, caches, markers, hints, variables, logs, and stale trash.
 
 ### What Worktrunk does NOT create
 
 - No files outside `.git/`, config directories, or worktree directories
 - No global git hooks
 - No modifications to `~/.gitconfig`
-- No background processes or daemons
+- No long-running background processes or daemons
 
 ## What can Worktrunk delete?
 
@@ -148,7 +156,8 @@ Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch
 
 ### Other cleanup
 
-- `wt config state clear` — removes cached state from `.git/config` and clears CI cache/logs
+- `wt remove` — in addition to the target worktree, sweeps `.git/wt/trash/` entries older than 24 hours in the background (eventual cleanup for directories orphaned when a previous background removal was interrupted)
+- `wt config state clear` — removes all worktrunk data from `.git/` (config keys, caches, markers, hints, variables, logs, stale trash)
 - `wt config shell uninstall` — removes shell integration from rc files
 
 See [What files does Worktrunk create?](#what-files-does-worktrunk-create) for details.
@@ -162,36 +171,35 @@ Worktrunk runs `git` commands internally and optionally runs `gh` (GitHub) or `g
 3. **LLM commands** (`~/.config/worktrunk/config.toml`) — Commit message generation and [branch summaries](https://worktrunk.dev/llm-commits/#branch-summaries)
 4. **--execute flag** — Explicitly provided commands
 
-User hooks don't require approval (you defined them). Commands from project hooks require approval on first run. Approved commands are saved to user config. If a command changes, Worktrunk requires new approval.
+User hooks don't require approval (you defined them). Commands from project hooks require approval on first run. Approved commands are saved to the approvals file (`approvals.toml`). If a command changes, Worktrunk requires new approval.
 
 ### Example approval prompt
 
-```
 ▲ repo needs approval to execute 3 commands:
 
-○ post-create install:
-  echo 'Installing dependencies...'
-○ post-create build:
-  echo 'Building project...'
-○ post-create test:
-  echo 'Running tests...'
+○ pre-start install:
+  npm ci
+○ pre-start build:
+  cargo build --release
+○ pre-start env:
+  echo 'PORT={{ branch | hash_port }}' > .env.local
+
 ❯ Allow and remember? [y/N]
-```
 
 Use `--yes` to bypass prompts (useful for CI/automation).
 
 ### Command log
 
-All hook executions and LLM commands are recorded in `.git/wt/logs/commands.jsonl` — one JSON object per line with timestamp, command, exit code, and duration. This provides a debugging trail without requiring `-vv` verbose output. The file rotates to `commands.jsonl.old` at 1MB, bounding storage to ~2MB.
+All hook executions and LLM commands are recorded in `.git/wt/logs/commands.jsonl` — one JSON object per line. Fields: `ts` (timestamp), `wt` (the wt command that triggered it), `label` (what ran, e.g., `pre-merge user:lint`), `cmd` (shell command), `exit` (exit code, `null` for background), `dur_ms` (duration, `null` for background). The file rotates to `commands.jsonl.old` at 1MB, bounding storage to ~2MB.
 
 View the log with `wt config state logs get`, or query directly:
 
 ```bash
 # Recent commands
-tail -5 .git/wt/logs/commands.jsonl | jq .
+$ tail -5 .git/wt/logs/commands.jsonl | jq .
 
 # Failed commands
-jq 'select(.exit != 0 and .exit != null)' .git/wt/logs/commands.jsonl
+$ jq 'select(.exit != 0 and .exit != null)' .git/wt/logs/commands.jsonl
 ```
 
 Clear with `wt config state logs clear`.
@@ -217,7 +225,7 @@ For full details on the detection mechanism, see `wt config state default-branch
 Errors related to tree-sitter or C compilation (C99 mode, `le16toh` undefined) can be avoided by installing without syntax highlighting:
 
 ```bash
-$ cargo install worktrunk --no-default-features
+cargo install worktrunk --no-default-features --features cli
 ```
 
 This disables bash syntax highlighting in command output but keeps all core functionality. The syntax highlighting feature requires C99 compiler support and can fail on older systems or minimal Docker images.
@@ -227,7 +235,7 @@ This disables bash syntax highlighting in command output but keeps all core func
 ### Quick tests
 
 ```bash
-$ cargo test
+cargo test
 ```
 
 ### Full integration tests
@@ -235,7 +243,7 @@ $ cargo test
 Shell integration tests require bash, zsh, fish, and nushell:
 
 ```bash
-$ cargo test --test integration --features shell-integration-tests
+cargo test --test integration --features shell-integration-tests
 ```
 
 ## How can I contribute?

@@ -9,6 +9,25 @@ use super::columns::{ColumnKind, DiffVariant};
 use super::layout::{ColumnFormat, ColumnLayout, DiffColumnConfig, LayoutConfig};
 use super::model::{ListItem, PositionMask};
 
+/// Placeholder glyph for unresolved Status positions — both "still loading" and
+/// "drain deadline fired, won't arrive."
+///
+/// TODO: collapse-to-one-glyph is temporary. Loading and timed-out are
+/// semantically distinct states; the original design used `⋯` vs `·` but `⋯`
+/// is too visually loud for a tight column where most cells are in one state
+/// or the other during a render. Revisit and pick a subtle second glyph
+/// (e.g. `·` for one, `–` or braille dot for the other) once we can evaluate
+/// them side-by-side in real tables. Also update `src/cli/mod.rs`
+/// status-column help table when resplit.
+pub const PLACEHOLDER: &str = "·";
+
+/// Blank placeholder used by `wt list` during the first ~200ms of progressive
+/// rendering. The skeleton renders with blanks so fast commands (everything
+/// resolved under 200ms) never flash the `·` loading indicator. After the
+/// 200ms threshold, `LayoutConfig::placeholder` is promoted to [`PLACEHOLDER`]
+/// and every still-pending cell is re-rendered with the dot.
+pub const PLACEHOLDER_BLANK: &str = " ";
+
 impl DiffColumnConfig {
     /// Check if a value exceeds the allocated digit width
     fn exceeds_width(value: usize, digits: usize) -> bool {
@@ -237,14 +256,7 @@ impl LayoutConfig {
 
     /// Render list item line as StyledLine (for extracting both plain and styled text)
     pub fn render_list_item_line(&self, item: &ListItem) -> StyledLine {
-        self.render_item_with_placeholder(item, "⋯")
-    }
-
-    /// Render with stale placeholders for items where data collection was truncated.
-    /// Uses `·` instead of `⋯` to indicate data won't arrive.
-    #[cfg_attr(windows, allow(dead_code))] // Used only by picker module (unix-only)
-    pub fn render_list_item_stale(&self, item: &ListItem) -> StyledLine {
-        self.render_item_with_placeholder(item, "·")
+        self.render_item_with_placeholder(item, self.placeholder.get())
     }
 
     fn render_item_with_placeholder(&self, item: &ListItem, placeholder: &str) -> StyledLine {
@@ -273,7 +285,7 @@ impl LayoutConfig {
             .unwrap_or_default();
 
         let dim = Style::new().dimmed();
-        let spinner = "⋯"; // Placeholder character
+        let spinner = self.placeholder.get();
 
         self.render_line(|col| {
             let mut cell = StyledLine::new();
@@ -282,12 +294,12 @@ impl LayoutConfig {
                 ColumnKind::Gutter => {
                     // Skeleton shows placeholder gutter - actual symbols (including is_previous)
                     // appear when WorktreeData is populated post-skeleton.
-                    // TODO: is this ever visible? The skeleton renders for ~50ms before data
-                    // arrives. If not, consider removing the middle dot.
+                    // Uses the current placeholder so the 200ms blank-reveal flow
+                    // keeps the gutter in lockstep with the data columns.
                     let symbol = if wt_data.is_some() {
-                        "· " // Placeholder for worktrees
+                        format!("{spinner} ") // Placeholder for worktrees
                     } else {
-                        "  " // Branch without worktree (two spaces to match width)
+                        "  ".to_string() // Branch without worktree (two spaces to match width)
                     };
                     cell.push_styled(symbol, dim);
                 }
@@ -390,11 +402,17 @@ impl ColumnLayout {
                 self.render_text_cell(text, text_style)
             }
             ColumnKind::Status => {
-                let Some(ref status_symbols) = item.status_symbols else {
-                    return self.placeholder_cell(placeholder);
-                };
+                // `render_with_mask` emits the placeholder glyph per
+                // position for unresolved gates, so a row whose Status
+                // cell is partially loaded renders e.g. `+!  · ↕ | ·`
+                // rather than a cell-level placeholder. The `placeholder`
+                // arg comes from `render_list_item_line` (`·` today — see
+                // `PLACEHOLDER`).
                 let mut cell = StyledLine::new();
-                cell.push_raw(status_symbols.render_with_mask(status_mask));
+                cell.push_raw(
+                    item.status_symbols
+                        .render_with_mask(status_mask, placeholder),
+                );
                 let mut cell = cell.truncate_to_width(self.width);
                 cell.pad_to(self.width);
                 cell
@@ -488,7 +506,7 @@ impl ColumnLayout {
                 // (works for both worktrees and branches)
                 if let Some(ref ci_display) = item.display.ci_status_display {
                     let mut cell = StyledLine::new();
-                    // ci_status_display contains pre-formatted ANSI text (either actual status or "⋯")
+                    // ci_status_display contains pre-formatted ANSI text (either actual status or the placeholder)
                     cell.push_raw(ci_display.clone());
                     return cell;
                 }
@@ -1294,41 +1312,32 @@ mod tests {
     }
 
     #[test]
-    fn test_render_list_item_stale_uses_middle_dot() {
+    fn test_loading_uses_middle_dot() {
         use super::super::layout::{ColumnLayout, LayoutConfig};
         use super::super::model::{ListItem, PositionMask};
         use std::path::PathBuf;
 
-        // Minimal layout with just a Status column
         let layout = LayoutConfig {
             columns: vec![ColumnLayout {
-                kind: ColumnKind::Status,
-                header: "Status",
+                kind: ColumnKind::Summary,
+                header: "Summary",
                 start: 0,
                 width: 10,
                 format: ColumnFormat::Text,
             }],
             main_worktree_path: PathBuf::from("/tmp"),
             max_message_len: 0,
-            max_summary_len: 0,
+            max_summary_len: 10,
             hidden_column_count: 0,
             status_position_mask: PositionMask::FULL,
+            placeholder: std::cell::Cell::new(PLACEHOLDER),
         };
 
-        // Item with no status_symbols (simulates budget timeout)
         let item = ListItem::new_branch("abc123".into(), "feat".into());
-        assert!(item.status_symbols.is_none());
 
-        // render_list_item_line uses ⋯
-        let line = layout.render_list_item_line(&item);
-        let rendered = line.render();
-        assert!(rendered.contains('⋯'), "expected ⋯ in: {rendered}");
-
-        // render_list_item_stale uses · (middle dot)
-        let stale = layout.render_list_item_stale(&item);
-        let stale_rendered = stale.render();
-        assert!(stale_rendered.contains('·'));
-        assert!(!stale_rendered.contains('⋯'));
+        let line = layout.render_list_item_line(&item).render();
+        assert!(line.contains('·'), "expected `·` in: {line}");
+        assert!(!line.contains('⋯'), "unexpected `⋯` in: {line}");
     }
 
     #[test]
@@ -1351,17 +1360,17 @@ mod tests {
         // Case 1: summary = None (not loaded yet → placeholder)
         let mut item = ListItem::new_branch("abc123".into(), "feat".into());
         item.summary = None;
-        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40, "⋯");
-        insta::assert_snapshot!(cell.render(), @"[2m⋯[0m");
+        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40, PLACEHOLDER);
+        insta::assert_snapshot!(cell.render(), @"[2m·[0m");
 
         // Case 2: summary = Some(None) (loaded, no summary → blank)
         item.summary = Some(None);
-        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40, "⋯");
+        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40, PLACEHOLDER);
         assert!(cell.render().is_empty());
 
         // Case 3: summary = Some(Some(text)) (has summary)
         item.summary = Some(Some("Add user authentication".into()));
-        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40, "⋯");
+        let cell = summary_col.render_cell(&item, &mask, &main_path, 50, 40, PLACEHOLDER);
         insta::assert_snapshot!(cell.render(), @"Add user authentication");
     }
 
@@ -1395,14 +1404,14 @@ mod tests {
 
         // Branch item (no worktree data) → blank, not placeholder
         let branch_item = ListItem::new_branch("abc123".into(), "feat".into());
-        let cell = col.render_cell(&branch_item, &mask, &main_path, 50, 40, "⋯");
+        let cell = col.render_cell(&branch_item, &mask, &main_path, 50, 40, PLACEHOLDER);
         assert!(cell.render().is_empty(), "branch item should be blank");
 
         // Worktree item with working_tree_diff: None → placeholder
         let mut wt_item = ListItem::new_branch("abc123".into(), "feat".into());
         wt_item.kind = ItemKind::Worktree(Box::default());
-        let cell = col.render_cell(&wt_item, &mask, &main_path, 50, 40, "⋯");
-        insta::assert_snapshot!(cell.render(), @"        [2m⋯[0m");
+        let cell = col.render_cell(&wt_item, &mask, &main_path, 50, 40, PLACEHOLDER);
+        insta::assert_snapshot!(cell.render(), @"        [2m·[0m");
 
         // Stale placeholder
         let cell = col.render_cell(&wt_item, &mask, &main_path, 50, 40, "·");
@@ -1440,13 +1449,13 @@ mod tests {
         // upstream: None (not loaded) → placeholder
         let item = ListItem::new_branch("abc123".into(), "feat".into());
         assert!(item.upstream.is_none());
-        let cell = col.render_cell(&item, &mask, &main_path, 50, 40, "⋯");
-        insta::assert_snapshot!(cell.render(), @"      [2m⋯[0m");
+        let cell = col.render_cell(&item, &mask, &main_path, 50, 40, PLACEHOLDER);
+        insta::assert_snapshot!(cell.render(), @"      [2m·[0m");
 
         // upstream: Some(default) (loaded, no active upstream) → blank
         let mut item = ListItem::new_branch("abc123".into(), "feat".into());
         item.upstream = Some(UpstreamStatus::default());
-        let cell = col.render_cell(&item, &mask, &main_path, 50, 40, "⋯");
+        let cell = col.render_cell(&item, &mask, &main_path, 50, 40, PLACEHOLDER);
         assert!(
             cell.render().is_empty(),
             "no active upstream should be blank"

@@ -1,6 +1,6 @@
 ---
 source: tests/integration_tests/config_state.rs
-expression: "String::from_utf8_lossy(&output.stderr)"
+expression: "String::from_utf8_lossy(&output.stdout)"
 ---
 [36mDEFAULT BRANCH[39m
 [107m [0m main
@@ -9,6 +9,9 @@ expression: "String::from_utf8_lossy(&output.stderr)"
 [107m [0m (none)
 
 [36mBRANCH MARKERS[39m
+[107m [0m (none)
+
+[36mVARS[39m
 [107m [0m (none)
 
 [36mCI STATUS CACHE[39m
@@ -25,4 +28,7 @@ expression: "String::from_utf8_lossy(&output.stderr)"
 [107m [0m (none)
 
 [36mHOOK OUTPUT[39m @ <PATH>
+[107m [0m (none)
+
+[36mDIAGNOSTIC[39m @ <PATH>
 [107m [0m (none)

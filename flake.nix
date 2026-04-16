@@ -27,7 +27,7 @@
           inherit system overlays;
         };
 
-        # Use latest stable Rust (must meet MSRV of 1.89)
+        # Use latest stable Rust (must meet MSRV of 1.93)
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [
             "rust-src"
@@ -44,7 +44,9 @@
             p: type:
             (craneLib.filterCargoSources p type)
             || (pkgs.lib.hasInfix "/templates/" p)
-            || (baseNameOf (dirOf p) == "templates");
+            || (baseNameOf (dirOf p) == "templates")
+            || (pkgs.lib.hasInfix "/dev/" p)
+            || (baseNameOf (dirOf p) == "dev");
         };
 
         # Common arguments for crane builds

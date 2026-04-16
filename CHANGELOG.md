@@ -1,5 +1,487 @@
 # Changelog
 
+## 0.38.0
+
+### Improved
+
+- **Concurrent execution in `pre-*` pipeline hooks**: Pipeline blocks (`[[pre-start]]`, `[[pre-merge]]`, etc.) now run their concurrent commands in parallel for foreground hooks, matching the existing behavior in post-* hooks and aliases. The deprecated single-table form (`[pre-start]`) remains serial. ([#2249](https://github.com/max-sixty/worktrunk/pull/2249))
+
+- **`cli` feature unbundles CLI-only deps for library consumers**: The `worktrunk` crate is also consumed as a library (e.g. by [`worktrunk-sync`](https://github.com/pablospe/worktrunk-sync)). Everything reachable from `src/lib.rs` previously pulled in `clap`, `clap_complete`, `skim`, `crossterm`, `termimad`, `env_logger`, and `humantime` transitively. A new `cli` feature (on by default) gates these; library consumers with `default-features = false` drop from 195 to 126 transitive crates. ([#2238](https://github.com/max-sixty/worktrunk/pull/2238))
+
+- **Faster `wt list` and `wt switch` on warm caches**:
+
+    - In-memory caches for remote URLs, commit details, and diff stats in `RepoCache` eliminate ~11 duplicate git subprocesses per `wt switch`. ([#2252](https://github.com/max-sixty/worktrunk/pull/2252))
+
+    - `list_local_branches()` primes ref/SHA caches from `for-each-ref` data already collected; `Branch::upstream()` uses a single batch `for-each-ref` call instead of N per-branch `rev-parse` commands. Reduces `rev-parse` calls from 53 to 27 on a typical-8 benchmark. ([#2255](https://github.com/max-sixty/worktrunk/pull/2255))
+
+    - Share `git status --porcelain` output between `WorkingTreeDiffTask` and `WorkingTreeConflictsTask`, halving duplicate subprocesses. ([#2259](https://github.com/max-sixty/worktrunk/pull/2259))
+
+- **Faster `wt statusline`**: `terminal_width()` no longer walks parent processes to find a TTY — the fallback is now behind a dedicated helper used only by `wt statusline` under Claude Code. Picker, `wt list`, and help callers skip the walker entirely. ([#2260](https://github.com/max-sixty/worktrunk/pull/2260))
+
+- **`switch.picker.timeout-ms` deprecated**: After progressive rendering landed in 0.37.1, this config field was parsed but silently ignored. It's now flagged as deprecated with migration via `wt config update`. (Breaking for library consumers: `SwitchPickerConfig::timeout_ms` field and `timeout()` accessor removed.) ([#2236](https://github.com/max-sixty/worktrunk/pull/2236))
+
+### Fixed
+
+- **Picker panic on terminal resize**: `Term::on_resize` panicked with `attempt to subtract with overflow` when the terminal was smaller than the picker's preferred height (reachable under `script(1)` with stdin closed, or in small tmux panes). Vendored skim-tuikit now uses `saturating_sub`. ([#2233](https://github.com/max-sixty/worktrunk/pull/2233))
+
+- **Picker previews no longer show stale "no commits ahead" text**: BranchDiff/UpstreamDiff tabs read async fields that sometimes hadn't landed at skeleton-time precompute, caching wrong "has no commits ahead" / "has no upstream tracking branch" text. Previews now derive only from skeleton-time fields plus direct git queries. ([#2245](https://github.com/max-sixty/worktrunk/pull/2245))
+
+- **Picker preview height with `--branches`/`--remotes`**: The Down-layout item count estimate only counted worktrees, so with `--branches` or `--remotes` the estimate underflowed and the preview claimed space the list needed. ([#2247](https://github.com/max-sixty/worktrunk/pull/2247))
+
+- **GitLab CI status in `wt list`**: `glab ci list` now runs with the correct working directory. ([#2244](https://github.com/max-sixty/worktrunk/pull/2244))
+
+- **Picker Summary tab empty state**: aligns with the other preview tabs (bullet + branch header) instead of a dimmed sentence. ([#2246](https://github.com/max-sixty/worktrunk/pull/2246))
+
+### Documentation
+
+- Use concurrent form in multi-key hook examples, now that pre-* concurrent is supported. ([#2248](https://github.com/max-sixty/worktrunk/pull/2248))
+
+- Catalog skim 4.x upgrade impact and stability assessment. ([#2239](https://github.com/max-sixty/worktrunk/pull/2239))
+
+- Picker and collect module docstrings gain phase timing tables and trace instrumentation at key picker phases. ([#2250](https://github.com/max-sixty/worktrunk/pull/2250))
+
+### Internal
+
+- Simplified `wt-perf` output; `cache-check` JSON adds wasted-time fields, sorts duplicates by wasted time, and renames `total_extra_calls` to `extra_calls`. ([#2253](https://github.com/max-sixty/worktrunk/pull/2253), [#2254](https://github.com/max-sixty/worktrunk/pull/2254))
+
+## 0.37.1
+
+### Improved
+
+- **Progressive rendering in `wt switch` picker**: The picker now mirrors `wt list`'s skeleton-first model — branch and path render immediately, while status, diff stats, counts, and summaries fill in in place as they resolve. Replaces the previous ~500ms blocking freeze before first render. ([#2231](https://github.com/max-sixty/worktrunk/pull/2231))
+
+- **Clean rows no longer flash the timeout glyph in the picker**: The LLM semaphore is now acquired only around the actual LLM call, so the no-changes and cache-hit fast paths return immediately instead of sitting behind up to 8 concurrent LLM calls. A clean `main` row in the picker now renders blank rather than the `·` "timed out" placeholder. ([#2222](https://github.com/max-sixty/worktrunk/pull/2222))
+
+### Fixed
+
+- **Picker preview styling bleed**: `color_print`'s `</>` emits SGR 22 to reset `<bold>`/`<dim>`, which skim 0.20's ANSI parser silently drops. Preview spans now emit an explicit full reset (`\x1b[0m`), so dim and bold no longer bleed across the rest of the preview pane. ([#2232](https://github.com/max-sixty/worktrunk/pull/2232))
+
+- **Picker alt-screen enter/exit asymmetry**: In partial-height mode (`height=90%`), skim-tuikit skipped `smcup` on startup but still emitted `rmcup` on exit, corrupting the outer terminal's scrollback. The vendored tuikit now pairs enter/exit symmetrically. ([#2230](https://github.com/max-sixty/worktrunk/pull/2230))
+
+- **Partial first render under tmux**: Under tmux PTY pressure, rows past the first ~1024 bytes would silently vanish because `Output::flush` used `write` instead of `write_all`. Vendored skim-tuikit fixes the short-write bug. ([#2226](https://github.com/max-sixty/worktrunk/pull/2226))
+
+### Library
+
+- **Expose worktree removal API from the `worktrunk` library**: `remove_worktree_with_cleanup`, `RemoveOptions`, and `BranchDeletionMode` are now public, letting external tools reuse the canonical removal flow (fsmonitor cleanup, trash-path staging) instead of reimplementing it with raw git commands. Motivated by [`worktrunk-sync`](https://github.com/pablospe/worktrunk-sync). ([#2227](https://github.com/max-sixty/worktrunk/pull/2227), thanks @pablospe for the request in [#2053](https://github.com/max-sixty/worktrunk/issues/2053))
+
+### Documentation
+
+- **Document `worktrunk-sync`**: Linked from the Extending page and the FAQ as a community-maintained companion tool for rebasing stacked worktree branches. ([#2225](https://github.com/max-sixty/worktrunk/pull/2225))
+
+- **Catalog vendored skim patches**: `vendor/skim-tuikit/PATCHES.md` now records both landed and candidate patches against skim-tuikit, and a Cargo.toml comment records why skim is pinned to 0.20.x. ([#2228](https://github.com/max-sixty/worktrunk/pull/2228), [#2229](https://github.com/max-sixty/worktrunk/pull/2229))
+
+### Internal
+
+- **Drop unreachable `rayon::spawn` fallback** in the picker orchestrator. ([#2216](https://github.com/max-sixty/worktrunk/pull/2216))
+
+## 0.37.0
+
+### Improved
+
+- **Concurrent table form across hooks and aliases**: `post-*` hooks already ran table form concurrently; aliases in table form (`[[aliases.deploy]]`) now do too, with output prefixed by a colored `{label} │ ` and line-atomic writes. `pre-*` table form (`[[pre-merge]]`) is still forced serial but will follow in a future release — it's deprecated now so the serial→concurrent switch is explicit. Run `wt config update` to migrate to pipeline form. ([#2089](https://github.com/max-sixty/worktrunk/pull/2089), [#2135](https://github.com/max-sixty/worktrunk/pull/2135), [#2145](https://github.com/max-sixty/worktrunk/pull/2145), [#2151](https://github.com/max-sixty/worktrunk/pull/2151))
+
+- **`--KEY=VALUE` shorthand for alias and hook variables**: `wt step deploy --env=staging` and `wt hook pre-start --branch=feature/test` now work without the `--var` prefix. `--my-var=value` becomes `{{ my_var }}` in templates. Hooks also accept **custom variable names** (previously a fixed list; now matches alias behavior) and warn when a `--var` isn't referenced by any template — catching typos like `--brnach=feature`. ([#2091](https://github.com/max-sixty/worktrunk/pull/2091), [#2096](https://github.com/max-sixty/worktrunk/pull/2096), [#2117](https://github.com/max-sixty/worktrunk/pull/2117))
+
+- **`wt step` discovers configured aliases**: Running `wt step` (or `wt step --help`) now lists user and project aliases alongside the built-in subcommands, each with a one-line template summary. Aliases that shadow a built-in are flagged `(shadowed by built-in)`. ([#2131](https://github.com/max-sixty/worktrunk/pull/2131), [#2141](https://github.com/max-sixty/worktrunk/pull/2141))
+
+- **Shell completions for external `wt-*` subcommands**: Tab completion now discovers `wt-*` binaries on PATH and forwards completion requests to them, so `wt sync --<tab>` shows the external command's flags. Builds on the git-style external subcommand dispatch in 0.36.0. ([#2074](https://github.com/max-sixty/worktrunk/pull/2074), thanks @pablospe)
+
+- **Persistent on-disk cache for expensive git operations**: Five SHA-keyed probes that previously ran live on every `wt list` and `wt switch` — merge-tree conflict checks, the integration/add-probe, `is-ancestor`, `has-added-changes`, and branch diff stats — are now cached to disk under `.git/wt/cache/`. Because commit SHAs are content-addressed, cached results never go stale; an LRU bound (5000 entries per kind) keeps disk usage bounded. User-visible effects:
+
+    - **`wt list` and the `wt switch` picker open much faster on big repos**, especially those with many stale branches. A warm cache skips the expensive probes entirely; a cold cache still benefits from the faster per-worktree check below.
+
+    - **Dirty-worktree conflict check is ~10× faster on cold cache.** Swapped `git stash create` for `git write-tree` as the ephemeral tree snapshot — same answer, far less plumbing per worktree. ([#2119](https://github.com/max-sixty/worktrunk/pull/2119))
+
+    - **The picker now shows the same status info as `wt list`.** The old "skip stale branches" shortcut hid conflict and ahead/behind info on branches 50+ commits behind main to keep the picker responsive. The cache makes the shortcut unnecessary, so stale branches now display full status.
+
+    - **Consistent results during in-progress rebases.** Tasks now track the branch ref rather than the worktree's transient HEAD, so rows no longer contradict themselves mid-rebase (e.g., `is_ancestor=true` alongside `1 ahead / 1 behind`).
+
+    Cache is cleared by `wt config state clear`. ([#2085](https://github.com/max-sixty/worktrunk/pull/2085), [#2090](https://github.com/max-sixty/worktrunk/pull/2090), [#2098](https://github.com/max-sixty/worktrunk/pull/2098), [#2119](https://github.com/max-sixty/worktrunk/pull/2119))
+
+- **Lower-priority background operations**: Extends the CPU/IO priority throttling already used by `wt step copy-ignored` to the background `rm -rf` in `wt remove` and the trash sweep, so cleanup doesn't compete with foreground work. On macOS this now uses `taskpolicy -b`, which throttles disk I/O as well as CPU; Linux uses `nice -n 19` with best-effort `ionice`. User hooks are unchanged. ([#2130](https://github.com/max-sixty/worktrunk/pull/2130), [#2133](https://github.com/max-sixty/worktrunk/pull/2133))
+
+- **Pipeline structure in alias announcements**: Aliases now announce their pipeline structure: `Running alias deploy: install; build, lint` rather than the bare alias name. ([#2092](https://github.com/max-sixty/worktrunk/pull/2092))
+
+- **Graceful per-layer config degradation**: A bad env var or a broken user config file no longer wipes the entire config to defaults. Each layer (system, user, env vars) degrades independently — valid layers apply, invalid layers are skipped with a warning. ([#2120](https://github.com/max-sixty/worktrunk/pull/2120))
+
+- **Per-variable env var type resolution**: When multiple `WORKTRUNK_*` env vars target fields of different types (e.g., a numeric and a string field), each is resolved independently against the file config. Previously one incompatible var would drop every env override and the file config. ([#2111](https://github.com/max-sixty/worktrunk/pull/2111))
+
+- **Clearer deprecation warnings**: Structural deprecation warnings follow a consistent `{label}: X is deprecated in favor of Y` pattern with a single proposed-diff preview — no more redundant current-config dump. Template variable renames and the `approved-commands` removal use the same pattern. Every command (not just `wt config show`) now emits the same per-kind warnings, with a single dedup'd hint per process pointing to `wt config show` for details and `wt config update` to apply. Deprecation warnings are suppressed in non-diagnostic contexts (tab completion, picker, `wt list statusline`) to keep prompts quiet. ([#2147](https://github.com/max-sixty/worktrunk/pull/2147), [#2148](https://github.com/max-sixty/worktrunk/pull/2148), [#2153](https://github.com/max-sixty/worktrunk/pull/2153), [#2171](https://github.com/max-sixty/worktrunk/pull/2171))
+
+- **Structured JSON for `wt config state logs`**: `--format` is now a global flag on `state logs`, `state hints`, `state ci-status`, and `state marker` — ordering no longer matters. Logs JSON entries gain first-class `branch`, `source`, `hook_type`, `name`, `size`, `modified_at`, and absolute `path` fields alongside the existing relative `file`, so filtering works with `jq` directly. (Breaking: the `--hook` and `--branch` filters on `wt config state logs get` were removed in favor of `jq`; piping the JSON through `jq 'select(.branch == "...")'` replaces them.) ([#2156](https://github.com/max-sixty/worktrunk/pull/2156), [#2161](https://github.com/max-sixty/worktrunk/pull/2161))
+
+- **Cleaner log filenames**: Background hook log files skip the collision-avoidance hash suffix when the input is already a safe filename. `main/project/post-merge/clippy.log` instead of `main-vfz/project/post-merge/clippy-vif.log`. Names containing invalid path characters still get the hash. ([#2157](https://github.com/max-sixty/worktrunk/pull/2157))
+
+- **`wt list` stall visibility**: When `wt list` hangs for 5+ seconds, the progressive footer now names the blocked task and worktree (e.g. `○ Showing 13 worktrees (253/254 loaded, no recent progress; waiting on ci-status for feat)`), with a pending count when multiple tasks are outstanding. On full timeout, the warning joins the blocked-tasks list onto a single gutter-prefixed line: `▲ wt list timed out after 120s (151 results received); blocked tasks: …`. ([#2203](https://github.com/max-sixty/worktrunk/pull/2203), [#2205](https://github.com/max-sixty/worktrunk/pull/2205), [#2207](https://github.com/max-sixty/worktrunk/pull/2207))
+
+- **`-vv` logs full subprocess output to disk; drop `-vvv`**: Captured subprocess stdout/stderr now fan out to two log targets — a bounded preview on stderr mirrored to `.git/wt/logs/trace.log` (renamed from `verbose.log`), and the uncapped body to a new `.git/wt/logs/output.log`. Large captures (e.g. `git log -p | patch-id` during `wt list`) no longer flood stderr with elision markers and force a rerun — the full body is always on disk. Any `-v` count above 2 collapses to `-vv`. ([#2201](https://github.com/max-sixty/worktrunk/pull/2201))
+
+- **Clap-native errors for unrecognized subcommands**: `wt s` and `wt step sqush` now show clap's formatted `error: unrecognized subcommand 'X'` with typo suggestions and Usage block, rather than a custom git-style single-line message. The `#[command(external_subcommand)]` path added in 0.36.0 for `wt-<name>` dispatch is preserved. ([#2212](https://github.com/max-sixty/worktrunk/pull/2212), [#2215](https://github.com/max-sixty/worktrunk/pull/2215))
+
+- **Quieter `wt list` loading placeholders**: The `·` loading indicator no longer appears for commands that finish within 200ms — short renders never flash the dots. The Status column's loading/timeout glyph collapses from `⋯` to a dim `·`, and the working-tree gate's loading placeholder collapses from `···` to a single `·`, matching the visual weight of neighbouring gates. ([#2177](https://github.com/max-sixty/worktrunk/pull/2177), [#2181](https://github.com/max-sixty/worktrunk/pull/2181), [#2199](https://github.com/max-sixty/worktrunk/pull/2199))
+
+- **Fewer `wt list statusline` subprocesses**: Statusline rendering dropped four duplicate git subprocesses per render (`rev-parse --git-common-dir` ×2, `--show-toplevel` ×3, `--git-dir` ×2) by adding a process-wide `rev-parse --git-common-dir` cache and canonicalizing input paths in `Repository::worktree_at()`. ([#2209](https://github.com/max-sixty/worktrunk/pull/2209))
+
+- **Signals named in background pipeline errors**: Killed hook children now report which signal: `pipeline step terminated by signal 15 (SIGTERM): <step>` instead of the generic `command failed with signal`. ([#2193](https://github.com/max-sixty/worktrunk/pull/2193))
+
+- **Nested config typos surface as warnings**: Mistyped keys nested inside a known table (e.g. `[merge] squas = true`) now produce `Unknown field merge.squas` rather than going unnoticed. Built on a unified top-level + nested unknown-key analysis that also powers on-save preservation. ([#2195](https://github.com/max-sixty/worktrunk/pull/2195))
+
+- **`sanitize_hash` minijinja filter**: New template filter that wraps `sanitize_for_filename` — produces a filesystem-safe name with a 3-char hash suffix so distinct originals never collide, while already-safe inputs pass through unchanged. Useful for matching on-disk hook log filenames from `wt config state logs --format=json`. ([#2172](https://github.com/max-sixty/worktrunk/pull/2172))
+
+### Fixed
+
+- **`wt --help` and `wt --version` write to stdout**: Both previously wrote to stderr, breaking `version=$(wt --version)` and pipelines like `wt --help | grep …`. If you have scripts redirecting `2>&1` as a workaround, drop the redirect. Fixes [#2072](https://github.com/max-sixty/worktrunk/issues/2072). ([#2073](https://github.com/max-sixty/worktrunk/pull/2073), thanks @koralowiec for reporting; [#2155](https://github.com/max-sixty/worktrunk/pull/2155))
+
+- **Directive file passes through `wt step` aliases**: Inside a `wt step <alias>` body, an inner `wt switch --create` now writes its `cd` directive to the parent shell instead of dropping it. This was the last blocker for "move staged changes into a new worktree" alias recipes. ([#2077](https://github.com/max-sixty/worktrunk/pull/2077))
+
+- **Detect `AA` and `DD` unmerged status codes**: The working-tree conflict check caught 5 of 7 unmerged states but missed `AA` (both added) and `DD` (both deleted). Worktrees with these conflict types now fall back to the commit-based check as intended. ([#2124](https://github.com/max-sixty/worktrunk/pull/2124))
+
+- **Squash detection no longer silently misses branches when `git diff-tree` fails**: The patch-id pipeline used for squash-merge detection didn't check whether `git diff-tree` exited cleanly — a failed source command fed `git patch-id` a truncated stream, producing a bogus patch-id and reporting "not squashed" when the branch may have been. Pipeline now bails on source-exit non-zero, and streams directly between commands via an OS pipe rather than buffering in-process. ([#2136](https://github.com/max-sixty/worktrunk/pull/2136))
+
+- **Nushell multi-line `--execute` payloads**: The nushell wrapper was executing the exec directive file line-by-line, so multi-line payloads ran as separate shell sessions — `cd` and variable assignments didn't persist across lines. Now matches bash/zsh/fish `source` semantics. ([#2134](https://github.com/max-sixty/worktrunk/pull/2134))
+
+- **Redundant "To configure" hint for outdated shell wrappers**: When a shell's integration file exists but is stale, `wt config show` no longer prints both a specific `wt config shell install <shell>` hint and the generic "To configure" summary. The summary now appears only when a shell is genuinely not configured. ([#2152](https://github.com/max-sixty/worktrunk/pull/2152))
+
+- **Ctrl-C aborts `wt` command loops**: Signal-derived child exits (SIGINT/SIGTERM) now abort hook pipelines, alias steps, concurrent groups, and the `wt step for-each` worktree loop. Previously, wt's signal handler forwarded SIGINT/SIGTERM to the current child but wt itself survived, and `FailureStrategy::Warn` silently swallowed each interrupt — a single Ctrl-C against `wt merge` could charge through remaining hook steps. ([#2174](https://github.com/max-sixty/worktrunk/pull/2174), [#2182](https://github.com/max-sixty/worktrunk/pull/2182))
+
+- **Nested unknown config keys preserved on save**: Any unknown key nested inside a known table (e.g. `future-option = true` under `[merge]`) was silently deleted on any config save triggered by other mutations (first-run prompt, interactive path customization). Preservation is now computed recursively, so unknown keys survive at every nesting level. ([#2180](https://github.com/max-sixty/worktrunk/pull/2180))
+
+- **`wt step --help` honors `-C` and `--config`**: Help previously resolved aliases before applying global flags, so `wt -C other step --help` listed aliases from the process cwd and `--config custom.toml` was ignored. Globals are now parsed in a single early pass. ([#2176](https://github.com/max-sixty/worktrunk/pull/2176))
+
+- **`wt step --help` no longer triggers config side effects**: Rendering the alias listing in help output no longer emits deprecation warnings to stderr or writes a migration file next to the user config. ([#2179](https://github.com/max-sixty/worktrunk/pull/2179))
+
+- **`wt step <alias> --dry-run` with lazy vars**: Dry-run previously expanded every command eagerly, so pipelines that read `{{ vars.foo }}` set by an earlier step failed with an "undefined vars" error even when the non-dry-run command would succeed. Dry-run now mirrors the hook pattern: templates that reference `vars.*` are syntax-validated (catching typos like `{{ vars..foo }}`) and shown raw, while other templates expand eagerly. ([#2170](https://github.com/max-sixty/worktrunk/pull/2170))
+
+- **`wt config show` fish completions and false-negative gating**: A missing fish completions file used to print a confusing nested hint under "Already configured shell extension" and flip the generic "To configure" summary. It now prints a warning with specific remediation, mirroring the "Outdated shell extension" pattern. The "report a false negative" link is no longer gated on `!has_any_configured`, so a detector miss in one shell still offers the link when other shells are detected. ([#2163](https://github.com/max-sixty/worktrunk/pull/2163))
+
+- **Nix build meets Rust 1.93 MSRV**: `flake.lock` updated to ship a newer nixpkgs rustc. ([#2185](https://github.com/max-sixty/worktrunk/pull/2185), thanks @Lysanleo)
+
+### Documentation
+
+- **"Extending Worktrunk" page**: Dedicated docs page collecting recipes for custom workflows via hooks and aliases, including a "move staged changes to a new worktree" recipe closing [#938](https://github.com/max-sixty/worktrunk/issues/938). ([#2079](https://github.com/max-sixty/worktrunk/pull/2079), [#2083](https://github.com/max-sixty/worktrunk/pull/2083), [#2088](https://github.com/max-sixty/worktrunk/pull/2088), [#2094](https://github.com/max-sixty/worktrunk/pull/2094))
+
+- **OpenCode in agent handoffs**: Skill documentation now covers OpenCode alongside other agent CLIs. ([#2108](https://github.com/max-sixty/worktrunk/pull/2108), thanks @vinicius507 for the suggestion in [#2076](https://github.com/max-sixty/worktrunk/issues/2076))
+
+- **Hook pipeline documentation**: `wt hook --help` and web docs now teach pipelines as `[[hook]]` blocks with TOML notes in `config commands`, and the aliases docs teach `[[aliases.NAME]]` pipeline blocks. ([#2144](https://github.com/max-sixty/worktrunk/pull/2144), [#2149](https://github.com/max-sixty/worktrunk/pull/2149), [#2154](https://github.com/max-sixty/worktrunk/pull/2154))
+
+- **FAQ updates**: Qualified the "no background processes" claim; clarified coverage includes shell-integration-tests; config key location uses `git config worktrunk.*`. ([#2080](https://github.com/max-sixty/worktrunk/pull/2080), [#2086](https://github.com/max-sixty/worktrunk/pull/2086), [#2126](https://github.com/max-sixty/worktrunk/pull/2126))
+
+- **Troubleshooting: `wt list` fsmonitor hang**: Noted the interaction with core.fsmonitor daemons. ([#2194](https://github.com/max-sixty/worktrunk/pull/2194))
+
+- **README installation command formatting**: Fixed code-block formatting around installation commands. ([#2187](https://github.com/max-sixty/worktrunk/pull/2187), thanks @MahmoudMabrok)
+
+### Internal
+
+- **Shell wrapper directive file split**: The shell integration now writes `cd` paths to a separate file from `--execute` shell payloads, with the `cd` path read literally (`cd -- "$(< file)"`, no shell parsing) and the exec file scrubbed from alias and hook child environments. Hardens against shell injection from hook/alias bodies into the parent session. The legacy single-file form is honored through 0.38; nushell users need `wt config shell install` to pick up the new wrapper. ([#2118](https://github.com/max-sixty/worktrunk/pull/2118))
+
+- **MSRV bumped to Rust 1.93**: Per the "latest stable − 1" policy. ([#2125](https://github.com/max-sixty/worktrunk/pull/2125))
+
+- **Centralized `[wt-trace]` emitter**: Trace records are now owned by `src/trace/emit.rs` rather than ad-hoc `log::debug!` format strings, and `-vv` log verbosity is fixed. ([#2146](https://github.com/max-sixty/worktrunk/pull/2146))
+
+- **Unified hook and alias execution paths**: Hooks and aliases share the same foreground execution, shell invocation, template expansion, and priority-spawning code. ([#2089](https://github.com/max-sixty/worktrunk/pull/2089), [#2128](https://github.com/max-sixty/worktrunk/pull/2128), [#2140](https://github.com/max-sixty/worktrunk/pull/2140), [#2095](https://github.com/max-sixty/worktrunk/pull/2095), [#2113](https://github.com/max-sixty/worktrunk/pull/2113))
+
+- **Config migration is now in-memory; no more `.new` files**: `wt config show` renders the deprecation diff from in-memory migrated content rather than writing a `.new` file next to the user's config. `wt config update` owns the sole filesystem mutation; a new `--print` flag emits migrated TOML to stdout without writing. ([#2184](https://github.com/max-sixty/worktrunk/pull/2184))
+
+## 0.36.0
+
+### Improved
+
+- **Git-style external subcommands**: `wt foo` now runs `wt-foo` from PATH when `foo` is not a built-in, mirroring `git foo` → `git-foo`. Third-party tools can be installed and invoked as `wt <name>` without touching this repo. Unrecognized commands show a git-style error with typo suggestions. [Docs](https://worktrunk.dev/tips-patterns/#external-subcommands) ([#2054](https://github.com/max-sixty/worktrunk/pull/2054), thanks @pablospe for the suggestion in [#2053](https://github.com/max-sixty/worktrunk/issues/2053))
+
+- **`{{ owner }}` template variable**: Expands to the GitHub/GitLab repository owner, useful for constructing URLs or paths in hook templates and `worktree-path`. ([#2051](https://github.com/max-sixty/worktrunk/pull/2051), thanks @greggdonovan)
+
+- **Typed env-var config overrides**: `WORKTRUNK__LIST__TIMEOUT_MS=30` and other typed overrides now work correctly. Previously, string-typed env values silently failed deserialization, wiping all user config and falling back to defaults. ([#2062](https://github.com/max-sixty/worktrunk/pull/2062))
+
+- **Config error attribution**: Config load errors now identify the source — file errors show TOML line/column pointers, env-var errors list the offending `WORKTRUNK_*` variable. Previously all failures showed a generic message. ([#2068](https://github.com/max-sixty/worktrunk/pull/2068))
+
+- **Per-symbol atomic status rendering**: The Status column in `wt list` and the `wt switch` picker now renders each symbol independently — unresolved gates show `⋯` at their position instead of fabricating defaults when the collect deadline expires. ([#2067](https://github.com/max-sixty/worktrunk/pull/2067))
+
+- **Hook error messages**: Malformed hook command config now lists the three accepted forms (string, named table, pipeline list) with a pointer to `wt hook --help`, instead of an opaque serde error. ([#2042](https://github.com/max-sixty/worktrunk/pull/2042))
+
+- **Stale trash cleanup**: `wt remove` now sweeps orphaned `.git/wt/trash` entries older than 24 hours after each removal, reclaiming space from interrupted background removals. ([#2039](https://github.com/max-sixty/worktrunk/pull/2039))
+
+### Changed
+
+- **`wt hook <type>` exits successfully when no hooks are configured**: Previously errored; now prints a warning and exits 0, so scripts and CI can invoke `wt hook` unconditionally. ([#2056](https://github.com/max-sixty/worktrunk/pull/2056))
+
+- **Hook output log layout**: Log files moved from flat `.git/wt/logs/{name}.log` to nested `{branch}/{source}/{hook-type}/{name}.log`. Per-branch listing/clearing is now O(that branch). `logs get --format=json` paths changed to relative. Legacy flat files are swept automatically. ([#2041](https://github.com/max-sixty/worktrunk/pull/2041))
+
+### Fixed
+
+- **`wt config show` false "Not configured"**: When the shell init line lives in a sourced file (common with dotfile managers), `config show` no longer reports "Not configured" — it checks whether integration is actually active at runtime. Fixes [#1306](https://github.com/max-sixty/worktrunk/issues/1306). ([#2066](https://github.com/max-sixty/worktrunk/pull/2066), thanks @wouter-intveld for reporting)
+
+- **Remove-then-switch hint**: The hint for shadowed remote branches now uses `--foreground` so the chained `wt remove && wt switch` actually works (background removal left a placeholder directory blocking the switch). ([#2040](https://github.com/max-sixty/worktrunk/pull/2040))
+
+- **Conflict detection unified**: The `wt switch` picker and `wt list` now both run both conflict probes (commit-level and working-tree). Previously the picker skipped the cheaper probe, leaving the fallback unreachable for clean worktrees; `wt list` non-full skipped the working-tree probe, missing conflicts from interrupted rebases. ([#2064](https://github.com/max-sixty/worktrunk/pull/2064))
+
+### Documentation
+
+- Surfaced vars & aliases on homepage and tips-patterns, cross-linked state keys to dedicated docs, tightened hook links. ([#2035](https://github.com/max-sixty/worktrunk/pull/2035), [#2036](https://github.com/max-sixty/worktrunk/pull/2036), [#2037](https://github.com/max-sixty/worktrunk/pull/2037), [#2038](https://github.com/max-sixty/worktrunk/pull/2038))
+
+### Internal
+
+- Subcommand ordering aligned to documented policies (pipeline order for step, CRUD for state actions). ([#2043](https://github.com/max-sixty/worktrunk/pull/2043), [#2044](https://github.com/max-sixty/worktrunk/pull/2044))
+
+## 0.35.3
+
+### Improved
+
+- **`wt step prune` streams removals inline**: Removals and "Skipped" messages now print as each integration check completes, overlapping with still-running checks — previously there was a visible gap of silence while all parallel checks finished before any output appeared. ([#2015](https://github.com/max-sixty/worktrunk/pull/2015))
+
+- **Fewer redundant `git worktree list` calls in prune and multi-remove**: `prepare_worktree_removal()` now accepts a pre-fetched worktree list, eliminating N+1 subprocess calls when removing many worktrees. ([#2025](https://github.com/max-sixty/worktrunk/pull/2025))
+
+### Fixed
+
+- **Picker preview UI lag**: The picker's preview cache now stores pager-rendered output, so cache hits skip the pager subprocess entirely. Previously, scrolling past an item with a large diff froze the UI briefly on every re-render because the pager ran on every call. ([#2021](https://github.com/max-sixty/worktrunk/pull/2021))
+
+- **Template error hint underlining**: The "Available variables" hint in template expansion errors now underlines each variable name individually instead of wrapping the entire comma-separated list in a single underline span. ([#2028](https://github.com/max-sixty/worktrunk/pull/2028))
+
+### Documentation
+
+- **Cross-linked vars references**: The vars feature is documented in the hook template variables table, `wt config state vars` page, and tips-patterns recipes — these now link to each other so readers can navigate between "how to set" and "how to use in templates". ([#2034](https://github.com/max-sixty/worktrunk/pull/2034))
+
+- **Clearer project config intro**: Improved the project config introduction and template variable heading in `wt config` help text. ([#2032](https://github.com/max-sixty/worktrunk/pull/2032))
+
+## 0.35.2
+
+### Improved
+
+- **Multiple NAME filters for hook subcommands**: `wt hook pre-merge --yes insta doctest doc` runs a subset of hooks in one command, instead of chaining separate invocations. ([#2013](https://github.com/max-sixty/worktrunk/pull/2013))
+
+- **Branch context in batch removal hooks**: During prune or multi-remove, hook announcement messages now include the branch name (`Running post-remove for **branch-name**: project:cleanup`), disambiguating which worktree triggered each hook. ([#2014](https://github.com/max-sixty/worktrunk/pull/2014))
+
+### Fixed
+
+- **Bare repo false positive when `core.bare` is unset**: Repos cloned by Eclipse/EGit (and other tools that don't write `core.bare`) were incorrectly detected as bare. Replaced `git rev-parse --is-bare-repository` with `git config --type=bool core.bare`. Fixes [#1939](https://github.com/max-sixty/worktrunk/issues/1939). ([#1976](https://github.com/max-sixty/worktrunk/pull/1976), thanks @daniel-iwan-datacore for reporting)
+
+## 0.35.1
+
+### Fixed
+
+- **PR lookup on forks respects `gh repo set-default`**: `wt switch pr:N` now checks the gh-configured default repo when origin points to a fork, instead of always querying the fork's repo (which returns 404). The error message is also context-aware based on the configured default. Fixes [#2002](https://github.com/max-sixty/worktrunk/issues/2002). ([#2004](https://github.com/max-sixty/worktrunk/pull/2004), thanks @JustinPierce for reporting)
+
+- **JSON output stability**: `config show --format=json` log file sort is now deterministic (filename tiebreaker for identical timestamps). `step for-each --format=json` includes a consistent `error` field on all failure variants. ([#2001](https://github.com/max-sixty/worktrunk/pull/2001))
+
+### Internal
+
+- Continued `TestRepo` consolidation: `bare()` constructor, `at(path)` constructor, removed lifetime guard field. ([#2000](https://github.com/max-sixty/worktrunk/pull/2000), [#2005](https://github.com/max-sixty/worktrunk/pull/2005), [#2007](https://github.com/max-sixty/worktrunk/pull/2007))
+
+## 0.35.0
+
+### Improved
+
+- **`--no-verify` deprecated in favor of `--no-hooks`**: All commands (`switch`, `remove`, `merge`, `step commit`, `step squash`) now use `--no-hooks`. `--no-verify` remains as a hidden alias with a deprecation warning. ([#1932](https://github.com/max-sixty/worktrunk/pull/1932))
+
+- **JSON output**: `--format=json` on `config show`, `config state` subcommands, `switch`, `remove`, `merge`, `step prune`, and `step for-each`. ([#1969](https://github.com/max-sixty/worktrunk/pull/1969), [#1959](https://github.com/max-sixty/worktrunk/pull/1959))
+
+- **Per-command hook log files**: Each background hook command writes to its own log file instead of sharing a pipeline log. Combined hook announcements (e.g., post-remove + post-switch) display on a single status line. ([#1934](https://github.com/max-sixty/worktrunk/pull/1934), [#1980](https://github.com/max-sixty/worktrunk/pull/1980))
+
+- **Prune and list performance**: `step prune` streams integration checks and removes candidates in parallel (~3x faster on repos with many branches). Multiple caching layers (integration target, `git_dir`, `rev_parse_tree`, `resolve_preferring_branch`) reduce redundant `git rev-parse` calls during `wt list`. ([#1950](https://github.com/max-sixty/worktrunk/pull/1950), [#1957](https://github.com/max-sixty/worktrunk/pull/1957), [#1966](https://github.com/max-sixty/worktrunk/pull/1966), [#1948](https://github.com/max-sixty/worktrunk/pull/1948), [#1943](https://github.com/max-sixty/worktrunk/pull/1943))
+
+- **Itemized `state clear` output**: `wt config state clear` shows per-category counts and cleans up stale trash from incomplete worktree removals. ([#1961](https://github.com/max-sixty/worktrunk/pull/1961), [#1960](https://github.com/max-sixty/worktrunk/pull/1960))
+
+- **Hook pipeline summary**: Serial steps separated by `;` instead of `→`, repeated unnamed sources collapsed into counted form (`user ×2`), and named steps show `source:name` prefix. ([#1994](https://github.com/max-sixty/worktrunk/pull/1994))
+
+- **Copy-pasteable help text**: `--help` output strips `$ ` prompts from code examples for direct copy-paste in the terminal. ([#1992](https://github.com/max-sixty/worktrunk/pull/1992))
+
+- **Better PR lookup errors**: `wt switch pr:N` 404 errors now include the repository name and suggest `gh repo set-default` for fork workflows. Fixes [#1925](https://github.com/max-sixty/worktrunk/issues/1925). ([#1927](https://github.com/max-sixty/worktrunk/pull/1927), thanks @JustinPierce for reporting)
+
+- **Claude Code worktree hooks**: WorktreeCreate and WorktreeRemove hooks for the Claude Code plugin. ([#1959](https://github.com/max-sixty/worktrunk/pull/1959))
+
+### Fixed
+
+- **File permissions lost on copy-ignored**: `wt step copy-ignored` now preserves execute bits when copying files via reflink. Fixes [#1936](https://github.com/max-sixty/worktrunk/issues/1936). ([#1937](https://github.com/max-sixty/worktrunk/pull/1937), thanks @RileyMathews for reporting)
+
+- **Git alias breaks `wt`**: Relative `GIT_DIR`/`GIT_WORK_TREE` paths inherited from git aliases now normalized to absolute paths at startup. Fixes [#1914](https://github.com/max-sixty/worktrunk/issues/1914). ([#1915](https://github.com/max-sixty/worktrunk/pull/1915), thanks @yasuhiroki for reporting)
+
+- **Diagnostic files in state logs**: `verbose.log` and `diagnostic.md` now properly categorized in `wt config state logs` output. ([#1981](https://github.com/max-sixty/worktrunk/pull/1981))
+
+- **Integration target in removal display**: Background removal now shows `origin/main` (effective target) instead of `main` when the remote is ahead. ([#1993](https://github.com/max-sixty/worktrunk/pull/1993))
+
+- **Worktree-path hint suppression**: The "customize worktree locations" hint no longer appears when project-specific `worktree-path` is configured. ([#1941](https://github.com/max-sixty/worktrunk/pull/1941))
+
+- **State logs formatting**: Missing newline between log sections in `wt config state logs` output. ([#1968](https://github.com/max-sixty/worktrunk/pull/1968))
+
+- **Claude Code WorktreeCreate hook**: Fixed jq filter using wrong input field. ([#1964](https://github.com/max-sixty/worktrunk/pull/1964))
+
+- **OpenCode unicode escaping**: Fixed broken emoji markers depending on Bun version. ([#1935](https://github.com/max-sixty/worktrunk/pull/1935), thanks @noirbizarre)
+
+### Documentation
+
+- Clarified plugin install command. ([#1906](https://github.com/max-sixty/worktrunk/pull/1906), thanks @suyua9)
+- Fixed inaccurate logs documentation. ([#1986](https://github.com/max-sixty/worktrunk/pull/1986))
+
+### Internal
+
+- Consolidated `TestRepo` into single `src/testing` module, shared across lib and bin unit tests. ([#1944](https://github.com/max-sixty/worktrunk/pull/1944), [#1963](https://github.com/max-sixty/worktrunk/pull/1963), [#1971](https://github.com/max-sixty/worktrunk/pull/1971), [#1991](https://github.com/max-sixty/worktrunk/pull/1991))
+- Simplified dispatch, timeout, and copy pool internals. ([#1949](https://github.com/max-sixty/worktrunk/pull/1949), [#1930](https://github.com/max-sixty/worktrunk/pull/1930), [#1931](https://github.com/max-sixty/worktrunk/pull/1931))
+
+## 0.34.2
+
+### Improved
+
+- **OpenCode integration**: Activity tracking plugin shows agent status (`🤖` working, `💬` waiting) in `wt list`, with `wt config plugins opencode install/uninstall` for management. Also adds OpenCode as an LLM commit generation backend. ([#1807](https://github.com/max-sixty/worktrunk/pull/1807), thanks @noirbizarre)
+
+- **Lower priority for copy-ignored**: `wt step copy-ignored` now runs at the lowest OS scheduling priority (`renice -n 19`), yielding CPU to interactive foreground tasks on large trees. ([#1916](https://github.com/max-sixty/worktrunk/pull/1916))
+
+- **Diff stats performance**: Switched from `--numstat` (one line per file) to `--shortstat` (single summary line), reducing diff output from O(files) to O(1) per worktree. ([#1917](https://github.com/max-sixty/worktrunk/pull/1917))
+
+### Fixed
+
+- **Remote detection with `includeIf` config**: `primary_remote()` failed when non-remote git config keys (like `includeIf.hasconfig:remote.*.url`) matched the remote regex. ([#1908](https://github.com/max-sixty/worktrunk/pull/1908), thanks @nirvdrum)
+
+- **Background hook execution**: Fixed three issues — list-form configs lost serial/concurrent semantics in post-merge/post-remove hooks, pipeline `hook_name` context leaked across steps, and lazy template expansion was broken for name-filtered hooks (e.g., `wt hook post-start db`). ([#1910](https://github.com/max-sixty/worktrunk/pull/1910))
+
+- **Copy-ignored parallelism**: The outer loop in `wt step copy-ignored` ran on the global rayon pool instead of the dedicated copy pool, effectively serializing top-level entries. Now runs entirely on the 4-thread copy pool. ([#1913](https://github.com/max-sixty/worktrunk/pull/1913))
+
+- **Windows stack overflow in copy-ignored**: Copy pool worker threads used platform default stack size (~2 MiB on Windows), causing overflow with 200+ directories. Now uses explicit 8 MiB stack size across all platforms. ([#1911](https://github.com/max-sixty/worktrunk/pull/1911))
+
+- **Nix flake build**: Fixed `flake.nix` filtering out the `dev/` directory, which broke builds after OpenCode integration added `include_str!("../../../dev/opencode-plugin.ts")`. ([#1924](https://github.com/max-sixty/worktrunk/pull/1924), thanks @mariuskimmina)
+
+### Internal
+
+- Unified background hook execution into a single pipeline-based path, removing ~260 lines of dual-path branching. ([#1912](https://github.com/max-sixty/worktrunk/pull/1912))
+- Replaced deprecated `codecov/test-results-action` with `codecov/codecov-action`. ([#1918](https://github.com/max-sixty/worktrunk/pull/1918))
+- Bumped AUR deploy action to v4.1.2 (fixes argument order with Arch Linux's updated `runuser`). ([#1909](https://github.com/max-sixty/worktrunk/pull/1909))
+
+## 0.34.1
+
+### Improved
+
+- **`step prune` performance**: Integration checks now run in parallel, dramatically reducing prune time for repos with many branches (3+ minutes → seconds with 100+ branches). Fixes [#1888](https://github.com/max-sixty/worktrunk/issues/1888). ([#1890](https://github.com/max-sixty/worktrunk/pull/1890), thanks @ortonomy for reporting)
+
+### Fixed
+
+- **CPU saturation during copy operations**: Restored a dedicated 4-thread copy pool that was accidentally removed in v0.34.0, preventing ~1000% CPU usage on copy-heavy operations like `step copy-ignored`. ([#1905](https://github.com/max-sixty/worktrunk/pull/1905))
+
+- **Background pipeline template variables**: When `wt switch --create` fires both post-switch and post-start hooks, pipeline steps were incorrectly accumulated into a single background process, causing `{{ hook_type }}` to expand to the wrong value. Each hook type now spawns its own pipeline. ([#1904](https://github.com/max-sixty/worktrunk/pull/1904))
+
+### Internal
+
+- Extracted shared `classify_unknown_key` to deduplicate config warning logic. ([#1902](https://github.com/max-sixty/worktrunk/pull/1902))
+
+## 0.34.0
+
+### Improved
+
+- **Per-branch custom variables**: New `wt config state vars set/get/list/clear` commands store custom key-value pairs per branch, accessible as `{{ vars.key }}` in hook templates and `wt step eval`. Variables persist in git config and appear in `wt list --format=json`. ([#1006](https://github.com/max-sixty/worktrunk/pull/1006))
+
+- **Lazy template expansion in pipelines**: Pipeline steps now expand `{{ vars.* }}` at execution time rather than at pipeline construction, so variables set by step N are available in step N+1. ([#1840](https://github.com/max-sixty/worktrunk/pull/1840))
+
+- **`wt config plugins claude` commands**: New `install`, `uninstall`, and `install-statusline` subcommands manage Claude Code integration. `install` registers the worktrunk plugin via the Claude marketplace, `install-statusline` configures the Claude Code status line, and `wt config show` suggests these commands instead of raw CLI instructions. ([#1830](https://github.com/max-sixty/worktrunk/pull/1830), [#1834](https://github.com/max-sixty/worktrunk/pull/1834))
+
+- **`[forge]` config section**: New explicit `[forge]` section with `platform` and `hostname` fields for SSH host aliases and non-standard remotes. `ci.platform` is deprecated with automatic migration. ([#1826](https://github.com/max-sixty/worktrunk/pull/1826))
+
+- **Forge detection with `url.insteadOf`**: Forge platform detection now falls back to the effective URL (after git `url.insteadOf` rewrites), fixing CI status, PR/MR detection, and push-remote features for users with SSH aliases or corporate mirrors. ([#1771](https://github.com/max-sixty/worktrunk/pull/1771), thanks @amodelaweb; thanks @roytouw for reporting [#1790](https://github.com/max-sixty/worktrunk/issues/1790))
+
+- **`--branch` flag for `wt step commit`**: Commit to a specific branch without switching to it — useful in automation and scripts. ([#1750](https://github.com/max-sixty/worktrunk/pull/1750))
+
+- **Last fetch time in branch-not-found hint**: When `wt switch` can't find a branch, the hint now shows when the remote was last fetched (e.g., "last fetched 3h ago") to help identify stale local refs. ([#1877](https://github.com/max-sixty/worktrunk/pull/1877))
+
+- **Config field renames**: `merge.no-ff` → `merge.ff` and `switch.no-cd` → `switch.cd`, using positive-sense naming. Old names continue to work with deprecation warnings and automatic migration via `wt config update`. ([#1856](https://github.com/max-sixty/worktrunk/pull/1856), [#1860](https://github.com/max-sixty/worktrunk/pull/1860))
+
+- **Syntax highlighting for template blocks**: Documentation site now renders `{{ }}` template expressions with syntax highlighting. ([#1792](https://github.com/max-sixty/worktrunk/pull/1792))
+
+- **Hide Claude Code section when CLI unavailable**: `wt config show` no longer displays the Claude Code integration section if the `claude` CLI is not found. ([#1827](https://github.com/max-sixty/worktrunk/pull/1827))
+
+### Fixed
+
+- **Copy-ignored too many open files**: `wt step copy-ignored` could exhaust file descriptors on large trees. Now reuses a single thread pool across all copy operations. Fixes [#1865](https://github.com/max-sixty/worktrunk/issues/1865). ([#1864](https://github.com/max-sixty/worktrunk/pull/1864), thanks @fspeirs)
+
+- **Squash-merged branch detection with merge-tree conflicts**: `wt step prune` and `wt list` failed to detect squash-merged branches when the default branch modified the same files. Now uses patch-id matching as fallback. Fixes [#1818](https://github.com/max-sixty/worktrunk/issues/1818). ([#1820](https://github.com/max-sixty/worktrunk/pull/1820), thanks @tthyer for reporting)
+
+- **Background removal blocked for 1 second**: `wt remove` blocked unnecessarily due to incorrect shell operator precedence in the background process spawn. ([#1858](https://github.com/max-sixty/worktrunk/pull/1858))
+
+- **Fish shell getcwd error in Zellij**: Removing a worktree while using fish in Zellij produced "error retrieving current directory" messages. ([#1787](https://github.com/max-sixty/worktrunk/pull/1787))
+
+- **Alias detection false positive on path substrings**: `wt config show` incorrectly flagged unrelated aliases when the alias target path contained "wt" as a substring. Fixes [#1772](https://github.com/max-sixty/worktrunk/issues/1772). ([#1773](https://github.com/max-sixty/worktrunk/pull/1773), thanks @nicolasff for reporting)
+
+- **Branch names with dots in vars**: Vars parsing incorrectly split branch names containing dots (e.g., `release.1.0`) as nested config keys. ([#1837](https://github.com/max-sixty/worktrunk/pull/1837))
+
+- **Lazy pipeline vars expansion in background hooks**: Background hook execution failed with lazy vars expansion due to raw string quoting and overly strict template validation. ([#1855](https://github.com/max-sixty/worktrunk/pull/1855))
+
+- **GitLab MR remote tracking**: `wt switch mr:N` could reuse branches tracking the correct merge-request ref but on the wrong remote. ([#1817](https://github.com/max-sixty/worktrunk/pull/1817))
+
+- **Fork CI and integration target detection**: Fixed CI check-runs querying the wrong repo for forks, branch tracking checking only merge config, and diverged local branches missing remote merges. ([#1812](https://github.com/max-sixty/worktrunk/pull/1812))
+
+- **Placeholder directory on non-current worktree removal**: `wt remove` created unnecessary empty placeholder directories and slept for 1 second when removing worktrees other than the current one. ([#1868](https://github.com/max-sixty/worktrunk/pull/1868), [#1874](https://github.com/max-sixty/worktrunk/pull/1874))
+
+- **Merge-tree errors silently swallowed**: `git merge-tree` failures (invalid refs, corrupt repos) were treated as conflicts instead of propagating, triggering expensive patch-id fallback unnecessarily. ([#1896](https://github.com/max-sixty/worktrunk/pull/1896))
+
+- **Deprecated key in wrong config file**: A deprecated section key (e.g., `[commit-generation]`) in the wrong config file (e.g., project config) was silently filtered. Now warns "Key X belongs in Y config as Z". ([#1899](https://github.com/max-sixty/worktrunk/pull/1899))
+
+- **Config migration mutex panic**: Replaced unsafe `unwrap()` with error propagation in config deprecation migration. ([#1887](https://github.com/max-sixty/worktrunk/pull/1887))
+
+- **Hook show outside git repo**: `wt hook show` now provides a clear error message when run outside a git repository. ([#1809](https://github.com/max-sixty/worktrunk/pull/1809), thanks @noirbizarre)
+
+### Documentation
+
+- Help text rewritten for `switch`, `merge`, `hook`, and `remove` commands. ([#1782](https://github.com/max-sixty/worktrunk/pull/1782), [#1783](https://github.com/max-sixty/worktrunk/pull/1783), [#1785](https://github.com/max-sixty/worktrunk/pull/1785), [#1765](https://github.com/max-sixty/worktrunk/pull/1765), [#1764](https://github.com/max-sixty/worktrunk/pull/1764))
+
+- Hook documentation restructured: types reordered by paired events, pipeline ordering rewritten with progressive examples, approval prompt shown in color. ([#1763](https://github.com/max-sixty/worktrunk/pull/1763), [#1756](https://github.com/max-sixty/worktrunk/pull/1756), [#1766](https://github.com/max-sixty/worktrunk/pull/1766))
+
+- Hooks documented in user config reference. ([#1845](https://github.com/max-sixty/worktrunk/pull/1845))
+
+- Deprecated `post-create` removed from documentation. ([#1776](https://github.com/max-sixty/worktrunk/pull/1776))
+
+- Arch Linux official package added to installation instructions. ([#1872](https://github.com/max-sixty/worktrunk/pull/1872), thanks @ctrl-q)
+
+- README template syntax fixed. Fixes [#1851](https://github.com/max-sixty/worktrunk/issues/1851). ([#1852](https://github.com/max-sixty/worktrunk/pull/1852), thanks @IlyaSemenov for reporting)
+
+### Internal
+
+- Config deprecation consolidated from two layers to one pre-deserialization TOML migration. ([#1879](https://github.com/max-sixty/worktrunk/pull/1879), [#1880](https://github.com/max-sixty/worktrunk/pull/1880), [#1876](https://github.com/max-sixty/worktrunk/pull/1876))
+
+- Benchmark infrastructure extracted into `wt-perf` crate. ([#1878](https://github.com/max-sixty/worktrunk/pull/1878))
+
+- `wt remove` approval path reuses already-loaded repo/config (~50ms savings). ([#1875](https://github.com/max-sixty/worktrunk/pull/1875))
+
+### Deprecated
+
+| Old | New | Action |
+|-----|-----|--------|
+| `[ci]` section | `[forge]` section | `wt config update` migrates; `wt config show` warns |
+| `no-ff` in `[merge]` | `ff` (reversed) | `wt config update` migrates; `wt config show` warns |
+| `no-cd` in `[switch]` | `cd` (reversed) | `wt config update` migrates; `wt config show` warns |
+
+All deprecated fields continue to work. Run `wt config update` to migrate, or `wt config show` for details.
+
+## 0.33.0
+
+### Improved
+
+- **Hook execution pipelines**: Post-* hooks support TOML array syntax for serial dependencies — steps execute in order, with maps within steps running concurrently. `post-start = [{ install = "npm install" }, { build = "npm run build", lint = "npm run lint" }]` runs install first, then build and lint in parallel. [Docs](https://worktrunk.dev/hook/) ([#1713](https://github.com/max-sixty/worktrunk/pull/1713))
+
+- **Copy-ignored exclude patterns**: `wt step copy-ignored` now skips built-in VCS metadata and tool-state directories (`.bzr/`, `.conductor/`, `.entire/`, `.hg/`, `.jj/`, `.pi/`, `.pijul/`, `.sl/`, `.svn/`, `.worktrees/`) by default. Additional excludes are configurable via `[step.copy-ignored] exclude = [...]` in user or project config. ([#1667](https://github.com/max-sixty/worktrunk/pull/1667), thanks @shunkakinoki for [#1653](https://github.com/max-sixty/worktrunk/issues/1653))
+
+- **Copy-ignored parallelized**: `wt step copy-ignored` directory walks run in parallel with a dedicated 4-thread pool, improving performance on multi-core systems. ([#1721](https://github.com/max-sixty/worktrunk/pull/1721))
+
+- **Alias append semantics**: Aliases now use append semantics across all config layers, matching hook merge behavior. Within user config, per-project aliases append to global aliases on collision (global first). Across configs, project-config aliases also run alongside user aliases (user first, then project with approval) — previously the user version silently suppressed the project version. ([#1724](https://github.com/max-sixty/worktrunk/pull/1724), [#1727](https://github.com/max-sixty/worktrunk/pull/1727))
+
+- **Agent skill discovery**: The website now serves `.well-known/agent-skills/` for web-based skill discovery by AI agents. ([#1751](https://github.com/max-sixty/worktrunk/pull/1751))
+
+### Fixed
+
+- **Picker alt-r skipped remove hooks**: Removing a worktree via `alt-r` in the picker bypassed pre-remove and post-remove hooks. Pre-remove hooks now run synchronously (non-zero exit aborts removal), and post-remove hooks spawn in the background. ([#1710](https://github.com/max-sixty/worktrunk/pull/1710))
+
+- **False positive shell integration warning**: `wt config show` reported "Found wt in ... but not detected as integration" for Nushell and Fish wrapper files that ARE the integration. Fixes [#1735](https://github.com/max-sixty/worktrunk/issues/1735). ([#1736](https://github.com/max-sixty/worktrunk/pull/1736), thanks @saschabratton)
+
+- **Bare repo config path ignored**: `wt hook approvals add` and other config commands failed to find `.config/wt.toml` in bare repositories because they looked relative to the current worktree instead of the primary worktree. Fixes [#1744](https://github.com/max-sixty/worktrunk/issues/1744). ([#1745](https://github.com/max-sixty/worktrunk/pull/1745), thanks @jrdncstr)
+
+### Documentation
+
+- Help text for `wt step` subcommands cleaned up — redundant openers removed. ([#1737](https://github.com/max-sixty/worktrunk/pull/1737))
+
+- Experimental badge placement fixed in generated documentation. ([#1742](https://github.com/max-sixty/worktrunk/pull/1742), [#1729](https://github.com/max-sixty/worktrunk/pull/1729), [#1734](https://github.com/max-sixty/worktrunk/pull/1734), [#1746](https://github.com/max-sixty/worktrunk/pull/1746))
+
+### Internal
+
+- Copy-ignored built-in exclude constants consolidated. ([#1738](https://github.com/max-sixty/worktrunk/pull/1738))
+
+- `Cmd::env()` accepts `AsRef<OsStr>` for direct path compatibility. ([#1723](https://github.com/max-sixty/worktrunk/pull/1723))
+
+- Picker width survey snapshots for layout testing at various terminal sizes. ([#1613](https://github.com/max-sixty/worktrunk/pull/1613))
+
 ## 0.32.0
 
 ### Improved

@@ -18,18 +18,19 @@ use worktrunk::git::{GitError, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     INFO_SYMBOL, PROMPT_SYMBOL, eprintln, format_bash_with_gutter, format_heading, hint_message,
-    info_message, success_message,
+    info_message, success_message, warning_message,
 };
 
 use super::command_approval::approve_hooks_filtered;
 use super::command_executor::build_hook_context;
 
 use super::command_executor::CommandContext;
+use super::command_executor::{FailureStrategy, command_summary_name};
 use super::context::CommandEnv;
+use super::hook_filter::{HookSource, ParsedFilter};
 use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, check_name_filter_matched, prepare_hook_commands,
-    prepare_pipeline_hooks_with_configs, run_hook_with_filter, spawn_background_hooks,
-    spawn_hook_pipeline,
+    HookCommandSpec, check_name_filter_matched, count_sourced_commands, prepare_background_hooks,
+    prepare_sourced_steps, run_hook_with_filter, spawn_hook_pipeline,
 };
 use super::project_config::collect_commands_for_hooks;
 
@@ -39,8 +40,8 @@ fn run_filtered_hook(
     project_config: Option<&CommandConfig>,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
-    name_filter: Option<&str>,
-    failure_strategy: HookFailureStrategy,
+    name_filters: &[String],
+    failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
     run_hook_with_filter(
         ctx,
@@ -49,7 +50,7 @@ fn run_filtered_hook(
             project_config,
             hook_type,
             extra_vars,
-            name_filter,
+            name_filters,
             display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
         },
         failure_strategy,
@@ -63,41 +64,36 @@ fn run_post_hook(
     project_config: Option<&CommandConfig>,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
-    name_filter: Option<&str>,
+    name_filters: &[String],
 ) -> anyhow::Result<()> {
     // Default to background execution; --foreground is for debugging.
     if !foreground.unwrap_or(false) {
-        // Pipeline configs (list form) use compound shell command path.
-        // Name filtering falls through to the flat path (individual command execution).
-        let has_pipeline = [user_config, project_config]
-            .iter()
-            .any(|c| c.is_some_and(CommandConfig::is_pipeline));
-
-        if has_pipeline && name_filter.is_none() {
-            let steps = prepare_pipeline_hooks_with_configs(
+        if !name_filters.is_empty() {
+            let steps = prepare_sourced_steps(
                 ctx,
+                HookCommandSpec {
+                    user_config,
+                    project_config,
+                    hook_type,
+                    extra_vars,
+                    name_filters,
+                    display_path: None,
+                },
+            )?;
+            check_name_filter_matched(
+                name_filters,
+                count_sourced_commands(&steps),
                 user_config,
                 project_config,
-                hook_type,
-                extra_vars,
-                None,
             )?;
             return spawn_hook_pipeline(ctx, steps);
         }
 
-        let commands = prepare_hook_commands(
-            ctx,
-            HookCommandSpec {
-                user_config,
-                project_config,
-                hook_type,
-                extra_vars,
-                name_filter,
-                display_path: None,
-            },
-        )?;
-        check_name_filter_matched(name_filter, commands.len(), user_config, project_config)?;
-        return spawn_background_hooks(ctx, commands);
+        // No name filter: prepare as pipeline steps and spawn per source.
+        for steps in prepare_background_hooks(ctx, hook_type, extra_vars, None)? {
+            spawn_hook_pipeline(ctx, steps)?;
+        }
+        return Ok(());
     }
 
     run_filtered_hook(
@@ -106,8 +102,8 @@ fn run_post_hook(
         project_config,
         hook_type,
         extra_vars,
-        name_filter,
-        HookFailureStrategy::Warn,
+        name_filters,
+        FailureStrategy::Warn,
     )
 }
 
@@ -162,6 +158,86 @@ fn build_manual_hook_extra_vars<'a>(
     vars
 }
 
+/// Warn about user-provided `--var` flags that aren't referenced by any template
+/// in the hooks that will run. Catches typos in variable names that would
+/// otherwise silently have no effect.
+///
+/// Only checks top-level variable references (not `{{ vars.foo }}`). Name
+/// filters are respected — if the user runs `wt hook pre-merge test` and `test`
+/// doesn't use the var but `build` does, we still warn because `build` won't run.
+fn warn_unreferenced_custom_vars(
+    user_config: Option<&CommandConfig>,
+    project_config: Option<&CommandConfig>,
+    name_filters: &[String],
+    custom_vars: &[(String, String)],
+) {
+    if custom_vars.is_empty() {
+        return;
+    }
+
+    let parsed_filters: Vec<ParsedFilter<'_>> = name_filters
+        .iter()
+        .map(|f| ParsedFilter::parse(f))
+        .collect();
+    let filter_names: Vec<&str> = parsed_filters
+        .iter()
+        .filter(|f| !f.name.is_empty())
+        .map(|f| f.name)
+        .collect();
+
+    // Empty environment: every variable reference in the template appears as
+    // "undeclared", giving us the full set of referenced top-level names.
+    let env = minijinja::Environment::new();
+    let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for (source, config) in [
+        (HookSource::User, user_config),
+        (HookSource::Project, project_config),
+    ] {
+        let Some(config) = config else { continue };
+
+        // Skip this source if no filter matches it
+        if !parsed_filters.is_empty() && !parsed_filters.iter().any(|f| f.matches_source(source)) {
+            continue;
+        }
+
+        for step in config.steps() {
+            let commands: &[worktrunk::config::Command] = match step {
+                worktrunk::config::HookStep::Single(cmd) => std::slice::from_ref(cmd),
+                worktrunk::config::HookStep::Concurrent(cmds) => cmds.as_slice(),
+            };
+            for cmd in commands {
+                // If names are filtered, skip commands whose name doesn't match
+                if !filter_names.is_empty()
+                    && !cmd
+                        .name
+                        .as_deref()
+                        .is_some_and(|n| filter_names.contains(&n))
+                {
+                    continue;
+                }
+                if let Ok(tmpl) = env.template_from_str(&cmd.template) {
+                    referenced.extend(tmpl.undeclared_variables(false));
+                }
+            }
+        }
+    }
+
+    // TODO: show the original (pre-canonicalized) key in the warning so
+    // `--my-env=staging` produces "my-env" not "my_env". Requires threading
+    // the raw input through parse_key_val.
+    for (key, _) in custom_vars {
+        if !referenced.contains(key) {
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "--var <bold>{key}</> is not referenced by any hook template — typo?"
+                ))
+            );
+        }
+    }
+}
+
 /// Handle `wt hook` command
 ///
 /// When explicitly invoking hooks, ALL hooks run (both user and project).
@@ -182,7 +258,7 @@ pub fn run_hook(
     yes: bool,
     foreground: Option<bool>,
     dry_run: bool,
-    name_filter: Option<&str>,
+    name_filters: &[String],
     custom_vars: &[(String, String)],
 ) -> anyhow::Result<()> {
     // Derive context from current environment (branch-optional for CI compatibility)
@@ -195,8 +271,8 @@ pub fn run_hook(
 
     if !dry_run {
         // "Approve at the Gate": approve project hooks upfront
-        // Pass name_filter to only approve the targeted hook, not all hooks of this type
-        let approved = approve_hooks_filtered(&ctx, &[hook_type], name_filter)?;
+        // Pass name_filters to only approve the targeted hooks, not all hooks of this type
+        let approved = approve_hooks_filtered(&ctx, &[hook_type], name_filters)?;
         // If declined, return early - the whole point of `wt hook` is to run hooks
         if !approved {
             eprintln!("{}", worktrunk::styling::info_message("Commands declined"));
@@ -210,28 +286,25 @@ pub fn run_hook(
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    /// Helper to require at least one hook is configured (for standalone `wt hook` command)
-    fn require_hooks(
-        user: Option<&CommandConfig>,
-        project: Option<&CommandConfig>,
-        hook_type: HookType,
-    ) -> anyhow::Result<()> {
-        if user.is_none() && project.is_none() {
-            return Err(worktrunk::git::GitError::Other {
-                message: format!("No {hook_type} hook configured; checked both user and project"),
-            }
-            .into());
-        }
-        Ok(())
-    }
-
     // Get effective user hooks (global + per-project merged)
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
     let (user_config, proj_config) = (
         user_hooks.get(hook_type),
         project_config.as_ref().and_then(|c| c.hooks.get(hook_type)),
     );
-    require_hooks(user_config, proj_config, hook_type)?;
+    // No hooks configured: warn and exit successfully. Running hooks that
+    // don't exist is a no-op, so scripts can invoke `wt hook <type>`
+    // unconditionally without special-casing empty configuration.
+    if user_config.is_none() && proj_config.is_none() {
+        eprintln!(
+            "{}",
+            warning_message(format!("No {hook_type} hooks configured"))
+        );
+        return Ok(());
+    }
+
+    // Warn about typos in --var flags — vars that no template references
+    warn_unreferenced_custom_vars(user_config, proj_config, name_filters, custom_vars);
 
     // Build extra vars per hook type (shared by dry-run and execution paths)
     let default_branch = repo.default_branch();
@@ -245,34 +318,40 @@ pub fn run_hook(
     );
 
     if dry_run {
-        let commands = prepare_hook_commands(
+        let steps = prepare_sourced_steps(
             &ctx,
             HookCommandSpec {
                 user_config,
                 project_config: proj_config,
                 hook_type,
                 extra_vars: &extra_vars,
-                name_filter,
+                name_filters,
                 display_path: None,
             },
         )?;
-        check_name_filter_matched(name_filter, commands.len(), user_config, proj_config)?;
+        check_name_filter_matched(
+            name_filters,
+            count_sourced_commands(&steps),
+            user_config,
+            proj_config,
+        )?;
 
-        for cmd in &commands {
-            let label = match &cmd.prepared.name {
-                Some(n) => {
-                    let display_name = format!("{}:{}", cmd.source, n);
-                    cformat!("{hook_type} <bold>{display_name}</> would run:")
-                }
-                None => cformat!("{hook_type} {} hook would run:", cmd.source),
-            };
-            eprintln!(
-                "{}",
-                info_message(cformat!(
-                    "{label}\n{}",
-                    format_bash_with_gutter(&cmd.prepared.expanded)
-                ))
-            );
+        for sourced in steps {
+            for cmd in sourced.step.into_commands() {
+                let summary = command_summary_name(cmd.name.as_deref(), sourced.source);
+                let label = if cmd.name.is_some() {
+                    cformat!("{hook_type} <bold>{summary}</> would run:")
+                } else {
+                    cformat!("{hook_type} <bold>{summary}</> hook would run:")
+                };
+                eprintln!(
+                    "{}",
+                    info_message(cformat!(
+                        "{label}\n{}",
+                        format_bash_with_gutter(&cmd.expanded)
+                    ))
+                );
+            }
         }
         return Ok(());
     }
@@ -290,8 +369,8 @@ pub fn run_hook(
             proj_config,
             hook_type,
             &extra_vars,
-            name_filter,
-            HookFailureStrategy::FailFast,
+            name_filters,
+            FailureStrategy::FailFast,
         ),
         HookType::PostStart
         | HookType::PostSwitch
@@ -304,7 +383,7 @@ pub fn run_hook(
             proj_config,
             hook_type,
             &extra_vars,
-            name_filter,
+            name_filters,
         ),
     }
 }
@@ -432,7 +511,7 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
 pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyhow::Result<()> {
     use crate::help_pager::show_help_in_pager;
 
-    let repo = Repository::current()?;
+    let repo = Repository::current().context("Failed to show hooks")?;
     let config = UserConfig::load().context("Failed to load user config")?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
     let project_config = repo.load_project_config()?;
@@ -480,9 +559,9 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
         ctx.as_ref(),
     )?;
 
-    // Display through pager (fall back to stderr if pager unavailable)
+    // Display through pager; fall back to direct stdout if pager unavailable
     if show_help_in_pager(&output, true).is_err() {
-        worktrunk::styling::eprintln!("{}", output);
+        worktrunk::styling::println!("{}", output);
     }
 
     Ok(())
@@ -514,7 +593,7 @@ fn render_user_hooks(
     // Collect all user hooks (global hooks from the user config file)
     // Note: uses overrides.hooks for display, not the merged hooks() accessor.
     // get() handles the post-create → pre-start deprecation merge.
-    let user_hooks = &config.configs.hooks;
+    let user_hooks = &config.hooks;
     let hooks: Vec<_> = HookType::iter()
         .filter_map(|ht| user_hooks.get(ht).map(|cfg| (ht, cfg)))
         .collect();

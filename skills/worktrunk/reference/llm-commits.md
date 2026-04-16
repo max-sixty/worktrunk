@@ -51,10 +51,10 @@ Squashes all changes (uncommitted + existing commits) into one commit with an LL
 
 ```bash
 $ wt merge
-◎ Squashing 3 commits into a single commit (5 files, +48)...
-◎ Generating squash commit message...
-   feat(auth): Implement JWT authentication system
-   ...
+<span class=c>◎</span> <span class=c>Squashing 3 commits into a single commit <span style='color:var(--bright-black,#555)'>(5 files, <span class=g>+48</span></span></span><span style='color:var(--bright-black,#555)'>)</span>...
+<span class=c>◎</span> <span class=c>Generating squash commit message...</span>
+<span style='background:var(--bright-white,#fff)'> </span> <b>feat(auth): Implement JWT authentication system</b>
+<span style='background:var(--bright-white,#fff)'> </span> ...
 ```
 
 ### wt step commit
@@ -62,7 +62,7 @@ $ wt merge
 Stages and commits with LLM-generated message:
 
 ```bash
-$ wt step commit
+wt step commit
 ```
 
 ### wt step squash
@@ -70,7 +70,7 @@ $ wt step commit
 Squashes branch commits into one with LLM-generated message:
 
 ```bash
-$ wt step squash
+wt step squash
 ```
 
 See [`wt merge`](https://worktrunk.dev/merge/) and [`wt step`](https://worktrunk.dev/step/) for full documentation.
@@ -93,7 +93,7 @@ Enable in user config:
 summary = true
 ```
 
-Disabled by default — when enabled, each branch's diff is sent to the configured LLM for summarization. Results are cached until the diff changes.
+Summaries are cached and regenerated only when the diff changes.
 
 ## Prompt templates
 

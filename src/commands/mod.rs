@@ -1,5 +1,4 @@
 mod alias;
-pub(crate) mod branch_deletion;
 pub(crate) mod command_approval;
 pub(crate) mod command_executor;
 pub(crate) mod commit;
@@ -7,6 +6,7 @@ pub(crate) mod config;
 pub(crate) mod configure_shell;
 pub(crate) mod context;
 mod eval;
+pub(crate) mod external;
 mod for_each;
 mod handle_switch;
 mod hook_commands;
@@ -17,24 +17,29 @@ pub(crate) mod list;
 pub(crate) mod merge;
 #[cfg(unix)]
 pub(crate) mod picker;
+pub(crate) mod pipeline_spec;
 pub(crate) mod process;
 pub(crate) mod project_config;
 mod relocate;
 pub(crate) mod repository_ext;
+mod run_pipeline;
 pub(crate) mod statusline;
 pub(crate) mod step_commands;
 pub(crate) mod worktree;
 
-pub(crate) use alias::{AliasOptions, step_alias};
+pub(crate) use alias::{AliasOptions, augment_step_help, step_alias};
 pub(crate) use config::{
+    handle_claude_install, handle_claude_install_statusline, handle_claude_uninstall,
     handle_config_create, handle_config_show, handle_config_update, handle_hints_clear,
-    handle_hints_get, handle_logs_get, handle_state_clear, handle_state_clear_all,
-    handle_state_get, handle_state_set, handle_state_show,
+    handle_hints_get, handle_logs_list, handle_opencode_install, handle_opencode_uninstall,
+    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
+    handle_state_show, handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set,
 };
 pub(crate) use configure_shell::{
     handle_configure_shell, handle_show_theme, handle_unconfigure_shell,
 };
 pub(crate) use eval::step_eval;
+pub(crate) use external::handle_external_command;
 pub(crate) use for_each::step_for_each;
 pub(crate) use handle_switch::{SwitchOptions, handle_switch};
 pub(crate) use hook_commands::{add_approvals, clear_approvals, handle_hook_show, run_hook};
@@ -44,6 +49,7 @@ pub(crate) use merge::{MergeOptions, handle_merge};
 #[cfg(unix)]
 pub(crate) use picker::handle_picker;
 pub(crate) use repository_ext::RemoveTarget;
+pub(crate) use run_pipeline::run_pipeline;
 pub(crate) use step_commands::{
     PromoteResult, RebaseResult, SquashResult, handle_promote, handle_rebase, handle_squash,
     step_commit, step_copy_ignored, step_diff, step_prune, step_relocate, step_show_squash_prompt,
@@ -68,6 +74,16 @@ pub(crate) fn format_command_label(command_type: &str, name: Option<&str>) -> St
         Some(name) => cformat!("Running {command_type} <bold>{name}</>"),
         None => format!("Running {command_type}"),
     }
+}
+
+/// Force concurrent steps to run serially. Test-only escape hatch — set via
+/// `WORKTRUNK_TEST_SERIAL_CONCURRENT=1` to make output ordering deterministic
+/// for snapshot tests, mirroring how `RAYON_NUM_THREADS=1` is used elsewhere.
+///
+/// Honored by both alias `HookStep::Concurrent` execution and the background
+/// pipeline runner's concurrent groups.
+pub(crate) fn force_serial_concurrent() -> bool {
+    std::env::var_os("WORKTRUNK_TEST_SERIAL_CONCURRENT").is_some()
 }
 
 /// Show detailed diffstat for a given commit range.

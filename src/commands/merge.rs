@@ -6,20 +6,18 @@ use worktrunk::styling::{eprintln, info_message};
 
 use super::command_approval::approve_command_batch;
 use super::command_executor::CommandContext;
+use super::command_executor::FailureStrategy;
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
-use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, execute_hook, prepare_hook_commands,
-    spawn_background_hooks,
-};
+use super::hooks::{execute_hook, prepare_background_hooks, spawn_hook_pipeline};
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::repository_ext::{
     RepositoryCliExt, check_not_default_branch, compute_integration_reason, is_primary_worktree,
 };
 use super::worktree::{
-    BranchDeletionMode, MergeOperations, RemoveResult, handle_no_ff_merge, handle_push,
-    path_mismatch,
+    MergeOperations, RemoveResult, handle_no_ff_merge, handle_push, path_mismatch,
 };
+use worktrunk::git::BranchDeletionMode;
 
 /// Options for the merge command
 ///
@@ -35,13 +33,15 @@ pub struct MergeOptions<'a> {
     pub rebase: Option<bool>,
     /// CLI override for remove. None = use effective config default.
     pub remove: Option<bool>,
-    /// CLI override for no-ff. None = use effective config default.
-    pub no_ff: Option<bool>,
+    /// CLI override for ff. None = use effective config default.
+    pub ff: Option<bool>,
     /// CLI override for verify. None = use effective config default.
     pub verify: Option<bool>,
     pub yes: bool,
     /// CLI override for stage mode. None = use effective config default.
     pub stage: Option<super::commit::StageMode>,
+    /// Output format (text or json).
+    pub format: crate::cli::SwitchFormat,
 }
 
 /// Collect all commands that will be executed during merge.
@@ -86,16 +86,18 @@ fn collect_merge_commands(
 }
 
 pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
+    let json_mode = opts.format == crate::cli::SwitchFormat::Json;
     let MergeOptions {
         target,
         squash: squash_opt,
         commit: commit_opt,
         rebase: rebase_opt,
         remove: remove_opt,
-        no_ff: no_ff_opt,
+        ff: ff_opt,
         verify: verify_opt,
         yes,
         stage,
+        ..
     } = opts;
 
     // Load config once, run LLM setup prompt if committing, then reuse config
@@ -105,7 +107,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         let _ = crate::output::prompt_commit_generation(&mut config);
     }
 
-    let env = CommandEnv::for_action("merge", config)?;
+    let env = CommandEnv::for_action(config)?;
     let repo = &env.repo;
     let config = &env.config;
     // Merge requires being on a branch (can't merge from detached HEAD)
@@ -119,7 +121,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let commit = commit_opt.unwrap_or(resolved.merge.commit());
     let rebase = rebase_opt.unwrap_or(resolved.merge.rebase());
     let remove = remove_opt.unwrap_or(resolved.merge.remove());
-    let no_ff = no_ff_opt.unwrap_or(resolved.merge.no_ff());
+    let ff = ff_opt.unwrap_or(resolved.merge.ff());
     let verify = verify_opt.unwrap_or(resolved.merge.verify());
     let stage_mode = stage.unwrap_or(resolved.commit.stage());
 
@@ -224,7 +226,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         .as_deref()
         .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
-    // Run pre-merge checks unless --no-verify was specified
+    // Run pre-merge checks unless --no-hooks was specified
     // Do this after commit/squash/rebase to validate the final state that will be pushed
     if verify {
         let ctx = env.context(yes);
@@ -236,8 +238,8 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             &ctx,
             HookType::PreMerge,
             &extra,
-            HookFailureStrategy::FailFast,
-            None,
+            FailureStrategy::FailFast,
+            &[],
             crate::output::pre_hook_display_path(ctx.worktree_path),
         )?;
     }
@@ -248,7 +250,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         squashed,
         rebased,
     });
-    if no_ff {
+    if !ff {
         // Create a merge commit on the target branch via commit-tree + update-ref
         handle_no_ff_merge(Some(&target_branch), operations, &current_branch)?;
     } else {
@@ -305,7 +307,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         current_wt.ensure_clean("remove worktree after merge", Some(&current_branch), false)?;
 
         let worktree_root = current_wt.root()?;
-        let integration_reason = compute_integration_reason(
+        let (integration_reason, _) = compute_integration_reason(
             repo,
             Some(&current_branch),
             Some(&target_branch),
@@ -325,7 +327,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             expected_path,
             removed_commit: feature_commit.clone(),
         };
-        crate::output::handle_remove_output(&remove_result, false, verify, false)?;
+        crate::output::handle_remove_output(&remove_result, false, verify, false, false)?;
         true
     };
 
@@ -356,25 +358,21 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             extra.push(("short_commit", sc));
         }
 
-        let project_config = ctx.repo.load_project_config()?;
-        let user_hooks_cfg = ctx.config.hooks(ctx.project_id().as_deref());
-        let (user_cfg, proj_cfg) = super::hooks::lookup_hook_configs(
-            &user_hooks_cfg,
-            project_config.as_ref(),
-            HookType::PostMerge,
-        );
-        let commands = prepare_hook_commands(
-            &ctx,
-            HookCommandSpec {
-                user_config: user_cfg,
-                project_config: proj_cfg,
-                hook_type: HookType::PostMerge,
-                extra_vars: &extra,
-                name_filter: None,
-                display_path,
-            },
-        )?;
-        spawn_background_hooks(&ctx, commands)?;
+        for steps in prepare_background_hooks(&ctx, HookType::PostMerge, &extra, display_path)? {
+            spawn_hook_pipeline(&ctx, steps)?;
+        }
+    }
+
+    if json_mode {
+        let output = serde_json::json!({
+            "branch": current_branch,
+            "target": target_branch,
+            "committed": committed,
+            "squashed": squashed,
+            "rebased": rebased,
+            "removed": removed,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
     }
 
     Ok(())

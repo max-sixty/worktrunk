@@ -1,0 +1,5 @@
+---
+source: src/commands/config/mod.rs
+expression: "warn_unknown_keys::<UserConfig>(&tree)"
+---
+[33m▲[39m [33mUnknown key [1mmerge.squas[22m will be ignored[39m

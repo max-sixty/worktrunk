@@ -87,9 +87,11 @@ cargo run -p wt-perf -- invalidate /tmp/wt-perf-typical-8/main
 ### Generating traces
 
 ```bash
-# Generate trace.json for Perfetto/Chrome
-RUST_LOG=debug wt list --branches 2>&1 | grep '\[wt-trace\]' | \
-  cargo run -p wt-perf -- trace > trace.json
+# Generate trace.json for Perfetto/Chrome. `--progressive` forces TTY-gated
+# events (Skeleton rendered, First result received) to fire even when stdout
+# is piped.
+RUST_LOG=debug wt list --progressive --branches 2>&1 \
+  | cargo run -p wt-perf -- trace > trace.json
 
 # Open in https://ui.perfetto.dev or chrome://tracing
 ```
@@ -102,46 +104,92 @@ Install [trace_processor](https://perfetto.dev/docs/analysis/trace-processor) fo
 curl -LO https://get.perfetto.dev/trace_processor && chmod +x trace_processor
 ```
 
-Useful queries:
+### Performance questions
+
+Three questions drive `wt list` performance work:
+
+1. **Where does time go?** Which subprocess types consume the most total time? The category with the highest `total_ms` is where optimization effort has the most impact.
+
+2. **How parallel are we?** Total subprocess time divided by wall time gives a parallelism factor. A factor of 4.0 means 4 commands running concurrently on average. Close to 1.0 means mostly serial execution with headroom to parallelize.
+
+3. **What's on the critical path?** The critical path passes through serial phases (setup, finalization) plus the slowest work item in the parallel phase. We don't have good queries for this yet — the trace format doesn't capture task dependencies, and rayon's work-stealing means thread IDs don't map to worktrees. The queries below are a starting point (phase boundaries from milestones, per-worktree time from args) but don't give a real critical path answer. Visualizing the trace in Perfetto is more useful here.
+
+### Queries
 
 ```bash
-# Top 10 slowest commands
+# 1. Where does time go? — slowest individual commands
 echo "SELECT name, ts/1e6 as start_ms, dur/1e6 as dur_ms FROM slice WHERE dur > 0 ORDER BY dur DESC LIMIT 10;" | trace_processor trace.json
 
-# Milestone events (skeleton render, worker spawn, completion)
-echo "SELECT name, ts/1e6 as ms FROM slice WHERE dur = 0 ORDER BY ts;" | trace_processor trace.json
-
-# Task type breakdown
+# 1. Where does time go? — total time by command type
 cat > /tmp/q.sql << 'EOF'
 SELECT
-  CASE WHEN name LIKE '%status%' THEN 'status'
-       WHEN name LIKE '%rev-parse%tree%' THEN 'trees_match'
+  CASE WHEN name LIKE '%patch-id%' THEN 'patch_id'
+       WHEN name LIKE '%diff-tree%' THEN 'diff_tree'
+       WHEN name LIKE '%log -p%' THEN 'log_patches'
        WHEN name LIKE '%merge-tree%' THEN 'merge_tree'
        WHEN name LIKE '%is-ancestor%' THEN 'is_ancestor'
        WHEN name LIKE '%diff --name%' THEN 'file_changes'
+       WHEN name LIKE '%diff --numstat%' THEN 'diff_numstat'
+       WHEN name LIKE '%diff --shortstat%' THEN 'diff_shortstat'
+       WHEN name LIKE '%diff --cached%' THEN 'diff_cached'
+       WHEN name LIKE '% diff main...%' THEN 'diff_3dot'
+       WHEN name LIKE '% diff HEAD%' THEN 'diff_wt'
+       WHEN name LIKE '%rev-parse%{tree}%' THEN 'trees_match'
+       WHEN name LIKE '%for-each-ref%' THEN 'for_each_ref'
+       WHEN name LIKE '%worktree list%' THEN 'worktree_list'
+       WHEN name LIKE '%stash create%' THEN 'stash_create'
+       WHEN name LIKE '%sparse-checkout%' THEN 'sparse_checkout'
+       WHEN name LIKE '%rev-list%' THEN 'rev_list'
+       WHEN name LIKE '%claude -p%' THEN 'llm_summary'
+       WHEN name LIKE '%status%' THEN 'status'
+       WHEN name LIKE '%merge-base%' THEN 'merge_base'
+       WHEN name LIKE '%log %' THEN 'log'
+       WHEN name LIKE '%config%' THEN 'config'
+       WHEN name LIKE '%rev-parse%' THEN 'rev_parse'
        ELSE 'other' END as task_type,
   COUNT(*) as count,
-  ROUND(SUM(dur)/1e6, 2) as total_ms
+  ROUND(SUM(dur)/1e6, 2) as total_ms,
+  ROUND(MAX(dur)/1e6, 2) as max_ms,
+  ROUND(AVG(dur)/1e6, 2) as avg_ms
 FROM slice WHERE dur > 0
 GROUP BY task_type ORDER BY total_ms DESC;
 EOF
 trace_processor trace.json -q /tmp/q.sql
 
-# Check parallel execution overlap between task types
+# 2. How parallel are we? — subprocess time vs subprocess span
+# parallelism ≈ 1.0 → serial; higher → concurrent execution is helping
+# (span = first subprocess start to last subprocess end; excludes wt's non-subprocess overhead)
 cat > /tmp/q.sql << 'EOF'
-WITH status_times AS (
-  SELECT MIN(ts) as start_us, MAX(ts + dur) as end_us
-  FROM slice WHERE name LIKE '%status%'
-),
-trees_times AS (
-  SELECT MIN(ts) as start_us, MAX(ts + dur) as end_us
-  FROM slice WHERE name LIKE '%rev-parse%tree%'
-)
 SELECT
-  s.start_us/1e6 as status_start_ms, s.end_us/1e6 as status_end_ms,
-  t.start_us/1e6 as trees_start_ms, t.end_us/1e6 as trees_end_ms,
-  CASE WHEN s.end_us > t.start_us AND t.end_us > s.start_us THEN 'OVERLAP' ELSE 'SEQUENTIAL' END as parallel
-FROM status_times s, trees_times t;
+  ROUND(SUM(dur)/1e6, 1) as total_subprocess_ms,
+  ROUND((MAX(ts + dur) - MIN(ts))/1e6, 1) as span_ms,
+  ROUND(CAST(SUM(dur) AS FLOAT) / (MAX(ts + dur) - MIN(ts)), 1) as parallelism
+FROM slice WHERE dur > 0;
+EOF
+trace_processor trace.json -q /tmp/q.sql
+
+# 3. What's on the critical path? — phase durations
+# Shows time between milestones: serial setup, parallel work, finalization
+# Key milestones: "Skeleton rendered", "Parallel execution started", "All results drained"
+cat > /tmp/q.sql << 'EOF'
+SELECT
+  name,
+  ROUND(ts/1e6, 1) as ms,
+  ROUND((ts - LAG(ts) OVER (ORDER BY ts))/1e6, 1) as phase_ms
+FROM slice WHERE dur = 0
+ORDER BY ts;
+EOF
+trace_processor trace.json -q /tmp/q.sql
+
+# 3. What's on the critical path? — parallel bottleneck (per-worktree)
+# The worktree with the highest total_ms is the likely parallel bottleneck
+cat > /tmp/q.sql << 'EOF'
+SELECT
+  EXTRACT_ARG(arg_set_id, 'args.context') as worktree,
+  COUNT(*) as commands,
+  ROUND(SUM(dur)/1e6, 1) as total_ms
+FROM slice WHERE dur > 0
+GROUP BY worktree ORDER BY total_ms DESC;
 EOF
 trace_processor trace.json -q /tmp/q.sql
 ```
@@ -150,8 +198,8 @@ trace_processor trace.json -q /tmp/q.sql
 
 ```bash
 # Trace on rust-lang/rust (must run benchmark first to clone)
-RUST_LOG=debug cargo run --release -q -- -C target/bench-repos/rust list --branches 2>&1 | \
-  grep '\[wt-trace\]' | cargo run -p wt-perf -- trace > rust-trace.json
+RUST_LOG=debug cargo run --release -q -- -C target/bench-repos/rust list --progressive --branches 2>&1 \
+  | cargo run -p wt-perf -- trace > rust-trace.json
 ```
 
 ## Key Performance Insights
@@ -163,6 +211,10 @@ This command walks the commit graph to compute divergence. On rust-lang/rust:
 - Only way to avoid it is to not enumerate branches at all
 
 **Branch enumeration costs** (rust-lang/rust with 50 branches):
-- No optimization: ~15-18s (expensive merge-base/merge-tree per branch)
-- With skip_expensive_for_stale: ~2-3s (skips expensive ops for stale branches)
+- First run (cold persistent cache): ~15-18s (expensive merge-base/merge-tree per branch)
+- Subsequent runs (warm persistent cache): ~2-3s (cache hits on merge-tree / integration probes / diff stats / ancestry)
 - Worktrees only: ~600ms (no branch enumeration)
+
+The persistent SHA-keyed cache (`.git/wt/cache/`) amortizes the first-run cost across
+subsequent invocations. Cache entries are eternally valid since they're keyed on commit
+SHAs.

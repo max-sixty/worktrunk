@@ -13,22 +13,25 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt config state previous-branch - Previous branch (for [1mwt switch -[0m)
 
 Usage: [1m[36mwt config state previous-branch[0m [36m[OPTIONS][0m [36m[COMMAND][0m
@@ -50,7 +53,7 @@ Usage: [1m[36mwt config state previous-branch[0m [36m[OPTIONS][0m [36m[COM
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
 
 Enables [2mwt switch -[0m to return to the previous worktree, similar to [2mcd -[0m or [2mgit checkout -[0m.
 
@@ -59,3 +62,5 @@ Enables [2mwt switch -[0m to return to the previous worktree, similar to [2mc
 Updated automatically on every [2mwt switch[0m. Stored in git config as [2mworktrunk.history[0m.
 
 Without a subcommand, runs [2mget[0m. Use [2mset[0m to override or [2mclear[0m to reset.
+
+----- stderr -----

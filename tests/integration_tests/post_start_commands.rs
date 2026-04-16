@@ -897,28 +897,30 @@ approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let git_common_dir = resolve_git_common_dir(&worktree_path);
     let log_dir = git_common_dir.join("wt/logs");
-    wait_for_file_count(&log_dir, "log", 1);
+    // 2 log files: runner log + per-command log (cmd-0, unnamed single command)
+    wait_for_file_count(&log_dir, "log", 2);
 
-    // Find the log file
-    let log_files: Vec<_> = fs::read_dir(&log_dir)
-        .unwrap()
+    // Find the command log file at `{branch}/project/post-start/cmd-0-*.log`.
+    let post_start_dir = log_dir
+        .join(worktrunk::path::sanitize_for_filename("feature"))
+        .join("project")
+        .join("post-start");
+    let cmd_log = fs::read_dir(&post_start_dir)
+        .unwrap_or_else(|e| panic!("reading {post_start_dir:?}: {e}"))
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("log"))
-        .collect();
+        .find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("cmd-0"))
+        })
+        .expect("Should have a cmd-0 log file");
 
-    assert_eq!(
-        log_files.len(),
-        1,
-        "Should have exactly one log file, found: {:?}",
-        log_files
-    );
+    // Wait for both lines — `&&` sequences two writes (stdout, then stderr),
+    // so file size > 0 can hit after only the first landed.
+    wait_for_file_lines(&cmd_log, 2);
 
-    // Wait for content to be written (background command might still be writing)
-    let log_file = &log_files[0];
-    wait_for_file_content(log_file);
-
-    let log_contents = fs::read_to_string(log_file).unwrap();
+    let log_contents = fs::read_to_string(&cmd_log).unwrap();
 
     // Verify both stdout and stderr were captured
     assert_snapshot!(log_contents, @"
@@ -982,57 +984,39 @@ approved-commands = [
 
     snapshot_switch("post_start_separate_logs", &repo, &["--create", "feature"]);
 
-    // Wait for all 3 log files to be created (poll, don't use fixed sleep)
+    // Each command gets its own log file (task1, task2, task3) plus one runner log.
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let git_common_dir = resolve_git_common_dir(&worktree_path);
     let log_dir = git_common_dir.join("wt/logs");
-    wait_for_file_count(&log_dir, "log", 3);
+    wait_for_file_count(&log_dir, "log", 4);
 
-    let log_files: Vec<_> = fs::read_dir(&log_dir)
-        .unwrap()
+    // Verify each task's output is in its own log file. Hook logs live at
+    // `{branch}/project/post-start/{task}.log` in the nested layout.
+    let post_start_dir = log_dir
+        .join(worktrunk::path::sanitize_for_filename("feature"))
+        .join("project")
+        .join("post-start");
+    let log_files: Vec<_> = fs::read_dir(&post_start_dir)
+        .unwrap_or_else(|e| panic!("reading {post_start_dir:?}: {e}"))
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("log"))
         .collect();
+    for (task, expected) in [
+        ("task1", "TASK1_OUTPUT"),
+        ("task2", "TASK2_OUTPUT"),
+        ("task3", "TASK3_OUTPUT"),
+    ] {
+        let log_file = log_files
+            .iter()
+            .find(|e| e.file_name().to_string_lossy().starts_with(task))
+            .unwrap_or_else(|| panic!("should have log file for {task} in {post_start_dir:?}"));
 
-    // Wait for content to be flushed in each log file before reading
-    for entry in &log_files {
-        wait_for_file_content(&entry.path());
-    }
-
-    // Read all log files and verify no cross-contamination
-    let mut found_outputs = vec![false, false, false];
-    for entry in log_files {
-        let contents = fs::read_to_string(entry.path()).unwrap();
-        let count_task1 = contents.matches("TASK1_OUTPUT").count();
-        let count_task2 = contents.matches("TASK2_OUTPUT").count();
-        let count_task3 = contents.matches("TASK3_OUTPUT").count();
-
-        // Each log should contain exactly one task's output
-        let total_outputs = count_task1 + count_task2 + count_task3;
-        assert_eq!(
-            total_outputs,
-            1,
-            "Each log should contain exactly one task's output, found {} in {:?}",
-            total_outputs,
-            entry.path()
+        wait_for_file_content(&log_file.path());
+        let contents = fs::read_to_string(log_file.path()).unwrap();
+        assert!(
+            contents.contains(expected),
+            "Log for {task} should contain {expected}, got: {contents}"
         );
-
-        if count_task1 == 1 {
-            found_outputs[0] = true;
-        }
-        if count_task2 == 1 {
-            found_outputs[1] = true;
-        }
-        if count_task3 == 1 {
-            found_outputs[2] = true;
-        }
     }
-
-    assert!(
-        found_outputs.iter().all(|&x| x),
-        "Should find output from all three tasks, found: {:?}",
-        found_outputs
-    );
 }
 
 #[rstest]
@@ -1370,4 +1354,85 @@ approved-commands = ["echo PROJECT > project_marker.txt"]
     wait_for_file_content(&worktree_path.join("project_marker.txt"));
     let project = fs::read_to_string(worktree_path.join("project_marker.txt")).unwrap();
     assert!(project.contains("PROJECT"));
+}
+
+/// `WORKTRUNK_TEST_SERIAL_CONCURRENT=1` makes the background pipeline runner's
+/// concurrent group run commands one at a time in declaration order. The two
+/// commands append to the same file, so a deterministic ordering proves they
+/// ran serially (a true concurrent run could interleave the appends). The
+/// failing-first-command variant additionally exercises the bail-on-failure
+/// path inside the serial branch — second never gets to run.
+#[rstest]
+fn test_post_start_concurrent_serial_force(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[post-start]
+first = "echo FIRST >> serial_order.txt"
+second = "echo SECOND >> serial_order.txt"
+"#,
+    );
+    repo.commit("Add concurrent post-start");
+
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = [
+    "echo FIRST >> serial_order.txt",
+    "echo SECOND >> serial_order.txt",
+]
+"#,
+    );
+
+    let temp_home = TempDir::new().unwrap();
+    let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature"], None);
+    cmd.env("WORKTRUNK_TEST_SERIAL_CONCURRENT", "1");
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let _ = cmd.output().unwrap();
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let order_file = worktree_path.join("serial_order.txt");
+    wait_for_file_lines(&order_file, 2);
+
+    let content = fs::read_to_string(&order_file).unwrap();
+    assert_eq!(
+        content, "FIRST\nSECOND\n",
+        "serial run should append in declaration order"
+    );
+}
+
+#[rstest]
+fn test_post_start_concurrent_serial_bails_on_failure(repo: TestRepo) {
+    // First command writes a marker then fails; second writes a marker that
+    // would always exist if it ran. Serial mode bails after the first failure,
+    // so the second marker should be absent.
+    repo.write_project_config(
+        r#"[post-start]
+first = "echo FIRST > first_marker.txt && false"
+second = "echo SECOND > second_marker.txt"
+"#,
+    );
+    repo.commit("Add failing post-start");
+
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = [
+    "echo FIRST > first_marker.txt && false",
+    "echo SECOND > second_marker.txt",
+]
+"#,
+    );
+
+    let temp_home = TempDir::new().unwrap();
+    let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature"], None);
+    cmd.env("WORKTRUNK_TEST_SERIAL_CONCURRENT", "1");
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let _ = cmd.output().unwrap();
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    wait_for_file_content(&worktree_path.join("first_marker.txt"));
+
+    // Wait for any trailing background work, then assert the second never ran.
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+    assert!(
+        !worktree_path.join("second_marker.txt").exists(),
+        "serial mode should bail on first failure — second command must not run"
+    );
 }

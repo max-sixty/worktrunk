@@ -1,7 +1,11 @@
 use clap::Subcommand;
 
+use super::SwitchFormat;
 use crate::commands::Shell;
 
+// Ordering: primitive (init prints the code) → convenience (install writes
+// it) → inverse (uninstall removes it), then unrelated utilities. Hidden
+// commands last.
 #[derive(Subcommand)]
 pub enum ConfigShellCommand {
     /// Generate shell integration code
@@ -14,7 +18,7 @@ Add one line to the shell config:
 
 Bash (~/.bashrc):
 ```console
-eval "$(wt config shell init bash)"
+$ eval "$(wt config shell init bash)"
 ```
 
 Fish (~/.config/fish/config.fish):
@@ -29,7 +33,7 @@ eval "$(wt config shell init zsh)"
 
 Nushell [experimental] — save to vendor autoload directory:
 ```console
-wt config shell init nu | save -f ($nu.default-config-dir | path join vendor/autoload/wt.nu)
+$ wt config shell init nu | save -f ($nu.default-config-dir | path join vendor/autoload/wt.nu)
 ```"#
     )]
     Init {
@@ -54,12 +58,12 @@ wt config shell init nu | save -f ($nu.default-config-dir | path join vendor/aut
 
 Install for all detected shells:
 ```console
-wt config shell install
+$ wt config shell install
 ```
 
 Install for specific shell only:
 ```console
-wt config shell install zsh
+$ wt config shell install zsh
 ```
 
 Shows proposed changes and waits for confirmation before modifying any files.
@@ -95,17 +99,17 @@ Use --yes to skip confirmation."#
 
 Uninstall from all shells:
 ```console
-wt config shell uninstall
+$ wt config shell uninstall
 ```
 
 Uninstall from specific shell only:
 ```console
-wt config shell uninstall zsh
+$ wt config shell uninstall zsh
 ```
 
 Skip confirmation prompt:
 ```console
-wt config shell uninstall --yes
+$ wt config shell uninstall --yes
 ```
 
 ## Version tolerance
@@ -155,6 +159,49 @@ Detects various forms of the integration pattern regardless of:
     },
 }
 
+// Ordering: action + inverse adjacent (install, uninstall).
+#[derive(Subcommand)]
+pub enum ConfigPluginsOpencodeCommand {
+    /// Install the activity tracking plugin
+    #[command(
+        after_long_help = r#"Writes the worktrunk plugin to the OpenCode plugins directory.
+
+## Examples
+
+```console
+$ wt config plugins opencode install
+$ wt config plugins opencode install --yes
+```
+
+## Plugin location
+
+The plugin is written to `~/.config/opencode/plugins/worktrunk.ts`.
+Override with the `OPENCODE_CONFIG_DIR` environment variable."#
+    )]
+    Install {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// Remove the activity tracking plugin
+    #[command(
+        after_long_help = r#"Removes the worktrunk plugin from the OpenCode plugins directory.
+
+## Examples
+
+```console
+$ wt config plugins opencode uninstall
+```"#
+    )]
+    Uninstall {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+}
+
+// Ordering: action + inverse adjacent (add, clear).
 #[derive(Subcommand)]
 pub enum ApprovalsCommand {
     /// Store approvals in approvals.toml
@@ -184,6 +231,113 @@ all approvals across all projects."#
     },
 }
 
+// Ordering: alphabetical. Equal-weight sibling plugins with no natural
+// precedence.
+#[derive(Subcommand)]
+pub enum ConfigPluginsCommand {
+    /// Claude Code plugin
+    #[command(after_long_help = r#"## Examples
+
+Install the plugin:
+```console
+$ wt config plugins claude install
+```
+
+Remove the plugin:
+```console
+$ wt config plugins claude uninstall
+```
+
+Configure the statusline:
+```console
+$ wt config plugins claude install-statusline
+```"#)]
+    Claude {
+        #[command(subcommand)]
+        action: ConfigPluginsClaudeCommand,
+    },
+
+    /// OpenCode plugin
+    #[command(
+        after_long_help = r#"Activity tracking plugin — shows status markers in `wt list`:
+- 🤖 — agent is working
+- 💬 — agent is waiting for input
+
+## Examples
+
+```console
+$ wt config plugins opencode install
+$ wt config plugins opencode uninstall
+```
+
+## Plugin location
+
+Written to `~/.config/opencode/plugins/worktrunk.ts` (or `$OPENCODE_CONFIG_DIR/plugins/worktrunk.ts`)."#
+    )]
+    Opencode {
+        #[command(subcommand)]
+        action: ConfigPluginsOpencodeCommand,
+    },
+}
+
+// Ordering: action + inverse adjacent (install, uninstall), then related
+// extras.
+#[derive(Subcommand)]
+pub enum ConfigPluginsClaudeCommand {
+    /// Install the Worktrunk plugin
+    #[command(
+        after_long_help = r#"Adds the Worktrunk plugin from the marketplace and installs it. Equivalent to:
+
+```console
+$ claude plugin marketplace add max-sixty/worktrunk
+$ claude plugin install worktrunk@worktrunk
+```
+
+Requires `claude` CLI. Skips gracefully if already installed."#
+    )]
+    Install {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// Remove the Worktrunk plugin
+    #[command(
+        after_long_help = r#"Uninstalls the Worktrunk plugin from Claude Code. Equivalent to:
+
+```console
+$ claude plugin uninstall worktrunk@worktrunk
+```"#
+    )]
+    Uninstall {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// Configure the Claude Code statusline
+    #[command(
+        name = "install-statusline",
+        after_long_help = r#"Writes the statusline configuration to `~/.claude/settings.json`, setting:
+
+```json
+{"statusLine":{"type":"command","command":"wt list statusline --format=claude-code"}}
+```
+
+Preserves existing settings. Creates the `.claude/` directory and `settings.json` if needed.
+
+Skips gracefully if the statusline is already configured."#
+    )]
+    InstallStatusline {
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+}
+
+// Ordering: user journey — shell (install integration), create (bootstrap
+// config files), show (inspect), update (migrate deprecations), plugins
+// (optional add-ons), state (advanced diagnostics).
 #[derive(Subcommand)]
 pub enum ConfigCommand {
     /// Shell integration setup
@@ -223,7 +377,7 @@ If a config file doesn't exist, shows defaults that would be used.
 Use `--full` to run diagnostic checks:
 
 ```console
-wt config show --full
+$ wt config show --full
 ```
 
 This tests:
@@ -235,6 +389,10 @@ This tests:
         /// Run diagnostic checks (CI tools, commit generation, version)
         #[arg(long)]
         full: bool,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Output")]
+        format: SwitchFormat,
     },
 
     /// Update deprecated config settings
@@ -242,72 +400,112 @@ This tests:
         after_long_help = r#"Updates deprecated settings in user and project config files
 to their current equivalents. Shows a diff and asks for confirmation.
 
+Migrations are computed in memory on demand — worktrunk no longer writes
+`.new` files as a side effect of loading config. Use `--print` to see the
+migrated TOML without touching any file.
+
 ## Examples
 
 Preview and apply updates:
 ```console
-wt config update
+$ wt config update
 ```
 
 Apply without confirmation:
 ```console
-wt config update --yes
+$ wt config update --yes
+```
+
+Print the migrated config to stdout (no changes written):
+```console
+$ wt config update --print
 ```"#
     )]
     Update {
         /// Skip confirmation prompt
         #[arg(short, long)]
         yes: bool,
+
+        /// Print the migrated config to stdout instead of writing it
+        #[arg(long, conflicts_with = "yes")]
+        print: bool,
+    },
+
+    /// Plugin management
+    #[command(
+        after_long_help = r#"Install and manage Worktrunk plugins for AI coding tools.
+
+## Supported tools
+
+- **claude** — Claude Code plugin (activity tracking + statusline)
+- **opencode** — OpenCode plugin (activity tracking)
+
+## Examples
+
+```console
+$ wt config plugins claude install
+$ wt config plugins opencode install
+```"#
+    )]
+    Plugins {
+        #[command(subcommand)]
+        action: ConfigPluginsCommand,
     },
 
     /// Manage internal data and cache
     #[command(
         after_long_help = r#"State is stored in `.git/` (config entries and log files), separate from configuration files.
-Use `wt config show` to view file-based configuration.
 
 ## Keys
 
-- **default-branch**: The repository's default branch (`main`, `master`, etc.)
+- **default-branch**: [The repository's default branch (`main`, `master`, etc.)](@/config.md#wt-config-state-default-branch)
 - **previous-branch**: Previous branch for `wt switch -`
-- **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
-- **marker**: Custom status marker for a branch (shown in `wt list`)
-- **logs**: Background operation logs
+- **logs**: [Operation and debug logs](@/config.md#wt-config-state-logs)
+- **ci-status**: [CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)](@/config.md#wt-config-state-ci-status)
+- **marker**: [Custom status marker for a branch (shown in `wt list`)](@/config.md#wt-config-state-marker)
+- **vars**: [experimental] [Custom variables per branch](@/config.md#wt-config-state-vars)
 
 ## Examples
 
 Get the default branch:
 ```console
-wt config state default-branch
+$ wt config state default-branch
 ```
 
 Set the default branch manually:
 ```console
-wt config state default-branch set main
+$ wt config state default-branch set main
 ```
 
 Set a marker for current branch:
 ```console
-wt config state marker set "🚧 WIP"
+$ wt config state marker set 🚧
+```
+
+Store arbitrary data:
+```console
+$ wt config state vars set env=staging
 ```
 
 Clear all CI status cache:
 ```console
-wt config state ci-status clear --all
+$ wt config state ci-status clear --all
 ```
 
 Show all stored state:
 ```console
-wt config state get
+$ wt config state get
 ```
 
 Clear all stored state:
 ```console
-wt config state clear
+$ wt config state clear
 ```
 <!-- subdoc: default-branch -->
+<!-- subdoc: logs -->
 <!-- subdoc: ci-status -->
 <!-- subdoc: marker -->
-<!-- subdoc: logs -->"#
+<!-- subdoc: vars -->"#
     )]
     State {
         #[command(subcommand)]
@@ -315,15 +513,54 @@ wt config state clear
     },
 }
 
+// Ordering: aggregate operations first (get, clear) — entry points for
+// exploring or wiping all state. Then primary state managed by wt
+// (default-branch, previous-branch, logs, hints), then per-branch display
+// annotations shown in `wt list` (ci-status, marker), then experimental keys
+// (vars).
 #[derive(Subcommand)]
 pub enum StateCommand {
+    /// Get all stored state
+    #[command(after_long_help = r#"Shows all stored state including:
+
+- **Default branch**: Cached result of querying remote for default branch
+- **Previous branch**: Previous branch for `wt switch -`
+- **Branch markers**: User-defined branch notes
+- **Vars**: Custom variables per branch
+- **CI status**: Cached GitHub/GitLab CI status per branch (30s TTL)
+- **Hints**: One-time hints that have been shown
+- **Log files**: Operation and debug logs
+
+CI cache entries show status, age, and the commit SHA they were fetched for."#)]
+    Get {
+        /// Output format (table, json)
+        #[arg(long, value_enum, default_value = "table", hide_possible_values = true)]
+        format: super::OutputFormat,
+    },
+
+    /// Clear all stored state
+    #[command(after_long_help = r#"Clears all stored state:
+
+- Default branch cache
+- Previous branch
+- All branch markers
+- All variables
+- All caches (CI status, git commands)
+- All hints
+- All log files
+- Stale trash from worktree removal (`.git/wt/trash/`)
+
+Use individual subcommands (`default-branch clear`, `ci-status clear --all`, etc.)
+to clear specific state."#)]
+    Clear,
+
     /// Default branch detection and override
     #[command(
         name = "default-branch",
         after_long_help = r#"Useful in scripts to avoid hardcoding `main` or `master`:
 
-```bash
-git rebase $(wt config state default-branch)
+```console
+$ git rebase $(wt config state default-branch)
 ```
 
 Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` to re-detect.
@@ -366,12 +603,142 @@ Without a subcommand, runs `get`. Use `set` to override or `clear` to reset."#
         action: Option<PreviousBranchAction>,
     },
 
+    /// Operation and debug logs
+    #[command(
+        after_long_help = r#"View and manage log files — hook output, command audit trail, and debug diagnostics.
+
+## What's logged
+
+Three kinds of logs live in `.git/wt/logs/`:
+
+### Command log (`commands.jsonl`)
+
+All hook executions and LLM commands are recorded automatically — one JSON object per line. Rotates to `commands.jsonl.old` at 1MB (~2MB total). Fields:
+
+| Field | Description |
+|-------|-------------|
+| `ts` | ISO 8601 timestamp |
+| `wt` | The `wt` command that triggered this (e.g., `wt hook pre-merge --yes`) |
+| `label` | What ran (e.g., `pre-merge user:lint`, `commit.generation`) |
+| `cmd` | Shell command executed |
+| `exit` | Exit code (`null` for background commands) |
+| `dur_ms` | Duration in milliseconds (`null` for background commands) |
+
+The command log appends entries and is not branch-specific — it records all activity across all worktrees.
+
+### Hook output logs
+
+Hook output lives in per-branch subtrees under `.git/wt/logs/{branch}/`:
+
+| Operation | Log path |
+|-----------|----------|
+| Background hooks | `{branch}/{source}/{hook-type}/{name}.log` |
+| Background removal | `{branch}/internal/remove.log` |
+
+All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is `user` or `project`. Branch and hook names are sanitized for filesystem safety (invalid characters → `-`; short collision-avoidance hash appended). Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with `wt config state logs clear`.
+
+### Diagnostic files
+
+| File | Created when |
+|------|-------------|
+| `trace.log` | Running with `-vv` |
+| `output.log` | Running with `-vv` |
+| `diagnostic.md` | Running with `-vv` when warnings occur |
+
+`trace.log` mirrors stderr (commands, `[wt-trace]` records, bounded subprocess previews). `output.log` holds the raw uncapped subprocess stdout/stderr bodies. Both are overwritten on each `-vv` run. `diagnostic.md` is a markdown report for pasting into GitHub issues — written only when warnings occur, and inlines `trace.log` (never `output.log`, which can be multi-MB).
+
+## Location
+
+All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). All worktrees write to the same directory. Top-level files are shared logs (command audit + diagnostics); top-level directories are per-branch log trees.
+
+## Structured output
+
+`wt config state logs --format=json` emits three arrays — `command_log`, `hook_output`, `diagnostic`. Each entry carries a `file` (relative), `path` (absolute), `size`, and `modified_at` (unix seconds). Hook-output entries additionally expose `branch`, `source` (`user` / `project` / `internal`), `hook_type` (the `post-*` kind, or `null` for internal ops), and `name`. Filter with `jq` to pick out a specific entry.
+
+## Examples
+
+List all log files:
+```console
+$ wt config state logs
+```
+
+Query the command log:
+```console
+$ tail -5 .git/wt/logs/commands.jsonl | jq .
+```
+
+Path to one hook log (e.g. the `post-start` `server` hook for the current branch):
+```console
+$ wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path'
+```
+
+Logs for a specific branch:
+```console
+$ wt config state logs --format=json | jq '.hook_output[] | select(.branch | startswith("feature"))'
+```
+
+Clear all logs:
+```console
+$ wt config state logs clear
+```"#
+    )]
+    Logs {
+        #[command(subcommand)]
+        action: Option<LogsAction>,
+
+        /// Output format (text, json) [default: text]
+        #[arg(
+            long,
+            default_value = "text",
+            global = true,
+            hide_possible_values = true,
+            hide_default_value = true,
+            help_heading = "Output"
+        )]
+        format: SwitchFormat,
+    },
+
+    /// One-time hints shown in this repo
+    #[command(
+        after_long_help = r#"Some hints show once per repo on first use, then are recorded in git config
+as `worktrunk.hints.<name> = true`.
+
+## Current hints
+
+| Name | Trigger | Message |
+|------|---------|---------|
+| `worktree-path` | First `wt switch --create` | Customize worktree locations: wt config create |
+
+## Examples
+
+```console
+$ wt config state hints              # list shown hints
+$ wt config state hints clear        # re-show all hints
+$ wt config state hints clear NAME   # re-show specific hint
+```"#
+    )]
+    Hints {
+        #[command(subcommand)]
+        action: Option<HintsAction>,
+
+        /// Output format (text, json) [default: text]
+        #[arg(
+            long,
+            default_value = "text",
+            global = true,
+            hide_possible_values = true,
+            hide_default_value = true,
+            help_heading = "Output"
+        )]
+        format: SwitchFormat,
+    },
+
     /// CI status cache
     #[command(
         name = "ci-status",
         after_long_help = r#"Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
 
-Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `ci.platform = "github"` in `.config/wt.toml` for self-hosted instances.
+Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `forge.platform = "github"` in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
 
 Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
 
@@ -395,6 +762,17 @@ Without a subcommand, runs `get` for the current branch. Use `clear` to reset ca
     CiStatus {
         #[command(subcommand)]
         action: Option<CiStatusAction>,
+
+        /// Output format (text, json) [default: text]
+        #[arg(
+            long,
+            default_value = "text",
+            global = true,
+            hide_possible_values = true,
+            hide_default_value = true,
+            help_heading = "Output"
+        )]
+        format: SwitchFormat,
     },
 
     /// Branch markers
@@ -403,19 +781,17 @@ Without a subcommand, runs `get` for the current branch. Use `clear` to reset ca
 
 ## Display
 
-Markers appear at the start of the Status column:
+Markers appear at the end of the Status column, after git symbols:
 
-```
-Branch    Status   Path
-main      ^        ~/code/myproject
-feature   🚧↑      ~/code/myproject.feature
-bugfix    🤖!↑⇡    ~/code/myproject.bugfix
+<!-- wt list (markers) -->
+```console
+wt list
 ```
 
 ## Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Claude Code plugin](@/claude-code.md) sets markers automatically
+- **Agent tracking** — The [Claude Code](@/claude-code.md) plugin sets markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ## Storage
@@ -423,7 +799,7 @@ bugfix    🤖!↑⇡    ~/code/myproject.bugfix
 Stored in git config as `worktrunk.state.<branch>.marker`. Set directly with:
 
 ```console
-git config worktrunk.state.feature.marker '{"marker":"🚧","set_at":0}'
+$ git config worktrunk.state.feature.marker '{"marker":"🚧","set_at":0}'
 ```
 
 Without a subcommand, runs `get` for the current branch. For `--branch`, use `get --branch=NAME`."#
@@ -431,120 +807,77 @@ Without a subcommand, runs `get` for the current branch. For `--branch`, use `ge
     Marker {
         #[command(subcommand)]
         action: Option<MarkerAction>,
+
+        /// Output format (text, json) [default: text]
+        #[arg(
+            long,
+            default_value = "text",
+            global = true,
+            hide_possible_values = true,
+            hide_default_value = true,
+            help_heading = "Output"
+        )]
+        format: SwitchFormat,
     },
 
-    /// Background operation logs
-    #[command(after_long_help = r#"View and manage logs from background operations.
-
-## What's logged
-
-Two kinds of logs live in `.git/wt/logs/`:
-
-### Command log (`commands.jsonl`)
-
-All hook executions and LLM commands are recorded automatically — one JSON object per line with timestamp, command, exit code, and duration. Rotates to `commands.jsonl.old` at 1MB (~2MB total).
-
-### Hook output logs
-
-| Operation | Log file |
-|-----------|----------|
-| post-start hooks | `{branch}-{source}-post-start-{name}.log` |
-| Background removal | `{branch}-remove.log` |
-
-Source is `user` or `project` depending on where the hook is defined.
-
-## Location
-
-All logs are stored in `.git/wt/logs/` (in the main worktree's git directory).
-
-## Behavior
-
-- **Overwrites** — Same operation on same branch overwrites previous log
-- **Persists** — Logs from deleted branches remain until manually cleared
-- **Shared** — All worktrees write to the same log directory
-
-## Examples
-
-List all log files:
-```console
-wt config state logs get
-```
-
-Query the command log:
-```console
-tail -5 .git/wt/logs/commands.jsonl | jq .
-```
-
-View a specific hook log:
-```console
-cat "$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log"
-```
-
-Clear all logs:
-```console
-wt config state logs clear
-```"#)]
-    Logs {
-        #[command(subcommand)]
-        action: Option<LogsAction>,
-    },
-
-    /// One-time hints shown in this repo
+    /// \[experimental\] Custom variables per branch
     #[command(
-        after_long_help = r#"Some hints show once per repo on first use, then are recorded in git config
-as `worktrunk.hints.<name> = true`.
-
-## Current hints
-
-| Name | Trigger | Message |
-|------|---------|---------|
-| `worktree-path` | First `wt switch --create` | Customize worktree locations: wt config create |
+        name = "vars",
+        after_long_help = r#"Store custom variables per branch. Values are stored as-is — plain strings or JSON.
 
 ## Examples
 
+Set and get values:
 ```console
-wt config state hints              # list shown hints
-wt config state hints clear        # re-show all hints
-wt config state hints clear NAME   # re-show specific hint
-```"#
+$ wt config state vars set env=staging
+$ wt config state vars get env
+```
+
+Store JSON:
+```console
+$ wt config state vars set config='{"port": 3000, "debug": true}'
+```
+
+List all keys:
+```console
+$ wt config state vars list
+```
+
+Operate on a different branch:
+```console
+$ wt config state vars set env=production --branch=main
+```
+
+## Template access
+
+Variables are available in [hook templates](@/hook.md#template-variables) as `{{ vars.<key> }}`. Use the `default` filter for keys that may not be set:
+
+```toml
+[post-start]
+dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.port | default('3000') }}"
+```
+
+JSON object and array values support dot access:
+
+```console
+$ wt config state vars set config='{"port": 3000, "debug": true}'
+```
+```toml
+[post-start]
+dev = "npm start -- --port {{ vars.config.port }}"
+```
+
+## Storage format
+
+Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain only letters, digits, hyphens, and underscores — dots conflict with git config's section separator."#
     )]
-    Hints {
+    Vars {
         #[command(subcommand)]
-        action: Option<HintsAction>,
+        action: VarsAction,
     },
-
-    /// Get all stored state
-    #[command(after_long_help = r#"Shows all stored state including:
-
-- **Default branch**: Cached result of querying remote for default branch
-- **Previous branch**: Previous branch for `wt switch -`
-- **Branch markers**: User-defined branch notes
-- **CI status**: Cached GitHub/GitLab CI status per branch (30s TTL)
-- **Hints**: One-time hints that have been shown
-- **Log files**: Background operation logs
-
-CI cache entries show status, age, and the commit SHA they were fetched for."#)]
-    Get {
-        /// Output format (table, json)
-        #[arg(long, value_enum, default_value = "table", hide_possible_values = true)]
-        format: super::OutputFormat,
-    },
-
-    /// Clear all stored state
-    #[command(after_long_help = r#"Clears all stored state:
-
-- Default branch cache
-- Previous branch
-- All branch markers
-- All CI status cache
-- All hints
-- All log files
-
-Use individual subcommands (`default-branch clear`, `ci-status clear --all`, etc.)
-to clear specific state."#)]
-    Clear,
 }
 
+// Ordering: CRUD — get, set, clear.
 #[derive(Subcommand)]
 pub enum DefaultBranchAction {
     /// Get the default branch
@@ -552,12 +885,12 @@ pub enum DefaultBranchAction {
 
 Get the default branch:
 ```console
-wt config state default-branch
+$ wt config state default-branch
 ```
 
 Clear cache and re-detect:
 ```console
-wt config state default-branch clear && wt config state default-branch get
+$ wt config state default-branch clear && wt config state default-branch get
 ```"#)]
     Get,
 
@@ -566,7 +899,7 @@ wt config state default-branch clear && wt config state default-branch get
 
 Set the default branch:
 ```console
-wt config state default-branch set main
+$ wt config state default-branch set main
 ```"#)]
     Set {
         /// Branch name to set as default
@@ -578,6 +911,7 @@ wt config state default-branch set main
     Clear,
 }
 
+// Ordering: CRUD — get, set, clear.
 #[derive(Subcommand)]
 pub enum PreviousBranchAction {
     /// Get the previous branch
@@ -585,7 +919,7 @@ pub enum PreviousBranchAction {
 
 Get the previous branch (used by `wt switch -`):
 ```console
-wt config state previous-branch
+$ wt config state previous-branch
 ```"#)]
     Get,
 
@@ -594,7 +928,7 @@ wt config state previous-branch
 
 Set the previous branch:
 ```console
-wt config state previous-branch set feature
+$ wt config state previous-branch set feature
 ```"#)]
     Set {
         /// Branch name to set as previous
@@ -606,6 +940,7 @@ wt config state previous-branch set feature
     Clear,
 }
 
+// Ordering: CRUD — get, clear.
 #[derive(Subcommand)]
 pub enum CiStatusAction {
     /// Get CI status for a branch
@@ -616,17 +951,17 @@ pub enum CiStatusAction {
 
 Get CI status for current branch:
 ```console
-wt config state ci-status
+$ wt config state ci-status
 ```
 
 Get CI status for a specific branch:
 ```console
-wt config state ci-status get --branch=feature
+$ wt config state ci-status get --branch=feature
 ```
 
 Clear cache and re-fetch:
 ```console
-wt config state ci-status clear && wt config state ci-status get
+$ wt config state ci-status clear && wt config state ci-status get
 ```"#
     )]
     Get {
@@ -640,17 +975,17 @@ wt config state ci-status clear && wt config state ci-status get
 
 Clear CI status for current branch:
 ```console
-wt config state ci-status clear
+$ wt config state ci-status clear
 ```
 
 Clear CI status for a specific branch:
 ```console
-wt config state ci-status clear --branch=feature
+$ wt config state ci-status clear --branch=feature
 ```
 
 Clear all CI status cache:
 ```console
-wt config state ci-status clear --all
+$ wt config state ci-status clear --all
 ```"#)]
     Clear {
         /// Target branch (defaults to current)
@@ -663,6 +998,7 @@ wt config state ci-status clear --all
     },
 }
 
+// Ordering: CRUD — get, set, clear.
 #[derive(Subcommand)]
 pub enum MarkerAction {
     /// Get marker for a branch
@@ -670,12 +1006,12 @@ pub enum MarkerAction {
 
 Get marker for current branch:
 ```console
-wt config state marker
+$ wt config state marker
 ```
 
 Get marker for a specific branch:
 ```console
-wt config state marker get --branch=feature
+$ wt config state marker get --branch=feature
 ```"#)]
     Get {
         /// Target branch (defaults to current)
@@ -688,12 +1024,12 @@ wt config state marker get --branch=feature
 
 Set marker for current branch:
 ```console
-wt config state marker set "🚧 WIP"
+$ wt config state marker set 🚧
 ```
 
 Set marker for a specific branch:
 ```console
-wt config state marker set "✅ ready" --branch=feature
+$ wt config state marker set "✅ ready" --branch=feature
 ```"#)]
     Set {
         /// Marker text (shown in `wt list` output)
@@ -709,17 +1045,17 @@ wt config state marker set "✅ ready" --branch=feature
 
 Clear marker for current branch:
 ```console
-wt config state marker clear
+$ wt config state marker clear
 ```
 
 Clear marker for a specific branch:
 ```console
-wt config state marker clear --branch=feature
+$ wt config state marker clear --branch=feature
 ```
 
 Clear all markers:
 ```console
-wt config state marker clear --all
+$ wt config state marker clear --all
 ```"#)]
     Clear {
         /// Target branch (defaults to current)
@@ -732,57 +1068,47 @@ wt config state marker clear --all
     },
 }
 
+// Ordering: CRUD — get, clear.
 #[derive(Subcommand)]
 pub enum LogsAction {
-    /// Get log file paths
+    /// List all log file paths
     #[command(
-        after_long_help = r#"Lists log files, or gets the path to a specific log.
+        after_long_help = r#"Lists every log file — command log, hook output, and diagnostics. Compose with `jq` to pick out a specific entry.
 
 ## Examples
 
 List all log files:
 ```console
-wt config state logs
+$ wt config state logs
 ```
 
-Get path to a specific hook log:
+Get the absolute path of one post-start hook log for the current branch (use `jq` to filter):
 ```console
-wt config state logs get --hook=user:post-start:server
+$ wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path'
 ```
 
-Stream a hook's log output:
+Stream that log with `tail -f`:
 ```console
-tail -f "$(wt config state logs get --hook=user:post-start:server)"
+$ tail -f "$(wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path' | head -1)"
 ```
 
-Get log for background worktree removal:
+Logs for a background worktree removal (internal op):
 ```console
-wt config state logs get --hook=internal:remove
+$ wt config state logs --format=json | jq '.hook_output[] | select(.source == "internal" and .name == "remove")'
 ```
 
-Get log for a different branch:
+Logs for a specific branch:
 ```console
-wt config state logs get --hook=user:post-start:server --branch=feature
+$ wt config state logs --format=json | jq '.hook_output[] | select(.branch | startswith("feature"))'
 ```"#
     )]
-    Get {
-        /// Get path for a specific log file
-        ///
-        /// Format: source:hook-type:name (e.g., user:post-start:server) for
-        /// hook commands, or internal:op (e.g., internal:remove) for internal
-        /// operations.
-        #[arg(long)]
-        hook: Option<String>,
+    Get,
 
-        /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
-        branch: Option<String>,
-    },
-
-    /// Clear background operation logs
+    /// Clear all log files
     Clear,
 }
 
+// Ordering: CRUD — get, clear.
 #[derive(Subcommand)]
 pub enum HintsAction {
     /// List hints that have been shown
@@ -793,7 +1119,7 @@ pub enum HintsAction {
 
 List shown hints:
 ```console
-wt config state hints
+$ wt config state hints
 ```"#
     )]
     Get,
@@ -806,16 +1132,121 @@ wt config state hints
 
 Clear all hints:
 ```console
-wt config state hints clear
+$ wt config state hints clear
 ```
 
 Clear a specific hint:
 ```console
-wt config state hints clear worktree-path
+$ wt config state hints clear worktree-path
 ```"#
     )]
     Clear {
         /// Specific hint to clear (clears all if not specified)
         name: Option<String>,
+    },
+}
+
+// Ordering: reads before writes — get, list, set, clear.
+#[derive(Subcommand)]
+pub enum VarsAction {
+    /// Get a value
+    #[command(after_long_help = r#"## Examples
+
+Get a value for the current branch:
+```console
+$ wt config state vars get env
+```
+
+Get a value for a specific branch:
+```console
+$ wt config state vars get env --branch=feature
+```"#)]
+    Get {
+        /// Key name
+        key: String,
+
+        /// Target branch (defaults to current)
+        #[arg(long, add = crate::completion::branch_value_completer())]
+        branch: Option<String>,
+    },
+
+    /// List all keys
+    #[command(after_long_help = r#"## Examples
+
+List keys for current branch:
+```console
+$ wt config state vars list
+```
+
+List keys for a specific branch:
+```console
+$ wt config state vars list --branch=feature
+```"#)]
+    List {
+        /// Target branch (defaults to current)
+        #[arg(long, add = crate::completion::branch_value_completer())]
+        branch: Option<String>,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Output")]
+        format: SwitchFormat,
+    },
+
+    /// Set a value
+    #[command(after_long_help = r#"## Examples
+
+Set a plain string:
+```console
+$ wt config state vars set env=staging
+```
+
+Set JSON:
+```console
+$ wt config state vars set config='{"port": 3000}'
+```
+
+Set for a specific branch:
+```console
+$ wt config state vars set env=production --branch=main
+```"#)]
+    Set {
+        /// KEY=VALUE pair
+        #[arg(value_name = "KEY=VALUE", value_parser = super::parse_vars_assignment)]
+        assignment: (String, String),
+
+        /// Target branch (defaults to current)
+        #[arg(long, add = crate::completion::branch_value_completer())]
+        branch: Option<String>,
+    },
+
+    /// Clear a key or all keys
+    #[command(after_long_help = r#"## Examples
+
+Clear a specific key:
+```console
+$ wt config state vars clear env
+```
+
+Clear all keys for current branch:
+```console
+$ wt config state vars clear --all
+```
+
+Clear all keys for a specific branch:
+```console
+$ wt config state vars clear env --branch=feature
+```"#)]
+    Clear {
+        /// Key to clear (required unless --all)
+        #[arg(conflicts_with = "all")]
+        key: Option<String>,
+
+        /// Clear all keys for the branch
+        #[arg(long)]
+        all: bool,
+
+        /// Target branch (defaults to current)
+        #[arg(long, add = crate::completion::branch_value_completer())]
+        branch: Option<String>,
     },
 }

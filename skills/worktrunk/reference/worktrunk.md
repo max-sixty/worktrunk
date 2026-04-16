@@ -39,27 +39,27 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
   <tbody>
     <tr>
       <td>Switch worktrees</td>
-      <td>{% rawcode() %}wt switch feat{% end %}</td>
-      <td>{% rawcode() %}cd ../repo.feat{% end %}</td>
+      <td>wt switch feat</td>
+      <td>cd ../repo.feat</td>
     </tr>
     <tr>
       <td>Create + start Claude</td>
-      <td>{% rawcode() %}wt switch -c -x claude feat{% end %}</td>
-      <td>{% rawcode() %}git worktree add -b feat ../repo.feat && \
+      <td>wt switch -c -x claude feat</td>
+      <td>git worktree add -b feat ../repo.feat && \
 cd ../repo.feat && \
-claude{% end %}</td>
+claude</td>
     </tr>
     <tr>
       <td>Clean up</td>
-      <td>{% rawcode() %}wt remove{% end %}</td>
-      <td>{% rawcode() %}cd ../repo && \
+      <td>wt remove</td>
+      <td>cd ../repo && \
 git worktree remove ../repo.feat && \
-git branch -d feat{% end %}</td>
+git branch -d feat</td>
     </tr>
     <tr>
       <td>List with status</td>
-      <td>{% rawcode() %}wt list{% end %}</td>
-      <td>{% rawcode() %}git worktree list{% end %} (paths only)</td>
+      <td>wt list</td>
+      <td>git worktree list (paths only)</td>
     </tr>
   </tbody>
 </table>
@@ -72,10 +72,11 @@ git branch -d feat{% end %}</td>
 - **[LLM commit messages](https://worktrunk.dev/llm-commits/)** — generate commit messages from diffs
 - **[Merge workflow](https://worktrunk.dev/merge/)** — squash, rebase, merge, clean up in one command
 - **[Interactive picker](https://worktrunk.dev/switch/#interactive-picker)** — browse worktrees with live diff and log previews
-- **[Copy build caches](https://worktrunk.dev/step/)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees
+- **[Copy build caches](https://worktrunk.dev/step/#wt-step-copy-ignored)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees
 - **[`wt list --full`](https://worktrunk.dev/list/#full-mode)** — [CI status](https://worktrunk.dev/list/#ci-status) and [AI-generated summaries](https://worktrunk.dev/list/#llm-summaries) per branch
 - **[PR checkout](https://worktrunk.dev/switch/#pull-requests-and-merge-requests)** — `wt switch pr:123` to jump straight to a PR's branch
 - **[Dev server per worktree](https://worktrunk.dev/hook/#dev-servers)** — `hash_port` template filter gives each worktree a unique port
+- **[Aliases](https://worktrunk.dev/step/#aliases) & [per-branch variables](https://worktrunk.dev/config/#wt-config-state-vars)** — custom `wt step <name>` commands and branch-scoped state for hook templates
 - ...and **[lots more](#next-steps)**
 
 A demo with some advanced features:
@@ -113,7 +114,7 @@ Alternatively, disable Windows Terminal's alias (Settings → Privacy & security
 **Arch Linux:**
 
 ```bash
-paru worktrunk-bin && wt config shell install
+sudo pacman -S worktrunk && wt config shell install
 ```
 
 <details>
@@ -139,23 +140,23 @@ powershell -c "irm https://worktrunk.dev/install.ps1 | iex"
 
 Create a worktree for a new feature:
 
-{% terminal(cmd="wt switch --create feature-auth") %}
-<span class="cmd">wt switch --create feature-auth</span>
+```bash
+$ wt switch --create feature-auth
 <span class=g>✓</span> <span class=g>Created branch <b>feature-auth</b> from <b>main</b> and worktree @ <b>repo.feature-auth</b></span>
-{% end %}
+```
 
 This creates a new branch and worktree, then switches to it. Do your work, then check all worktrees with [`wt list`](https://worktrunk.dev/list/):
 
-{% terminal(cmd="wt list") %}
-<span class="cmd">wt list</span>
+```bash
+$ wt list
   <b>Branch</b>        <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ feature-auth  <span class=c>+</span>   <span class=d>–</span>      <span class=g>+53</span>                         <span class=d>0e631add</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
+@ feature-auth  <span class=c>+</span>   <span class=d>↑</span>      <span class=g>+27</span>   <span class=r>-8</span>   <span class=g>↑1</span>               <span class=d>4bc72dc9</span>  <span class=d>2h</span>    <span class=d>Add authentication module</span>
 ^ main              <span class=d>^</span><span class=d>⇡</span>                         <span class=g>⇡1</span>      <span class=d>0e631add</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
 
-<span class=d>○</span> <span class=d>Showing 2 worktrees, 1 with changes, 1 column hidden</span>
-{% end %}
+<span class=d>○</span> <span class=d>Showing 2 worktrees, 1 with changes, 1 ahead, 1 column hidden</span>
+```
 
-The `@` marks the current worktree. `+` means staged changes, `⇡` means unpushed commits.
+The `@` marks the current worktree. `+` means staged changes, `↑1` means 1 commit ahead of main, `⇡` means unpushed commits.
 
 When done, either:
 
@@ -169,8 +170,8 @@ wt remove                         # after PR is merged
 
 **Local merge** — squash, rebase onto main, fast-forward merge, clean up:
 
-{% terminal(cmd="wt merge main") %}
-<span class="cmd">wt merge main</span>
+```bash
+$ wt merge main
 <span class=c>◎</span> <span class=c>Generating commit message and committing changes... <span style='color:var(--bright-black,#555)'>(2 files, <span class=g>+53</span></span></span>, no squashing needed<span style='color:var(--bright-black,#555)'>)</span>
 <span style='background:var(--bright-white,#fff)'> </span> <b>Add authentication module</b>
 <span class=g>✓</span> <span class=g>Committed changes @ <span class=d>a1b2c3d</span></span>
@@ -182,7 +183,7 @@ wt remove                         # after PR is merged
 <span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 2 files, +53</span></span><span style='color:var(--bright-black,#555)'>)</span>
 <span class=c>◎</span> <span class=c>Removing <b>feature-auth</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
 <span class=d>○</span> Switched to worktree for <b>main</b> @ <b>repo</b>
-{% end %}
+```
 
 For parallel agents, create multiple worktrees and launch an agent in each:
 
@@ -192,16 +193,17 @@ wt switch -x claude -c feature-b -- 'Fix the pagination bug'
 wt switch -x claude -c feature-c -- 'Write tests for the API'
 ```
 
-The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](https://worktrunk.dev/hook/) to automate setup (install deps, start dev servers).
+The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](https://worktrunk.dev/hook/#pre-start-vs-post-start) to automate setup (install deps, start dev servers).
 
 ## Next steps
 
 - Learn the core commands: [`wt switch`](https://worktrunk.dev/switch/), [`wt list`](https://worktrunk.dev/list/), [`wt merge`](https://worktrunk.dev/merge/), [`wt remove`](https://worktrunk.dev/remove/)
-- Set up [project hooks](https://worktrunk.dev/hook/) for automated setup
+- Set up [hooks](https://worktrunk.dev/hook/) for automated setup
 - Explore [LLM commit messages](https://worktrunk.dev/llm-commits/), [interactive
   picker](https://worktrunk.dev/switch/#interactive-picker), [Claude Code integration](https://worktrunk.dev/claude-code/), [CI
   status & PR links](https://worktrunk.dev/list/#ci-status)
 - Browse [tips & patterns](https://worktrunk.dev/tips-patterns/) for recipes: aliases, dev servers, databases, agent handoffs, and more
+- [Extending Worktrunk](https://worktrunk.dev/extending/) — customize workflows with hooks & aliases
 - Run `wt --help` or `wt <command> --help` for quick CLI reference
 
 ## Further reading

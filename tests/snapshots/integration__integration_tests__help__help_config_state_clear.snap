@@ -13,22 +13,25 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt config state clear - Clear all stored state
 
 Usage: [1m[36mwt config state clear[0m [36m[OPTIONS][0m
@@ -45,16 +48,20 @@ Usage: [1m[36mwt config state clear[0m [36m[OPTIONS][0m
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
 
 Clears all stored state:
 
 - Default branch cache
 - Previous branch
 - All branch markers
-- All CI status cache
+- All variables
+- All caches (CI status, git commands)
 - All hints
 - All log files
+- Stale trash from worktree removal ([2m.git/wt/trash/[0m)
 
 Use individual subcommands ([2mdefault-branch clear[0m, [2mci-status clear --all[0m, etc.)
 to clear specific state.
+
+----- stderr -----

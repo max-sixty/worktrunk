@@ -13,6 +13,29 @@ tasks:
     desc: Run tests with coverage report
     cmd: cargo llvm-cov --html --features shell-integration-tests {{.CLI_ARGS}}
 
+  vendor-diff:
+    desc: Show the patch we carry in vendor/ vs the pristine upstream crate source
+    cmds:
+      - |
+        set -e
+        VENDORED=vendor/skim-tuikit
+        if [ ! -d "$VENDORED" ]; then
+          echo "no vendored source at $VENDORED"
+          exit 0
+        fi
+        VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$VENDORED/Cargo.toml" | head -1)
+        # Fetch the pristine tarball directly from crates.io rather than relying
+        # on ~/.cargo/registry — `[patch.crates-io]` suppresses the download, so
+        # that cache is never populated on a fresh checkout.
+        TMP=$(mktemp -d)
+        trap 'rm -rf "$TMP"' EXIT
+        URL="https://static.crates.io/crates/skim-tuikit/skim-tuikit-${VERSION}.crate"
+        if ! curl -sSfL "$URL" | tar -xz -C "$TMP"; then
+          echo "failed to fetch pristine skim-tuikit-${VERSION} from $URL"
+          exit 1
+        fi
+        diff -ruN "$TMP/skim-tuikit-${VERSION}" "$VENDORED" || true
+
   setup-web:
     desc: Setup Claude Code web environment for development
     platforms: [linux]
@@ -300,7 +323,7 @@ tasks:
         echo "Done! Fixture at: tests/fixtures/standard/"
 
   bench-llm-commits:
-    desc: Benchmark LLM commit message tools (claude, llm, aichat, codex)
+    desc: Benchmark LLM commit message tools (claude, llm, aichat, codex, opencode)
     silent: true
     cmds:
       - |
@@ -389,13 +412,14 @@ tasks:
         COMMANDS["llm"]='llm -m claude-haiku-4.5'
         COMMANDS["aichat"]='aichat -m claude:claude-haiku-4.5'
         COMMANDS["codex"]='codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='"'"'low'"'"' -c system_prompt='"'"''"'"' --sandbox=read-only --json - | jq -sr '"'"'[.[] | select(.item.type? == "agent_message")] | last.item.text'"'"''
+        COMMANDS["opencode"]='opencode run -m anthropic/claude-haiku-4.5 --variant fast'
 
         # Check which tools are available
         echo "=== LLM Commit Message Benchmark ==="
         echo ""
         echo "Checking available tools..."
         AVAILABLE=()
-        for tool in claude llm aichat codex; do
+        for tool in claude llm aichat codex opencode; do
           if command -v "$tool" &>/dev/null; then
             echo "  ✓ $tool"
             AVAILABLE+=("$tool")
@@ -417,6 +441,7 @@ tasks:
           echo "  llm: uv tool install llm llm-anthropic"
           echo "  aichat: https://github.com/sigoden/aichat"
           echo "  codex: npm install -g @openai/codex"
+          echo "  opencode: https://opencode.ai/download"
           exit 1
         fi
 

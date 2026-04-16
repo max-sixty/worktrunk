@@ -1,11 +1,95 @@
 //! Interactive branch/worktree selector.
 //!
-//! A skim-based TUI for selecting and switching between worktrees.
+//! A skim-based TUI for selecting and switching between worktrees. The picker
+//! shares `super::list::collect::collect` with `wt list` — see
+//! `commands/list/collect/mod.rs` for the rendering-pipeline spec — but inverts
+//! the ordering because skim's `preview_window` height is baked into
+//! `SkimOptions` before `Skim::run_with` takes over the terminal, so we have
+//! to estimate the visible row count up front rather than learn it from
+//! collect's skeleton pass.
+//!
+//! # "Skeleton"
+//!
+//! Same meaning as in `wt list`: the column/row frame with placeholder cells
+//! the user sees first. In the picker, `collect::collect` builds those rows
+//! and streams them via `on_skeleton` → `PickerHandler` → `SkimItemSender` →
+//! skim. (Not to be confused with the rendered skeleton-row *strings* that
+//! flow through that channel.)
+//!
+//! # Startup flow
+//!
+//! On the main thread, `handle_picker`:
+//!
+//! 1. `current_or_recover` + config resolution.
+//! 2. `PreviewState::new` — auto-detects Right vs Down layout.
+//! 3. Allocates the `PreviewOrchestrator` and kicks off a *speculative*
+//!    `git diff HEAD` for the current worktree on the preview pool. That bg
+//!    work overlaps with everything below.
+//! 4. Computes `num_items_estimate` — `list_worktrees` plus (conditionally)
+//!    `list_local_branches` / `list_remote_branches`, capped at
+//!    `MAX_VISIBLE_ITEMS`. Only used to size skim's `preview_window`.
+//! 5. Builds `SkimOptions` (immutable after this — which is why steps 1-4 have
+//!    to run first).
+//! 6. Spawns the `picker-collect` bg thread, which calls `collect::collect`.
+//! 7. Calls `Skim::run_with(rx)`; skim paints the empty frame and then ingests
+//!    skeleton rows from the channel as the bg thread streams them via
+//!    `on_skeleton`.
+//!
+//! Time-to-skeleton = steps 1-6 on the main thread *plus* collect's
+//! pre-skeleton phase on the bg thread.
+//!
+//! ## Phase timings
+//!
+//! Representative medians on the worktrunk dev repo (7 worktrees, 6 branches,
+//! warm caches, release build).
+//!
+//! | Phase (instant-to-instant) | median | cmds |
+//! |-----------------------------|-------:|-----:|
+//! | `Picker started → Picker config resolved` | ~16ms | 3 |
+//! | `Picker config resolved → Picker layout detected` | <1ms | 0 |
+//! | `Picker layout detected → Picker estimate computed` | ~39ms | 11 (includes bg preview `git diff`s) |
+//! | `Picker estimate computed → Picker skim options built` | <1ms | 0 |
+//! | `Picker skim options built → Picker collect spawned` | <100µs | 0 |
+//! | `Picker collect spawned → List collect started` | <100µs | 0 |
+//! | `List collect started → Skeleton rendered` (bg, pre-skeleton) | ~41ms | 25 |
+//! | **Time-to-skeleton** (≈ main-thread prelude + bg pre-skeleton) | **~96ms** | |
+//! | `Skeleton rendered → Spawning worker thread` (post-skeleton, pre-work) | ~156ms | 86 |
+//! | `Parallel execution started → All results drained` (post-skeleton work) | ~1.1s | 254 |
+//! | Wall clock under `WORKTRUNK_PICKER_DRY_RUN=1` (median / p95) | ~1.4s / ~4.4s | |
+//!
+//! Skim's own paint cost isn't observable from the dry-run path — skim is
+//! bypassed there.
+//!
+//! ### Reproducing
+//!
+//! End-to-end time-to-first-output (criterion, synthetic repo):
+//!
+//! ```bash
+//! cargo bench --bench time_to_first_output -- switch
+//! ```
+//!
+//! Per-phase breakdown on a specific repo (a single trace is usually enough
+//! to spot where time goes; re-run a few times if you want variance):
+//!
+//! ```bash
+//! RUST_LOG=debug ./target/release/wt -C <repo> switch \
+//!   2> >(cargo run -p wt-perf --release -q -- trace > trace.json)
+//! # Open trace.json in Perfetto, or run the phase-duration SQL query
+//! # documented in benches/CLAUDE.md §"What's on the critical path?".
+//! ```
+//!
+//! # TODO(picker-perf): dedupe git calls
+//!
+//! `num_items_estimate` and `collect::collect` each call `list_worktrees` and
+//! `list_local_branches`. Pre-seed collect's OnceCells from the main-thread
+//! fetch to save one of each on the bg thread's critical path toward skeleton.
 
 mod items;
 mod log_formatter;
 mod pager;
 mod preview;
+mod preview_orchestrator;
+mod progressive_handler;
 mod summary;
 
 use std::cell::RefCell;
@@ -14,31 +98,34 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 use anyhow::Context;
 // bounded/unbounded/Sender are re-exported by skim::prelude
-use dashmap::DashMap;
 use skim::prelude::*;
 use skim::reader::CommandCollector;
 use worktrunk::git::{Repository, current_or_recover};
 
-use super::branch_deletion::delete_branch_if_safe;
+use super::command_executor::FailureStrategy;
 use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
-use super::hooks::{HookFailureStrategy, execute_hook, spawn_background_hooks};
+use super::hooks::{execute_hook, prepare_background_hooks, spawn_hook_pipeline};
 use super::list::collect;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
+use super::worktree::hooks::PostRemoveContext;
 use super::worktree::{
-    BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult, execute_removal,
-    execute_switch, offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
+    RemoveResult, SwitchBranchInfo, SwitchResult, execute_switch,
+    offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
 };
 use crate::commands::command_executor::CommandContext;
 use crate::output::handle_switch_output;
+use worktrunk::git::{
+    BranchDeletionMode, RemoveOptions, delete_branch_if_safe, remove_worktree_with_cleanup,
+};
 
-use items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
+use items::{PreviewCache, WorktreeSkimItem};
 use preview::{PreviewLayout, PreviewMode, PreviewState};
+use preview_orchestrator::PreviewOrchestrator;
 
 /// Action selected by the user in the picker.
 enum PickerAction {
@@ -113,18 +200,20 @@ impl PickerCollector {
                     &pre_ctx,
                     worktrunk::HookType::PreRemove,
                     &extra_vars,
-                    HookFailureStrategy::FailFast,
-                    None,
+                    FailureStrategy::FailFast,
+                    &[],
                     None, // no display path in TUI context
                 )?;
 
-                let output = execute_removal(
+                let output = remove_worktree_with_cleanup(
                     &repo,
                     worktree_path,
-                    branch_name.as_deref(),
-                    *deletion_mode,
-                    target_branch.as_deref(),
-                    *force_worktree,
+                    RemoveOptions {
+                        branch: branch_name.clone(),
+                        deletion_mode: *deletion_mode,
+                        target_branch: target_branch.clone(),
+                        force_worktree: *force_worktree,
+                    },
                 )?;
                 if let Some(staged) = output.staged_path {
                     let _ = std::fs::remove_dir_all(&staged);
@@ -133,14 +222,20 @@ impl PickerCollector {
                 // Spawn post-remove hooks in background (log to files, no terminal output).
                 let post_ctx =
                     CommandContext::new(&repo, config, Some(hook_branch), main_path, false);
-                let post_hooks = post_ctx.prepare_post_remove_commands(
-                    hook_branch,
+                let remove_vars = PostRemoveContext::new(
                     worktree_path,
                     removed_commit.as_deref(),
+                    main_path,
+                    &repo,
+                );
+                let extra_vars = remove_vars.extra_vars(hook_branch);
+                for steps in prepare_background_hooks(
+                    &post_ctx,
+                    worktrunk::HookType::PostRemove,
+                    &extra_vars,
                     None, // no display path in TUI context
-                )?;
-                if !post_hooks.is_empty() {
-                    spawn_background_hooks(&post_ctx, post_hooks)?;
+                )? {
+                    spawn_hook_pipeline(&post_ctx, steps)?;
                 }
             }
             RemoveResult::BranchOnly {
@@ -198,6 +293,7 @@ impl CommandCollector for PickerCollector {
                     false,
                     config,
                     caller_path,
+                    None,
                 );
 
                 match preparation {
@@ -272,118 +368,148 @@ pub fn handle_picker(
     cli_remotes: bool,
     change_dir_flag: Option<bool>,
 ) -> anyhow::Result<()> {
-    // Interactive picker requires a terminal for the TUI
-    if !std::io::stdin().is_terminal() {
+    // Interactive picker requires a terminal for the TUI. The dry-run path
+    // bypasses skim entirely, so no TTY is required — useful for tests and
+    // for diagnosing the pre-compute pipeline from scripts.
+    if std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_none() && !std::io::stdin().is_terminal() {
         anyhow::bail!("Interactive picker requires an interactive terminal");
     }
+    worktrunk::shell_exec::trace_instant("Picker started");
 
     let (repo, is_recovered) = current_or_recover()?;
 
     // Merge CLI flags with resolved config (project-specific config is now available)
     let config = repo.config();
-    let change_dir = change_dir_flag.unwrap_or_else(|| !config.switch.no_cd());
+    let change_dir = change_dir_flag.unwrap_or_else(|| config.switch.cd());
     let show_branches = cli_branches || config.list.branches();
     let show_remotes = cli_remotes || config.list.remotes();
+    worktrunk::shell_exec::trace_instant("Picker config resolved");
 
     // Initialize preview mode state file (auto-cleanup on drop)
     let state = PreviewState::new();
+    worktrunk::shell_exec::trace_instant("Picker layout detected");
 
-    // Gather list data using simplified collection (buffered mode)
-    // Skip expensive operations not needed for picker UI
-    let skip_tasks: std::collections::HashSet<collect::TaskKind> = [
-        collect::TaskKind::BranchDiff,
-        collect::TaskKind::CiStatus,
-        collect::TaskKind::MergeTreeConflicts,
-    ]
-    .into_iter()
-    .collect();
+    // Preview cache + dedicated pool are created up-front so the speculative
+    // first-item preview can run in parallel with `collect::collect` below.
+    // Wrapped in `Arc` because the progressive handler (running on the
+    // collect background thread) also calls `spawn_preview`.
+    let orchestrator = Arc::new(PreviewOrchestrator::new(repo.clone()));
+    let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
 
-    // Per-task command timeout from shared [list] config.
+    // Speculative warm-up: the picker sorts the current worktree first, and
+    // the default tab (WorkingTree = `git diff HEAD` in that worktree) is
+    // what skim will render first. Kicking this off before `collect::collect`
+    // overlaps preview compute with list collection.
+    // The real spawn later skips this key via `contains_key`.
+    if let (Ok(Some(branch)), Ok(path)) = (
+        repo.current_worktree().branch(),
+        repo.current_worktree().root(),
+    ) {
+        use super::list::model::{ItemKind, ListItem, WorktreeData};
+        let mut item = ListItem::new_branch(String::new(), branch);
+        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+            path,
+            ..Default::default()
+        }));
+        // num_items doesn't matter for Right (dims independent of it); for
+        // Down it only affects height, which doesn't alter pager wrapping.
+        let dims = state.initial_layout.preview_dimensions(0);
+        orchestrator.spawn_preview(Arc::new(item), PreviewMode::WorkingTree, dims);
+    }
+
+    // Skip expensive operations — BranchDiff walks history per item,
+    // CiStatus hits the network. Both are slow enough that waiting for
+    // them adds perceptible cost for a modest column-population win.
+    let skip_tasks: std::collections::HashSet<collect::TaskKind> =
+        [collect::TaskKind::BranchDiff, collect::TaskKind::CiStatus]
+            .into_iter()
+            .collect();
+
+    // Per-task command timeout (bounds any single git invocation) from
+    // shared `[list]` config. Still applies in progressive mode.
     let command_timeout = config.list.task_timeout();
 
-    // Wall-clock budget for the entire collect phase (default: 500ms).
-    let collect_deadline = config.switch_picker.timeout().map(|d| Instant::now() + d);
+    // Progressive rendering means the picker never blocks waiting for
+    // collect — so there's no UI-freeze budget to bound. The drain runs
+    // until its results channel closes or the fallback DRAIN_TIMEOUT
+    // (120s) fires.
 
-    let Some(list_data) = collect::collect(
-        &repo,
-        collect::ShowConfig::Resolved {
-            show_branches,
-            show_remotes,
-            skip_tasks: skip_tasks.clone(),
-            command_timeout,
-            collect_deadline,
-        },
-        false, // show_progress (no progress bars)
-        false, // render_table (picker renders its own UI)
-        true,  // skip_expensive_for_stale (faster for repos with many stale branches)
-    )?
-    else {
-        return Ok(());
-    };
-
-    // Use the same layout system as `wt list` for proper column alignment
-    // List width depends on preview position:
-    // - Right layout: skim splits ~50% for list, ~50% for preview
-    // - Down layout: list gets full width, preview is below
+    // List width depends on the preview position. Right splits the terminal
+    // ~50/50; Down gives the list the full width. Passed to `collect` so
+    // the skeleton layout matches the picker's actual render width.
     let terminal_width = crate::display::terminal_width();
     let skim_list_width = match state.initial_layout {
         PreviewLayout::Right => terminal_width / 2,
         PreviewLayout::Down => terminal_width,
     };
-    let layout = super::list::layout::calculate_layout_with_width(
-        &list_data.items,
-        &list_data.skip_tasks,
-        skim_list_width,
-        &list_data.main_worktree_path,
-        None, // URL column not shown in picker
-    );
 
-    // Render header using layout system (need both plain and styled text for skim)
-    let header_line = layout.render_header_line();
-    let header_display_text = header_line.render();
-    let header_plain_text = header_line.plain_text();
+    // Estimate item count for the preview window spec (only the Down
+    // layout depends on it). Every row over MAX_VISIBLE_ITEMS is a no-op
+    // for the height computation, so we short-circuit once we know the
+    // list already fills the cap.
+    let num_items_estimate = {
+        let cap = preview::MAX_VISIBLE_ITEMS;
+        let mut estimate = repo.list_worktrees().map(|w| w.len()).unwrap_or(cap);
+        if estimate < cap && show_branches {
+            // Local branches are a superset of worktree branches (each
+            // linked worktree normally has one), so take the max rather
+            // than summing.
+            let local = repo.list_local_branches().map(|b| b.len()).unwrap_or(cap);
+            estimate = estimate.max(local);
+        }
+        if estimate < cap && show_remotes {
+            let remotes = repo.list_remote_branches().map(|b| b.len()).unwrap_or(0);
+            estimate = estimate.saturating_add(remotes);
+        }
+        estimate
+    };
+    worktrunk::shell_exec::trace_instant("Picker estimate computed");
+    let preview_window_spec = state
+        .initial_layout
+        .to_preview_window_spec(num_items_estimate);
+    let preview_dims = state.initial_layout.preview_dimensions(num_items_estimate);
 
-    // Create shared cache for all preview modes (pre-computed in background)
-    let preview_cache: PreviewCache = Arc::new(DashMap::new());
+    // Summary hint: when summaries are disabled, prime the Summary cache
+    // with config guidance instead of showing a perpetual "Generating…"
+    // placeholder.
+    let (llm_command, summary_hint) =
+        if config.list.summary() && config.commit_generation.is_configured() {
+            (config.commit_generation.command.clone(), None)
+        } else {
+            let hint = if !config.commit_generation.is_configured() {
+                "Configure [commit.generation] command to enable LLM summaries.\n\n\
+                 Example in ~/.config/worktrunk/config.toml:\n\n\
+                 [commit.generation]\n\
+                 command = \"llm -m haiku\"\n\n\
+                 [list]\n\
+                 summary = true\n"
+            } else {
+                "Enable summaries in ~/.config/worktrunk/config.toml:\n\n\
+                 [list]\n\
+                 summary = true\n"
+            };
+            (None, Some(hint.to_string()))
+        };
 
-    // Convert to skim items using the layout system for rendering
-    // Keep Arc<ListItem> refs for background pre-computation
-    let mut items_for_precompute: Vec<Arc<super::list::model::ListItem>> = Vec::new();
-    let mut items: Vec<Arc<dyn SkimItem>> = list_data
-        .items
-        .into_iter()
-        .map(|item| {
-            let branch_name = item.branch_name().to_string();
+    // Shared items list: populated by the handler's `on_skeleton` and read
+    // by `PickerCollector` on alt-r reload. Starts empty — the collector's
+    // `invoke` only fires after skim has displayed items, by which time
+    // the handler has already published them.
+    let shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>> = Arc::new(Mutex::new(Vec::new()));
 
-            // The picker doesn't update progressively, so any column whose data
-            // didn't arrive in time won't fill in later. Use the stale placeholder
-            // ("·") for all items — it signals "data not available" rather than the
-            // ellipsis ("⋯") which implies data is still loading.
-            let rendered_line = layout.render_list_item_stale(&item);
-            let display_text_with_ansi = rendered_line.render();
-            let display_text = rendered_line.plain_text();
+    // Signal file for alt-r removal communication. execute-silent writes
+    // the branch name here; the PickerCollector reads it on reload.
+    // Cleaned up in PreviewState::Drop.
+    let signal_path = state.path.with_extension("remove");
 
-            let item = Arc::new(item);
-            items_for_precompute.push(Arc::clone(&item));
+    let collector = PickerCollector {
+        items: Arc::clone(&shared_items),
+        signal_path: signal_path.clone(),
+        repo: repo.clone(),
+    };
 
-            Arc::new(WorktreeSkimItem {
-                display_text,
-                display_text_with_ansi,
-                branch_name,
-                item,
-                preview_cache: Arc::clone(&preview_cache),
-            }) as Arc<dyn SkimItem>
-        })
-        .collect();
-
-    // Insert header row at the beginning (will be non-selectable via header_lines option)
-    items.insert(
-        0,
-        Arc::new(HeaderSkimItem {
-            display_text: header_plain_text,
-            display_text_with_ansi: header_display_text,
-        }) as Arc<dyn SkimItem>,
-    );
+    let signal_path_escaped =
+        shell_escape::escape(signal_path.display().to_string().into()).into_owned();
 
     // Get state path for key bindings (shell-escaped for safety)
     let state_path_display = state.path.display().to_string();
@@ -394,36 +520,9 @@ pub fn handle_picker(
         .map(|(_, terminal_size::Height(h))| (h as usize * 45 / 100).max(5))
         .unwrap_or(10);
 
-    // Calculate preview window spec based on auto-detected layout
-    // items.len() - 1 because we added a header row
-    let num_items = items.len().saturating_sub(1);
-    let preview_window_spec = state.initial_layout.to_preview_window_spec(num_items);
-
-    // Signal file for alt-r removal communication. execute-silent writes the branch
-    // name here; the PickerCollector reads it on reload. Cleaned up in PreviewState::Drop.
-    let signal_path = state.path.with_extension("remove");
-
-    // Shared items list: the PickerCollector reads and modifies this on reload.
-    let shared_items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>> = Arc::new(Mutex::new(items));
-
-    // Custom collector for skim's reload action — performs removal and streams
-    // updated items back, all without leaving the picker.
-    let collector = PickerCollector {
-        items: Arc::clone(&shared_items),
-        signal_path: signal_path.clone(),
-        repo: repo.clone(),
-    };
-
-    let signal_path_escaped =
-        shell_escape::escape(signal_path.display().to_string().into()).into_owned();
-
     // Configure skim options with Rust-based preview and mode switching keybindings
     let options = SkimOptionsBuilder::default()
         .height("90%".to_string())
-        // Workaround for skim-tuikit bug: partial-height mode skips smcup but
-        // cleanup still sends rmcup, leaving artifacts. no_clear_start forces
-        // cursor_goto + erase_down cleanup instead. See skim-rs/skim#880.
-        .no_clear_start(true)
         .layout("reverse".to_string())
         .header_lines(1) // Make first line (header) non-selectable
         .multi(false)
@@ -489,78 +588,74 @@ pub fn handle_picker(
         // Legend/controls moved to preview window tabs (render_preview_tabs)
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build skim options: {}", e))?;
+    worktrunk::shell_exec::trace_instant("Picker skim options built");
 
-    // Send initial items to skim via channel
-    let items = shared_items.lock().unwrap();
     let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
-    for item in items.iter() {
-        tx.send(Arc::clone(item))
-            .map_err(|e| anyhow::anyhow!("Failed to send item to skim: {}", e))?;
-    }
+
+    let handler: Arc<dyn collect::PickerProgressHandler> =
+        Arc::new(progressive_handler::PickerHandler {
+            tx: tx.clone(),
+            shared_items: Arc::clone(&shared_items),
+            rendered_slots: std::sync::OnceLock::new(),
+            preview_cache: Arc::clone(&preview_cache),
+            orchestrator: Arc::clone(&orchestrator),
+            preview_dims,
+            llm_command,
+            repo: repo.clone(),
+            summary_hint,
+        });
+
+    // Spawn collect on a background thread. The handler holds the only
+    // remaining `tx` clone; when the bg thread exits, `tx` drops, and skim's
+    // heartbeat stops. Contract: background work done → picker idle.
+    let bg_handler = Arc::clone(&handler);
+    let bg_repo = repo.clone();
+    let bg_skip_tasks = skip_tasks.clone();
+    let bg_handle = std::thread::Builder::new()
+        .name("picker-collect".into())
+        .spawn(move || {
+            let _ = collect::collect(
+                &bg_repo,
+                collect::ShowConfig::Resolved {
+                    show_branches,
+                    show_remotes,
+                    skip_tasks: bg_skip_tasks,
+                    command_timeout,
+                    collect_deadline: None,
+                    list_width: Some(skim_list_width),
+                    progressive_handler: Some(bg_handler),
+                },
+                false, // show_progress (picker renders its own UI)
+                false, // render_table
+            );
+        })
+        .context("Failed to spawn picker-collect thread")?;
+    worktrunk::shell_exec::trace_instant("Picker collect spawned");
+
+    // Drop main-thread copies so the bg thread's `tx` clone is the last
+    // sender (its drop is what stops skim's heartbeat).
     drop(tx);
-    drop(items);
+    drop(handler);
 
-    // Pre-compute all preview modes for all worktrees in parallel via rayon.
-    // Each (worktree, mode) pair is a separate rayon task, allowing the thread pool
-    // to overlap I/O-bound git commands. Tasks are fire-and-forget — ongoing
-    // git commands are harmless read-only operations even if skim exits early.
-    let (preview_width, preview_height) = state.initial_layout.preview_dimensions(num_items);
-
-    let modes = [
-        PreviewMode::WorkingTree,
-        PreviewMode::Log,
-        PreviewMode::BranchDiff,
-        PreviewMode::UpstreamDiff,
-    ];
-
-    for item in &items_for_precompute {
-        for mode in modes {
-            let cache = Arc::clone(&preview_cache);
-            let item = Arc::clone(item);
-            rayon::spawn(move || {
-                let cache_key = (item.branch_name().to_string(), mode);
-                cache.entry(cache_key).or_insert_with(|| {
-                    WorktreeSkimItem::compute_preview(&item, mode, preview_width, preview_height)
-                });
-            });
-        }
+    // Dry-run: skim is bypassed. Wait for collect (which spawns previews
+    // via the handler), then for the preview pool, then dump the cache.
+    if std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_some() {
+        drop(rx);
+        let _ = bg_handle.join();
+        orchestrator.wait_for_idle();
+        println!("{}", orchestrator.dump_cache_json());
+        return Ok(());
     }
 
-    // Queue summary generation after tabs 1-4 so git previews get rayon priority.
-    if config.list.summary() && config.commit_generation.is_configured() {
-        let llm_command = config.commit_generation.command.clone().unwrap();
-        for item in &items_for_precompute {
-            let item = Arc::clone(item);
-            let cache = Arc::clone(&preview_cache);
-            let cmd = llm_command.clone();
-            let repo = repo.clone();
-            rayon::spawn(move || {
-                summary::generate_and_cache_summary(&item, &cmd, &cache, &repo);
-            });
-        }
-    } else {
-        // No LLM configured or summaries disabled — insert config hint so the
-        // tab shows a useful message instead of a perpetual "Generating..." placeholder.
-        let hint = if !config.commit_generation.is_configured() {
-            "Configure [commit.generation] command to enable LLM summaries.\n\n\
-             Example in ~/.config/worktrunk/config.toml:\n\n\
-             [commit.generation]\n\
-             command = \"llm -m haiku\"\n\n\
-             [list]\n\
-             summary = true\n"
-        } else {
-            "Enable summaries in ~/.config/worktrunk/config.toml:\n\n\
-             [list]\n\
-             summary = true\n"
-        };
-        for item in &items_for_precompute {
-            let branch = item.branch_name().to_string();
-            preview_cache.insert((branch, PreviewMode::Summary), hint.to_string());
-        }
-    }
-
-    // Run skim (single invocation — alt-r uses reload, not re-launch)
+    // Run skim (single invocation — alt-r uses reload, not re-launch).
+    // Skim receives items as the bg thread's handler sends them.
+    //
+    // Don't join `bg_handle` after skim exits: drain may still be running
+    // network tasks, and joining would block exit for up to DRAIN_TIMEOUT
+    // (120s). Process exit terminates the bg thread; its git subprocesses
+    // are read-only.
     let output = Skim::run_with(&options, Some(rx));
+    drop(bg_handle);
 
     // Handle selection (signal file cleaned up by PreviewState::Drop)
     if let Some(out) = output
@@ -705,41 +800,9 @@ fn resolve_identifier(
 pub mod tests {
     use super::preview::{PreviewLayout, PreviewMode, PreviewStateData};
     use super::{PickerAction, PickerCollector, resolve_identifier};
-    use crate::commands::worktree::{BranchDeletionMode, RemoveResult};
+    use crate::commands::worktree::RemoveResult;
     use std::fs;
-    use std::path::PathBuf;
-    use worktrunk::shell_exec::Cmd;
-
-    /// Create a git repo with one commit at `tmp/repo` and return the path.
-    fn init_test_repo(tmp: &tempfile::TempDir) -> PathBuf {
-        let repo_path = tmp.path().join("repo");
-        Cmd::new("git")
-            .args(["init", "--initial-branch=main", repo_path.to_str().unwrap()])
-            .run()
-            .unwrap();
-        Cmd::new("git")
-            .args(["config", "user.email", "test@test.com"])
-            .current_dir(&repo_path)
-            .run()
-            .unwrap();
-        Cmd::new("git")
-            .args(["config", "user.name", "Test"])
-            .current_dir(&repo_path)
-            .run()
-            .unwrap();
-        fs::write(repo_path.join("file.txt"), "hello").unwrap();
-        Cmd::new("git")
-            .args(["add", "."])
-            .current_dir(&repo_path)
-            .run()
-            .unwrap();
-        Cmd::new("git")
-            .args(["commit", "-m", "init"])
-            .current_dir(&repo_path)
-            .run()
-            .unwrap();
-        repo_path
-    }
+    use worktrunk::git::BranchDeletionMode;
 
     #[test]
     fn test_preview_state_data_roundtrip() {
@@ -812,10 +875,10 @@ pub mod tests {
 
     #[test]
     fn test_execute_removal_removes_worktree_and_branch() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let repo_path = init_test_repo(&tmp);
-        let repo = worktrunk::git::Repository::at(&repo_path).unwrap();
-        let wt_path = tmp.path().join("repo.feature");
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt_path = wt_dir.path().join("feature");
 
         repo.run_command(&[
             "worktree",
@@ -828,7 +891,7 @@ pub mod tests {
         assert!(wt_path.exists());
 
         let result = RemoveResult::RemovedWorktree {
-            main_path: repo_path,
+            main_path: test.path().to_path_buf(),
             worktree_path: wt_path.clone(),
             changed_directory: false,
             branch_name: Some("feature".to_string()),
@@ -849,9 +912,8 @@ pub mod tests {
 
     #[test]
     fn test_do_removal_branch_only_deletes_integrated_branch() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let repo_path = init_test_repo(&tmp);
-        let repo = worktrunk::git::Repository::at(&repo_path).unwrap();
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
 
         // Create a branch at the same commit (fully integrated into main)
         repo.run_command(&["branch", "feature"]).unwrap();
@@ -860,6 +922,8 @@ pub mod tests {
             branch_name: "feature".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             pruned: false,
+            target_branch: None,
+            integration_reason: None,
         };
         PickerCollector::do_removal(&repo, &result).unwrap();
 
@@ -869,13 +933,12 @@ pub mod tests {
 
     #[test]
     fn test_do_removal_branch_only_retains_unmerged_branch() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let repo_path = init_test_repo(&tmp);
-        let repo = worktrunk::git::Repository::at(&repo_path).unwrap();
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
 
         // Create a branch with an unmerged commit
         repo.run_command(&["checkout", "-b", "unmerged"]).unwrap();
-        fs::write(repo_path.join("new.txt"), "unmerged work").unwrap();
+        fs::write(test.path().join("new.txt"), "unmerged work").unwrap();
         repo.run_command(&["add", "."]).unwrap();
         repo.run_command(&["commit", "-m", "unmerged work"])
             .unwrap();
@@ -885,6 +948,8 @@ pub mod tests {
             branch_name: "unmerged".to_string(),
             deletion_mode: BranchDeletionMode::SafeDelete,
             pruned: false,
+            target_branch: None,
+            integration_reason: None,
         };
         PickerCollector::do_removal(&repo, &result).unwrap();
 
@@ -898,10 +963,10 @@ pub mod tests {
 
     #[test]
     fn test_do_removal_removes_detached_worktree() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let repo_path = init_test_repo(&tmp);
-        let repo = worktrunk::git::Repository::at(&repo_path).unwrap();
-        let wt_path = tmp.path().join("repo.detached");
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt_path = wt_dir.path().join("detached");
 
         repo.run_command(&[
             "worktree",
@@ -913,7 +978,7 @@ pub mod tests {
         .unwrap();
 
         // Detach HEAD in the new worktree
-        Cmd::new("git")
+        worktrunk::shell_exec::Cmd::new("git")
             .args(["checkout", "--detach", "HEAD"])
             .current_dir(&wt_path)
             .run()
@@ -922,7 +987,7 @@ pub mod tests {
         assert!(wt_path.exists());
 
         let result = RemoveResult::RemovedWorktree {
-            main_path: repo_path,
+            main_path: test.path().to_path_buf(),
             worktree_path: wt_path.clone(),
             changed_directory: false,
             branch_name: None,

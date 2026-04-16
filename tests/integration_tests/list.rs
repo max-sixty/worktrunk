@@ -1,6 +1,7 @@
 use crate::common::{
     DAY, HOUR, MINUTE, TestRepo, list_snapshots, make_snapshot_cmd,
-    mock_commands::create_mock_llm_quickstart, repo, repo_with_remote, wt_command,
+    mock_commands::create_mock_llm_quickstart, repo, repo_with_remote,
+    setup_snapshot_settings_for_paths, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
@@ -428,9 +429,8 @@ fn test_list_with_remotes_and_full(#[from(repo_with_remote)] repo: TestRepo) {
 
 #[rstest]
 fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) {
-    // Create a remote-tracking ref for a non-existent remote to exercise the
-    // fallback path in CiBranchName::from_branch_ref (lines 64-75)
-    // This simulates a ref that remains after a remote is deleted
+    // Create a remote-tracking ref for a non-existent remote.
+    // This simulates a ref that remains after a remote is deleted.
     let head_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
@@ -453,10 +453,8 @@ fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) 
         "deleted-remote should not exist"
     );
 
-    // Run with --remotes --full to trigger the fallback path
-    // The orphaned ref should be parsed using split_once('/') as fallback
-    // Note: We don't use snapshot testing here because the spinner character
-    // in stderr is non-deterministic (timing-dependent)
+    // The orphaned ref should still appear — split_once('/') parses it correctly
+    // even though the remote no longer exists.
     let output = repo
         .wt_command()
         .args(["list", "--remotes", "--full"])
@@ -468,12 +466,6 @@ fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) 
     assert!(
         stdout.contains("deleted-remote/orphaned-branch"),
         "should show orphaned remote branch in output: {stdout}"
-    );
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("unknown remote 'deleted-remote'"),
-        "should warn about unknown remote: {stderr}"
     );
 }
 
@@ -572,6 +564,13 @@ fn test_list_with_upstream_tracking(mut repo: TestRepo) {
     // Without this, Windows CI may show 55y (Unix epoch) because the worktree
     // isn't ready when wt list tries to read commit timestamps.
     repo.run_git_in(&no_upstream_wt, &["status", "--porcelain"]);
+
+    // Scenario 6: Upstream configured but remote ref deleted (git's [gone] state).
+    // Should be treated as no upstream — blank Remote column, no error.
+    let gone_wt = repo.add_worktree("gone-upstream");
+    repo.run_git_in(&gone_wt, &["push", "-u", "origin", "gone-upstream"]);
+    repo.run_git(&["push", "origin", "--delete", "gone-upstream"]);
+    repo.run_git_in(&gone_wt, &["fetch", "--prune", "origin"]);
 
     // Run list --branches --full to show all columns including Remote
     assert_cmd_snapshot!("with_upstream_tracking", {
@@ -840,9 +839,12 @@ mod tests {
 
 /// Set up a Quick Start example repo with main + feature-auth.
 ///
-/// Creates a simple scenario:
-/// - main: Initial codebase
-/// - feature-auth: Uncommitted changes adding authentication (WIP state)
+/// Creates a scenario with a committed feature branch plus staged WIP:
+/// - main: Initial codebase (1 commit behind remote)
+/// - feature-auth: 1 commit ahead of main + staged WIP changes (adds + removes)
+///
+/// The staged WIP extends auth.rs and restructures lib.rs, producing both
+/// additions and deletions in HEAD± to showcase more of `wt list`.
 ///
 /// Returns the feature-auth worktree path.
 fn setup_quickstart_repo(repo: &mut TestRepo) -> std::path::PathBuf {
@@ -851,7 +853,55 @@ fn setup_quickstart_repo(repo: &mut TestRepo) -> std::path::PathBuf {
     // Create feature-auth worktree
     let feature_auth = repo.add_worktree("feature-auth");
 
-    // Add authentication module (not committed - realistic WIP state)
+    // === Commit: Add authentication module (1 commit ahead of main) ===
+    std::fs::write(
+        feature_auth.join("auth.rs"),
+        r#"//! Authentication module for user session management.
+
+use std::time::{Duration, SystemTime};
+
+/// A user session with token and expiry.
+pub struct Session {
+    token: String,
+    expires_at: SystemTime,
+}
+
+impl Session {
+    /// Creates a new session with the given token and TTL.
+    pub fn new(token: String, ttl: Duration) -> Self {
+        Self {
+            token,
+            expires_at: SystemTime::now() + ttl,
+        }
+    }
+
+    /// Returns true if the session has not expired.
+    pub fn is_valid(&self) -> bool {
+        SystemTime::now() < self.expires_at
+    }
+
+    /// Validates the token format.
+    pub fn validate_token(token: &str) -> bool {
+        token.len() >= 32 && token.chars().all(|c| c.is_ascii_alphanumeric())
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let lib_content = std::fs::read_to_string(feature_auth.join("lib.rs")).unwrap();
+    std::fs::write(
+        feature_auth.join("lib.rs"),
+        format!("mod auth;\n\n{}", lib_content),
+    )
+    .unwrap();
+
+    repo.run_git_in(&feature_auth, &["add", "auth.rs", "lib.rs"]);
+    repo.commit_staged_with_age("Add authentication module", 2 * HOUR, &feature_auth);
+
+    // === Staged WIP: extend auth + restructure lib (produces both +N and -N in HEAD±) ===
+
+    // Extend auth.rs with is_authenticated and tests
     std::fs::write(
         feature_auth.join("auth.rs"),
         r#"//! Authentication module for user session management.
@@ -909,15 +959,26 @@ mod tests {
     )
     .unwrap();
 
-    // Update lib.rs to include the new module
-    let lib_content = std::fs::read_to_string(feature_auth.join("lib.rs")).unwrap();
+    // Restructure lib.rs: remove test module, add pub use + init
     std::fs::write(
         feature_auth.join("lib.rs"),
-        format!("mod auth;\n\n{}", lib_content),
+        r#"mod auth;
+
+pub use auth::Session;
+
+/// Adds two numbers.
+pub fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+/// Initializes the application with default settings.
+pub fn init() -> bool {
+    true
+}
+"#,
     )
     .unwrap();
 
-    // Stage all changes (but don't commit - WIP state for wt list demo)
     repo.run_git_in(&feature_auth, &["add", "auth.rs", "lib.rs"]);
 
     feature_auth
@@ -1714,6 +1775,13 @@ TODO: Add request/response examples for each endpoint
     // Remove the worktree but keep the branch
     repo.run_git(&["worktree", "remove", wip_wt.to_str().unwrap()]);
 
+    // === Create fix-typos worktree (already merged — shows dimmed as removable) ===
+    // Story: A quick typo fix that was already squash-merged into main.
+    // The worktree is still around and can be removed. Shows dimmed in list output.
+    let fix_typos = repo.add_worktree("fix-typos");
+    repo.run_git_in(&fix_typos, &["push", "-u", "origin", "fix-typos"]);
+    mock_ci_status(repo, "fix-typos", "passed", "pull-request", false);
+
     // === Mock CI status ===
     // CI requires --full flag, but we mock it so examples show realistic output
     // Note: main's CI is mocked AFTER the merge commit so the hash matches
@@ -1721,6 +1789,33 @@ TODO: Add request/response examples for each endpoint
     mock_ci_status(repo, "fix-auth", "passed", "pull-request", false);
     // feature-api has unpushed commits, so CI is stale (shows dimmed)
     mock_ci_status(repo, "feature-api", "running", "pull-request", true);
+
+    // === Mock LLM summaries ===
+    // Summary requires --full + [list] summary = true + [commit.generation] command
+    // Pre-populate the cache so tests don't need a real LLM
+    repo.write_test_config(
+        r#"
+[list]
+summary = true
+
+[commit.generation]
+command = "echo unused"
+"#,
+    );
+    mock_summary_cache(
+        repo,
+        "fix-auth",
+        Some(&fix_auth),
+        "Harden auth with constant-time token validation",
+    );
+    mock_summary_cache(
+        repo,
+        "feature-api",
+        Some(&feature_api),
+        "Refactor API to REST architecture with middleware",
+    );
+    mock_summary_cache(repo, "exp", None, "Explore GraphQL schema and resolvers");
+    mock_summary_cache(repo, "wip", None, "Start API documentation");
 
     feature_api
 }
@@ -1774,6 +1869,82 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     std::fs::write(&cache_file, &cache_json).unwrap();
 }
 
+/// Mock summary cache by computing the real diff hash and writing a cache entry.
+///
+/// Mirrors `summary::generate_summary_core` — computes the combined diff
+/// (branch + working tree), hashes it, and writes a CachedSummary JSON file.
+fn mock_summary_cache(
+    repo: &TestRepo,
+    branch: &str,
+    worktree_path: Option<&std::path::Path>,
+    summary: &str,
+) {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    // Compute combined diff (matching compute_combined_diff in summary.rs)
+    let mut diff = String::new();
+
+    // Branch diff: main...<branch>
+    let head_output = repo
+        .git_command()
+        .args(["rev-parse", branch])
+        .run()
+        .unwrap();
+    let head = String::from_utf8_lossy(&head_output.stdout)
+        .trim()
+        .to_string();
+    let merge_base = format!("main...{}", head);
+    if let Ok(output) = repo.git_command().args(["diff", &merge_base]).run() {
+        let branch_diff = String::from_utf8_lossy(&output.stdout);
+        diff.push_str(&branch_diff);
+    }
+
+    // Working tree diff (only if worktree exists)
+    if let Some(wt_path) = worktree_path {
+        let wt_str = wt_path.display().to_string();
+        if let Ok(output) = repo
+            .git_command()
+            .args(["-C", &wt_str, "diff", "HEAD"])
+            .run()
+        {
+            let wt_diff = String::from_utf8_lossy(&output.stdout);
+            if !wt_diff.trim().is_empty() {
+                diff.push_str(&wt_diff);
+            }
+        }
+    }
+
+    // Hash the diff (matches summary::hash_diff)
+    let mut hasher = DefaultHasher::new();
+    diff.hash(&mut hasher);
+    let diff_hash = hasher.finish();
+
+    // Write cache file
+    let cache_json = format!(
+        r#"{{"summary":"{}","diff_hash":{},"branch":"{}"}}"#,
+        summary, diff_hash, branch
+    );
+
+    let output = repo
+        .git_command()
+        .args(["rev-parse", "--git-common-dir"])
+        .run()
+        .unwrap();
+    let git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let git_path = if std::path::Path::new(&git_dir).is_absolute() {
+        std::path::PathBuf::from(&git_dir)
+    } else {
+        repo.root_path().join(&git_dir)
+    };
+
+    let cache_dir = git_path.join("wt").join("cache").join("summaries");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    let safe_branch = worktrunk::path::sanitize_for_filename(branch);
+    let cache_file = cache_dir.join(format!("{safe_branch}.json"));
+    std::fs::write(&cache_file, &cache_json).unwrap();
+}
+
 // =============================================================================
 // Quick Start Snapshot Tests
 // =============================================================================
@@ -1781,7 +1952,7 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
 /// Generate Quick Start example: `wt switch --create feature-auth` output
 ///
 /// Shows the switch output when creating a new worktree from main.
-/// Sets WORKTRUNK_DIRECTIVE_FILE to simulate shell integration being active,
+/// Sets WORKTRUNK_DIRECTIVE_CD_FILE to simulate shell integration being active,
 /// which suppresses the "Cannot change directory" warning.
 /// Output: tests/snapshots/integration__integration_tests__list__quickstart_switch.snap
 #[rstest]
@@ -1796,7 +1967,7 @@ fn test_quickstart_switch(mut repo: TestRepo) {
     std::fs::write(&directive_file, "").unwrap();
     assert_cmd_snapshot!("quickstart_switch", {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature-auth"], None);
-        cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
+        cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file);
         cmd
     });
 }
@@ -1817,7 +1988,7 @@ fn test_quickstart_list(mut repo: TestRepo) {
 /// Generate Quick Start example: `wt merge` output
 ///
 /// Shows merge output when merging feature-auth into main.
-/// Sets WORKTRUNK_DIRECTIVE_FILE to simulate shell integration being active,
+/// Sets WORKTRUNK_DIRECTIVE_CD_FILE to simulate shell integration being active,
 /// which suppresses the "Cannot change directory" warning.
 /// Output: tests/snapshots/integration__integration_tests__list__quickstart_merge.snap
 #[rstest]
@@ -1831,7 +2002,7 @@ fn test_quickstart_merge(mut repo: TestRepo) {
     // Create feature-auth worktree with one commit
     let feature_auth = repo.add_worktree("feature-auth");
 
-    // Add authentication module (same as setup_quickstart_repo)
+    // Add authentication module (full WIP version — all staged, no commit, for wt merge)
     std::fs::write(
         feature_auth.join("auth.rs"),
         r#"//! Authentication module for user session management.
@@ -1920,7 +2091,7 @@ mod tests {
     // Merge feature-auth into main
     assert_cmd_snapshot!("quickstart_merge", {
         let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_auth));
-        cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
+        cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file);
         // Set MOCK_CONFIG_DIR so mock-stub can find llm.json
         cmd.env("MOCK_CONFIG_DIR", &mock_bin_dir);
         // Use to_slash_lossy() for Windows compatibility - bash can't handle backslash paths
@@ -1952,8 +2123,8 @@ fn test_readme_example_list(mut repo: TestRepo) {
 
 /// Generate README example: `wt list --full` output
 ///
-/// Shows additional columns: main…± (line diffs in commits) and CI status.
-/// Uses narrower width (100 cols) to fit in doc site code blocks.
+/// Shows additional columns: main…± (line diffs), CI status, and LLM summaries.
+/// Uses wider terminal (130 cols) than the base example to fit the Summary column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_full.snap
 #[rstest]
 fn test_readme_example_list_full(mut repo: TestRepo) {
@@ -1961,6 +2132,7 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
     assert_cmd_snapshot!("readme_example_list_full", {
         let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
         cmd.arg("--full");
+        cmd.env("COLUMNS", "130");
         cmd
     });
 }
@@ -1968,7 +2140,7 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
 /// Generate README example: `wt list --branches --full` output
 ///
 /// Shows branches without worktrees (⎇ symbol) alongside worktrees, plus CI status.
-/// Uses narrower width (100 cols) to fit in doc site code blocks.
+/// Uses wider terminal (130 cols) than the base example to fit the Summary column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_branches.snap
 #[rstest]
 fn test_readme_example_list_branches(mut repo: TestRepo) {
@@ -1976,8 +2148,49 @@ fn test_readme_example_list_branches(mut repo: TestRepo) {
     assert_cmd_snapshot!("readme_example_list_branches", {
         let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
         cmd.args(["--branches", "--full"]);
+        cmd.env("COLUMNS", "130");
         cmd
     });
+}
+
+/// Generate config state marker example: `wt list` with user markers
+///
+/// Shows how user markers appear in the Status column alongside git symbols.
+/// Used by `wt config state marker --help` and docs via placeholder expansion.
+/// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_marker.snap
+#[rstest]
+fn test_readme_example_list_marker(mut repo: TestRepo) {
+    remove_fixture_worktrees(&mut repo);
+
+    repo.commit_with_age("Initial commit", DAY);
+
+    // Branch ahead of main with commits and user marker 🤖
+    let _feature_wt = repo.add_worktree_with_commit(
+        "feature-api",
+        "api.rs",
+        "// API implementation",
+        "Add REST API endpoints",
+    );
+    repo.set_marker("feature-api", "🤖");
+
+    // Branch with uncommitted changes and user marker 💬
+    let review_wt = repo.add_worktree_with_commit(
+        "review-ui",
+        "component.tsx",
+        "// UI component",
+        "Add dashboard component",
+    );
+    std::fs::write(review_wt.join("styles.css"), "/* pending styles */").unwrap();
+    repo.set_marker("review-ui", "💬");
+
+    // Branch with uncommitted changes only (no user marker)
+    let wip_wt = repo.add_worktree("wip-docs");
+    std::fs::write(wip_wt.join("README.md"), "# Documentation").unwrap();
+
+    assert_cmd_snapshot!(
+        "readme_example_list_marker",
+        list_snapshots::command_readme(&repo, repo.root_path())
+    );
 }
 
 /// Generate tips-patterns.md example: dev server per worktree workflow
@@ -2614,14 +2827,14 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
 
 ///
 /// This specifically tests the WorkingTreeConflicts task which:
-/// 1. Uses `git stash create` to get a tree object from uncommitted changes
+/// 1. Uses `git write-tree` to snapshot the index (with temp index for unstaged/untracked)
 /// 2. Runs merge-tree against the default branch to detect conflicts
 ///
-/// The key distinction from commit-level conflicts:
-/// - Commit-level: HEAD conflicts with main (always checked)
-/// - Working tree: Uncommitted changes conflict with main (only with --full)
+/// Both kinds of conflicts are checked in both `wt list` and `wt list --full`:
+/// - Commit-level: HEAD conflicts with main
+/// - Working tree: uncommitted changes conflict with main
 #[rstest]
-fn test_list_full_working_tree_conflicts(mut repo: TestRepo) {
+fn test_list_working_tree_conflicts(mut repo: TestRepo) {
     // Create initial commit with a shared file
     std::fs::write(repo.root_path().join("shared.txt"), "original content").unwrap();
     repo.commit("Initial commit");
@@ -2639,13 +2852,14 @@ fn test_list_full_working_tree_conflicts(mut repo: TestRepo) {
     // Now add uncommitted changes to feature that would conflict with main
     std::fs::write(feature.join("shared.txt"), "feature's uncommitted version").unwrap();
 
-    // Without --full: no conflict symbol (only checks commit-level)
+    // Without --full: WorkingTreeConflicts runs and detects the uncommitted conflict.
     assert_cmd_snapshot!(
         "working_tree_conflicts_without_full",
         list_snapshots::command(&repo, repo.root_path())
     );
 
-    // With --full: should show conflict symbol because uncommitted changes conflict
+    // With --full: same conflict detection, plus the wide status column and extra
+    // post-skeleton tasks that non-full mode skips.
     assert_cmd_snapshot!("working_tree_conflicts_with_full", {
         let mut cmd = list_snapshots::command(&repo, repo.root_path());
         cmd.arg("--full");
@@ -2654,7 +2868,7 @@ fn test_list_full_working_tree_conflicts(mut repo: TestRepo) {
 }
 
 ///
-/// Even with --full, if the working tree is clean, we skip the stash-based check
+/// Even with --full, if the working tree is clean, we skip the working-tree check
 /// and just use the commit-level conflict detection.
 #[rstest]
 fn test_list_full_clean_working_tree_uses_commit_conflicts(mut repo: TestRepo) {
@@ -2782,63 +2996,6 @@ fn test_list_skips_operations_for_prunable_worktrees(mut repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
-/// Tests that branches far behind main show `…` instead of diff stats when
-/// skip_expensive_for_stale is enabled. This saves time in `wt switch` interactive
-/// picker for repos with many stale branches.
-///
-/// The `…` indicator distinguishes "not computed" from "zero changes" (blank).
-#[rstest]
-fn test_list_skips_expensive_for_stale_branches(mut repo: TestRepo) {
-    // Create feature branch at current main
-    let feature_path = repo.add_worktree("feature");
-
-    // Advance main by 2 commits (feature will be 2 behind)
-    repo.commit("Second commit on main");
-    repo.commit("Third commit on main");
-
-    // Add a change on feature so it's not integrated
-    std::fs::write(feature_path.join("feature.txt"), "feature content").unwrap();
-    repo.git_command()
-        .args(["add", "feature.txt"])
-        .current_dir(&feature_path)
-        .run()
-        .unwrap();
-    repo.git_command()
-        .args(["commit", "-m", "Feature work"])
-        .current_dir(&feature_path)
-        .run()
-        .unwrap();
-
-    // With threshold=1, feature branch (2 behind) should skip expensive tasks
-    // and show `…` instead of actual diff stats
-    assert_cmd_snapshot!({
-        let mut cmd = list_snapshots::command(&repo, repo.root_path());
-        cmd.arg("--full"); // Need --full to show BranchDiff column
-        cmd.env("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD", "1");
-        cmd
-    });
-}
-
-/// Tests skip_expensive_for_stale with branch-only entries (no worktree).
-/// This exercises a different code path than the worktree test above.
-#[rstest]
-fn test_list_skips_expensive_for_stale_branches_only(repo: TestRepo) {
-    // Create a branch without a worktree
-    repo.create_branch("stale-branch");
-
-    // Advance main by 2 commits (stale-branch will be 2 behind)
-    repo.commit("Second commit on main");
-    repo.commit("Third commit on main");
-
-    // With threshold=1, stale-branch (2 behind) should skip expensive tasks
-    assert_cmd_snapshot!({
-        let mut cmd = list_snapshots::command(&repo, repo.root_path());
-        cmd.args(["--branches", "--full"]);
-        cmd.env("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD", "1");
-        cmd
-    });
-}
-
 /// Tests that wt list works correctly when the configured default branch doesn't exist.
 ///
 /// When a user sets `wt config state default-branch set develop` but the `develop`
@@ -2856,7 +3013,7 @@ fn test_list_with_nonexistent_default_branch(repo: TestRepo) {
 
 /// Tests that wt list --full works correctly when the configured default branch doesn't exist.
 ///
-/// The --full flag enables expensive tasks like BranchDiff and WorkingTreeConflicts.
+/// The --full flag enables expensive tasks like BranchDiff.
 /// These should also degrade gracefully when default_branch is None.
 #[rstest]
 fn test_list_full_with_nonexistent_default_branch(repo: TestRepo) {
@@ -2931,6 +3088,9 @@ fn test_list_nested_worktree_json_is_current(mut repo: TestRepo) {
 #[test]
 fn test_list_empty_repo() {
     let repo = TestRepo::empty();
+    let guard =
+        setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees).bind_to_scope();
+    std::mem::forget(guard);
     // Pre-set default branch cache so the `is_unborn_head_branch` validation path is exercised
     repo.run_git(&["config", "worktrunk.default-branch", "main"]);
     // Should show the branch with empty commit columns and no errors

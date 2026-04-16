@@ -24,14 +24,13 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt config create - Create configuration file
 
 Usage: [1m[36mwt config create[0m [36m[OPTIONS][0m
@@ -51,7 +50,7 @@ Usage: [1m[36mwt config create[0m [36m[OPTIONS][0m
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
 
 [1m[32mUser config[0m
 
@@ -59,7 +58,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 
 [107m [0m [2m# # User Configuration[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Create with `wt config create`.[0m
+[107m [0m [2m# Create with `wt config create`. Values shown are defaults unless noted otherwise.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Location:[0m
 [107m [0m [2m#[0m
@@ -70,30 +69,35 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# Controls where new worktrees are created.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# **Variables:**[0m
+[107m [0m [2m# **Available template variables:**[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# - `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)[0m
 [107m [0m [2m# - `{{ repo }}` — repository directory name (e.g., `myproject`)[0m
+[107m [0m [2m# - `{{ owner }}` — primary remote owner path (may include subgroups like `group/subgroup`)[0m
 [107m [0m [2m# - `{{ branch }}` — raw branch name (e.g., `feature/auth`)[0m
 [107m [0m [2m# - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)[0m
 [107m [0m [2m# - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# **Examples** for repo at `~/code/myproject`, branch `feature/auth`:[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # Default — sibling directory[0m
-[107m [0m [2m# # Creates: ~/code/myproject.feature-auth[0m
-[107m [0m [2m# # worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"[0m
+[107m [0m [2m# Default — sibling directory (`~/code/myproject.feature-auth`):[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # Inside the repository[0m
-[107m [0m [2m# # Creates: ~/code/myproject/.worktrees/feature-auth[0m
+[107m [0m [2m# worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Inside the repository (`~/code/myproject/.worktrees/feature-auth`):[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # Centralized worktrees directory[0m
-[107m [0m [2m# # Creates: ~/worktrees/myproject/feature-auth[0m
+[107m [0m [2m# Centralized worktrees directory (`~/worktrees/myproject/feature-auth`):[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # Bare repository (git clone --bare <url> myproject/.git)[0m
-[107m [0m [2m# # Creates: ~/code/myproject/feature-auth[0m
+[107m [0m [2m# By remote owner path (`~/development/max-sixty/myproject/feature/auth`):[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# worktree-path = "~/development/{{ owner }}/{{ repo }}/{{ branch }}"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Bare repository (`~/code/myproject/feature-auth`):[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# `~` expands to the home directory. Relative paths resolve from `repo_path`.[0m
@@ -104,28 +108,28 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Claude Code[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # [commit.generation][0m
-[107m [0m [2m# # command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Codex[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # [commit.generation][0m
-[107m [0m [2m# # command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# ### opencode[0m
+[107m [0m [2m# ### OpenCode[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # [commit.generation][0m
-[107m [0m [2m# # command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"[0m
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### llm[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # [commit.generation][0m
-[107m [0m [2m# # command = "llm -m claude-haiku-4.5"[0m
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "llm -m claude-haiku-4.5"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### aichat[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# # [commit.generation][0m
-[107m [0m [2m# # command = "aichat -m claude:claude-haiku-4.5"[0m
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# command = "aichat -m claude:claude-haiku-4.5"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and Custom prompt templates (#custom-prompt-templates) for template customization.[0m
 [107m [0m [2m#[0m
@@ -161,26 +165,21 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# commit = true      # Commit uncommitted changes first (--no-commit to skip)[0m
 [107m [0m [2m# rebase = true      # Rebase onto target before merge (--no-rebase to skip)[0m
 [107m [0m [2m# remove = true      # Remove worktree after merge (--no-remove to keep)[0m
-[107m [0m [2m# verify = true      # Run project hooks (--no-verify to skip)[0m
-[107m [0m [2m# no-ff = false      # Create a merge commit even when fast-forward is possible (--no-ff)[0m
+[107m [0m [2m# verify = true      # Run project hooks (--no-hooks to skip)[0m
+[107m [0m [2m# ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Switch[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [switch][0m
-[107m [0m [2m# no-cd = true       # Skip directory change after switching (--cd to override)[0m
+[107m [0m [2m# cd = true          # Change directory after switching (--no-cd to skip)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [switch.picker][0m
-[107m [0m [2m# # Pager command for diff preview (overrides git's core.pager)[0m
-[107m [0m [2m# # pager = "delta --paging=never"[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# # Wall-clock budget (ms) for picker data collection (default: 500)[0m
-[107m [0m [2m# # Tasks still running when the budget expires are abandoned; 0 disables[0m
-[107m [0m [2m# # timeout-ms = 500[0m
+[107m [0m [2m# pager = "delta --paging=never"   # Example: override git's core.pager for diff preview[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Step[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [step.copy-ignored][0m
-[107m [0m [2m# exclude = [".cache/", ".turbo/"]  # Add more excludes after built-in defaults and .worktreeinclude[0m
+[107m [0m [2m# exclude = []   # Additional excludes (e.g., [".cache/", ".turbo/"])[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.[0m
 [107m [0m [2m#[0m
@@ -202,11 +201,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# - User configs generally apply to all projects.[0m
 [107m [0m [2m# - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Entries are keyed by project identifier (e.g., `github.com/user/repo`).[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# #### Setting overrides [experimental][0m
-[107m [0m [2m#[0m
-[107m [0m [2m# Override global user config for a specific project. Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.[0m
+[107m [0m [2m# Entries are keyed by project identifier (e.g., `github.com/user/repo`). Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [projects."github.com/user/repo"][0m
 [107m [0m [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
@@ -233,7 +228,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# <!-- DEFAULT_TEMPLATE_START -->[0m
 [107m [0m [2m# [commit.generation][0m
 [107m [0m [2m# template = """[0m
-[107m [0m [2m# Write a commit message for the staged changes below.[0m
+[107m [0m [2m# <task>Write a commit message for the staged changes below.</task>[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# <format>[0m
 [107m [0m [2m# - Subject line under 50 chars[0m
@@ -277,7 +272,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# <!-- DEFAULT_SQUASH_TEMPLATE_START -->[0m
 [107m [0m [2m# [commit.generation][0m
 [107m [0m [2m# squash-template = """[0m
-[107m [0m [2m# Combine these commits into a single commit message.[0m
+[107m [0m [2m# <task>Write a commit message for the combined effect of these commits.</task>[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# <format>[0m
 [107m [0m [2m# - Subject line under 50 chars[0m
@@ -305,117 +300,61 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# """[0m
 [107m [0m [2m# <!-- DEFAULT_SQUASH_TEMPLATE_END -->[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# ## Hooks[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# See `wt hook` (https://worktrunk.dev/hook/) for hook types, execution order, template variables, and examples. User hooks apply to all projects; project hooks (https://worktrunk.dev/config/#project-configuration) apply only to that repository.[0m
 
 [1m[32mProject config[0m
 
 With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repository:
 
-[107m [0m [2m# Worktrunk Project Configuration[0m
-[107m [0m [2m# Copy to: <repo>/.config/wt.toml[0m
+[107m [0m [2m# # Project Configuration[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Project-specific hooks that run automatically during worktree operations.[0m
-[107m [0m [2m# Check this file into git to share hooks across all developers.[0m
-[107m [0m [2m[0m
-[107m [0m [2m# ============================================================================[0m
-[107m [0m [2m# Hook Formats[0m
-[107m [0m [2m# ============================================================================[0m
-[107m [0m [2m# All hooks support two formats:[0m
+[107m [0m [2m# Project configuration lets teams share repository-specific settings — hooks, dev server URLs, and other defaults. The file lives in `.config/wt.toml` and is typically checked into version control.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Single command:[0m
-[107m [0m [2m#   post-create = "npm install"[0m
+[107m [0m [2m# To create a starter file with commented-out examples, run `wt config create --project`.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Named table (multiple commands):[0m
-[107m [0m [2m#   [post-create][0m
-[107m [0m [2m#   deps = "npm install"[0m
-[107m [0m [2m#   build = "npm run build"[0m
+[107m [0m [2m# ## Hooks[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Named commands appear in output, making it easier to identify failures.[0m
-[107m [0m [2m[0m
-[107m [0m [2m# ============================================================================[0m
-[107m [0m [2m# Template Variables — see https://worktrunk.dev/hook/#template-variables[0m
-[107m [0m [2m# ============================================================================[0m
-[107m [0m [2m# Common variables:[0m
-[107m [0m [2m#   {{ repo }}               - Repository directory name (e.g., "myproject")[0m
-[107m [0m [2m#   {{ branch }}             - Branch name (e.g., "feature/auth")[0m
-[107m [0m [2m#   {{ worktree_path }}      - Absolute path to worktree[0m
-[107m [0m [2m#   {{ primary_worktree_path }} - Main worktree (or default branch worktree for bare repos)[0m
-[107m [0m [2m#   {{ default_branch }}     - Default branch name (e.g., "main")[0m
-[107m [0m [2m#   {{ target }}             - Target branch (merge hooks only)[0m
+[107m [0m [2m# Project hooks apply to this repository only. See `wt hook` (https://worktrunk.dev/hook/) for hook types, execution order, and examples.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Filters:[0m
-[107m [0m [2m#   {{ branch | sanitize }}     - Replace / and \ with - (e.g., "feature-auth")[0m
-[107m [0m [2m#   {{ branch | sanitize_db }}  - Database-safe identifier with hash suffix (e.g., "feature_auth_x7k")[0m
-[107m [0m [2m#   {{ branch | hash_port }}    - Deterministic port 10000-19999[0m
-[107m [0m [2m[0m
-[107m [0m [2m# ============================================================================[0m
-[107m [0m [2m# Hooks[0m
-[107m [0m [2m# ============================================================================[0m
-[107m [0m [2m[0m
-[107m [0m [2m# Post-Create: Runs after worktree creation, BLOCKS until complete[0m
-[107m [0m [2m# Use for: installing dependencies, setting up databases, copying configs[0m
+[107m [0m [2m# pre-start = "npm ci"[0m
+[107m [0m [2m# post-start = "npm run dev"[0m
+[107m [0m [2m# pre-merge = "npm test"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# [post-create][0m
-[107m [0m [2m# deps = "npm ci"[0m
-[107m [0m [2m# env = "cp .env.example .env"[0m
-[107m [0m [2m[0m
-[107m [0m [2m# Post-Start: Runs in BACKGROUND after worktree creation (parallel)[0m
-[107m [0m [2m# Use for: dev servers, file watchers, background builds[0m
-[107m [0m [2m# Output logged to .git/wt/logs/{branch}-project-post-start-{name}.log[0m
+[107m [0m [2m# ## Dev server URL[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# [post-start][0m
-[107m [0m [2m# server = "npm run dev -- --port {{ branch | hash_port }}"[0m
-[107m [0m [2m# watch = "npm run watch"[0m
-[107m [0m [2m[0m
-[107m [0m [2m# Post-Switch: Runs in BACKGROUND after every switch (parallel)[0m
-[107m [0m [2m# Use for: terminal tab naming, tmux window titles, IDE notifications[0m
+[107m [0m [2m# URL column in `wt list` (dimmed when port not listening):[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# post-switch = "echo -ne '\\033]0;{{ branch }}\\007'"[0m
-[107m [0m [2m[0m
-[107m [0m [2m# Pre-Commit: Runs before committing during merge, BLOCKS (fail-fast)[0m
-[107m [0m [2m# Use for: formatters, linters, quick checks[0m
+[107m [0m [2m# [list][0m
+[107m [0m [2m# url = "http://localhost:{{ branch | hash_port }}"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# [pre-commit][0m
-[107m [0m [2m# format = "npm run format:check"[0m
-[107m [0m [2m# lint = "npm run lint"[0m
-[107m [0m [2m[0m
-[107m [0m [2m# Pre-Merge: Runs before merging to target, BLOCKS (fail-fast)[0m
-[107m [0m [2m# Use for: tests, build verification[0m
+[107m [0m [2m# ## Forge platform override[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# [pre-merge][0m
-[107m [0m [2m# test = "npm test"[0m
-[107m [0m [2m# build = "npm run build"[0m
-[107m [0m [2m[0m
-[107m [0m [2m# Post-Merge: Runs after successful merge, BLOCKS[0m
-[107m [0m [2m# Use for: deployment, notifications[0m
+[107m [0m [2m# Override platform detection for SSH aliases or self-hosted instances:[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# post-merge = "echo 'Merged {{ branch }} to {{ target }}'"[0m
-[107m [0m [2m[0m
-[107m [0m [2m# Pre-Remove: Runs before worktree removal, BLOCKS (fail-fast)[0m
-[107m [0m [2m# Use for: cleanup, stopping services[0m
+[107m [0m [2m# [forge][0m
+[107m [0m [2m# platform = "github"  # or "gitlab"[0m
+[107m [0m [2m# hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# pre-remove = "docker compose down"[0m
-[107m [0m [2m[0m
-[107m [0m [2m# ============================================================================[0m
-[107m [0m [2m# Aliases (experimental) — run with `wt step <name>`[0m
-[107m [0m [2m# ============================================================================[0m
-[107m [0m [2m# Command templates that support the same variables as hooks.[0m
-[107m [0m [2m# Project-config aliases require command approval on first run.[0m
+[107m [0m [2m# ## Copy-ignored excludes[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Additional excludes for `wt step copy-ignored`:[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [step.copy-ignored][0m
+[107m [0m [2m# exclude = [".cache/", ".turbo/"][0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# ## Aliases[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Command templates that run with `wt step <name>`. See `wt step` aliases (https://worktrunk.dev/step/#aliases) for usage and flags.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [aliases][0m
 [107m [0m [2m# deploy = "make deploy BRANCH={{ branch }}"[0m
 [107m [0m [2m# url = "echo http://localhost:{{ branch | hash_port }}"[0m
-[107m [0m [2m[0m
-[107m [0m [2m# ============================================================================[0m
-[107m [0m [2m# Dev Server URL (shown in `wt list`)[0m
-[107m [0m [2m# ============================================================================[0m
-[107m [0m [2m# [list][0m
-[107m [0m [2m# url = "http://localhost:{{ branch | hash_port }}"[0m
-[107m [0m [2m[0m
-[107m [0m [2m# ============================================================================[0m
-[107m [0m [2m# CI Platform Override[0m
-[107m [0m [2m# ============================================================================[0m
-[107m [0m [2m# Override CI platform detection for GitHub Enterprise or self-hosted GitLab[0m
-[107m [0m [2m# with custom domains where URL detection fails.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# [ci][0m
-[107m [0m [2m# platform = "github"  # or "gitlab"[0m
+[107m [0m [2m# Aliases defined here are shared with teammates. For personal aliases, use the user config (https://worktrunk.dev/config/#aliases) `[aliases]` section instead.[0m
+
+----- stderr -----

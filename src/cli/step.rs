@@ -1,5 +1,70 @@
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 
+#[derive(Args)]
+pub struct CommitArgs {
+    /// Branch to operate on (defaults to current worktree)
+    #[arg(short, long, add = crate::completion::worktree_only_completer())]
+    pub(crate) branch: Option<String>,
+
+    /// Skip approval prompts
+    #[arg(short, long, help_heading = "Automation")]
+    pub(crate) yes: bool,
+
+    /// Skip hooks
+    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+    pub(crate) verify: bool,
+
+    /// Skip hooks (deprecated alias for --no-hooks)
+    #[arg(long = "no-verify", hide = true)]
+    pub(crate) no_verify_deprecated: bool,
+
+    /// What to stage before committing [default: all]
+    #[arg(long)]
+    pub(crate) stage: Option<crate::commands::commit::StageMode>,
+
+    /// Show prompt without running LLM
+    ///
+    /// Outputs the rendered prompt to stdout for debugging or manual piping.
+    #[arg(long)]
+    pub(crate) show_prompt: bool,
+}
+
+#[derive(Args)]
+pub struct SquashArgs {
+    /// Target branch
+    ///
+    /// Defaults to default branch.
+    #[arg(add = crate::completion::branch_value_completer())]
+    pub(crate) target: Option<String>,
+
+    /// Skip approval prompts
+    #[arg(short, long, help_heading = "Automation")]
+    pub(crate) yes: bool,
+
+    /// Skip hooks
+    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+    pub(crate) verify: bool,
+
+    /// Skip hooks (deprecated alias for --no-hooks)
+    #[arg(long = "no-verify", hide = true)]
+    pub(crate) no_verify_deprecated: bool,
+
+    /// What to stage before committing [default: all]
+    #[arg(long)]
+    pub(crate) stage: Option<crate::commands::commit::StageMode>,
+
+    /// Show prompt without running LLM
+    ///
+    /// Outputs the rendered prompt to stdout for debugging or manual piping.
+    #[arg(long)]
+    pub(crate) show_prompt: bool,
+}
+
+// Ordering: `wt merge` pipeline steps first (commit → squash → rebase → push),
+// then standalone utilities (diff, copy-ignored), then experimentals
+// (alphabetical: eval, for-each, promote, prune, relocate). Keep this enum,
+// the `## Operations` bullet list in `src/cli/mod.rs`, and the
+// `<!-- subdoc: -->` markers in the same relative order.
 /// Run individual operations
 #[derive(Subcommand)]
 #[command(allow_external_subcommands = true)]
@@ -21,7 +86,7 @@ Controls what to stage before committing:
 | `none` | Don't stage anything, commit only what's already staged |
 
 ```console
-wt step commit --stage=tracked
+$ wt step commit --stage=tracked
 ```
 
 Configure the default in user config:
@@ -37,32 +102,14 @@ Output the rendered LLM prompt to stdout without running the command. Useful for
 
 ```console
 # Inspect the rendered prompt
-wt step commit --show-prompt | less
+$ wt step commit --show-prompt | less
 
 # Pipe to a different LLM
-wt step commit --show-prompt | llm -m gpt-5-nano
+$ wt step commit --show-prompt | llm -m gpt-5-nano
 ```
 "#
     )]
-    Commit {
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
-        /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
-        verify: bool,
-
-        /// What to stage before committing [default: all]
-        #[arg(long)]
-        stage: Option<crate::commands::commit::StageMode>,
-
-        /// Show prompt without running LLM
-        ///
-        /// Outputs the rendered prompt to stdout for debugging or manual piping.
-        #[arg(long)]
-        show_prompt: bool,
-    },
+    Commit(CommitArgs),
 
     /// Squash commits since branching
     ///
@@ -83,7 +130,7 @@ Controls what to stage before squashing:
 | `none` | Don't stage anything, squash only committed changes |
 
 ```console
-wt step squash --stage=none
+$ wt step squash --stage=none
 ```
 
 Configure the default in user config:
@@ -98,34 +145,30 @@ stage = "tracked"
 Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
 
 ```console
-wt step squash --show-prompt | less
+$ wt step squash --show-prompt | less
 ```
 "#
     )]
-    Squash {
+    Squash(SquashArgs),
+
+    /// Rebase onto target
+    #[command(
+        after_long_help = r#"Rebases the current branch onto the target branch. Conflicts abort immediately; use `git rebase --abort` to recover.
+
+## Examples
+
+```console
+$ wt step rebase            # Rebase onto default branch
+$ wt step rebase develop    # Rebase onto develop
+```
+"#
+    )]
+    Rebase {
         /// Target branch
         ///
         /// Defaults to default branch.
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
-        /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
-        verify: bool,
-
-        /// What to stage before committing [default: all]
-        #[arg(long)]
-        stage: Option<crate::commands::commit::StageMode>,
-
-        /// Show prompt without running LLM
-        ///
-        /// Outputs the rendered prompt to stdout for debugging or manual piping.
-        #[arg(long)]
-        show_prompt: bool,
     },
 
     /// Fast-forward target to current branch
@@ -135,8 +178,8 @@ wt step squash --show-prompt | less
 ## Examples
 
 ```console
-wt step push             # Fast-forward main to current branch
-wt step push develop     # Fast-forward develop instead
+$ wt step push             # Fast-forward main to current branch
+$ wt step push develop     # Fast-forward develop instead
 ```
 
 Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updateInstead` internally.
@@ -158,26 +201,6 @@ Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updat
         ff: bool,
     },
 
-    /// Rebase onto target
-    #[command(
-        after_long_help = r#"Rebases the current branch onto the target branch. Conflicts abort immediately; use `git rebase --abort` to recover.
-
-## Examples
-
-```console
-wt step rebase            # Rebase onto default branch
-wt step rebase develop    # Rebase onto develop
-```
-"#
-    )]
-    Rebase {
-        /// Target branch
-        ///
-        /// Defaults to default branch.
-        #[arg(add = crate::completion::branch_value_completer())]
-        target: Option<String>,
-    },
-
     /// Show all changes since branching
     ///
     /// Includes committed, staged, unstaged, and untracked files.
@@ -189,15 +212,15 @@ wt step rebase develop    # Rebase onto develop
 Arguments after `--` are forwarded to `git diff`:
 
 ```console
-wt step diff -- --stat
-wt step diff -- --name-only
-wt step diff -- -- '*.rs'
+$ wt step diff -- --stat
+$ wt step diff -- --name-only
+$ wt step diff -- -- '*.rs'
 ```
 
 The diff is pipeable to tools like `delta`:
 
 ```console
-wt step diff | delta
+$ wt step diff | delta
 ```
 
 ## How it works
@@ -205,9 +228,9 @@ wt step diff | delta
 Equivalent to:
 
 ```console
-cp "$(git rev-parse --git-dir)/index" /tmp/idx
-GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .
-GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
+$ cp "$(git rev-parse --git-dir)/index" /tmp/idx
+$ GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .
+$ GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
 ```
 
 `git diff` ignores untracked files. `git add --intent-to-add .` registers them in the index without staging their content, making them visible to `git diff`. This runs against a copy of the real index so the original is never modified.
@@ -284,7 +307,7 @@ Reflink copies share disk blocks until modified — no data is actually copied. 
 | `cp -R` (full copy) | 2m |
 | `cp -Rc` / `wt step copy-ignored` | 20s |
 
-Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
+Uses per-file reflink (like `cp -Rc`) — copy time scales with file count. On Unix, the process is automatically reniced to lowest priority (nice 19) so it yields to interactive work.
 
 Use the `post-start` hook so the copy runs in the background. Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
@@ -409,31 +432,35 @@ All variables are shell-escaped. See [`wt hook` template variables](@/hook.md#te
 Check status across all worktrees:
 
 ```console
-wt step for-each -- git status --short
+$ wt step for-each -- git status --short
 ```
 
 Run npm install in all worktrees:
 
 ```console
-wt step for-each -- npm install
+$ wt step for-each -- npm install
 ```
 
 Use branch name in command:
 
 ```console
-wt step for-each -- "echo Branch: {{ branch }}"
+$ wt step for-each -- "echo Branch: {{ branch }}"
 ```
 
 Pull updates in worktrees with upstreams (skips others):
 
 ```console
-git fetch --prune && wt step for-each -- '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
+$ git fetch --prune && wt step for-each -- '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
 ```
 
 Note: This command is experimental and may change in future versions.
 "#
     )]
     ForEach {
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
+
         /// Command template (see --help for all variables)
         #[arg(required = true, last = true, num_args = 1..)]
         args: Vec<String>,
@@ -505,8 +532,8 @@ Locked worktrees and the main worktree are always skipped. The current worktree 
 Worktrees younger than `--min-age` (default: 1 hour) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
 
 ```console
-wt step prune --min-age=0s     # no age guard
-wt step prune --min-age=2d     # skip worktrees younger than 2 days
+$ wt step prune --min-age=0s     # no age guard
+$ wt step prune --min-age=2d     # skip worktrees younger than 2 days
 ```
 
 ## Examples
@@ -514,13 +541,13 @@ wt step prune --min-age=2d     # skip worktrees younger than 2 days
 Preview what would be removed:
 
 ```console
-wt step prune --dry-run
+$ wt step prune --dry-run
 ```
 
 Remove all merged worktrees:
 
 ```console
-wt step prune
+$ wt step prune
 ```
 "#
     )]
@@ -540,6 +567,10 @@ wt step prune
         /// Run removal in foreground (block until complete)
         #[arg(long)]
         foreground: bool,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// \[experimental\] Move worktrees to expected paths
@@ -550,25 +581,25 @@ wt step prune
 Preview what would be moved:
 
 ```console
-wt step relocate --dry-run
+$ wt step relocate --dry-run
 ```
 
 Move all mismatched worktrees:
 
 ```console
-wt step relocate
+$ wt step relocate
 ```
 
 Auto-commit and clobber blockers (never fails):
 
 ```console
-wt step relocate --commit --clobber
+$ wt step relocate --commit --clobber
 ```
 
 Move specific worktrees:
 
 ```console
-wt step relocate feature bugfix
+$ wt step relocate feature bugfix
 ```
 
 ## Swap handling

@@ -96,17 +96,12 @@ impl<'a> Branch<'a> {
     ///
     /// [1]: https://git-scm.com/docs/gitrevisions#Documentation/gitrevisions.txt-emltaboranchgtemuaboranchgtupaboranchgtupstream
     pub fn upstream(&self) -> anyhow::Result<Option<String>> {
-        let result =
-            self.repo
-                .run_command(&["rev-parse", "--abbrev-ref", &format!("{}@{{u}}", self.name)]);
-
-        match result {
-            Ok(upstream) => {
-                let trimmed = upstream.trim();
-                Ok((!trimmed.is_empty()).then(|| trimmed.to_string()))
-            }
-            Err(_) => Ok(None), // No upstream configured
-        }
+        let upstreams = self
+            .repo
+            .cache
+            .upstreams
+            .get_or_try_init(|| self.repo.fetch_all_upstreams())?;
+        Ok(upstreams.get(&self.name).cloned().unwrap_or(None))
     }
 
     /// Unset the upstream tracking branch for this branch.
@@ -148,8 +143,9 @@ impl<'a> Branch<'a> {
     ///
     /// Uses `%(push:remotename)` which returns either a remote name or URL directly
     /// (`gh pr checkout` sets pushremote to a URL rather than a remote name).
+    /// For remote names, uses `effective_remote_url` to apply `url.insteadOf` rewrites.
     /// Returns `None` if no push remote is configured or the remote has no URL.
-    pub fn push_remote_url(&self) -> Option<String> {
+    fn push_remote_url(&self) -> Option<String> {
         // %(push:remotename) returns either a remote name or URL directly
         // Unlike @{push}, this doesn't fail when pushremote is a URL
         let push_remote = self
@@ -167,15 +163,19 @@ impl<'a> Branch<'a> {
         if push_remote.contains("://") || push_remote.starts_with("git@") {
             Some(push_remote)
         } else {
-            // It's a remote name, look up its URL
-            self.repo.remote_url(&push_remote)
+            // It's a remote name — use effective URL (handles insteadOf)
+            self.repo.effective_remote_url(&push_remote)
         }
     }
 
     /// Get the GitHub URL for this branch's push remote, if it's a GitHub URL.
     ///
     /// Returns the push remote URL if configured and pointing to GitHub,
-    /// otherwise returns `None`.
+    /// otherwise returns `None`. Handles `url.insteadOf` aliases via
+    /// `effective_remote_url` (cached).
+    ///
+    /// Handles both remote-name and URL-based pushremotes (the latter is set by
+    /// `gh pr checkout` for fork PRs).
     pub fn github_push_url(&self) -> Option<String> {
         let url = self.push_remote_url()?;
         let parsed = GitRemoteUrl::parse(&url)?;

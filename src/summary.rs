@@ -12,11 +12,13 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
+use anstyle::Reset;
 use color_print::cformat;
 use minijinja::Environment;
 use serde::{Deserialize, Serialize};
 use worktrunk::git::Repository;
 use worktrunk::path::sanitize_for_filename;
+use worktrunk::styling::INFO_SYMBOL;
 use worktrunk::sync::Semaphore;
 
 use crate::llm::{execute_llm_command, prepare_diff};
@@ -25,7 +27,7 @@ use crate::llm::{execute_llm_command, prepare_diff};
 /// provider. 8 permits balances parallelism with resource usage — LLM calls
 /// are I/O-bound (1-5s network waits), so more permits than the CPU-bound
 /// `HEAVY_OPS_SEMAPHORE` (4) but still bounded.
-pub(crate) static LLM_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(8));
+static LLM_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(8));
 
 /// Cached summary stored in `.git/wt/cache/summaries/<branch>.json`
 #[derive(Serialize, Deserialize)]
@@ -46,7 +48,7 @@ pub(crate) struct CombinedDiff {
 ///
 /// Uses commit-message format (subject + body) which naturally produces
 /// imperative-mood summaries without "This branch..." preamble.
-const SUMMARY_TEMPLATE: &str = r#"Write a summary of this branch's changes as a commit message.
+const SUMMARY_TEMPLATE: &str = r#"<task>Write a summary of this branch's changes as a commit message.</task>
 
 <format>
 - Subject line under 50 chars, imperative mood ("Add feature" not "Adds feature")
@@ -216,6 +218,12 @@ pub(crate) fn generate_summary_core(
     // Prepare diff (filter large diffs)
     let prepared = prepare_diff(combined.diff, combined.stat);
     let prompt = render_prompt(&prepared.diff, &prepared.stat)?;
+
+    // Acquire the LLM permit only around the actual LLM call. The no-changes
+    // and cache-hit fast paths above return without contending — otherwise a
+    // clean `main` branch sits behind up to 8 slow summary calls and misses
+    // the picker's collect deadline, surfacing as a `·` in the Summary column.
+    let _permit = LLM_SEMAPHORE.acquire();
     let summary = execute_llm_command(llm_command, &prompt)?;
 
     // Write cache
@@ -246,7 +254,10 @@ pub(crate) fn generate_summary(
 ) -> String {
     match generate_summary_core(branch, head, worktree_path, llm_command, repo) {
         Ok(Some(summary)) => summary,
-        Ok(None) => cformat!("<dim>No changes to summarize on {branch}.</>"),
+        Ok(None) => {
+            let reset = Reset;
+            cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no changes to summarize\n")
+        }
         Err(e) => format!("Error: {e}"),
     }
 }
@@ -259,7 +270,7 @@ mod tests {
     fn test_render_prompt_includes_diff_and_stat() {
         let result = render_prompt("diff content here", "stat content here").unwrap();
         insta::assert_snapshot!(result, @r#"
-        Write a summary of this branch's changes as a commit message.
+        <task>Write a summary of this branch's changes as a commit message.</task>
 
         <format>
         - Subject line under 50 chars, imperative mood ("Add feature" not "Adds feature")

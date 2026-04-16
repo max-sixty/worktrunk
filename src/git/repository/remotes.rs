@@ -1,4 +1,93 @@
 //! Remote and URL operations for Repository.
+//!
+//! # Forge detection
+//!
+//! Worktrunk needs three pieces of information to talk to GitHub/GitLab:
+//!
+//! 1. **Platform** — GitHub or GitLab (which CLI to invoke)
+//! 2. **Owner/repo** — the project path (for API calls)
+//! 3. **API hostname** — which server to talk to (only needed for GHE /
+//!    self-hosted GitLab; `gh`/`glab` default to github.com/gitlab.com)
+//!
+//! ## Design principle
+//!
+//! Derive owner/repo from URL paths, not hostnames. SSH aliases only
+//! corrupt the host component — the path (`owner/repo`) is always real.
+//! Only use the hostname for platform detection (substring match), and
+//! let `gh`/`glab` default to the right API host unless overridden.
+//!
+//! **Resolution order:**
+//!
+//! 1. **Remote** — branch's remote (for remote branches) >
+//!    [`primary_remote()`](Repository::primary_remote)
+//! 2. **Platform** — `forge.platform` config > hostname substring match
+//!    ([`is_github()`](super::GitRemoteUrl::is_github) /
+//!    [`is_gitlab()`](super::GitRemoteUrl::is_gitlab)) on effective URL
+//! 3. **Owner/repo** — parsed from the chosen remote's URL path (works
+//!    regardless of hostname, including SSH aliases)
+//! 4. **API hostname** — `forge.hostname` config > omit (let CLI default)
+//!
+//! For `wt list`, steps 1-4 are sufficient — each branch uses its
+//! associated remote.
+//!
+//! For `wt switch pr:N`, the API call uses owner/repo from the primary
+//! remote's raw URL. The API response provides the base repo's identity,
+//! and `Repository::find_remote_for_repo` matches it back to a local remote by
+//! owner/repo (host is not required to match).
+//!
+//! ## Where each piece is used
+//!
+//! | Need | `wt switch pr:N` | `wt list` CI status |
+//! |------|------------------|---------------------|
+//! | Platform | Implicit (`pr:` = GitHub, `mr:` = GitLab) | `platform_for_repo` |
+//! | Owner/repo | `fetch_pr_info` builds API path | `github_owner_repo` for check-runs API |
+//! | API hostname | `forge.hostname` config, else omit | `forge.hostname` config, else omit |
+//! | Fetch remote | `Repository::find_remote_for_repo` by owner/repo | Not needed |
+//!
+//! ## Config: `[forge]` section
+//!
+//! All fields are optional. For most repositories (single remote, hostname
+//! contains "github" or "gitlab"), no configuration is needed.
+//!
+//! ```toml
+//! [forge]
+//! platform = "github"              # override platform detection
+//! hostname = "github.example.com"  # API hostname (GHE / self-hosted GitLab)
+//! ```
+//!
+//! `ci.platform` is supported as a deprecated alias for `forge.platform`.
+//!
+//! ## SSH host aliases
+//!
+//! Multi-account SSH setups use host aliases (`git@github-personal:owner/repo`)
+//! where SSH resolves `github-personal` → `github.com` via `~/.ssh/config`.
+//! Git operations work, but the literal hostname affects forge detection.
+//!
+//! Owner/repo extraction is unaffected — aliases only change the host, not
+//! the path. The impact depends on the alias name:
+//!
+//! | Alias | Platform detection | API calls | Config needed |
+//! |-------|-------------------|-----------|---------------|
+//! | `github-personal` | Works ("github" in name) | Works (`gh` defaults to github.com) | None |
+//! | `work` (opaque) | Fails | Works (`gh` defaults to github.com) | `forge.platform` |
+//! | GHE alias | May work | Needs explicit host | `forge.hostname` (+ `forge.platform` if opaque) |
+//!
+//! ### `url.insteadOf` (alternative)
+//!
+//! Git's `url.insteadOf` rewrites URLs before any tool sees them, which
+//! solves all detection problems. Trade-off: it also affects SSH, which
+//! sees `github.com` instead of the alias and can't select the correct
+//! `IdentityFile`. Users must pair it with per-repo `core.sshCommand`.
+//! The `[forge]` config avoids this trade-off.
+//!
+//! ## URL methods
+//!
+//! - `remote_url` — raw config value, no rewriting (for non-forge uses
+//!   like template variables and project identifiers)
+//! - `effective_remote_url` — `git remote get-url`, with `insteadOf`
+//!   applied (cached; used for platform detection)
+//! - `find_remote_for_repo(host, owner, repo)` — match owner/repo across
+//!   remotes, host used only as disambiguator
 
 use anyhow::Context;
 
@@ -25,7 +114,7 @@ impl Repository {
                 if let Ok(default_remote) = self.run_command(&["config", "checkout.defaultRemote"])
                 {
                     let default_remote = default_remote.trim();
-                    if !default_remote.is_empty() && self.remote_has_url(default_remote) {
+                    if !default_remote.is_empty() && self.remote_url(default_remote).is_some() {
                         return Some(default_remote.to_string());
                     }
                 }
@@ -36,9 +125,13 @@ impl Repository {
                 let output = self
                     .run_command(&["config", "--get-regexp", r"remote\..+\.url"])
                     .unwrap_or_default();
-                let first_remote = output.lines().next().and_then(|line| {
+                let first_remote = output.lines().find_map(|line| {
                     // Parse "remote.<name>.url <value>" format
                     // Use ".url " as delimiter to handle remote names with dots (e.g., "my.remote")
+                    // Use find_map (not next + parse) because the unanchored regex matches
+                    // any config key containing "remote.<something>.url" — not just actual
+                    // remote entries. For example, includeIf.hasconfig:remote.*.url:... keys
+                    // match and can appear before the first real remote URL.
                     line.strip_prefix("remote.")
                         .and_then(|s| s.split_once(".url "))
                         .map(|(name, _)| name)
@@ -50,25 +143,55 @@ impl Repository {
             .ok_or_else(|| anyhow::anyhow!("No remotes configured"))
     }
 
-    /// Check if a remote has a URL configured.
-    fn remote_has_url(&self, remote: &str) -> bool {
-        self.run_command(&["config", &format!("remote.{}.url", remote)])
-            .map(|url| !url.trim().is_empty())
-            .unwrap_or(false)
+    /// Get the URL for a remote, if configured.
+    ///
+    /// Returns the raw value from `.git/config` without applying `url.insteadOf`
+    /// rewrites. Use [`effective_remote_url`](Self::effective_remote_url) when you
+    /// need forge detection to work with `insteadOf` aliases.
+    ///
+    /// Results are cached per-remote in the shared repo cache.
+    pub fn remote_url(&self, remote: &str) -> Option<String> {
+        self.cache
+            .remote_urls
+            .entry(remote.to_string())
+            .or_insert_with(|| {
+                self.run_command(&["config", &format!("remote.{}.url", remote)])
+                    .ok()
+                    .map(|url| url.trim().to_string())
+                    .filter(|url| !url.is_empty())
+            })
+            .clone()
     }
 
-    /// Get the URL for a remote, if configured.
-    pub fn remote_url(&self, remote: &str) -> Option<String> {
-        self.run_command(&["config", &format!("remote.{}.url", remote)])
-            .ok()
-            .map(|url| url.trim().to_string())
-            .filter(|url| !url.is_empty())
+    /// Get the effective URL for a remote, with `url.insteadOf` rewrites applied.
+    ///
+    /// Uses `git remote get-url` which applies `url.insteadOf` rewrites. When no
+    /// rewrite rules are configured, returns the same value as [`remote_url`](Self::remote_url).
+    ///
+    /// Results are cached per-remote in the shared repo cache.
+    ///
+    /// Returns `None` if the remote doesn't exist or has no URL.
+    pub fn effective_remote_url(&self, remote: &str) -> Option<String> {
+        self.cache
+            .effective_remote_urls
+            .entry(remote.to_string())
+            .or_insert_with(|| {
+                self.run_command(&["remote", "get-url", remote])
+                    .ok()
+                    .map(|url| url.trim().to_string())
+                    .filter(|url| !url.is_empty())
+            })
+            .clone()
     }
 
     /// Find a remote that points to a specific owner/repo.
     ///
     /// Searches all configured remotes and returns the name of the first one
-    /// whose URL matches the given owner and repo (case-insensitive).
+    /// whose URL matches the given owner and repo (case-insensitive). Checks
+    /// both the raw config URL and the effective URL (with `url.insteadOf`
+    /// rewrites applied), so matches work in both directions: when the raw URL
+    /// contains a real forge hostname, and when `insteadOf` rewrites a custom
+    /// hostname to a real forge.
     ///
     /// When `host` is `Some`, the remote must also match the host. This is
     /// important for multi-host setups (e.g., both github.com and
@@ -81,23 +204,24 @@ impl Repository {
         owner: &str,
         repo: &str,
     ) -> Option<String> {
-        // Get all remotes with URLs
-        let output = self
-            .run_command(&["config", "--get-regexp", r"remote\..+\.url"])
-            .ok()?;
-
-        for line in output.lines() {
-            // Parse "remote.<name>.url <value>" format
-            if let Some(rest) = line.strip_prefix("remote.")
-                && let Some((name, url)) = rest.split_once(".url ")
-                && let Some(parsed) = GitRemoteUrl::parse(url)
-                // Case-insensitive comparison (GitHub owner/repo names are case-insensitive)
-                && parsed.owner().eq_ignore_ascii_case(owner)
+        let matches = |url: &str| -> bool {
+            let Some(parsed) = GitRemoteUrl::parse(url) else {
+                return false;
+            };
+            parsed.owner().eq_ignore_ascii_case(owner)
                 && parsed.repo().eq_ignore_ascii_case(repo)
-                // If host is specified, it must also match (case-insensitive)
                 && host.is_none_or(|h| parsed.host().eq_ignore_ascii_case(h))
+        };
+
+        for (remote_name, raw_url) in self.all_remote_urls() {
+            if matches(&raw_url) {
+                return Some(remote_name);
+            }
+            if let Some(effective_url) = self.effective_remote_url(&remote_name)
+                && effective_url != raw_url
+                && matches(&effective_url)
             {
-                return Some(name.to_string());
+                return Some(remote_name);
             }
         }
 
@@ -141,7 +265,7 @@ impl Repository {
 
     /// Get the URL for the primary remote, if configured.
     ///
-    /// Result is cached in the repository's shared cache (same for all clones).
+    /// Returns the raw config value. Result is cached in the shared repo cache.
     pub fn primary_remote_url(&self) -> Option<String> {
         self.cache
             .primary_remote_url
@@ -151,6 +275,16 @@ impl Repository {
                     .and_then(|remote| self.remote_url(&remote))
             })
             .clone()
+    }
+
+    /// Parse the primary remote URL into structured host/owner/repo components.
+    ///
+    /// Uses the raw configured URL rather than `effective_remote_url()` so owner/namespace
+    /// extraction follows the same "path is the source of truth" rule used elsewhere.
+    pub fn primary_remote_parsed_url(&self) -> Option<GitRemoteUrl> {
+        self.primary_remote_url()
+            .as_deref()
+            .and_then(GitRemoteUrl::parse)
     }
 
     /// Get a project identifier for approval tracking.
@@ -198,8 +332,7 @@ impl Repository {
         self.load_project_config()
             .ok()
             .flatten()
-            .and_then(|config| config.list)
-            .and_then(|list| list.url)
+            .and_then(|config| config.list.url)
     }
 
     /// Check if a ref is a remote tracking branch.

@@ -68,6 +68,32 @@ fn test_eval_dry_run(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_eval_owner(repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "git@github.com:max-sixty/worktrunk.git",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "eval", "{{ owner }}/{{ repo }}"])
+        .output()
+        .expect("Failed to run wt step eval");
+
+    assert!(
+        output.status.success(),
+        "wt step eval should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "max-sixty/repo"
+    );
+}
+
+#[rstest]
 fn test_eval_conditional(repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,

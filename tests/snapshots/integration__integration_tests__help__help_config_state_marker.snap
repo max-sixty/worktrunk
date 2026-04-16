@@ -25,14 +25,13 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt config state marker - Branch markers
 
 Usage: [1m[36mwt config state marker[0m [36m[OPTIONS][0m [36m[COMMAND][0m
@@ -46,6 +45,10 @@ Usage: [1m[36mwt config state marker[0m [36m[OPTIONS][0m [36m[COMMAND][0m
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
+[1m[32mOutput:[0m
+      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
+          Output format (text, json) [default: text]
+
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
@@ -54,18 +57,15 @@ Usage: [1m[36mwt config state marker[0m [36m[OPTIONS][0m [36m[COMMAND][0m
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
 
 Custom status text or emoji shown in the [2mwt list[0m Status column.
 
 [1m[32mDisplay[0m
 
-Markers appear at the start of the Status column:
+Markers appear at the end of the Status column, after git symbols:
 
-[107m [0m [2mBranch    Status   Path[0m
-[107m [0m [2mmain      ^        ~/code/myproject[0m
-[107m [0m [2mfeature   🚧↑      ~/code/myproject.feature[0m
-[107m [0m [2mbugfix    🤖!↑⇡    ~/code/myproject.bugfix[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m list[0m
 
 [1m[32mUse cases[0m
 
@@ -80,3 +80,5 @@ Stored in git config as [2mworktrunk.state.<branch>.marker[0m. Set directly wi
 [107m [0m [2m[0m[2m[34mgit[0m[2m config worktrunk.state.feature.marker [0m[2m[32m'{"marker":"🚧","set_at":0}'[0m[2m[0m
 
 Without a subcommand, runs [2mget[0m for the current branch. For [2m--branch[0m, use [2mget --branch=NAME[0m.
+
+----- stderr -----

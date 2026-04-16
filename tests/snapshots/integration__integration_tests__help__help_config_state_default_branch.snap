@@ -25,14 +25,13 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt config state default-branch - Default branch detection and override
 
 Usage: [1m[36mwt config state default-branch[0m [36m[OPTIONS][0m [36m[COMMAND][0m
@@ -54,7 +53,7 @@ Usage: [1m[36mwt config state default-branch[0m [36m[OPTIONS][0m [36m[COMM
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
 
 Useful in scripts to avoid hardcoding [2mmain[0m or [2mmaster[0m:
 
@@ -78,3 +77,5 @@ The local inference fallback uses these heuristics in order:
 - For bare repos or empty repos, checks [2msymbolic-ref HEAD[0m
 - Checks [2mgit config init.defaultBranch[0m
 - Looks for common names: [2mmain[0m, [2mmaster[0m, [2mdevelop[0m, [2mtrunk[0m
+
+----- stderr -----

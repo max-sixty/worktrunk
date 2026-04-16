@@ -21,6 +21,7 @@ info:
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     NO_COLOR: ""
+    OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -34,6 +35,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -41,11 +43,11 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 [36mUSER HOOKS[39m @ [TEST_CONFIG]
 [2m↳[22m [2m(none configured)[22m
 
 [36mPROJECT HOOKS[39m @ _REPO_/.config/wt.toml
 [36m❯[39m pre-remove [1mcleanup[22m: [2m(requires approval)[22m
 [107m [0m [2m[0m[2m[34mecho[0m[2m cleanup
+
+----- stderr -----

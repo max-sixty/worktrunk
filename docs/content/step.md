@@ -15,18 +15,11 @@ Run individual operations. The building blocks of wt merge — commit, squash, r
 
 Commit with LLM-generated message:
 
-```bash
-wt step commit
-```
+{{ terminal(cmd="wt step commit") }}
 
 Manual merge workflow with review between steps:
 
-```bash
-wt step commit
-wt step squash
-wt step rebase
-wt step push
-```
+{{ terminal(cmd="wt step commit|||wt step squash|||wt step rebase|||wt step push") }}
 
 ## Operations
 
@@ -53,16 +46,15 @@ wt step push
 {% terminal() %}
 wt step - Run individual operations
 
-The building blocks of <b>wt merge</b> — commit, squash, rebase, push — plus standalone
-utilities.
+The building blocks of <b>wt merge</b> — commit, squash, rebase, push — plus standalone utilities.
 
 Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
   <b><span class=c>commit</span></b>        Stage and commit with LLM-generated message
   <b><span class=c>squash</span></b>        Squash commits since branching
-  <b><span class=c>push</span></b>          Fast-forward target to current branch
   <b><span class=c>rebase</span></b>        Rebase onto target
+  <b><span class=c>push</span></b>          Fast-forward target to current branch
   <b><span class=c>diff</span></b>          Show all changes since branching
   <b><span class=c>copy-ignored</span></b>  Copy gitignored files to another worktree
   <b><span class=c>eval</span></b>          [experimental] Evaluate a template expression
@@ -83,7 +75,8 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 {% end %}
 
 # Subcommands
@@ -106,9 +99,7 @@ Controls what to stage before committing:
 | `tracked` | Stage only modified tracked files |
 | `none` | Don't stage anything, commit only what's already staged |
 
-```bash
-wt step commit --stage=tracked
-```
+{{ terminal(cmd="wt step commit --stage=tracked") }}
 
 Configure the default in user config:
 
@@ -121,13 +112,7 @@ stage = "tracked"
 
 Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
 
-```bash
-# Inspect the rendered prompt
-wt step commit --show-prompt | less
-
-# Pipe to a different LLM
-wt step commit --show-prompt | llm -m gpt-5-nano
-```
+{{ terminal(cmd="# Inspect the rendered prompt|||wt step commit --show-prompt | less||||||# Pipe to a different LLM|||wt step commit --show-prompt | llm -m gpt-5-nano") }}
 
 ### Command reference
 
@@ -137,12 +122,14 @@ wt step commit - Stage and commit with LLM-generated message
 Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
 
 <b><span class=g>Options:</span></b>
+  <b><span class=c>-b</span></b>, <b><span class=c>--branch</span></b><span class=c> &lt;BRANCH&gt;</span>
+          Branch to operate on (defaults to current worktree)
+
       <b><span class=c>--stage</span></b><span class=c> &lt;STAGE&gt;</span>
           What to stage before committing [default: all]
 
           Possible values:
-          - <b><span class=c>all</span></b>:     Stage everything: untracked files + unstaged tracked
-            changes
+          - <b><span class=c>all</span></b>:     Stage everything: untracked files + unstaged tracked changes
           - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
           - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
 
@@ -158,7 +145,7 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
 
-      <b><span class=c>--no-verify</span></b>
+      <b><span class=c>--no-hooks</span></b>
           Skip hooks
 
 <b><span class=g>Global Options:</span></b>
@@ -169,7 +156,8 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 {% end %}
 
 ## wt step squash
@@ -190,9 +178,7 @@ Controls what to stage before squashing:
 | `tracked` | Stage only modified tracked files |
 | `none` | Don't stage anything, squash only committed changes |
 
-```bash
-wt step squash --stage=none
-```
+{{ terminal(cmd="wt step squash --stage=none") }}
 
 Configure the default in user config:
 
@@ -205,9 +191,7 @@ stage = "tracked"
 
 Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
 
-```bash
-wt step squash --show-prompt | less
-```
+{{ terminal(cmd="wt step squash --show-prompt | less") }}
 
 ### Command reference
 
@@ -229,8 +213,7 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
           What to stage before committing [default: all]
 
           Possible values:
-          - <b><span class=c>all</span></b>:     Stage everything: untracked files + unstaged tracked
-            changes
+          - <b><span class=c>all</span></b>:     Stage everything: untracked files + unstaged tracked changes
           - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
           - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
 
@@ -246,7 +229,7 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
 
-      <b><span class=c>--no-verify</span></b>
+      <b><span class=c>--no-hooks</span></b>
           Skip hooks
 
 <b><span class=g>Global Options:</span></b>
@@ -257,7 +240,8 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 {% end %}
 
 ## wt step diff
@@ -270,27 +254,17 @@ This is what `wt merge` would include — a single diff against the merge base.
 
 Arguments after `--` are forwarded to `git diff`:
 
-```bash
-wt step diff -- --stat
-wt step diff -- --name-only
-wt step diff -- -- '*.rs'
-```
+{{ terminal(cmd="wt step diff -- --stat|||wt step diff -- --name-only|||wt step diff -- -- '*.rs'") }}
 
 The diff is pipeable to tools like `delta`:
 
-```bash
-wt step diff | delta
-```
+{{ terminal(cmd="wt step diff | delta") }}
 
 ### How it works
 
 Equivalent to:
 
-```bash
-cp "$(git rev-parse --git-dir)/index" /tmp/idx
-GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .
-GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))
-```
+{{ terminal(cmd="cp __WT_QUOT__$(git rev-parse --git-dir)/index__WT_QUOT__ /tmp/idx|||GIT_INDEX_FILE=/tmp/idx git add --intent-to-add .|||GIT_INDEX_FILE=/tmp/idx git diff $(git merge-base HEAD $(wt config state default-branch))") }}
 
 `git diff` ignores untracked files. `git add --intent-to-add .` registers them in the index without staging their content, making them visible to `git diff`. This runs against a copy of the real index so the original is never modified.
 
@@ -324,7 +298,8 @@ Usage: <b><span class=c>wt step diff</span></b> <span class=c>[OPTIONS]</span> <
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 {% end %}
 
 ## wt step copy-ignored
@@ -387,7 +362,7 @@ Reflink copies share disk blocks until modified — no data is actually copied. 
 | `cp -R` (full copy) | 2m |
 | `cp -Rc` / `wt step copy-ignored` | 20s |
 
-Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
+Uses per-file reflink (like `cp -Rc`) — copy time scales with file count. On Unix, the process is automatically reniced to lowest priority (nice 19) so it yields to interactive work.
 
 Use the `post-start` hook so the copy runs in the background. Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
@@ -455,7 +430,8 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 {% end %}
 
 ## wt step eval
@@ -470,40 +446,34 @@ All [hook template variables and filters](@/hook.md#template-variables) are avai
 
 Get the port for the current branch:
 
-```bash
-$ wt step eval '{{ branch | hash_port }}'
+{% terminal(cmd="wt step eval '__WT_OPEN2__ branch | hash_port __WT_CLOSE2__'") %}
 16066
-```
+{% end %}
 
 Use in shell substitution:
 
-```bash
-$ curl http://localhost:$(wt step eval '{{ branch | hash_port }}')/health
-```
+{{ terminal(cmd="curl http://localhost:$(wt step eval '__WT_OPEN2__ branch | hash_port __WT_CLOSE2__')/health") }}
 
 Combine multiple values:
 
-```bash
-$ wt step eval '{{ branch | hash_port }},{{ ("supabase-api-" ~ branch) | hash_port }}'
+{% terminal(cmd="wt step eval '__WT_OPEN2__ branch | hash_port __WT_CLOSE2__,__WT_OPEN2__ (__WT_QUOT__supabase-api-__WT_QUOT__ ~ branch) | hash_port __WT_CLOSE2__'") %}
 16066,16739
-```
+{% end %}
 
 Use conditionals and filters:
 
-```bash
-$ wt step eval '{{ branch | sanitize_db }}'
+{% terminal(cmd="wt step eval '__WT_OPEN2__ branch | sanitize_db __WT_CLOSE2__'") %}
 feature_auth_oauth2_a1b
-```
+{% end %}
 
 Show available template variables:
 
-```bash
-$ wt step eval --dry-run '{{ branch }}'
+{% terminal(cmd="wt step eval --dry-run '__WT_OPEN2__ branch __WT_CLOSE2__'") %}
 branch=feature/auth-oauth2
 worktree_path=/home/user/projects/myapp-feature-auth-oauth2
 ...
 Result: feature/auth-oauth2
-```
+{% end %}
 
 Note: This command is experimental and may change in future versions.
 
@@ -535,7 +505,8 @@ Usage: <b><span class=c>wt step eval</span></b> <span class=c>[OPTIONS]</span> <
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 {% end %}
 
 ## wt step for-each
@@ -554,27 +525,19 @@ All variables are shell-escaped. See [`wt hook` template variables](@/hook.md#te
 
 Check status across all worktrees:
 
-```bash
-wt step for-each -- git status --short
-```
+{{ terminal(cmd="wt step for-each -- git status --short") }}
 
 Run npm install in all worktrees:
 
-```bash
-wt step for-each -- npm install
-```
+{{ terminal(cmd="wt step for-each -- npm install") }}
 
 Use branch name in command:
 
-```bash
-wt step for-each -- "echo Branch: {{ branch }}"
-```
+{{ terminal(cmd="wt step for-each -- __WT_QUOT__echo Branch: __WT_OPEN2__ branch __WT_CLOSE2____WT_QUOT__") }}
 
 Pull updates in worktrees with upstreams (skips others):
 
-```bash
-git fetch --prune && wt step for-each -- '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
-```
+{{ terminal(cmd="git fetch --prune && wt step for-each -- '[ __WT_QUOT__$(git rev-parse @{u} 2>/dev/null)__WT_QUOT__ ] || exit 0; git pull --autostash'") }}
 
 Note: This command is experimental and may change in future versions.
 
@@ -595,6 +558,16 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 
+<b><span class=g>Automation:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format (text, json)
+
+          Possible values:
+          - <b><span class=c>text</span></b>: Human-readable text output
+          - <b><span class=c>json</span></b>: JSON output
+
+          [default: text]
+
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
           Working directory for this command
@@ -603,7 +576,8 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 {% end %}
 
 ## wt step promote
@@ -616,10 +590,7 @@ Swap a branch into the main worktree. Exchanges branches and gitignored files be
 
 ### Example
 
-```bash
-# from ~/project (main worktree)
-$ wt step promote feature
-```
+{{ terminal(cmd="# from ~/project (main worktree)|||wt step promote feature") }}
 
 Before:
 
@@ -679,7 +650,8 @@ Usage: <b><span class=c>wt step promote</span></b> <span class=c>[OPTIONS]</span
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 {% end %}
 
 ## wt step prune
@@ -698,24 +670,17 @@ Locked worktrees and the main worktree are always skipped. The current worktree 
 
 Worktrees younger than `--min-age` (default: 1 hour) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
 
-```bash
-wt step prune --min-age=0s     # no age guard
-wt step prune --min-age=2d     # skip worktrees younger than 2 days
-```
+{{ terminal(cmd="wt step prune --min-age=0s     # no age guard|||wt step prune --min-age=2d     # skip worktrees younger than 2 days") }}
 
 ### Examples
 
 Preview what would be removed:
 
-```bash
-wt step prune --dry-run
-```
+{{ terminal(cmd="wt step prune --dry-run") }}
 
 Remove all merged worktrees:
 
-```bash
-wt step prune
-```
+{{ terminal(cmd="wt step prune") }}
 
 ### Command reference
 
@@ -743,6 +708,15 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
 
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format (text, json)
+
+          Possible values:
+          - <b><span class=c>text</span></b>: Human-readable text output
+          - <b><span class=c>json</span></b>: JSON output
+
+          [default: text]
+
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
           Working directory for this command
@@ -751,7 +725,8 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 {% end %}
 
 ## wt step relocate
@@ -764,27 +739,19 @@ Move worktrees to expected paths. Relocates worktrees whose path doesn't match t
 
 Preview what would be moved:
 
-```bash
-wt step relocate --dry-run
-```
+{{ terminal(cmd="wt step relocate --dry-run") }}
 
 Move all mismatched worktrees:
 
-```bash
-wt step relocate
-```
+{{ terminal(cmd="wt step relocate") }}
 
 Auto-commit and clobber blockers (never fails):
 
-```bash
-wt step relocate --commit --clobber
-```
+{{ terminal(cmd="wt step relocate --commit --clobber") }}
 
 Move specific worktrees:
 
-```bash
-wt step relocate feature bugfix
-```
+{{ terminal(cmd="wt step relocate feature bugfix") }}
 
 ### Swap handling
 
@@ -848,7 +815,8 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
 {% end %}
 
 ## Aliases
@@ -864,14 +832,46 @@ deploy = "make deploy BRANCH={{ branch }}"
 port = "echo http://localhost:{{ branch | hash_port }}"
 ```
 
-```bash
-wt step deploy                            # run the alias
-wt step deploy --dry-run                  # show expanded command
-wt step deploy --var env=staging          # pass extra template variables
-wt step deploy --yes                      # skip approval prompt
+{{ terminal(cmd="wt step deploy                            # run the alias|||wt step deploy --dry-run                  # show expanded command|||wt step deploy --env=staging              # pass template variable|||wt step deploy --var env=staging          # equivalent long form|||wt step deploy --my-var=value             # hyphens become underscores (__WT_OPEN2__ my_var __WT_CLOSE2__)|||wt step deploy --yes                      # skip approval prompt") }}
+
+Hyphens in variable names are canonicalized to underscores at parse time, so `--my-var=value` is referenced as `{{ my_var }}` in templates. This lets flags use natural kebab-case while avoiding the minijinja parser's interpretation of `{{ my-var }}` as subtraction.
+
+Multi-line aliases work too. This `up` alias fetches all remotes and rebases each worktree onto its upstream, skipping worktrees without a tracking branch or with a rebase already in progress:
+
+```toml
+# ~/.config/worktrunk/config.toml
+[aliases]
+up = '''
+git fetch --all --prune && wt step for-each -- '
+  git rev-parse --verify -q @{u} >/dev/null || exit 0
+  g=$(git rev-parse --git-dir)
+  test -d "$g/rebase-merge" -o -d "$g/rebase-apply" && exit 0
+  git rebase @{u} --no-autostash || git rebase --abort
+''''
 ```
 
-When defined in both user and project config, user aliases take precedence. Project-config aliases require [command approval](@/hook.md#security) on first run (same as project hooks). User-config aliases are trusted.
+{{ terminal(cmd="wt step up") }}
+
+Multi-step aliases run commands in order using `[[aliases.NAME]]` blocks. Each block is one step; multiple keys within a block run concurrently.
+
+```toml
+# .config/wt.toml
+[[aliases.release]]
+test = "cargo test"
+
+[[aliases.release]]
+build = "cargo build --release"
+package = "cargo package --no-verify"
+
+[[aliases.release]]
+publish = "cargo publish"
+```
+
+Here `test` runs first, then `build` and `package` run together, then `publish` runs last. A step failure aborts the remaining steps.
+
+When defined in both user and project config, both run — user first, then project. Project-config aliases require [command approval](@/hook.md#wt-hook-approvals) on first run, same as project hooks. User-config aliases are trusted.
+
+Inside an alias body, an inner `wt switch` (or `wt switch --create`) passes its `cd` through to the parent shell, so an alias wrapping `wt switch --create` lands the shell in the new worktree just like running it directly.
 
 Alias names that match a built-in step command (`commit`, `squash`, etc.) are shadowed by the built-in and will never run.
 

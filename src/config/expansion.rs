@@ -26,10 +26,9 @@ use crate::styling::{
 ///
 /// These are populated by `build_hook_context()` in `command_executor.rs`.
 /// Some variables are conditional (e.g., `upstream` only exists if tracking is configured).
-///
-/// This list is the single source of truth for `--var` validation in CLI.
 pub const TEMPLATE_VARS: &[&str] = &[
     "repo",
+    "owner",
     "branch",
     "worktree_name",
     "repo_path",
@@ -48,6 +47,8 @@ pub const TEMPLATE_VARS: &[&str] = &[
     "base",      // Added by creation/switch hooks via extra_vars
     "base_worktree_path", // Added by creation/switch hooks via extra_vars
     "cwd",       // Execution directory (always exists on disk)
+                 // Note: `vars` is NOT listed here — it's a structured object injected by expand_template,
+                 // not a simple string that --var can override.
 ];
 
 /// Deprecated template variable aliases (still valid for backward compatibility).
@@ -235,10 +236,15 @@ impl std::fmt::Display for TemplateExpandError {
             parts.push(format_with_gutter(line, None));
         }
         if !self.available_vars.is_empty() {
+            let underlined_vars: Vec<String> = self
+                .available_vars
+                .iter()
+                .map(|v| cformat!("<underline>{}</>", v))
+                .collect();
             parts.push(
                 hint_message(cformat!(
-                    "Available variables: <underline>{}</>",
-                    self.available_vars.join(", ")
+                    "Available variables: {}",
+                    underlined_vars.join(", ")
                 ))
                 .to_string(),
             );
@@ -317,6 +323,9 @@ fn setup_template_env(repo: &Repository) -> Environment<'static> {
     env.add_filter("sanitize_db", |value: Value| -> String {
         sanitize_db(value.as_str().unwrap_or_default())
     });
+    env.add_filter("sanitize_hash", |value: Value| -> String {
+        crate::path::sanitize_for_filename(value.as_str().unwrap_or_default())
+    });
     env.add_filter("hash_port", |value: String| string_to_port(&value));
 
     // Register worktree_path_of_branch function for looking up branch worktree paths.
@@ -332,6 +341,29 @@ fn setup_template_env(repo: &Repository) -> Environment<'static> {
     });
 
     env
+}
+
+/// Check if a template references a specific top-level variable.
+///
+/// Uses minijinja's AST analysis rather than string matching, avoiding false
+/// positives from literal text like `template_vars.txt`.
+pub fn template_references_var(template: &str, var: &str) -> bool {
+    let env = minijinja::Environment::new();
+    let Ok(tmpl) = env.template_from_str(template) else {
+        return false;
+    };
+    tmpl.undeclared_variables(false).contains(var)
+}
+
+/// Parse-only syntax check for a template.
+///
+/// Used on lazy-expansion paths (hooks + aliases) where rendering would fail
+/// because `vars.*` values are only known at execution time — we still want
+/// to catch typos like `{{ vars..foo }}` upfront.
+pub fn validate_template_syntax(template: &str, name: &str) -> Result<(), minijinja::Error> {
+    minijinja::Environment::new()
+        .template_from_named_str(name, template)
+        .map(|_| ())
 }
 
 /// Validate that a template can be expanded without errors.
@@ -354,9 +386,14 @@ pub fn validate_template(
     name: &str,
 ) -> Result<(), TemplateExpandError> {
     let all_vars = TEMPLATE_VARS.iter().chain(DEPRECATED_TEMPLATE_VARS.iter());
-    let context: HashMap<String, minijinja::Value> = all_vars
+    let mut context: HashMap<String, minijinja::Value> = all_vars
         .map(|&k| (k.to_string(), minijinja::Value::from("PLACEHOLDER")))
         .collect();
+    // Inject vars as empty map so {{ vars.key | default(...) }} doesn't error
+    context.insert(
+        "vars".to_string(),
+        minijinja::Value::from_serialize(std::collections::BTreeMap::<String, String>::new()),
+    );
 
     let env = setup_template_env(repo);
 
@@ -390,6 +427,7 @@ pub fn validate_template(
 /// # Filters
 /// - `sanitize` — Replace `/` and `\` with `-` for filesystem-safe paths
 /// - `sanitize_db` — Transform to database-safe identifier (`[a-z0-9_]`, max 63 chars)
+/// - `sanitize_hash` — Filesystem-safe name with hash suffix so distinct inputs never collide
 /// - `hash_port` — Hash to deterministic port number (10000-19999)
 ///
 /// # Functions
@@ -411,6 +449,32 @@ pub fn expand_template(
             key.to_string(),
             minijinja::Value::from((*value).to_string()),
         );
+    }
+
+    // Inject vars data as a nested object: {{ vars.env }}, {{ vars.config.port }}
+    // When branch is present, always inject (even if empty map) so {{ vars.key | default(...) }}
+    // works in SemiStrict mode. Only look up vars data if the template references it (avoids a
+    // git process spawn per expansion). JSON objects/arrays are parsed so dot access works
+    // ({{ vars.config.port }}); plain strings and numbers stay as-is.
+    //
+    // Use "vars." to avoid false positives from branch names or URLs containing "vars"
+    // (e.g., "envvars.internal"). Template access is always `vars.<key>`.
+    if template.contains("vars.")
+        && let Some(branch) = vars.get("branch")
+    {
+        let entries = repo.vars_entries(branch);
+        let vars_map: std::collections::BTreeMap<String, Value> = entries
+            .into_iter()
+            .map(|(k, v)| {
+                let value = serde_json::from_str::<serde_json::Value>(&v)
+                    .ok()
+                    .filter(|j| j.is_object() || j.is_array())
+                    .map(|j| Value::from_serialize(&j))
+                    .unwrap_or_else(|| Value::from(v));
+                (k, value)
+            })
+            .collect();
+        context.insert("vars".to_string(), Value::from_serialize(&vars_map));
     }
 
     let mut env = setup_template_env(repo);
@@ -493,25 +557,7 @@ mod tests {
 
     use super::*;
     use crate::shell_exec::Cmd;
-
-    /// Test fixture that creates a real temporary git repository.
-    struct TestRepo {
-        _dir: tempfile::TempDir,
-        repo: Repository,
-    }
-
-    impl TestRepo {
-        fn new() -> Self {
-            let dir = tempfile::tempdir().unwrap();
-            Cmd::new("git")
-                .args(["init"])
-                .current_dir(dir.path())
-                .run()
-                .unwrap();
-            let repo = Repository::at(dir.path()).unwrap();
-            Self { _dir: dir, repo }
-        }
-    }
+    use crate::testing::TestRepo;
 
     fn test_repo() -> TestRepo {
         TestRepo::new()
@@ -521,9 +567,9 @@ mod tests {
     fn test_sanitize_branch_name() {
         let cases = [
             ("feature/foo", "feature-foo"),
-            ("user\\task", "user-task"),
+            (r"user\task", "user-task"),
             ("feature/user/task", "feature-user-task"),
-            ("feature/user\\task", "feature-user-task"),
+            (r"feature/user\task", "feature-user-task"),
             ("simple-branch", "simple-branch"),
             ("", ""),
             ("///", "---"),
@@ -691,7 +737,7 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("path", "my path");
         let expanded = expand_template("cd {{ path }}", &vars, true, &test.repo, "test").unwrap();
-        assert!(expanded.contains("'my path'") || expanded.contains("my\\ path"));
+        assert!(expanded.contains("'my path'") || expanded.contains(r"my\ path"));
 
         // Command injection prevention
         vars.insert("arg", "test;rm -rf");
@@ -743,7 +789,7 @@ mod tests {
         assert_snapshot!(err, @"
         [31m✗[39m [31mFailed to expand test: undefined value @ line 1[39m
         [107m [0m echo {{ target }}
-        [2m↳[22m [2mAvailable variables: [4mbranch, remote[24m[22m
+        [2m↳[22m [2mAvailable variables: [4mbranch[24m, [4mremote[24m[22m
         ");
     }
 
@@ -889,7 +935,7 @@ mod tests {
         );
 
         // Backslashes are also sanitized
-        vars.insert("branch", "feature\\bar");
+        vars.insert("branch", r"feature\bar");
         assert_eq!(
             expand_template("{{ branch | sanitize }}", &vars, false, &test.repo, "test").unwrap(),
             "feature-bar"
@@ -917,7 +963,7 @@ mod tests {
             expand_template("{{ branch | sanitize }}", &vars, true, &test.repo, "test").unwrap();
         // sanitize replaces / with -, producing "user's-feature"
         // shell_escape wraps it: 'user'\''s-feature' (valid shell for user's-feature)
-        assert_eq!(result, "'user'\\''s-feature'", "sanitize + shell escape");
+        assert_eq!(result, r"'user'\''s-feature'", "sanitize + shell escape");
 
         // Without the fix, pre-escaping would produce corrupted output because
         // sanitize would replace the / and \ in the already-escaped value.
@@ -926,7 +972,7 @@ mod tests {
         let result = expand_template("{{ branch }}", &vars, true, &test.repo, "test").unwrap();
         // shell_escape wraps: 'user'\''s/feature' (valid shell for user's/feature)
         assert_eq!(
-            result, "'user'\\''s/feature'",
+            result, r"'user'\''s/feature'",
             "shell escape without filter"
         );
 
@@ -1111,6 +1157,200 @@ mod tests {
     }
 
     #[test]
+    fn test_expand_template_vars_data() {
+        let test = test_repo();
+
+        // Set vars data via git config
+        Cmd::new("git")
+            .args(["config", "worktrunk.state.main.vars.env", "staging"])
+            .current_dir(test.path())
+            .run()
+            .unwrap();
+        Cmd::new("git")
+            .args(["config", "worktrunk.state.main.vars.port", "3000"])
+            .current_dir(test.path())
+            .run()
+            .unwrap();
+
+        let mut vars = HashMap::new();
+        vars.insert("branch", "main");
+
+        // Access vars via dot notation
+        assert_eq!(
+            expand_template("{{ vars.env }}", &vars, false, &test.repo, "test").unwrap(),
+            "staging"
+        );
+        assert_eq!(
+            expand_template("{{ vars.port }}", &vars, false, &test.repo, "test").unwrap(),
+            "3000"
+        );
+
+        // Default filter for missing vars keys
+        assert_eq!(
+            expand_template(
+                "{{ vars.missing | default('fallback') }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "fallback"
+        );
+
+        // Conditional on vars
+        assert_eq!(
+            expand_template(
+                "{% if vars.env %}env={{ vars.env }}{% endif %}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "env=staging"
+        );
+    }
+
+    #[test]
+    fn test_expand_template_vars_json_dot_access() {
+        let test = test_repo();
+
+        // Store a JSON object as a vars value
+        Cmd::new("git")
+            .args([
+                "config",
+                "worktrunk.state.main.vars.config",
+                r#"{"port": 3000, "debug": true}"#,
+            ])
+            .current_dir(test.path())
+            .run()
+            .unwrap();
+
+        // Store a JSON array
+        Cmd::new("git")
+            .args([
+                "config",
+                "worktrunk.state.main.vars.tags",
+                r#"["alpha", "beta"]"#,
+            ])
+            .current_dir(test.path())
+            .run()
+            .unwrap();
+
+        // Store a plain string (not JSON)
+        Cmd::new("git")
+            .args(["config", "worktrunk.state.main.vars.env", "staging"])
+            .current_dir(test.path())
+            .run()
+            .unwrap();
+
+        let mut vars = HashMap::new();
+        vars.insert("branch", "main");
+
+        // Dot access into JSON object
+        assert_eq!(
+            expand_template("{{ vars.config.port }}", &vars, false, &test.repo, "test").unwrap(),
+            "3000"
+        );
+        assert_eq!(
+            expand_template("{{ vars.config.debug }}", &vars, false, &test.repo, "test").unwrap(),
+            "true"
+        );
+
+        // Array index access
+        assert_eq!(
+            expand_template("{{ vars.tags[0] }}", &vars, false, &test.repo, "test").unwrap(),
+            "alpha"
+        );
+
+        // Plain string still works
+        assert_eq!(
+            expand_template("{{ vars.env }}", &vars, false, &test.repo, "test").unwrap(),
+            "staging"
+        );
+
+        // Default filter on missing nested key
+        assert_eq!(
+            expand_template(
+                "{{ vars.config.missing | default('fallback') }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "fallback"
+        );
+    }
+
+    #[test]
+    fn test_expand_template_vars_json_shell_escape() {
+        let test = test_repo();
+
+        Cmd::new("git")
+            .args([
+                "config",
+                "worktrunk.state.main.vars.config",
+                r#"{"name": "my project", "cmd": "echo hello"}"#,
+            ])
+            .current_dir(test.path())
+            .run()
+            .unwrap();
+
+        let mut vars = HashMap::new();
+        vars.insert("branch", "main");
+
+        // Shell escaping should work on JSON-parsed nested values
+        let result =
+            expand_template("{{ vars.config.name }}", &vars, true, &test.repo, "test").unwrap();
+        assert_eq!(result, "'my project'");
+
+        let result =
+            expand_template("{{ vars.config.cmd }}", &vars, true, &test.repo, "test").unwrap();
+        assert_eq!(result, "'echo hello'");
+    }
+
+    #[test]
+    fn test_expand_template_vars_empty_when_no_branch() {
+        let test = test_repo();
+        let vars = HashMap::new(); // No branch var
+
+        // vars should be undefined (no branch to look up)
+        assert_eq!(
+            expand_template(
+                "{{ vars | default('none') }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "none"
+        );
+    }
+
+    #[test]
+    fn test_expand_template_vars_empty_when_no_data() {
+        let test = test_repo();
+        let mut vars = HashMap::new();
+        vars.insert("branch", "main");
+
+        // vars injected as empty map when no entries exist — use default filter for missing keys
+        assert_eq!(
+            expand_template(
+                "{{ vars.env | default('dev') }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "dev"
+        );
+    }
+
+    #[test]
     fn test_validate_template_valid() {
         let test = test_repo();
 
@@ -1124,6 +1364,7 @@ mod tests {
         // Filters
         assert!(validate_template("{{ branch | sanitize }}", &test.repo, "test").is_ok());
         assert!(validate_template("{{ branch | sanitize_db }}", &test.repo, "test").is_ok());
+        assert!(validate_template("{{ branch | sanitize_hash }}", &test.repo, "test").is_ok());
         assert!(validate_template("{{ branch | hash_port }}", &test.repo, "test").is_ok());
 
         // Conditionals with optional vars

@@ -15,7 +15,54 @@
 //! - `diff.rs` - Diff, history, and commit operations
 //! - `config.rs` - Git config, hints, markers, and default branch detection
 //! - `integration.rs` - Integration detection (same commit, ancestor, trees match)
+//!
+//! # Caching
+//!
+//! Most repository data — remote URLs, config, default branch, merge-bases — is stable
+//! for the duration of a single CLI command. [`RepoCache`] exploits this by caching
+//! read-only values so repeated queries hit memory instead of spawning git processes.
+//!
+//! **Lifetime.** A cache is created once per `Repository::at()` call and never
+//! invalidated. There is no expiry, no dirty-tracking, no
+//! manual flush — the cache lives exactly as long as the command.
+//!
+//! **Sharing.** `Repository` holds an `Arc<RepoCache>`, so cloning a `Repository`
+//! (e.g., to pass into parallel worktree operations in `wt list`) shares the same
+//! cache. Callers that need a *separate* cache must call `Repository::at()` again.
+//!
+//! **What is NOT cached.** Values that change during command execution are intentionally
+//! excluded:
+//! - `WorkingTree::is_dirty()` — changes as we stage and commit
+//! - `Repository::list_worktrees()` — changes as we create and remove worktrees
+//!
+//! **Access patterns.** See the [`RepoCache`] doc comment for the two storage patterns
+//! (repo-wide `OnceCell` vs per-key `DashMap`) and their infallible/fallible variants.
+//!
+//! **Invariants:**
+//! - A cached value, once written, is never updated within the same command.
+//! - All cache access is lock-free at the call site — `OnceCell` and `DashMap` handle
+//!   synchronization internally.
+//! - Code that mutates repository state (committing, creating worktrees) must not read
+//!   its own mutations through the cache. Use direct git commands for post-mutation
+//!   state.
+//!
+//! **Process-level singletons.** Outside `RepoCache`, several modules use `OnceLock`/`LazyLock`
+//! for process-global singletons that are computed once and never change:
+//! - Resource limiters: `CMD_SEMAPHORE` (shell_exec), `HEAVY_OPS_SEMAPHORE` (git),
+//!   `LLM_SEMAPHORE` (summary), `COPY_POOL` (copy)
+//! - Global state: `OUTPUT_STATE` (output), `TRACE` and `OUTPUT` (log_files), `COMMAND_LOG`
+//! - Config: `CONFIG_PATH` (config/user/path), `SHELL_CONFIG`, `GIT_ENV_OVERRIDES` (shell_exec)
+//! - Git discovery: `GIT_COMMON_DIR_CACHE` (below) — memoizes `git rev-parse --git-common-dir`
+//!   across `Repository::at()` calls
+//!
+//! These are lazy initialization, not caches — they have no invalidation concerns
+//! because the container is initialized once and never replaced — unlike `RepoCache`,
+//! there is no risk of reading stale external state.
+//!
+//! The picker also maintains a `PreviewCache` (`Arc<DashMap>` in `commands/picker/items.rs`)
+//! for rendered preview output, scoped to a single picker session.
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -28,15 +75,16 @@ use crate::shell_exec::Cmd;
 
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
+use wait_timeout::ChildExt;
 
 use anyhow::{Context, bail};
 
 use dunce::canonicalize;
 
-use crate::config::{ProjectConfig, ResolvedConfig, UserConfig};
+use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
-use super::{DefaultBranchName, GitError, LineDiff, WorktreeInfo};
+use super::{DefaultBranchName, GitError, IntegrationReason, LineDiff, WorktreeInfo};
 
 // Re-export types needed by submodules
 pub(super) use super::{BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl};
@@ -48,6 +96,7 @@ mod config;
 mod diff;
 mod integration;
 mod remotes;
+mod sha_cache;
 mod working_tree;
 mod worktrees;
 
@@ -80,6 +129,28 @@ impl std::fmt::Display for StreamCommandError {
 
 impl std::error::Error for StreamCommandError {}
 
+/// Convert a child exit status into `Ok(())` or a [`StreamCommandError`].
+fn stream_exit_result(
+    status: std::process::ExitStatus,
+    buffer: &Arc<Mutex<Vec<String>>>,
+    cmd_str: &str,
+) -> anyhow::Result<()> {
+    if status.success() {
+        return Ok(());
+    }
+    let lines = buffer.lock().unwrap();
+    let exit_info = status
+        .code()
+        .map(|c| format!("exit code {c}"))
+        .unwrap_or_else(|| "killed by signal".to_string());
+    Err(StreamCommandError {
+        output: lines.join("\n"),
+        command: cmd_str.to_string(),
+        exit_info,
+    }
+    .into())
+}
+
 // ============================================================================
 // Repository Cache
 // ============================================================================
@@ -92,6 +163,36 @@ impl std::error::Error for StreamCommandError {}
 ///
 /// Wrapped in Arc to allow releasing the outer HashMap lock before accessing
 /// cached values, avoiding deadlocks when cached methods call each other.
+///
+/// # Cache access patterns
+///
+/// Repo-wide values use `OnceCell::get_or_init` / `get_or_try_init` — single
+/// initialization, no key.
+///
+/// Keyed values use `DashMap`. Both patterns hold the shard lock across
+/// check-and-insert (no TOCTOU gap). Choose based on whether computation
+/// is fallible:
+///
+/// **Infallible** — use `entry().or_insert_with()`:
+///
+/// ```rust,ignore
+/// self.cache.some_map
+///     .entry(key)
+///     .or_insert_with(|| compute())
+///     .clone()
+/// ```
+///
+/// **Fallible** — use explicit `Entry` matching to propagate errors:
+///
+/// ```rust,ignore
+/// match self.cache.some_map.entry(key) {
+///     Entry::Occupied(e) => Ok(e.get().clone()),
+///     Entry::Vacant(e) => {
+///         let value = compute()?;
+///         Ok(e.insert(value).clone())
+///     }
+/// }
+/// ```
 #[derive(Debug, Default)]
 pub(super) struct RepoCache {
     // ========== Repo-wide values (same for all worktrees) ==========
@@ -127,12 +228,62 @@ pub(super) struct RepoCache {
     /// Batch ahead/behind cache: (base_ref, branch_name) -> (ahead, behind)
     /// Populated by batch_ahead_behind(), used by cached_ahead_behind()
     pub(super) ahead_behind: DashMap<(String, String), (usize, usize)>,
+    /// Raw remote URLs: remote_name -> URL from `.git/config` (no `url.insteadOf`).
+    /// Cached because `primary_remote` validates the URL, then `primary_remote_url`
+    /// reads it again — two calls for the same key without this cache.
+    pub(super) remote_urls: DashMap<String, Option<String>>,
+    /// Effective remote URLs: remote_name -> effective URL (with `url.insteadOf` applied).
+    /// Cached because forge detection may query the same remote multiple times.
+    pub(super) effective_remote_urls: DashMap<String, Option<String>>,
+    /// Resolved refs: unresolved ref (e.g., "main") -> resolved form (e.g., "refs/heads/main")
+    /// or original if not a local branch. Populated by `resolve_preferring_branch()`.
+    pub(super) resolved_refs: DashMap<String, String>,
+    /// Effective integration targets: local_target -> effective ref (may be upstream).
+    /// Cached because `integration_reason()` calls `effective_integration_target()` for
+    /// every branch, but the result depends only on the target ref's relationship with
+    /// its upstream — stable for the duration of a command.
+    pub(super) effective_integration_targets: DashMap<String, String>,
+    /// Integration reason cache: (branch, target) -> (effective_target, reason).
+    /// Populated by `integration_reason()`, avoids redundant `compute_integration_lazy()`
+    /// calls when the same branch is checked multiple times (e.g., step_prune Phase 1
+    /// followed by prepare_worktree_removal).
+    pub(super) integration_reasons: DashMap<(String, String), (String, Option<IntegrationReason>)>,
+
+    /// Tree SHA cache: tree spec (e.g., "refs/heads/main^{tree}") -> SHA.
+    /// The tree SHA for a given ref doesn't change during a command.
+    pub(super) tree_shas: DashMap<String, String>,
+
+    /// Commit SHA cache: ref (e.g., "main", "refs/heads/main") -> commit SHA.
+    /// The commit SHA for a given ref doesn't change during a command.
+    /// Used by `rev_parse_commit()` to key the persistent `sha_cache` by SHA.
+    pub(super) commit_shas: DashMap<String, String>,
+
+    /// Upstream tracking branch cache: local branch -> upstream (e.g., "origin/main").
+    /// None means "no upstream configured". Lazily loaded on first access via
+    /// `Branch::upstream()` → `fetch_all_upstreams()`.
+    pub(super) upstreams: OnceCell<HashMap<String, Option<String>>>,
+    /// Commit details cache: commit SHA -> (timestamp, subject).
+    /// Multiple items sharing the same HEAD commit (e.g., worktrees on main)
+    /// would otherwise each spawn a `git log -1` for the same SHA.
+    pub(super) commit_details: DashMap<String, (i64, String)>,
+    /// In-memory branch diff stats cache: (base_sha, head_sha) -> LineDiff.
+    /// Sits in front of the persistent `sha_cache` to prevent parallel tasks
+    /// from racing through the file-based cache for the same SHA pair.
+    pub(super) diff_stats: DashMap<(String, String), LineDiff>,
 
     // ========== Per-worktree values (keyed by path) ==========
+    /// Per-worktree git directory: worktree_path -> canonicalized git dir
+    /// (e.g., `.git/worktrees/<name>` for linked worktrees, `.git` for main)
+    pub(super) git_dirs: DashMap<PathBuf, PathBuf>,
     /// Worktree root paths: worktree_path -> canonicalized root
     pub(super) worktree_roots: DashMap<PathBuf, PathBuf>,
     /// Current branch per worktree: worktree_path -> branch name (None = detached HEAD)
     pub(super) current_branches: DashMap<PathBuf, Option<String>>,
+    /// Cached `git status --porcelain` output per worktree: worktree_path -> raw porcelain.
+    /// Populated by `WorkingTree::status_porcelain_cached()` so parallel tasks
+    /// (working-tree diff + conflict detection) share one subprocess per worktree
+    /// instead of spawning `git status` twice.
+    pub(super) status_porcelain: DashMap<PathBuf, String>,
 }
 
 /// Result of resolving a worktree name.
@@ -161,6 +312,21 @@ static BASE_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 /// Default base path when -C flag is not provided.
 static DEFAULT_BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("."));
+
+/// Process-wide cache for `git rev-parse --git-common-dir` resolution,
+/// keyed by the discovery path passed to [`Repository::at`].
+///
+/// Unlike per-Repository caches, this lives for the whole process so that
+/// multiple Repository instances pointed at the same path (e.g.
+/// `init_command_log` early in `main`, then a command handler later) skip
+/// the duplicate `git rev-parse` subprocess. The value (a canonicalized
+/// `.git` directory) is invariant for the lifetime of the process.
+///
+/// Keys are stored as-is (not canonicalized) — the goal is only to dedupe
+/// repeated calls with the same path. The duplicate case we care about (both
+/// callers go through `base_path()`) always passes the same `PathBuf`, so
+/// equality on the raw path is sufficient.
+static GIT_COMMON_DIR_CACHE: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new(DashMap::new);
 
 /// Initialize the global base path for repository operations.
 ///
@@ -263,11 +429,56 @@ impl Repository {
     /// Prefer [`config()`](Self::config) for behavior settings. This is only needed
     /// for operations that require the full `UserConfig` (e.g., path template formatting,
     /// approval state, hook resolution).
+    ///
+    /// Each config layer (system file, user file, env vars) degrades
+    /// independently — a failure in one preserves data from earlier layers.
+    /// Issues are surfaced on stderr so they're visible without `RUST_LOG`.
     pub fn user_config(&self) -> &UserConfig {
         self.cache.user_config.get_or_init(|| {
-            UserConfig::load()
-                .inspect_err(|err| log::warn!("Failed to load user config, using defaults: {err}"))
-                .unwrap_or_default()
+            let (config, warnings) = UserConfig::load_with_warnings();
+            for warning in &warnings {
+                match warning {
+                    LoadError::File { path, label, err } => {
+                        crate::styling::eprintln!(
+                            "{}",
+                            crate::styling::warning_message(format!(
+                                "{label} at {} failed to parse, skipping",
+                                crate::path::format_path_for_display(path),
+                            ))
+                        );
+                        crate::styling::eprintln!(
+                            "{}",
+                            crate::styling::format_with_gutter(&err.to_string(), None)
+                        );
+                    }
+                    LoadError::Env { err, vars } => {
+                        let var_list: Vec<_> = vars
+                            .iter()
+                            .map(|(name, value)| format!("{name}={value}"))
+                            .collect();
+                        crate::styling::eprintln!(
+                            "{}",
+                            crate::styling::warning_message(format!(
+                                "Ignoring env var overrides: {}",
+                                var_list.join(", ")
+                            ))
+                        );
+                        crate::styling::eprintln!(
+                            "{}",
+                            crate::styling::format_with_gutter(err.trim(), None)
+                        );
+                    }
+                    LoadError::Validation(err) => {
+                        crate::styling::eprintln!(
+                            "{}",
+                            crate::styling::warning_message(format!(
+                                "Config validation warning: {err}"
+                            ))
+                        );
+                    }
+                }
+            }
+            config
         })
     }
 
@@ -285,7 +496,15 @@ impl Repository {
     ///
     /// Always returns a canonicalized absolute path to ensure consistent
     /// comparison with `WorkingTree::git_dir()`.
+    ///
+    /// Result is cached process-wide in [`GIT_COMMON_DIR_CACHE`] so multiple
+    /// `Repository::at()` calls for the same discovery path don't each spawn
+    /// `git rev-parse --git-common-dir`.
     fn resolve_git_common_dir(discovery_path: &Path) -> anyhow::Result<PathBuf> {
+        if let Some(cached) = GIT_COMMON_DIR_CACHE.get(discovery_path) {
+            return Ok(cached.clone());
+        }
+
         let output = Cmd::new("git")
             .args(["rev-parse", "--git-common-dir"])
             .current_dir(discovery_path)
@@ -306,7 +525,10 @@ impl Repository {
         } else {
             path
         };
-        canonicalize(&absolute_path).context("Failed to resolve git common directory")
+        let resolved =
+            canonicalize(&absolute_path).context("Failed to resolve git common directory")?;
+        GIT_COMMON_DIR_CACHE.insert(discovery_path.to_path_buf(), resolved.clone());
+        Ok(resolved)
     }
 
     /// Get the path this repository was discovered from.
@@ -327,11 +549,16 @@ impl Repository {
     /// Get a worktree view at a specific path.
     ///
     /// Use this when you need to operate on a worktree other than the current one.
+    ///
+    /// The path is canonicalized when it exists so that callers passing
+    /// equivalent forms (e.g., cwd from JSON vs path from `git worktree list
+    /// --porcelain`) hit the same per-worktree cache entries in `RepoCache`.
+    /// Falls back to the raw path if canonicalization fails (e.g., path does
+    /// not yet exist for a worktree about to be created).
     pub fn worktree_at(&self, path: impl Into<PathBuf>) -> WorkingTree<'_> {
-        WorkingTree {
-            repo: self,
-            path: path.into(),
-        }
+        let raw = path.into();
+        let path = canonicalize(&raw).unwrap_or(raw);
+        WorkingTree { repo: self, path }
     }
 
     /// Get a branch handle for branch-specific operations.
@@ -374,12 +601,31 @@ impl Repository {
         &self.git_common_dir
     }
 
+    /// Get the epoch timestamp of the last `git fetch`, if available.
+    ///
+    /// Checks the modification time of `FETCH_HEAD` in the git common directory.
+    /// Returns `None` if the file doesn't exist (never fetched) or on any I/O error.
+    pub fn last_fetch_epoch(&self) -> Option<u64> {
+        let fetch_head = self.git_common_dir().join("FETCH_HEAD");
+        let metadata = std::fs::metadata(fetch_head).ok()?;
+        let modified = metadata.modified().ok()?;
+        modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs())
+    }
+
     /// Get the worktrunk data directory inside the git directory.
     ///
     /// Returns `<git-common-dir>/wt/` (typically `.git/wt/`).
     /// All worktrunk-managed state lives under this single directory.
     pub fn wt_dir(&self) -> PathBuf {
         self.git_common_dir().join("wt")
+    }
+
+    /// Clear all cached git command results, returning the count removed.
+    pub fn clear_git_commands_cache(&self) -> usize {
+        sha_cache::clear_all(self)
     }
 
     /// Get the directory where worktrunk background logs are stored.
@@ -471,23 +717,43 @@ impl Repository {
     /// worktrees at templated paths, including the default branch.
     ///
     /// Result is cached in the repository's shared cache (same for all clones).
-    /// Runs `git rev-parse --is-bare-repository` from git_common_dir to correctly
-    /// detect bare repos even when called from a linked worktree.
+    ///
+    /// Reads `core.bare` from git config rather than using `git rev-parse
+    /// --is-bare-repository`. The rev-parse approach is unreliable when run from
+    /// inside a `.git` directory — when `core.bare` is unset, git infers based
+    /// on directory context, and from inside `.git/` there's no working tree so
+    /// it returns `true` even for normal repos. This affects repos where
+    /// `core.bare` was never written (e.g., repos cloned by Eclipse/EGit).
+    /// Reading the config value directly avoids this false positive.
+    ///
+    /// Uses `--type=bool` to normalize all git boolean representations (`yes`,
+    /// `1`, `on`, `TRUE`) to `true`/`false`. When `core.bare` is unset (exit 1),
+    /// defaults to non-bare — matching libgit2's behavior.
+    ///
+    /// See <https://github.com/max-sixty/worktrunk/issues/1939>.
     pub fn is_bare(&self) -> anyhow::Result<bool> {
         self.cache
             .is_bare
             .get_or_try_init(|| {
-                // Run from git_common_dir, not discovery_path. This is important for
-                // worktrees of bare repos: running from the worktree returns false,
-                // but running from the bare repo returns true.
+                // Read core.bare from git config. We run from git_common_dir so
+                // linked worktrees of bare repos correctly read the bare repo's
+                // config (not the worktree's).
                 let output = Cmd::new("git")
-                    .args(["rev-parse", "--is-bare-repository"])
+                    .args(["config", "--type=bool", "core.bare"])
                     .current_dir(&self.git_common_dir)
                     .context(path_to_logging_context(&self.git_common_dir))
                     .run()
                     .context("failed to check if repository is bare")?;
-                Ok(output.status.success()
-                    && String::from_utf8_lossy(&output.stdout).trim() == "true")
+                // Exit 0 = key found (value printed), 1 = key missing (not bare),
+                // 2+ = config error (corrupt file, invalid type).
+                match output.status.code() {
+                    Some(0) => Ok(String::from_utf8_lossy(&output.stdout).trim() == "true"),
+                    Some(1) => Ok(false),
+                    _ => {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        bail!("git config core.bare failed: {}", stderr.trim());
+                    }
+                }
             })
             .copied()
     }
@@ -539,14 +805,14 @@ impl Repository {
     /// waiting for EOF that never comes.
     pub fn start_fsmonitor_daemon_at(&self, path: &Path) {
         log::debug!("$ git fsmonitor--daemon start [{}]", path.display());
-        let result = std::process::Command::new("git")
-            .args(["fsmonitor--daemon", "start"])
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(["fsmonitor--daemon", "start"])
             .current_dir(path)
-            .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+            .stderr(Stdio::null());
+        crate::shell_exec::scrub_directive_env_vars(&mut cmd);
+        let result = cmd.status();
         match result {
             Ok(status) if !status.success() => {
                 log::debug!("fsmonitor daemon start exited {status} (usually fine)");
@@ -709,13 +975,14 @@ impl Repository {
             delay_ms
         );
 
-        let mut child = std::process::Command::new("git")
-            .args(args)
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(args)
             .current_dir(&self.discovery_path)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
+            .stderr(Stdio::piped());
+        crate::shell_exec::scrub_directive_env_vars(&mut cmd);
+        let mut child = cmd
             .spawn()
             .with_context(|| format!("Failed to spawn: {}", cmd_str))?;
 
@@ -761,49 +1028,39 @@ impl Repository {
 
         let start = Instant::now();
 
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    let _ = stdout_handle.join();
-                    let _ = stderr_handle.join();
+        // Phase 1: If delay threshold is enabled, wait that long for the child to
+        // exit. If it finishes before the threshold, output stays buffered (quiet).
+        if delay_ms >= 0 {
+            let delay = Duration::from_millis(delay_ms as u64);
+            let remaining = delay.saturating_sub(start.elapsed());
 
-                    if status.success() {
-                        return Ok(());
-                    }
-                    // Failed - return buffered output as error
-                    let lines = buffer.lock().unwrap();
-                    let exit_info = status
-                        .code()
-                        .map(|c| format!("exit code {c}"))
-                        .unwrap_or_else(|| "killed by signal".to_string());
-                    return Err(StreamCommandError {
-                        output: lines.join("\n"),
-                        command: cmd_str,
-                        exit_info,
-                    }
-                    .into());
-                }
-                Ok(None) => {
-                    // Still running - check if we should switch to streaming (skip if delay_ms < 0)
-                    if delay_ms >= 0
-                        && !streaming.load(Ordering::Relaxed)
-                        && start.elapsed() >= Duration::from_millis(delay_ms as u64)
-                    {
-                        streaming.store(true, Ordering::Relaxed);
-
-                        if let Some(ref msg) = progress_message {
-                            let _ = writeln!(std::io::stderr(), "{}", msg);
-                        }
-                        for line in buffer.lock().unwrap().drain(..) {
-                            let _ = writeln!(std::io::stderr(), "{}", line);
-                        }
-                        let _ = std::io::stderr().flush();
-                    }
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(e) => bail!("Failed to wait for command: {}", e),
+            // Zero delay means "stream immediately", not "try a zero-timeout reap".
+            if !remaining.is_zero()
+                && let Some(status) = child
+                    .wait_timeout(remaining)
+                    .context("Failed to wait for command")?
+            {
+                let _ = stdout_handle.join();
+                let _ = stderr_handle.join();
+                return stream_exit_result(status, &buffer, &cmd_str);
             }
+
+            // Delay threshold exceeded — switch to streaming
+            streaming.store(true, Ordering::Relaxed);
+            if let Some(ref msg) = progress_message {
+                let _ = writeln!(std::io::stderr(), "{}", msg);
+            }
+            for line in buffer.lock().unwrap().drain(..) {
+                let _ = writeln!(std::io::stderr(), "{}", line);
+            }
+            let _ = std::io::stderr().flush();
         }
+
+        // Phase 2: Block until the child exits (no polling).
+        let status = child.wait().context("Failed to wait for command")?;
+        let _ = stdout_handle.join();
+        let _ = stderr_handle.join();
+        stream_exit_result(status, &buffer, &cmd_str)
     }
 
     /// Run a git command and return the raw Output (for inspecting exit codes).

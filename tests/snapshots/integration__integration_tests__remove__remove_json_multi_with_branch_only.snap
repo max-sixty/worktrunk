@@ -1,0 +1,18 @@
+---
+source: tests/integration_tests/remove.rs
+expression: "String::from_utf8_lossy(&output.stdout)"
+---
+[
+  {
+    "branch": "wt-feature",
+    "branch_deleted": true,
+    "kind": "worktree",
+    "path": "<PATH>"
+  },
+  {
+    "branch": "orphan-branch",
+    "branch_deleted": true,
+    "kind": "branch_only",
+    "pruned": false
+  }
+]

@@ -1,6 +1,6 @@
 ---
 source: tests/integration_tests/config_state.rs
-expression: "String::from_utf8_lossy(&output.stderr)"
+expression: "String::from_utf8_lossy(&output.stdout)"
 ---
 [36mDEFAULT BRANCH[39m
 [107m [0m main
@@ -14,6 +14,12 @@ expression: "String::from_utf8_lossy(&output.stderr)"
  bugfix  🐛 debugging now 
  feature 🚧 WIP       now
 
+[36mVARS[39m
+ Branch  Key   Value  
+ ─────── ──── ─────── 
+ feature port 3000    
+ main    env  staging
+
 [36mCI STATUS CACHE[39m
  Branch  Status Age   Head   
  ─────── ────── ─── ──────── 
@@ -26,7 +32,10 @@ expression: "String::from_utf8_lossy(&output.stderr)"
 [107m [0m (none)
 
 [36mHOOK OUTPUT[39m @ <PATH>
-            File            Size  Age   
- ────────────────────────── ──── ────── 
- bugfix-remove.log          13B  future 
- feature-post-start-npm.log 10B  future
+              File               Size  Age   
+ ─────────────────────────────── ──── ────── 
+ bugfix/internal/remove.log      13B  future 
+ feature/user/post-start/npm.log 10B  future
+
+[36mDIAGNOSTIC[39m @ <PATH>
+[107m [0m (none)

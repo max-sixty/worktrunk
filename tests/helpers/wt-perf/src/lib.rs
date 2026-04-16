@@ -4,6 +4,7 @@
 //! - Benchmark repository setup (used by `benches/list.rs`, `benches/time_to_first_output.rs`)
 //! - Cache invalidation for cold benchmark runs
 //! - Trace analysis utilities
+//! - Shared benchmark helpers (`isolate_cmd`, `run_git_ok`)
 //!
 //! # Library Usage
 //!
@@ -18,18 +19,7 @@
 //! invalidate_caches_auto(&repo_path);
 //! ```
 //!
-//! # CLI Usage
-//!
-//! ```bash
-//! # Set up a benchmark repo
-//! cargo run -p wt-perf -- setup typical-8
-//!
-//! # Invalidate caches
-//! cargo run -p wt-perf -- invalidate /path/to/repo
-//!
-//! # Parse trace logs
-//! RUST_LOG=debug wt list 2>&1 | grep wt-trace | cargo run -p wt-perf -- trace
-//! ```
+//! See `wt-perf --help` for CLI usage.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -114,7 +104,7 @@ impl RepoConfig {
     }
 }
 
-/// Run a git command in the given directory.
+/// Run a git command in the given directory. Panics on failure.
 pub fn run_git(path: &Path, args: &[&str]) {
     let output = Cmd::new("git")
         .args(args.iter().copied())
@@ -131,6 +121,49 @@ pub fn run_git(path: &Path, args: &[&str]) {
         String::from_utf8_lossy(&output.stdout),
         path.display()
     );
+}
+
+/// Run a git command, returning whether it succeeded. Does not panic.
+pub fn run_git_ok(path: &Path, args: &[&str]) -> bool {
+    Cmd::new("git")
+        .args(args.iter().copied())
+        .current_dir(path)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .run()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// Strip host environment from a benchmark command for isolation.
+///
+/// Removes `GIT_*`, `WORKTRUNK_*`, `SHELL`, and `NO_COLOR` env vars, then sets
+/// config/system/approvals paths. Pass a `user_config_path` to use a real config
+/// file (e.g., with hooks); `None` points at a nonexistent path (defaults only).
+///
+/// This is intentionally minimal compared to `tests/common::configure_cli_command()`:
+/// benchmarks need realistic timing without host config interference, while
+/// integration tests need full determinism (timestamps, locale, mock commands,
+/// snapshot filters). Coupling them would make benchmarks slower or tests flaky.
+pub fn isolate_cmd(cmd: &mut std::process::Command, user_config_path: Option<&Path>) {
+    for (key, _) in std::env::vars() {
+        if key.starts_with("GIT_") || key.starts_with("WORKTRUNK_") {
+            cmd.env_remove(&key);
+        }
+    }
+    cmd.env_remove("NO_COLOR");
+    cmd.env(
+        "WORKTRUNK_CONFIG_PATH",
+        user_config_path.unwrap_or(Path::new("/nonexistent/bench/config.toml")),
+    );
+    cmd.env(
+        "WORKTRUNK_SYSTEM_CONFIG_PATH",
+        "/nonexistent/bench/system-config.toml",
+    );
+    cmd.env(
+        "WORKTRUNK_APPROVALS_PATH",
+        "/nonexistent/bench/approvals.toml",
+    );
+    cmd.env_remove("SHELL");
 }
 
 /// Create a test repository from config.
@@ -312,6 +345,9 @@ pub fn invalidate_caches_auto(repo_path: &Path) {
 
     // Remove packed refs
     let _ = std::fs::remove_file(git_dir.join("packed-refs"));
+
+    // Remove worktrunk's persistent SHA-keyed caches (diff-stats, is-ancestor, etc.)
+    let _ = std::fs::remove_dir_all(git_dir.join("wt/cache"));
 }
 
 /// Get or clone the rust-lang/rust repository for real-world benchmarks.

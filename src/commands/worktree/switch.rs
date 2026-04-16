@@ -4,6 +4,7 @@
 
 use std::path::Path;
 
+use crate::display::format_relative_time_short;
 use anyhow::Context;
 use color_print::cformat;
 use dunce::canonicalize;
@@ -108,11 +109,22 @@ fn resolve_fork_ref(
     let ref_type = provider.ref_type();
     let repo_root = repo.repo_path()?;
     let local_branch = remote_ref::local_branch_name(info);
+    let expected_remote = match remote_ref::find_remote(repo, info) {
+        Ok(remote) => Some(remote),
+        Err(e) => {
+            log::debug!("Could not resolve remote for {}: {e:#}", ref_type.name());
+            None
+        }
+    };
 
     // Check if branch already exists and is tracking this ref
-    if let Some(tracks_this) =
-        remote_ref::branch_tracks_ref(repo_root, &local_branch, provider, number)
-    {
+    if let Some(tracks_this) = remote_ref::branch_tracks_ref(
+        repo_root,
+        &local_branch,
+        provider,
+        number,
+        expected_remote.as_deref(),
+    ) {
         if tracks_this {
             eprintln!(
                 "{}",
@@ -132,9 +144,13 @@ fn resolve_fork_ref(
 
         // Branch exists but doesn't track this ref - try prefixed name (GitHub only)
         if let Some(prefixed) = info.prefixed_local_branch_name() {
-            if let Some(prefixed_tracks) =
-                remote_ref::branch_tracks_ref(repo_root, &prefixed, provider, number)
-            {
+            if let Some(prefixed_tracks) = remote_ref::branch_tracks_ref(
+                repo_root,
+                &prefixed,
+                provider,
+                number,
+                expected_remote.as_deref(),
+            ) {
                 if prefixed_tracks {
                     eprintln!(
                         "{}",
@@ -162,7 +178,7 @@ fn resolve_fork_ref(
 
             // Use prefixed branch name; push won't work (None for fork_push_url)
             // This is GitHub-only (GitLab doesn't support prefixed names)
-            let remote = find_github_remote(repo, info)?;
+            let remote = remote_ref::find_remote(repo, info)?;
             return Ok(ResolvedTarget {
                 branch: prefixed,
                 method: CreationMethod::ForkRef {
@@ -189,8 +205,8 @@ fn resolve_fork_ref(
     // Resolve remote and URLs based on platform.
     let (fork_push_url, remote) = match ref_type {
         RefType::Pr => {
-            // GitHub: URLs already in info, just find remote
-            let remote = find_github_remote(repo, info)?;
+            // GitHub: URLs already in info, just find remote.
+            let remote = remote_ref::find_remote(repo, info)?;
             (info.fork_push_url.clone(), remote)
         }
         RefType::Mr => {
@@ -239,72 +255,15 @@ fn resolve_fork_ref(
     })
 }
 
-/// Find the remote for a GitHub PR (where PR refs live).
-fn find_github_remote(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result<String> {
-    use worktrunk::git::remote_ref::PlatformData;
-
-    let PlatformData::GitHub {
-        host,
-        base_owner,
-        base_repo,
-        ..
-    } = &info.platform_data
-    else {
-        anyhow::bail!("find_github_remote called on non-GitHub ref");
-    };
-
-    repo.find_remote_for_repo(Some(host), base_owner, base_repo)
-        .ok_or_else(|| {
-            let suggested_url =
-                worktrunk::git::remote_ref::github::fork_remote_url(host, base_owner, base_repo);
-            GitError::NoRemoteForRepo {
-                owner: base_owner.clone(),
-                repo: base_repo.clone(),
-                suggested_url,
-            }
-            .into()
-        })
-}
-
 /// Resolve a same-repo (non-fork) PR/MR.
 fn resolve_same_repo_ref(
     repo: &Repository,
     info: &RemoteRefInfo,
 ) -> anyhow::Result<ResolvedTarget> {
-    use worktrunk::git::remote_ref::PlatformData;
-
     // Find the remote for the same-repo PR/MR and fetch the branch with an
     // explicit refspec. This ensures the remote tracking branch is created even
     // in repos with limited fetch refspecs (single-branch clones, bare repos).
-    let remote = match &info.platform_data {
-        PlatformData::GitHub {
-            host,
-            base_owner,
-            base_repo,
-            ..
-        } => {
-            let suggested_url =
-                worktrunk::git::remote_ref::github::fork_remote_url(host, base_owner, base_repo);
-            repo.find_remote_for_repo(Some(host), base_owner, base_repo)
-                .ok_or_else(|| GitError::NoRemoteForRepo {
-                    owner: base_owner.clone(),
-                    repo: base_repo.clone(),
-                    suggested_url,
-                })?
-        }
-        PlatformData::GitLab {
-            host,
-            base_owner,
-            base_repo,
-            ..
-        } => repo
-            .find_remote_for_repo(Some(host), base_owner, base_repo)
-            .ok_or_else(|| GitError::NoRemoteForRepo {
-                owner: base_owner.clone(),
-                repo: base_repo.clone(),
-                suggested_url: format!("https://{host}/{base_owner}/{base_repo}.git"),
-            })?,
-    };
+    let remote = remote_ref::find_remote(repo, info)?;
 
     let branch = &info.source_branch;
     eprintln!(
@@ -404,7 +363,10 @@ fn resolve_switch_target(
                     "Branch <bold>{resolved_branch}</> exists on remote ({remote_ref}); creating new branch from base instead"
                 ))
             );
-            let remove_cmd = suggest_command("remove", &[&resolved_branch], &[]);
+            // `--foreground` is required: background removal leaves a placeholder
+            // directory at the original path (to keep shell PWD valid), which
+            // would block the subsequent `wt switch` with "Directory already exists".
+            let remove_cmd = suggest_command("remove", &[&resolved_branch], &["--foreground"]);
             let switch_cmd = suggest_command("switch", &[&resolved_branch], &[]);
             eprintln!(
                 "{}",
@@ -476,6 +438,7 @@ fn validate_worktree_creation(
         return Err(GitError::BranchNotFound {
             branch: branch.to_string(),
             show_create_hint: true,
+            last_fetch_ago: format_last_fetch_ago(repo),
         }
         .into());
     }
@@ -952,5 +915,19 @@ fn worktree_creation_error(
         base_branch,
         error: output,
         command,
+    }
+}
+
+/// Format the last fetch time as a self-contained phrase for error hint parentheticals.
+///
+/// Returns e.g. "last fetched 3h ago" or "last fetched just now".
+/// Returns `None` if FETCH_HEAD doesn't exist (never fetched).
+fn format_last_fetch_ago(repo: &Repository) -> Option<String> {
+    let epoch = repo.last_fetch_epoch()?;
+    let relative = format_relative_time_short(epoch as i64);
+    if relative == "now" || relative == "future" {
+        Some("last fetched just now".to_string())
+    } else {
+        Some(format!("last fetched {relative} ago"))
     }
 }

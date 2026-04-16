@@ -1,190 +1,19 @@
 //! Config persistence - loading and saving to disk.
 //!
 //! Handles TOML serialization with formatting (multiline arrays, implicit tables)
-//! and preserves comments when updating existing files.
+//! and preserves comments when updating existing files via diff-based merge.
+//!
+//! The existing-file save path works by diffing the serialized in-memory state
+//! against the parsed file and merging only changed keys. This automatically
+//! handles any new fields without manual wiring — if a struct field is
+//! serializable, save_to persists it.
 
-use config::ConfigError;
-use serde::Serialize;
+use crate::config::{ConfigError, UnknownTree, compute_unknown_tree};
 
 use super::UserConfig;
-use super::path;
 use super::sections::CommitGenerationConfig;
 
 impl UserConfig {
-    /// Save the current configuration to the default config file location
-    pub fn save(&self) -> Result<(), ConfigError> {
-        self.save_impl(None)
-    }
-
-    /// Internal save implementation that handles both default and custom paths
-    pub(super) fn save_impl(
-        &self,
-        config_path: Option<&std::path::Path>,
-    ) -> Result<(), ConfigError> {
-        match config_path {
-            Some(path) => self.save_to(path),
-            None => {
-                let path = path::config_path().ok_or_else(|| {
-                    ConfigError::Message(
-                        "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME environment variable".to_string(),
-                    )
-                })?;
-                self.save_to(&path)
-            }
-        }
-    }
-
-    /// Update the [commit.generation] section in the document.
-    fn update_commit_generation_section(&self, doc: &mut toml_edit::DocumentMut) {
-        // Helper to update a string field only if changed, preserving comments
-        fn update_string_field(
-            table: &mut toml_edit::Table,
-            key: &str,
-            new_value: Option<&String>,
-        ) {
-            match new_value {
-                Some(v) => {
-                    // Only update if value changed (preserves comments if unchanged)
-                    let current = table.get(key).and_then(|i| i.as_str());
-                    if current != Some(v.as_str()) {
-                        table[key] = toml_edit::value(v.as_str());
-                    }
-                }
-                None => {
-                    table.remove(key);
-                }
-            }
-        }
-
-        if let Some(ref commit_cfg) = self.configs.commit
-            && let Some(ref gen_cfg) = commit_cfg.generation
-        {
-            // Ensure [commit] table exists
-            if !doc.contains_key("commit") {
-                doc["commit"] = toml_edit::Item::Table(toml_edit::Table::new());
-            }
-            if let Some(commit_table) = doc["commit"].as_table_mut() {
-                // Ensure [commit.generation] table exists
-                if !commit_table.contains_key("generation") {
-                    commit_table["generation"] = toml_edit::Item::Table(toml_edit::Table::new());
-                }
-                if let Some(gen_table) = commit_table["generation"].as_table_mut() {
-                    update_string_field(gen_table, "command", gen_cfg.command.as_ref());
-                    update_string_field(gen_table, "template", gen_cfg.template.as_ref());
-                    update_string_field(gen_table, "template-file", gen_cfg.template_file.as_ref());
-                    update_string_field(
-                        gen_table,
-                        "squash-template",
-                        gen_cfg.squash_template.as_ref(),
-                    );
-                    update_string_field(
-                        gen_table,
-                        "squash-template-file",
-                        gen_cfg.squash_template_file.as_ref(),
-                    );
-                }
-            }
-        }
-    }
-
-    /// Update the \[projects\] section in the document.
-    fn update_projects_section(&self, doc: &mut toml_edit::DocumentMut) {
-        // Ensure projects table exists
-        if !doc.contains_key("projects") {
-            doc["projects"] = toml_edit::Item::Table(toml_edit::Table::new());
-        }
-
-        if let Some(projects) = doc["projects"].as_table_mut() {
-            // Remove stale projects
-            let stale: Vec<_> = projects
-                .iter()
-                .filter(|(k, _)| !self.projects.contains_key(*k))
-                .map(|(k, _)| k.to_string())
-                .collect();
-            for key in stale {
-                projects.remove(&key);
-            }
-
-            // Add/update projects
-            for (project_id, project_config) in &self.projects {
-                if !projects.contains_key(project_id) {
-                    projects[project_id] = toml_edit::Item::Table(toml_edit::Table::new());
-                }
-
-                // worktree-path (only if set)
-                if let Some(ref path) = project_config.overrides.worktree_path {
-                    projects[project_id]["worktree-path"] = toml_edit::value(path);
-                } else if let Some(table) = projects[project_id].as_table_mut() {
-                    table.remove("worktree-path");
-                }
-
-                // Per-project nested config sections
-                Self::serialize_project_config_section(
-                    projects,
-                    project_id,
-                    "commit-generation",
-                    project_config.commit_generation.as_ref(),
-                );
-                Self::serialize_project_config_section(
-                    projects,
-                    project_id,
-                    "list",
-                    project_config.overrides.list.as_ref(),
-                );
-                Self::serialize_project_config_section(
-                    projects,
-                    project_id,
-                    "commit",
-                    project_config.overrides.commit.as_ref(),
-                );
-                Self::serialize_project_config_section(
-                    projects,
-                    project_id,
-                    "merge",
-                    project_config.overrides.merge.as_ref(),
-                );
-                Self::serialize_project_config_section(
-                    projects,
-                    project_id,
-                    "switch",
-                    project_config.overrides.switch.as_ref(),
-                );
-                Self::serialize_project_config_section(
-                    projects,
-                    project_id,
-                    "select",
-                    project_config.overrides.select.as_ref(),
-                );
-            }
-        }
-    }
-
-    /// Serialize a per-project config section (commit-generation, list, commit, merge).
-    ///
-    /// If the config is Some, serializes it as a nested table. If None, removes the section.
-    /// Used when updating an existing file.
-    fn serialize_project_config_section<T: Serialize>(
-        projects: &mut toml_edit::Table,
-        project_id: &str,
-        section_name: &str,
-        config: Option<&T>,
-    ) {
-        if let Some(cfg) = config {
-            // Serialize to TOML value, then convert to toml_edit Item
-            if let Ok(toml_value) = toml::to_string(cfg)
-                && let Ok(parsed) = toml_value.parse::<toml_edit::DocumentMut>()
-            {
-                let mut table = toml_edit::Table::new();
-                for (k, v) in parsed.iter() {
-                    table[k] = v.clone();
-                }
-                projects[project_id][section_name] = toml_edit::Item::Table(table);
-            }
-        } else if let Some(project_table) = projects[project_id].as_table_mut() {
-            project_table.remove(section_name);
-        }
-    }
-
     /// Recursively convert inline tables to standard tables for readability.
     ///
     /// When using `toml_edit::ser::to_document()`, nested structs are serialized as inline tables
@@ -198,8 +27,6 @@ impl UserConfig {
                 let mut new_table = inline.clone().into_table();
                 Self::expand_inline_tables(&mut new_table);
                 *item = toml_edit::Item::Table(new_table);
-            } else if let Some(t) = item.as_table_mut() {
-                Self::expand_inline_tables(t);
             }
         }
     }
@@ -215,61 +42,146 @@ impl UserConfig {
         }
     }
 
-    /// Save the current configuration to a specific file path
+    /// Recursively merge desired state into existing document.
     ///
-    /// Use this in tests to save to a temporary location instead of the user's config.
-    /// Preserves comments and formatting in the existing file when possible.
+    /// - Keys in desired but not existing: inserted
+    /// - Keys in existing but not desired: removed (unless in `preserve`)
+    /// - Both standard tables: recurse (preserves existing formatting and comments)
+    /// - Existing inline table, desired standard table: compare contents, preserve
+    ///   inline format when semantically equal
+    /// - Both exist, values differ: update existing to desired
+    /// - Both exist, values equal: leave existing unchanged (preserves comments)
+    fn merge_tables(
+        existing: &mut toml_edit::Table,
+        desired: &toml_edit::Table,
+        preserve: &UnknownTree,
+    ) {
+        let stale_keys: Vec<_> = existing
+            .iter()
+            .map(|(k, _)| k.to_string())
+            .filter(|k| !desired.contains_key(k) && !preserve.keys.contains(k))
+            .collect();
+        for key in &stale_keys {
+            existing.remove(key);
+        }
+
+        let empty_tree = UnknownTree::default();
+        for (key, desired_item) in desired.iter() {
+            match existing.get_mut(key) {
+                // Both standard tables: recurse
+                Some(existing_item) if existing_item.is_table() && desired_item.is_table() => {
+                    let nested_preserve = preserve.nested.get(key).unwrap_or(&empty_tree);
+                    Self::merge_tables(
+                        existing_item.as_table_mut().unwrap(),
+                        desired_item.as_table().unwrap(),
+                        nested_preserve,
+                    );
+                }
+                // Existing inline table, desired standard table: compare contents
+                // to preserve the user's inline formatting when nothing changed
+                Some(existing_item)
+                    if existing_item.is_inline_table() && desired_item.is_table() =>
+                {
+                    let as_table = existing_item
+                        .as_inline_table()
+                        .unwrap()
+                        .clone()
+                        .into_table();
+                    if !Self::tables_equal(&as_table, desired_item.as_table().unwrap()) {
+                        *existing_item = desired_item.clone();
+                    }
+                }
+                Some(existing_item) => {
+                    if !Self::items_equal(existing_item, desired_item) {
+                        *existing_item = desired_item.clone();
+                    }
+                }
+                None => {
+                    existing[key] = desired_item.clone();
+                }
+            }
+        }
+    }
+
+    /// Compare two Items for value equality, ignoring formatting and comments.
+    fn items_equal(a: &toml_edit::Item, b: &toml_edit::Item) -> bool {
+        match (a, b) {
+            (toml_edit::Item::Value(va), toml_edit::Item::Value(vb)) => Self::values_equal(va, vb),
+            (toml_edit::Item::Table(ta), toml_edit::Item::Table(tb)) => Self::tables_equal(ta, tb),
+            _ => false,
+        }
+    }
+
+    fn values_equal(a: &toml_edit::Value, b: &toml_edit::Value) -> bool {
+        use toml_edit::Value;
+        match (a, b) {
+            (Value::String(a), Value::String(b)) => a.value() == b.value(),
+            (Value::Integer(a), Value::Integer(b)) => a.value() == b.value(),
+            (Value::Boolean(a), Value::Boolean(b)) => a.value() == b.value(),
+            (Value::Array(a), Value::Array(b)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(a, b)| Self::values_equal(a, b))
+            }
+            _ => false,
+        }
+    }
+
+    fn tables_equal(a: &toml_edit::Table, b: &toml_edit::Table) -> bool {
+        a.len() == b.len()
+            && a.iter()
+                .all(|(k, v)| b.get(k).is_some_and(|bv| Self::items_equal(v, bv)))
+    }
+
+    /// Save the current configuration to a specific file path.
     ///
-    /// TODO: This design is fragile. When file exists, we surgically update specific
-    /// sections to preserve comments. If a new programmatically-modifiable field is added
-    /// but not handled here, changes won't persist. Consider using a diff-based approach:
-    /// compare self vs existing config and only update what changed.
+    /// Preserves comments and formatting in the existing file by diffing the
+    /// serialized in-memory state against the parsed file and merging only
+    /// changed keys. Schema-unknown keys at any nesting level (typos, fields
+    /// from newer wt versions) are preserved so older wt versions don't
+    /// silently strip forward-compatible config data.
     pub fn save_to(&self, config_path: &std::path::Path) -> Result<(), ConfigError> {
-        // Create parent directory if it doesn't exist
         if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                ConfigError::Message(format!("Failed to create config directory: {}", e))
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| ConfigError(format!("Failed to create config directory: {}", e)))?;
         }
 
         let toml_string = if config_path.exists() {
-            // Surgically update sections to preserve comments
             let existing_content = std::fs::read_to_string(config_path)
-                .map_err(|e| ConfigError::Message(format!("Failed to read config file: {}", e)))?;
+                .map_err(|e| ConfigError(format!("Failed to read config file: {}", e)))?;
 
-            let mut doc: toml_edit::DocumentMut = existing_content
+            let mut existing_doc: toml_edit::DocumentMut = existing_content
                 .parse()
-                .map_err(|e| ConfigError::Message(format!("Failed to parse config file: {}", e)))?;
+                .map_err(|e| ConfigError(format!("Failed to parse config file: {}", e)))?;
 
-            // Update all programmatically-modifiable sections
-            // NOTE: If you add a new setter that modifies config, add the update here too!
-            if self.skip_shell_integration_prompt {
-                doc["skip-shell-integration-prompt"] = toml_edit::value(true);
-            } else {
-                doc.remove("skip-shell-integration-prompt");
-            }
+            let mut desired_doc = toml_edit::ser::to_document(&self)
+                .map_err(|e| ConfigError(format!("Serialization error: {e}")))?;
+            Self::expand_inline_tables(desired_doc.as_table_mut());
 
-            if self.skip_commit_generation_prompt {
-                doc["skip-commit-generation-prompt"] = toml_edit::value(true);
-            } else {
-                doc.remove("skip-commit-generation-prompt");
-            }
+            // Preserve unknown keys at every nesting level (typos, future
+            // fields, deprecated keys not yet migrated) so they aren't
+            // silently deleted on save. On type-mismatch we still preserve
+            // every on-disk key — it's safer to round-trip the whole file
+            // than to drop fields we can't interpret.
+            let analysis = compute_unknown_tree::<UserConfig>(&existing_content);
+            let preserve = analysis.preserve_tree();
 
-            self.update_commit_generation_section(&mut doc);
-            self.update_projects_section(&mut doc);
-            Self::make_commit_table_implicit_if_only_subtables(&mut doc);
+            Self::merge_tables(
+                existing_doc.as_table_mut(),
+                desired_doc.as_table(),
+                preserve,
+            );
+            Self::make_commit_table_implicit_if_only_subtables(&mut existing_doc);
 
-            doc.to_string()
+            existing_doc.to_string()
         } else {
-            // No existing file: serialize struct directly, then post-process formatting
             let mut doc = toml_edit::ser::to_document(&self)
-                .map_err(|e| ConfigError::Message(format!("Serialization error: {e}")))?;
+                .map_err(|e| ConfigError(format!("Serialization error: {e}")))?;
 
-            // Convert inline tables to standard tables for readability
             Self::expand_inline_tables(doc.as_table_mut());
             Self::make_commit_table_implicit_if_only_subtables(&mut doc);
 
-            // Make [projects] implicit to avoid emitting header for readability
             if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
                 projects.set_implicit(true);
             }
@@ -278,7 +190,7 @@ impl UserConfig {
         };
 
         std::fs::write(config_path, toml_string)
-            .map_err(|e| ConfigError::Message(format!("Failed to write config file: {}", e)))?;
+            .map_err(|e| ConfigError(format!("Failed to write config file: {}", e)))?;
 
         Ok(())
     }
@@ -292,48 +204,40 @@ impl UserConfig {
     /// Validate configuration values.
     pub(super) fn validate(&self) -> Result<(), ConfigError> {
         // Validate worktree path (only if explicitly set - default is always valid)
-        if let Some(ref path) = self.configs.worktree_path
+        if let Some(ref path) = self.worktree_path
             && path.trim().is_empty()
         {
-            return Err(ConfigError::Message("worktree-path cannot be empty".into()));
+            return Err(ConfigError("worktree-path cannot be empty".into()));
         }
 
         // Validate per-project configs
         for (project, project_config) in &self.projects {
             // Validate worktree path
-            if let Some(ref path) = project_config.overrides.worktree_path
+            if let Some(ref path) = project_config.worktree_path
                 && path.trim().is_empty()
             {
-                return Err(ConfigError::Message(format!(
+                return Err(ConfigError(format!(
                     "projects.{project}.worktree-path cannot be empty"
                 )));
             }
 
-            // Validate commit generation config (check both old and new locations)
-            // Old: [projects."...".commit-generation] (deprecated)
-            if let Some(ref cg) = project_config.commit_generation {
-                Self::validate_commit_generation(cg, &format!("projects.{project}"))?;
-            }
-            // New: [projects."...".commit.generation]
-            if let Some(ref commit) = project_config.overrides.commit
-                && let Some(ref cg) = commit.generation
-            {
+            if let Some(ref cg) = project_config.commit.generation {
                 Self::validate_commit_generation(cg, &format!("projects.{project}"))?;
             }
         }
 
-        // Validate commit generation config (check both old and new locations)
-        let commit_gen = self.commit_generation(None);
-        if commit_gen.template.is_some() && commit_gen.template_file.is_some() {
-            return Err(ConfigError::Message(
-                "commit.generation.template and commit.generation.template-file are mutually exclusive".into(),
-            ));
-        }
+        if let Some(ref cg) = self.commit.generation {
+            if cg.template.is_some() && cg.template_file.is_some() {
+                return Err(ConfigError(
+                    "commit.generation.template and commit.generation.template-file are mutually exclusive".into(),
+                ));
+            }
 
-        if commit_gen.squash_template.is_some() && commit_gen.squash_template_file.is_some() {
-            return Err(ConfigError::Message(
-                "commit.generation.squash-template and commit.generation.squash-template-file are mutually exclusive".into(),
-            ));
+            if cg.squash_template.is_some() && cg.squash_template_file.is_some() {
+                return Err(ConfigError(
+                    "commit.generation.squash-template and commit.generation.squash-template-file are mutually exclusive".into(),
+                ));
+            }
         }
 
         Ok(())
@@ -344,12 +248,12 @@ impl UserConfig {
         prefix: &str,
     ) -> Result<(), ConfigError> {
         if cg.template.is_some() && cg.template_file.is_some() {
-            return Err(ConfigError::Message(format!(
+            return Err(ConfigError(format!(
                 "{prefix}.commit-generation.template and template-file are mutually exclusive"
             )));
         }
         if cg.squash_template.is_some() && cg.squash_template_file.is_some() {
-            return Err(ConfigError::Message(format!(
+            return Err(ConfigError(format!(
                 "{prefix}.commit-generation.squash-template and squash-template-file are mutually exclusive"
             )));
         }

@@ -1,13 +1,13 @@
 [workspace]
 members = ["tests/helpers/wt-perf", "tests/helpers/mock-stub"]
-# Include mock-stub so `cargo test` builds its binary (via its integration test)
-default-members = [".", "tests/helpers/mock-stub"]
+# Include mock-stub and wt-perf so `cargo test` builds their binaries
+default-members = [".", "tests/helpers/mock-stub", "tests/helpers/wt-perf"]
 
 [package]
 name = "worktrunk"
-version = "0.32.0"
+version = "0.38.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.93"
 build = "build.rs"
 repository = "https://github.com/max-sixty/worktrunk"
 homepage = "https://worktrunk.dev"
@@ -33,7 +33,20 @@ normal = ["which"]
 # tier-2-integration-tests = []
 # Enable syntax highlighting for bash commands in output (requires tree-sitter)
 # This is optional to avoid C compilation issues on some platforms
-default = ["syntax-highlighting"]
+default = ["cli", "syntax-highlighting"]
+# Enables the `wt` binary and everything specific to the CLI: argument parsing,
+# interactive picker, rich terminal rendering, and the markdown help pager.
+# Library consumers (e.g. `worktrunk-sync`) should depend on worktrunk with
+# `default-features = false` to avoid pulling these in.
+cli = [
+    "dep:clap",
+    "dep:clap_complete",
+    "dep:crossterm",
+    "dep:env_logger",
+    "dep:humantime",
+    "dep:skim",
+    "dep:termimad",
+]
 syntax-highlighting = ["dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-highlight"]
 # Enable shell/PTY integration tests (requires bash, zsh, fish installed on system)
 # Includes: shell wrapper tests, PTY-based approval prompts, TUI select, progressive rendering
@@ -51,6 +64,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "wt"
 path = "src/main.rs"
+required-features = ["cli"]
 
 # Also install as git-wt so `git wt <command>` works as a git subcommand.
 # Primarily useful on Windows where `wt` conflicts with Windows Terminal.
@@ -59,7 +73,7 @@ path = "src/main.rs"
 [[bin]]
 name = "git-wt"
 path = "src/git_wt.rs"
-required-features = ["git-wt"]
+required-features = ["cli", "git-wt"]
 
 [dependencies]
 anyhow = "1.0"
@@ -69,18 +83,16 @@ ansi-str = "0.9"
 color-print = "0.3"
 askama = { version = "0.15", default-features = false, features = ["derive", "std"] }
 chrono = "0.4"
-clap = { version = "4.6", features = ["derive", "unstable-ext", "wrap_help"] }
-clap_complete = { version = "4.6", features = ["unstable-dynamic"] }
-# Only enable TOML format - saves ~250KB by excluding yaml, ron, json5, ini parsers
-config = { version = "0.15", default-features = false, features = ["toml", "convert-case", "preserve_order"] }
+clap = { version = "4.6", features = ["derive", "unstable-ext", "wrap_help"], optional = true }
+clap_complete = { version = "4.6", features = ["unstable-dynamic"], optional = true }
 crossbeam-channel = "0.5"
-crossterm = "0.29"
-env_logger = "0.11"
-indexmap = { version = "2.13", features = ["serde"] }
+crossterm = { version = "0.29", optional = true }
+env_logger = { version = "0.11", optional = true }
+indexmap = { version = "2.14", features = ["serde"] }
 etcetera = "0.11"
 log = "0.4"
 # Only enable needed features - saves ~200KB by excluding debug, macros, multi_template
-minijinja = { version = "2.18", default-features = false, features = ["builtins", "serde", "std_collections"] }
+minijinja = { version = "2.19", default-features = false, features = ["builtins", "serde", "std_collections"] }
 rayon = "1.11"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -95,7 +107,7 @@ toml_edit = { version = "0.25", features = ["serde"] }
 # tree-sitter and tree-sitter-highlight should use matching versions.
 # tree-sitter-bash may lag behind (0.25.x works with tree-sitter 0.26.x).
 # These are optional dependencies controlled by the "syntax-highlighting" feature.
-# To build without C compilation requirements, use: cargo install worktrunk --no-default-features
+# To build without C compilation requirements, use: cargo install worktrunk --no-default-features --features cli
 tree-sitter = { version = "0.26", optional = true }
 tree-sitter-bash = { version = "0.25.1", optional = true }
 tree-sitter-highlight = { version = "0.26", optional = true }
@@ -104,7 +116,7 @@ wrap-ansi = "0.1"
 osc8 = "0.1.0"
 supports-hyperlinks = "3"
 home = "0.5.12"
-humantime = "2.2"
+humantime = { version = "2.2", optional = true }
 once_cell = "1.21"
 dirs = "6.0"
 normalize-path = "0.2.1"
@@ -114,7 +126,7 @@ which = "8.0"
 # Cross-platform path canonicalization that avoids Windows verbatim paths (\\?\)
 # which external tools like git cannot handle. On Unix, it's a no-op wrapper.
 dunce = "1.0"
-termimad = "0.34.1"
+termimad = { version = "0.34.1", optional = true }
 urlencoding = "2.1"
 regex = "1.12"
 ignore = "0.4"
@@ -128,7 +140,15 @@ tempfile = "3.27"
 wait-timeout = "0.2"
 
 [target.'cfg(unix)'.dependencies]
-skim = "0.20"
+# Pinned to the 0.20.x line. Newer skim releases (the 3.x / 4.x rewrite)
+# pin many of their direct dependencies with exact versions — e.g.,
+# `color-eyre = "=0.6.5"`, `derive_builder = "=0.20.2"`, `kanal = "=0.1.1"`,
+# `tokio-util = "=0.7.18"`, `unicode-normalization = "=0.1.25"`, and ~12
+# others. Depending on skim would lock worktrunk onto each of those exact
+# versions, so an upgrade blocks on upstream relaxing those pins.
+# Windows picker support (worktrunk#2223) landed in skim v4.3.0 but is
+# gated by the same constraint.
+skim = { version = "0.20", optional = true }
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
 signal-hook = "0.4"
 
@@ -136,7 +156,7 @@ signal-hook = "0.4"
 vergen-gitcl = { version = "9.1.0", features = ["build"] }
 
 [dev-dependencies]
-insta = { version = "1.46.3", features = ["yaml", "redactions", "filters"] }
+insta = { version = "1.47.2", features = ["yaml", "redactions", "filters"] }
 insta-cmd = "0.6"
 rstest = "0.26"
 tempfile = "3.27"
@@ -147,8 +167,8 @@ regex = "1.12"
 vt100 = "0.16"
 ansi-to-html = "0.2.2"
 wt-perf = { path = "tests/helpers/wt-perf" }
-similar = "2.7.0"
-sha2 = "0.10"
+similar = "3.1.0"
+sha2 = "0.11"
 
 [[bench]]
 name = "completion"
@@ -166,6 +186,10 @@ harness = false
 name = "time_to_first_output"
 harness = false
 
+[[bench]]
+name = "remove"
+harness = false
+
 [lints.rust]
 unsafe_code = "forbid"
 
@@ -173,3 +197,42 @@ unsafe_code = "forbid"
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+[patch.crates-io]
+# Local fork of skim-tuikit 0.6.6 carrying three small fixes. Run
+# `task vendor-diff` to see the full diff against the upstream tarball.
+#
+# Upstream status: skim-tuikit is effectively abandoned. Upstream skim
+# migrated to ratatui in skim-rs/skim#864 (merged 2026-01-12) and has
+# shipped several releases on the new backend; crates.io skim-tuikit is
+# frozen at 0.6.6 (Aug 2025) and will not receive another release. The
+# bugs below are resolved (or moot) in ratatui-era skim but not in the
+# vendored tuikit. These patches are permanent until we either migrate
+# our picker to a post-ratatui skim (breaking API change in
+# `src/commands/picker/`) or drop skim entirely.
+#
+# 1. Dropped-bytes bug in `Output::flush` — it used `write()` instead of
+#    `write_all()`, so when the kernel accepted a partial write (common
+#    under load or in tmux PTYs with small pipe buffers) the remainder of
+#    the buffer was dropped by the subsequent `buffer.clear()`, leaving
+#    the picker's first render missing whichever rows didn't fit in the
+#    first chunk. See vendor/skim-tuikit/src/output.rs.
+#
+# 2. Asymmetric alternate-screen enter/exit in partial-height mode — in
+#    full-height mode tuikit emits smcup on enter and rmcup on exit, but
+#    in partial-height mode (e.g. `height("90%")`) it skips smcup yet
+#    still emits rmcup on shutdown, leaving terminal artifacts. Fixed by
+#    tracking whether smcup was actually emitted and gating rmcup on that
+#    flag. See vendor/skim-tuikit/src/term.rs. Upstream bug was
+#    skim-rs/skim#880, resolved via the ratatui migration rather than a
+#    tuikit patch.
+#
+# 3. `usize` underflow panic in `Term::on_resize` — when the terminal is
+#    smaller than the picker's preferred height, `screen_height - height`
+#    underflowed and panicked with "attempt to subtract with overflow".
+#    Reachable by running `wt switch` under `script(1)` with stdin closed,
+#    or in any sufficiently small tmux pane. Fixed with `saturating_sub`,
+#    which clamps `cursor_row` to 0 — matching the full-screen fallback
+#    `ensure_height` already uses. See vendor/skim-tuikit/src/term.rs. No
+#    known upstream tracking issue; moot post-ratatui.
+skim-tuikit = { path = "vendor/skim-tuikit" }

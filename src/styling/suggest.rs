@@ -203,7 +203,7 @@ mod tests {
     fn test_branch_with_single_quote() {
         assert_eq!(
             suggest_command("remove", &["it's-a-branch"], &[]),
-            "wt remove 'it'\\''s-a-branch'"
+            r"wt remove 'it'\''s-a-branch'"
         );
     }
 

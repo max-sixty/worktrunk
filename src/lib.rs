@@ -10,14 +10,19 @@
 pub mod command_log;
 pub mod config;
 pub mod copy;
+pub mod docs;
 pub mod git;
 pub mod path;
+pub mod priority;
 pub mod shell;
 pub mod shell_exec;
 pub mod styling;
 pub mod sync;
 pub mod trace;
 pub mod utils;
+
+#[doc(hidden)]
+pub mod testing;
 
 // Re-export HookType for convenience
 pub use git::HookType;

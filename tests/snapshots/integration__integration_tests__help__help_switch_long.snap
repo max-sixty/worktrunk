@@ -23,14 +23,13 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt switch - Switch to a worktree; create if needed
 
 Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--[0m [36m<EXECUTE_ARGS>...[0m[1m[36m][0m
@@ -95,8 +94,19 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-      [1m[36m--no-verify[0m
+      [1m[36m--no-hooks[0m
           Skip hooks
+
+      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
+          Output format[0m
+          
+          JSON prints structured result to stdout. Designed for tool integration (e.g., Claude Code WorktreeCreate hooks).[0m
+
+          Possible values:
+          - [1m[36mtext[0m: Human-readable text output
+          - [1m[36mjson[0m: JSON output
+          
+          [default: text]
 
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m
@@ -106,7 +116,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
 
 Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike [2mgit switch[0m, this navigates between worktrees rather than changing branches in place.
 
@@ -120,25 +130,22 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 
 [1m[32mCreating a branch[0m
 
-The [2m--create[0m flag creates a new branch from the [2m--base[0m branch (defaults to default branch). Without [2m--create[0m, the branch must already exist. Switching to a remote branch (e.g., [2mwt switch feature[0m when only [2morigin/feature[0m exists) creates a local tracking branch.
+The [2m--create[0m flag creates a new branch from [2m--base[0m — the default branch unless specified. Without [2m--create[0m, the branch must already exist. Switching to a remote branch (e.g., [2mwt switch feature[0m when only [2morigin/feature[0m exists) creates a local tracking branch.
 
 [1m[32mCreating worktrees[0m
 
-If the branch already has a worktree, [2mwt switch[0m changes directories to it. Otherwise, it creates one, running hooks.
+If the branch already has a worktree, [2mwt switch[0m changes directories to it. Otherwise, it creates one:
 
-When creating a worktree, worktrunk:
-
-1. Runs pre-switch hooks (blocking, fail-fast)
+1. Runs pre-switch hooks, blocking until complete
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs pre-start hooks (blocking)
-5. Spawns post-start hooks (background)
-6. Spawns post-switch hooks (background)
+4. Runs pre-start hooks, blocking until complete
+5. Spawns post-start and post-switch hooks in the background
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch feature                        # Existing branch → creates worktree[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m feature               # New branch and worktree[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base[0m[2m release    # New branch from release[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m temp [0m[2m[36m--no-verify[0m[2m      # Skip hooks[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m temp [0m[2m[36m--no-hooks[0m[2m       # Skip hooks[0m[2m[0m
 
 [1m[32mShortcuts[0m
 
@@ -158,28 +165,28 @@ When creating a worktree, worktrunk:
 
 [1m[32mInteractive picker[0m
 
-When called without arguments, [2mwt switch[0m opens an interactive picker to browse and select worktrees with live preview. The picker requires a TTY.
+When called without arguments, [2mwt switch[0m opens an interactive picker to browse and select worktrees with live preview.
 
 [1mKeybindings:[0m
 
-      Key                  Action             
- ───────────── ────────────────────────────── 
- [2m↑[0m/[2m↓[0m           Navigate worktree list         
- (type)        Filter worktrees               
- [2mEnter[0m         Switch to selected worktree    
- [2mAlt-c[0m         Create new worktree from query 
- [2mEsc[0m           Cancel                         
- [2m1[0m–[2m5[0m           Switch preview tab             
- [2mAlt-p[0m         Toggle preview panel           
- [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down         
+      Key                       Action                   
+ ───────────── ───────────────────────────────────────── 
+ [2m↑[0m/[2m↓[0m           Navigate worktree list                    
+ (type)        Filter worktrees                          
+ [2mEnter[0m         Switch to selected worktree               
+ [2mAlt-c[0m         Create new worktree named as entered text 
+ [2mEsc[0m           Cancel                                    
+ [2m1[0m–[2m5[0m           Switch preview tab                        
+ [2mAlt-p[0m         Toggle preview panel                      
+ [2mCtrl-u[0m/[2mCtrl-d[0m Scroll preview up/down                    
 
-[1mPreview tabs[0m (toggle with number keys):
+[1mPreview tabs[0m — toggle with number keys:
 
 1. [1mHEAD±[0m — Diff of uncommitted changes
 2. [1mlog[0m — Recent commits; commits already on the default branch have dimmed hashes
 3. [1mmain…±[0m — Diff of changes since the merge-base with the default branch
-4. [1mremote⇅[0m — Diff vs upstream tracking branch (ahead/behind)
-5. [1msummary[0m — LLM-generated branch summary (requires [2m[list] summary = true[0m and [2m[commit.generation][0m)
+4. [1mremote⇅[0m — Ahead/behind diff vs upstream tracking branch
+5. [1msummary[0m — LLM-generated branch summary; requires [2m[list] summary = true[0m and [2m[commit.generation][0m
 
 [1mPager configuration:[0m The preview panel pipes diff output through git's pager. Override in user config:
 
@@ -212,3 +219,5 @@ To change which branch a worktree is on, use [2mgit switch[0m inside that work
 - [2mwt list[0m — View all worktrees
 - [2mwt remove[0m — Delete worktrees when done
 - [2mwt merge[0m — Integrate changes back to the default branch
+
+----- stderr -----

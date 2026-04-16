@@ -23,14 +23,13 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt step - Run individual operations
 
 Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
@@ -38,8 +37,8 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 [1m[32mCommands:[0m
   [1m[36mcommit[0m        Stage and commit with LLM-generated message
   [1m[36msquash[0m        Squash commits since branching
-  [1m[36mpush[0m          Fast-forward target to current branch
   [1m[36mrebase[0m        Rebase onto target
+  [1m[36mpush[0m          Fast-forward target to current branch
   [1m[36mdiff[0m          Show all changes since branching
   [1m[36mcopy-ignored[0m  Copy gitignored files to another worktree
   [1m[36meval[0m          [experimental] Evaluate a template expression
@@ -54,4 +53,6 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m            Working directory for this command
       [1m[36m--config[0m[36m [0m[36m<path>[0m  User config file path
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m     Verbose output (-v: hooks, templates; -vv: debug report)
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m     Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+----- stderr -----

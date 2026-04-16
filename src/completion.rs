@@ -22,6 +22,11 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
         return false;
     }
 
+    // Tab-completion output lands above the user's prompt — any stray stderr
+    // warnings would display there. Silence config deprecation/unknown-field
+    // warnings for the duration of this process.
+    worktrunk::config::suppress_warnings();
+
     let mut args: Vec<OsString> = std::env::args_os().collect();
     CONTEXT.with(|ctx| *ctx.borrow_mut() = Some(CompletionContext { args: args.clone() }));
 
@@ -44,6 +49,28 @@ pub(crate) fn maybe_handle_env_completion() -> bool {
             .try_complete(all_args, current_dir.as_deref());
         CONTEXT.with(|ctx| ctx.borrow_mut().take());
         return true;
+    }
+
+    // If the subcommand word matches an external binary, forward the completion
+    // request to it (e.g., `wt sync --<tab>` → `wt-sync --<tab>`).
+    // args[0] is the binary name ("wt"), args[1] is the subcommand ("sync").
+    if args.len() >= 3 {
+        let subcommand = args[1].to_string_lossy();
+        // Only forward to external binary if no built-in subcommand has this name.
+        // Built-ins always take precedence at runtime, so completions must agree.
+        let binary = format!("wt-{subcommand}");
+        if cli::build_command().find_subcommand(&*subcommand).is_none()
+            && which::which(&binary).is_ok()
+        {
+            // Forward args[1..] to the external binary
+            if let Some(forwarded) =
+                forward_completion_to_external(&binary, &args[1..], &shell_name)
+            {
+                let _ = std::io::stdout().write_all(forwarded.as_bytes());
+                CONTEXT.with(|ctx| ctx.borrow_mut().take());
+                return true;
+            }
+        }
     }
 
     // Generate completions with filtering
@@ -257,7 +284,7 @@ impl ValueCompleter for HookCommandCompleter {
 
         // Load user config and add user hook names
         if let Ok(user_config) = UserConfig::load()
-            && let Some(config) = user_config.configs.hooks.get(hook_type)
+            && let Some(config) = user_config.hooks.get(hook_type)
         {
             add_named_commands(&mut candidates, config);
         }
@@ -374,6 +401,7 @@ thread_local! {
 fn completion_command() -> Command {
     let cmd = cli::build_command();
     let cmd = inject_alias_subcommands(cmd);
+    let cmd = inject_external_subcommands(cmd);
     hide_non_positional_options_for_completion(cmd)
 }
 
@@ -437,10 +465,8 @@ fn load_aliases_for_completion() -> BTreeMap<String, CommandConfig> {
             aliases.extend(user_config.aliases(project_id.as_deref()));
         }
         // Project config appends
-        if let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
-            && let Some(ref project_aliases) = project_config.aliases
-        {
-            append_aliases(&mut aliases, project_aliases);
+        if let Ok(Some(project_config)) = ProjectConfig::load(&repo, false) {
+            append_aliases(&mut aliases, &project_config.aliases);
         }
     } else if let Ok(user_config) = UserConfig::load() {
         aliases.extend(user_config.aliases(None));
@@ -463,6 +489,140 @@ fn truncate_template(template: &str) -> &str {
     } else {
         first_line
     }
+}
+
+/// Forward a completion request to an external `wt-*` binary.
+///
+/// Rebuilds the args as if the user invoked `wt-sync <rest>` directly, passing
+/// the `COMPLETE` env var so the external binary generates completions.
+fn forward_completion_to_external(
+    binary: &str,
+    args: &[OsString],
+    shell: &OsStr,
+) -> Option<String> {
+    // Build args for the external binary: [binary_name, rest_args...]
+    let mut ext_args: Vec<OsString> = vec![OsString::from(binary)];
+    ext_args.extend_from_slice(&args[1..]);
+
+    // Adjust the completion index: subtract 1 since we removed the subcommand name
+    let index = std::env::var("_CLAP_COMPLETE_INDEX")
+        .ok()
+        .and_then(|i| i.parse::<usize>().ok())
+        .map(|i| i.saturating_sub(1));
+
+    let mut cmd = std::process::Command::new(binary);
+    cmd.arg("--");
+    cmd.args(&ext_args);
+    cmd.env("COMPLETE", shell);
+    cmd.env(
+        "_CLAP_IFS",
+        std::env::var("_CLAP_IFS").unwrap_or_else(|_| "\n".to_string()),
+    );
+    if let Some(idx) = index {
+        cmd.env("_CLAP_COMPLETE_INDEX", idx.to_string());
+    }
+
+    // Capture stdout from the external binary. Using std::process::Command
+    // directly (not shell_exec::Cmd) because this runs during completion —
+    // a short-lived subprocess where logging/tracing is unwanted.
+    let result = cmd
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?
+        .wait_with_output()
+        .ok()?;
+    if result.status.success() {
+        String::from_utf8(result.stdout).ok()
+    } else {
+        None
+    }
+}
+
+/// Discover `wt-*` executables on PATH and inject them as subcommands for completion.
+///
+/// This mirrors git's approach: `wt sync` dispatches to `wt-sync`, and completions
+/// should show `sync` as a subcommand. External subcommands that shadow built-in
+/// commands are skipped (built-ins always take precedence at runtime).
+fn inject_external_subcommands(cmd: Command) -> Command {
+    inject_external_subcommand_list(cmd, discover_external_subcommands())
+}
+
+/// Add discovered external subcommands to the completion command tree.
+///
+/// Each external gets a stub `Command` with `allow_external_subcommands(true)` so
+/// any trailing args are accepted without error. Built-in subcommands are never shadowed.
+fn inject_external_subcommand_list(mut cmd: Command, externals: Vec<String>) -> Command {
+    for name in externals {
+        if cmd.find_subcommand(&name).is_some() {
+            continue;
+        }
+        // Leak is fine: completion is a short-lived subprocess that exits after
+        // printing candidates (same pattern as inject_alias_subcommands).
+        let name: &'static str = Box::leak(name.into_boxed_str());
+        let about: &'static str = Box::leak(format!("external: wt-{name}").into_boxed_str());
+        let sub = Command::new(name)
+            .about(about)
+            .allow_external_subcommands(true);
+        cmd = cmd.subcommand(sub);
+    }
+    cmd
+}
+
+/// Find `wt-*` executables on PATH, returning their subcommand names (without the `wt-` prefix).
+fn discover_external_subcommands() -> Vec<String> {
+    let Some(path_var) = std::env::var_os("PATH") else {
+        return Vec::new();
+    };
+    discover_external_subcommands_in(&path_var)
+}
+
+/// Find `wt-*` executables in the given PATH value, returning subcommand names
+/// (without the `wt-` prefix). On Windows, executable extensions (.exe, .cmd, etc.)
+/// are stripped so that `wt-sync.exe` produces the subcommand name `sync`.
+fn discover_external_subcommands_in(path_var: &OsStr) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+
+    for dir in std::env::split_paths(path_var) {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str() else {
+                continue;
+            };
+            let Some(subcommand) = name.strip_prefix("wt-") else {
+                continue;
+            };
+            // Strip executable extensions on Windows (.exe, .cmd, etc.)
+            #[cfg(windows)]
+            let subcommand = std::path::Path::new(subcommand)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(subcommand);
+
+            if subcommand.is_empty() || !seen.insert(subcommand.to_string()) {
+                continue;
+            }
+
+            // Verify it's executable (on Unix)
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(meta) = entry.metadata()
+                    && meta.permissions().mode() & 0o111 == 0
+                {
+                    continue;
+                }
+            }
+            result.push(subcommand.to_string());
+        }
+    }
+
+    result.sort();
+    result
 }
 
 /// Hide non-positional options so they're filtered out when positional/subcommand
@@ -541,5 +701,198 @@ mod tests {
         let result = truncate_template(&multi);
         assert_eq!(result.len(), 56);
         assert_eq!(result, "a".repeat(56));
+    }
+
+    #[test]
+    fn test_discover_empty_path() {
+        let result = discover_external_subcommands_in(OsStr::new(""));
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_discover_nonexistent_dir() {
+        let result =
+            discover_external_subcommands_in(OsStr::new("/nonexistent/path/xxxxxxxx_wt_test"));
+        assert!(result.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_discover_finds_wt_executables() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+
+        for name in ["wt-alpha", "wt-beta"] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let result = discover_external_subcommands_in(dir.path().as_os_str());
+        assert_eq!(result, vec!["alpha", "beta"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_discover_skips_non_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+
+        let exec = dir.path().join("wt-exec");
+        std::fs::write(&exec, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&exec, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let noexec = dir.path().join("wt-noexec");
+        std::fs::write(&noexec, "data").unwrap();
+        std::fs::set_permissions(&noexec, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let result = discover_external_subcommands_in(dir.path().as_os_str());
+        assert_eq!(result, vec!["exec"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_discover_deduplicates_across_dirs() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir1 = tempfile::tempdir().unwrap();
+        let dir2 = tempfile::tempdir().unwrap();
+
+        for dir in [dir1.path(), dir2.path()] {
+            let path = dir.join("wt-dup");
+            std::fs::write(&path, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let path = std::env::join_paths([dir1.path(), dir2.path()]).unwrap();
+        let result = discover_external_subcommands_in(&path);
+        assert_eq!(result, vec!["dup"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_discover_skips_bare_prefix_and_non_matching() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+
+        // "wt-" with no suffix should be skipped
+        let empty = dir.path().join("wt-");
+        std::fs::write(&empty, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&empty, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // Non-matching name should be skipped
+        let other = dir.path().join("other-tool");
+        std::fs::write(&other, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&other, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let result = discover_external_subcommands_in(dir.path().as_os_str());
+        assert!(result.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_discover_results_are_sorted() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create in reverse alphabetical order
+        for name in ["wt-zebra", "wt-apple", "wt-mango"] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let result = discover_external_subcommands_in(dir.path().as_os_str());
+        assert_eq!(result, vec!["apple", "mango", "zebra"]);
+    }
+
+    #[test]
+    fn test_inject_external_adds_subcommands() {
+        let cmd = Command::new("wt")
+            .subcommand(Command::new("switch"))
+            .subcommand(Command::new("list"));
+
+        let cmd = inject_external_subcommand_list(cmd, vec!["sync".into(), "deploy".into()]);
+
+        assert!(cmd.find_subcommand("sync").is_some());
+        assert!(cmd.find_subcommand("deploy").is_some());
+        assert!(cmd.find_subcommand("switch").is_some());
+        assert!(cmd.find_subcommand("list").is_some());
+    }
+
+    #[test]
+    fn test_inject_external_skips_builtins() {
+        let cmd = Command::new("wt").subcommand(Command::new("switch").about("built-in switch"));
+
+        let cmd = inject_external_subcommand_list(cmd, vec!["switch".into(), "sync".into()]);
+
+        // "switch" should still be the built-in, not the external
+        let switch = cmd.find_subcommand("switch").unwrap();
+        assert_eq!(switch.get_about().unwrap().to_string(), "built-in switch");
+        // "sync" should be added as external
+        let sync = cmd.find_subcommand("sync").unwrap();
+        assert!(sync.get_about().unwrap().to_string().contains("external"));
+    }
+
+    #[test]
+    fn test_inject_external_empty_list() {
+        let cmd = Command::new("wt").subcommand(Command::new("switch"));
+        let cmd = inject_external_subcommand_list(cmd, vec![]);
+        assert_eq!(cmd.get_subcommands().count(), 1);
+    }
+
+    #[test]
+    fn test_inject_external_allows_trailing_args() {
+        let cmd = Command::new("wt");
+        let cmd = inject_external_subcommand_list(cmd, vec!["sync".into()]);
+
+        let sync = cmd.find_subcommand("sync").unwrap();
+        assert!(sync.is_allow_external_subcommands_set());
+    }
+
+    #[test]
+    fn test_forward_to_nonexistent_binary() {
+        let result = forward_completion_to_external(
+            "/nonexistent/binary/xxxxxxxx_wt_test",
+            &[OsString::from("test")],
+            OsStr::new("bash"),
+        );
+        assert!(result.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_forward_to_external_binary() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("wt-fake");
+        std::fs::write(&script, "#!/bin/sh\nprintf '%s\\n%s' '--all' '--verbose'\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let result = forward_completion_to_external(
+            script.to_str().unwrap(),
+            &[OsString::from("fake"), OsString::from("--")],
+            OsStr::new("bash"),
+        );
+        assert!(result.is_some());
+        let output = result.unwrap();
+        assert!(output.contains("--all"));
+        assert!(output.contains("--verbose"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_forward_to_failing_binary() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("wt-fail");
+        std::fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let result = forward_completion_to_external(
+            script.to_str().unwrap(),
+            &[OsString::from("fail")],
+            OsStr::new("bash"),
+        );
+        assert!(result.is_none());
     }
 }

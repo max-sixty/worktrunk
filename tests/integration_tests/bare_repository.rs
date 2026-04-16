@@ -1,7 +1,7 @@
 use crate::common::{
-    BareRepoTest, TestRepo, TestRepoBase, canonicalize, configure_directive_file,
-    configure_git_cmd, configure_git_env, directive_file, repo, setup_temp_snapshot_settings,
-    wait_for, wait_for_file_content, wait_for_file_count, wt_command,
+    BareRepoTest, TestRepo, TestRepoBase, canonicalize, configure_directive_files,
+    configure_git_cmd, configure_git_env, directive_files, repo, setup_temp_snapshot_settings,
+    wait_for_file, wait_for_file_content, wait_for_worktree_removed, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -64,10 +64,10 @@ fn test_bare_repo_switch_creates_worktree() {
 
     // Run wt switch --create to create a new worktree
     // Config uses {{ branch }} template, so worktrees are created inside bare repo
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["switch", "--create", "feature"])
         .current_dir(&main_worktree);
 
@@ -111,10 +111,10 @@ fn test_bare_repo_switch_with_configured_naming() {
     test.commit_in(&main_worktree, "Initial commit");
 
     // Config uses "{{ branch }}" template, so worktrees are created inside bare repo
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["switch", "--create", "feature"])
         .current_dir(&main_worktree);
 
@@ -149,10 +149,10 @@ fn test_bare_repo_remove_worktree() {
     test.commit_in(&feature_worktree, "Feature work");
 
     // Remove feature worktree from main worktree
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["remove", "feature", "--foreground"])
         .current_dir(&main_worktree);
 
@@ -208,10 +208,10 @@ fn test_bare_repo_path_used_for_worktree_paths() {
 
     // Create new worktree - config uses {{ branch }} template
     // Worktrees are created inside the bare repo directory
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["switch", "--create", "dev"])
         .current_dir(&main_worktree);
 
@@ -252,10 +252,10 @@ fn test_bare_repo_with_repo_path_variable() {
     test.commit_in(&main_worktree, "Initial commit");
 
     // Create new worktree using wt switch
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["switch", "--create", "feature/auth"])
         .current_dir(&main_worktree);
 
@@ -281,6 +281,240 @@ fn test_bare_repo_with_repo_path_variable() {
         expected_path.exists(),
         "Expected worktree at {:?} (using repo_path variable)",
         expected_path
+    );
+}
+
+/// Regression test for #1914: when `wt` is invoked via a git shell alias
+/// (`alias.wt = "!wt"`), git exports `GIT_DIR` — sometimes as a *relative*
+/// path like `.git`. That relative path would otherwise re-resolve against
+/// every child command's `current_dir`, breaking worktrunk's repo discovery
+/// in bare-layout repositories. Worktrunk normalizes inherited relative
+/// `GIT_*` path variables at startup so `{{ repo_path }}` resolves
+/// identically whether `wt` is invoked directly or via a git alias.
+#[test]
+fn test_bare_repo_repo_path_with_inherited_relative_git_dir() {
+    let test = BareRepoTest::new();
+
+    // Configure a user-level alias that prints repo_path. We use user config
+    // (not project config) so it's discoverable even when the command is
+    // launched from the bare repo's parent directory.
+    let user_config = test.temp_path().join("user-config.toml");
+    fs::write(
+        &user_config,
+        "[aliases]\nprint-repo-path = \"echo REPO_PATH={{ repo_path }}\"\n",
+    )
+    .unwrap();
+
+    // Create a linked worktree so there's somewhere to run from.
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in(&main_worktree, "Initial commit");
+
+    // Helper: run `wt step print-repo-path --yes` and extract the
+    // `REPO_PATH=...` value emitted by the alias. We compare these as-is
+    // so platform-specific path formatting (e.g. msys-style paths that
+    // Git Bash uses on Windows for `echo`) doesn't affect the test — we
+    // only assert that both invocations produce the *same* value.
+    let extract_repo_path = |out: &std::process::Output| -> String {
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        combined
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("REPO_PATH=").map(str::to_owned))
+            .unwrap_or_else(|| panic!("no REPO_PATH= line in output:\n{combined}"))
+    };
+
+    // Baseline: invoke `wt` normally from the main worktree.
+    let mut baseline = wt_command();
+    test.configure_wt_cmd(&mut baseline);
+    baseline
+        .env("WORKTRUNK_CONFIG_PATH", &user_config)
+        .args(["step", "print-repo-path", "--yes"])
+        .current_dir(&main_worktree);
+    let baseline_out = baseline.output().unwrap();
+    assert!(
+        baseline_out.status.success(),
+        "baseline wt failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&baseline_out.stdout),
+        String::from_utf8_lossy(&baseline_out.stderr)
+    );
+    let baseline_repo_path = extract_repo_path(&baseline_out);
+
+    // Simulate a git alias invocation: git sets GIT_DIR (and GIT_PREFIX) for
+    // shell aliases. From a linked worktree, git sets GIT_DIR to the
+    // per-worktree admin dir — use a relative spelling to exercise the bug.
+    let worktree_git_dir = test.bare_repo_path().join("worktrees").join("main");
+    assert!(
+        worktree_git_dir.exists(),
+        "expected linked worktree admin dir at {worktree_git_dir:?}"
+    );
+    // Relative path from main_worktree to its per-worktree admin dir.
+    let relative_git_dir = PathBuf::from("..").join("worktrees").join("main");
+
+    let mut via_alias = wt_command();
+    test.configure_wt_cmd(&mut via_alias);
+    via_alias
+        .env("WORKTRUNK_CONFIG_PATH", &user_config)
+        .env("GIT_DIR", &relative_git_dir)
+        .env("GIT_PREFIX", "")
+        .args(["step", "print-repo-path", "--yes"])
+        .current_dir(&main_worktree);
+    let via_alias_out = via_alias.output().unwrap();
+    assert!(
+        via_alias_out.status.success(),
+        "wt via git alias failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&via_alias_out.stdout),
+        String::from_utf8_lossy(&via_alias_out.stderr)
+    );
+    let via_alias_repo_path = extract_repo_path(&via_alias_out);
+
+    assert_eq!(
+        baseline_repo_path, via_alias_repo_path,
+        "repo_path differed when invoked via a simulated git alias \
+         (relative GIT_DIR was not normalized — see #1914)"
+    );
+}
+
+/// Companion to `test_bare_repo_repo_path_with_inherited_relative_git_dir`
+/// that exercises the full `git wt …` → `sh -c` → `wt` path using a *real*
+/// git alias instead of hand-crafted `GIT_*` env vars.
+///
+/// To actually trigger #1914, the layout must match the issue reporter's:
+/// `repo/.git` is the bare repository and `repo/main` is a linked worktree.
+/// Running `git wt …` from `repo/` causes git to export `GIT_DIR=.git`
+/// (relative), which is the bug vector — `BareRepoTest` uses a different
+/// layout (`repo/` *is* the bare) where git exports an absolute `GIT_DIR`
+/// and the bug doesn't reproduce, so we build the layout by hand here.
+///
+/// Unix-only: git aliases execute via `sh -c`, and shell-quoting the wt
+/// binary path for Windows' bundled sh is fiddly. The underlying fix in
+/// `shell_exec.rs` has no platform-specific code, so the simulated-env
+/// companion test still exercises the normalization on Windows.
+#[cfg(not(windows))]
+#[test]
+fn test_repo_path_via_real_git_alias_bare_dot_git_layout() {
+    use crate::common::{configure_git_env, wt_bin};
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let temp_path = canonicalize(temp_dir.path()).unwrap();
+
+    // Isolated gitconfig so we don't leak the user's real git settings.
+    let git_config_path = temp_path.join("test-gitconfig");
+    fs::write(
+        &git_config_path,
+        "[user]\n\tname = Test User\n\temail = test@example.com\n\
+         [init]\n\tdefaultBranch = main\n",
+    )
+    .unwrap();
+
+    // Layout: repo/.git (bare) + repo/main (linked worktree).
+    let repo_dir = temp_path.join("repo");
+    fs::create_dir(&repo_dir).unwrap();
+    let bare_git = repo_dir.join(".git");
+
+    let git = |dir: &Path| configure_git_env(Cmd::new("git"), &git_config_path).current_dir(dir);
+
+    git(&temp_path)
+        .args(["init", "--bare", "--initial-branch", "main"])
+        .arg(bare_git.to_str().unwrap())
+        .run()
+        .unwrap();
+    git(&bare_git)
+        .args(["worktree", "add", "../main"])
+        .run()
+        .unwrap();
+
+    let main_worktree = repo_dir.join("main");
+    fs::write(main_worktree.join("a.txt"), "hello").unwrap();
+    git(&main_worktree).args(["add", "a.txt"]).run().unwrap();
+    git(&main_worktree)
+        .args(["commit", "-m", "Initial commit"])
+        .run()
+        .unwrap();
+
+    // wt config with worktree-path template and the `print-repo-path` alias.
+    let user_config = temp_path.join("test-config.toml");
+    fs::write(
+        &user_config,
+        "worktree-path = \"{{ branch }}\"\n\
+         [aliases]\nprint-repo-path = \"echo REPO_PATH={{ repo_path }}\"\n",
+    )
+    .unwrap();
+    let approvals_path = temp_path.join("test-approvals.toml");
+
+    // Register the real git alias in the bare repo's config.
+    let wt_path = wt_bin();
+    let wt_path_lossy = wt_path.to_string_lossy();
+    let wt_path_escaped = shell_escape::unix::escape(wt_path_lossy);
+    git(&bare_git)
+        .args(["config", "alias.wt", &format!("!{wt_path_escaped}")])
+        .run()
+        .unwrap();
+
+    let extract_repo_path = |out: &std::process::Output| -> String {
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        combined
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("REPO_PATH=").map(str::to_owned))
+            .unwrap_or_else(|| panic!("no REPO_PATH= line in output:\n{combined}"))
+    };
+
+    // Shared wt env applied to both the direct and aliased invocations.
+    let apply_wt_env = |cmd: &mut Command| {
+        configure_git_cmd(cmd, &git_config_path);
+        cmd.env("WORKTRUNK_CONFIG_PATH", &user_config)
+            .env(
+                "WORKTRUNK_SYSTEM_CONFIG_PATH",
+                "/etc/xdg/worktrunk/config.toml",
+            )
+            .env("WORKTRUNK_APPROVALS_PATH", &approvals_path)
+            .env_remove("NO_COLOR")
+            .env_remove("CLICOLOR_FORCE");
+    };
+
+    // Baseline: invoke `wt` directly from `repo/`. Git discovers the bare
+    // `.git` automatically without exporting any `GIT_*` path vars.
+    let mut baseline = Command::new(wt_bin());
+    apply_wt_env(&mut baseline);
+    baseline
+        .args(["step", "print-repo-path", "--yes"])
+        .current_dir(&repo_dir);
+    let baseline_out = baseline.output().unwrap();
+    assert!(
+        baseline_out.status.success(),
+        "baseline wt failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&baseline_out.stdout),
+        String::from_utf8_lossy(&baseline_out.stderr)
+    );
+    let baseline_repo_path = extract_repo_path(&baseline_out);
+
+    // Via the real git alias: `git wt step print-repo-path --yes`. From the
+    // `repo/` dir (not inside the worktree), git sets `GIT_DIR=.git`
+    // (relative) when exporting the alias environment — the exact bug vector
+    // from #1914.
+    let mut via_alias = Command::new("git");
+    apply_wt_env(&mut via_alias);
+    via_alias
+        .args(["wt", "step", "print-repo-path", "--yes"])
+        .current_dir(&repo_dir);
+    let via_alias_out = via_alias.output().unwrap();
+    assert!(
+        via_alias_out.status.success(),
+        "git wt via real alias failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&via_alias_out.stdout),
+        String::from_utf8_lossy(&via_alias_out.stderr)
+    );
+    let via_alias_repo_path = extract_repo_path(&via_alias_out);
+
+    assert_eq!(
+        baseline_repo_path, via_alias_repo_path,
+        "repo_path differed when invoked via a real `git wt` alias — see #1914"
     );
 }
 
@@ -379,10 +613,10 @@ fn test_bare_repo_merge_workflow() {
 
     // Create feature branch worktree using wt switch
     // Config uses {{ branch }} template, so worktrees are inside bare repo
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["switch", "--create", "feature"])
         .current_dir(&main_worktree);
     cmd.output().unwrap();
@@ -395,15 +629,15 @@ fn test_bare_repo_merge_workflow() {
     test.commit_in(&feature_worktree, "Feature work");
 
     // Merge feature into main (explicitly specify target)
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args([
         "merge",
         "main",        // Explicitly specify target branch
         "--no-squash", // Skip squash to avoid LLM dependency
-        "--no-verify", // Skip pre-merge hooks
+        "--no-hooks",  // Skip pre-merge hooks
     ])
     .current_dir(&feature_worktree);
 
@@ -418,7 +652,12 @@ fn test_bare_repo_merge_workflow() {
     }
 
     // Wait for background removal to complete
-    wait_for("feature worktree removed", || !feature_worktree.exists());
+    // Use the "gone or empty placeholder" predicate — the instant-removal
+    // path leaves an empty dir behind if the background `rmdir` silently
+    // fails (stray `.DS_Store`, scheduling delay under parallel load).
+    // That placeholder is production-harmless but trips a strict
+    // `!exists()` check.
+    wait_for_worktree_removed(&feature_worktree);
 
     // Verify main worktree still exists and has the feature commit
     assert!(main_worktree.exists());
@@ -452,10 +691,10 @@ fn test_bare_repo_background_logs_location() {
     test.commit_in(&feature_worktree, "Feature work");
 
     // Run remove in background to test log file location
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["remove", "feature"]).current_dir(&main_worktree);
 
     let output = cmd.output().unwrap();
@@ -469,26 +708,19 @@ fn test_bare_repo_background_logs_location() {
     }
 
     // Wait for background process to create log file (poll instead of fixed sleep)
-    // The key test is that the path is correct, not that content was written (background processes are flaky in tests)
-    // Log filename has hash suffix: feature-<hash>-remove-<hash>.log
+    // The key test is that the path is correct, not that content was written
+    // (background processes are flaky in tests). Logs live at:
+    // `{bare_repo}/wt/logs/{sanitized-branch}/internal/remove.log`
     let log_dir = test.bare_repo_path().join("wt/logs");
-    wait_for_file_count(&log_dir, "log", 1);
-
-    // Verify the log file matches expected pattern (feature-*-remove.log)
-    // Format: {branch_with_hash}-{op}.log (internal ops don't have hash on suffix)
-    let log_files: Vec<_> = std::fs::read_dir(&log_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            name.starts_with("feature-") && name.ends_with("-remove.log")
-        })
-        .collect();
-    assert_eq!(
-        log_files.len(),
-        1,
-        "Expected exactly one feature-*-remove.log file, found: {:?}",
-        log_files
+    let remove_log = log_dir
+        .join(worktrunk::path::sanitize_for_filename("feature"))
+        .join("internal")
+        .join("remove.log");
+    wait_for_file(&remove_log);
+    assert!(
+        remove_log.exists(),
+        "Expected remove log at {}",
+        remove_log.display()
     );
 
     // Verify it's NOT in the worktree's .git directory (which doesn't exist for linked worktrees)
@@ -538,10 +770,10 @@ fn test_bare_repo_project_config_found_from_bare_root() {
 
     // Now run `wt switch --create feature` from the bare repo root (NOT from main worktree)
     // This is the scenario described in #1691
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["switch", "--create", "feature", "--yes"])
         .current_dir(test.bare_repo_path());
 
@@ -600,10 +832,10 @@ fn test_bare_repo_project_config_found_with_dash_c_flag() {
 
     // Run from a completely unrelated directory using -C to point at the bare repo
     let unrelated_dir = tempfile::tempdir().unwrap();
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args([
         "-C",
         test.bare_repo_path().to_str().unwrap(),
@@ -658,10 +890,10 @@ fn test_bare_repo_ignores_config_in_bare_root() {
     .unwrap();
 
     // Run `wt switch --create feature` from the bare repo root
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["switch", "--create", "feature", "--yes"])
         .current_dir(test.bare_repo_path());
 
@@ -699,10 +931,10 @@ fn test_bare_repo_slashed_branch_with_sanitize() {
     test.commit_in(&main_worktree, "Initial commit");
 
     // Create feature branch with slash using wt switch
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["switch", "--create", "feature/auth"])
         .current_dir(&main_worktree);
 
@@ -911,10 +1143,10 @@ fn test_nested_bare_repo_worktree_path() {
     let test = NestedBareRepoTest::new();
 
     // Create first worktree using wt switch --create
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["switch", "--create", "main"])
         .current_dir(test.bare_repo_path());
 
@@ -949,10 +1181,10 @@ fn test_nested_bare_repo_full_workflow() {
     let test = NestedBareRepoTest::new();
 
     // Create main worktree
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["switch", "--create", "main"])
         .current_dir(test.bare_repo_path());
     cmd.output().unwrap();
@@ -962,10 +1194,10 @@ fn test_nested_bare_repo_full_workflow() {
     test.commit_in(&main_worktree, "Initial");
 
     // Create feature worktree
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["switch", "--create", "feature"])
         .current_dir(&main_worktree);
     cmd.output().unwrap();
@@ -988,10 +1220,10 @@ fn test_nested_bare_repo_full_workflow() {
     assert!(stdout.contains("feature"), "Should list feature worktree");
 
     // Remove feature worktree
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["remove", "feature", "--foreground"])
         .current_dir(&main_worktree);
     cmd.output().unwrap();
@@ -1008,10 +1240,10 @@ fn test_nested_bare_repo_list_snapshot() {
     let test = NestedBareRepoTest::new();
 
     // Create main worktree
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["switch", "--create", "main"])
         .current_dir(test.bare_repo_path());
     cmd.output().unwrap();
@@ -1020,10 +1252,10 @@ fn test_nested_bare_repo_list_snapshot() {
     test.commit_in(&main_worktree, "Initial");
 
     // Create feature worktree
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["switch", "--create", "feature"])
         .current_dir(&main_worktree);
     cmd.output().unwrap();
@@ -1049,10 +1281,10 @@ fn test_bare_repo_bootstrap_first_worktree() {
     // Unlike other tests, we do NOT create any worktrees first.
     // We run wt switch --create directly on the bare repo.
 
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["switch", "--create", "main"])
         .current_dir(test.bare_repo_path());
 
@@ -1200,15 +1432,15 @@ fn test_bare_repo_merge_preserves_default_branch_worktree() {
     // Run `wt merge feature` from the main (default branch) worktree.
     // This attempts to merge main into feature — the important thing is that
     // the main worktree must NOT be removed even though is_linked() returns true.
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args([
         "merge",
         "feature",     // Target = feature branch
         "--no-squash", // Skip squash to avoid LLM dependency
-        "--no-verify", // Skip hooks
+        "--no-hooks",  // Skip hooks
     ])
     .current_dir(&main_worktree);
 
@@ -1245,10 +1477,10 @@ fn setup_unconfigured_nested_bare_repo() -> NestedBareRepoTest {
     .unwrap();
 
     // Create main worktree with a commit (needed as a starting point for switch)
-    let (directive_path, _guard) = directive_file();
+    let (cd_path, exec_path, _guard) = directive_files();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    configure_directive_file(&mut cmd, &directive_path);
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
     cmd.args(["switch", "--create", "main", "--yes"])
         .current_dir(test.bare_repo_path());
     let output = cmd.output().unwrap();
@@ -1274,10 +1506,10 @@ fn test_bare_repo_worktree_path_prompt_auto_accept() {
 
     let settings = setup_temp_snapshot_settings(test.temp_path());
     settings.bind(|| {
-        let (directive_path, _guard) = directive_file();
+        let (cd_path, exec_path, _guard) = directive_files();
         let mut cmd = wt_command();
         test.configure_wt_cmd(&mut cmd);
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
         cmd.args(["switch", "--create", "feature", "--yes"])
             .current_dir(&main_worktree);
 
@@ -1308,10 +1540,10 @@ fn test_bare_repo_worktree_path_prompt_non_interactive_warning() {
 
     let settings = setup_temp_snapshot_settings(test.temp_path());
     settings.bind(|| {
-        let (directive_path, _guard) = directive_file();
+        let (cd_path, exec_path, _guard) = directive_files();
         let mut cmd = wt_command();
         test.configure_wt_cmd(&mut cmd);
-        configure_directive_file(&mut cmd, &directive_path);
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
         // No --yes, but stdin is piped (non-interactive) since assert_cmd_snapshot
         // doesn't attach a TTY
         cmd.args(["switch", "--create", "feature"])

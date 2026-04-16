@@ -3,6 +3,7 @@
 use crate::common::{
     BareRepoTest, TestRepo, make_snapshot_cmd, repo, setup_temp_snapshot_settings,
 };
+use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
@@ -67,13 +68,13 @@ fn test_prune_removes_merged(mut repo: TestRepo) {
         None
     ));
 
-    // Verify worktree was removed
+    // Verify worktree was removed (non-current removal — no placeholder created)
     let worktree_path = repo
         .root_path()
         .parent()
         .unwrap()
         .join("repo.merged-branch");
-    assert!(!worktree_path.exists(), "Merged worktree should be removed");
+    assert!(!worktree_path.exists(), "Worktree should be fully removed");
 }
 
 /// Prune skips worktrees with unique commits (not merged)
@@ -94,9 +95,12 @@ fn test_prune_skips_unmerged(mut repo: TestRepo) {
         None
     ));
 
-    // Merged worktree removed
+    // Merged worktree removed (non-current — no placeholder)
     let merged_path = repo.root_path().parent().unwrap().join("repo.merged-one");
-    assert!(!merged_path.exists(), "Merged worktree should be removed");
+    assert!(
+        !merged_path.exists(),
+        "Merged worktree should be fully removed"
+    );
 
     // Unmerged worktree still exists
     let unmerged_path = repo.root_path().parent().unwrap().join("repo.unmerged");
@@ -137,18 +141,24 @@ fn test_prune_multiple(mut repo: TestRepo) {
     repo.add_worktree("merged-b");
     repo.add_worktree("merged-c");
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["prune", "--yes", "--min-age=0s"],
-        None
-    ));
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes", "--min-age=0s"], None);
+    cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
+    assert_cmd_snapshot!(cmd);
 
-    // All merged worktrees removed
+    // All merged worktrees removed (non-current — no placeholders)
     let parent = repo.root_path().parent().unwrap();
-    assert!(!parent.join("repo.merged-a").exists());
-    assert!(!parent.join("repo.merged-b").exists());
-    assert!(!parent.join("repo.merged-c").exists());
+    assert!(
+        !parent.join("repo.merged-a").exists(),
+        "merged-a should be fully removed"
+    );
+    assert!(
+        !parent.join("repo.merged-b").exists(),
+        "merged-b should be fully removed"
+    );
+    assert!(
+        !parent.join("repo.merged-c").exists(),
+        "merged-c should be fully removed"
+    );
 }
 
 /// Prune skips unmerged detached HEAD worktrees
@@ -185,18 +195,20 @@ fn test_prune_removes_integrated_detached(mut repo: TestRepo) {
     repo.add_worktree("detached-integrated");
     repo.detach_head_in_worktree("detached-integrated");
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    let mut cmd = make_snapshot_cmd(
         &repo,
         "step",
-        &["prune", "--yes", "--min-age=0s"],
-        None
-    ));
+        &["prune", "--yes", "--min-age=0s", "--foreground"],
+        None,
+    );
+    cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
+    assert_cmd_snapshot!(cmd);
 
-    // Worktree was removed
+    // Worktree was removed (non-current — no placeholder)
     let parent = repo.root_path().parent().unwrap();
     assert!(
         !parent.join("repo.detached-integrated").exists(),
-        "Integrated detached worktree should be removed"
+        "Worktree should be fully removed"
     );
 }
 
@@ -211,16 +223,19 @@ fn test_prune_removes_multiple_detached(mut repo: TestRepo) {
     repo.add_worktree("detached-b");
     repo.detach_head_in_worktree("detached-b");
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["prune", "--yes", "--min-age=0s"],
-        None
-    ));
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes", "--min-age=0s"], None);
+    cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
+    assert_cmd_snapshot!(cmd);
 
     let parent = repo.root_path().parent().unwrap();
-    assert!(!parent.join("repo.detached-a").exists());
-    assert!(!parent.join("repo.detached-b").exists());
+    assert!(
+        !parent.join("repo.detached-a").exists(),
+        "detached-a should be fully removed"
+    );
+    assert!(
+        !parent.join("repo.detached-b").exists(),
+        "detached-b should be fully removed"
+    );
 }
 
 /// Prune skips locked worktrees
@@ -242,9 +257,12 @@ fn test_prune_skips_locked(mut repo: TestRepo) {
         None
     ));
 
-    // Merged removed, locked remains
+    // Merged removed (non-current — no placeholder), locked remains
     let parent = repo.root_path().parent().unwrap();
-    assert!(!parent.join("repo.merged-branch").exists());
+    assert!(
+        !parent.join("repo.merged-branch").exists(),
+        "Merged worktree should be fully removed"
+    );
     assert!(
         parent.join("repo.locked-branch").exists(),
         "Locked worktree should be skipped"
@@ -270,6 +288,7 @@ fn test_prune_orphan_branches(mut repo: TestRepo) {
     // Far-future epoch: branches appear ~5 years old, passing the default 1h guard
     let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes"], None);
     cmd.env("WORKTRUNK_TEST_EPOCH", "1893456000"); // 2030-01-01
+    cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
 
     assert_cmd_snapshot!(cmd);
 }
@@ -304,17 +323,14 @@ fn test_prune_mixed_worktree_and_orphan_branch(mut repo: TestRepo) {
     // Worktree candidate: integrated worktree at the same commit as main.
     repo.add_worktree("merged-mixed");
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["prune", "--yes", "--min-age=0s"],
-        None
-    ));
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes", "--min-age=0s"], None);
+    cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
+    assert_cmd_snapshot!(cmd);
 
     let parent = repo.root_path().parent().unwrap();
     assert!(
         !parent.join("repo.merged-mixed").exists(),
-        "Merged worktree should be removed"
+        "Worktree should be fully removed"
     );
 }
 
@@ -338,10 +354,7 @@ fn test_prune_current_worktree(mut repo: TestRepo) {
     ));
 
     // Current worktree was removed
-    assert!(
-        !wt_path.exists(),
-        "Current merged worktree should be removed"
-    );
+    crate::common::assert_worktree_removed(&wt_path);
 }
 
 /// Prune handles stale/prunable worktrees (directory deleted but git metadata remains)
@@ -401,11 +414,11 @@ fn test_prune_skips_dirty(mut repo: TestRepo) {
     // Dirty worktree still exists
     assert!(wt_path.exists(), "Dirty worktree should be skipped");
 
-    // Clean worktree removed
+    // Clean worktree removed (non-current — no placeholder)
     let clean_path = repo.root_path().parent().unwrap().join("repo.clean-merged");
     assert!(
         !clean_path.exists(),
-        "Clean merged worktree should be removed"
+        "Clean worktree should be fully removed"
     );
 }
 
@@ -488,11 +501,65 @@ fn test_prune_stale_plus_young(mut repo: TestRepo) {
     // Regular merged worktree: with default epoch it appears "young"
     repo.add_worktree("young-branch");
 
-    // Default min-age (1h) — young-branch is skipped, stale-branch is a candidate
+    // Orphan branch (no worktree) at HEAD: integrated but appears young
+    repo.create_branch("young-orphan");
+
+    // Epoch 30 minutes after GIT_COMMITTER_DATE → orphan branch appears 30min old, < 1h
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--dry-run"], None);
+    cmd.env("WORKTRUNK_TEST_EPOCH", "1735691400");
+    assert_cmd_snapshot!(cmd);
+}
+
+/// Non-dry-run variant of `test_prune_stale_plus_young`: exercises the skipped_young
+/// message in the non-dry-run removal path.
+#[rstest]
+fn test_prune_stale_plus_young_non_dry_run(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Stale worktree: directory deleted, but git metadata remains → candidate
+    let wt_path = repo.add_worktree("stale-branch");
+    std::fs::remove_dir_all(&wt_path).unwrap();
+
+    // Regular merged worktree: with default epoch it appears "young"
+    repo.add_worktree("young-branch");
+
+    // Default min-age (1h) — young-branch is skipped, stale-branch is removed
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes"], None);
+    cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
+    assert_cmd_snapshot!(cmd);
+}
+
+/// Prune detects squash-merged branches when target later modified the same files (#1818).
+///
+/// When `git merge-tree --write-tree` conflicts because the branch and target both
+/// changed the same files, the patch-id fallback detects the squash merge.
+#[rstest]
+fn test_prune_squash_merged_same_files_modified(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Create worktree, make changes to a file
+    let wt_path = repo.add_worktree("feature-squash");
+    std::fs::write(wt_path.join("shared.txt"), "feature content").unwrap();
+    repo.run_git_in(&wt_path, &["add", "shared.txt"]);
+    repo.run_git_in(&wt_path, &["commit", "-m", "Add feature"]);
+
+    // Back on main: simulate squash merge (same content), then advance the same file
+    std::fs::write(repo.root_path().join("shared.txt"), "feature content").unwrap();
+    repo.run_git(&["add", "shared.txt"]);
+    repo.run_git(&["commit", "-m", "Squash merge feature"]);
+
+    std::fs::write(
+        repo.root_path().join("shared.txt"),
+        "feature content\nmore main changes",
+    )
+    .unwrap();
+    repo.run_git(&["add", "shared.txt"]);
+    repo.run_git(&["commit", "-m", "Advance same file on main"]);
+
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "step",
-        &["prune", "--dry-run"],
+        &["prune", "--dry-run", "--min-age=0s"],
         None
     ));
 }
@@ -539,4 +606,198 @@ fn test_prune_skips_default_branch_orphan() {
         branches.contains("main"),
         "Default branch 'main' should not have been pruned"
     );
+}
+
+// ============================================================================
+// --format=json
+// ============================================================================
+
+#[rstest]
+fn test_prune_dry_run_json(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree("merged-a");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--dry-run",
+            "--min-age=0s",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""path": "[^"]*""#, r#""path": "<PATH>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+#[rstest]
+fn test_prune_dry_run_json_empty(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree_with_commit("feature", "f.txt", "content", "feature commit");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--dry-run",
+            "--min-age=0s",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"[]");
+}
+
+#[rstest]
+fn test_prune_json_actual_removal(mut repo: TestRepo) {
+    repo.commit("initial");
+    repo.add_worktree("merged-a");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--min-age=0s",
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""path": "[^"]*""#, r#""path": "<PATH>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+#[rstest]
+fn test_prune_dry_run_json_current_worktree(mut repo: TestRepo) {
+    repo.commit("initial");
+    let wt_path = repo.add_worktree("current-merged");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--dry-run",
+            "--min-age=0s",
+            "--format=json",
+        ])
+        .current_dir(&wt_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""path": "[^"]*""#, r#""path": "<PATH>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+#[rstest]
+fn test_prune_dry_run_json_orphan_branch(repo: TestRepo) {
+    repo.commit("initial");
+    // Orphan branch: integrated but no worktree
+    repo.create_branch("orphan-integrated");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--dry-run",
+            "--min-age=0s",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+}
+
+#[cfg(not(target_os = "windows"))]
+#[rstest]
+fn test_prune_json_current_worktree(mut repo: TestRepo) {
+    repo.commit("initial");
+    let wt_path = repo.add_worktree("current-merged");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--min-age=0s",
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .current_dir(&wt_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""path": "[^"]*""#, r#""path": "<PATH>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+#[rstest]
+fn test_prune_json_orphan_branch(repo: TestRepo) {
+    repo.commit("initial");
+    repo.create_branch("orphan-integrated");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--min-age=0s",
+            "--format=json",
+            "--yes",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+}
+
+/// Hook announcements during prune include the branch name for disambiguation
+#[rstest]
+fn test_prune_hook_announcements_include_branch(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Use branch names that don't collide with the fixture's feature-a/b/c
+    repo.add_worktree("merged-x");
+    repo.add_worktree("merged-y");
+
+    repo.write_test_config(
+        r#"[post-remove]
+cleanup = "echo done"
+"#,
+    );
+
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes", "--min-age=0s"], None);
+    cmd.env("RAYON_NUM_THREADS", "1");
+    assert_cmd_snapshot!(cmd);
 }

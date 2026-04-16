@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
-use worktrunk::shell_exec::{Cmd, ShellConfig};
+use worktrunk::shell_exec::{Cmd, SUBPROCESS_FULL_TARGET, ShellConfig};
 use worktrunk::styling::{eprintln, warning_message};
 
 use minijinja::Environment;
@@ -222,7 +222,7 @@ struct TemplateContext<'a> {
 /// Default template for commit message prompts
 ///
 /// Synced to dev/config.example.toml by `cargo test readme_sync`
-const DEFAULT_TEMPLATE: &str = r#"Write a commit message for the staged changes below.
+const DEFAULT_TEMPLATE: &str = r#"<task>Write a commit message for the staged changes below.</task>
 
 <format>
 - Subject line under 50 chars
@@ -255,7 +255,7 @@ Branch: {{ branch }}
 /// Default template for squash commit message prompts
 ///
 /// Synced to dev/config.example.toml by `cargo test readme_sync`
-const DEFAULT_SQUASH_TEMPLATE: &str = r#"Combine these commits into a single commit message.
+const DEFAULT_SQUASH_TEMPLATE: &str = r#"<task>Write a commit message for the combined effect of these commits.</task>
 
 <format>
 - Subject line under 50 chars
@@ -291,10 +291,17 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"Combine these commits into a single com
 /// This is the canonical way to execute LLM commands in this codebase.
 /// All LLM execution should go through this function to maintain consistency.
 pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result<String> {
-    // Log prompt for debugging (Cmd logs the command itself)
-    log::debug!("  Prompt (stdin):");
+    // TODO(diff-pipe): Consider splitting the prompt template around
+    // `{{ git_diff }}` and piping `git diff` directly into the LLM via
+    // `Cmd::pipe_into` (preamble + epilogue through env vars). Avoids buffering
+    // MB-scale diffs in our process memory and removes them from our logs
+    // entirely. See conversation around PR #2136 for sketch.
+
+    // Log the prompt to output.log alongside captured subprocess stdout —
+    // SUBPROCESS_FULL_TARGET routes to output.log at `-vv`, never to stderr.
+    log::debug!(target: SUBPROCESS_FULL_TARGET, "  Prompt (stdin):");
     for line in prompt.lines() {
-        log::debug!("    {}", line);
+        log::debug!(target: SUBPROCESS_FULL_TARGET, "    {}", line);
     }
 
     let shell = ShellConfig::get()?;
@@ -366,10 +373,7 @@ fn load_template(
                 eprintln!(
                     "{}",
                     warning_message(format!(
-                        "{} is deprecated and will be removed in a future release. \
-                        Use inline template instead. To request this feature, comment on: \
-                        https://github.com/max-sixty/worktrunk/issues/444",
-                        file_type_name
+                        "{file_type_name} is deprecated and will be removed in a future release. Use inline template instead. To request this feature, comment on: https://github.com/max-sixty/worktrunk/issues/444"
                     ))
                 );
             }
@@ -766,7 +770,7 @@ mod tests {
         let context = commit_context("diff content", "main", None, "myrepo");
         let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
         assert_snapshot!(prompt, @r#"
-        Write a commit message for the staged changes below.
+        <task>Write a commit message for the staged changes below.</task>
 
         <format>
         - Subject line under 50 chars
@@ -799,7 +803,7 @@ mod tests {
         let context = commit_context("diff", "main", Some(&commits), "repo");
         let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
         assert_snapshot!(prompt, @r#"
-        Write a commit message for the staged changes below.
+        <task>Write a commit message for the staged changes below.</task>
 
         <format>
         - Subject line under 50 chars
@@ -835,7 +839,7 @@ mod tests {
         let context = commit_context("diff", "main", Some(&commits), "repo");
         let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
         assert_snapshot!(prompt, @r#"
-        Write a commit message for the staged changes below.
+        <task>Write a commit message for the staged changes below.</task>
 
         <format>
         - Subject line under 50 chars
@@ -937,7 +941,7 @@ mod tests {
         let context = squash_context("diff content", "feature", None, "repo", &commits, "main");
         let prompt = build_prompt(&config, TemplateType::Squash, &context).unwrap();
         assert_snapshot!(prompt, @r#"
-        Combine these commits into a single commit message.
+        <task>Write a commit message for the combined effect of these commits.</task>
 
         <format>
         - Subject line under 50 chars

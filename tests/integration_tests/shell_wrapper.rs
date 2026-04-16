@@ -34,13 +34,14 @@
 use crate::common::{TestRepo, shell::shell_binary, wt_bin};
 use std::process::Command;
 
+use worktrunk::shell;
+
 // Unix-only imports
 #[cfg(unix)]
 use {
     crate::common::{add_pty_filters, canonicalize, wait_for_file_content},
     insta::assert_snapshot,
     std::{fs, path::PathBuf, sync::LazyLock},
-    worktrunk::shell,
 };
 
 /// Output from executing a command through a shell wrapper
@@ -173,7 +174,7 @@ fn quote_arg(arg: &str) -> String {
 /// Always quote a string for shell use, properly escaping single quotes.
 /// Handles paths like `/path/to/worktrunk.'∅'/target/debug/wt`
 fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
+    format!("'{}'", s.replace('\'', r"'\''"))
 }
 
 /// Quote a path for PowerShell (escape backticks and single quotes)
@@ -182,102 +183,72 @@ fn powershell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
-/// Build a shell script that sources the wrapper and runs a command
-fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&str]) -> String {
-    let wt_bin = wt_bin();
-    let wrapper_script = generate_wrapper(repo, shell);
-    let mut script = String::new();
+fn wrapper_shell(shell_name: &str) -> shell::Shell {
+    match shell_name {
+        "bash" => shell::Shell::Bash,
+        "fish" => shell::Shell::Fish,
+        "nu" | "nushell" => shell::Shell::Nushell,
+        "zsh" => shell::Shell::Zsh,
+        "powershell" | "pwsh" => shell::Shell::PowerShell,
+        other => panic!("Unsupported shell wrapper test shell: {other}"),
+    }
+}
 
-    // Set environment variables - syntax varies by shell
-    // Don't use 'set -e' in bash/zsh - we want to capture failures and their exit codes.
-    // This is tested by test_wrapper_handles_command_failure which verifies
-    // that command failures return proper exit codes rather than aborting the script.
-    // Properly quote paths to handle special characters like single quotes
-    let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
-    let config_path_quoted = shell_quote(&repo.test_config_path().display().to_string());
-    let approvals_path_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
+fn wrapper_env_vars(shell: shell::Shell, repo: &TestRepo) -> Vec<(&'static str, String)> {
+    let quote = |value: &str| match shell {
+        shell::Shell::PowerShell => powershell_quote(value),
+        _ => shell_quote(value),
+    };
 
-    match shell {
-        "fish" => {
-            script.push_str(&format!("set -x WORKTRUNK_BIN {}\n", wt_bin_quoted));
-            script.push_str(&format!(
-                "set -x WORKTRUNK_CONFIG_PATH {}\n",
-                config_path_quoted
-            ));
-            script.push_str(&format!(
-                "set -x WORKTRUNK_APPROVALS_PATH {}\n",
-                approvals_path_quoted
-            ));
-            script.push_str("set -x CLICOLOR_FORCE 1\n");
-        }
-        "nu" => {
-            // Nushell uses $env.VAR syntax for environment variables
-            script.push_str(&format!("$env.WORKTRUNK_BIN = {}\n", wt_bin_quoted));
-            script.push_str(&format!(
-                "$env.WORKTRUNK_CONFIG_PATH = {}\n",
-                config_path_quoted
-            ));
-            script.push_str(&format!(
-                "$env.WORKTRUNK_APPROVALS_PATH = {}\n",
-                approvals_path_quoted
-            ));
-            script.push_str("$env.CLICOLOR_FORCE = '1'\n");
-        }
-        "zsh" => {
-            // For zsh, initialize the completion system first
-            // This allows static completions (which call compdef) to work in isolated mode
-            // We run with --no-rcs to prevent user rc files from touching /dev/tty,
-            // but compinit is safe since it only sets up completion functions
-            script.push_str("autoload -Uz compinit && compinit -i 2>/dev/null\n");
+    vec![
+        ("WORKTRUNK_BIN", quote(&wt_bin().display().to_string())),
+        (
+            "WORKTRUNK_CONFIG_PATH",
+            quote(&repo.test_config_path().display().to_string()),
+        ),
+        (
+            "WORKTRUNK_APPROVALS_PATH",
+            quote(&repo.test_approvals_path().display().to_string()),
+        ),
+        (
+            "CLICOLOR_FORCE",
+            match shell {
+                shell::Shell::Nushell | shell::Shell::PowerShell => "'1'".to_string(),
+                _ => "1".to_string(),
+            },
+        ),
+    ]
+}
 
-            script.push_str(&format!("export WORKTRUNK_BIN={}\n", wt_bin_quoted));
-            script.push_str(&format!(
-                "export WORKTRUNK_CONFIG_PATH={}\n",
-                config_path_quoted
-            ));
-            script.push_str(&format!(
-                "export WORKTRUNK_APPROVALS_PATH={}\n",
-                approvals_path_quoted
-            ));
-            script.push_str("export CLICOLOR_FORCE=1\n");
-        }
-        "powershell" | "pwsh" => {
-            // PowerShell uses $env: for environment variables
-            let wt_bin_ps = powershell_quote(&wt_bin.display().to_string());
-            let config_path_ps = powershell_quote(&repo.test_config_path().display().to_string());
-            let approvals_path_ps =
-                powershell_quote(&repo.test_approvals_path().display().to_string());
-            script.push_str(&format!("$env:WORKTRUNK_BIN = {}\n", wt_bin_ps));
-            script.push_str(&format!(
-                "$env:WORKTRUNK_CONFIG_PATH = {}\n",
-                config_path_ps
-            ));
-            script.push_str(&format!(
-                "$env:WORKTRUNK_APPROVALS_PATH = {}\n",
-                approvals_path_ps
-            ));
-            script.push_str("$env:CLICOLOR_FORCE = '1'\n");
-        }
-        _ => {
-            // bash
-            script.push_str(&format!("export WORKTRUNK_BIN={}\n", wt_bin_quoted));
-            script.push_str(&format!(
-                "export WORKTRUNK_CONFIG_PATH={}\n",
-                config_path_quoted
-            ));
-            script.push_str(&format!(
-                "export WORKTRUNK_APPROVALS_PATH={}\n",
-                approvals_path_quoted
-            ));
-            script.push_str("export CLICOLOR_FORCE=1\n");
-        }
+fn append_shell_env_exports(script: &mut String, shell: shell::Shell, vars: &[(&str, String)]) {
+    if matches!(shell, shell::Shell::Zsh) {
+        script.push_str("autoload -Uz compinit && compinit -i 2>/dev/null\n");
     }
 
-    // Include the shell wrapper code
-    // For PowerShell: The wrapper_script is PowerShell code included inline
-    // For bash/zsh/fish: The wrapper is shell code sourced via eval
-    script.push_str(&wrapper_script);
+    for (key, value) in vars {
+        match shell {
+            shell::Shell::Fish => script.push_str(&format!("set -x {key} {value}\n")),
+            shell::Shell::Nushell => script.push_str(&format!("$env.{key} = {value}\n")),
+            shell::Shell::PowerShell => script.push_str(&format!("$env:{key} = {value}\n")),
+            shell::Shell::Bash | shell::Shell::Zsh => {
+                script.push_str(&format!("export {key}={value}\n"))
+            }
+        }
+    }
+}
+
+fn append_wrapper_setup(script: &mut String, shell_name: &str, repo: &TestRepo) {
+    let shell = wrapper_shell(shell_name);
+    let env_vars = wrapper_env_vars(shell, repo);
+    append_shell_env_exports(script, shell, &env_vars);
+    script.push_str(&generate_wrapper(repo, shell_name));
     script.push('\n');
+}
+
+/// Build a shell script that sources the wrapper and runs a command
+fn build_shell_script(shell: &str, repo: &TestRepo, subcommand: &str, args: &[&str]) -> String {
+    let mut script = String::new();
+    append_wrapper_setup(&mut script, shell, repo);
 
     // Build the command
     script.push_str("wt ");
@@ -624,8 +595,8 @@ fn exec_bash_truly_interactive(
 ///
 /// This simulates what actually happens when users run `wt switch`, etc. in their shell:
 /// 1. The `wt` function is defined (from shell integration)
-/// 2. It calls `wt_exec` which sets WORKTRUNK_DIRECTIVE_FILE and runs the binary
-/// 3. The wrapper sources the directive file after wt exits (for cd, exec commands)
+/// 2. It calls `wt_exec` which sets WORKTRUNK_DIRECTIVE_CD_FILE + WORKTRUNK_DIRECTIVE_EXEC_FILE
+/// 3. The wrapper reads the cd file and sources the exec file after wt exits
 /// 4. Users see stdout/stderr output in real-time
 ///
 /// Now uses PTY interactive mode for consistent behavior and potential input echoing.
@@ -1070,9 +1041,10 @@ mod unix_tests {
         fs::write(
             config_dir.join("wt.toml"),
             r#"# Blocking commands that run before worktree is ready
-[pre-start]
-install = "echo 'Installing dependencies...'"
-build = "echo 'Building project...'"
+pre-start = [
+    {install = "echo 'Installing dependencies...'"},
+    {build = "echo 'Building project...'"},
+]
 
 # Background commands that run in parallel
 [post-start]
@@ -1120,10 +1092,11 @@ approved-commands = [
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(
             config_dir.join("wt.toml"),
-            r#"[pre-merge]
-format = "echo '✓ Code formatting check passed'"
-lint = "echo '✓ Linting passed - no warnings'"
-test = "echo '✓ All 47 tests passed in 2.3s'"
+            r#"pre-merge = [
+    {format = "echo '✓ Code formatting check passed'"},
+    {lint = "echo '✓ Linting passed - no warnings'"},
+    {test = "echo '✓ All 47 tests passed in 2.3s'"},
+]
 "#,
         )
         .unwrap();
@@ -1173,9 +1146,10 @@ approved-commands = [
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(
             config_dir.join("wt.toml"),
-            r#"[pre-merge]
-format = "echo '✓ Code formatting check passed'"
-test = "echo '✗ Test suite failed: 3 tests failing' && exit 1"
+            r#"pre-merge = [
+    {format = "echo '✓ Code formatting check passed'"},
+    {test = "echo '✗ Test suite failed: 3 tests failing' && exit 1"},
+]
 "#,
         )
         .unwrap();
@@ -1248,9 +1222,10 @@ approved-commands = [
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(
             config_dir.join("wt.toml"),
-            r#"[pre-merge]
-check1 = "./mixed-output.sh check1 3"
-check2 = "./mixed-output.sh check2 3"
+            r#"pre-merge = [
+    {check1 = "./mixed-output.sh check1 3"},
+    {check2 = "./mixed-output.sh check2 3"},
+]
 "#,
         )
         .unwrap();
@@ -1590,49 +1565,8 @@ approved-commands = ["echo 'fish background task'"]
         let worktrunk_source = canonicalize(&env::current_dir().unwrap()).unwrap();
 
         // Build a shell script that runs from the worktrunk source directory
-        let wt_bin = wt_bin();
-        let wrapper_script = generate_wrapper(&repo, shell);
         let mut script = String::new();
-
-        // Set environment variables (use shell_quote to handle paths with special chars)
-        let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
-        let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
-        let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
-        match shell {
-            "fish" => {
-                script.push_str(&format!("set -x WORKTRUNK_BIN {}\n", wt_bin_quoted));
-                script.push_str(&format!("set -x WORKTRUNK_CONFIG_PATH {}\n", config_quoted));
-                script.push_str(&format!(
-                    "set -x WORKTRUNK_APPROVALS_PATH {}\n",
-                    approvals_quoted
-                ));
-                script.push_str("set -x CLICOLOR_FORCE 1\n");
-            }
-            "zsh" => {
-                script.push_str("autoload -Uz compinit && compinit -i 2>/dev/null\n");
-                script.push_str(&format!("export WORKTRUNK_BIN={}\n", wt_bin_quoted));
-                script.push_str(&format!("export WORKTRUNK_CONFIG_PATH={}\n", config_quoted));
-                script.push_str(&format!(
-                    "export WORKTRUNK_APPROVALS_PATH={}\n",
-                    approvals_quoted
-                ));
-                script.push_str("export CLICOLOR_FORCE=1\n");
-            }
-            _ => {
-                // bash
-                script.push_str(&format!("export WORKTRUNK_BIN={}\n", wt_bin_quoted));
-                script.push_str(&format!("export WORKTRUNK_CONFIG_PATH={}\n", config_quoted));
-                script.push_str(&format!(
-                    "export WORKTRUNK_APPROVALS_PATH={}\n",
-                    approvals_quoted
-                ));
-                script.push_str("export CLICOLOR_FORCE=1\n");
-            }
-        }
-
-        // Source the wrapper
-        script.push_str(&wrapper_script);
-        script.push('\n');
+        append_wrapper_setup(&mut script, shell, &repo);
 
         // Try to run wt --source with an invalid subcommand
         // The --source flag triggers cargo build (which succeeds)
@@ -1673,10 +1607,10 @@ approved-commands = ["echo 'fish background task'"]
         // Shell-agnostic assertions
         assert_ne!(output.exit_code, 0, "{}: Command should fail", shell);
 
-        // CRITICAL: Should see wt's actual error message about unrecognized subcommand
+        // CRITICAL: Should see wt's actual error message about an unknown subcommand
         assert!(
             output.combined.contains("unrecognized subcommand"),
-            "{}: Should show actual wt error message 'unrecognized subcommand'.\nOutput:\n{}",
+            "{}: Should show clap's 'unrecognized subcommand' error.\nOutput:\n{}",
             shell,
             output.combined
         );
@@ -1776,19 +1710,8 @@ approved-commands = ["echo 'bash background'"]
         );
 
         // Build the setup script that defines the wt function
-        let wt_bin = wt_bin();
-        let wrapper_script = generate_wrapper(&repo, "bash");
-        let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
-        let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
-        let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
-        let setup_script = format!(
-            "export WORKTRUNK_BIN={}\n\
-             export WORKTRUNK_CONFIG_PATH={}\n\
-             export WORKTRUNK_APPROVALS_PATH={}\n\
-             export CLICOLOR_FORCE=1\n\
-             {}",
-            wt_bin_quoted, config_quoted, approvals_quoted, wrapper_script
-        );
+        let mut setup_script = String::new();
+        append_wrapper_setup(&mut setup_script, "bash", &repo);
 
         let config_path = repo.test_config_path().to_string_lossy().to_string();
         let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
@@ -1839,9 +1762,6 @@ approved-commands = ["echo 'bash background'"]
     /// Note: Completions are inline in the wrapper script (lazy loading)
     #[rstest]
     fn test_bash_completions_registered(repo: TestRepo) {
-        let wt_bin = wt_bin();
-        let wrapper_script = generate_wrapper(&repo, "bash");
-
         // Use a marker file to avoid PTY output race conditions.
         // PTY buffer flushing is unreliable on CI, so we write to a file and poll for it.
         let marker_file = repo.root_path().join(".completions_test_marker");
@@ -1849,16 +1769,11 @@ approved-commands = ["echo 'bash background'"]
 
         // Script that sources wrapper and checks if completion is registered
         // (completions are inline in the wrapper via lazy loading)
-        let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
-        let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
-        let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
         let marker_quoted = shell_quote(&marker_path);
-        let script = format!(
+        let mut script = String::new();
+        append_wrapper_setup(&mut script, "bash", &repo);
+        script.push_str(&format!(
             r#"
-            export WORKTRUNK_BIN={}
-            export WORKTRUNK_CONFIG_PATH={}
-            export WORKTRUNK_APPROVALS_PATH={}
-            {}
             # Check if wt completion is registered and write result to marker file
             if complete -p wt 2>/dev/null; then
                 echo "__COMPLETION_REGISTERED__" > {}
@@ -1866,13 +1781,8 @@ approved-commands = ["echo 'bash background'"]
                 echo "__NO_COMPLETION__" > {}
             fi
             "#,
-            wt_bin_quoted,
-            config_quoted,
-            approvals_quoted,
-            wrapper_script,
-            marker_quoted,
-            marker_quoted,
-        );
+            marker_quoted, marker_quoted,
+        ));
 
         let final_script = format!("( {} ) 2>&1", script);
         let config_path = repo.test_config_path().to_string_lossy().to_string();
@@ -1901,8 +1811,6 @@ approved-commands = ["echo 'bash background'"]
     /// Test that fish completions are properly registered
     #[rstest]
     fn test_fish_completions_registered(repo: TestRepo) {
-        let wt_bin = wt_bin();
-        let wrapper_script = generate_wrapper(&repo, "fish");
         let completions_script = generate_completions(&repo, "fish");
 
         // Use a marker file to avoid PTY output race conditions.
@@ -1911,17 +1819,12 @@ approved-commands = ["echo 'bash background'"]
         let marker_path = marker_file.to_string_lossy().to_string();
 
         // Script that sources wrapper, completions, and checks if completion is registered
-        let wt_bin_quoted = shell_quote(&wt_bin.display().to_string());
-        let config_quoted = shell_quote(&repo.test_config_path().display().to_string());
-        let approvals_quoted = shell_quote(&repo.test_approvals_path().display().to_string());
         let marker_quoted = shell_quote(&marker_path);
-        let script = format!(
+        let mut script = String::new();
+        append_wrapper_setup(&mut script, "fish", &repo);
+        script.push_str(&completions_script);
+        script.push_str(&format!(
             r#"
-            set -x WORKTRUNK_BIN {}
-            set -x WORKTRUNK_CONFIG_PATH {}
-            set -x WORKTRUNK_APPROVALS_PATH {}
-            {}
-            {}
             # Check if wt completions are registered and write result to marker file
             if complete -c wt 2>/dev/null | grep -q .
                 echo "__COMPLETION_REGISTERED__" > {}
@@ -1929,14 +1832,8 @@ approved-commands = ["echo 'bash background'"]
                 echo "__NO_COMPLETION__" > {}
             end
             "#,
-            wt_bin_quoted,
-            config_quoted,
-            approvals_quoted,
-            wrapper_script,
-            completions_script,
-            marker_quoted,
-            marker_quoted,
-        );
+            marker_quoted, marker_quoted,
+        ));
 
         let final_script = format!("begin\n{}\nend 2>&1", script);
         let config_path = repo.test_config_path().to_string_lossy().to_string();
@@ -2491,9 +2388,10 @@ fi
         }
 
         let config_content = r#"
-[pre-merge]
-"test" = "uv run pytest"
-"lint" = "uv run ruff check"
+pre-merge = [
+    {"test" = "uv run pytest"},
+    {"lint" = "uv run ruff check"},
+]
 "#;
 
         fs::write(config_dir.join("wt.toml"), config_content).unwrap();
@@ -2628,9 +2526,9 @@ command = "{}"
     ///
     /// Uses shell wrapper to avoid "To enable automatic cd" hint.
     ///
-    /// Source: tests/snapshots/shell_wrapper__tests__readme_example_hooks_post_create.snap
+    /// Source: tests/snapshots/shell_wrapper__tests__readme_example_hooks_pre_start.snap
     #[rstest]
-    fn test_readme_example_hooks_post_create(repo: TestRepo) {
+    fn test_readme_example_hooks_pre_start(repo: TestRepo) {
         // Create project config with pre-start and post-start hooks
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
@@ -2716,10 +2614,11 @@ fi
 
         // Create project config with named pre-start commands
         repo.write_project_config(
-            r#"[pre-start]
-install = "echo 'Installing dependencies...'"
-build = "echo 'Building project...'"
-test = "echo 'Running tests...'"
+            r#"pre-start = [
+    {install = "echo 'Installing dependencies...'"},
+    {build = "echo 'Building project...'"},
+    {test = "echo 'Running tests...'"},
+]
 "#,
         );
         repo.commit("Add config");
@@ -3067,6 +2966,30 @@ fi
         );
     }
 
+    /// Build a hermetic PATH for completion tests.
+    ///
+    /// Creates a temp dir with a symlink to the `wt` binary, then builds PATH
+    /// from that dir + system dirs (excluding cargo target directories). This
+    /// prevents co-built binaries like `wt-perf` from leaking into completion
+    /// output as external subcommands.
+    ///
+    /// NOTE: passing this via `.env("PATH", ...)` is not enough when spawning
+    /// a shell whose startup files mutate PATH: a typical `~/.zshenv` sources
+    /// `~/.cargo/env` (even for non-interactive `zsh -c`), and `~/.bashrc` or
+    /// `~/.bash_profile` can do the same. Invoke the shell with its
+    /// rc-bypass flag (`zsh -f`, `bash --noprofile --norc`) alongside the
+    /// PATH override. `/etc/zshenv` is always sourced and cannot be bypassed,
+    /// but it doesn't typically touch PATH on the environments we care about.
+    fn completion_test_path(wt_bin: &std::path::Path) -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(wt_bin, dir.path().join("wt")).unwrap();
+        // Only include the symlink dir + essential system dirs. This prevents
+        // any user-installed `wt-*` binaries (e.g. ~/.cargo/bin/wt-sync) or
+        // co-compiled helpers (target/debug/wt-perf) from appearing.
+        let path = format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", dir.path().display());
+        (dir, path)
+    }
+
     /// Black-box test: zsh completion produces correct subcommands.
     ///
     /// Sources actual `wt config shell init zsh`, triggers completion, snapshots result.
@@ -3093,17 +3016,17 @@ _wt_lazy_complete
 "#
         );
 
+        // Filter PATH to exclude cargo target directories so `wt-perf` (test
+        // helper) doesn't leak into completion output as an external subcommand.
+        let (_dir, clean_path) = completion_test_path(&wt_bin);
+
+        // `-f` skips ~/.zshenv (which typically sources ~/.cargo/env and
+        // re-prepends ~/.cargo/bin). `/etc/zshenv` is still read — it can't
+        // be bypassed — but doesn't touch PATH in our test environments.
         let output = std::process::Command::new("zsh")
-            .arg("-c")
+            .args(["-f", "-c"])
             .arg(&script)
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    wt_bin.parent().unwrap().display(),
-                    std::env::var("PATH").unwrap_or_default()
-                ),
-            )
+            .env("PATH", &clean_path)
             .output()
             .unwrap();
 
@@ -3131,17 +3054,14 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
 "#
         );
 
+        let (_dir, clean_path) = completion_test_path(&wt_bin);
+
+        // `--noprofile --norc` skips ~/.bash_profile, ~/.bashrc, /etc/profile
+        // so our clean PATH isn't polluted with ~/.cargo/bin etc.
         let output = std::process::Command::new("bash")
-            .arg("-c")
+            .args(["--noprofile", "--norc", "-c"])
             .arg(&script)
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    wt_bin.parent().unwrap().display(),
-                    std::env::var("PATH").unwrap_or_default()
-                ),
-            )
+            .env("PATH", &clean_path)
             .output()
             .unwrap();
 
@@ -3154,11 +3074,13 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     #[test]
     fn test_fish_completion_subcommands() {
         let wt_bin = wt_bin();
+        let (_dir, clean_path) = completion_test_path(&wt_bin);
 
         let output = std::process::Command::new(&wt_bin)
             .args(["--", "wt", ""])
             .env("COMPLETE", "fish")
             .env("_CLAP_COMPLETE_INDEX", "1")
+            .env("PATH", &clean_path)
             .output()
             .unwrap();
 
@@ -3178,10 +3100,12 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     #[test]
     fn test_nushell_completion_subcommands() {
         let wt_bin = wt_bin();
+        let (_dir, clean_path) = completion_test_path(&wt_bin);
 
         let output = std::process::Command::new(&wt_bin)
             .args(["--", "wt", ""])
             .env("COMPLETE", "nu")
+            .env("PATH", &clean_path)
             .output()
             .unwrap();
 
@@ -3193,6 +3117,106 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
             .join("\n");
 
         assert_snapshot!(completions);
+    }
+
+    /// Shell integration test: completing an external subcommand's flags
+    /// forwards the request to the `wt-*` binary on PATH.
+    ///
+    /// Places a `wt-fake` script in the hermetic PATH, then triggers
+    /// `wt fake --<tab>` via the fish completion protocol. Verifies that:
+    /// 1. The external script's output appears (forwarding works)
+    /// 2. `_CLAP_COMPLETE_INDEX` is decremented by 1 (index adjustment)
+    #[test]
+    fn test_fish_completion_forwards_to_external() {
+        use std::os::unix::fs::PermissionsExt;
+        let wt_bin = wt_bin();
+        let (dir, clean_path) = completion_test_path(&wt_bin);
+
+        // Place a wt-fake script that outputs distinctive completions and
+        // echoes the received _CLAP_COMPLETE_INDEX so we can verify adjustment.
+        let script = dir.path().join("wt-fake");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nprintf '%s\\n%s\\n' '--fake-flag' \"idx:${_CLAP_COMPLETE_INDEX}\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // Fish protocol: `wt -- wt fake --` with COMPLETE=fish.
+        // _CLAP_COMPLETE_INDEX=2 (completing the 3rd word "—" in "wt fake --").
+        // The forwarding code should detect "fake" is external, forward to
+        // wt-fake, and decrement the index to 1.
+        let output = std::process::Command::new(&wt_bin)
+            .args(["--", "wt", "fake", "--"])
+            .env("COMPLETE", "fish")
+            .env("_CLAP_COMPLETE_INDEX", "2")
+            .env("PATH", &clean_path)
+            .output()
+            .unwrap();
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("--fake-flag"),
+            "Forwarded completions should include external script output: {stdout}"
+        );
+        assert!(
+            stdout.contains("idx:1"),
+            "_CLAP_COMPLETE_INDEX should be adjusted from 2 to 1: {stdout}"
+        );
+    }
+
+    /// Shell integration test: bash completion forwards to external subcommands.
+    ///
+    /// Sources the real `wt config shell init bash` output, places a `wt-fake`
+    /// script on the hermetic PATH, and triggers `wt fake --<tab>` through
+    /// bash's completion machinery.
+    #[test]
+    fn test_bash_completion_forwards_to_external() {
+        use std::os::unix::fs::PermissionsExt;
+        let wt_bin = wt_bin();
+        let (dir, clean_path) = completion_test_path(&wt_bin);
+
+        // Place a wt-fake script that outputs completions
+        let ext_script = dir.path().join("wt-fake");
+        std::fs::write(
+            &ext_script,
+            "#!/bin/sh\nprintf '%s\\n%s\\n' '--fake-opt' '--fake-verbose'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&ext_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let init = std::process::Command::new(&wt_bin)
+            .args(["config", "shell", "init", "bash"])
+            .output()
+            .unwrap();
+        let shell_integration = String::from_utf8_lossy(&init.stdout);
+
+        // Trigger completion for "wt fake --" through bash's completion system.
+        let script = format!(
+            r#"
+{shell_integration}
+COMP_WORDS=(wt fake --) COMP_CWORD=2
+_wt_lazy_complete
+for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
+"#
+        );
+
+        let output = std::process::Command::new("bash")
+            .args(["--noprofile", "--norc", "-c"])
+            .arg(&script)
+            .env("PATH", &clean_path)
+            .output()
+            .unwrap();
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("--fake-opt"),
+            "Bash completion should forward to wt-fake and show its output: {stdout}"
+        );
+        assert!(
+            stdout.contains("--fake-verbose"),
+            "Bash completion should include all external completions: {stdout}"
+        );
     }
 
     // ========================================================================

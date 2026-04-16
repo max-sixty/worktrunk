@@ -27,9 +27,9 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
         // Double blanks indicate formatting issues (e.g., HTML comments like
         // `<!-- demo: file.gif -->` with blank lines on both sides).
         let output = cmd.output().expect("failed to run command");
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            !stderr.contains("\n\n\n"),
+            !stdout.contains("\n\n\n"),
             "Double blank line in help output for `wt {}`",
             args.join(" ")
         );
@@ -110,6 +110,73 @@ fn test_version() {
     });
 }
 
+/// `--help` must write to stdout, not stderr. POSIX convention — matches
+/// `cargo`, `curl`, `python`, and `git <cmd> -h`. Lets users do
+/// `wt --help | less` or `wt --help > help.txt` without redirection.
+#[test]
+fn test_help_goes_to_stdout() {
+    for args in [&["--help"][..], &["-h"][..], &["merge", "--help"][..]] {
+        let output = wt_command()
+            .args(args)
+            .output()
+            .unwrap_or_else(|e| panic!("failed to run wt {args:?}: {e}"));
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            stdout.contains("Usage:"),
+            "wt {args:?} should write help to stdout, but stdout was: {stdout:?} (stderr: {stderr:?})"
+        );
+        assert!(
+            stderr.trim().is_empty(),
+            "wt {args:?} should not write to stderr, but stderr was: {stderr:?}"
+        );
+    }
+}
+
+/// When stdout is piped, help must be plain text — no ANSI escapes leaking into
+/// `wt --help > file.txt` or `wt --help | less`. Uses the raw binary so
+/// `CLICOLOR_FORCE` (set by `wt_command`) doesn't override color detection.
+#[test]
+fn test_help_strips_ansi_when_piped() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wt"))
+        .arg("--help")
+        .env_remove("CLICOLOR_FORCE")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("failed to run wt --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains('\x1b'),
+        "wt --help piped to a file must not contain ANSI escapes; got: {stdout:?}"
+    );
+}
+
+/// `--version` must write to stdout, not stderr. This is the POSIX convention
+/// and what scripts expect — e.g., `version=$(wt --version)` or test harnesses
+/// that grep for a version string from stdout. See #2072.
+#[test]
+fn test_version_goes_to_stdout() {
+    let output = wt_command()
+        .arg("--version")
+        .output()
+        .expect("failed to run wt --version");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stdout.contains("wt "),
+        "wt --version should write to stdout, but stdout was: {stdout:?} (stderr: {stderr:?})"
+    );
+    assert!(
+        stderr.trim().is_empty(),
+        "wt --version should not write to stderr, but stderr was: {stderr:?}"
+    );
+}
+
 #[test]
 fn test_help_md() {
     let mut settings = Settings::clone_current();
@@ -150,7 +217,10 @@ fn test_help_list_narrow_terminal() {
 /// Tests --help-description outputs the meta description for docs frontmatter.
 #[rstest]
 #[case("switch", "Switch to a worktree; create if needed.")]
-#[case("merge", "Merge current branch into target. Squash & rebase")]
+#[case(
+    "merge",
+    "Merge current branch into the target branch. Squash & rebase"
+)]
 #[case("hook", "Run configured hooks.")]
 fn test_help_description(#[case] cmd: &str, #[case] expected_prefix: &str) {
     let output = wt_command()

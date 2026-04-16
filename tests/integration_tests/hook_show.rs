@@ -26,12 +26,13 @@ user-lint = "pre-commit run --all-files"
 
     // Create project config with hooks
     repo.write_project_config(
-        r#"[post-start]
-deps = "npm install"
+        r#"pre-merge = [
+    {build = "cargo build"},
+    {test = "cargo test"},
+]
 
-[pre-merge]
-build = "cargo build"
-test = "cargo test"
+[post-start]
+deps = "npm install"
 "#,
     );
     repo.commit("Add project config");
@@ -82,12 +83,13 @@ fn setup_all_hook_types(repo: &TestRepo, temp_home: &TempDir) {
     .unwrap();
 
     repo.write_project_config(
-        r#"[post-start]
-deps = "npm install"
+        r#"pre-merge = [
+    {build = "cargo build"},
+    {test = "cargo test"},
+]
 
-[pre-merge]
-build = "cargo build"
-test = "cargo test"
+[post-start]
+deps = "npm install"
 
 [post-merge]
 deploy = "scripts/deploy.sh"
@@ -208,9 +210,10 @@ approved-commands = ["cargo build"]
 
     // Create project config with approved and unapproved hooks
     repo.write_project_config(
-        r#"[pre-merge]
-build = "cargo build"
-test = "cargo test"
+        r#"pre-merge = [
+    {build = "cargo build"},
+    {test = "cargo test"},
+]
 "#,
     );
     repo.commit("Add project config");
@@ -299,6 +302,8 @@ lint = "pre-commit run"
     let canonical_home = crate::common::canonicalize(temp_home.path())
         .unwrap_or_else(|_| temp_home.path().to_path_buf());
     settings.add_filter(&regex::escape(&canonical_home.to_string_lossy()), "~");
+    // Normalize thread IDs in panic messages (e.g., "thread 'main' (1234567)")
+    settings.add_filter(r"thread '([^']+)' \(\d+\)", "thread '$1' ([THREAD_ID])");
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.arg("hook").arg("show").current_dir(temp_dir.path());

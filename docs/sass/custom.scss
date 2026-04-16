@@ -563,6 +563,8 @@ main {
     .g { color: var(--green, #0a0); }
     .r { color: var(--red, #a00); }
     .c { color: var(--cyan, #0aa); }
+    .y { color: var(--yellow, #a60); }
+    .b { color: var(--blue, #00a); }
 
     // Gutter spans - extend vertically to form continuous line
     span[style*="background:var(--bright-white"] {

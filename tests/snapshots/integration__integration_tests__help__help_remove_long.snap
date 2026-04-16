@@ -23,14 +23,13 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt remove - Remove worktree; delete branch if merged[0m
 
 Defaults to the current worktree.[0m
@@ -63,8 +62,19 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-      [1m[36m--no-verify[0m
+      [1m[36m--no-hooks[0m
           Skip hooks
+
+      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
+          Output format[0m
+          
+          JSON prints structured result to stdout after removal completes.[0m
+
+          Possible values:
+          - [1m[36mtext[0m: Human-readable text output
+          - [1m[36mjson[0m: JSON output
+          
+          [default: text]
 
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m
@@ -74,7 +84,7 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
 
 [1m[32mExamples[0m
 
@@ -97,38 +107,41 @@ Force-delete an unmerged branch:
 
 [1m[32mBranch cleanup[0m
 
-By default, branches are deleted when merging them would add nothing. This works with squash-merge and rebase workflows where commit history differs but file changes match.
+By default, branches are deleted when they would add no changes to the default branch if merged. This works with both unchanged git histories, and squash-merge or rebase workflows where commit history differs but file changes match.
 
-Worktrunk checks five conditions (in order of cost):
+Worktrunk checks six conditions (in order of cost):
 
 1. [1mSame commit[0m — Branch HEAD equals the default branch. Shows [2m_[0m in [2mwt list[0m.
 2. [1mAncestor[0m — Branch is in target's history (fast-forward or rebase case). Shows [2m⊂[0m.
 3. [1mNo added changes[0m — Three-dot diff ([2mtarget...branch[0m) is empty. Shows [2m⊂[0m.
 4. [1mTrees match[0m — Branch tree SHA equals target tree SHA. Shows [2m⊂[0m.
-5. [1mMerge adds nothing[0m — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced. Shows [2m⊂[0m.
+5. [1mMerge adds nothing[0m — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced with changes to different files. Shows [2m⊂[0m.
+6. [1mPatch-id match[0m — Branch's entire diff matches a single squash-merge commit on target. Fallback for when the simulated merge conflicts because target later modified the same files the branch touched. Shows [2m⊂[0m.
 
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., [2morigin/main[0m) when strictly ahead.
 
-Branches showing [2m_[0m or [2m⊂[0m are dimmed as safe to delete.
+Branches matching these conditions and with empty working trees are dimmed in [2mwt list[0m as safe to delete.
 
 [1m[32mForce flags[0m
 
 Worktrunk has two force flags for different situations:
 
-        Flag          Scope                          When to use                         
- ─────────────────── ──────── ────────────────────────────────────────────────────────── 
- [2m--force[0m ([2m-f[0m)        Worktree Worktree has untracked files (build artifacts, IDE config) 
- [2m--force-delete[0m ([2m-D[0m) Branch   Branch has unmerged commits                                
+        Flag          Scope           When to use          
+ ─────────────────── ──────── ──────────────────────────── 
+ [2m--force[0m ([2m-f[0m)        Worktree Worktree has untracked files 
+ [2m--force-delete[0m ([2m-D[0m) Branch   Branch has unmerged commits  
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m--force[0m[2m       # Remove worktree with untracked files[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m-D[0m[2m            # Delete unmerged branch[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m--force[0m[2m [0m[2m[36m-D[0m[2m    # Both[0m[2m[0m
 
-Without [2m--force[0m, removal fails if the worktree contains untracked files. Without [2m-D[0m, removal keeps branches with unmerged changes. Use [2m--no-delete-branch[0m to keep the branch regardless of merge status.
+Without [2m--force[0m, removal fails if the worktree contains untracked files. Without [2m--force-delete[0m, removal keeps branches with unmerged changes. Use [2m--no-delete-branch[0m to keep the branch regardless of merge status.
 
 [1m[32mBackground removal[0m
 
-Removal runs in the background by default (returns immediately). Logs are written to [2m.git/wt/logs/{branch}-remove.log[0m. Use [2m--foreground[0m to run in the foreground.
+Removal runs in the background by default — the command returns immediately. The worktree is renamed into [2m.git/wt/trash/[0m (instant same-filesystem rename), git metadata is pruned, the branch is deleted, and a detached [2mrm -rf[0m finishes cleanup. Cross-filesystem worktrees fall back to [2mgit worktree remove[0m. Logs: [2m.git/wt/logs/{branch}/internal/remove.log[0m. Use [2m--foreground[0m to run in the foreground.
+
+After each [2mwt remove[0m, entries in [2m.git/wt/trash/[0m older than 24 hours are swept by a detached [2mrm -rf[0m — eventual cleanup for directories orphaned when a previous background removal was interrupted (SIGKILL, reboot, disk full).
 
 [1m[32mHooks[0m
 
@@ -136,9 +149,11 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
 [1m[32mDetached HEAD worktrees[0m
 
-Detached worktrees have no branch name. Pass the worktree path instead: [2mwt remove /path/to/worktree[0m. [2mwt switch /path/to/worktree[0m also works.
+Detached worktrees have no branch name. Pass the worktree path instead: [2mwt remove /path/to/worktree[0m.
 
 [1m[32mSee also[0m
 
 - [2mwt merge[0m — Remove worktree after merging
 - [2mwt list[0m — View all worktrees
+
+----- stderr -----

@@ -4,30 +4,30 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use anstyle::AnsiColor;
 use color_print::cformat;
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
 
-use crate::commands::branch_deletion::{
-    BranchDeletionOutcome, BranchDeletionResult, delete_branch_if_safe,
-};
 use crate::commands::command_executor::CommandContext;
+use crate::commands::command_executor::FailureStrategy;
 use crate::commands::hooks::{
-    HookFailureStrategy, execute_hook, prepare_background_hooks, spawn_background_hooks,
-    spawn_hook_pipeline,
+    announce_and_spawn_background_hooks, execute_hook, prepare_background_hooks,
 };
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
 };
-use crate::commands::worktree::{
-    BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult, execute_removal,
-    stage_worktree_removal,
-};
+use crate::commands::worktree::hooks::PostRemoveContext;
+use crate::commands::worktree::{RemoveResult, SwitchBranchInfo, SwitchResult};
 use worktrunk::config::UserConfig;
 use worktrunk::git::GitError;
 use worktrunk::git::IntegrationReason;
 use worktrunk::git::Repository;
 use worktrunk::git::path_dir_name;
+use worktrunk::git::{
+    BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemoveOptions,
+    remove_worktree_with_cleanup, stage_worktree_removal,
+};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     FormattedMessage, eprintln, error_message, format_with_gutter, hint_message, info_message,
@@ -54,6 +54,7 @@ fn spawn_background_removal(
     branch_to_delete: Option<&str>,
     force_worktree: bool,
     log_label: &str,
+    changed_directory: bool,
 ) -> anyhow::Result<()> {
     // Stop fsmonitor daemon BEFORE rename (must happen while path still exists).
     // Best effort — prevents zombie daemons from accumulating.
@@ -61,8 +62,13 @@ fn spawn_background_removal(
         .worktree_at(worktree_path)
         .run_command(&["fsmonitor--daemon", "stop"]);
 
-    let remove_command =
-        execute_instant_removal_or_fallback(repo, worktree_path, branch_to_delete, force_worktree);
+    let remove_command = execute_instant_removal_or_fallback(
+        repo,
+        worktree_path,
+        branch_to_delete,
+        force_worktree,
+        changed_directory,
+    );
 
     spawn_detached(
         repo,
@@ -89,6 +95,7 @@ fn execute_instant_removal_or_fallback(
     worktree_path: &Path,
     branch_to_delete: Option<&str>,
     force_worktree: bool,
+    changed_directory: bool,
 ) -> String {
     // Fast path: rename worktree into .git/wt/trash/ (instant on same filesystem),
     // prune git metadata, then background process just does `rm -rf`.
@@ -102,14 +109,16 @@ fn execute_instant_removal_or_fallback(
         {
             log::debug!("Failed to delete branch {} synchronously: {}", branch, e);
         }
-        // Create an empty placeholder at the original path so the shell's working
-        // directory ($env.PWD) remains valid until the wrapper has cd'd away.
-        // Without this, shells that validate PWD (notably Nushell) emit errors
-        // between binary exit and the cd directive executing.
-        // Best-effort: if create_dir fails (permissions, race), the only effect
-        // is that Nushell may still emit PWD errors — not a correctness issue.
-        let _ = std::fs::create_dir(worktree_path);
-        build_remove_command_staged(&staged_path, worktree_path)
+        if changed_directory {
+            // Create an empty placeholder at the original path so the shell's working
+            // directory ($env.PWD) remains valid until the wrapper has cd'd away.
+            // Without this, shells that validate PWD (notably Nushell) emit errors
+            // between binary exit and the cd directive executing.
+            // Best-effort: if create_dir fails (permissions, race), the only effect
+            // is that Nushell may still emit PWD errors — not a correctness issue.
+            let _ = std::fs::create_dir(worktree_path);
+        }
+        build_remove_command_staged(&staged_path, worktree_path, changed_directory)
     } else {
         // Fallback: cross-filesystem, permissions, Windows file locking, etc.
         // Use legacy git worktree remove which handles these cases.
@@ -126,7 +135,7 @@ fn execute_instant_removal_or_fallback(
         // small check-vs-use window where newly introduced changes could be
         // removed. See remove_worktree() docs for the detailed safety analysis.
         let force = force_worktree || worktree_path.join(".gitmodules").exists();
-        build_remove_command(worktree_path, branch_to_delete, force)
+        build_remove_command(worktree_path, branch_to_delete, force, changed_directory)
     }
 }
 
@@ -212,42 +221,202 @@ fn format_path_mismatch_warning(
     ))
 }
 
+struct SwitchOutputContext {
+    path: PathBuf,
+    path_display: String,
+    branch: String,
+    shell_warning_reason: Option<String>,
+    user_wont_be_in_worktree: bool,
+    branch_worktree_mismatch_warning: Option<FormattedMessage>,
+    is_git_subcommand: bool,
+}
+
+fn build_switch_output_context(
+    result: &SwitchResult,
+    branch_info: &SwitchBranchInfo,
+    change_dir: bool,
+) -> SwitchOutputContext {
+    let path = super::to_logical_path(result.path());
+    let path_display = format_path_for_display(&path);
+    let branch = branch_info
+        .branch
+        .clone()
+        .unwrap_or_else(|| "detached worktree".to_string());
+
+    let is_git_subcommand = crate::is_git_subcommand();
+    let is_shell_integration_active = super::is_shell_integration_active();
+    let shell_warning_reason = if !change_dir || is_shell_integration_active {
+        None
+    } else if is_git_subcommand {
+        Some("ran git wt; running through git prevents cd".to_string())
+    } else {
+        Some(compute_shell_warning_reason())
+    };
+    let user_wont_be_in_worktree = !change_dir || shell_warning_reason.is_some();
+    let branch_worktree_mismatch_warning = branch_info
+        .expected_path
+        .as_ref()
+        .map(|expected| format_path_mismatch_warning(&branch, &path, expected));
+
+    SwitchOutputContext {
+        path,
+        path_display,
+        branch,
+        shell_warning_reason,
+        user_wont_be_in_worktree,
+        branch_worktree_mismatch_warning,
+        is_git_subcommand,
+    }
+}
+
+fn print_switch_path_mismatch_warning(ctx: &SwitchOutputContext) {
+    if let Some(warning) = &ctx.branch_worktree_mismatch_warning {
+        eprintln!("{}", warning);
+    }
+}
+
+fn print_switch_directory_hint(branch: &str, is_git_subcommand: bool) {
+    if is_git_subcommand {
+        eprintln!("{}", hint_message(git_subcommand_warning()));
+    } else if should_show_explicit_path_hint() {
+        eprintln!("{}", hint_message(explicit_path_hint(branch)));
+    }
+}
+
+fn handle_switch_already_at_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
+    print_switch_path_mismatch_warning(ctx);
+    eprintln!(
+        "{}",
+        info_message(cformat!(
+            "Already on worktree for <bold>{}</> @ <bold>{}</>",
+            ctx.branch,
+            ctx.path_display
+        ))
+    );
+    None
+}
+
+fn handle_switch_existing_output(ctx: &SwitchOutputContext) -> Option<PathBuf> {
+    print_switch_path_mismatch_warning(ctx);
+
+    if let Some(reason) = &ctx.shell_warning_reason {
+        eprintln!(
+            "{}",
+            warning_message(cformat!(
+                "Worktree for <bold>{}</> @ <bold>{}</>, but cannot change directory — {reason}",
+                ctx.branch,
+                ctx.path_display
+            ))
+        );
+        print_switch_directory_hint(&ctx.branch, ctx.is_git_subcommand);
+    } else {
+        eprintln!(
+            "{}",
+            info_message(format_switch_message(
+                &ctx.branch,
+                &ctx.path,
+                false, // worktree_created
+                false, // created_branch
+                None,
+                None,
+            ))
+        );
+    }
+
+    ctx.user_wont_be_in_worktree.then(|| ctx.path.clone())
+}
+
+fn maybe_print_worktree_path_hint(created_branch: bool) {
+    if !created_branch {
+        return;
+    }
+
+    if let Ok(repo) = worktrunk::git::Repository::current() {
+        let has_custom_config = UserConfig::load()
+            .map(|c| {
+                c.has_custom_worktree_path()
+                    || repo
+                        .project_identifier()
+                        .ok()
+                        .is_some_and(|p| c.has_project_worktree_path(&p))
+            })
+            .unwrap_or(false);
+        if !has_custom_config && !repo.has_shown_hint("worktree-path") {
+            let hint = hint_message(cformat!(
+                "To customize worktree locations, run <underline>wt config create</>"
+            ));
+            eprintln!("{}", hint);
+            let _ = repo.mark_hint_shown("worktree-path");
+        }
+    }
+}
+
+fn handle_switch_created_output(
+    ctx: &SwitchOutputContext,
+    created_branch: bool,
+    base_branch: Option<&str>,
+    from_remote: Option<&str>,
+) -> Option<PathBuf> {
+    eprintln!(
+        "{}",
+        success_message(format_switch_message(
+            &ctx.branch,
+            &ctx.path,
+            true, // worktree_created
+            created_branch,
+            base_branch,
+            from_remote,
+        ))
+    );
+
+    maybe_print_worktree_path_hint(created_branch);
+
+    if let Some(reason) = &ctx.shell_warning_reason {
+        eprintln!(
+            "{}",
+            warning_message(cformat!("Cannot change directory — {reason}"))
+        );
+        print_switch_directory_hint(&ctx.branch, ctx.is_git_subcommand);
+    }
+
+    ctx.user_wont_be_in_worktree.then(|| ctx.path.clone())
+}
+
+struct BranchDeletionDisplay {
+    result: BranchDeletionResult,
+    show_unmerged_hint: bool,
+}
+
+fn print_retained_unmerged_branch(branch_name: &str) {
+    eprintln!(
+        "{}",
+        info_message(cformat!(
+            "Branch <bold>{branch_name}</> retained; has unmerged changes"
+        ))
+    );
+    let cmd = suggest_command("remove", &[branch_name], &["-D"]);
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "To delete the unmerged branch, run <underline>{cmd}</>"
+        ))
+    );
+}
+
 /// Handle the result of a branch deletion attempt.
 ///
-/// Shows appropriate messages for non-deleted branches:
-/// - `NotDeleted`: We checked and chose not to delete (not integrated) - show info
+/// Converts a deletion attempt into structured display data:
+/// - `NotDeleted`: We checked and chose not to delete (not integrated)
 /// - `Err(e)`: Git command failed - show warning with actual error
-///
-/// Returns (result, needs_hint) where needs_hint indicates the caller should print
-/// the unmerged branch hint after any success message.
-///
-/// When `defer_output` is true, info and hint are suppressed (caller will handle).
 fn handle_branch_deletion_result(
     result: anyhow::Result<BranchDeletionResult>,
     branch_name: &str,
-    defer_output: bool,
-) -> anyhow::Result<(BranchDeletionResult, bool)> {
+) -> anyhow::Result<BranchDeletionDisplay> {
     match result {
-        Ok(r) if !matches!(r.outcome, BranchDeletionOutcome::NotDeleted) => Ok((r, false)),
-        Ok(r) => {
-            // Branch not integrated - we chose not to delete (not a failure)
-            if !defer_output {
-                eprintln!(
-                    "{}",
-                    info_message(cformat!(
-                        "Branch <bold>{branch_name}</> retained; has unmerged changes"
-                    ))
-                );
-                let cmd = suggest_command("remove", &[branch_name], &["-D"]);
-                eprintln!(
-                    "{}",
-                    hint_message(cformat!(
-                        "To delete the unmerged branch, run <underline>{cmd}</>"
-                    ))
-                );
-            }
-            Ok((r, defer_output))
-        }
+        Ok(result) => Ok(BranchDeletionDisplay {
+            show_unmerged_hint: matches!(result.outcome, BranchDeletionOutcome::NotDeleted),
+            result,
+        }),
         Err(e) => {
             // Git command failed - this is an error (we decided to delete but couldn't)
             eprintln!(
@@ -259,17 +428,6 @@ fn handle_branch_deletion_result(
         }
     }
 }
-
-// ============================================================================
-// FlagNote: Workaround for cformat! being compile-time only
-// ============================================================================
-//
-// We want to parameterize the color (cyan/green) but can't because cformat!
-// parses color tags at compile time before generic substitution. So we have
-// duplicate methods (after_cyan, after_green) instead of after(color).
-//
-// This is ugly but unavoidable. Keep it encapsulated here.
-// ============================================================================
 
 struct FlagNote {
     text: String,
@@ -306,22 +464,17 @@ impl FlagNote {
         }
     }
 
-    fn after_cyan(&self) -> String {
+    fn after(&self, color: AnsiColor) -> String {
         match &self.symbol {
-            Some(s) => cformat!("{}<cyan>{}</>", s, self.suffix),
-            None => String::new(),
-        }
-    }
-
-    fn after_green(&self) -> String {
-        match &self.symbol {
-            Some(s) => cformat!("{}<green>{}</>", s, self.suffix),
+            Some(s) => match color {
+                AnsiColor::Cyan => cformat!("{}<cyan>{}</>", s, self.suffix),
+                AnsiColor::Green => cformat!("{}<green>{}</>", s, self.suffix),
+                _ => format!("{s}{}", self.suffix),
+            },
             None => String::new(),
         }
     }
 }
-
-// ============================================================================
 
 /// Get flag acknowledgment note for remove messages
 ///
@@ -445,8 +598,8 @@ fn resolve_subdir_in_target(target_root: &Path, source_root: Option<&Path>, cwd:
 /// Always warn when the shell's directory won't change. Users expect to be in
 /// the target worktree after switching.
 ///
-/// **When to warn:** Shell integration is not active (`WORKTRUNK_DIRECTIVE_FILE`
-/// not set). This applies to both `Existing` and `Created` results.
+/// **When to warn:** Shell integration is not active (no directive files set).
+/// This applies to both `Existing` and `Created` results.
 ///
 /// **When NOT to warn:**
 /// - `AlreadyAt` — user is already in the target directory
@@ -489,168 +642,44 @@ pub fn handle_switch_output(
 
     // Translate to the user's logical (symlink-preserved) path for display messages.
     // The cd directive (above) handles its own translation internally.
-    let path = super::to_logical_path(result.path());
-    let path_display = format_path_for_display(&path);
-    // For detached HEAD worktrees, use a static label since the path already appears after @.
-    let branch: &str = match &branch_info.branch {
-        Some(b) => b,
-        None => "detached worktree",
-    };
-
-    // Check if shell integration is active (directive file set)
-    let is_shell_integration_active = super::is_shell_integration_active();
-
-    // Compute shell warning reason once (only if we'll need it)
-    // Git subcommand case is special — needs a hint after the warning
-    // With --no-cd: no warning (user explicitly requested no cd), but hooks still get path
-    let is_git_subcommand = crate::is_git_subcommand();
-    let shell_warning_reason: Option<String> = if !change_dir || is_shell_integration_active {
-        None
-    } else if is_git_subcommand {
-        Some("ran git wt; running through git prevents cd".to_string())
-    } else {
-        Some(compute_shell_warning_reason())
-    };
-
-    // When not changing directory, user won't be in the worktree (unless already there)
-    // Used to determine if hooks should show "@ path" annotation
-    let user_wont_be_in_worktree = !change_dir || shell_warning_reason.is_some();
-
-    // Compute branch-worktree mismatch warning (shown before action messages)
-    let branch_worktree_mismatch_warning = branch_info
-        .expected_path
-        .as_ref()
-        .map(|expected| format_path_mismatch_warning(branch, &path, expected));
+    let ctx = build_switch_output_context(result, branch_info, change_dir);
 
     let display_path_for_hooks = match result {
-        SwitchResult::AlreadyAt(_) => {
-            // Already in target directory — no shell warning needed
-            // Show path mismatch warning first - discovered while checking current state
-            if let Some(warning) = branch_worktree_mismatch_warning {
-                eprintln!("{}", warning);
-            }
-            eprintln!(
-                "{}",
-                info_message(cformat!(
-                    "Already on worktree for <bold>{branch}</> @ <bold>{path_display}</>"
-                ))
-            );
-            // User is already there - no path annotation needed
-            None
-        }
-        SwitchResult::Existing { .. } => {
-            if let Some(reason) = &shell_warning_reason {
-                // Shell integration not active — single warning with context
-                if let Some(warning) = branch_worktree_mismatch_warning {
-                    eprintln!("{}", warning);
-                }
-                // Show what exists + why cd won't happen
-                // (--execute command display is handled by execute_user_command)
-                eprintln!(
-                    "{}",
-                    warning_message(cformat!(
-                        "Worktree for <bold>{branch}</> @ <bold>{path_display}</>, but cannot change directory — {reason}"
-                    ))
-                );
-                // Show appropriate hint based on invocation mode
-                // (regular shell integration hint is shown by prompt_shell_integration in main.rs)
-                if is_git_subcommand {
-                    eprintln!("{}", hint_message(git_subcommand_warning()));
-                } else if should_show_explicit_path_hint() {
-                    eprintln!("{}", hint_message(explicit_path_hint(branch)));
-                }
-            } else {
-                // Shell integration active or --no-cd — user switched (or chose not to cd)
-                // Show path mismatch warning first - discovered while evaluating the switch
-                if let Some(warning) = branch_worktree_mismatch_warning {
-                    eprintln!("{}", warning);
-                }
-                eprintln!(
-                    "{}",
-                    info_message(format_switch_message(
-                        branch, &path, false, // worktree_created
-                        false, // created_branch
-                        None, None,
-                    ))
-                );
-            }
-            // Return path for hook annotations if user won't be in the worktree
-            if user_wont_be_in_worktree {
-                Some(path.clone())
-            } else {
-                None
-            }
-        }
+        SwitchResult::AlreadyAt(_) => handle_switch_already_at_output(&ctx),
+        SwitchResult::Existing { .. } => handle_switch_existing_output(&ctx),
         SwitchResult::Created {
             created_branch,
             base_branch,
             from_remote,
             ..
-        } => {
-            // Always show success for creation
-            eprintln!(
-                "{}",
-                success_message(format_switch_message(
-                    branch,
-                    &path,
-                    true, // worktree_created
-                    *created_branch,
-                    base_branch.as_deref(),
-                    from_remote.as_deref(),
-                ))
-            );
-
-            // Show worktree-path config hint on first --create in this repo,
-            // unless user already has a custom worktree-path config
-            if *created_branch && let Ok(repo) = worktrunk::git::Repository::current() {
-                let has_custom_config = UserConfig::load()
-                    .map(|c| c.has_custom_worktree_path())
-                    .unwrap_or(false);
-                if !has_custom_config && !repo.has_shown_hint("worktree-path") {
-                    let hint = hint_message(cformat!(
-                        "To customize worktree locations, run <underline>wt config create</>"
-                    ));
-                    eprintln!("{}", hint);
-                    let _ = repo.mark_hint_shown("worktree-path");
-                }
-            }
-
-            // Warn if shell won't cd to the new worktree (but not for --no-cd)
-            // (--execute command display is handled by execute_user_command)
-            if let Some(reason) = shell_warning_reason {
-                // Don't repeat "Created worktree" — success message above already said that
-                eprintln!(
-                    "{}",
-                    warning_message(cformat!("Cannot change directory — {reason}"))
-                );
-                // Show appropriate hint based on invocation mode
-                // (regular shell integration hint is shown by prompt_shell_integration in main.rs)
-                if is_git_subcommand {
-                    eprintln!("{}", hint_message(git_subcommand_warning()));
-                } else if should_show_explicit_path_hint() {
-                    eprintln!("{}", hint_message(explicit_path_hint(branch)));
-                }
-            }
-            // Return path for hook annotations if user won't be in the worktree
-            if user_wont_be_in_worktree {
-                Some(path.clone())
-            } else {
-                None
-            }
-            // Note: No branch_worktree_mismatch_warning — created worktrees are always at
-            // the expected path (SwitchBranchInfo::expected_path is None)
-        }
+        } => handle_switch_created_output(
+            &ctx,
+            *created_branch,
+            base_branch.as_deref(),
+            from_remote.as_deref(),
+        ),
     };
 
     stderr().flush()?;
     Ok(display_path_for_hooks)
 }
 
-/// Execute the --execute command after hooks have run
+/// Execute the --execute command after hooks have run.
 ///
-/// `display_path` is shown when the user's shell won't be in the worktree directory
-/// (shell integration not active). This helps users understand where the command runs.
+/// `display_path` is shown when the user's shell won't be in the worktree
+/// directory (shell integration not active). This helps users understand where
+/// the command runs.
+///
+/// When the conservative EXEC scrub is in effect (nested `wt` inside an alias
+/// or hook body), no `Executing` header is printed — `execute()` emits its own
+/// warning explaining the skip, and a contradictory header would read as a
+/// broken promise. See `output::global::warn_exec_scrubbed_once`.
 pub fn execute_user_command(command: &str, display_path: Option<&Path>) -> anyhow::Result<()> {
+    if super::exec_would_be_refused() {
+        // execute() will emit the conservative-scrub warning and return Ok.
+        return super::execute(command);
+    }
+
     // Show what command is being executed (section header + gutter content)
     // Include path when user's shell won't be there (shell integration not active)
     let header = match display_path {
@@ -678,6 +707,7 @@ pub fn handle_remove_output(
     foreground: bool,
     verify: bool,
     quiet: bool,
+    show_branch_in_hooks: bool,
 ) -> anyhow::Result<()> {
     match result {
         RemoveResult::RemovedWorktree {
@@ -704,12 +734,22 @@ pub fn handle_remove_output(
             removed_commit: removed_commit.as_deref(),
             foreground,
             verify,
+            show_branch_in_hooks,
         }),
         RemoveResult::BranchOnly {
             branch_name,
             deletion_mode,
             pruned,
-        } => handle_branch_only_output(branch_name, *deletion_mode, *pruned, quiet),
+            target_branch,
+            integration_reason,
+        } => handle_branch_only_output(
+            branch_name,
+            *deletion_mode,
+            *pruned,
+            *integration_reason,
+            target_branch.as_deref(),
+            quiet,
+        ),
     }
 }
 
@@ -721,6 +761,8 @@ fn handle_branch_only_output(
     branch_name: &str,
     deletion_mode: BranchDeletionMode,
     pruned: bool,
+    integration_reason: Option<IntegrationReason>,
+    target_branch: Option<&str>,
     quiet: bool,
 ) -> anyhow::Result<()> {
     let branch_info = if pruned {
@@ -736,43 +778,48 @@ fn handle_branch_only_output(
         return Ok(());
     }
 
-    let repo = worktrunk::git::Repository::current()?;
+    let check_target = target_branch.unwrap_or("HEAD");
 
-    // Get default branch for integration check and reason display
-    // Falls back to HEAD if default branch can't be determined
-    let default_branch = repo.default_branch();
-    let check_target = default_branch.as_deref().unwrap_or("HEAD");
+    // Decide outcome from pre-computed integration (computed in prepare_worktree_removal).
+    let outcome = if deletion_mode.is_force() {
+        Some(BranchDeletionOutcome::ForceDeleted)
+    } else {
+        integration_reason.map(BranchDeletionOutcome::Integrated)
+    };
 
-    let result = delete_branch_if_safe(&repo, branch_name, check_target, deletion_mode.is_force());
-    // Defer "retained" output so we control message ordering (info before retained)
-    let (deletion, deferred) = handle_branch_deletion_result(result, branch_name, true)?;
+    let deletion = if let Some(outcome) = outcome {
+        let repo = worktrunk::git::Repository::current()?;
+        let result = repo.run_command(&["branch", "-D", branch_name]);
+        handle_branch_deletion_result(
+            result.map(|_| BranchDeletionResult {
+                outcome,
+                integration_target: check_target.to_string(),
+            }),
+            branch_name,
+        )?
+    } else {
+        BranchDeletionDisplay {
+            result: BranchDeletionResult {
+                outcome: BranchDeletionOutcome::NotDeleted,
+                integration_target: check_target.to_string(),
+            },
+            show_unmerged_hint: true,
+        }
+    };
 
-    if matches!(deletion.outcome, BranchDeletionOutcome::NotDeleted) {
-        // Print info first, then deferred "retained" + hint
+    if matches!(deletion.result.outcome, BranchDeletionOutcome::NotDeleted) {
         eprintln!("{}", info_message(&branch_info));
-        if deferred {
-            eprintln!(
-                "{}",
-                info_message(cformat!(
-                    "Branch <bold>{branch_name}</> retained; has unmerged changes"
-                ))
-            );
-            let cmd = suggest_command("remove", &[branch_name], &["-D"]);
-            eprintln!(
-                "{}",
-                hint_message(cformat!(
-                    "To delete the unmerged branch, run <underline>{cmd}</>"
-                ))
-            );
+        if deletion.show_unmerged_hint {
+            print_retained_unmerged_branch(branch_name);
         }
     } else {
         let flag_note = flag_note(
             deletion_mode,
-            &deletion.outcome,
-            Some(&deletion.integration_target),
+            &deletion.result.outcome,
+            Some(&deletion.result.integration_target),
         );
         let flag_text = &flag_note.text;
-        let flag_after = flag_note.after_green();
+        let flag_after = flag_note.after(AnsiColor::Green);
 
         if pruned {
             // Combined: pruned stale metadata & deleted branch in one line
@@ -807,17 +854,13 @@ fn handle_branch_only_output(
 /// Post-remove template variables reflect the removed worktree (branch, path, commit).
 /// Post-switch hooks only run when `changed_directory` is true (user cd'd to main).
 ///
-/// Only runs if `verify` is true (hooks approved).
+/// Only runs if `ctx.verify` is true (hooks approved).
 fn spawn_hooks_after_remove(
     repo: &Repository,
-    main_path: &std::path::Path,
-    removed_worktree_path: &std::path::Path,
+    ctx: &RemovedWorktreeOutputContext<'_>,
     removed_branch: &str,
-    removed_commit: Option<&str>,
-    verify: bool,
-    changed_directory: bool,
 ) -> anyhow::Result<()> {
-    if !verify {
+    if !ctx.verify {
         return Ok(());
     }
     let Ok(config) = UserConfig::load() else {
@@ -828,46 +871,60 @@ fn spawn_hooks_after_remove(
     // (suppresses path if shell integration will cd there).
     // When removing a different worktree, user stays at cwd → use pre_hook logic
     // (shows path if main_path differs from cwd).
-    let display_path = if changed_directory {
-        super::post_hook_display_path(main_path)
+    let display_path = if ctx.changed_directory {
+        super::post_hook_display_path(ctx.main_path)
     } else {
-        super::pre_hook_display_path(main_path)
+        super::pre_hook_display_path(ctx.main_path)
     };
+
+    // Build post-remove template variables from the removed worktree identity.
+    let remove_vars =
+        PostRemoveContext::new(ctx.worktree_path, ctx.removed_commit, ctx.main_path, repo);
+    let extra_vars = remove_vars.extra_vars(removed_branch);
 
     // All hooks use remove_ctx for spawning: log files are named after the removed
     // branch since both post-remove and post-switch are consequences of that removal.
-    // Template variables differ per hook type (prepared separately below).
-    let remove_ctx = CommandContext::new(repo, &config, Some(removed_branch), main_path, false);
-    let mut hooks = remove_ctx.prepare_post_remove_commands(
-        removed_branch,
-        removed_worktree_path,
-        removed_commit,
-        display_path,
-    )?;
+    let remove_ctx = CommandContext::new(repo, &config, Some(removed_branch), ctx.main_path, false);
+
+    // Collect post-remove and post-switch hooks for a single combined announcement.
+    let mut pipelines = Vec::new();
+    pipelines.extend(
+        prepare_background_hooks(
+            &remove_ctx,
+            worktrunk::HookType::PostRemove,
+            &extra_vars,
+            display_path,
+        )?
+        .into_iter()
+        .map(|g| (remove_ctx, g)),
+    );
 
     // Post-switch: only when the user actually changed directory.
-    // Uses its own context for template variable preparation (dest branch),
-    // but spawned under remove_ctx (removed branch) for log naming.
-    if changed_directory {
-        let dest_branch = repo.worktree_at(main_path).branch()?;
+    // Uses its own context with the destination branch for template variables.
+    // dest_branch hoisted so it outlives the pipelines vec.
+    let dest_branch = if ctx.changed_directory {
+        Some(repo.worktree_at(ctx.main_path).branch()?)
+    } else {
+        None
+    };
+    if let Some(ref dest_branch) = dest_branch {
         let switch_ctx =
-            CommandContext::new(repo, &config, dest_branch.as_deref(), main_path, false);
-        match prepare_background_hooks(
-            &switch_ctx,
-            worktrunk::HookType::PostSwitch,
-            &[],
-            display_path,
-        )? {
-            crate::commands::hooks::PreparedHooks::Flat(cmds) => hooks.extend(cmds),
-            crate::commands::hooks::PreparedHooks::Pipeline(steps) => {
-                if !steps.is_empty() {
-                    spawn_hook_pipeline(&switch_ctx, steps)?;
-                }
-            }
-        }
+            CommandContext::new(repo, &config, dest_branch.as_deref(), ctx.main_path, false);
+        pipelines.extend(
+            prepare_background_hooks(
+                &switch_ctx,
+                worktrunk::HookType::PostSwitch,
+                &[],
+                display_path,
+            )?
+            .into_iter()
+            .map(|g| (switch_ctx, g)),
+        );
     }
 
-    spawn_background_hooks(&remove_ctx, hooks)
+    announce_and_spawn_background_hooks(pipelines, ctx.show_branch_in_hooks)?;
+
+    Ok(())
 }
 
 // ============================================================================
@@ -942,11 +999,15 @@ impl RemovalDisplayInfo {
 
         let (outcome, integration_target, show_unmerged_hint) = match branch_deletion {
             Some(result) => {
-                let (deletion, needs_hint) =
-                    handle_branch_deletion_result(result, branch_name, true)?;
+                let deletion = handle_branch_deletion_result(result, branch_name)?;
                 // Only use integration_target for display if we had a real target (not "HEAD" fallback)
-                let display_target = target_branch.map(|_| deletion.integration_target);
-                (deletion.outcome, display_target, needs_hint)
+                let display_target =
+                    target_branch.map(|_| deletion.result.integration_target.clone());
+                (
+                    deletion.result.outcome,
+                    display_target,
+                    deletion.show_unmerged_hint,
+                )
             }
             None => (
                 BranchDeletionOutcome::NotDeleted,
@@ -995,7 +1056,7 @@ impl RemovalDisplayInfo {
                 success_message(cformat!(
                     "Removed <bold>{branch_name}</> worktree{force_text} & branch{flag_text}"
                 ))
-                .append(&flag_note.after_green())
+                .append(&flag_note.after(AnsiColor::Green))
             } else {
                 success_message(cformat!(
                     "Removed <bold>{branch_name}</> worktree{force_text}"
@@ -1006,7 +1067,7 @@ impl RemovalDisplayInfo {
             progress_message(cformat!(
                 "Removing <bold>{branch_name}</> worktree{force_text} & branch in background{flag_text}"
             ))
-            .append(&flag_note.after_cyan())
+            .append(&flag_note.after(AnsiColor::Cyan))
         } else {
             progress_message(cformat!(
                 "Removing <bold>{branch_name}</> worktree{force_text} in background"
@@ -1074,70 +1135,60 @@ struct RemovedWorktreeOutputContext<'a> {
     removed_commit: Option<&'a str>,
     foreground: bool,
     verify: bool,
+    /// Show branch name in hook announcements for disambiguation in batch contexts.
+    show_branch_in_hooks: bool,
 }
 
-/// Handle output for RemovedWorktree removal
-fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyhow::Result<()> {
-    let RemovedWorktreeOutputContext {
-        main_path,
-        worktree_path,
-        changed_directory,
-        branch_name,
-        deletion_mode,
-        target_branch,
-        pre_computed_integration,
-        force_worktree,
-        expected_path,
-        removed_commit,
-        foreground,
-        verify,
-    } = ctx;
-
-    // Use main_path for discovery - the worktree being removed might be cwd,
-    // and git operations after removal need a valid working directory.
-    let repo = worktrunk::git::Repository::at(main_path)?;
-
-    // Execute pre-remove hooks in the worktree being removed BEFORE writing cd directive.
-    // Non-zero exit aborts removal (FailFast strategy).
-    // If hooks fail, we don't want the shell to cd to main_path.
-    // For detached HEAD, {{ branch }} expands to "HEAD" in templates
-    if verify && let Ok(config) = UserConfig::load() {
-        let ctx = CommandContext::new(
-            &repo,
-            &config,
-            branch_name,
-            worktree_path,
-            false, // yes=false for CommandContext (not approval-related)
-        );
-        // Show path when removing a different worktree (user is elsewhere)
-        let display_path = if changed_directory {
-            None // User was already here
-        } else {
-            Some(worktree_path) // Show path when user is elsewhere
-        };
-        // Target vars: where the user will end up after removal
-        let target_branch = repo
-            .worktree_at(main_path)
-            .branch()
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        let target_path_str = worktrunk::path::to_posix_path(&main_path.to_string_lossy());
-        let extra_vars: Vec<(&str, &str)> = vec![
-            ("target", &target_branch),
-            ("target_worktree_path", &target_path_str),
-        ];
-        execute_hook(
-            &ctx,
-            worktrunk::HookType::PreRemove,
-            &extra_vars,
-            HookFailureStrategy::FailFast,
-            None,
-            display_path,
-        )?;
+fn execute_pre_remove_hooks_if_needed(
+    repo: &Repository,
+    ctx: &RemovedWorktreeOutputContext<'_>,
+) -> anyhow::Result<()> {
+    if !ctx.verify {
+        return Ok(());
     }
 
-    // Emit cd directive only after pre-remove hooks succeed
+    let Ok(config) = UserConfig::load() else {
+        return Ok(());
+    };
+
+    let command_ctx = CommandContext::new(
+        repo,
+        &config,
+        ctx.branch_name,
+        ctx.worktree_path,
+        false, // yes=false for CommandContext (not approval-related)
+    );
+    let display_path = if ctx.changed_directory {
+        None
+    } else {
+        Some(ctx.worktree_path)
+    };
+    let target_branch = repo
+        .worktree_at(ctx.main_path)
+        .branch()
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let target_path_str = worktrunk::path::to_posix_path(&ctx.main_path.to_string_lossy());
+    let extra_vars: Vec<(&str, &str)> = vec![
+        ("target", &target_branch),
+        ("target_worktree_path", &target_path_str),
+    ];
+
+    execute_hook(
+        &command_ctx,
+        worktrunk::HookType::PreRemove,
+        &extra_vars,
+        FailureStrategy::FailFast,
+        &[],
+        display_path,
+    )
+}
+
+fn prepare_remove_directory_change(
+    main_path: &Path,
+    changed_directory: bool,
+) -> anyhow::Result<()> {
     if changed_directory {
         super::change_directory(main_path)?;
         stderr().flush()?; // Force flush to ensure shell processes the cd
@@ -1146,205 +1197,225 @@ fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyh
         super::mark_cwd_removed();
     }
 
-    // Handle detached HEAD case (no branch known)
-    let Some(branch_name) = branch_name else {
-        // No branch associated - just remove the worktree
-        if foreground {
-            // Progress message after pre-remove hooks, before actual removal
-            eprintln!(
-                "{}",
-                progress_message(cformat!(
-                    "Removing worktree @ <bold>{}</>... (detached HEAD, no branch to delete)",
-                    format_path_for_display(worktree_path)
-                ))
-            );
-            let output = execute_removal(
-                &repo,
-                worktree_path,
-                None,
-                deletion_mode,
-                target_branch,
-                force_worktree,
-            )
-            .map_err(|err| GitError::WorktreeRemovalFailed {
-                branch: path_dir_name(worktree_path).to_string(),
-                path: worktree_path.to_path_buf(),
-                remaining_entries: list_remaining_entries(worktree_path),
-                error: err.to_string(),
-            })?;
-            if let Some(staged) = output.staged_path {
-                let _ = std::fs::remove_dir_all(&staged);
-            }
-            eprintln!(
-                "{}",
-                success_message(cformat!(
-                    "Removed worktree @ <bold>{}</> (detached HEAD, no branch to delete)",
-                    format_path_for_display(worktree_path)
-                ))
-            );
-        } else {
-            let path_display = format_path_for_display(worktree_path);
-            eprintln!(
-                "{}",
-                progress_message(cformat!(
-                    "Removing worktree @ <bold>{path_display}</> in background (detached HEAD, no branch to delete)"
-                ))
-            );
+    Ok(())
+}
 
-            spawn_background_removal(
-                &repo,
-                main_path,
-                worktree_path,
-                None,
-                force_worktree,
-                "detached",
-            )?;
-        }
-        // Post-remove hooks for detached HEAD use "HEAD" as the branch identifier
-        spawn_hooks_after_remove(
-            &repo,
-            main_path,
-            worktree_path,
-            "HEAD",
-            removed_commit,
-            verify,
-            changed_directory,
-        )?;
-        stderr().flush()?;
-        return Ok(());
-    };
-
-    if foreground {
-        // Foreground mode: remove immediately and report actual results
-
-        // Progress message after pre-remove hooks, before actual removal
+fn handle_detached_removed_worktree_output(
+    repo: &Repository,
+    ctx: &RemovedWorktreeOutputContext<'_>,
+) -> anyhow::Result<()> {
+    if ctx.foreground {
         eprintln!(
             "{}",
-            progress_message(cformat!("Removing <bold>{branch_name}</> worktree..."))
+            progress_message(cformat!(
+                "Removing worktree @ <bold>{}</>... (detached HEAD, no branch to delete)",
+                format_path_for_display(ctx.worktree_path)
+            ))
         );
-
-        // Foreground mode: show warning after progress (contextual info during operation)
-        if let Some(expected) = expected_path {
-            eprintln!(
-                "{}",
-                format_path_mismatch_warning(branch_name, worktree_path, expected)
-            );
-        }
-
-        let output = execute_removal(
-            &repo,
-            worktree_path,
-            Some(branch_name),
-            deletion_mode,
-            target_branch,
-            force_worktree,
+        let output = remove_worktree_with_cleanup(
+            repo,
+            ctx.worktree_path,
+            RemoveOptions {
+                branch: None,
+                deletion_mode: ctx.deletion_mode,
+                target_branch: ctx.target_branch.map(String::from),
+                force_worktree: ctx.force_worktree,
+            },
         )
         .map_err(|err| GitError::WorktreeRemovalFailed {
-            branch: branch_name.into(),
-            path: worktree_path.to_path_buf(),
-            remaining_entries: list_remaining_entries(worktree_path),
+            branch: path_dir_name(ctx.worktree_path).to_string(),
+            path: ctx.worktree_path.to_path_buf(),
+            remaining_entries: list_remaining_entries(ctx.worktree_path),
             error: err.to_string(),
         })?;
         if let Some(staged) = output.staged_path {
             let _ = std::fs::remove_dir_all(&staged);
         }
-
-        let display_info = RemovalDisplayInfo::from_branch_result(
-            output.branch_result,
-            branch_name,
-            pre_computed_integration,
-            target_branch,
-            force_worktree,
-        )?;
-
-        display_info.print_message(branch_name, true)?;
-        display_info.print_hints(branch_name, deletion_mode, pre_computed_integration)?;
-        print_switch_message_if_changed(changed_directory, main_path)?;
-
-        spawn_hooks_after_remove(
-            &repo,
-            main_path,
-            worktree_path,
-            branch_name,
-            removed_commit,
-            verify,
-            changed_directory,
-        )?;
-        stderr().flush()?;
-        Ok(())
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Removed worktree @ <bold>{}</> (detached HEAD, no branch to delete)",
+                format_path_for_display(ctx.worktree_path)
+            ))
+        );
     } else {
-        // Background mode: show warning before decision announcement
-        if let Some(expected) = expected_path {
-            eprintln!(
-                "{}",
-                format_path_mismatch_warning(branch_name, worktree_path, expected)
-            );
-        }
-
-        // Background mode: spawn detached process
-        let display_info = RemovalDisplayInfo::from_precomputed(
-            deletion_mode,
-            pre_computed_integration,
-            target_branch,
-            force_worktree,
+        let path_display = format_path_for_display(ctx.worktree_path);
+        eprintln!(
+            "{}",
+            progress_message(cformat!(
+                "Removing worktree @ <bold>{path_display}</> in background (detached HEAD, no branch to delete)"
+            ))
         );
 
-        display_info.print_message(branch_name, false)?;
-        display_info.print_hints(branch_name, deletion_mode, pre_computed_integration)?;
-        print_switch_message_if_changed(changed_directory, main_path)?;
-
         spawn_background_removal(
-            &repo,
-            main_path,
-            worktree_path,
-            display_info.branch_deleted().then_some(branch_name),
-            force_worktree,
-            branch_name,
+            repo,
+            ctx.main_path,
+            ctx.worktree_path,
+            None,
+            ctx.force_worktree,
+            "detached",
+            ctx.changed_directory,
         )?;
+    }
 
-        spawn_hooks_after_remove(
-            &repo,
-            main_path,
-            worktree_path,
-            branch_name,
-            removed_commit,
-            verify,
-            changed_directory,
-        )?;
-        stderr().flush()?;
-        Ok(())
+    // Post-remove hooks for detached HEAD use "HEAD" as the branch identifier
+    spawn_hooks_after_remove(repo, ctx, "HEAD")?;
+    stderr().flush()?;
+    Ok(())
+}
+
+fn handle_named_removed_worktree_foreground(
+    repo: &Repository,
+    ctx: &RemovedWorktreeOutputContext<'_>,
+    branch_name: &str,
+) -> anyhow::Result<()> {
+    eprintln!(
+        "{}",
+        progress_message(cformat!("Removing <bold>{branch_name}</> worktree..."))
+    );
+
+    if let Some(expected) = ctx.expected_path {
+        eprintln!(
+            "{}",
+            format_path_mismatch_warning(branch_name, ctx.worktree_path, expected)
+        );
+    }
+
+    let output = remove_worktree_with_cleanup(
+        repo,
+        ctx.worktree_path,
+        RemoveOptions {
+            branch: Some(branch_name.to_string()),
+            deletion_mode: ctx.deletion_mode,
+            target_branch: ctx.target_branch.map(String::from),
+            force_worktree: ctx.force_worktree,
+        },
+    )
+    .map_err(|err| GitError::WorktreeRemovalFailed {
+        branch: branch_name.into(),
+        path: ctx.worktree_path.to_path_buf(),
+        remaining_entries: list_remaining_entries(ctx.worktree_path),
+        error: err.to_string(),
+    })?;
+    if let Some(staged) = output.staged_path {
+        let _ = std::fs::remove_dir_all(&staged);
+    }
+
+    let display_info = RemovalDisplayInfo::from_branch_result(
+        output.branch_result,
+        branch_name,
+        ctx.pre_computed_integration,
+        ctx.target_branch,
+        ctx.force_worktree,
+    )?;
+
+    display_info.print_message(branch_name, true)?;
+    display_info.print_hints(branch_name, ctx.deletion_mode, ctx.pre_computed_integration)?;
+    print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
+
+    spawn_hooks_after_remove(repo, ctx, branch_name)?;
+    stderr().flush()?;
+    Ok(())
+}
+
+fn handle_named_removed_worktree_background(
+    repo: &Repository,
+    ctx: &RemovedWorktreeOutputContext<'_>,
+    branch_name: &str,
+) -> anyhow::Result<()> {
+    if let Some(expected) = ctx.expected_path {
+        eprintln!(
+            "{}",
+            format_path_mismatch_warning(branch_name, ctx.worktree_path, expected)
+        );
+    }
+
+    let display_info = RemovalDisplayInfo::from_precomputed(
+        ctx.deletion_mode,
+        ctx.pre_computed_integration,
+        ctx.target_branch,
+        ctx.force_worktree,
+    );
+
+    display_info.print_message(branch_name, false)?;
+    display_info.print_hints(branch_name, ctx.deletion_mode, ctx.pre_computed_integration)?;
+    print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
+
+    spawn_background_removal(
+        repo,
+        ctx.main_path,
+        ctx.worktree_path,
+        display_info.branch_deleted().then_some(branch_name),
+        ctx.force_worktree,
+        branch_name,
+        ctx.changed_directory,
+    )?;
+
+    spawn_hooks_after_remove(repo, ctx, branch_name)?;
+    stderr().flush()?;
+    Ok(())
+}
+
+/// Handle output for RemovedWorktree removal
+fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyhow::Result<()> {
+    // Use main_path for discovery - the worktree being removed might be cwd,
+    // and git operations after removal need a valid working directory.
+    let repo = worktrunk::git::Repository::at(ctx.main_path)?;
+
+    execute_pre_remove_hooks_if_needed(&repo, &ctx)?;
+    prepare_remove_directory_change(ctx.main_path, ctx.changed_directory)?;
+
+    // Handle detached HEAD case (no branch known)
+    let Some(branch_name) = ctx.branch_name else {
+        return handle_detached_removed_worktree_output(&repo, &ctx);
+    };
+
+    if ctx.foreground {
+        handle_named_removed_worktree_foreground(&repo, &ctx, branch_name)
+    } else {
+        handle_named_removed_worktree_background(&repo, &ctx, branch_name)
     }
 }
 
-/// Execute a command in a worktree directory
+/// Run a shell command with streaming output, signal forwarding, and ANSI reset.
 ///
-/// Redirects child stdout to stderr (via `.stdout(Stdio::from(std::io::stderr()))`) for
-/// deterministic output ordering. Per CLAUDE.md guidelines: child process output goes to
-/// stderr, worktrunk output goes to stdout.
+/// Unified entry point for all foreground command execution — hooks, aliases,
+/// and `for-each` all call this. The background pipeline runner
+/// (`run_pipeline.rs`) has its own spawning logic since it redirects to log
+/// files and runs detached.
 ///
-/// If `stdin_content` is provided, it will be piped to the command's stdin. This is used to pass
-/// hook context as JSON to hook commands.
+/// Capabilities: stdout→stderr redirect for deterministic ordering,
+/// SIGINT/SIGTERM forwarding to child process group, ANSI reset before child
+/// runs, `Cmd` tracing/logging, and directive file control.
 ///
-/// ## Color Bleeding Prevention
+/// ## Directive files
 ///
-/// This function explicitly resets ANSI codes on stderr before executing child commands.
+/// `directives` controls whether the child can write shell-integration
+/// directives back to the parent shell. The CD file is always safe to pass
+/// through (raw path, no injection surface); the EXEC file is never passed
+/// through — only wt-internal Rust code writes arbitrary shell directives.
 ///
-/// Root cause: Terminal emulators maintain a single rendering state machine. When stdout
-/// and stderr both connect to the same TTY, output from both streams passes through this
-/// state machine in arrival order. If stdout writes color codes but stderr's output arrives
-/// next, the terminal applies stdout's color state to stderr's text. The flush ensures stdout
-/// completes, but doesn't reset the terminal state - hence this explicit reset to stderr.
+/// - `DirectivePassthrough::none()` — scrubs all directive env vars from the
+///   child. Used by `for-each` (runs in other worktrees) and background hooks
+///   (outlive the parent shell).
+/// - `DirectivePassthrough::inherit_from_env()` — re-adds whichever directive
+///   env vars are currently set in this process. Used by aliases and
+///   foreground hooks, which may emit `cd` directives. In new-protocol mode
+///   only the CD file passes through; in legacy compat mode the single
+///   legacy file passes through to preserve pre-split behavior.
 ///
-/// We write the reset to stderr (not stdout) because:
-/// 1. Child process output goes to stderr (per CLAUDE.md guidelines)
-/// 2. The reset must reach the terminal before child output
-/// 3. Writing to stdout could arrive after stderr due to buffering
+/// ## ANSI reset
 ///
-pub fn execute_command_in_worktree(
-    worktree_path: &std::path::Path,
+/// Resets ANSI codes on stderr before the child runs. Terminal emulators
+/// maintain a single rendering state machine — if stdout writes color codes
+/// but stderr's output arrives next, the terminal applies stdout's color
+/// state to stderr's text. The reset to stderr prevents this.
+pub fn execute_shell_command(
+    working_dir: &std::path::Path,
     command: &str,
     stdin_content: Option<&str>,
     command_log_label: Option<&str>,
+    directives: DirectivePassthrough,
 ) -> anyhow::Result<()> {
     // Flush stdout before executing command to ensure all our messages appear
     // before the child process output
@@ -1358,7 +1429,7 @@ pub fn execute_command_in_worktree(
 
     // Execute with stdout→stderr redirect for deterministic ordering
     let mut cmd = Cmd::shell(command)
-        .current_dir(worktree_path)
+        .current_dir(working_dir)
         .stdout(Stdio::from(std::io::stderr()))
         .forward_signals();
 
@@ -1370,12 +1441,55 @@ pub fn execute_command_in_worktree(
         cmd = cmd.stdin_bytes(content);
     }
 
+    if let Some(path) = directives.cd_file {
+        cmd = cmd.directive_cd_file(path);
+    }
+    if let Some(path) = directives.legacy_file {
+        cmd = cmd.directive_legacy_file(path);
+    }
+
     cmd.stream()?;
 
     // Flush to ensure all output appears before we continue
     stderr().flush()?;
 
     Ok(())
+}
+
+/// Selector for which directive file env vars to pass through to a child shell.
+///
+/// Constructed by callers via [`DirectivePassthrough::none`] or
+/// [`DirectivePassthrough::inherit_from_env`]. The EXEC file is intentionally
+/// never included — alias/hook shell bodies must not inject arbitrary shell
+/// into the parent session.
+#[derive(Debug, Default, Clone)]
+pub struct DirectivePassthrough {
+    pub cd_file: Option<std::path::PathBuf>,
+    pub legacy_file: Option<std::path::PathBuf>,
+}
+
+impl DirectivePassthrough {
+    /// Scrub all directive file env vars from the child process.
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// Pass CD and legacy directive files through to the child, reading the
+    /// current process environment. Used by trusted contexts (aliases,
+    /// foreground hooks) that may legitimately emit a `cd` directive. The
+    /// EXEC file is deliberately omitted.
+    pub fn inherit_from_env() -> Self {
+        use worktrunk::shell_exec::{DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR};
+        let read = |var: &str| {
+            std::env::var_os(var)
+                .map(std::path::PathBuf::from)
+                .filter(|p| !p.as_os_str().is_empty())
+        };
+        Self {
+            cd_file: read(DIRECTIVE_CD_FILE_ENV_VAR),
+            legacy_file: read(DIRECTIVE_FILE_ENV_VAR),
+        }
+    }
 }
 
 #[cfg(test)]
