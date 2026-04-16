@@ -72,8 +72,6 @@ The full workflow: start an agent (one of many) on a task, work elsewhere, retur
 ```toml
 [[pre-merge]]
 test = "cargo test"
-
-[[pre-merge]]
 lint = "cargo clippy"
 ```
 

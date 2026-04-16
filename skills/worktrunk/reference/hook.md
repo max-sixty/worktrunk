@@ -389,14 +389,10 @@ Quick checks before commit, thorough validation before merge:
 ```toml
 [[pre-commit]]
 lint = "npm run lint"
-
-[[pre-commit]]
 typecheck = "npm run typecheck"
 
 [[pre-merge]]
 test = "npm test"
-
-[[pre-merge]]
 build = "npm run build"
 ```
 
@@ -432,20 +428,14 @@ post-merge = "cargo install --path ."
 
 [[pre-start]]
 install = "npm ci"
-
-[[pre-start]]
 env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
 
 [[pre-commit]]
 format = "cargo fmt -- --check"
-
-[[pre-commit]]
 lint = "cargo clippy -- -D warnings"
 
 [[pre-merge]]
 test = "cargo test"
-
-[[pre-merge]]
 build = "cargo build --release"
 
 [pre-switch]

@@ -131,8 +131,6 @@ All gitignored files are copied by default. To limit what gets copied, create `.
 ```toml
 [[pre-merge]]
 lint = "uv run ruff check"
-
-[[pre-merge]]
 test = "uv run pytest"
 ```
 
