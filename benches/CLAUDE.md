@@ -87,8 +87,10 @@ cargo run -p wt-perf -- invalidate /tmp/wt-perf-typical-8/main
 ### Generating traces
 
 ```bash
-# Generate trace.json for Perfetto/Chrome
-RUST_LOG=debug wt list --branches 2>&1 | grep '\[wt-trace\]' | \
+# Generate trace.json for Perfetto/Chrome. `--progressive` forces TTY-gated
+# events (Skeleton rendered, First result received) to fire even when stdout
+# is piped.
+RUST_LOG=debug wt list --progressive --branches 2>&1 | grep '\[wt-trace\]' | \
   cargo run -p wt-perf -- trace > trace.json
 
 # Open in https://ui.perfetto.dev or chrome://tracing

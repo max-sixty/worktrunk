@@ -28,8 +28,8 @@
 //! # Invalidate caches
 //! cargo run -p wt-perf -- invalidate /path/to/repo
 //!
-//! # Parse trace logs
-//! RUST_LOG=debug wt list 2>&1 | grep wt-trace | cargo run -p wt-perf -- trace
+//! # Parse trace logs (see `wt-perf trace --help` for the full pipeline)
+//! RUST_LOG=debug wt list --progressive 2>&1 | grep wt-trace | cargo run -p wt-perf -- trace
 //! ```
 
 use std::path::{Path, PathBuf};
