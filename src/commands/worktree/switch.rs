@@ -277,8 +277,8 @@ fn resolve_same_repo_ref(
 /// Fetch a same-repo PR/MR's source branch, creating the remote-tracking ref.
 ///
 /// Works even in repos with limited fetch refspecs (single-branch clones, bare
-/// repos) by passing an explicit refspec. Returns the remote name on success.
-fn fetch_same_repo_branch(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result<String> {
+/// repos) by passing an explicit refspec.
+fn fetch_same_repo_branch(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result<()> {
     let remote = remote_ref::find_remote(repo, info)?;
     let branch = &info.source_branch;
     eprintln!(
@@ -291,7 +291,7 @@ fn fetch_same_repo_branch(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Re
     // Use -- to prevent branch names starting with - from being interpreted as flags
     repo.run_command(&["fetch", "--", &remote, &refspec])
         .with_context(|| cformat!("Failed to fetch branch <bold>{}</> from {}", branch, remote))?;
-    Ok(remote)
+    Ok(())
 }
 
 /// Resolve a `--base` value, expanding `pr:`/`mr:` shortcuts to a git ref.
