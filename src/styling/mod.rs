@@ -75,6 +75,11 @@ pub fn verbosity() -> u8 {
 /// When detection fails (piped context, no TTY), returns `usize::MAX` rather than
 /// an arbitrary default. Callers that need width-based formatting will produce
 /// full output, letting the consumer handle truncation.
+///
+/// Does **not** probe the parent process tree — that fallback is expensive
+/// (spawns `ps` up to 10 times plus `stty`) and only useful for `wt statusline`
+/// under Claude Code, where no TTY is inherited. Statusline calls
+/// [`terminal_width_for_statusline`] instead.
 pub fn terminal_width() -> usize {
     // Prefer direct terminal detection (more accurate than COLUMNS which may be stale/wrong)
     // Check stderr first (status messages), then stdout (table output)
@@ -91,15 +96,30 @@ pub fn terminal_width() -> usize {
         return width;
     }
 
-    // Try parent TTY detection (Unix only)
-    // This is used when running in a subprocess without direct TTY access,
-    // such as Claude Code's statusline hook.
+    // Can't detect width — don't truncate, let the consumer handle it
+    usize::MAX
+}
+
+/// Terminal width for `wt statusline`, including a subprocess-compat fallback.
+///
+/// Claude Code invokes `wt statusline` as a subprocess with pipes for stdin,
+/// stdout, and stderr — so [`terminal_width`] always falls through to its
+/// `usize::MAX` sentinel, and the statusline output would overflow the bar.
+/// As a last resort, this walks up to 10 parent processes looking for a TTY
+/// and asks `stty size` for its dimensions, reserving 20% for Claude Code's
+/// own UI messages.
+///
+/// Every other caller should use [`terminal_width`] — the parent-TTY walk is
+/// a statusline-specific workaround, not a general fallback.
+pub fn terminal_width_for_statusline() -> usize {
+    let width = terminal_width();
+    if width != usize::MAX {
+        return width;
+    }
     #[cfg(unix)]
     if let Some(width) = detect_parent_tty_width() {
         return width;
     }
-
-    // Can't detect width — don't truncate, let the consumer handle it
     usize::MAX
 }
 
