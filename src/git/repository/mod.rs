@@ -257,6 +257,15 @@ pub(super) struct RepoCache {
     /// Used by `rev_parse_commit()` to key the persistent `sha_cache` by SHA.
     pub(super) commit_shas: DashMap<String, String>,
 
+    /// Commit details cache: commit SHA -> (timestamp, subject).
+    /// Multiple items sharing the same HEAD commit (e.g., worktrees on main)
+    /// would otherwise each spawn a `git log -1` for the same SHA.
+    pub(super) commit_details: DashMap<String, (i64, String)>,
+    /// In-memory branch diff stats cache: (base_sha, head_sha) -> LineDiff.
+    /// Sits in front of the persistent `sha_cache` to prevent parallel tasks
+    /// from racing through the file-based cache for the same SHA pair.
+    pub(super) diff_stats: DashMap<(String, String), LineDiff>,
+
     // ========== Per-worktree values (keyed by path) ==========
     /// Per-worktree git directory: worktree_path -> canonicalized git dir
     /// (e.g., `.git/worktrees/<name>` for linked worktrees, `.git` for main)
