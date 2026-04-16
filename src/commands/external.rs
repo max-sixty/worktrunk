@@ -28,11 +28,10 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 use clap::error::{ContextKind, ContextValue, ErrorKind};
-use strsim::jaro_winkler;
 use worktrunk::git::WorktrunkError;
 
 use crate::cli::build_command;
-use crate::commands::{alias_names_for_suggestions, try_alias};
+use crate::commands::{alias_names_for_suggestions, did_you_mean, try_alias};
 use crate::enhance_and_exit_error;
 
 /// Handle a `Commands::External` invocation.
@@ -167,30 +166,16 @@ fn run_external(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> R
 }
 
 /// Return visible built-in subcommand names and configured alias names
-/// similar to `name`, sorted by descending confidence. Mirrors clap's
-/// internal `did_you_mean` (Jaro–Winkler similarity with a 0.7 threshold)
-/// so the `tip:` line reads the same as it would have without
-/// `#[command(external_subcommand)]` intercepting the error, plus aliases.
+/// similar to `name`. Dedupe matters here: an alias configured with the
+/// same name as a built-in would otherwise appear twice in the candidate
+/// pool and surface duplicated in the `tip:` line.
 fn similar_subcommands(name: &str, cli_cmd: &clap::Command, alias_names: &[String]) -> Vec<String> {
     let builtins = cli_cmd
         .get_subcommands()
         .filter(|c| !c.is_hide_set())
         .map(|c| c.get_name().to_string())
         .filter(|candidate| candidate != "help");
-    let candidates = builtins.chain(alias_names.iter().cloned());
-    let mut scored: Vec<(f64, String)> = candidates
-        .map(|candidate| (jaro_winkler(name, &candidate), candidate))
-        .filter(|(score, _)| *score > 0.7)
-        .collect();
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    // Dedupe while preserving sort order (an alias with the same name as a
-    // built-in would otherwise appear twice).
-    let mut seen = std::collections::HashSet::new();
-    scored
-        .into_iter()
-        .filter(|(_, n)| seen.insert(n.clone()))
-        .map(|(_, n)| n)
-        .collect()
+    did_you_mean(name, builtins.chain(alias_names.iter().cloned()))
 }
 
 #[cfg(test)]

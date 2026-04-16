@@ -35,7 +35,6 @@ use std::collections::{BTreeMap, HashMap};
 use anyhow::{Context, bail};
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 use color_print::cformat;
-use strsim::jaro_winkler;
 use worktrunk::config::{
     CommandConfig, HookStep, ProjectConfig, UserConfig, append_aliases, template_references_var,
     validate_template_syntax,
@@ -48,6 +47,7 @@ use crate::commands::command_executor::{
     CommandContext, CommandOrigin, FailureStrategy, ForegroundStep, PreparedCommand, PreparedStep,
     build_hook_context, execute_pipeline_foreground, expand_shell_template,
 };
+use crate::commands::did_you_mean;
 use crate::commands::hooks::format_pipeline_summary_from_names;
 use crate::output::DirectivePassthrough;
 
@@ -175,9 +175,6 @@ fn alias_needs_approval(
 /// the visible built-in `wt step` subcommands and the user's configured
 /// aliases — `SuggestedSubcommand` takes arbitrary strings, so aliases show
 /// up in the `tip:` line for typos like `wt step deplyo` → `'deploy'`.
-///
-/// Uses the same `jaro_winkler > 0.7` threshold as clap's internal
-/// `did_you_mean` so the tip line reads identically to the top-level path.
 fn unknown_step_command_exit(name: &str, alias_names: &[&str]) -> ! {
     let mut top = crate::cli::build_command();
     let step_cmd = top
@@ -191,21 +188,13 @@ fn unknown_step_command_exit(name: &str, alias_names: &[&str]) -> ! {
     step_cmd.set_bin_name("wt step");
     let usage = step_cmd.render_usage();
 
-    let mut candidates: Vec<&str> = step_cmd
+    let builtins = step_cmd
         .get_subcommands()
         .filter(|c| !c.is_hide_set())
-        .map(|c| c.get_name())
-        .filter(|&n| n != "help")
-        .collect();
-    candidates.extend(alias_names);
-
-    let mut scored: Vec<(f64, String)> = candidates
-        .into_iter()
-        .map(|candidate| (jaro_winkler(name, candidate), candidate.to_string()))
-        .filter(|(score, _)| *score > 0.7)
-        .collect();
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    let suggestions: Vec<String> = scored.into_iter().map(|(_, n)| n).collect();
+        .map(|c| c.get_name().to_string())
+        .filter(|n| n != "help");
+    let candidates = builtins.chain(alias_names.iter().map(|s| s.to_string()));
+    let suggestions = did_you_mean(name, candidates);
 
     let mut err = clap::Error::new(ErrorKind::InvalidSubcommand).with_cmd(step_cmd);
     err.insert(
