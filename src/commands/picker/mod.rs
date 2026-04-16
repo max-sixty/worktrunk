@@ -72,11 +72,9 @@
 //! to spot where time goes; re-run a few times if you want variance):
 //!
 //! ```bash
-//! RUST_LOG=debug WORKTRUNK_PICKER_DRY_RUN=1 \
-//!   ./target/release/wt -C <repo> switch 2>&1 \
-//!     | grep '\[wt-trace\]' \
-//!     | cargo run -p wt-perf --release -- trace > trace.json
-//! # Then open trace.json in Perfetto, or run the phase-duration SQL query
+//! RUST_LOG=debug ./target/release/wt -C <repo> switch \
+//!   2> >(cargo run -p wt-perf --release -q -- trace > trace.json)
+//! # Open trace.json in Perfetto, or run the phase-duration SQL query
 //! # documented in benches/CLAUDE.md §"What's on the critical path?".
 //! ```
 //!

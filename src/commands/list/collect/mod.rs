@@ -100,9 +100,8 @@
 //! `benches/CLAUDE.md`:
 //!
 //! ```bash
-//! RUST_LOG=debug ./target/release/wt -C <repo> list --progressive 2>&1 \
-//!     | grep '\[wt-trace\]' \
-//!     | cargo run -p wt-perf --release -- trace > trace.json
+//! RUST_LOG=debug ./target/release/wt -C <repo> list --progressive \
+//!   2> >(cargo run -p wt-perf --release -q -- trace > trace.json)
 //! ```
 //!
 //! ## Unified Collection Architecture
