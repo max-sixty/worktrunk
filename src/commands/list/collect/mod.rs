@@ -168,11 +168,8 @@
 //! - `AheadBehind` — batch-optimized via single `git for-each-ref %(ahead-behind:main)`
 //!   (~11ms for all branches); per-branch tasks read the in-memory cache
 //! - `CommittedTreesMatch` — single `git rev-parse` resolving both tree SHAs (~1ms)
-//!
-//! ### Cacheable but uncached
-//!
-//! - `Upstream` — `ahead_behind()` against the tracking branch; same SHA-pair
-//!   pattern as `sha_cache`, just not wired up yet
+//! - `Upstream` — upstream names batch-fetched via single `git for-each-ref
+//!   %(upstream:short)`; per-branch tasks read the in-memory cache
 //!
 //! ### Cached via tree SHA
 //!
@@ -988,6 +985,11 @@ pub fn collect(
     // `git for-each-ref` call. Primes the Repository cache so each
     // `AheadBehindTask` hits the cache instead of spawning its own
     // `git rev-list --count`. One git call replaces N.
+    //
+    // Note: `resolved_refs` and `commit_shas` are already primed by
+    // `list_local_branches()` (called during pre-skeleton phase).
+    // Upstream tracking branches are lazily loaded on first `Branch::upstream()`
+    // call via `OnceCell`.
     //
     // On git < 2.36 (no `%(ahead-behind:)` support) or if default_branch is
     // unknown, skip the batch — individual tasks fall back to direct calls.

@@ -19,18 +19,7 @@
 //! invalidate_caches_auto(&repo_path);
 //! ```
 //!
-//! # CLI Usage
-//!
-//! ```bash
-//! # Set up a benchmark repo
-//! cargo run -p wt-perf -- setup typical-8
-//!
-//! # Invalidate caches
-//! cargo run -p wt-perf -- invalidate /path/to/repo
-//!
-//! # Parse trace logs
-//! RUST_LOG=debug wt list 2>&1 | grep wt-trace | cargo run -p wt-perf -- trace
-//! ```
+//! See `wt-perf --help` for CLI usage.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;

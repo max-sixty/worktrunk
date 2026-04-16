@@ -108,7 +108,7 @@ fn test_wt_perf_trace_empty_input() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("No trace entries found"),
+        stderr.contains("No [wt-trace] entries found"),
         "Should indicate no trace entries"
     );
 }

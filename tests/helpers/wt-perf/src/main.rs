@@ -1,20 +1,6 @@
 //! CLI for worktrunk performance testing and tracing.
 //!
-//! # Usage
-//!
-//! ```bash
-//! # Set up a benchmark repo
-//! wt-perf setup typical-8 --path /tmp/bench
-//!
-//! # Invalidate caches for cold run
-//! wt-perf invalidate /tmp/bench/main
-//!
-//! # Parse trace logs (pipe from wt command)
-//! RUST_LOG=debug wt list 2>&1 | grep wt-trace | wt-perf trace > trace.json
-//!
-//! # Set up picker test environment
-//! wt-perf setup picker-test
-//! ```
+//! Run `wt-perf --help` (and `wt-perf <subcommand> --help`) for usage.
 
 use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
@@ -55,7 +41,9 @@ enum Commands {
     /// Parse trace logs and output Chrome Trace Format JSON
     #[command(after_long_help = r#"EXAMPLES:
   # Generate trace from wt command
-  RUST_LOG=debug wt list 2>&1 | grep wt-trace | wt-perf trace > trace.json
+  # --progressive is required — without it, TTY-gated events (Skeleton
+  # rendered, First result received) don't fire when stdout is a pipe.
+  RUST_LOG=debug wt list --progressive 2>&1 | wt-perf trace > trace.json
 
   # Then either:
   #   - Open trace.json in chrome://tracing or https://ui.perfetto.dev
@@ -75,15 +63,10 @@ enum Commands {
     /// Analyze trace logs for duplicate commands (cache effectiveness)
     #[command(after_long_help = r#"EXAMPLES:
   # Check cache effectiveness for wt list
-  RUST_LOG=debug wt list 2>&1 | grep wt-trace | wt-perf cache-check
+  RUST_LOG=debug wt list --progressive 2>&1 | wt-perf cache-check
 
   # From a file
   wt-perf cache-check trace.log
-
-  # With a benchmark repo
-  cargo run -p wt-perf -- setup typical-8 --persist
-  RUST_LOG=debug wt -C /tmp/wt-perf-typical-8 list 2>&1 | \
-    grep wt-trace | cargo run -p wt-perf -- cache-check
 "#)]
     CacheCheck {
         /// Path to trace log file (reads from stdin if omitted)
@@ -139,7 +122,7 @@ fn main() {
             eprintln!("Created: {}", parts.join(", "));
             eprintln!();
             eprintln!(
-                "  RUST_LOG=debug wt -C {} list 2>&1 | grep wt-trace | wt-perf trace > trace.json",
+                "  RUST_LOG=debug wt -C {} list --progressive 2>&1 | wt-perf trace > trace.json",
                 base_path.display()
             );
             eprintln!("  wt-perf invalidate {}", base_path.display());
@@ -199,10 +182,8 @@ fn read_trace_entries(file: Option<&std::path::Path>) -> Vec<worktrunk::trace::T
         _ => {
             if std::io::stdin().is_terminal() {
                 eprintln!(
-                    "\
-Reading from stdin... (pipe trace data or use Ctrl+D to end)
-
-Hint: RUST_LOG=debug wt list 2>&1 | grep wt-trace | wt-perf <subcommand>"
+                    "Reading from stdin... (pipe trace data or use Ctrl+D to end)\n\
+                     See `wt-perf <subcommand> --help` for the capture pipeline."
                 );
             }
 
@@ -219,15 +200,9 @@ Hint: RUST_LOG=debug wt list 2>&1 | grep wt-trace | wt-perf <subcommand>"
 
     if entries.is_empty() {
         eprintln!(
-            "\
-No trace entries found in input.
-
-Trace lines should look like:
-  [wt-trace] ts=1234567890 tid=3 cmd=\"git status\" dur_us=12300 ok=true
-  [wt-trace] ts=1234567890 tid=3 event=\"Showed skeleton\"
-
-To capture traces, run with RUST_LOG=debug:
-  RUST_LOG=debug wt list 2>&1 | grep wt-trace | wt-perf <subcommand>"
+            "No [wt-trace] entries found in input.\n\
+             Run the target command with RUST_LOG=debug to emit trace records.\n\
+             See `wt-perf <subcommand> --help` for the capture pipeline."
         );
         std::process::exit(1);
     }
