@@ -126,39 +126,22 @@ fn main() {
                 canonicalize(&temp).unwrap()
             };
 
-            // Create repo at base_path (main worktree location)
-            // Worktrees will be siblings: base_path.feature-wt-N
             eprintln!("Creating {} repo...", config);
             create_repo_at(&repo_config, &base_path);
 
-            let repo_name = base_path.file_name().unwrap().to_str().unwrap();
-            let parent_dir = base_path.parent().unwrap();
-            eprintln!();
-            eprintln!("✅ Repository created");
-            eprintln!();
-            eprintln!("Main worktree: {}", base_path.display());
+            let mut parts = vec![format!("main @ {}", base_path.display())];
             if repo_config.worktrees > 1 {
-                eprintln!("Worktrees: {} total", repo_config.worktrees);
-                for i in 1..repo_config.worktrees {
-                    let branch = format!("feature-wt-{i}");
-                    eprintln!(
-                        "  - {}: {}",
-                        branch,
-                        parent_dir.join(format!("{repo_name}.{branch}")).display()
-                    );
-                }
+                parts.push(format!("{} worktrees", repo_config.worktrees));
             }
             if repo_config.branches > 0 {
-                eprintln!("Branches: {}", repo_config.branches);
+                parts.push(format!("{} branches", repo_config.branches));
             }
+            eprintln!("Created: {}", parts.join(", "));
             eprintln!();
-            eprintln!("To run with tracing:");
             eprintln!(
                 "  RUST_LOG=debug wt -C {} list 2>&1 | grep wt-trace | wt-perf trace > trace.json",
                 base_path.display()
             );
-            eprintln!();
-            eprintln!("To invalidate caches (cold run):");
             eprintln!("  wt-perf invalidate {}", base_path.display());
 
             if !persist {
@@ -188,7 +171,7 @@ fn main() {
             }
 
             invalidate_caches_auto(&repo);
-            eprintln!("✅ Caches invalidated for {}", repo.display());
+            eprintln!("Invalidated caches for {}", repo.display());
         }
 
         Commands::Trace { file } => {
@@ -252,70 +235,88 @@ To capture traces, run with RUST_LOG=debug:
     entries
 }
 
-/// Truncate an ASCII string for display, appending "..." if it exceeds `max` chars.
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max - 3])
-    }
-}
-
 /// Analyze trace entries for cache effectiveness.
 ///
-/// Outputs structured JSON to stdout (composable with jq) and a human-readable
-/// report to stderr.
+/// Outputs structured JSON to stdout, composable with jq.
+///
+/// For each (command, context) pair called N times, the first call is "necessary"
+/// and the remaining N-1 are "extra". Wasted time is computed by keeping the
+/// slowest call (likely a cache-miss/cold call) and summing the rest.
 fn cache_check(entries: &[worktrunk::trace::TraceEntry]) {
     use std::collections::{BTreeMap, HashMap, HashSet};
     use worktrunk::trace::TraceEntryKind;
 
     let mut total_commands = 0;
     let mut cmd_counts: HashMap<&str, usize> = HashMap::new();
-    let mut pair_counts: HashMap<(&str, &str), usize> = HashMap::new();
     let mut contexts: HashSet<&str> = HashSet::new();
 
+    // Collect all durations per (command, context) pair
+    let mut pair_durations: HashMap<(&str, &str), Vec<u64>> = HashMap::new();
+
     for entry in entries {
-        if let TraceEntryKind::Command { command, .. } = &entry.kind {
+        if let TraceEntryKind::Command {
+            command, duration, ..
+        } = &entry.kind
+        {
             let ctx = entry.context.as_deref().unwrap_or("(none)");
-            *cmd_counts.entry(command.as_str()).or_insert(0) += 1;
-            *pair_counts.entry((command.as_str(), ctx)).or_insert(0) += 1;
+            *cmd_counts.entry(command.as_str()).or_default() += 1;
+            pair_durations
+                .entry((command.as_str(), ctx))
+                .or_default()
+                .push(duration.as_micros() as u64);
             contexts.insert(ctx);
             total_commands += 1;
         }
     }
 
-    // Build structured duplicates list
-    let mut cmd_ctx_info: BTreeMap<&str, Vec<(&str, usize)>> = BTreeMap::new();
-    for ((cmd, ctx), count) in &pair_counts {
-        if *count > 1 {
-            cmd_ctx_info.entry(cmd).or_default().push((ctx, *count));
+    // Build structured duplicates list: group by command
+    let mut cmd_ctx_info: BTreeMap<&str, Vec<(&str, &Vec<u64>)>> = BTreeMap::new();
+    for ((cmd, ctx), durations) in &pair_durations {
+        if durations.len() > 1 {
+            cmd_ctx_info.entry(cmd).or_default().push((ctx, durations));
         }
     }
 
-    // Build JSON output
     let mut duplicates = Vec::new();
     let mut total_extra = 0usize;
+    let mut total_extra_us = 0u64;
     for (cmd, ctx_list) in &cmd_ctx_info {
-        let max_count = *ctx_list.iter().map(|(_, c)| c).max().unwrap();
-        let extra: usize = ctx_list.iter().map(|(_, c)| c - 1).sum();
+        let max_count = ctx_list.iter().map(|(_, d)| d.len()).max().unwrap();
+        let extra: usize = ctx_list.iter().map(|(_, d)| d.len() - 1).sum();
         total_extra += extra;
+
+        // Wasted time: for each context, keep the slowest call, sum the rest
+        let extra_us: u64 = ctx_list
+            .iter()
+            .map(|(_, durations)| {
+                let max = durations.iter().max().unwrap();
+                durations.iter().sum::<u64>() - max
+            })
+            .sum();
+        total_extra_us += extra_us;
+
         let contexts: Vec<_> = ctx_list
             .iter()
-            .map(|(ctx, count)| serde_json::json!({"context": ctx, "count": count}))
+            .map(|(ctx, durations)| {
+                let total_us: u64 = durations.iter().sum();
+                serde_json::json!({
+                    "context": ctx,
+                    "count": durations.len(),
+                    "total_us": total_us,
+                })
+            })
             .collect();
         duplicates.push(serde_json::json!({
             "command": cmd,
             "max_per_context": max_count,
             "extra_calls": extra,
+            "extra_us": extra_us,
             "contexts": contexts,
         }));
     }
-    duplicates.sort_by(|a, b| {
-        b["max_per_context"]
-            .as_u64()
-            .cmp(&a["max_per_context"].as_u64())
-    });
+    duplicates.sort_by(|a, b| b["extra_us"].as_u64().cmp(&a["extra_us"].as_u64()));
 
+    let total_time_us: u64 = pair_durations.values().flat_map(|d| d.iter()).sum();
     let dup_count = cmd_counts.values().filter(|c| **c > 1).count();
     let dup_total: usize = cmd_counts.values().filter(|c| **c > 1).map(|c| c - 1).sum();
 
@@ -323,39 +324,12 @@ fn cache_check(entries: &[worktrunk::trace::TraceEntry]) {
         "total_commands": total_commands,
         "unique_commands": cmd_counts.len(),
         "contexts": contexts.len(),
+        "total_time_us": total_time_us,
         "duplicated_commands": dup_count,
         "total_extra_calls": dup_total,
         "same_context_duplicates": duplicates,
         "same_context_extra_calls": total_extra,
+        "same_context_extra_us": total_extra_us,
     });
     println!("{}", serde_json::to_string_pretty(&output).unwrap());
-
-    // Human-readable report to stderr
-    if !cmd_ctx_info.is_empty() {
-        eprintln!(
-            "\
-=== Same-context duplicates (potential cache misses) ===
-"
-        );
-        for dup in &duplicates {
-            eprintln!(
-                "  {} (max {}x/context, {} extra)",
-                truncate(dup["command"].as_str().unwrap(), 70),
-                dup["max_per_context"],
-                dup["extra_calls"]
-            );
-        }
-        eprintln!();
-        eprintln!("  Total extra calls: {total_extra}");
-    }
-
-    eprintln!(
-        "\
-\n=== Summary ===
-
-  {total_commands} commands, {} unique, {} contexts
-  {dup_count} duplicated ({dup_total} extra calls)",
-        cmd_counts.len(),
-        contexts.len()
-    );
 }
