@@ -112,15 +112,21 @@ pub fn terminal_width() -> usize {
 /// Every other caller should use [`terminal_width`] — the parent-TTY walk is
 /// a statusline-specific workaround, not a general fallback.
 pub fn terminal_width_for_statusline() -> usize {
-    let width = terminal_width();
-    if width != usize::MAX {
-        return width;
-    }
+    statusline_width_fallback(terminal_width())
+}
+
+/// Apply the parent-TTY fallback to a width returned by [`terminal_width`].
+///
+/// Split from [`terminal_width_for_statusline`] so tests can exercise the
+/// fallback path without racing the process-wide `COLUMNS` env var.
+fn statusline_width_fallback(base: usize) -> usize {
     #[cfg(unix)]
-    if let Some(width) = detect_parent_tty_width() {
+    if base == usize::MAX
+        && let Some(width) = detect_parent_tty_width()
+    {
         return width;
     }
-    usize::MAX
+    base
 }
 
 /// Detect terminal width by walking up the process tree to find a TTY.
@@ -202,6 +208,29 @@ mod tests {
     use super::*;
     use anstyle::Style;
     use unicode_width::UnicodeWidthStr;
+
+    #[test]
+    fn statusline_width_fallback_returns_base_when_known() {
+        // Fast path: if `terminal_width()` found a real width, use it as-is.
+        assert_eq!(statusline_width_fallback(80), 80);
+        assert_eq!(statusline_width_fallback(1), 1);
+    }
+
+    #[test]
+    fn statusline_width_fallback_probes_parent_tty_when_unknown() {
+        // Slow path: `usize::MAX` signals "direct detection failed" — the
+        // helper then walks the process tree. Whether a TTY is found depends
+        // on the test environment, so only assert the return type.
+        let _ = statusline_width_fallback(usize::MAX);
+    }
+
+    #[test]
+    fn terminal_width_for_statusline_returns_a_width() {
+        // End-to-end smoke test. Under cargo test, `COLUMNS=80` is set in
+        // `.cargo/config.toml`, so the fast path returns 80.
+        let width = terminal_width_for_statusline();
+        assert!(width > 0);
+    }
 
     #[test]
     fn test_toml_formatting() {
