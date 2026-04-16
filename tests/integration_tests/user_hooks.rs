@@ -3100,3 +3100,104 @@ setup = "'{wt_toml}' switch --create hook-created --no-hooks"
         "inner wt should not warn about shell integration being uninstalled, got: {stderr}",
     );
 }
+
+// ============================================================================
+// Pre-* Pipeline Concurrent Execution Tests
+// ============================================================================
+
+/// Pipeline blocks in pre-* hooks run their concurrent commands concurrently.
+/// The second block has two commands — both should produce output with prefixed
+/// labels (the concurrent execution style).
+#[rstest]
+fn test_pre_merge_pipeline_concurrent_block(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[[pre-merge]]
+setup = "echo SETUP"
+
+[[pre-merge]]
+lint = "echo LINT"
+test = "echo TEST"
+"#,
+    );
+    repo.commit("Add pipeline pre-merge hooks");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["hook", "pre-merge", "--yes"]);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "pre-merge pipeline should succeed.\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // All three commands should have run.
+    assert!(stderr.contains("SETUP"), "setup step should run: {stderr}");
+    assert!(stderr.contains("LINT"), "lint command should run: {stderr}");
+    assert!(stderr.contains("TEST"), "test command should run: {stderr}");
+
+    // Concurrent commands get prefixed labels (e.g., "lint │ LINT").
+    // Serial commands do not. The "│" separator confirms the concurrent path.
+    assert!(
+        stderr.contains("│ LINT") && stderr.contains("│ TEST"),
+        "concurrent block commands should have prefixed labels: {stderr}",
+    );
+}
+
+/// Deprecated single-table form (`[pre-merge]`) still runs commands serially,
+/// even though the commands are parsed as a `Concurrent` step.
+#[rstest]
+fn test_pre_merge_deprecated_table_runs_serially(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[pre-merge]
+lint = "echo LINT"
+test = "echo TEST"
+"#,
+    );
+    repo.commit("Add table-form pre-merge hooks");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["hook", "pre-merge", "--yes"]);
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("LINT") && stderr.contains("TEST"),
+        "both commands should run: {stderr}",
+    );
+    // Serial execution does not use the "│" prefix labels.
+    assert!(
+        !stderr.contains("│ LINT") && !stderr.contains("│ TEST"),
+        "deprecated table form should run serially (no prefix labels): {stderr}",
+    );
+}
+
+/// A single `[[pre-merge]]` block (one block, multiple entries) runs
+/// concurrently — the `[[]]` syntax is the pipeline form even with one block.
+#[rstest]
+fn test_pre_merge_single_pipeline_block_runs_concurrently(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[[pre-merge]]
+lint = "echo LINT"
+test = "echo TEST"
+"#,
+    );
+    repo.commit("Add single-block pipeline pre-merge hooks");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["hook", "pre-merge", "--yes"]);
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "single-block pipeline should succeed.\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("│ LINT") && stderr.contains("│ TEST"),
+        "single [[pre-merge]] block should run concurrently: {stderr}",
+    );
+}

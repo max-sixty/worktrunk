@@ -64,6 +64,9 @@ pub enum CommandOrigin {
 pub struct ForegroundStep {
     pub step: PreparedStep,
     pub origin: CommandOrigin,
+    /// Whether `Concurrent` steps actually run concurrently. When `false`,
+    /// concurrent commands execute serially (deprecated pre-* table form).
+    pub concurrent: bool,
 }
 
 /// Controls how foreground execution responds to command failures.
@@ -272,11 +275,10 @@ pub(crate) fn command_summary_name(name: Option<&str>, source: HookSource) -> St
 /// Handles serial/concurrent step execution, per-command announcement, lazy
 /// template resolution, and origin-aware error handling.
 ///
-/// When `concurrent` is true, `Concurrent` steps spawn threads via
-/// `thread::scope`. When false (foreground hooks), `Concurrent` steps execute
-/// serially — a compat fallback for the **deprecated** pre-hook table form.
-/// The canonical pre-* hook shape is a list of `Single` steps; concurrent
-/// execution is reserved for aliases and the background pipeline runner.
+/// Each `ForegroundStep` carries a `concurrent` flag. When true, `Concurrent`
+/// steps spawn threads via `thread::scope`. When false (deprecated pre-*
+/// single-table form), `Concurrent` steps execute serially. Pipeline configs
+/// (`[[hook]]` blocks), aliases, and post-* hooks set `concurrent: true`.
 ///
 /// TODO(unify-hook-alias): this function centralized dispatch but left four
 /// per-origin branch points. Follow-ups to collapse them:
@@ -294,7 +296,6 @@ pub fn execute_pipeline_foreground(
     wt_path: &Path,
     directives: &DirectivePassthrough,
     failure_strategy: FailureStrategy,
-    concurrent: bool,
 ) -> anyhow::Result<()> {
     for fg_step in steps {
         match &fg_step.step {
@@ -309,7 +310,7 @@ pub fn execute_pipeline_foreground(
                 )?;
             }
             PreparedStep::Concurrent(cmds) => {
-                if !concurrent {
+                if !fg_step.concurrent {
                     for cmd in cmds {
                         run_one_command(
                             cmd,
@@ -356,20 +357,19 @@ fn run_concurrent_group(
         announce_command(cmd, origin);
     }
 
-    // The concurrent path requires `lazy_template` so expansion sees the
-    // fresh git-config state at execution time (prior pipeline steps may
-    // have set `vars.*`). Alias prep sets this unconditionally; hook prep
-    // will when concurrent hooks ship.
+    // Commands with `lazy_template` are re-expanded at execution time so
+    // they see fresh git-config state (e.g., `vars.*` set by earlier steps).
+    // Commands without it were already expanded at prep time — use `expanded`.
     let mut expanded: Vec<String> = Vec::with_capacity(cmds.len());
     for cmd in cmds {
-        let template = cmd
-            .lazy_template
-            .as_ref()
-            .expect("concurrent group commands must carry a lazy_template");
-        let label = expansion_label(cmd, origin);
-        let context: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
-            .context("failed to deserialize context_json")?;
-        expanded.push(expand_shell_template(template, &context, repo, &label)?);
+        if let Some(template) = &cmd.lazy_template {
+            let label = expansion_label(cmd, origin);
+            let context: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
+                .context("failed to deserialize context_json")?;
+            expanded.push(expand_shell_template(template, &context, repo, &label)?);
+        } else {
+            expanded.push(cmd.expanded.clone());
+        }
     }
 
     let log_labels: Vec<Option<String>> = cmds
@@ -377,10 +377,8 @@ fn run_concurrent_group(
         .map(|cmd| command_log_label(cmd, origin))
         .collect();
 
-    // Alias tables always produce named commands (TOML keys become `name`),
-    // and the concurrent path is alias-only today — so `cmd.name` is always
-    // `Some` here. When foreground concurrent hooks eventually ship, this
-    // will need an origin-aware fallback; for now, require the name.
+    // Both alias tables and hook tables produce named commands (TOML keys
+    // become `name`), so `cmd.name` is always `Some` here.
     let labels: Vec<&str> = cmds
         .iter()
         .map(|cmd| {

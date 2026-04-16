@@ -77,10 +77,12 @@ impl Command {
 
 /// A step in a hook pipeline.
 ///
-/// The execution model depends on the hook type:
+/// The execution model depends on the hook type and config form:
 /// - **Post-* hooks**: `Single` steps run serially, `Concurrent` steps spawn in parallel.
 ///   The entire pipeline runs in the background as one detached process.
-/// - **Pre-* hooks**: All commands run serially regardless of step type.
+/// - **Pre-* hooks (pipeline form)**: `Single` steps run serially, `Concurrent` steps
+///   run in parallel. The pipeline blocks until complete.
+/// - **Pre-* hooks (deprecated table form)**: All commands run serially.
 #[derive(Debug, Clone, PartialEq)]
 pub enum HookStep {
     /// A single command (from a string in a list, or a single-entry map).
@@ -100,6 +102,10 @@ pub enum HookStep {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommandConfig {
     steps: Vec<HookStep>,
+    /// Whether this config was deserialized from a pipeline form (TOML array:
+    /// `[[hook]]` blocks or inline `hook = [...]`). Non-pipeline forms are a
+    /// bare string (`hook = "cmd"`) or a single table (`[hook]`).
+    pipeline: bool,
 }
 
 impl CommandConfig {
@@ -107,6 +113,7 @@ impl CommandConfig {
     pub fn single(template: impl Into<String>) -> Self {
         Self {
             steps: vec![HookStep::Single(Command::new(None, template.into()))],
+            pipeline: false,
         }
     }
 
@@ -118,10 +125,10 @@ impl CommandConfig {
         })
     }
 
-    /// Returns true if this config uses a pipeline (list form with multiple steps).
-    /// Single-step configs (string or map) return false.
+    /// Whether this config uses a pipeline form (`[[hook]]` blocks or inline array).
+    /// A single `[[hook]]` block counts as a pipeline even though it has one step.
     pub fn is_pipeline(&self) -> bool {
-        self.steps.len() > 1
+        self.pipeline
     }
 
     /// Returns the pipeline steps for execution.
@@ -135,7 +142,10 @@ impl CommandConfig {
     pub fn merge_append(&self, other: &Self) -> Self {
         let mut steps = self.steps.clone();
         steps.extend(other.steps.iter().cloned());
-        Self { steps }
+        Self {
+            steps,
+            pipeline: self.pipeline || other.pipeline,
+        }
     }
 }
 
@@ -262,6 +272,7 @@ impl<'de> Deserialize<'de> for CommandConfig {
             fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
                 Ok(CommandConfig {
                     steps: vec![HookStep::Single(Command::new(None, v.to_string()))],
+                    pipeline: false,
                 })
             }
 
@@ -284,7 +295,10 @@ impl<'de> Deserialize<'de> for CommandConfig {
                         }
                     }
                 }
-                Ok(CommandConfig { steps })
+                Ok(CommandConfig {
+                    steps,
+                    pipeline: true,
+                })
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -303,6 +317,7 @@ impl<'de> Deserialize<'de> for CommandConfig {
                     .collect();
                 Ok(CommandConfig {
                     steps: vec![HookStep::Concurrent(commands)],
+                    pipeline: false,
                 })
             }
         }
@@ -722,6 +737,7 @@ broken = 42
                     None,
                     "npm install".to_string(),
                 ))],
+                pipeline: false,
             },
         };
 
@@ -741,6 +757,7 @@ broken = 42
                     Command::new(Some("build".to_string()), "cargo build".to_string()),
                     Command::new(Some("test".to_string()), "cargo test".to_string()),
                 ])],
+                pipeline: false,
             },
         };
 
@@ -767,6 +784,7 @@ broken = 42
                         Command::new(Some("lint".to_string()), "npm run lint".to_string()),
                     ]),
                 ],
+                pipeline: true,
             },
         };
 
@@ -780,6 +798,7 @@ broken = 42
                 None,
                 "echo hello".to_string(),
             ))],
+            pipeline: false,
         };
 
         #[derive(Serialize, Deserialize)]
@@ -805,6 +824,7 @@ broken = 42
                 Command::new(Some("a".to_string()), "echo a".to_string()),
                 Command::new(Some("b".to_string()), "echo b".to_string()),
             ])],
+            pipeline: false,
         };
 
         #[derive(Serialize, Deserialize)]
@@ -834,6 +854,7 @@ broken = 42
                 ]),
                 HookStep::Single(Command::new(None, "cmd4".to_string())),
             ],
+            pipeline: true,
         };
 
         let cmds: Vec<_> = config.commands().collect();
@@ -852,12 +873,14 @@ broken = 42
     fn test_merge_append_steps() {
         let base = CommandConfig {
             steps: vec![HookStep::Single(Command::new(None, "step1".to_string()))],
+            pipeline: false,
         };
         let overlay = CommandConfig {
             steps: vec![HookStep::Concurrent(vec![
                 Command::new(Some("a".to_string()), "step2a".to_string()),
                 Command::new(Some("b".to_string()), "step2b".to_string()),
             ])],
+            pipeline: false,
         };
 
         let merged = base.merge_append(&overlay);
@@ -883,12 +906,14 @@ broken = 42
                 None,
                 "npm install".to_string(),
             ))],
+            pipeline: false,
         };
         let per_project = CommandConfig {
             steps: vec![HookStep::Concurrent(vec![Command::new(
                 Some("setup".to_string()),
                 "echo setup".to_string(),
             )])],
+            pipeline: false,
         };
 
         let merged = global.merge_append(&per_project);

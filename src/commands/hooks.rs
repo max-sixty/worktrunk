@@ -69,6 +69,7 @@ pub fn prepare_sourced_steps(
             continue;
         }
 
+        let is_pipeline = config.is_pipeline();
         let steps = prepare_steps(config, ctx, extra_vars, hook_type, source)?;
         for step in steps {
             if let Some(filtered) = filter_step_by_name(step, &parsed_filters) {
@@ -77,6 +78,7 @@ pub fn prepare_sourced_steps(
                     source,
                     hook_type,
                     display_path: display_path.clone(),
+                    is_pipeline,
                 });
             }
         }
@@ -139,6 +141,10 @@ pub struct SourcedStep {
     pub source: HookSource,
     pub hook_type: HookType,
     pub display_path: Option<PathBuf>,
+    /// Whether this step came from a pipeline config (`[[hook]]` blocks).
+    /// Pipeline `Concurrent` steps run concurrently; non-pipeline `Concurrent`
+    /// steps (deprecated single-table form) run serially.
+    pub is_pipeline: bool,
 }
 
 /// Format a pipeline summary from per-step command names.
@@ -502,9 +508,13 @@ pub fn run_hook_with_filter(
     let directives = DirectivePassthrough::inherit_from_env();
 
     // Convert SourcedSteps → ForegroundSteps for the shared executor.
+    // Pipeline configs (`[[hook]]` blocks) get concurrent execution within each
+    // block. Non-pipeline configs (deprecated single-table `[hook]` form) run
+    // their commands serially.
     let foreground_steps: Vec<ForegroundStep> = sourced_steps
         .into_iter()
         .map(|sourced| ForegroundStep {
+            concurrent: sourced.is_pipeline,
             step: sourced.step,
             origin: CommandOrigin::Hook {
                 source: sourced.source,
@@ -514,18 +524,12 @@ pub fn run_hook_with_filter(
         })
         .collect();
 
-    // Foreground hooks always execute serially, even when the prepared step is
-    // `Concurrent`. That input shape is the deprecated pre-hook table form — we
-    // still accept it but run it sequentially ("for pre-* hooks, commands in a
-    // table run sequentially", `src/cli/mod.rs`). Concurrent execution is
-    // reserved for aliases and the background pipeline runner (`run_pipeline.rs`).
     execute_pipeline_foreground(
         &foreground_steps,
         ctx.repo,
         ctx.worktree_path,
         &directives,
         failure_strategy,
-        false,
     )
 }
 
@@ -605,6 +609,7 @@ pub(crate) fn prepare_background_hooks(
 
     for (source, config) in sources {
         let Some(config) = config else { continue };
+        let is_pipeline = config.is_pipeline();
         let steps = prepare_steps(config, ctx, extra_vars, hook_type, source)?;
         if steps.is_empty() {
             continue;
@@ -617,6 +622,7 @@ pub(crate) fn prepare_background_hooks(
                     source,
                     hook_type,
                     display_path: display_path.clone(),
+                    is_pipeline,
                 })
                 .collect(),
         );
@@ -691,6 +697,7 @@ mod tests {
             source: HookSource::User,
             hook_type: worktrunk::HookType::PostStart,
             display_path: None,
+            is_pipeline: false,
         }
     }
 

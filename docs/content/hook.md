@@ -251,7 +251,7 @@ build = "npm run build"
 lint = "npm run lint"
 ```
 
-When one command depends on another — `npm run build` needs `npm install` to finish first — use `[[hook]]` blocks to run steps in order:
+When one command depends on another — `npm run build` needs `npm install` to finish first — use `[[hook]]` blocks to run steps in order. A failing step aborts the rest of the pipeline:
 
 ```toml
 # Two blocks, run in order.
@@ -272,12 +272,6 @@ In summary, the bracket count tracks the shape:
 - `post-start = "npm install"` — one command
 - `[post-start]` — one section of concurrent commands
 - `[[post-start]]` — one of multiple sections, run in order
-
-## How it works
-
-Steps run in order. A failing step aborts the pipeline — later steps don't run. A multi-entry map spawns its commands concurrently and waits for all to complete before the next step.
-
-Pre-* hooks ignore pipeline structure — all commands run serially regardless, since pre-* hooks are blocking by nature.
 
 ## When to use pipelines
 

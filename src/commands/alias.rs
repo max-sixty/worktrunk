@@ -386,6 +386,7 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
             ForegroundStep {
                 step: prepared,
                 origin: origin.clone(),
+                concurrent: true,
             }
         })
         .collect();
@@ -396,7 +397,6 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
         &wt_path,
         &directives,
         FailureStrategy::FailFast,
-        true, // aliases support concurrent execution
     )
 }
 
