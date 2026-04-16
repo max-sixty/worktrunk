@@ -11,13 +11,13 @@ Worktrunk has three extension mechanisms.
 
 **[Hooks](#hooks)** run shell commands at lifecycle events — creating a worktree, merging, removing. They're configured in TOML and run automatically.
 
-**[Aliases](#aliases)** define reusable commands invoked via `wt step <name>`. Same template variables as hooks, but triggered manually.
+**[Aliases](#aliases)** define reusable commands invoked as `wt <name>`. Same template variables as hooks, but triggered manually.
 
 **[External subcommands](#external-subcommands)** are standalone executables. Drop `wt-foo` on `PATH` and it becomes `wt foo`. No configuration needed.
 
 | | Hooks | Aliases | External subcommands |
 |---|---|---|---|
-| **Trigger** | Automatic (lifecycle events) | Manual (`wt step <name>`) | Manual (`wt <name>`) |
+| **Trigger** | Automatic (lifecycle events) | Manual (`wt <name>`) | Manual (`wt <name>`) |
 | **Defined in** | TOML config | TOML config | Any executable on `PATH` |
 | **Template variables** | Yes | Yes | No |
 | **Shareable via repo** | `.config/wt.toml` | `.config/wt.toml` | Distribute the binary |
@@ -108,7 +108,9 @@ See [Tips & Patterns](@/tips-patterns.md) for more recipes: dev server per workt
 
 ## Aliases
 
-Aliases are custom commands invoked via `wt step <name>`. They share the same template variables and approval model as hooks.
+<span class="badge-experimental"></span>
+
+Aliases are custom commands invoked as `wt <name>`. They share the same template variables and approval model as hooks.
 
 ```toml
 [aliases]
@@ -116,7 +118,11 @@ deploy = "make deploy BRANCH={{ branch }}"
 open = "open http://localhost:{{ branch | hash_port }}"
 ```
 
-{{ terminal(cmd="wt step deploy|||wt step deploy --dry-run|||wt step deploy --env=staging") }}
+{{ terminal(cmd="wt deploy|||wt deploy --dry-run|||wt deploy --env=staging") }}
+
+`wt deploy` resolves `deploy` against configured aliases first, then falls through to a `wt-deploy` PATH binary if no alias matches. Built-in subcommands always take precedence — an alias named `list` or `switch` is unreachable.
+
+Hyphens in variable names are canonicalized to underscores at parse time, so `--my-var=value` is referenced as `{{ my_var }}` in templates. This lets flags use natural kebab-case while avoiding the minijinja parser's interpretation of `{{ my-var }}` as subtraction.
 
 An `up` alias that fetches all remotes and rebases each worktree onto its upstream:
 
@@ -131,9 +137,29 @@ git fetch --all --prune && wt step for-each -- '
 ''''
 ```
 
-When both user and project config define the same alias name, both run — user first, then project. Project-config aliases require approval, same as project hooks.
+### Multi-step pipelines
 
-Alias names that collide with built-in step commands (`commit`, `squash`, `rebase`, etc.) are shadowed by the built-in.
+Multi-step aliases run commands in order using `[[aliases.NAME]]` blocks. Each block is one step; multiple keys within a block run concurrently.
+
+```toml
+[[aliases.release]]
+test = "cargo test"
+
+[[aliases.release]]
+build = "cargo build --release"
+package = "cargo package --no-verify"
+
+[[aliases.release]]
+publish = "cargo publish"
+```
+
+`test` runs first, then `build` and `package` run together, then `publish` runs last. A step failure aborts the remaining steps.
+
+### Sources and approval
+
+When both user and project config define the same alias name, both run — user first, then project. Project-config aliases require approval on first run, same as project hooks. User-config aliases are trusted.
+
+Inside an alias body, an inner `wt switch` (or `wt switch --create`) passes its `cd` through to the parent shell, so an alias wrapping `wt switch --create` lands the shell in the new worktree just like running it directly.
 
 ### Recipe: move or copy in-progress changes to a new worktree
 
@@ -152,11 +178,11 @@ fi
 '''
 ```
 
-Run with `wt step move-changes --to=feature-xyz`. The leading guard avoids touching a pre-existing stash when nothing is in flight; otherwise, `git stash push --include-untracked` captures everything, `wt switch --create` makes the new worktree, and `git stash pop --index` (via `--execute`) restores the changes there with the staged/unstaged split intact.
+Run with `wt move-changes --to=feature-xyz`. The leading guard avoids touching a pre-existing stash when nothing is in flight; otherwise, `git stash push --include-untracked` captures everything, `wt switch --create` makes the new worktree, and `git stash pop --index` (via `--execute`) restores the changes there with the staged/unstaged split intact.
 
 To copy instead of move (source keeps its changes too), add `git stash apply --index --quiet` right after the push. For staged-only flows, swap the stash for `git diff --cached` written to a tempfile and applied with `git apply --index` in the new worktree — that handles files where staged and unstaged hunks overlap on the same lines, where `git stash --staged` falls short.
 
-Because an inner `wt switch --create` inside an alias [propagates its `cd` to the parent shell](@/step.md#aliases), the alias drops you in the new worktree directly.
+Because an inner `wt switch --create` inside an alias propagates its `cd` to the parent shell, the alias drops you in the new worktree directly.
 
 ### Recipe: tail a specific hook log
 
@@ -173,21 +199,19 @@ tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name | sani
 '''
 ```
 
-Run with `wt step hook-log --name=<hook-name>` (e.g., `wt step hook-log --name=server`) to tail the current worktree's `post-start` hook of that name. The `sanitize_hash` filter produces a filesystem-safe name with a hash suffix that keeps distinct originals unique — the same transformation Worktrunk applies on disk — so the alias resolves the right log even for branch and hook names containing characters like `/`.
-
-See [`wt step` — Aliases](@/step.md#aliases) for the full reference.
+Run with `wt hook-log --name=<hook-name>` (e.g., `wt hook-log --name=server`) to tail the current worktree's `post-start` hook of that name. The `sanitize_hash` filter produces a filesystem-safe name with a hash suffix that keeps distinct originals unique — the same transformation Worktrunk applies on disk — so the alias resolves the right log even for branch and hook names containing characters like `/`.
 
 ## External subcommands
 
 <span class="badge-experimental"></span>
 
-Any executable named `wt-<name>` on `PATH` becomes available as `wt <name>` — the same pattern git uses for `git-foo`. Built-in commands always take precedence.
+Any executable named `wt-<name>` on `PATH` becomes available as `wt <name>` — the same pattern git uses for `git-foo`. Built-in commands and configured [aliases](#aliases) take precedence — `wt foo` resolves to the alias if `foo` is configured, otherwise to `wt-foo`.
 
 {{ terminal(cmd="wt sync origin              # runs: wt-sync origin|||wt -C /tmp/repo sync        # -C is forwarded as the child's working directory") }}
 
 Arguments pass through verbatim, stdio is inherited, and the child's exit code propagates unchanged. External subcommands don't have access to template variables.
 
-If nothing matches — no built-in, no nested subcommand, no `wt-<name>` on `PATH` — wt prints a "not a wt command" error with a typo suggestion.
+If nothing matches — no built-in, no alias, no `wt-<name>` on `PATH` — wt prints a "not a wt command" error with a typo suggestion.
 
 ### Examples
 

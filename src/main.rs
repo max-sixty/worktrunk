@@ -944,17 +944,18 @@ fn parse_cli() -> Option<Cli> {
         return None;
     }
 
-    // Apply -C / --config before help handling so `wt -C other step --help`
+    // Apply -C / --config before help handling so `wt -C other --help`
     // and `wt --config custom.toml step --help` resolve aliases against the
     // requested repo and user config (not the process cwd / default config).
-    // The same early parse also tells us whether this is `wt step` help, so
-    // the splice path in `augment_step_help` has no separate arg scanner.
-    let (directory, config, is_step_help) = parse_early_globals();
+    // The same early parse also tells us whether this is help for the top
+    // level or `wt step`, so the splice path in `augment_help` has no
+    // separate arg scanner.
+    let (directory, config, alias_help_context) = parse_early_globals();
     apply_global_options(directory, config);
 
     // Handle --help with pager before clap processes it.
     // Exits the process on a help/version/doc request; otherwise returns.
-    help::maybe_handle_help_with_pager(is_step_help);
+    help::maybe_handle_help_with_pager(alias_help_context);
 
     // TODO: Enhance error messages to show possible values for missing enum arguments
     // Currently `wt config shell init` doesn't show available shells, but `wt config shell init invalid` does.
@@ -982,32 +983,40 @@ fn apply_global_options(directory: Option<std::path::PathBuf>, config: Option<st
 }
 
 /// Parse global options (`-C`, `--config`) and detect whether this invocation
-/// is `wt step` help, in a single pass against the real `Cli` definition.
+/// renders help that should include the configured aliases — in a single pass
+/// against the real `Cli` definition.
 ///
 /// Uses `ignore_errors(true)` so unknown args, missing values, and `--help`
 /// don't abort parsing — we just read what matched. This lets `wt -C other
-/// step --help` apply `-C` before the help path renders, so `augment_step_help`
+/// --help` apply `-C` before the help path renders, so `augment_help`
 /// resolves aliases against the requested repo instead of the process cwd.
 ///
 /// Using `cli::build_command()` rather than a hand-rolled mini-command keeps
 /// the global-flag definitions in one place (the derive on `Cli`), so renaming
 /// `-C` or adding a value-taking global doesn't silently desync this path.
-fn parse_early_globals() -> (Option<std::path::PathBuf>, Option<std::path::PathBuf>, bool) {
+fn parse_early_globals() -> (
+    Option<std::path::PathBuf>,
+    Option<std::path::PathBuf>,
+    Option<commands::HelpContext>,
+) {
     let cmd = cli::build_command()
         .ignore_errors(true)
         .disable_help_flag(true);
     let Ok(matches) = cmd.try_get_matches_from(std::env::args_os()) else {
-        return (None, None, false);
+        return (None, None, None);
     };
     let directory = matches.get_one::<std::path::PathBuf>("directory").cloned();
     let config = matches.get_one::<std::path::PathBuf>("config").cloned();
-    // `wt step --help` (or `-h`) lands here with the `step` subcommand matched
-    // and nothing past it. `wt step promote --help` has a nested subcommand
-    // and should render plain clap help without the aliases splice.
-    let is_step_help = matches
-        .subcommand()
-        .is_some_and(|(name, sub)| name == "step" && sub.subcommand_name().is_none());
-    (directory, config, is_step_help)
+    // Top-level help: `wt --help` (or `-h`, or bare `wt` via `arg_required_else_help`)
+    // lands here with no subcommand matched. Step help: `wt step --help` (or
+    // `-h`, or bare `wt step`) matches `step` with nothing past it. Other
+    // subcommands' help renders plain clap output without the aliases splice.
+    let alias_help_context = match matches.subcommand() {
+        None => Some(commands::HelpContext::TopLevel),
+        Some(("step", sub)) if sub.subcommand_name().is_none() => Some(commands::HelpContext::Step),
+        _ => None,
+    };
+    (directory, config, alias_help_context)
 }
 
 fn init_command_log(command_line: &str) {

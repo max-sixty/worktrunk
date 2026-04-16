@@ -2,22 +2,25 @@
 //!
 //! When the user runs `wt foo` and `foo` is not a built-in subcommand, clap
 //! captures the invocation via the `Commands::External` variant. This module
-//! looks for an executable named `wt-foo` on `PATH` and runs it with the
-//! remaining arguments, mirroring how `git foo` finds `git-foo`.
+//! resolves it in this order:
 //!
-//! Behaviour:
-//!
-//! 1. Resolve `wt-<name>` via `which`. If found, run it with the remaining
-//!    args, inheriting stdio, and propagate the exit code.
-//! 2. If not found, synthesize clap's native `InvalidSubcommand` error and
-//!    route it through `enhance_and_exit_error` so the output matches what
-//!    clap would have produced without `external_subcommand` — same
-//!    formatting, suggestions, Usage line, and nested-subcommand tip (e.g.
-//!    `wt squash` → `perhaps wt step squash?`).
+//! 1. **Alias**: if `foo` is configured as an alias in user/project config,
+//!    run it via the same path as `wt step foo`. User config wins over
+//!    `wt-<name>` PATH binaries — aliases are how users customize wt, so the
+//!    user's intent should take precedence.
+//! 2. **PATH binary**: resolve `wt-<name>` via `which`. If found, run it with
+//!    the remaining args, inheriting stdio, and propagate the exit code.
+//!    Mirrors how `git foo` finds `git-foo`.
+//! 3. Otherwise, synthesize clap's native `InvalidSubcommand` error (with
+//!    aliases included in the "did you mean" candidates) and route it through
+//!    `enhance_and_exit_error` so the output matches what clap would have
+//!    produced without `external_subcommand` — same formatting, suggestions,
+//!    Usage line, and nested-subcommand tip (e.g. `wt squash` →
+//!    `perhaps wt step squash?`).
 //!
 //! Built-in subcommands always take precedence — clap only dispatches
 //! `Commands::External` when no built-in matched, so there is no way for an
-//! external `wt-switch` to shadow `wt switch`.
+//! alias or external `wt-switch` to shadow `wt switch`.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -29,6 +32,7 @@ use strsim::jaro_winkler;
 use worktrunk::git::WorktrunkError;
 
 use crate::cli::build_command;
+use crate::commands::{alias_names_for_suggestions, try_alias};
 use crate::enhance_and_exit_error;
 
 /// Handle a `Commands::External` invocation.
@@ -63,24 +67,37 @@ pub(crate) fn handle_external_command(
         })?
         .to_owned();
 
-    // Try the PATH lookup first. If a `wt-<name>` binary exists, it takes
-    // precedence over clap's "unrecognized subcommand" error path — but *not*
-    // over built-ins, because clap only dispatches `External` when no built-in
-    // matched. Nested-subcommand hints (`wt squash` → `wt step squash`) are
-    // applied by `enhance_and_exit_error` when we fall through below, so a
-    // name that matches a nested subcommand still gets its tip even though
-    // we look at PATH first (nested names aren't expected to collide with
-    // real `wt-*` binaries, and if they do the on-PATH binary wins — same as
-    // git's behaviour).
+    // Try alias dispatch first so user/project config wins over PATH binaries
+    // of the same name. Built-ins still take precedence — clap only routes
+    // to `Commands::External` when no built-in matched. The alias arg parser
+    // requires UTF-8, but we only run it after confirming the name is a
+    // configured alias, so non-UTF-8 args meant for an external binary don't
+    // surface as alias parse errors.
+    let alias_args: Option<Vec<String>> = rest
+        .iter()
+        .map(|a| a.to_str().map(|s| s.to_owned()))
+        .collect();
+    if let Some(alias_args) = alias_args
+        && let Some(()) = try_alias(name.clone(), alias_args)?
+    {
+        return Ok(());
+    }
+
+    // Fall through to `wt-<name>` PATH binary. Nested-subcommand hints
+    // (`wt squash` → `wt step squash`) are applied by `enhance_and_exit_error`
+    // when we fall through below, so a name that matches a nested subcommand
+    // still gets its tip even though we look at PATH before erroring (nested
+    // names aren't expected to collide with real `wt-*` binaries, and if they
+    // do the on-PATH binary wins — same as git's behaviour).
     let binary = format!("wt-{name}");
     if let Ok(path) = which::which(&binary) {
         return run_external(&path, &rest, working_dir.as_deref());
     }
 
-    // Not on PATH — emit clap's native `InvalidSubcommand` error. Routing
-    // through `enhance_and_exit_error` keeps the rendering consistent with
-    // every other clap error (same tip/Usage formatting) and layers the
-    // wt-specific nested-subcommand hint on top.
+    // Not an alias and not on PATH — emit clap's native `InvalidSubcommand`
+    // error. Routing through `enhance_and_exit_error` keeps the rendering
+    // consistent with every other clap error (same tip/Usage formatting) and
+    // layers the wt-specific nested-subcommand hint on top.
     enhance_and_exit_error(unrecognized_subcommand_error(&name));
 }
 
@@ -90,6 +107,10 @@ pub(crate) fn handle_external_command(
 /// `SuggestedSubcommand`, and `Usage` context so clap's rich formatter
 /// produces its native output (the "tip:" line and "Usage:" block come from
 /// these context entries).
+///
+/// Configured aliases are mixed into the candidate pool so a typo like
+/// `wt deplyo` produces `tip: ... 'deploy'` when `deploy` is user-defined,
+/// matching the discovery surface of `wt --help`.
 fn unrecognized_subcommand_error(name: &str) -> clap::Error {
     let mut cmd = build_command();
     let mut err = clap::Error::new(ErrorKind::InvalidSubcommand).with_cmd(&cmd);
@@ -97,7 +118,8 @@ fn unrecognized_subcommand_error(name: &str) -> clap::Error {
         ContextKind::InvalidSubcommand,
         ContextValue::String(name.to_string()),
     );
-    let suggestions = similar_subcommands(name, &cmd);
+    let alias_names = alias_names_for_suggestions();
+    let suggestions = similar_subcommands(name, &cmd, &alias_names);
     if !suggestions.is_empty() {
         err.insert(
             ContextKind::SuggestedSubcommand,
@@ -144,22 +166,31 @@ fn run_external(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> R
     Err(WorktrunkError::AlreadyDisplayed { exit_code: code }.into())
 }
 
-/// Return visible built-in subcommand names similar to `name`, sorted by
-/// descending confidence. Mirrors clap's internal `did_you_mean` (Jaro–Winkler
-/// similarity with a 0.7 threshold) so the `tip:` line reads the same as it
-/// would have without `#[command(external_subcommand)]` intercepting the
-/// error.
-fn similar_subcommands(name: &str, cli_cmd: &clap::Command) -> Vec<String> {
-    let mut scored: Vec<(f64, String)> = cli_cmd
+/// Return visible built-in subcommand names and configured alias names
+/// similar to `name`, sorted by descending confidence. Mirrors clap's
+/// internal `did_you_mean` (Jaro–Winkler similarity with a 0.7 threshold)
+/// so the `tip:` line reads the same as it would have without
+/// `#[command(external_subcommand)]` intercepting the error, plus aliases.
+fn similar_subcommands(name: &str, cli_cmd: &clap::Command, alias_names: &[String]) -> Vec<String> {
+    let builtins = cli_cmd
         .get_subcommands()
         .filter(|c| !c.is_hide_set())
-        .map(|c| c.get_name())
-        .filter(|&candidate| candidate != "help")
-        .map(|candidate| (jaro_winkler(name, candidate), candidate.to_string()))
+        .map(|c| c.get_name().to_string())
+        .filter(|candidate| candidate != "help");
+    let candidates = builtins.chain(alias_names.iter().cloned());
+    let mut scored: Vec<(f64, String)> = candidates
+        .map(|candidate| (jaro_winkler(name, &candidate), candidate))
         .filter(|(score, _)| *score > 0.7)
         .collect();
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    scored.into_iter().map(|(_, name)| name).collect()
+    // Dedupe while preserving sort order (an alias with the same name as a
+    // built-in would otherwise appear twice).
+    let mut seen = std::collections::HashSet::new();
+    scored
+        .into_iter()
+        .filter(|(_, n)| seen.insert(n.clone()))
+        .map(|(_, n)| n)
+        .collect()
 }
 
 #[cfg(test)]
@@ -169,7 +200,7 @@ mod tests {
     #[test]
     fn similar_subcommands_finds_typo() {
         let cmd = build_command();
-        let suggestions = similar_subcommands("siwtch", &cmd);
+        let suggestions = similar_subcommands("siwtch", &cmd, &[]);
         assert_eq!(
             suggestions.first().map(String::as_str),
             Some("switch"),
@@ -180,7 +211,7 @@ mod tests {
     #[test]
     fn similar_subcommands_ignores_unrelated() {
         let cmd = build_command();
-        assert!(similar_subcommands("zzzzzzzz", &cmd).is_empty());
+        assert!(similar_subcommands("zzzzzzzz", &cmd, &[]).is_empty());
     }
 
     #[test]
@@ -188,7 +219,32 @@ mod tests {
         // `select` is hidden (deprecated); it should not be suggested even
         // though an exact-match candidate exists.
         let cmd = build_command();
-        assert!(!similar_subcommands("select", &cmd).contains(&"select".to_string()));
+        assert!(!similar_subcommands("select", &cmd, &[]).contains(&"select".to_string()));
+    }
+
+    #[test]
+    fn similar_subcommands_includes_aliases() {
+        // Alias names mix into the candidate pool so a typo close to a
+        // user-defined alias shows up in the `tip:` line.
+        let cmd = build_command();
+        let aliases = vec!["deploy".to_string(), "release".to_string()];
+        let suggestions = similar_subcommands("deplyo", &cmd, &aliases);
+        assert_eq!(
+            suggestions.first().map(String::as_str),
+            Some("deploy"),
+            "got: {suggestions:?}"
+        );
+    }
+
+    #[test]
+    fn similar_subcommands_dedupes_alias_matching_builtin() {
+        // An alias whose name shadows a built-in (e.g. `list`) should appear
+        // only once in suggestions, not duplicated.
+        let cmd = build_command();
+        let aliases = vec!["list".to_string()];
+        let suggestions = similar_subcommands("list", &cmd, &aliases);
+        let count = suggestions.iter().filter(|n| *n == "list").count();
+        assert_eq!(count, 1, "got: {suggestions:?}");
     }
 
     #[cfg(unix)]

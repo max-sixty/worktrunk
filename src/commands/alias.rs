@@ -41,9 +41,7 @@ use worktrunk::config::{
     validate_template_syntax,
 };
 use worktrunk::git::Repository;
-use worktrunk::styling::{
-    eprintln, format_bash_with_gutter, info_message, progress_message, warning_message,
-};
+use worktrunk::styling::{eprintln, format_bash_with_gutter, info_message, progress_message};
 
 use crate::commands::command_approval::approve_alias_commands;
 use crate::commands::command_executor::{
@@ -54,7 +52,7 @@ use crate::commands::hooks::format_pipeline_summary_from_names;
 use crate::output::DirectivePassthrough;
 
 /// Built-in `wt step` subcommand names. Aliases with these names are
-/// shadowed by the built-in and will never run.
+/// reachable via `wt <name>` (top-level) but shadowed via `wt step <name>`.
 const BUILTIN_STEP_COMMANDS: &[&str] = &[
     "commit",
     "copy-ignored",
@@ -67,6 +65,15 @@ const BUILTIN_STEP_COMMANDS: &[&str] = &[
     "rebase",
     "relocate",
     "squash",
+];
+
+/// Built-in top-level `wt` subcommand names — visible and hidden. Aliases
+/// with these names are fully unreachable: clap matches the built-in before
+/// alias dispatch sees the name, so `wt list` always runs the built-in even
+/// if `[aliases] list = …` is configured. Kept in sync with `Cli` via
+/// `test_top_level_builtins_match_clap`.
+const TOP_LEVEL_BUILTINS: &[&str] = &[
+    "config", "hook", "list", "merge", "remove", "select", "step", "switch",
 ];
 
 /// Options parsed from the external subcommand args.
@@ -246,48 +253,57 @@ fn format_alias_announcement(name: &str, cmd_config: &CommandConfig) -> String {
     }
 }
 
-/// Run a configured alias by name.
+/// Load the merged alias map (user config + project config, in runtime order).
+fn load_merged_aliases(
+    repo: &Repository,
+    user_config: &UserConfig,
+    project_config: Option<&ProjectConfig>,
+) -> BTreeMap<String, CommandConfig> {
+    let project_id = repo.project_identifier().ok();
+    let mut aliases = user_config.aliases(project_id.as_deref());
+    if let Some(pc) = project_config {
+        append_aliases(&mut aliases, &pc.aliases);
+    }
+    aliases
+}
+
+/// Try to run alias `name` with `rest` as its arg vector. Returns `Ok(None)`
+/// when no alias by that name is configured — the caller can fall through to
+/// other dispatch (e.g. `wt-<name>` PATH binary at the top level). Argument
+/// parsing only runs after we've confirmed the alias is configured, so
+/// non-alias `rest` (positional args meant for an external binary) doesn't
+/// surface as a parse error.
 ///
-/// Looks up the alias in merged config (project config + user config),
-/// expands each command template, and executes them in order. Project-config
-/// aliases require command approval before execution.
+/// Alias execution needs a git repository; without one this returns `Ok(None)`
+/// so the caller falls through to PATH lookup. Config load errors propagate —
+/// a broken `wt.toml` should fail loudly here just as it does for `wt list`,
+/// rather than silently turning into an "unrecognized subcommand" once we
+/// fall through to PATH lookup.
+pub fn try_alias(name: String, rest: Vec<String>) -> anyhow::Result<Option<()>> {
+    let Ok(repo) = Repository::current() else {
+        return Ok(None);
+    };
+    let user_config = UserConfig::load()?;
+    let project_config = ProjectConfig::load(&repo, true)?;
+    let aliases = load_merged_aliases(&repo, &user_config, project_config.as_ref());
+    if !aliases.contains_key(&name) {
+        return Ok(None);
+    }
+    let mut alias_args = Vec::with_capacity(1 + rest.len());
+    alias_args.push(name);
+    alias_args.extend(rest);
+    let opts = AliasOptions::parse(alias_args)?;
+    run_alias(opts, repo, user_config, project_config, aliases).map(Some)
+}
+
+/// Run a configured alias from `wt step <name>`. Errors with a clap-style
+/// "unrecognized subcommand" if the alias isn't configured.
 pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let user_config = UserConfig::load()?;
-    let project_id = repo.project_identifier().ok();
     let project_config = ProjectConfig::load(&repo, true)?;
-
-    // Merge aliases: user config first, then project config appends.
-    // Matches hook merge semantics — both sources run, project commands
-    // need approval regardless of whether user also defines the alias.
-    let mut aliases = user_config.aliases(project_id.as_deref());
-    if let Some(pc) = project_config.as_ref() {
-        append_aliases(&mut aliases, &pc.aliases);
-    }
-
-    // Warn about aliases that shadow built-in step commands
-    let shadowed: Vec<_> = aliases
-        .keys()
-        .filter(|k| BUILTIN_STEP_COMMANDS.contains(&k.as_str()))
-        .collect();
-    if !shadowed.is_empty() {
-        let names = shadowed
-            .iter()
-            .map(|k| cformat!("<bold>{k}</>"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let (noun, verb) = if shadowed.len() == 1 {
-            ("Alias", "shadows a built-in step command")
-        } else {
-            ("Aliases", "shadow built-in step commands")
-        };
-        eprintln!(
-            "{}",
-            warning_message(format!("{noun} {names} {verb} and will never run"))
-        );
-    }
-
-    let Some(cmd_config) = aliases.get(&opts.name) else {
+    let aliases = load_merged_aliases(&repo, &user_config, project_config.as_ref());
+    if !aliases.contains_key(&opts.name) {
         // Mirror clap's native `unrecognized subcommand` error so `wt step
         // <typo>` reads the same as `wt <typo>`. Aliases are fed into the
         // `SuggestedSubcommand` list so a typo like `wt step deplyo` still
@@ -300,11 +316,46 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
             .map(|k| k.as_str())
             .collect();
         unknown_step_command_exit(&opts.name, &alias_names);
+    }
+    run_alias(opts, repo, user_config, project_config, aliases)
+}
+
+/// Return alias names for use as suggestions when a top-level subcommand is
+/// not recognized. Best-effort — returns empty if config can't be loaded so
+/// the suggestion list silently degrades to clap's built-in candidates.
+pub fn alias_names_for_suggestions() -> Vec<String> {
+    worktrunk::config::suppress_warnings();
+    let Ok(repo) = Repository::current() else {
+        return UserConfig::load()
+            .map(|uc| uc.aliases(None).keys().cloned().collect())
+            .unwrap_or_default();
     };
+    let Ok(user_config) = UserConfig::load() else {
+        return Vec::new();
+    };
+    let project_config = ProjectConfig::load(&repo, false).ok().flatten();
+    load_merged_aliases(&repo, &user_config, project_config.as_ref())
+        .keys()
+        .cloned()
+        .collect()
+}
+
+/// Execute `cmd_config` for `opts.name`. Caller must have already verified
+/// `aliases.contains_key(&opts.name)`.
+fn run_alias(
+    opts: AliasOptions,
+    repo: Repository,
+    user_config: UserConfig,
+    project_config: Option<ProjectConfig>,
+    aliases: BTreeMap<String, CommandConfig>,
+) -> anyhow::Result<()> {
+    let cmd_config = aliases
+        .get(&opts.name)
+        .expect("caller verified alias is configured");
 
     // Check if this alias needs project-config approval (skip for --dry-run).
     // project_id is required for approval — re-derive with error propagation
-    // rather than using the .ok() from above.
+    // rather than relying on `.ok()`.
     if !opts.dry_run
         && let Some(project_commands) = alias_needs_approval(&opts.name, &project_config)
     {
@@ -443,15 +494,26 @@ enum AliasSource {
     Project,
 }
 
-/// Splice the Aliases section into clap-rendered `wt step` help, if any
-/// aliases are configured.
+/// Which help page is being augmented. Controls the "shadowed by built-in"
+/// annotation: at the top level, only top-level built-ins shadow an alias
+/// (`wt list` blocks an alias named `list`). Under `wt step`, only step
+/// built-ins shadow it (`wt step commit` blocks an alias named `commit` from
+/// running via that path — but `wt commit` still runs the alias).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HelpContext {
+    TopLevel,
+    Step,
+}
+
+/// Splice the Aliases section into clap-rendered help, if any aliases are
+/// configured.
 ///
-/// Called from the help path in `help.rs` — which covers `wt step`
-/// (via `arg_required_else_help`), `wt step -h`, and `wt step --help`,
-/// all of which flow through clap's `DisplayHelp` error. Tolerates
-/// running outside a repository: user-config aliases still list,
-/// project-config aliases just get skipped.
-pub(crate) fn augment_step_help(help: &str) -> String {
+/// Called from the help path in `help.rs` — which covers `wt --help`,
+/// `wt step --help`, and the bare `wt step` invocation (via
+/// `arg_required_else_help`), all of which flow through clap's `DisplayHelp`
+/// error. Tolerates running outside a repository: user-config aliases still
+/// list, project-config aliases just get skipped.
+pub(crate) fn augment_help(help: &str, context: HelpContext) -> String {
     // Help must not emit deprecation/unknown-field warnings or write `.new`
     // migration files as a side effect of rendering the alias list.
     worktrunk::config::suppress_warnings();
@@ -467,7 +529,7 @@ pub(crate) fn augment_step_help(help: &str) -> String {
     // rendered output. The search prefix is derived from the same style
     // clap uses (our `help_styles().get_header()`), so if the header
     // styling changes both sides move together.
-    let aliases_section = render_aliases_section(&aliases);
+    let aliases_section = render_aliases_section(&aliases, context);
     let options_heading = format!(
         "{}Options:",
         crate::cli::help_styles().get_header().render()
@@ -492,8 +554,20 @@ pub(crate) fn augment_step_help(help: &str) -> String {
 /// When a name is defined in both user and project config, two rows are
 /// shown (user first, then project, matching runtime order). Both rows
 /// carry a source marker so the reader can tell which pipeline is which.
-fn render_aliases_section(entries: &[(String, CommandConfig, AliasSource)]) -> String {
+///
+/// `context` controls the "shadowed by built-in" annotation — see
+/// [`HelpContext`].
+fn render_aliases_section(
+    entries: &[(String, CommandConfig, AliasSource)],
+    context: HelpContext,
+) -> String {
     use std::fmt::Write as _;
+
+    let shadowed_names: &[&str] = match context {
+        HelpContext::TopLevel => TOP_LEVEL_BUILTINS,
+        HelpContext::Step => BUILTIN_STEP_COMMANDS,
+    };
+    let is_shadowed = |name: &str| shadowed_names.contains(&name);
 
     // Names appearing in both sources need source markers to be distinguishable.
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
@@ -514,7 +588,7 @@ fn render_aliases_section(entries: &[(String, CommandConfig, AliasSource)]) -> S
         let summary = format_alias_summary(cfg);
         // Shadowed-by-builtin is a warning (yellow) and takes precedence over
         // the source marker so the row doesn't pile up suffixes.
-        let suffix = if BUILTIN_STEP_COMMANDS.contains(&name.as_str()) {
+        let suffix = if is_shadowed(name) {
             cformat!(" <yellow>(shadowed by built-in)</>")
         } else if counts.get(name.as_str()).copied().unwrap_or(0) > 1 {
             match source {
@@ -1015,6 +1089,40 @@ cmd = [
         }
     }
 
+    /// Verify TOP_LEVEL_BUILTINS stays in sync with the actual `Cli` enum.
+    ///
+    /// Hidden subcommands like `select` count — clap still matches them
+    /// before falling through to alias dispatch, so they shadow aliases of
+    /// the same name. Only `help` (clap-internal) and external subcommands
+    /// are excluded.
+    #[test]
+    fn test_top_level_builtins_match_clap() {
+        use crate::cli::Cli;
+        use clap::CommandFactory;
+
+        let app = Cli::command();
+        let clap_names: Vec<&str> = app
+            .get_subcommands()
+            .map(|s| s.get_name())
+            .filter(|n| *n != "help")
+            .collect();
+
+        for name in &clap_names {
+            assert!(
+                TOP_LEVEL_BUILTINS.contains(name),
+                "Top-level subcommand '{name}' is missing from TOP_LEVEL_BUILTINS. \
+                 Add it so the help splice annotates aliases unreachable at the top level."
+            );
+        }
+        for name in TOP_LEVEL_BUILTINS {
+            assert!(
+                clap_names.contains(name),
+                "TOP_LEVEL_BUILTINS contains '{name}' but no such top-level subcommand exists. \
+                 Remove it from the list."
+            );
+        }
+    }
+
     #[test]
     fn test_format_alias_summary_single_command() {
         let cfg = cfg_from_toml(r#"cmd = "echo hello""#);
@@ -1098,7 +1206,7 @@ test = "cargo test"
         // Caller passes pre-sorted entries; mirror that here.
         let mut sorted = entries;
         sorted.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(&b.2)));
-        let rendered = render_aliases_section(&sorted);
+        let rendered = render_aliases_section(&sorted, HelpContext::Step);
         let rendered = rendered.ansi_strip();
         insta::assert_snapshot!(rendered, @r"
         Aliases:
@@ -1106,6 +1214,41 @@ test = "cargo test"
           only-user     echo u
           shared        echo from-user (user)
           shared        echo from-project (project)
+        ");
+    }
+
+    #[test]
+    fn test_render_aliases_section_top_level_shadowing() {
+        // Top-level shadowing: an alias named after a top-level built-in (e.g.
+        // `list`) is unreachable from `wt list` because clap matches first.
+        // Step-only built-in names (e.g. `commit`) are NOT shadowed at the top
+        // level — `wt commit` runs the alias.
+        let entries = vec![
+            (
+                "list".to_string(),
+                cfg_from_toml(r#"cmd = "ls""#),
+                AliasSource::User,
+            ),
+            (
+                "commit".to_string(),
+                cfg_from_toml(r#"cmd = "git commit""#),
+                AliasSource::User,
+            ),
+            (
+                "deploy".to_string(),
+                cfg_from_toml(r#"cmd = "make deploy""#),
+                AliasSource::User,
+            ),
+        ];
+        let mut sorted = entries;
+        sorted.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(&b.2)));
+        let rendered = render_aliases_section(&sorted, HelpContext::TopLevel);
+        let rendered = rendered.ansi_strip();
+        insta::assert_snapshot!(rendered, @r"
+        Aliases:
+          commit  git commit
+          deploy  make deploy
+          list    ls (shadowed by built-in)
         ");
     }
 }

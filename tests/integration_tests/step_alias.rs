@@ -211,40 +211,85 @@ greet = "echo Greetings from {{ branch }}"
     ));
 }
 
-/// Shadowed aliases are filtered from the "available" list in error messages
+/// Top-level alias dispatch: `wt <name>` runs an alias when `<name>` is not
+/// a built-in subcommand, with the same template-expansion and approval flow
+/// as `wt step <name>`.
+#[rstest]
+fn test_top_level_alias_dispatch(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+hello = "echo Hello from {{ branch }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "hello",
+        &["--yes"],
+        Some(&feature_path),
+    ));
+}
+
+/// An alias whose name matches a `wt step` built-in is unreachable via
+/// `wt step <name>` (the built-in always wins) but runs from the top level
+/// via `wt <name>` — there's no top-level `commit` built-in.
+#[rstest]
+fn test_top_level_alias_with_step_builtin_name(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+commit = "echo custom-commit"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "commit",
+        &["--yes"],
+        Some(&feature_path),
+    ));
+}
+
+/// Top-level typo on an alias name suggests the alias in the `tip:` line,
+/// matching `wt step <typo>`.
+#[rstest]
+fn test_top_level_alias_did_you_mean(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "make deploy"
+hello = "echo Hello"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "deplyo", &[], Some(&feature_path),));
+}
+
+/// Aliases shadowed by `wt step` built-ins are filtered from the typo
+/// suggestion list — `wt step commit` does not suggest a (shadowed) alias
+/// named `commit`, only the real built-in.
 #[rstest]
 fn test_step_alias_shadows_builtin(mut repo: TestRepo) {
     repo.write_project_config(
         r#"
 [aliases]
 commit = "echo custom-commit"
-hello = "echo hello"
-"#,
-    );
-    repo.commit("Add alias config");
-    let feature_path = repo.add_worktree("feature");
-
-    let settings = setup_snapshot_settings(&repo);
-    let _guard = settings.bind_to_scope();
-
-    // "commit" is shadowed by the built-in and should not appear in available list
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["nonexistent"],
-        Some(&feature_path),
-    ));
-}
-
-/// Multiple shadowed aliases use plural grammar
-#[rstest]
-fn test_step_alias_shadows_builtin_plural(mut repo: TestRepo) {
-    repo.write_project_config(
-        r#"
-[aliases]
-commit = "echo custom-commit"
-rebase = "echo custom-rebase"
-hello = "echo hello"
 "#,
     );
     repo.commit("Add alias config");
@@ -256,7 +301,7 @@ hello = "echo hello"
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "step",
-        &["nonexistent"],
+        &["comit"],
         Some(&feature_path),
     ));
 }

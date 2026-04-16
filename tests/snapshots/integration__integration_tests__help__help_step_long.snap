@@ -89,64 +89,12 @@ Manual merge workflow with review between steps:
 - [2mpromote[0m — [experimental] Swap a branch into the main worktree
 - [2mprune[0m — Remove worktrees and branches merged into the default branch
 - [2mrelocate[0m — [experimental] Move worktrees to expected paths
-- [2m<alias>[0m — [experimental] Run a configured command alias
+- [2m<alias>[0m — [experimental] Run a configured command alias (see Aliases)
 
 [1m[32mSee also[0m
 
 - [2mwt merge[0m — Runs commit → squash → rebase → hooks → push → cleanup automatically
 - [2mwt hook[0m — Run configured hooks
-
-[1m[32mAliases [experimental][0m
-
-Custom command templates configured in user config ([2m~/.config/worktrunk/config.toml[0m) or project config ([2m.config/wt.toml[0m). Aliases support the same template variables as hooks.
-
-[107m [0m [2m# .config/wt.toml[0m
-[107m [0m [2m[36m[aliases][0m
-[107m [0m [2mdeploy = [0m[2m[32m"make deploy BRANCH={{ branch }}"[0m
-[107m [0m [2mport = [0m[2m[32m"echo http://localhost:{{ branch | hash_port }}"[0m
-
-[107m [0m [2m[0m[2m[34mwt[0m[2m step deploy                            # run the alias[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--dry-run[0m[2m                  # show expanded command[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--env=staging[0m[2m              # pass template variable[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--var[0m[2m env=staging          # equivalent long form[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--my-var=value[0m[2m             # hyphens become underscores ([0m[2m[32m{{[0m[2m my_var [0m[2m[32m}}[0m[2m)[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m step deploy [0m[2m[36m--yes[0m[2m                      # skip approval prompt[0m[2m[0m
-
-Hyphens in variable names are canonicalized to underscores at parse time, so [2m--my-var=value[0m is referenced as [2m{{ my_var }}[0m in templates. This lets flags use natural kebab-case while avoiding the minijinja parser's interpretation of [2m{{ my-var }}[0m as subtraction.
-
-Multi-line aliases work too. This [2mup[0m alias fetches all remotes and rebases each worktree onto its upstream, skipping worktrees without a tracking branch or with a rebase already in progress:
-
-[107m [0m [2m# ~/.config/worktrunk/config.toml[0m
-[107m [0m [2m[36m[aliases][0m
-[107m [0m [2mup = [0m[2m[32m''[0m[2m[32m'[0m
-[107m [0m [2m[32mgit fetch --all --prune && wt step for-each -- '[0m
-[107m [0m [2m  git rev-parse --verify -q @{u} >/dev/null || exit 0[0m
-[107m [0m [2m  g=$(git rev-parse --git-dir)[0m
-[107m [0m [2m  test -d [0m[2m[32m"$g/rebase-merge"[0m[2m -o -d [0m[2m[32m"$g/rebase-apply"[0m[2m && exit 0[0m
-[107m [0m [2m  git rebase @{u} --no-autostash || git rebase --abort[0m
-[107m [0m [2m[32m''[0m[2m[32m''[0m
-
-[107m [0m [2m[0m[2m[34mwt[0m[2m step up[0m
-
-Multi-step aliases run commands in order using [2m[[aliases.NAME]][0m blocks. Each block is one step; multiple keys within a block run concurrently.
-
-[107m [0m [2m# .config/wt.toml[0m
-[107m [0m [2m[36m[[aliases.release]][0m
-[107m [0m [2mtest = [0m[2m[32m"cargo test"[0m
-[107m [0m 
-[107m [0m [2m[36m[[aliases.release]][0m
-[107m [0m [2mbuild = [0m[2m[32m"cargo build --release"[0m
-[107m [0m [2mpackage = [0m[2m[32m"cargo package --no-verify"[0m
-[107m [0m 
-[107m [0m [2m[36m[[aliases.release]][0m
-[107m [0m [2mpublish = [0m[2m[32m"cargo publish"[0m
-
-Here [2mtest[0m runs first, then [2mbuild[0m and [2mpackage[0m run together, then [2mpublish[0m runs last. A step failure aborts the remaining steps.
-
-When defined in both user and project config, both run — user first, then project. Project-config aliases require command approval on first run, same as project hooks. User-config aliases are trusted.
-
-Inside an alias body, an inner [2mwt switch[0m (or [2mwt switch --create[0m) passes its [2mcd[0m through to the parent shell, so an alias wrapping [2mwt switch --create[0m lands the shell in the new worktree just like running it directly.
-
-Alias names that match a built-in step command ([2mcommit[0m, [2msquash[0m, etc.) are shadowed by the built-in and will never run.
+- Aliases — Custom command templates run as [2mwt <name>[0m
 
 ----- stderr -----

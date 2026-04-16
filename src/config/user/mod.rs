@@ -322,7 +322,7 @@ pub struct UserConfig {
     #[serde(default, skip_serializing_if = "super::is_default")]
     pub step: sections::StepConfig,
 
-    /// Command aliases for `wt step <name>`
+    /// Command aliases for `wt <name>`
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub aliases: std::collections::BTreeMap<String, crate::config::commands::CommandConfig>,
 

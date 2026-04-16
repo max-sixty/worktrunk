@@ -405,51 +405,64 @@ fn completion_command() -> Command {
     hide_non_positional_options_for_completion(cmd)
 }
 
-/// Inject configured aliases as subcommands of `step` so they appear in completions.
+/// Inject configured aliases as subcommands at both the top level and under
+/// `step` so they appear in completions for `wt <Tab>` and `wt step <Tab>`.
 ///
 /// Aliases are loaded from user config and project config (same merge order as
-/// `step_alias`). Aliases that shadow built-in step commands are skipped.
+/// `step_alias`). Aliases that shadow a built-in at a given level are skipped
+/// for that level only — `commit` is shadowed under `step` but offered at the
+/// top level, since `wt commit` runs the alias.
 fn inject_alias_subcommands(cmd: Command) -> Command {
     let aliases = load_aliases_for_completion();
     if aliases.is_empty() {
         return cmd;
     }
 
+    let mut cmd = cmd;
+    // Top-level injection: skip aliases that match a top-level built-in.
+    for (name, cmd_config) in &aliases {
+        if cmd.get_subcommands().any(|s| s.get_name() == name.as_str()) {
+            continue;
+        }
+        cmd = cmd.subcommand(build_alias_completion_command(name, cmd_config));
+    }
+    // Step-level injection: keep historical `wt step <alias>` completions.
     cmd.mut_subcommand("step", |mut step| {
         for (name, cmd_config) in aliases {
-            // Skip aliases that shadow built-in step commands
             if step
                 .get_subcommands()
                 .any(|s| s.get_name() == name.as_str())
             {
                 continue;
             }
-            // Use the first command's template for the help text
-            let first_template = cmd_config
-                .commands()
-                .next()
-                .map(|c| c.template.as_str())
-                .unwrap_or("");
-            let help = truncate_template(first_template);
-            // clap::Command::new() requires Into<Str>, and Str only implements
-            // From<&'static str> (not From<String>). Leak is fine: completion is
-            // a short-lived subprocess that exits after printing candidates.
-            let name: &'static str = Box::leak(name.into_boxed_str());
-            let about: &'static str = Box::leak(format!("alias: {help}").into_boxed_str());
-            let sub = Command::new(name)
-                .about(about)
-                .arg(clap::Arg::new("dry-run").long("dry-run"))
-                .arg(clap::Arg::new("yes").short('y').long("yes"))
-                .arg(
-                    clap::Arg::new("var")
-                        .long("var")
-                        .num_args(1)
-                        .action(clap::ArgAction::Append),
-                );
-            step = step.subcommand(sub);
+            step = step.subcommand(build_alias_completion_command(&name, &cmd_config));
         }
         step
     })
+}
+
+/// Build a completion stub `clap::Command` for an alias. Leaks strings since
+/// completion is a short-lived subprocess that exits after printing candidates.
+fn build_alias_completion_command(name: &str, cmd_config: &CommandConfig) -> Command {
+    // Use the first command's template for the help text
+    let first_template = cmd_config
+        .commands()
+        .next()
+        .map(|c| c.template.as_str())
+        .unwrap_or("");
+    let help = truncate_template(first_template);
+    let name: &'static str = Box::leak(name.to_string().into_boxed_str());
+    let about: &'static str = Box::leak(format!("alias: {help}").into_boxed_str());
+    Command::new(name)
+        .about(about)
+        .arg(clap::Arg::new("dry-run").long("dry-run"))
+        .arg(clap::Arg::new("yes").short('y').long("yes"))
+        .arg(
+            clap::Arg::new("var")
+                .long("var")
+                .num_args(1)
+                .action(clap::ArgAction::Append),
+        )
 }
 
 /// Load aliases from user and project config for completion.

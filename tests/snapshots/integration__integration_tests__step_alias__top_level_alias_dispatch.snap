@@ -3,8 +3,8 @@ source: tests/integration_tests/step_alias.rs
 info:
   program: wt
   args:
-    - step
-    - comit
+    - hello
+    - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -39,15 +39,10 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 2
+success: true
+exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[1m[31merror:[0m unrecognized subcommand '[33mcomit[0m'
-
-  [32mtip:[0m a similar subcommand exists: '[32mcommit[0m'
-
-[1m[4mUsage:[0m [1mwt step[0m <COMMAND>
-
-For more information, try '[1m--help[0m'.
+[36m◎[39m [36mRunning alias [1mhello[22m[39m
+[0mHello from feature

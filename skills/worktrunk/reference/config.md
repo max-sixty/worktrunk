@@ -218,7 +218,7 @@ Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/
 
 ### Aliases
 
-Command templates that run with `wt step <name>`. See [`wt step` aliases](https://worktrunk.dev/step/#aliases) for usage and flags.
+Command templates that run as `wt <name>`. See [Aliases](https://worktrunk.dev/extending/#aliases) for usage and flags.
 
 ```toml
 [aliases]
@@ -395,7 +395,7 @@ Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/
 
 ## Aliases
 
-Command templates that run with `wt step <name>`. See [`wt step` aliases](https://worktrunk.dev/step/#aliases) for usage and flags.
+Command templates that run as `wt <name>`. See [Aliases](https://worktrunk.dev/extending/#aliases) for usage and flags.
 
 ```toml
 [aliases]

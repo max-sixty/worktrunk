@@ -2990,6 +2990,22 @@ fi
         (dir, path)
     }
 
+    /// Point the spawned `wt` (and its child shells) at an empty config so
+    /// user-config aliases don't leak into completion output. Aliases now
+    /// surface as top-level completion candidates, so without this isolation
+    /// any global aliases in the developer's `~/.config/worktrunk/config.toml`
+    /// would pollute the snapshot.
+    ///
+    /// Project config (`.config/wt.toml`) is not isolated — the spawned `wt`
+    /// runs in this repo's working directory and reads its project config.
+    /// Today the project has no `[aliases]` so the snapshot is stable; if a
+    /// future contributor adds an alias to this repo's own `.config/wt.toml`,
+    /// that alias will start showing up in completion output. Watch for it.
+    fn set_empty_user_config(cmd: &mut std::process::Command) {
+        cmd.env("WORKTRUNK_CONFIG_PATH", "/dev/null");
+        cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", "/dev/null");
+    }
+
     /// Black-box test: zsh completion produces correct subcommands.
     ///
     /// Sources actual `wt config shell init zsh`, triggers completion, snapshots result.
@@ -3023,12 +3039,10 @@ _wt_lazy_complete
         // `-f` skips ~/.zshenv (which typically sources ~/.cargo/env and
         // re-prepends ~/.cargo/bin). `/etc/zshenv` is still read — it can't
         // be bypassed — but doesn't touch PATH in our test environments.
-        let output = std::process::Command::new("zsh")
-            .args(["-f", "-c"])
-            .arg(&script)
-            .env("PATH", &clean_path)
-            .output()
-            .unwrap();
+        let mut cmd = std::process::Command::new("zsh");
+        cmd.args(["-f", "-c"]).arg(&script).env("PATH", &clean_path);
+        set_empty_user_config(&mut cmd);
+        let output = cmd.output().unwrap();
 
         assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     }
@@ -3058,12 +3072,12 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
 
         // `--noprofile --norc` skips ~/.bash_profile, ~/.bashrc, /etc/profile
         // so our clean PATH isn't polluted with ~/.cargo/bin etc.
-        let output = std::process::Command::new("bash")
-            .args(["--noprofile", "--norc", "-c"])
+        let mut cmd = std::process::Command::new("bash");
+        cmd.args(["--noprofile", "--norc", "-c"])
             .arg(&script)
-            .env("PATH", &clean_path)
-            .output()
-            .unwrap();
+            .env("PATH", &clean_path);
+        set_empty_user_config(&mut cmd);
+        let output = cmd.output().unwrap();
 
         assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     }
@@ -3076,13 +3090,13 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
         let wt_bin = wt_bin();
         let (_dir, clean_path) = completion_test_path(&wt_bin);
 
-        let output = std::process::Command::new(&wt_bin)
-            .args(["--", "wt", ""])
+        let mut cmd = std::process::Command::new(&wt_bin);
+        cmd.args(["--", "wt", ""])
             .env("COMPLETE", "fish")
             .env("_CLAP_COMPLETE_INDEX", "1")
-            .env("PATH", &clean_path)
-            .output()
-            .unwrap();
+            .env("PATH", &clean_path);
+        set_empty_user_config(&mut cmd);
+        let output = cmd.output().unwrap();
 
         // Fish format is "value\tdescription" - extract just values
         let completions: String = String::from_utf8_lossy(&output.stdout)
@@ -3102,12 +3116,12 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
         let wt_bin = wt_bin();
         let (_dir, clean_path) = completion_test_path(&wt_bin);
 
-        let output = std::process::Command::new(&wt_bin)
-            .args(["--", "wt", ""])
+        let mut cmd = std::process::Command::new(&wt_bin);
+        cmd.args(["--", "wt", ""])
             .env("COMPLETE", "nu")
-            .env("PATH", &clean_path)
-            .output()
-            .unwrap();
+            .env("PATH", &clean_path);
+        set_empty_user_config(&mut cmd);
+        let output = cmd.output().unwrap();
 
         // Nushell format is "value\tdescription" - extract just values
         let completions: String = String::from_utf8_lossy(&output.stdout)

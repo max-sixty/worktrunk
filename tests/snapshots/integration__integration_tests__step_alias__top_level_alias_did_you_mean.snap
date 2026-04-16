@@ -3,8 +3,7 @@ source: tests/integration_tests/step_alias.rs
 info:
   program: wt
   args:
-    - step
-    - comit
+    - deplyo
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -44,10 +43,10 @@ exit_code: 2
 ----- stdout -----
 
 ----- stderr -----
-[1m[31merror:[0m unrecognized subcommand '[33mcomit[0m'
+[1m[31merror:[0m unrecognized subcommand '[1m[33mdeplyo[0m'
 
-  [32mtip:[0m a similar subcommand exists: '[32mcommit[0m'
+  [1m[32mtip:[0m some similar subcommands exist: '[1m[32mdeploy[0m', '[1m[32mhello[0m'
 
-[1m[4mUsage:[0m [1mwt step[0m <COMMAND>
+[1m[32mUsage:[0m [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND]
 
-For more information, try '[1m--help[0m'.
+For more information, try '[1m[36m--help[0m'.
