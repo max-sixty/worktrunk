@@ -144,6 +144,23 @@ impl<'a> WorkingTree<'a> {
         }
     }
 
+    /// Return cached `git status --porcelain` output for this worktree.
+    ///
+    /// Keyed by worktree path in the shared `RepoCache`, so parallel tasks that
+    /// each want porcelain (e.g., working-tree diff + conflict detection during
+    /// `wt list`) share a single subprocess. Uses `--no-optional-locks` to avoid
+    /// index-lock contention with the `git write-tree` run by
+    /// `WorkingTreeConflictsTask` in parallel.
+    pub fn status_porcelain_cached(&self) -> anyhow::Result<String> {
+        match self.repo.cache.status_porcelain.entry(self.path.clone()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let stdout = self.run_command(&["--no-optional-locks", "status", "--porcelain"])?;
+                Ok(e.insert(stdout).clone())
+            }
+        }
+    }
+
     /// Check if the working tree has uncommitted changes.
     ///
     /// Note: This does NOT detect files hidden via `git update-index --assume-unchanged`
