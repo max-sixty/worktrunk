@@ -96,12 +96,9 @@ fn handle_config_show_json() -> anyhow::Result<()> {
     };
 
     let (project_path, project_config) = if let Ok(repo) = Repository::current() {
-        let path = repo.current_worktree().root()?.join(".config/wt.toml");
+        let path = repo.project_config_path()?;
         let config = repo.load_project_config()?;
-        (
-            Some(path),
-            config.map(|c| serde_json::to_value(&c)).transpose()?,
-        )
+        (path, config.map(|c| serde_json::to_value(&c)).transpose()?)
     } else {
         (None, None)
     };

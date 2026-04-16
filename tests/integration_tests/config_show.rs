@@ -3761,3 +3761,71 @@ fn test_config_show_json_outside_repo(repo: TestRepo, temp_home: TempDir) {
     assert!(!json["project"]["exists"].as_bool().unwrap());
     assert!(json["project"]["config"].is_null());
 }
+
+/// `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the default `.config/wt.toml`
+/// lookup. Mirrors `WORKTRUNK_CONFIG_PATH` / `WORKTRUNK_SYSTEM_CONFIG_PATH`
+/// for project config — used to isolate tests (including completion tests)
+/// from any `[aliases]` in the developer's own project config.
+#[rstest]
+fn test_project_config_path_env_var_override(repo: TestRepo, temp_home: TempDir) {
+    // Write a project config in the repo that should be *ignored* when the
+    // override points elsewhere.
+    let in_repo_config = repo.root_path().join(".config").join("wt.toml");
+    fs::create_dir_all(in_repo_config.parent().unwrap()).unwrap();
+    fs::write(&in_repo_config, "post-create = \"in-repo-hook\"\n").unwrap();
+
+    // Write the override project config at an arbitrary path.
+    let override_dir = tempfile::tempdir().unwrap();
+    let override_path = override_dir.path().join("override.toml");
+    fs::write(&override_path, "post-create = \"override-hook\"\n").unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", &override_path);
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert_eq!(
+        json["project"]["config"]["post-create"], "override-hook",
+        "expected override config to be loaded, got: {}",
+        json["project"]
+    );
+
+    // And a missing override path resolves to no project config (same as a
+    // missing `.config/wt.toml`) — doesn't silently fall back to the repo's
+    // own file.
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env(
+        "WORKTRUNK_PROJECT_CONFIG_PATH",
+        override_dir.path().join("nonexistent.toml"),
+    );
+    cmd.args(["config", "show", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+    assert!(
+        json["project"]["config"].is_null(),
+        "missing override path should resolve to no project config, got: {}",
+        json["project"]["config"]
+    );
+}

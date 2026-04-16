@@ -368,6 +368,11 @@ pub fn configure_cli_command(cmd: &mut Command) {
         "WORKTRUNK_SYSTEM_CONFIG_PATH",
         "/etc/xdg/worktrunk/config.toml",
     );
+    // `WORKTRUNK_PROJECT_CONFIG_PATH` is intentionally left unset so tests
+    // can pick up `.config/wt.toml` in their own test repo via the default
+    // lookup. Host leakage is prevented by the `WORKTRUNK_*` env_remove loop
+    // above. Tests needing full project-config isolation (e.g., completion
+    // tests that must not see this repo's aliases) should set it explicitly.
     cmd.env(
         "WORKTRUNK_APPROVALS_PATH",
         "/nonexistent/test/approvals.toml",
