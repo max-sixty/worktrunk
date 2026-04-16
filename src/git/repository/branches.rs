@@ -121,20 +121,14 @@ impl Repository {
     /// Returns a map from local branch name to upstream ref (or None if no
     /// upstream is configured). Called lazily via `OnceCell` on first
     /// `Branch::upstream()` access.
-    pub(super) fn fetch_all_upstreams(&self) -> HashMap<String, Option<String>> {
-        let output = match self.run_command(&[
+    pub(super) fn fetch_all_upstreams(&self) -> anyhow::Result<HashMap<String, Option<String>>> {
+        let output = self.run_command(&[
             "for-each-ref",
             "--format=%(refname:lstrip=2)\t%(upstream:short)",
             "refs/heads/",
-        ]) {
-            Ok(output) => output,
-            Err(e) => {
-                log::debug!("fetch_all_upstreams: git for-each-ref failed: {e}");
-                return HashMap::new();
-            }
-        };
+        ])?;
 
-        output
+        Ok(output
             .lines()
             .filter_map(|line| {
                 let (branch, upstream) = line.split_once('\t')?;
@@ -145,7 +139,7 @@ impl Repository {
                 };
                 Some((branch.to_string(), value))
             })
-            .collect()
+            .collect())
     }
 
     /// List remote branches that aren't tracked by any local branch.

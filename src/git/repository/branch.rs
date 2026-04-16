@@ -100,7 +100,7 @@ impl<'a> Branch<'a> {
             .repo
             .cache
             .upstreams
-            .get_or_init(|| self.repo.fetch_all_upstreams());
+            .get_or_try_init(|| self.repo.fetch_all_upstreams())?;
         Ok(upstreams.get(&self.name).cloned().unwrap_or(None))
     }
 

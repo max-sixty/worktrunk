@@ -256,7 +256,7 @@ pub(super) struct RepoCache {
 
     /// Upstream tracking branch cache: local branch -> upstream (e.g., "origin/main").
     /// None means "no upstream configured". Lazily loaded on first access via
-    /// `Branch::upstream()` → `batch_upstreams()`.
+    /// `Branch::upstream()` → `fetch_all_upstreams()`.
     pub(super) upstreams: OnceCell<HashMap<String, Option<String>>>,
 
     // ========== Per-worktree values (keyed by path) ==========
