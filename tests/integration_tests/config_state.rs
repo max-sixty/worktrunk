@@ -1573,7 +1573,7 @@ fn test_vars_invalid_key(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @r#"[31m✗[39m [31mInvalid key "foo.bar": keys must contain only letters, digits, hyphens, and underscores[39m"#);
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @r#"[31m✗[39m [31mInvalid key "foo.bar": keys must contain only letters, digits, and hyphens[39m"#);
 }
 
 #[rstest]
