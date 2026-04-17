@@ -1,6 +1,8 @@
 # Worktrunk Installer (Windows)
 # https://worktrunk.dev/install.ps1
 
+$ErrorActionPreference = 'Stop'
+
 if ($IsWindows -eq $false -and $PSVersionTable.PSVersion.Major -ge 6) {
     Write-Host "Non-Windows environment detected. Please use the shell installer instead:" -ForegroundColor Yellow
     Write-Host "  curl -fsSL https://worktrunk.dev/install.sh | sh"
@@ -17,7 +19,19 @@ if ($env:Path -notlike "*$cargoBin*") {
     $env:Path += ";$cargoBin"
 }
 
-if ((Get-Command wt -ErrorAction SilentlyContinue) -and (wt --version 2>&1 | Select-String 'worktrunk')) {
+# Check whether `wt` on PATH is actually worktrunk (Windows Terminal uses
+# the same alias). Wrap in try/catch — with ErrorActionPreference='Stop',
+# a failing `wt --version` would throw instead of falling through.
+$wtIsWorktrunk = $false
+if (Get-Command wt -ErrorAction SilentlyContinue) {
+    try {
+        $wtIsWorktrunk = [bool](wt --version 2>&1 | Select-String 'worktrunk')
+    } catch {
+        $wtIsWorktrunk = $false
+    }
+}
+
+if ($wtIsWorktrunk) {
     wt config shell install
 } elseif (Get-Command git-wt -ErrorAction SilentlyContinue) {
     git-wt config shell install
