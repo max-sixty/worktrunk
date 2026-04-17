@@ -260,8 +260,8 @@ fn load_merged_aliases(
 /// when no alias by that name is configured — the caller can fall through to
 /// other dispatch (e.g. `wt-<name>` PATH binary at the top level). Argument
 /// parsing only runs after we've confirmed the alias is configured, so
-/// non-alias `rest` (positional args meant for an external binary) doesn't
-/// surface as a parse error.
+/// non-alias `rest` (positional args meant for a `wt-<name>` PATH binary)
+/// doesn't surface as a parse error.
 ///
 /// Alias execution needs a git repository; without one this returns `Ok(None)`
 /// so the caller falls through to PATH lookup. Config load errors propagate —

@@ -1719,7 +1719,7 @@ fn test_complete_custom_subcommand_listed(repo: TestRepo) {
         .command("_default", MockResponse::output("external ran\n"))
         .write(ext_dir.path());
 
-    // Complete "wt " — should include "testext" from the external binary
+    // Complete "wt " — should include "testext" from the `wt-testext` binary
     let mut cmd = repo.completion_cmd(&["wt", ""]);
     prepend_path(&mut cmd, ext_dir.path());
     cmd.env("MOCK_CONFIG_DIR", ext_dir.path());
