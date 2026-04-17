@@ -230,8 +230,6 @@ Branch from current HEAD instead of the default branch:
 
 {{ terminal(cmd="wt switch --create feature-part2 --base=@") }}
 
-Creates a worktree that builds on the current branch's changes.
-
 ## Agent handoffs
 
 Spawn a worktree with an agent CLI running in the background. Examples below use `claude`; for OpenCode, replace `claude` with `'opencode run'`.
@@ -253,7 +251,7 @@ from the worktrunk skill.
 
 ## Tmux session per worktree
 
-Each worktree gets its own tmux session with a multi-pane layout. Sessions are named after the branch for easy identification.
+Each worktree gets its own tmux session with a multi-pane layout.
 
 ```toml
 # .config/wt.toml

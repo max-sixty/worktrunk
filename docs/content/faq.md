@@ -221,7 +221,7 @@ Yes. Core commands, shell integration, and tab completion work in both Git Bash 
 
 ## How does Worktrunk determine the default branch?
 
-Worktrunk checks the local git cache first, queries the remote if needed, and falls back to local inference when no remote exists. The result is cached for fast subsequent lookups.
+Worktrunk checks the local git cache first, queries the remote if needed, and falls back to local inference when no remote exists.
 
 If the remote's default branch has changed (e.g., renamed from master to main), clear the cache with `wt config state default-branch clear`.
 

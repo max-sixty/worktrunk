@@ -108,8 +108,6 @@ See [Tips & Patterns](@/tips-patterns.md) for more recipes: dev server per workt
 
 ## Aliases
 
-<span class="badge-experimental"></span>
-
 Aliases are custom commands invoked as `wt <name>`. They share the same template variables and approval model as hooks.
 
 ```toml
@@ -182,8 +180,6 @@ Run with `wt move-changes --to=feature-xyz`. The leading guard avoids touching a
 
 To copy instead of move (source keeps its changes too), add `git stash apply --index --quiet` right after the push. For staged-only flows, swap the stash for `git diff --cached` written to a tempfile and applied with `git apply --index` in the new worktree — that handles files where staged and unstaged hunks overlap on the same lines, where `git stash --staged` falls short.
 
-Because an inner `wt switch --create` inside an alias propagates its `cd` to the parent shell, the alias drops you in the new worktree directly.
-
 ### Recipe: tail a specific hook log
 
 `wt config state logs --format=json` emits structured entries — `branch`, `source`, `hook_type`, `name`, `path`. Pipe through `jq` to resolve one entry, then wrap in an alias for quick access:
@@ -210,8 +206,6 @@ Any executable named `wt-<name>` on `PATH` becomes available as `wt <name>` — 
 {{ terminal(cmd="wt sync origin              # runs: wt-sync origin|||wt -C /tmp/repo sync        # -C is forwarded as the child's working directory") }}
 
 Arguments pass through verbatim, stdio is inherited, and the child's exit code propagates unchanged. Custom subcommands don't have access to template variables.
-
-If nothing matches — no built-in, no alias, no `wt-<name>` on `PATH` — wt prints a "not a wt command" error with a typo suggestion.
 
 ### Examples
 
