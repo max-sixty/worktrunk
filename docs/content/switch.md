@@ -22,7 +22,7 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 
 ## Examples
 
-{{ terminal(cmd="wt switch feature-auth           # Switch to worktree|||wt switch -                      # Previous worktree (like cd -)|||wt switch --create new-feature   # Create new branch and worktree|||wt switch --create hotfix --base production|||wt switch pr:123                 # Switch to PR #123's branch") }}
+{{ terminal(cmd="wt switch feature-auth           # Switch to worktree|||wt switch -                      # Previous worktree (like cd -)|||wt switch --create new-feature   # Create new branch and worktree|||wt switch --create hotfix --base production|||wt switch --create feature/JIRA-1234 --path navigation-animation-refactor|||wt switch pr:123                 # Switch to PR #123's branch") }}
 
 ## Creating a branch
 
@@ -38,7 +38,9 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 4. Runs [pre-start hooks](@/hook.md#hook-types), blocking until complete
 5. Spawns [post-start](@/hook.md#hook-types) and [post-switch hooks](@/hook.md#hook-types) in the background
 
-{{ terminal(cmd="wt switch feature                        # Existing branch → creates worktree|||wt switch --create feature               # New branch and worktree|||wt switch --create fix --base release    # New branch from release|||wt switch --create temp --no-hooks       # Skip hooks") }}
+{{ terminal(cmd="wt switch feature                        # Existing branch → creates worktree|||wt switch --create feature               # New branch and worktree|||wt switch --create fix --base release    # New branch from release|||wt switch --create fix --path hotfixes/urgent-auth-fix|||wt switch --create temp --no-hooks       # Skip hooks") }}
+
+Use `--path` to choose a custom destination for the new worktree. Absolute paths are used as-is. Relative paths resolve under the configured parent directory for the branch's normal `worktree-path`.
 
 ## Shortcuts
 
@@ -149,6 +151,12 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
 
           Defaults to default branch. Supports the same shortcuts as the branch argument: <b>^</b>, <b>@</b>, <b>-</b>,
 <b>          pr:{N}</b>, <b>mr:{N}</b>.
+
+      <b><span class=c>--path</span></b><span class=c> &lt;path&gt;</span>
+          Custom path for the new worktree
+
+          Absolute paths are used as-is. Relative paths are resolved under the configured parent
+          directory for this branch.
 
   <b><span class=c>-x</span></b>, <b><span class=c>--execute</span></b><span class=c> &lt;EXECUTE&gt;</span>
           Command to run after switch

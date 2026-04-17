@@ -80,6 +80,7 @@ pub struct SwitchOptions<'a> {
     pub branch: &'a str,
     pub create: bool,
     pub base: Option<&'a str>,
+    pub path: Option<&'a str>,
     pub execute: Option<&'a str>,
     pub execute_args: &'a [String],
     pub yes: bool,
@@ -276,6 +277,7 @@ pub fn handle_switch(
         branch,
         create,
         base,
+        path,
         execute,
         execute_args,
         yes,
@@ -297,13 +299,23 @@ pub fn handle_switch(
     // Build switch suggestion context for enriching error hints with --execute/trailing args.
     // Without this, errors like "branch already exists" would suggest `wt switch <branch>`
     // instead of the full `wt switch <branch> --execute=<cmd> -- <args>`.
-    let suggestion_ctx = execute.map(|exec| {
-        let escaped = shell_escape::escape(exec.into());
-        SwitchSuggestionCtx {
-            extra_flags: vec![format!("--execute={escaped}")],
-            trailing_args: execute_args.to_vec(),
+    let suggestion_ctx = if execute.is_some() || path.is_some() {
+        let mut extra_flags = Vec::new();
+        if let Some(path) = path {
+            let escaped = shell_escape::escape(path.into());
+            extra_flags.push(format!("--path={escaped}"));
         }
-    });
+        if let Some(exec) = execute {
+            let escaped = shell_escape::escape(exec.into());
+            extra_flags.push(format!("--execute={escaped}"));
+        }
+        Some(SwitchSuggestionCtx {
+            extra_flags,
+            trailing_args: execute_args.to_vec(),
+        })
+    } else {
+        None
+    };
 
     // Run pre-switch hooks before branch resolution or worktree creation.
     // {{ branch }} receives the raw user input (before resolution).
@@ -316,7 +328,7 @@ pub fn handle_switch(
     offer_bare_repo_worktree_path_fix(&repo, config)?;
 
     // Validate and resolve the target branch.
-    let plan = plan_switch(&repo, branch, create, base, clobber, config).map_err(|err| {
+    let plan = plan_switch(&repo, branch, create, base, path, clobber, config).map_err(|err| {
         match suggestion_ctx {
             Some(ref ctx) => match err.downcast::<GitError>() {
                 Ok(git_err) => GitError::WithSwitchSuggestion {

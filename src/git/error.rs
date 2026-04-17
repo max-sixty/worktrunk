@@ -188,6 +188,10 @@ pub enum GitError {
     ReferenceNotFound {
         reference: String,
     },
+    InvalidCustomWorktreePath {
+        path: String,
+        reason: String,
+    },
 
     // Worktree errors
     NotInWorktree {
@@ -438,6 +442,15 @@ impl GitError {
                     error_message(cformat!(
                         "No branch, tag, or commit named <bold>{reference}</>"
                     ))
+                )
+            }
+
+            GitError::InvalidCustomWorktreePath { path, reason } => {
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!("Invalid <bold>--path</> value <bold>{path}</>")),
+                    format_with_gutter(reason, None)
                 )
             }
 

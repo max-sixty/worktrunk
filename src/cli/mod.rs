@@ -271,11 +271,11 @@ pub(crate) struct SwitchArgs {
     pub(crate) branch: Option<String>,
 
     /// Include branches without worktrees
-    #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
+    #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "path", "execute", "execute_args", "clobber"])]
     pub(crate) branches: bool,
 
     /// Include remote branches
-    #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "execute", "execute_args", "clobber"])]
+    #[arg(long, help_heading = "Picker Options", conflicts_with_all = ["create", "base", "path", "execute", "execute_args", "clobber"])]
     pub(crate) remotes: bool,
 
     /// Create a new branch
@@ -288,6 +288,13 @@ pub(crate) struct SwitchArgs {
     /// argument: `^`, `@`, `-`, `pr:{N}`, `mr:{N}`.
     #[arg(short = 'b', long, requires = "branch", add = crate::completion::branch_value_completer())]
     pub(crate) base: Option<String>,
+
+    /// Custom path for the new worktree
+    ///
+    /// Absolute paths are used as-is. Relative paths are resolved under the
+    /// configured parent directory for this branch.
+    #[arg(long, requires_all = ["branch", "create"], value_name = "path")]
+    pub(crate) path: Option<String>,
 
     /// Command to run after switch
     ///
@@ -537,6 +544,7 @@ $ wt switch feature-auth           # Switch to worktree
 $ wt switch -                      # Previous worktree (like cd -)
 $ wt switch --create new-feature   # Create new branch and worktree
 $ wt switch --create hotfix --base production
+$ wt switch --create feature/JIRA-1234 --path navigation-animation-refactor
 $ wt switch pr:123                 # Switch to PR #123's branch
 ```
 
@@ -558,8 +566,11 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 $ wt switch feature                        # Existing branch → creates worktree
 $ wt switch --create feature               # New branch and worktree
 $ wt switch --create fix --base release    # New branch from release
+$ wt switch --create fix --path hotfixes/urgent-auth-fix
 $ wt switch --create temp --no-hooks       # Skip hooks
 ```
+
+Use `--path` to choose a custom destination for the new worktree. Absolute paths are used as-is. Relative paths resolve under the configured parent directory for the branch's normal `worktree-path`.
 
 ## Shortcuts
 

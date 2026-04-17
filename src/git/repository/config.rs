@@ -1,6 +1,6 @@
 //! Git config, hints, marker, and default branch operations for Repository.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
@@ -8,6 +8,12 @@ use color_print::cformat;
 use crate::config::ProjectConfig;
 
 use super::{DefaultBranchName, GitError, Repository};
+
+const WORKTREE_PATH_OVERRIDE_VAR_KEY: &str = "worktree-path-override";
+
+fn include_user_var_key(key: &str) -> bool {
+    key != WORKTREE_PATH_OVERRIDE_VAR_KEY
+}
 
 impl Repository {
     /// Get a git config value. Returns None if the key doesn't exist.
@@ -75,9 +81,75 @@ impl Repository {
             .filter_map(|line| {
                 let (config_key, value) = line.split_once(' ')?;
                 let key = config_key.strip_prefix(&prefix)?;
+                if !include_user_var_key(key) {
+                    return None;
+                }
                 Some((key.to_string(), value.to_string()))
             })
             .collect()
+    }
+
+    /// Get the persisted custom worktree path override for a branch, if any.
+    ///
+    /// Overrides are stored as branch-scoped state in git config so later
+    /// commands (`wt switch`, `wt list`, `wt step relocate`) treat the custom
+    /// path as that branch's expected location.
+    pub fn worktree_path_override(&self, branch: &str) -> Option<PathBuf> {
+        self.cache
+            .worktree_path_overrides
+            .get_or_init(|| {
+                let output = self
+                    .run_command(&[
+                        "config",
+                        "--get-regexp",
+                        r"^worktrunk\.state\..+\.vars\.worktree-path-override$",
+                    ])
+                    .unwrap_or_default();
+
+                let mut overrides = std::collections::HashMap::new();
+                for line in output.lines() {
+                    let Some((config_key, value)) = line.split_once(' ') else {
+                        continue;
+                    };
+                    let Some(rest) = config_key.strip_prefix("worktrunk.state.") else {
+                        continue;
+                    };
+                    let Some((override_branch, key)) = rest.rsplit_once(".vars.") else {
+                        continue;
+                    };
+                    if key != WORKTREE_PATH_OVERRIDE_VAR_KEY {
+                        continue;
+                    }
+                    overrides.insert(override_branch.to_string(), PathBuf::from(value));
+                }
+
+                overrides
+            })
+            .get(branch)
+            .cloned()
+    }
+
+    /// Persist a branch-scoped custom worktree path override.
+    pub fn set_worktree_path_override(&self, branch: &str, path: &Path) -> anyhow::Result<()> {
+        let config_key = format!("worktrunk.state.{branch}.vars.{WORKTREE_PATH_OVERRIDE_VAR_KEY}");
+        self.run_command(&["config", &config_key, &path.to_string_lossy()])?;
+        Ok(())
+    }
+
+    /// Clear a branch-scoped custom worktree path override.
+    ///
+    /// Returns `true` if an override existed, `false` otherwise.
+    pub fn clear_worktree_path_override(&self, branch: &str) -> anyhow::Result<bool> {
+        let key = format!("worktrunk.state.{branch}.vars.{WORKTREE_PATH_OVERRIDE_VAR_KEY}");
+        let output = self.run_command_output(&["config", "--unset", &key])?;
+        if output.status.success() {
+            Ok(true)
+        } else if output.status.code() == Some(5) {
+            Ok(false)
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git config --unset {}: {}", key, stderr.trim());
+        }
     }
 
     /// Get all vars entries across all branches in a single git call.
@@ -108,6 +180,9 @@ impl Repository {
             let Some((branch, key)) = rest.rsplit_once(".vars.") else {
                 continue;
             };
+            if !include_user_var_key(key) {
+                continue;
+            }
             result
                 .entry(branch.to_string())
                 .or_default()

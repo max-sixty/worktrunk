@@ -18,7 +18,9 @@ use worktrunk::styling::{
     warning_message,
 };
 
-use super::resolve::{compute_clobber_backup, compute_worktree_path};
+use super::resolve::{
+    compute_clobber_backup, compute_worktree_path, resolve_requested_worktree_path,
+};
 use super::types::{CreationMethod, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::commands::command_executor::CommandContext;
 
@@ -606,6 +608,7 @@ pub fn plan_switch(
     branch: &str,
     create: bool,
     base: Option<&str>,
+    path_override: Option<&str>,
     clobber: bool,
     config: &UserConfig,
 ) -> anyhow::Result<SwitchPlan> {
@@ -660,7 +663,16 @@ pub fn plan_switch(
     }
 
     // Phase 3: Compute expected path (only needed for create)
-    let expected_path = compute_worktree_path(repo, &target.branch, config)?;
+    let configured_path = compute_worktree_path(repo, &target.branch, config)?;
+    let (expected_path, persist_worktree_path_override) =
+        if let Some(requested_path) = path_override {
+            let requested_path =
+                resolve_requested_worktree_path(&configured_path, Path::new(requested_path))?;
+            let persist_override = !super::resolve::paths_match(&requested_path, &configured_path);
+            (requested_path, persist_override)
+        } else {
+            (configured_path, false)
+        };
 
     // Phase 4: Validate we can create at this path
     let clobber_backup = validate_worktree_creation(
@@ -675,6 +687,7 @@ pub fn plan_switch(
     Ok(SwitchPlan::Create {
         branch: target.branch,
         worktree_path: expected_path,
+        persist_worktree_path_override,
         method: target.method,
         clobber_backup,
         new_previous,
@@ -736,6 +749,7 @@ pub fn execute_switch(
         SwitchPlan::Create {
             branch,
             worktree_path,
+            persist_worktree_path_override,
             method,
             clobber_backup,
             new_previous,
@@ -898,6 +912,12 @@ pub fn execute_switch(
                     (false, None, Some(label))
                 }
             };
+
+            if persist_worktree_path_override {
+                repo.set_worktree_path_override(&branch, &worktree_path)?;
+            } else if created_branch {
+                let _ = repo.clear_worktree_path_override(&branch);
+            }
 
             // Compute base worktree path for hooks and result
             let base_worktree_path = base_branch

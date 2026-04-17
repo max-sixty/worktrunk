@@ -262,6 +262,9 @@ pub(super) struct RepoCache {
     /// None means "no upstream configured". Lazily loaded on first access via
     /// `Branch::upstream()` → `fetch_all_upstreams()`.
     pub(super) upstreams: OnceCell<HashMap<String, Option<String>>>,
+    /// Branch-scoped custom worktree paths stored in git config state.
+    /// Populated lazily from `worktrunk.state.<branch>.vars.worktree-path-override`.
+    pub(super) worktree_path_overrides: OnceCell<HashMap<String, PathBuf>>,
     /// Commit details cache: commit SHA -> (timestamp, subject).
     /// Multiple items sharing the same HEAD commit (e.g., worktrees on main)
     /// would otherwise each spawn a `git log -1` for the same SHA.

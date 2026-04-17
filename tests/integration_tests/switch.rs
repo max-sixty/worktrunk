@@ -336,6 +336,202 @@ fn test_switch_with_base_branch(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_switch_create_with_custom_relative_path(repo: TestRepo) {
+    snapshot_switch(
+        "switch_create_with_custom_relative_path",
+        &repo,
+        &[
+            "--create",
+            "feature/JIRA-1234",
+            "--path",
+            "navigation-animation-refactor",
+        ],
+    );
+}
+
+#[rstest]
+fn test_switch_create_with_absolute_path(repo: TestRepo) {
+    let custom_root = repo.root_path().parent().unwrap().join("custom-worktrees");
+    fs::create_dir_all(&custom_root).unwrap();
+    let custom_path = custom_root.join("absolute-feature");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "absolute-feature",
+            "--path",
+            custom_path.to_str().unwrap(),
+            "--no-cd",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "switch with absolute --path should succeed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        custom_path.is_dir(),
+        "custom worktree should exist at absolute path"
+    );
+
+    let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
+    let default_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("{repo_name}.absolute-feature"));
+    assert!(
+        !default_path.exists(),
+        "default templated path should not be used when --path is absolute"
+    );
+}
+
+#[rstest]
+fn test_switch_create_custom_path_persists_for_recreate(repo: TestRepo) {
+    let custom_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("navigation-animation-refactor");
+
+    let first = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "feature/JIRA-1234",
+            "--path",
+            "navigation-animation-refactor",
+            "--no-cd",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "initial switch with custom path should succeed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(
+        custom_path.is_dir(),
+        "custom worktree should exist after creation"
+    );
+
+    repo.run_git(&[
+        "worktree",
+        "remove",
+        "--force",
+        custom_path.to_str().unwrap(),
+    ]);
+    assert!(
+        !custom_path.exists(),
+        "custom worktree should be removed before recreation"
+    );
+
+    let recreated = repo
+        .wt_command()
+        .args(["switch", "feature/JIRA-1234", "--no-cd"])
+        .output()
+        .unwrap();
+    assert!(
+        recreated.status.success(),
+        "switch should recreate worktree at stored custom path:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&recreated.stdout),
+        String::from_utf8_lossy(&recreated.stderr)
+    );
+    assert!(
+        custom_path.is_dir(),
+        "stored custom worktree path should be reused when recreating the branch worktree"
+    );
+
+    let stderr = String::from_utf8_lossy(&recreated.stderr);
+    assert!(
+        !stderr.contains("Branch-worktree mismatch"),
+        "recreated custom path should be treated as expected, stderr:\n{stderr}"
+    );
+}
+
+#[rstest]
+fn test_switch_create_custom_path_override_is_hidden_from_user_vars(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "feature/JIRA-1234",
+            "--path",
+            "navigation-animation-refactor",
+            "--no-cd",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch with custom path should succeed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let list_output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(
+        list_output.status.success(),
+        "wt list --format=json should succeed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&list_output.stdout),
+        String::from_utf8_lossy(&list_output.stderr)
+    );
+    let items: serde_json::Value = serde_json::from_slice(&list_output.stdout).unwrap();
+    let branch_item = items
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["branch"] == "feature/JIRA-1234")
+        .expect("custom-path branch should appear in wt list json");
+    assert!(
+        branch_item.get("vars").is_none(),
+        "internal worktree path override should not appear in wt list JSON: {branch_item:#}"
+    );
+
+    let vars_output = repo
+        .wt_command()
+        .args([
+            "config",
+            "state",
+            "vars",
+            "list",
+            "--branch=feature/JIRA-1234",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        vars_output.status.success(),
+        "wt config state vars list should succeed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&vars_output.stdout),
+        String::from_utf8_lossy(&vars_output.stderr)
+    );
+    let vars: serde_json::Value = serde_json::from_slice(&vars_output.stdout).unwrap();
+    assert_eq!(vars, serde_json::json!({}));
+}
+
+#[rstest]
+fn test_switch_create_rejects_parent_relative_custom_path(repo: TestRepo) {
+    snapshot_switch(
+        "switch_create_rejects_parent_relative_custom_path",
+        &repo,
+        &["--create", "feature-path", "--path", "../escape"],
+    );
+}
+
+#[rstest]
 fn test_switch_base_without_create_warning(repo: TestRepo) {
     snapshot_switch(
         "switch_base_without_create",

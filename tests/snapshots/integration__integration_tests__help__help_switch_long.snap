@@ -8,7 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
+    GIT_PAGER: ""
     LANG: C
     LC_ALL: C
     NO_COLOR: ""
@@ -53,6 +53,11 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           Base branch[0m
           
           Defaults to default branch. Supports the same shortcuts as the branch argument: [1m^[0m, [1m@[0m, [1m-[0m, [1mpr:{N}[0m, [1mmr:{N}[0m.[0m
+
+      [1m[36m--path[0m[36m [0m[36m<path>[0m
+          Custom path for the new worktree[0m
+          
+          Absolute paths are used as-is. Relative paths are resolved under the configured parent directory for this branch.[0m
 
   [1m[36m-x[0m, [1m[36m--execute[0m[36m [0m[36m<EXECUTE>[0m
           Command to run after switch[0m
@@ -126,6 +131,7 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m-[0m[2m                      # Previous worktree (like cd -)[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m new-feature   # Create new branch and worktree[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m hotfix [0m[2m[36m--base[0m[2m production[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m feature/JIRA-1234 [0m[2m[36m--path[0m[2m navigation-animation-refactor[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:123                 # Switch to PR #123's branch[0m[2m[0m
 
 [1m[32mCreating a branch[0m
@@ -145,7 +151,10 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch feature                        # Existing branch → creates worktree[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m feature               # New branch and worktree[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base[0m[2m release    # New branch from release[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--path[0m[2m hotfixes/urgent-auth-fix[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m temp [0m[2m[36m--no-hooks[0m[2m       # Skip hooks[0m[2m[0m
+
+Use [2m--path[0m to choose a custom destination for the new worktree. Absolute paths are used as-is. Relative paths resolve under the configured parent directory for the branch's normal [2mworktree-path[0m.
 
 [1m[32mShortcuts[0m
 

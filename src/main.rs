@@ -607,6 +607,7 @@ fn handle_switch_command(args: SwitchArgs) -> anyhow::Result<()> {
                     branch: &branch,
                     create: args.create,
                     base: args.base.as_deref(),
+                    path: args.path.as_deref(),
                     execute: args.execute.as_deref(),
                     execute_args: &args.execute_args,
                     yes: args.yes,

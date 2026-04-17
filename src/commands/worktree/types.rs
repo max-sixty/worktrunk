@@ -105,6 +105,8 @@ pub enum SwitchPlan {
     Create {
         branch: String,
         worktree_path: PathBuf,
+        /// Persist this path as a branch-scoped override after creation.
+        persist_worktree_path_override: bool,
         /// How to create the worktree
         method: CreationMethod,
         /// If path exists and --clobber, this is the backup path to move it to

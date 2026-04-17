@@ -719,7 +719,15 @@ pub fn handle_picker(
         }
 
         // Switch to existing worktree or create new one
-        let plan = plan_switch(&repo, &identifier, should_create, None, false, &config)?;
+        let plan = plan_switch(
+            &repo,
+            &identifier,
+            should_create,
+            None,
+            None,
+            false,
+            &config,
+        )?;
         let hooks_approved = approve_switch_hooks(&repo, &config, &plan, false, true)?;
         let (result, branch_info) = execute_switch(&repo, plan, &config, false, hooks_approved)?;
 

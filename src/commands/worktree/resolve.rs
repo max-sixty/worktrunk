@@ -3,7 +3,7 @@
 //! Functions for resolving worktree arguments and computing expected paths.
 
 use std::io::IsTerminal;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
@@ -118,6 +118,12 @@ pub fn compute_worktree_path(
         return Ok(repo_root.to_path_buf());
     }
 
+    if let Some(override_path) = repo.worktree_path_override(branch)
+        && repo.branch(branch).exists_locally().unwrap_or(false)
+    {
+        return Ok(override_path);
+    }
+
     let repo_name = repo_root
         .file_name()
         .ok_or_else(|| {
@@ -138,6 +144,42 @@ pub fn compute_worktree_path(
     let expanded_path = config.format_path(repo_name, branch, repo, project.as_deref())?;
 
     Ok(repo_root.join(expanded_path).normalize())
+}
+
+/// Resolve a `wt switch --create --path` value into an absolute worktree path.
+///
+/// Absolute values are used as-is. Relative values are resolved under the
+/// configured parent directory for the branch's default worktree path.
+pub fn resolve_requested_worktree_path(
+    default_path: &Path,
+    requested: &Path,
+) -> anyhow::Result<PathBuf> {
+    if requested.is_absolute() {
+        return Ok(requested.normalize());
+    }
+
+    if requested
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        let requested_display = format_path_for_display(requested);
+        return Err(GitError::InvalidCustomWorktreePath {
+            path: requested_display,
+            reason:
+                "Relative paths cannot contain `..`; use an absolute path to escape the configured parent directory"
+                    .to_string(),
+        }
+        .into());
+    }
+
+    let parent = default_path.parent().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Configured worktree path has no parent directory: {}",
+            format_path_for_display(default_path)
+        )
+    })?;
+
+    Ok(parent.join(requested).normalize())
 }
 
 /// Check if a worktree is at its expected path based on config template.
