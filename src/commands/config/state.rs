@@ -560,7 +560,10 @@ pub fn handle_state_get(
             };
             if format == SwitchFormat::Json {
                 // Read raw config to get both marker and set_at
-                let config_key = format!("worktrunk.state.{branch_name}.marker");
+                let config_key = format!(
+                    "worktrunk.state.{}.marker",
+                    encode_branch_for_config(&branch_name)
+                );
                 let raw = repo
                     .run_command(&["config", "--get", &config_key])
                     .ok()
@@ -684,7 +687,10 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
                 "set_at": now
             });
 
-            let config_key = format!("worktrunk.state.{branch_name}.marker");
+            let config_key = format!(
+                "worktrunk.state.{}.marker",
+                encode_branch_for_config(&branch_name)
+            );
             repo.run_command(&["config", &config_key, &json.to_string()])?;
 
             eprintln!(
@@ -744,7 +750,10 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                     Some(b) => b,
                     None => repo.require_current_branch("clear ci-status for current branch")?,
                 };
-                let config_key = format!("worktrunk.state.{branch_name}.ci-status");
+                let config_key = format!(
+                    "worktrunk.state.{}.ci-status",
+                    encode_branch_for_config(&branch_name)
+                );
                 if repo
                     .run_command(&["config", "--unset", &config_key])
                     .is_ok()
@@ -792,7 +801,10 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                     None => repo.require_current_branch("clear marker for current branch")?,
                 };
 
-                let config_key = format!("worktrunk.state.{branch_name}.marker");
+                let config_key = format!(
+                    "worktrunk.state.{}.marker",
+                    encode_branch_for_config(&branch_name)
+                );
                 if repo
                     .run_command(&["config", "--unset", &config_key])
                     .is_ok()
@@ -1174,18 +1186,20 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
 
 // ==================== Vars Operations ====================
 
-/// Validate a vars key name: letters, digits, hyphens, underscores only.
+fn encode_branch_for_config(branch: &str) -> String {
+    branch.replace('/', "..")
+}
+
+fn decode_branch_from_config(encoded: &str) -> String {
+    encoded.replace("..", "/")
+}
+
 fn validate_vars_key(key: &str) -> anyhow::Result<()> {
     if key.is_empty() {
         anyhow::bail!("Key cannot be empty");
     }
-    if !key
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        anyhow::bail!(
-            "Invalid key {key:?}: keys must contain only letters, digits, hyphens, and underscores"
-        );
+    if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        anyhow::bail!("Invalid key {key:?}: keys must contain only letters, digits, and hyphens");
     }
     Ok(())
 }
@@ -1199,7 +1213,10 @@ pub fn handle_vars_get(key: &str, branch: Option<String>) -> anyhow::Result<()> 
         None => repo.require_current_branch("get variable for current branch")?,
     };
 
-    let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
+    let config_key = format!(
+        "worktrunk.state.{}.vars.{key}",
+        encode_branch_for_config(&branch_name)
+    );
     if let Some(value) = repo.config_value(&config_key)? {
         println!("{value}");
     }
@@ -1215,7 +1232,10 @@ pub fn handle_vars_set(key: &str, value: &str, branch: Option<String>) -> anyhow
         None => repo.require_current_branch("set variable for current branch")?,
     };
 
-    let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
+    let config_key = format!(
+        "worktrunk.state.{}.vars.{key}",
+        encode_branch_for_config(&branch_name)
+    );
     repo.run_command(&["config", &config_key, value])?;
 
     eprintln!(
@@ -1279,8 +1299,9 @@ pub fn handle_vars_clear(
             );
         } else {
             let count = entries.len();
+            let encoded = encode_branch_for_config(&branch_name);
             for (key, _) in entries {
-                let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
+                let config_key = format!("worktrunk.state.{encoded}.vars.{key}");
                 let _ = repo.run_command(&["config", "--unset", &config_key]);
             }
             eprintln!(
@@ -1294,7 +1315,10 @@ pub fn handle_vars_clear(
     } else {
         let key = key.expect("key required when --all not set");
         validate_vars_key(key)?;
-        let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
+        let config_key = format!(
+            "worktrunk.state.{}.vars.{key}",
+            encode_branch_for_config(&branch_name)
+        );
         if repo
             .run_command(&["config", "--unset", &config_key])
             .is_ok()
@@ -1322,8 +1346,9 @@ fn clear_all_vars(repo: &Repository) -> anyhow::Result<usize> {
     let all_vars = repo.all_vars_entries();
     let mut cleared = 0;
     for (branch, entries) in &all_vars {
+        let encoded = encode_branch_for_config(branch);
         for key in entries.keys() {
-            let config_key = format!("worktrunk.state.{branch}.vars.{key}");
+            let config_key = format!("worktrunk.state.{encoded}.vars.{key}");
             let _ = repo.run_command(&["config", "--unset", &config_key]);
             cleared += 1;
         }
@@ -1366,7 +1391,7 @@ pub(super) fn all_markers(repo: &Repository) -> Vec<MarkerEntry> {
         };
         let set_at = parsed.get("set_at").and_then(|v| v.as_u64()).unwrap_or(0);
         markers.push(MarkerEntry {
-            branch: branch.to_string(),
+            branch: decode_branch_from_config(branch),
             marker: marker.to_string(),
             set_at,
         });

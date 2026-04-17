@@ -9,6 +9,20 @@ use crate::config::ProjectConfig;
 
 use super::{DefaultBranchName, GitError, Repository};
 
+/// Encode a branch name for use in a git config key path.
+///
+/// Branch names may contain `/` which git config rejects in key names.
+/// We encode `/` as `..` (two dots), which is safe because git branch
+/// names cannot contain `..` (git-check-ref-format rule).
+fn encode_branch_for_config(branch: &str) -> String {
+    branch.replace('/', "..")
+}
+
+/// Decode a branch name encoded by `encode_branch_for_config`.
+fn decode_branch_from_config(encoded: &str) -> String {
+    encoded.replace("..", "/")
+}
+
 impl Repository {
     /// Get a git config value. Returns None if the key doesn't exist.
     ///
@@ -42,7 +56,10 @@ impl Repository {
             marker: Option<String>,
         }
 
-        let config_key = format!("worktrunk.state.{branch}.marker");
+        let config_key = format!(
+            "worktrunk.state.{}.marker",
+            encode_branch_for_config(branch)
+        );
         let raw = self
             .run_command(&["config", "--get", &config_key])
             .ok()
@@ -63,13 +80,14 @@ impl Repository {
     /// Returns a `BTreeMap` so it serializes to a minijinja object for template access
     /// via `{{ vars.key }}`.
     pub fn vars_entries(&self, branch: &str) -> std::collections::BTreeMap<String, String> {
-        let escaped = regex::escape(branch);
+        let encoded = encode_branch_for_config(branch);
+        let escaped = regex::escape(&encoded);
         let pattern = format!(r"^worktrunk\.state\.{escaped}\.vars\.");
         let output = self
             .run_command(&["config", "--get-regexp", &pattern])
             .unwrap_or_default();
 
-        let prefix = format!("worktrunk.state.{branch}.vars.");
+        let prefix = format!("worktrunk.state.{encoded}.vars.");
         output
             .lines()
             .filter_map(|line| {
@@ -105,11 +123,11 @@ impl Repository {
             // Use rsplit_once: var keys cannot contain dots (validated by
             // validate_vars_key), so the last `.vars.` is always the real separator.
             // split_once would misparse branch names containing `.vars.`.
-            let Some((branch, key)) = rest.rsplit_once(".vars.") else {
+            let Some((branch_encoded, key)) = rest.rsplit_once(".vars.") else {
                 continue;
             };
             result
-                .entry(branch.to_string())
+                .entry(decode_branch_from_config(branch_encoded))
                 .or_default()
                 .insert(key.to_string(), value.to_string());
         }

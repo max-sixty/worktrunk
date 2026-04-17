@@ -1573,7 +1573,7 @@ fn test_vars_invalid_key(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @r#"[31m✗[39m [31mInvalid key "foo.bar": keys must contain only letters, digits, hyphens, and underscores[39m"#);
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @r#"[31m✗[39m [31mInvalid key "foo.bar": keys must contain only letters, digits, and hyphens[39m"#);
 }
 
 #[rstest]
@@ -1600,6 +1600,40 @@ fn test_vars_branch_flag(repo: TestRepo) {
 
     // Current branch should not have the value
     let output = wt_state_cmd(&repo, "vars", "get", &["env"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
+}
+
+#[rstest]
+fn test_vars_slash_branch(repo: TestRepo) {
+    // Branch names with `/` must be stored and retrieved correctly.
+    // git config rejects `/` in key names so we encode it as `..`.
+    repo.run_git(&["branch", "feature/my-task"]);
+
+    let output = wt_state_cmd(
+        &repo,
+        "vars",
+        "set",
+        &["port=4000", "--branch=feature/my-task"],
+    )
+    .output()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output = wt_state_cmd(&repo, "vars", "get", &["port", "--branch=feature/my-task"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "4000");
+
+    // A branch whose name decodes to the same string must not collide
+    // (git forbids `..` in branch names, so no real collision is possible,
+    // but verify the scoping is correct).
+    let output = wt_state_cmd(&repo, "vars", "get", &["port"])
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
