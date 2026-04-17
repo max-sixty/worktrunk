@@ -160,7 +160,7 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m-[0m[2m                           # Back to previous[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch ^                           # Default branch worktree[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base=@[0m[2m       # Branch from current HEAD[0m[2m[0m
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base[0m[2m pr:123  # Branch from PR #123's head[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base=pr:123[0m[2m  # Branch from PR #123's head[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:123                      # PR #123's branch[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                      # MR !101's branch[0m[2m[0m
 
