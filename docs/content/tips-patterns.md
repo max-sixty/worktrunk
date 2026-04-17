@@ -29,7 +29,7 @@ open = "open http://localhost:{{ branch | hash_port }}"
 test = "cargo test --features {{ vars.features | default('default') }}"
 ```
 
-See [`wt step` aliases](@/step.md#aliases) for scoping, approval, and reference.
+See [Aliases](@/extending.md#aliases) for scoping, approval, and reference.
 
 ## Per-branch variables
 
@@ -148,7 +148,7 @@ command = '''f=$(mktemp); printf '\n\n' > "$f"; sed 's/^/# /' >> "$f"; ${EDITOR:
 
 This comments out the rendered prompt (diff, branch name, stats) with `#` prefixes, opens your editor, and strips comment lines on save. A couple of blank lines at the top give you space to type; the prompt context is visible below for reference.
 
-To keep the LLM as default but use the editor for a specific merge, add a [worktrunk alias](@/step.md#aliases):
+To keep the LLM as default but use the editor for a specific merge, add a [worktrunk alias](@/extending.md#aliases):
 
 ```toml
 # ~/.config/worktrunk/config.toml
@@ -156,7 +156,7 @@ To keep the LLM as default but use the editor for a specific merge, add a [workt
 mc = '''WORKTRUNK_COMMIT__GENERATION__COMMAND='f=$(mktemp); printf "\n\n" > "$f"; sed "s/^/# /" >> "$f"; ${EDITOR:-vi} "$f" < /dev/tty > /dev/tty; grep -v "^#" "$f"' wt merge'''
 ```
 
-Then `wt step mc` opens an editor for the commit message while plain `wt merge` continues to use the LLM.
+Then `wt mc` opens an editor for the commit message while plain `wt merge` continues to use the LLM.
 
 ## Track agent status
 

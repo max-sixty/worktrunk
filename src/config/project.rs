@@ -170,7 +170,7 @@ pub struct ProjectConfig {
     #[serde(default, skip_serializing_if = "is_default")]
     pub step: StepConfig,
 
-    /// \[experimental\] Command aliases for `wt step <name>`.
+    /// \[experimental\] Command aliases for `wt <name>`.
     ///
     /// Each alias maps a name to a [`CommandConfig`] — a string for a single
     /// command, a named table (`[aliases.NAME]`) for concurrent commands, or

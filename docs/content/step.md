@@ -34,12 +34,13 @@ Manual merge workflow with review between steps:
 - [`promote`](#wt-step-promote) — <span class="badge-experimental"></span> Swap a branch into the main worktree
 - [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
 - [`relocate`](#wt-step-relocate) — <span class="badge-experimental"></span> Move worktrees to expected paths
-- [`<alias>`](#aliases) — <span class="badge-experimental"></span> Run a configured command alias
+- [`<alias>`](@/extending.md#aliases) — <span class="badge-experimental"></span> Run a configured command alias (see [Aliases](@/extending.md#aliases))
 
 ## See also
 
 - [`wt merge`](@/merge.md) — Runs commit → squash → rebase → hooks → push → cleanup automatically
 - [`wt hook`](@/hook.md) — Run configured hooks
+- [Aliases](@/extending.md#aliases) — Custom command templates run as `wt <name>`
 
 ## Command reference
 
@@ -818,61 +819,5 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
 {% end %}
-
-## Aliases
-
-<span class="badge-experimental"></span>
-
-Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](@/hook.md#template-variables) as hooks.
-
-```toml
-# .config/wt.toml
-[aliases]
-deploy = "make deploy BRANCH={{ branch }}"
-port = "echo http://localhost:{{ branch | hash_port }}"
-```
-
-{{ terminal(cmd="wt step deploy                            # run the alias|||wt step deploy --dry-run                  # show expanded command|||wt step deploy --env=staging              # pass template variable|||wt step deploy --var env=staging          # equivalent long form|||wt step deploy --my-var=value             # hyphens become underscores (__WT_OPEN2__ my_var __WT_CLOSE2__)|||wt step deploy --yes                      # skip approval prompt") }}
-
-Hyphens in variable names are canonicalized to underscores at parse time, so `--my-var=value` is referenced as `{{ my_var }}` in templates. This lets flags use natural kebab-case while avoiding the minijinja parser's interpretation of `{{ my-var }}` as subtraction.
-
-Multi-line aliases work too. This `up` alias fetches all remotes and rebases each worktree onto its upstream, skipping worktrees without a tracking branch or with a rebase already in progress:
-
-```toml
-# ~/.config/worktrunk/config.toml
-[aliases]
-up = '''
-git fetch --all --prune && wt step for-each -- '
-  git rev-parse --verify -q @{u} >/dev/null || exit 0
-  g=$(git rev-parse --git-dir)
-  test -d "$g/rebase-merge" -o -d "$g/rebase-apply" && exit 0
-  git rebase @{u} --no-autostash || git rebase --abort
-''''
-```
-
-{{ terminal(cmd="wt step up") }}
-
-Multi-step aliases run commands in order using `[[aliases.NAME]]` blocks. Each block is one step; multiple keys within a block run concurrently.
-
-```toml
-# .config/wt.toml
-[[aliases.release]]
-test = "cargo test"
-
-[[aliases.release]]
-build = "cargo build --release"
-package = "cargo package --no-verify"
-
-[[aliases.release]]
-publish = "cargo publish"
-```
-
-Here `test` runs first, then `build` and `package` run together, then `publish` runs last. A step failure aborts the remaining steps.
-
-When defined in both user and project config, both run — user first, then project. Project-config aliases require [command approval](@/hook.md#wt-hook-approvals) on first run, same as project hooks. User-config aliases are trusted.
-
-Inside an alias body, an inner `wt switch` (or `wt switch --create`) passes its `cd` through to the parent shell, so an alias wrapping `wt switch --create` lands the shell in the new worktree just like running it directly.
-
-Alias names that match a built-in step command (`commit`, `squash`, etc.) are shadowed by the built-in and will never run.
 
 <!-- END AUTO-GENERATED from `wt step --help-page` -->

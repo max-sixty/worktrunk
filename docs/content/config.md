@@ -219,7 +219,7 @@ Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/
 
 ### Aliases
 
-Command templates that run with `wt step <name>`. See [`wt step` aliases](@/step.md#aliases) for usage and flags.
+Command templates that run as `wt <name>`. See [Aliases](@/extending.md#aliases) for usage and flags.
 
 ```toml
 [aliases]
@@ -396,7 +396,7 @@ Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/
 
 ## Aliases
 
-Command templates that run with `wt step <name>`. See [`wt step` aliases](@/step.md#aliases) for usage and flags.
+Command templates that run as `wt <name>`. See [Aliases](@/extending.md#aliases) for usage and flags.
 
 ```toml
 [aliases]
@@ -454,6 +454,7 @@ Override the LLM command in CI to use a mock:
 | `WORKTRUNK_BIN` | Override binary path for shell wrappers; useful for testing dev builds |
 | `WORKTRUNK_CONFIG_PATH` | Override user config file location |
 | `WORKTRUNK_SYSTEM_CONFIG_PATH` | Override system config file location |
+| `WORKTRUNK_PROJECT_CONFIG_PATH` | Override project config file location (defaults to `.config/wt.toml`) |
 | `XDG_CONFIG_DIRS` | Colon-separated system config directories (default: `/etc/xdg`) |
 | `WORKTRUNK_DIRECTIVE_CD_FILE` | Internal: set by shell wrappers. wt writes a raw path; the wrapper `cd`s to it |
 | `WORKTRUNK_DIRECTIVE_EXEC_FILE` | Internal: set by shell wrappers. wt writes shell commands; the wrapper sources the file |

@@ -71,10 +71,11 @@ use crate::cli;
 /// On a help/version/doc-generation request, prints output and calls
 /// `process::exit(0)`. Otherwise returns so the caller can continue normal parsing.
 ///
-/// `is_step_help` is computed by the caller from the same early-parse pass that
-/// extracts global options, and controls whether we splice the configured
-/// aliases into the rendered output.
-pub fn maybe_handle_help_with_pager(is_step_help: bool) {
+/// `alias_help_context` is computed by the caller from the same early-parse
+/// pass that extracts global options. When `Some`, the configured aliases are
+/// spliced into the rendered output — at the top level for `wt --help`, or
+/// under the Aliases section for `wt step --help`.
+pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::HelpContext>) {
     let args: Vec<String> = std::env::args().collect();
 
     // --help uses pager, -h prints directly (git convention)
@@ -140,13 +141,13 @@ pub fn maybe_handle_help_with_pager(is_step_help: bool) {
                 // Use .ansi() to preserve them; .to_string() strips ANSI codes.
                 let clap_output = err.render().ansi().to_string();
 
-                // Splice configured aliases into `wt step --help` / `-h`
-                // so the help here matches bare `wt step`. Scoped to the
-                // step subcommand only — other help passes through.
-                let clap_output = if is_step_help {
-                    crate::commands::augment_step_help(&clap_output)
-                } else {
-                    clap_output
+                // Splice configured aliases into `wt --help` and
+                // `wt step --help` (and their `-h` / bare-subcommand
+                // equivalents) so the help surfaces both the built-ins and
+                // the user's aliases. Other help pages pass through.
+                let clap_output = match alias_help_context {
+                    Some(ctx) => crate::commands::augment_help(&clap_output, ctx),
+                    None => clap_output,
                 };
 
                 // Render markdown sections (tables, code blocks, prose) with proper wrapping.

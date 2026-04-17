@@ -3,8 +3,8 @@ source: tests/integration_tests/step_alias.rs
 info:
   program: wt
   args:
-    - step
-    - nonexistent
+    - commit
+    - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -39,14 +39,10 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 2
+success: true
+exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mAliases [1mcommit[22m, [1mrebase[22m shadow built-in step commands and will never run[39m
-[1m[31merror:[0m unrecognized subcommand '[33mnonexistent[0m'
-
-[1m[4mUsage:[0m [1mwt step[0m <COMMAND>
-
-For more information, try '[1m--help[0m'.
+[36m◎[39m [36mRunning alias [1mcommit[22m[39m
+[0mcustom-commit

@@ -231,7 +231,7 @@ Built-in excludes always apply: VCS metadata directories ([2m.bzr/[0m, [2m.hg
 
 [32mAliases[0m
 
-Command templates that run with [2mwt step <name>[0m. See [2mwt step[0m aliases for usage and flags.
+Command templates that run as [2mwt <name>[0m. See Aliases for usage and flags.
 
 [107m [0m [2m[36m[aliases][0m
 [107m [0m [2mgreet = [0m[2m[32m"echo Hello from {{ branch }}"[0m
@@ -386,7 +386,7 @@ Built-in excludes always apply: VCS metadata directories ([2m.bzr/[0m, [2m.hg
 
 [1m[32mAliases[0m
 
-Command templates that run with [2mwt step <name>[0m. See [2mwt step[0m aliases for usage and flags.
+Command templates that run as [2mwt <name>[0m. See Aliases for usage and flags.
 
 [107m [0m [2m[36m[aliases][0m
 [107m [0m [2mdeploy = [0m[2m[32m"make deploy BRANCH={{ branch }}"[0m
@@ -441,6 +441,7 @@ Override the LLM command in CI to use a mock:
  [2mWORKTRUNK_BIN[0m                     Override binary path for shell wrappers; useful for testing dev builds                  
  [2mWORKTRUNK_CONFIG_PATH[0m             Override user config file location                                                      
  [2mWORKTRUNK_SYSTEM_CONFIG_PATH[0m      Override system config file location                                                    
+ [2mWORKTRUNK_PROJECT_CONFIG_PATH[0m     Override project config file location (defaults to [2m.config/wt.toml[0m)                     
  [2mXDG_CONFIG_DIRS[0m                   Colon-separated system config directories (default: [2m/etc/xdg[0m)                           
  [2mWORKTRUNK_DIRECTIVE_CD_FILE[0m       Internal: set by shell wrappers. wt writes a raw path; the wrapper [2mcd[0ms to it            
  [2mWORKTRUNK_DIRECTIVE_EXEC_FILE[0m     Internal: set by shell wrappers. wt writes shell commands; the wrapper sources the file 

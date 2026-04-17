@@ -27,7 +27,9 @@ pub(crate) mod statusline;
 pub(crate) mod step_commands;
 pub(crate) mod worktree;
 
-pub(crate) use alias::{AliasOptions, augment_step_help, step_alias};
+pub(crate) use alias::{
+    AliasOptions, HelpContext, alias_names_for_suggestions, augment_help, step_alias, try_alias,
+};
 pub(crate) use config::{
     handle_claude_install, handle_claude_install_statusline, handle_claude_uninstall,
     handle_config_create, handle_config_show, handle_config_update, handle_hints_clear,
@@ -74,6 +76,29 @@ pub(crate) fn format_command_label(command_type: &str, name: Option<&str>) -> St
         Some(name) => cformat!("Running {command_type} <bold>{name}</>"),
         None => format!("Running {command_type}"),
     }
+}
+
+/// Return candidates similar to `query`, sorted by descending Jaro–Winkler
+/// similarity, filtered by `score > 0.7`, and deduplicated while preserving
+/// order. The 0.7 threshold matches clap's internal `did_you_mean` so
+/// wt-synthesized "unrecognized subcommand" tips read identically to clap's
+/// native output — keep them aligned if clap ever changes it.
+pub(crate) fn did_you_mean(
+    query: &str,
+    candidates: impl IntoIterator<Item = String>,
+) -> Vec<String> {
+    let mut scored: Vec<(f64, String)> = candidates
+        .into_iter()
+        .map(|candidate| (strsim::jaro_winkler(query, &candidate), candidate))
+        .filter(|(score, _)| *score > 0.7)
+        .collect();
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    let mut seen = std::collections::HashSet::new();
+    scored
+        .into_iter()
+        .filter(|(_, n)| seen.insert(n.clone()))
+        .map(|(_, n)| n)
+        .collect()
 }
 
 /// Force concurrent steps to run serially. Test-only escape hatch — set via
