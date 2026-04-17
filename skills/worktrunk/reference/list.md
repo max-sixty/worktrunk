@@ -8,7 +8,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 ## Full mode
 
-`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries) of each branch's changes. The table displays instantly and columns fill in as results arrive.
+`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries) of each branch's changes.
 
 ## Examples
 

@@ -34,7 +34,7 @@ Manual merge workflow with review between steps:
 - [`promote`](#wt-step-promote) — <span class="badge-experimental"></span> Swap a branch into the main worktree
 - [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
 - [`relocate`](#wt-step-relocate) — <span class="badge-experimental"></span> Move worktrees to expected paths
-- [`<alias>`](@/extending.md#aliases) — <span class="badge-experimental"></span> Run a configured command alias (see [Aliases](@/extending.md#aliases))
+- [`<alias>`](@/extending.md#aliases) — Run a configured command alias
 
 ## See also
 

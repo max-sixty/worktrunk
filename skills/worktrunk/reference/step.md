@@ -32,7 +32,7 @@ $ wt step push
 - [`promote`](#wt-step-promote) — [experimental] Swap a branch into the main worktree
 - [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
 - [`relocate`](#wt-step-relocate) — [experimental] Move worktrees to expected paths
-- [`<alias>`](https://worktrunk.dev/extending/#aliases) — [experimental] Run a configured command alias (see [Aliases](https://worktrunk.dev/extending/#aliases))
+- [`<alias>`](https://worktrunk.dev/extending/#aliases) — Run a configured command alias
 
 ## Command reference
 

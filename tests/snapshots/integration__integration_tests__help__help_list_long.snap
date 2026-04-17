@@ -77,7 +77,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 [1m[32mFull mode[0m
 
-[2m--full[0m adds columns that require network access or LLM calls: CI status (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and LLM-generated summaries of each branch's changes. The table displays instantly and columns fill in as results arrive.
+[2m--full[0m adds columns that require network access or LLM calls: CI status (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and LLM-generated summaries of each branch's changes.
 
 [1m[32mExamples[0m
 

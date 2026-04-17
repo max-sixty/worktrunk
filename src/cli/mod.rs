@@ -657,7 +657,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 ## Full mode
 
-`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries) of each branch's changes. The table displays instantly and columns fill in as results arrive.
+`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries) of each branch's changes.
 
 ## Examples
 
@@ -1125,7 +1125,7 @@ $ wt step push
 - [`promote`](#wt-step-promote) — [experimental] Swap a branch into the main worktree
 - [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
 - [`relocate`](#wt-step-relocate) — [experimental] Move worktrees to expected paths
-- [`<alias>`](@/extending.md#aliases) — [experimental] Run a configured command alias (see [Aliases](@/extending.md#aliases))
+- [`<alias>`](@/extending.md#aliases) — Run a configured command alias
 
 ## See also
 

@@ -85,8 +85,7 @@ git operations complete.
 
 [2m--full[0m adds columns that require network access or LLM calls: CI status 
 (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and 
-LLM-generated summaries of each branch's changes. The table displays instantly 
-and columns fill in as results arrive.
+LLM-generated summaries of each branch's changes.
 
 [1m[32mExamples[0m
 
