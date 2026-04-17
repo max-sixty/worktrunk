@@ -49,7 +49,7 @@ use commands::{
     MergeOptions, OperationMode, RebaseResult, RemoveTarget, SquashResult, SwitchOptions,
     add_approvals, clear_approvals, handle_claude_install, handle_claude_install_statusline,
     handle_claude_uninstall, handle_completions, handle_config_create, handle_config_show,
-    handle_config_update, handle_configure_shell, handle_external_command, handle_hints_clear,
+    handle_config_update, handle_configure_shell, handle_custom_command, handle_hints_clear,
     handle_hints_get, handle_hook_show, handle_init, handle_list, handle_logs_list, handle_merge,
     handle_opencode_install, handle_opencode_uninstall, handle_promote, handle_rebase,
     handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
@@ -1157,9 +1157,9 @@ fn dispatch_command(
         Commands::Remove(args) => handle_remove_command(args),
         Commands::Merge(args) => handle_merge_command(args),
         // `working_dir` is the top-level `-C <path>` flag, applied as the
-        // child's current directory so global `-C` works for external
+        // child's current directory so global `-C` works for custom
         // subcommands the same way it does for built-ins.
-        Commands::External(args) => handle_external_command(args, working_dir),
+        Commands::Custom(args) => handle_custom_command(args, working_dir),
     }
 }
 

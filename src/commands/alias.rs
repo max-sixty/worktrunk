@@ -76,7 +76,7 @@ const TOP_LEVEL_BUILTINS: &[&str] = &[
     "config", "hook", "list", "merge", "remove", "select", "step", "switch",
 ];
 
-/// Options parsed from the external subcommand args.
+/// Options parsed from alias-dispatch args (`wt step <alias>` or `wt <alias>`).
 #[derive(Debug)]
 pub struct AliasOptions {
     pub name: String,
@@ -86,7 +86,7 @@ pub struct AliasOptions {
 }
 
 impl AliasOptions {
-    /// Parse alias options from the external subcommand args.
+    /// Parse alias options from `wt step <alias>` args.
     ///
     /// First element is the alias name, remaining are flags:
     /// `--dry-run`, `--yes`/`-y`, `--var KEY=VALUE`, or `--KEY=VALUE`.
@@ -260,8 +260,8 @@ fn load_merged_aliases(
 /// when no alias by that name is configured — the caller can fall through to
 /// other dispatch (e.g. `wt-<name>` PATH binary at the top level). Argument
 /// parsing only runs after we've confirmed the alias is configured, so
-/// non-alias `rest` (positional args meant for an external binary) doesn't
-/// surface as a parse error.
+/// non-alias `rest` (positional args meant for a `wt-<name>` PATH binary)
+/// doesn't surface as a parse error.
 ///
 /// Alias execution needs a git repository; without one this returns `Ok(None)`
 /// so the caller falls through to PATH lookup. Config load errors propagate —
@@ -1082,7 +1082,7 @@ cmd = [
     ///
     /// Hidden subcommands like `select` count — clap still matches them
     /// before falling through to alias dispatch, so they shadow aliases of
-    /// the same name. Only `help` (clap-internal) and external subcommands
+    /// the same name. Only `help` (clap-internal) and custom subcommands
     /// are excluded.
     #[test]
     fn test_top_level_builtins_match_clap() {

@@ -6,9 +6,9 @@ Worktrunk has three extension mechanisms.
 
 **[Aliases](#aliases)** define reusable commands invoked as `wt <name>`. Same template variables as hooks, but triggered manually.
 
-**[External subcommands](#external-subcommands)** are standalone executables. Drop `wt-foo` on `PATH` and it becomes `wt foo`. No configuration needed.
+**[Custom subcommands](#custom-subcommands)** are standalone executables. Drop `wt-foo` on `PATH` and it becomes `wt foo`. No configuration needed.
 
-| | Hooks | Aliases | External subcommands |
+| | Hooks | Aliases | Custom subcommands |
 |---|---|---|---|
 | **Trigger** | Automatic (lifecycle events) | Manual (`wt <name>`) | Manual (`wt <name>`) |
 | **Defined in** | TOML config | TOML config | Any executable on `PATH` |
@@ -198,7 +198,7 @@ tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name | sani
 
 Run with `wt hook-log --name=<hook-name>` (e.g., `wt hook-log --name=server`) to tail the current worktree's `post-start` hook of that name. The `sanitize_hash` filter produces a filesystem-safe name with a hash suffix that keeps distinct originals unique — the same transformation Worktrunk applies on disk — so the alias resolves the right log even for branch and hook names containing characters like `/`.
 
-## External subcommands
+## Custom subcommands
 
 [experimental]
 
@@ -209,7 +209,7 @@ wt sync origin              # runs: wt-sync origin
 wt -C /tmp/repo sync        # -C is forwarded as the child's working directory
 ```
 
-Arguments pass through verbatim, stdio is inherited, and the child's exit code propagates unchanged. External subcommands don't have access to template variables.
+Arguments pass through verbatim, stdio is inherited, and the child's exit code propagates unchanged. Custom subcommands don't have access to template variables.
 
 If nothing matches — no built-in, no alias, no `wt-<name>` on `PATH` — wt prints a "not a wt command" error with a typo suggestion.
 
