@@ -1,4 +1,4 @@
-//! Tests for git-style external subcommand dispatch (`wt-<name>`).
+//! Tests for git-style custom subcommand dispatch (`wt-<name>`).
 
 use crate::common::{
     mock_commands::{MockConfig, MockResponse},
@@ -34,13 +34,10 @@ fn mock_bin_dir(name: &str, response: MockResponse) -> TempDir {
 }
 
 #[test]
-fn external_subcommand_runs_wt_prefixed_binary_on_path() {
+fn custom_subcommand_runs_wt_prefixed_binary_on_path() {
     // `wt wt-test-extcmd-ok` should find `wt-wt-test-extcmd-ok` on PATH.
     // We use a deliberately unique name so host PATH pollution doesn't match.
-    let dir = mock_bin_dir(
-        "wt-wt-test-extcmd-ok",
-        MockResponse::output("external ran\n"),
-    );
+    let dir = mock_bin_dir("wt-wt-test-extcmd-ok", MockResponse::output("custom ran\n"));
 
     let mut cmd = wt_command();
     prepend_path(&mut cmd, dir.path());
@@ -53,14 +50,11 @@ fn external_subcommand_runs_wt_prefixed_binary_on_path() {
         "expected success, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "external ran"
-    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "custom ran");
 }
 
 #[test]
-fn external_subcommand_not_found_prints_clap_error() {
+fn custom_subcommand_not_found_prints_clap_error() {
     let mut cmd = wt_command();
     // Clear PATH so no `wt-*` binaries can be discovered, then add a single
     // empty dir so `which` has somewhere to look.
@@ -84,7 +78,7 @@ fn external_subcommand_not_found_prints_clap_error() {
 }
 
 #[test]
-fn external_subcommand_typo_suggests_closest_builtin() {
+fn custom_subcommand_typo_suggests_closest_builtin() {
     let mut cmd = wt_command();
     let empty = TempDir::new().unwrap();
     cmd.env("PATH", empty.path());
@@ -104,7 +98,7 @@ fn external_subcommand_typo_suggests_closest_builtin() {
 }
 
 #[test]
-fn external_subcommand_nested_suggestion_wins_over_path_lookup() {
+fn custom_subcommand_nested_suggestion_wins_over_path_lookup() {
     // `wt squash` should suggest `wt step squash` even though `wt-squash` is
     // not on PATH. The nested tip is layered on top of clap's standard
     // unrecognized-subcommand error.
@@ -145,7 +139,7 @@ fn strip_ansi(s: &str) -> String {
 }
 
 #[test]
-fn external_subcommand_propagates_exit_code() {
+fn custom_subcommand_propagates_exit_code() {
     let dir = mock_bin_dir(
         "wt-wt-test-extcmd-fail",
         MockResponse::exit(0).with_exit_code(42),
@@ -163,7 +157,7 @@ fn external_subcommand_propagates_exit_code() {
         "expected exit code 42, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    // When the external command fails, wt should NOT add its own error line —
+    // When the custom command fails, wt should NOT add its own error line —
     // the child already reported whatever it needed to.
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -173,7 +167,7 @@ fn external_subcommand_propagates_exit_code() {
 }
 
 #[test]
-fn external_subcommand_respects_global_dash_c_flag() {
+fn custom_subcommand_respects_global_dash_c_flag() {
     // `wt -C <dir> foo` should run `wt-foo` with `<dir>` as its cwd. We verify
     // by reading argv, not cwd, because MockResponse doesn't reflect cwd —
     // instead we run `pwd` via a shell wrapper using the `file` response. Too
@@ -207,7 +201,7 @@ fn external_subcommand_respects_global_dash_c_flag() {
 }
 
 #[test]
-fn external_subcommand_passes_help_flag_through() {
+fn custom_subcommand_passes_help_flag_through() {
     // `wt foo --help` should hand `--help` to `wt-foo`, not to wt itself.
     // The mock-stub has no built-in `--help` handler, so if `--help` reaches
     // it the mock falls through to `_default` (which we set to exit 0).

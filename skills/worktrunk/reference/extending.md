@@ -6,9 +6,9 @@ Worktrunk has three extension mechanisms.
 
 **[Aliases](#aliases)** define reusable commands invoked via `wt step <name>`. Same template variables as hooks, but triggered manually.
 
-**[External subcommands](#external-subcommands)** are standalone executables. Drop `wt-foo` on `PATH` and it becomes `wt foo`. No configuration needed.
+**[Custom subcommands](#custom-subcommands)** are standalone executables. Drop `wt-foo` on `PATH` and it becomes `wt foo`. No configuration needed.
 
-| | Hooks | Aliases | External subcommands |
+| | Hooks | Aliases | Custom subcommands |
 |---|---|---|---|
 | **Trigger** | Automatic (lifecycle events) | Manual (`wt step <name>`) | Manual (`wt <name>`) |
 | **Defined in** | TOML config | TOML config | Any executable on `PATH` |
@@ -174,7 +174,7 @@ Run with `wt step hook-log --name=<hook-name>` (e.g., `wt step hook-log --name=s
 
 See [`wt step` — Aliases](https://worktrunk.dev/step/#aliases) for the full reference.
 
-## External subcommands
+## Custom subcommands
 
 [experimental]
 
@@ -185,7 +185,7 @@ wt sync origin              # runs: wt-sync origin
 wt -C /tmp/repo sync        # -C is forwarded as the child's working directory
 ```
 
-Arguments pass through verbatim, stdio is inherited, and the child's exit code propagates unchanged. External subcommands don't have access to template variables.
+Arguments pass through verbatim, stdio is inherited, and the child's exit code propagates unchanged. Custom subcommands don't have access to template variables.
 
 If nothing matches — no built-in, no nested subcommand, no `wt-<name>` on `PATH` — wt prints a "not a wt command" error with a typo suggestion.
 

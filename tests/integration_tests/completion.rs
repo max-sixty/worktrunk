@@ -1710,7 +1710,7 @@ fn prepend_path(cmd: &mut std::process::Command, dir: &std::path::Path) {
 
 /// External `wt-*` binaries on PATH appear as subcommand completion candidates.
 #[rstest]
-fn test_complete_external_subcommand_listed(repo: TestRepo) {
+fn test_complete_custom_subcommand_listed(repo: TestRepo) {
     repo.commit("initial");
 
     // Create a mock wt-testext binary on PATH
@@ -1729,7 +1729,7 @@ fn test_complete_external_subcommand_listed(repo: TestRepo) {
 
     assert!(
         stdout.contains("testext"),
-        "External subcommand 'testext' missing from completion output: {stdout}"
+        "Custom subcommand 'testext' missing from completion output: {stdout}"
     );
     // Built-in subcommands should still be present
     assert!(
@@ -1738,10 +1738,10 @@ fn test_complete_external_subcommand_listed(repo: TestRepo) {
     );
 }
 
-/// Completion for an external subcommand's flags forwards to the external binary.
+/// Completion for a custom subcommand's flags forwards to the `wt-*` binary.
 #[cfg(unix)]
 #[rstest]
-fn test_complete_external_subcommand_forwards(repo: TestRepo) {
+fn test_complete_custom_subcommand_forwards(repo: TestRepo) {
     use std::os::unix::fs::PermissionsExt;
     repo.commit("initial");
 

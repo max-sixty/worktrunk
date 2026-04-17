@@ -2151,11 +2151,11 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
         action: ConfigCommand,
     },
 
-    /// Run an external `wt-<name>` command found on PATH.
+    /// Run a custom `wt-<name>` command found on PATH.
     ///
     /// Captured by clap when the first positional argument doesn't match any
     /// built-in subcommand. The first element of the vec is the subcommand name;
-    /// the rest are the arguments to pass through. See `commands::external`.
+    /// the rest are the arguments to pass through. See `commands::custom`.
     #[command(external_subcommand)]
-    External(Vec<OsString>),
+    Custom(Vec<OsString>),
 }

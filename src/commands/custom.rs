@@ -1,7 +1,7 @@
-//! Git-style external subcommand dispatch.
+//! Git-style custom subcommand dispatch.
 //!
 //! When the user runs `wt foo` and `foo` is not a built-in subcommand, clap
-//! captures the invocation via the `Commands::External` variant. This module
+//! captures the invocation via the `Commands::Custom` variant. This module
 //! looks for an executable named `wt-foo` on `PATH` and runs it with the
 //! remaining arguments, mirroring how `git foo` finds `git-foo`.
 //!
@@ -16,8 +16,8 @@
 //!    `wt squash` → `perhaps wt step squash?`).
 //!
 //! Built-in subcommands always take precedence — clap only dispatches
-//! `Commands::External` when no built-in matched, so there is no way for an
-//! external `wt-switch` to shadow `wt switch`.
+//! `Commands::Custom` when no built-in matched, so there is no way for a
+//! `wt-switch` on PATH to shadow `wt switch`.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -31,26 +31,26 @@ use worktrunk::git::WorktrunkError;
 use crate::cli::build_command;
 use crate::enhance_and_exit_error;
 
-/// Handle a `Commands::External` invocation.
+/// Handle a `Commands::Custom` invocation.
 ///
 /// `args[0]` is the subcommand name; `args[1..]` are the arguments to pass
 /// through. `working_dir`, if set, is the value of the top-level `-C <path>`
 /// flag — applied as the child's current directory so global `-C` works the
-/// same for external subcommands as it does for built-ins.
+/// same for custom subcommands as it does for built-ins.
 ///
 /// On success (child exit code 0), returns `Ok(())`. On non-zero exit, returns
 /// `WorktrunkError::AlreadyDisplayed` with the child's exit code so `main`
 /// can propagate it without printing an extra error line. When the command
 /// isn't found on PATH, diverges via `enhance_and_exit_error` with clap's
 /// standard exit code 2.
-pub(crate) fn handle_external_command(
+pub(crate) fn handle_custom_command(
     args: Vec<OsString>,
     working_dir: Option<PathBuf>,
 ) -> Result<()> {
     let mut iter = args.into_iter();
     let name_os = iter
         .next()
-        .expect("clap guarantees at least one arg for external subcommands");
+        .expect("clap guarantees at least one arg for external_subcommand variants");
     let rest: Vec<OsString> = iter.collect();
 
     let name = name_os
@@ -65,7 +65,7 @@ pub(crate) fn handle_external_command(
 
     // Try the PATH lookup first. If a `wt-<name>` binary exists, it takes
     // precedence over clap's "unrecognized subcommand" error path — but *not*
-    // over built-ins, because clap only dispatches `External` when no built-in
+    // over built-ins, because clap only dispatches `Custom` when no built-in
     // matched. Nested-subcommand hints (`wt squash` → `wt step squash`) are
     // applied by `enhance_and_exit_error` when we fall through below, so a
     // name that matches a nested subcommand still gets its tip even though
@@ -74,7 +74,7 @@ pub(crate) fn handle_external_command(
     // git's behaviour).
     let binary = format!("wt-{name}");
     if let Ok(path) = which::which(&binary) {
-        return run_external(&path, &rest, working_dir.as_deref());
+        return run_custom(&path, &rest, working_dir.as_deref());
     }
 
     // Not on PATH — emit clap's native `InvalidSubcommand` error. Routing
@@ -111,8 +111,8 @@ fn unrecognized_subcommand_error(name: &str) -> clap::Error {
     err
 }
 
-/// Spawn the external binary, inheriting stdio, and propagate its exit code.
-fn run_external(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Result<()> {
+/// Spawn the custom binary, inheriting stdio, and propagate its exit code.
+fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Result<()> {
     let mut cmd = Command::new(path);
     cmd.args(args);
     if let Some(dir) = working_dir {
@@ -129,7 +129,7 @@ fn run_external(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> R
 
     // Propagate the exact exit code — including signal codes on Unix — so
     // `wt foo` behaves like running `wt-foo` directly. We use
-    // `AlreadyDisplayed` (not `ChildProcessExited`) because the external
+    // `AlreadyDisplayed` (not `ChildProcessExited`) because the custom
     // command has already reported its own failure to the user; `wt` should
     // just forward the exit code without adding a second error line.
     #[cfg(unix)]
@@ -193,14 +193,14 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn handle_external_command_rejects_non_utf8_name() {
+    fn handle_custom_command_rejects_non_utf8_name() {
         use std::os::unix::ffi::OsStringExt;
 
         // clap routes the subcommand name through `OsString`, so a caller
         // with a non-UTF-8 argv could in principle reach this path. We
         // construct the same `Vec<OsString>` shape directly.
         let bad_name = OsString::from_vec(vec![0xFF, 0xFE]);
-        let err = handle_external_command(vec![bad_name], None).unwrap_err();
+        let err = handle_custom_command(vec![bad_name], None).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("not valid UTF-8"),
@@ -210,7 +210,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn run_external_propagates_signal_exit_code() {
+    fn run_custom_propagates_signal_exit_code() {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempfile::tempdir().expect("create tempdir");
@@ -222,7 +222,7 @@ mod tests {
         perms.set_mode(0o755);
         std::fs::set_permissions(&script, perms).expect("chmod script");
 
-        let err = run_external(&script, &[], None).expect_err("child killed by SIGTERM");
+        let err = run_custom(&script, &[], None).expect_err("child killed by SIGTERM");
         let wt_err = err
             .downcast_ref::<WorktrunkError>()
             .expect("signal should surface as WorktrunkError::AlreadyDisplayed");

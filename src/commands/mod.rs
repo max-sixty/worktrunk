@@ -5,8 +5,8 @@ pub(crate) mod commit;
 pub(crate) mod config;
 pub(crate) mod configure_shell;
 pub(crate) mod context;
+pub(crate) mod custom;
 mod eval;
-pub(crate) mod external;
 mod for_each;
 mod handle_switch;
 mod hook_commands;
@@ -38,8 +38,8 @@ pub(crate) use config::{
 pub(crate) use configure_shell::{
     handle_configure_shell, handle_show_theme, handle_unconfigure_shell,
 };
+pub(crate) use custom::handle_custom_command;
 pub(crate) use eval::step_eval;
-pub(crate) use external::handle_external_command;
 pub(crate) use for_each::step_for_each;
 pub(crate) use handle_switch::{SwitchOptions, handle_switch};
 pub(crate) use hook_commands::{add_approvals, clear_approvals, handle_hook_show, run_hook};

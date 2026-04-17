@@ -2971,7 +2971,7 @@ fi
     /// Creates a temp dir with a symlink to the `wt` binary, then builds PATH
     /// from that dir + system dirs (excluding cargo target directories). This
     /// prevents co-built binaries like `wt-perf` from leaking into completion
-    /// output as external subcommands.
+    /// output as custom subcommands.
     ///
     /// NOTE: passing this via `.env("PATH", ...)` is not enough when spawning
     /// a shell whose startup files mutate PATH: a typical `~/.zshenv` sources
@@ -3017,7 +3017,7 @@ _wt_lazy_complete
         );
 
         // Filter PATH to exclude cargo target directories so `wt-perf` (test
-        // helper) doesn't leak into completion output as an external subcommand.
+        // helper) doesn't leak into completion output as a custom subcommand.
         let (_dir, clean_path) = completion_test_path(&wt_bin);
 
         // `-f` skips ~/.zshenv (which typically sources ~/.cargo/env and
@@ -3119,15 +3119,15 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
         assert_snapshot!(completions);
     }
 
-    /// Shell integration test: completing an external subcommand's flags
+    /// Shell integration test: completing a custom subcommand's flags
     /// forwards the request to the `wt-*` binary on PATH.
     ///
     /// Places a `wt-fake` script in the hermetic PATH, then triggers
     /// `wt fake --<tab>` via the fish completion protocol. Verifies that:
-    /// 1. The external script's output appears (forwarding works)
+    /// 1. The `wt-fake` script's output appears (forwarding works)
     /// 2. `_CLAP_COMPLETE_INDEX` is decremented by 1 (index adjustment)
     #[test]
-    fn test_fish_completion_forwards_to_external() {
+    fn test_fish_completion_forwards_to_custom() {
         use std::os::unix::fs::PermissionsExt;
         let wt_bin = wt_bin();
         let (dir, clean_path) = completion_test_path(&wt_bin);
@@ -3157,7 +3157,7 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             stdout.contains("--fake-flag"),
-            "Forwarded completions should include external script output: {stdout}"
+            "Forwarded completions should include the `wt-fake` script output: {stdout}"
         );
         assert!(
             stdout.contains("idx:1"),
@@ -3165,13 +3165,13 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
         );
     }
 
-    /// Shell integration test: bash completion forwards to external subcommands.
+    /// Shell integration test: bash completion forwards to custom subcommands.
     ///
     /// Sources the real `wt config shell init bash` output, places a `wt-fake`
     /// script on the hermetic PATH, and triggers `wt fake --<tab>` through
     /// bash's completion machinery.
     #[test]
-    fn test_bash_completion_forwards_to_external() {
+    fn test_bash_completion_forwards_to_custom() {
         use std::os::unix::fs::PermissionsExt;
         let wt_bin = wt_bin();
         let (dir, clean_path) = completion_test_path(&wt_bin);

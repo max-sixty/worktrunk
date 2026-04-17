@@ -69,7 +69,7 @@ const BUILTIN_STEP_COMMANDS: &[&str] = &[
     "squash",
 ];
 
-/// Options parsed from the external subcommand args.
+/// Options parsed from `wt step <alias>` args.
 #[derive(Debug)]
 pub struct AliasOptions {
     pub name: String,
@@ -79,7 +79,7 @@ pub struct AliasOptions {
 }
 
 impl AliasOptions {
-    /// Parse alias options from the external subcommand args.
+    /// Parse alias options from `wt step <alias>` args.
     ///
     /// First element is the alias name, remaining are flags:
     /// `--dry-run`, `--yes`/`-y`, `--var KEY=VALUE`, or `--KEY=VALUE`.
