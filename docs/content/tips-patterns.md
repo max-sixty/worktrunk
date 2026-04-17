@@ -192,7 +192,7 @@ With `summary = true` and [`commit.generation`](@/config.md#commit) configured, 
 summary = true
 ```
 
-Summaries are cached and regenerated only when the diff changes. See [LLM Commits](@/llm-commits.md#branch-summaries) for details.
+See [LLM Commits](@/llm-commits.md#branch-summaries) for details.
 
 ## JSON API
 
@@ -278,8 +278,6 @@ echo "✓ Session '$S' — attach with: tmux attach -t $S"
 [pre-remove]
 tmux = "tmux kill-session -t {{ branch | sanitize }} 2>/dev/null || true"
 ```
-
-`pre-remove` stops all services when the worktree is removed.
 
 To create a worktree and immediately attach:
 
