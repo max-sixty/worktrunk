@@ -122,6 +122,19 @@ open = "open http://localhost:{{ branch | hash_port }}"
 
 Hyphens in variable names are canonicalized to underscores at parse time, so `--my-var=value` is referenced as `{{ my_var }}` in templates. This lets flags use natural kebab-case while avoiding the minijinja parser's interpretation of `{{ my-var }}` as subtraction.
 
+### Forwarding positional arguments
+
+Non-flag tokens after the alias name are forwarded to the template as `{{ args }}`. Bare `{{ args }}` renders as a space-joined, shell-escaped string ready to append to a command line — so `wt s some-branch` with `s = "wt switch {{ args }}"` expands to `wt switch some-branch`.
+
+```toml
+[aliases]
+s = "wt switch {{ args }}"
+```
+
+{{ terminal(cmd="wt s some-branch|||wt s feature/api  # multiple tokens pass through in order|||wt s 'has a space'  # spaces and metacharacters are escaped safely") }}
+
+`{{ args }}` is a sequence — `{{ args[0] }}` returns the first argument, `{{ args | length }}` its count, and `{% for a in args %}{{ a }}{% endfor %}` iterates. Each element is individually shell-escaped, so `wt run 'a b' 'c;d'` splices into the command line as `'a b' 'c;d'` and can't inject shell syntax. Positionals interleave freely with flags — `wt deploy foo --dry-run bar` collects `["foo", "bar"]` into `args`. On the JSON stdin context passed to each command, `args` arrives as a JSON-encoded string (e.g. `"[\"foo\",\"bar\"]"`) because the context is a flat string map — decode with `json.loads` or equivalent if a script consumer needs the list.
+
 An `up` alias that fetches all remotes and rebases each worktree onto its upstream:
 
 ```toml
