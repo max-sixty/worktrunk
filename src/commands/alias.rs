@@ -30,7 +30,7 @@
 //! the EXEC directive file is scrubbed so alias bodies cannot inject
 //! arbitrary shell into the interactive session.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use anyhow::{Context, bail};
 use clap::error::{ContextKind, ContextValue, ErrorKind};
@@ -177,6 +177,69 @@ fn alias_needs_approval(
         .as_ref()
         .and_then(|pc| pc.aliases.get(alias_name))
         .cloned()
+}
+
+/// Collect the union of template variable names referenced across every
+/// command in `cmd_config`. Returns `None` if any template fails to parse —
+/// callers should then skip unused-argument validation so the real syntax
+/// error surfaces during expansion instead of being masked by a spurious
+/// "unused" diagnostic.
+///
+/// Uses minijinja's AST walk via `undeclared_variables(false)`, which correctly
+/// reports free variables across every form users write: `{{ args }}`,
+/// `{{ args[0] }}`, `{{ args | length }}`, `{% for a in args %}…{% endfor %}`,
+/// `{% if args %}…{% endif %}`.
+fn referenced_template_vars(cmd_config: &CommandConfig) -> Option<HashSet<String>> {
+    let env = minijinja::Environment::new();
+    let mut refs = HashSet::new();
+    for cmd in cmd_config.commands() {
+        let tmpl = env.template_from_str(&cmd.template).ok()?;
+        refs.extend(tmpl.undeclared_variables(false));
+    }
+    Some(refs)
+}
+
+/// Reject positional args and `--key=value` assignments that no template in
+/// the alias references. Silent-drop of user input violates the project's
+/// fail-fast principle, and catching it at the edge surfaces typos like
+/// `wt deploy prod` (with no `{{ args }}`) as an error rather than a no-op.
+///
+/// Runs before both the approval prompt and the `--dry-run` branch, so a
+/// dry-run still fails on unused input — the template preview wouldn't show
+/// dropped values anyway.
+///
+/// Templates that fail to parse cause the check to be skipped entirely so
+/// the real syntax error surfaces during expansion.
+fn reject_unused_args(opts: &AliasOptions, cmd_config: &CommandConfig) -> anyhow::Result<()> {
+    let Some(referenced) = referenced_template_vars(cmd_config) else {
+        return Ok(());
+    };
+    if !opts.positional_args.is_empty() && !referenced.contains(ALIAS_ARGS_KEY) {
+        bail!(cformat!(
+            "alias <bold>{}</> has no {{{{ args }}}} in template; unused: {}",
+            opts.name,
+            opts.positional_args.join(" "),
+        ));
+    }
+    let unused: Vec<&str> = opts
+        .vars
+        .iter()
+        .filter(|(k, _)| !referenced.contains(k.as_str()))
+        .map(|(k, _)| k.as_str())
+        .collect();
+    if !unused.is_empty() {
+        let list = unused
+            .iter()
+            .map(|k| format!("{{{{ {k} }}}}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        bail!(cformat!(
+            "alias <bold>{}</> does not reference: {}",
+            opts.name,
+            list,
+        ));
+    }
+    Ok(())
 }
 
 /// Synthesize clap's native `InvalidSubcommand` error for `wt step <name>`
@@ -362,6 +425,8 @@ fn run_alias(
     let cmd_config = aliases
         .get(&opts.name)
         .expect("caller verified alias is configured");
+
+    reject_unused_args(&opts, cmd_config)?;
 
     let skip_approval = global_yes;
 

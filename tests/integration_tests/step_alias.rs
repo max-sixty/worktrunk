@@ -1342,6 +1342,187 @@ s = "wt switch {{ args }}"
     ));
 }
 
+/// Positional args are rejected when the alias template has no `{{ args }}`.
+/// Silent-drop of user input violates the fail-fast principle — users who type
+/// extra tokens almost always meant them to go somewhere.
+#[rstest]
+fn test_step_alias_rejects_unused_positional(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+run = "echo hello"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
+        &repo,
+        "run",
+        &["extra", "junk"],
+        Some(&feature_path),
+        &["-y"],
+    ));
+}
+
+/// `--key=value` assignments are rejected when the alias template does not
+/// reference `{{ key }}` — same footgun as unused positional args.
+#[rstest]
+fn test_step_alias_rejects_unused_key_value(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+run = "echo hello"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
+        &repo,
+        "run",
+        &["--env=prod"],
+        Some(&feature_path),
+        &["-y"],
+    ));
+}
+
+/// Multiple unused `--key=value` assignments are reported together in a
+/// single error so users can fix them in one pass.
+#[rstest]
+fn test_step_alias_rejects_multiple_unused_key_values(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+run = "echo hello"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
+        &repo,
+        "run",
+        &["--env=prod", "--region=us-east"],
+        Some(&feature_path),
+        &["-y"],
+    ));
+}
+
+/// Pipeline where only one step references `{{ args }}` still accepts
+/// positional args — the reference check unions across all commands.
+#[rstest]
+fn test_step_alias_pipeline_union_accepts_args(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+build = ["echo first step", "echo running {{ args }}"]
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
+        &repo,
+        "build",
+        &["payload"],
+        Some(&feature_path),
+        &["-y"],
+    ));
+}
+
+/// A multi-step pipeline where no step references `{{ args }}` rejects
+/// positional args — the union check correctly reports "not referenced"
+/// across all steps, not just the first.
+#[rstest]
+fn test_step_alias_pipeline_rejects_when_no_step_uses_args(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+build = ["echo first", "echo second"]
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
+        &repo,
+        "build",
+        &["payload"],
+        Some(&feature_path),
+        &["-y"],
+    ));
+}
+
+/// A conditional reference `{% if args %}…{% endif %}` counts as a
+/// reference — minijinja's AST walk catches the free variable regardless
+/// of whether it's in an expression, a filter, an index, a loop, or a
+/// conditional.
+#[rstest]
+fn test_step_alias_conditional_args_counts_as_referenced(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+maybe = "echo{% if args %} got={{ args }}{% endif %}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
+        &repo,
+        "maybe",
+        &["value"],
+        Some(&feature_path),
+        &["-y"],
+    ));
+}
+
+/// Post-alias `-y` (single-dash) falls into the positional-args branch
+/// (clap only captures `--yes`/`-y` at the global position). With the
+/// unused-arg check, an alias whose template has no `{{ args }}` now
+/// surfaces the mistake instead of silently forwarding `-y` as a token.
+#[rstest]
+fn test_step_alias_rejects_post_alias_dash_y(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+run = "echo hello"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
+        &repo,
+        "run",
+        &["-y"],
+        Some(&feature_path),
+        &["-y"],
+    ));
+}
+
 /// Declining approval prevents alias execution
 #[rstest]
 fn test_alias_approval_decline(mut repo: TestRepo) {
