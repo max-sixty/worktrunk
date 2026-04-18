@@ -96,16 +96,21 @@ fn hook_extras(hook_type: HookType) -> &'static [&'static str] {
     use HookType::*;
     match hook_type {
         // Switch: source branch (`base`) and destination (`target`).
-        // Post-switch has already switched, so only `base` is set — but we
-        // accept both here so user templates stay portable between pre/post.
         PreSwitch | PostSwitch => &[
             "base",
             "base_worktree_path",
             "target",
             "target_worktree_path",
         ],
-        // Create/start: source worktree the new branch was created from.
-        PreStart | PostStart => &["base", "base_worktree_path"],
+        // Create/start: source worktree (`base`) and newly-created destination
+        // (`target`). On create, the destination branch equals the bare `branch`
+        // var — `target` is accepted for template portability with switch hooks.
+        PreStart | PostStart => &[
+            "base",
+            "base_worktree_path",
+            "target",
+            "target_worktree_path",
+        ],
         // Commit: integration target for the pre-commit squash.
         PreCommit | PostCommit => &["target"],
         // Merge: where the feature is being merged into.
@@ -1677,10 +1682,10 @@ mod tests {
             err.message
         );
 
-        // `target` is unavailable in pre-start — catch the typo at validation time.
+        // `base` is unavailable in pre-merge — catch the typo at validation time.
         let err = validate_template(
-            "{{ target }}",
-            ValidationScope::Hook(HookType::PreStart),
+            "{{ base }}",
+            ValidationScope::Hook(HookType::PreMerge),
             &test.repo,
             "test",
         )
