@@ -78,9 +78,9 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
 #[case("help_config_state_logs", "config state logs --help")]
 #[case("help_config_state_get", "config state get --help")]
 #[case("help_config_state_clear", "config state clear --help")]
-#[case("help_hook_approvals", "hook approvals --help")]
-#[case("help_hook_approvals_add", "hook approvals add --help")]
-#[case("help_hook_approvals_clear", "hook approvals clear --help")]
+#[case("help_config_approvals", "config approvals --help")]
+#[case("help_config_approvals_add", "config approvals add --help")]
+#[case("help_config_approvals_clear", "config approvals clear --help")]
 fn test_help(#[case] test_name: &str, #[case] args_str: &str) {
     let args: Vec<&str> = if args_str.is_empty() {
         vec![]

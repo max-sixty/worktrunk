@@ -308,8 +308,9 @@ Skips gracefully if the statusline is already configured."#
 }
 
 // Ordering: user journey — shell (install integration), create (bootstrap
-// config files), show (inspect), update (migrate deprecations), plugins
-// (optional add-ons), state (advanced diagnostics).
+// config files), show (inspect), update (migrate deprecations), approvals
+// (security policy for project commands), plugins (optional add-ons), state
+// (advanced diagnostics).
 #[derive(Subcommand)]
 pub enum ConfigCommand {
     /// Shell integration setup
@@ -397,6 +398,36 @@ $ wt config update --print
         /// Print the migrated config to stdout instead of writing it
         #[arg(long)]
         print: bool,
+    },
+
+    /// Manage command approvals
+    #[command(
+        after_long_help = r#"Project hooks and project aliases prompt for approval on first run to prevent untrusted projects from running arbitrary commands. Approvals from both flows are stored together.
+
+## Examples
+
+Pre-approve all hook and alias commands for current project:
+```console
+$ wt config approvals add
+```
+
+Clear approvals for current project:
+```console
+$ wt config approvals clear
+```
+
+Clear global approvals:
+```console
+$ wt config approvals clear --global
+```
+
+## How approvals work
+
+Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves. Use `--yes` to bypass prompts in CI."#
+    )]
+    Approvals {
+        #[command(subcommand)]
+        action: ApprovalsCommand,
     },
 
     /// Plugin management
@@ -837,7 +868,7 @@ dev = "npm start -- --port {{ vars.config.port }}"
 
 ## Storage format
 
-Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain only letters, digits, hyphens, and underscores — dots conflict with git config's section separator."#
+Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain only letters, digits and hyphens — dots conflict with git config's section separator, underscores with its variable name format."#
     )]
     Vars {
         #[command(subcommand)]

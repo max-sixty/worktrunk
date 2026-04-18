@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.39.0
+
+### Improved
+
+- **Aliases dispatch from top-level `wt <name>`** (and graduate from experimental): Configured aliases now resolve as first-class commands — `wt deploy` works the same as `wt step deploy`, reading better as an everyday shortcut. Precedence is built-in → alias → `wt-<name>` PATH binary → unrecognized-subcommand error, matching git's model where `[alias]` entries shadow `git-foo` externals. The old "alias shadows a built-in" warning is gone; an alias named `commit` now simply runs via `wt commit` (only `wt step commit` remains shadowed). ([#2266](https://github.com/max-sixty/worktrunk/pull/2266))
+
+- **`wt switch --base` accepts `pr:N` / `mr:N`**: `--base` now routes through the same resolver as the positional branch argument, so `wt switch -c feat-x --base pr:42` works symmetrically with `wt switch pr:42`. Same-repo PRs/MRs resolve to the source branch name; fork PRs/MRs fetch `refs/pull/N/head` (GitHub) or `refs/merge-requests/N/head` (GitLab) and use the resolved SHA, avoiding fork-branch pollution in the local namespace. ([#2263](https://github.com/max-sixty/worktrunk/pull/2263), thanks @jrdncstr for the request in [#2261](https://github.com/max-sixty/worktrunk/issues/2261))
+
+- **`WORKTRUNK_PROJECT_CONFIG_PATH` env override**: Mirrors the existing `WORKTRUNK_CONFIG_PATH` (user) and `WORKTRUNK_SYSTEM_CONFIG_PATH` (system) overrides for the project config. Missing files at the overridden path resolve to no project config, same as a missing `.config/wt.toml`. `wt config show --format=json` now reports the overridden path in the `project.path` field. ([#2267](https://github.com/max-sixty/worktrunk/pull/2267))
+
+### Fixed
+
+- **`wt list` handles `[gone]` upstreams gracefully**: When a branch's configured upstream ref is gone (remote branch deleted, local tracking ref pruned), the Remote column was surfacing a raw `fatal: ambiguous argument 'origin/<branch>'` error from `git rev-parse`. Upstream resolution now reads `%(upstream:track)` and treats `[gone]` the same as no upstream, so the row renders cleanly. ([#2262](https://github.com/max-sixty/worktrunk/pull/2262))
+
+- **Nix flake build with vendored skim-tuikit**: The `[patch.crates-io]` path dependency on `vendor/skim-tuikit` was being stubbed out by crane's `mkDummySrc` during `buildDepsOnly`, breaking downstream skim resolution. The flake now preserves real sources for vendored path deps while still benefiting from dependency caching. ([#2265](https://github.com/max-sixty/worktrunk/pull/2265), thanks @nickdichev)
+
+### Documentation
+
+- **Renamed "external subcommand" to "custom subcommand"**: The user-facing name for `wt-<name>` PATH-dispatched subcommands is now "custom subcommand" in docs and internal code, matching cargo's vocabulary. Avoids overloading "external," which the codebase already uses for `shell_exec` subprocesses. Internal renames: `src/commands/external.rs` → `custom.rs`, `Commands::External` → `Commands::Custom`. ([#2270](https://github.com/max-sixty/worktrunk/pull/2270))
+
+- **Trimmed filler in prose docs**: Removed sentences that restated obvious error behavior, duplicated nearby prose, or added visual weight without information across `extending.md`, `faq.md`, and `tips-patterns.md`. ([#2271](https://github.com/max-sixty/worktrunk/pull/2271), [#2272](https://github.com/max-sixty/worktrunk/pull/2272))
+
+### Internal
+
+- Extracted a shared `did_you_mean` helper used by both top-level and `wt step` suggestion sites, so the 0.7 Jaro-Winkler threshold and sort order are defined in one place. ([#2268](https://github.com/max-sixty/worktrunk/pull/2268))
+
 ## 0.38.0
 
 ### Improved

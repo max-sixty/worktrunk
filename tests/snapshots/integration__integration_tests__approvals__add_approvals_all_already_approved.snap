@@ -3,7 +3,7 @@ source: tests/integration_tests/approvals.rs
 info:
   program: wt
   args:
-    - hook
+    - config
     - approvals
     - add
   env:
@@ -51,4 +51,4 @@ exit_code: 1
 [2m○[22m pre-start:
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'test'[0m[2m
 [31m✗[39m [31mCannot prompt for approval in non-interactive environment[39m
-[2m↳[22m [2mTo skip prompts in CI/CD, add [4m--yes[24m; to pre-approve commands, run [4mwt hook approvals add[24m[22m
+[2m↳[22m [2mTo skip prompts in CI/CD, add [4m--yes[24m; to pre-approve commands, run [4mwt config approvals add[24m[22m

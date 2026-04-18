@@ -1174,18 +1174,13 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
 
 // ==================== Vars Operations ====================
 
-/// Validate a vars key name: letters, digits, hyphens, underscores only.
+/// Validate a vars key name: letters, digits, and hyphens only.
 fn validate_vars_key(key: &str) -> anyhow::Result<()> {
     if key.is_empty() {
         anyhow::bail!("Key cannot be empty");
     }
-    if !key
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        anyhow::bail!(
-            "Invalid key {key:?}: keys must contain only letters, digits, hyphens, and underscores"
-        );
+    if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        anyhow::bail!("Invalid key {key:?}: keys must contain only letters, digits, and hyphens");
     }
     Ok(())
 }

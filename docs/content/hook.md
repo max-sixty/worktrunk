@@ -64,7 +64,7 @@ Project commands require approval on first run:
 - Use `--yes` to bypass prompts — useful for CI and automation
 - Use `--no-hooks` to skip hooks
 
-Manage approvals with `wt hook approvals add` and `wt hook approvals clear`.
+Manage approvals with `wt config approvals add` and `wt config approvals clear`.
 
 # Configuration
 
@@ -462,7 +462,7 @@ remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null
 
 - [`wt merge`](@/merge.md) — Runs hooks automatically during merge
 - [`wt switch`](@/switch.md) — Runs pre-start/post-start hooks on `--create`
-- [`wt config`](@/config.md) — Manage hook approvals
+- [`wt config approvals`](@/config.md#wt-config-approvals) — Manage approvals
 - [`wt config state logs`](@/config.md#wt-config-state-logs) — Access background hook logs
 
 ## Command reference
@@ -484,7 +484,6 @@ Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>post-merge</span></b>   Run post-merge hooks
   <b><span class=c>pre-remove</span></b>   Run pre-remove hooks
   <b><span class=c>post-remove</span></b>  Run post-remove hooks
-  <b><span class=c>approvals</span></b>    Manage command approvals
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
@@ -500,62 +499,6 @@ Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
-
-  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
-          Skip approval prompts
-{% end %}
-
-# Subcommands
-
-## wt hook approvals
-
-Manage command approvals.
-
-Project hooks require approval on first run to prevent untrusted projects from running arbitrary commands.
-
-### Examples
-
-Pre-approve all commands for current project:
-{{ terminal(cmd="wt hook approvals add") }}
-
-Clear approvals for current project:
-{{ terminal(cmd="wt hook approvals clear") }}
-
-Clear global approvals:
-{{ terminal(cmd="wt hook approvals clear --global") }}
-
-### How approvals work
-
-Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves. Use `--yes` to bypass prompts in CI.
-
-### Command reference
-
-{% terminal() %}
-wt hook approvals - Manage command approvals
-
-Usage: <b><span class=c>wt hook approvals</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
-
-<b><span class=g>Commands:</span></b>
-  <b><span class=c>add</span></b>    Store approvals in approvals.toml
-  <b><span class=c>clear</span></b>  Clear approved commands from approvals.toml
-
-<b><span class=g>Options:</span></b>
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
-
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
-          Working directory for this command
-
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
-          User config file path
-
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
-          + trace.log/output.log under .git/wt/logs/)
-
-  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
-          Skip approval prompts
 {% end %}
 
 <!-- END AUTO-GENERATED from `wt hook --help-page` -->

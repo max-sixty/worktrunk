@@ -121,7 +121,7 @@ pub use deprecation::{
     key_belongs_in, warn_unknown_fields,
 };
 pub use expansion::{
-    DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, TemplateExpandError, expand_template,
+    ALIAS_ARGS_KEY, DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, TemplateExpandError, expand_template,
     redact_credentials, sanitize_branch_name, sanitize_db, short_hash, template_references_var,
     validate_template, validate_template_syntax,
 };

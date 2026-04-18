@@ -3,9 +3,8 @@ source: tests/integration_tests/help.rs
 info:
   program: wt
   args:
-    - hook
+    - config
     - approvals
-    - clear
     - "--help"
   env:
     CLICOLOR_FORCE: "1"
@@ -32,14 +31,15 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-wt hook approvals clear - Clear approved commands from approvals.toml
+wt config approvals - Manage command approvals
 
-Usage: [1m[36mwt hook approvals clear[0m [36m[OPTIONS][0m
+Usage: [1m[36mwt config approvals[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
+
+[1m[32mCommands:[0m
+  [1m[36madd[0m    Store approvals in approvals.toml
+  [1m[36mclear[0m  Clear approved commands from approvals.toml
 
 [1m[32mOptions:[0m
-  [1m[36m-g[0m, [1m[36m--global[0m
-          Clear global approvals
-
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
@@ -53,12 +53,21 @@ Usage: [1m[36mwt hook approvals clear[0m [36m[OPTIONS][0m
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
 
-  [1m[36m-y[0m, [1m[36m--yes[0m
-          Skip approval prompts
+Project hooks and project aliases prompt for approval on first run to prevent untrusted projects from running arbitrary commands. Approvals from both flows are stored together.
 
-Removes saved approvals, requiring re-approval on next command run.
+[1m[32mExamples[0m
 
-By default, clears approvals for the current project. Use [2m--global[0m to clear
-all approvals across all projects.
+Pre-approve all hook and alias commands for current project:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config approvals add[0m
+
+Clear approvals for current project:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config approvals clear[0m
+
+Clear global approvals:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config approvals clear [0m[2m[36m--global[0m[2m[0m
+
+[1m[32mHow approvals work[0m
+
+Approved commands are saved to [2m~/.config/worktrunk/approvals.toml[0m. Re-approval is required when the command template changes or the project moves. Use [2m--yes[0m to bypass prompts in CI.
 
 ----- stderr -----

@@ -3,8 +3,9 @@ source: tests/integration_tests/help.rs
 info:
   program: wt
   args:
-    - hook
+    - config
     - approvals
+    - clear
     - "--help"
   env:
     CLICOLOR_FORCE: "1"
@@ -31,15 +32,14 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-wt hook approvals - Manage command approvals
+wt config approvals clear - Clear approved commands from approvals.toml
 
-Usage: [1m[36mwt hook approvals[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
-
-[1m[32mCommands:[0m
-  [1m[36madd[0m    Store approvals in approvals.toml
-  [1m[36mclear[0m  Clear approved commands from approvals.toml
+Usage: [1m[36mwt config approvals clear[0m [36m[OPTIONS][0m
 
 [1m[32mOptions:[0m
+  [1m[36m-g[0m, [1m[36m--global[0m
+          Clear global approvals
+
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
@@ -56,21 +56,9 @@ Usage: [1m[36mwt hook approvals[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-Project hooks require approval on first run to prevent untrusted projects from running arbitrary commands.
+Removes saved approvals, requiring re-approval on next command run.
 
-[1m[32mExamples[0m
-
-Pre-approve all commands for current project:
-[107m [0m [2m[0m[2m[34mwt[0m[2m hook approvals add[0m
-
-Clear approvals for current project:
-[107m [0m [2m[0m[2m[34mwt[0m[2m hook approvals clear[0m
-
-Clear global approvals:
-[107m [0m [2m[0m[2m[34mwt[0m[2m hook approvals clear [0m[2m[36m--global[0m[2m[0m
-
-[1m[32mHow approvals work[0m
-
-Approved commands are saved to [2m~/.config/worktrunk/approvals.toml[0m. Re-approval is required when the command template changes or the project moves. Use [2m--yes[0m to bypass prompts in CI.
+By default, clears approvals for the current project. Use [2m--global[0m to clear
+all approvals across all projects.
 
 ----- stderr -----

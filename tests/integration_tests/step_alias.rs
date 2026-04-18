@@ -1224,6 +1224,104 @@ xyzzy = "echo nothing happens"
     );
 }
 
+/// Positional args after the alias name forward to `{{ args }}` in the
+/// template — space-joined and shell-escaped so args with spaces, quotes,
+/// or metacharacters splice safely into a command line.
+#[rstest]
+fn test_step_alias_forwards_positional_args(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+run = "echo got {{ args }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "run",
+        &["one", "two three", "four", "--yes"],
+        Some(&feature_path),
+    ));
+}
+
+/// Templates can treat `{{ args }}` as a sequence: indexing, iteration,
+/// and `length` all work because `ShellArgs` reports as `ObjectRepr::Seq`.
+#[rstest]
+fn test_step_alias_args_sequence_access(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+show = '''echo first={{ args[0] }}; echo count={{ args | length }}; echo each={% for a in args %} {{ a }}{% endfor %}'''
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "show",
+        &["alpha", "beta gamma", "--yes"],
+        Some(&feature_path),
+    ));
+}
+
+/// With no positionals, `{{ args }}` renders empty — the rest of the line
+/// stays intact and no stray whitespace is introduced.
+#[rstest]
+fn test_step_alias_empty_args_renders_empty(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+run = "echo [{{ args }}]"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "run",
+        &["--yes"],
+        Some(&feature_path),
+    ));
+}
+
+/// `wt s some-branch` with `s = "wt switch {{ args }}"` forwards the
+/// positional into the expanded command. Verified via `--dry-run` so the
+/// inner `wt switch` is not actually executed.
+#[rstest]
+fn test_top_level_alias_positional_expands_in_dry_run(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+s = "wt switch {{ args }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "s",
+        &["target-branch", "--dry-run", "--yes"],
+        Some(&feature_path),
+    ));
+}
+
 /// Declining approval prevents alias execution
 #[rstest]
 fn test_alias_approval_decline(mut repo: TestRepo) {

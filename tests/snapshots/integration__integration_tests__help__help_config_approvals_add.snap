@@ -3,7 +3,7 @@ source: tests/integration_tests/help.rs
 info:
   program: wt
   args:
-    - hook
+    - config
     - approvals
     - add
     - "--help"
@@ -32,9 +32,9 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-wt hook approvals add - Store approvals in approvals.toml
+wt config approvals add - Store approvals in approvals.toml
 
-Usage: [1m[36mwt hook approvals add[0m [36m[OPTIONS][0m
+Usage: [1m[36mwt config approvals add[0m [36m[OPTIONS][0m
 
 [1m[32mOptions:[0m
       [1m[36m--all[0m
