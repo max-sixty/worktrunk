@@ -932,11 +932,12 @@ pub fn execute_switch(
                         .collect();
                         ctx.execute_pre_start_commands(&extra_vars)?;
                     }
-                    CreationMethod::ForkRef { .. } => {
-                        let num_str = pr_number.unwrap().to_string();
-                        let url = pr_url.as_deref().unwrap();
+                    CreationMethod::ForkRef {
+                        number, ref_url, ..
+                    } => {
+                        let num_str = number.to_string();
                         let extra_vars: Vec<(&str, &str)> =
-                            vec![("pr_number", &num_str), ("pr_url", url)];
+                            vec![("pr_number", &num_str), ("pr_url", ref_url)];
                         ctx.execute_pre_start_commands(&extra_vars)?;
                     }
                 }
