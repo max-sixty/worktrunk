@@ -98,14 +98,19 @@ fn hook_extras(hook_type: HookType) -> &'static [&'static str] {
         // Switch: source branch (`base`) and destination (`target`).
         // Post-switch has already switched, so only `base` is set — but we
         // accept both here so user templates stay portable between pre/post.
+        // `pr_number`/`pr_url` are populated for post-switch when creating
+        // via `pr:N` / `mr:N`; pre-switch fires before the PR/MR API call,
+        // so they're never set there but remain accepted for portability.
         PreSwitch | PostSwitch => &[
             "base",
             "base_worktree_path",
             "target",
             "target_worktree_path",
+            "pr_number",
+            "pr_url",
         ],
         // Create/start: source worktree the new branch was created from.
-        // `pr_number`/`pr_url` are populated only when creating via `pr:N` /
+        // `pr_number`/`pr_url` are populated when creating via `pr:N` /
         // `mr:N` (GitLab MRs reuse the same `pr_*` names).
         PreStart | PostStart => &["base", "base_worktree_path", "pr_number", "pr_url"],
         // Commit: integration target for the pre-commit squash.

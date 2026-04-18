@@ -1,7 +1,8 @@
 use crate::common::{
     TestRepo, configure_directive_files, directive_files, make_snapshot_cmd,
     make_snapshot_cmd_with_global_flags, repo, repo_with_remote, set_temp_home_env,
-    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wt_command,
+    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wait_for_file_content,
+    wt_command,
 };
 use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
@@ -2011,11 +2012,13 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
-/// `pre-start` hooks on PR/MR-created worktrees see `pr_number` and `pr_url` in
-/// their template context. Both GitHub PRs and GitLab MRs canonicalize to the
-/// same `pr_*` names — hook authors don't need to branch on platform.
+/// `pre-start`, `post-start`, and `post-switch` hooks on PR/MR-created worktrees
+/// see `pr_number` and `pr_url` in their template context. Both GitHub PRs and
+/// GitLab MRs canonicalize to the same `pr_*` names — hook authors don't need
+/// to branch on platform. Pre-switch fires before PR resolution and never sees
+/// them.
 #[rstest]
-fn test_switch_pr_pre_start_hook_sees_pr_vars(#[from(repo_with_remote)] repo: TestRepo) {
+fn test_switch_pr_hooks_see_pr_vars(#[from(repo_with_remote)] repo: TestRepo) {
     // Set up the same fork-PR scenario as test_switch_pr_fork: a refs/pull/42/head on the
     // bare remote, origin redirected to GitHub-style URL, and `gh api` mocked.
     repo.run_git(&["checkout", "-b", "pr-source"]);
@@ -2073,12 +2076,13 @@ fn test_switch_pr_pre_start_hook_sees_pr_vars(#[from(repo_with_remote)] repo: Te
     }"#;
     let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
 
-    // Hook writes pr_number and pr_url to a marker file in the *primary* worktree
-    // (the new worktree's path is unknown — and the test would have to derive it).
+    // Each hook writes its own marker in the primary worktree so we can verify
+    // post-switch + post-start (background) populate pr_number/pr_url too.
     // {{ repo_path }} is always the main repo's working tree.
-    let marker = repo.root_path().join("pr_marker.txt");
     repo.write_project_config(
-        r#"pre-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pr_marker.txt"
+        r#"pre-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_start.txt"
+post-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_start.txt"
+post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_switch.txt"
 "#,
     );
 
@@ -2093,12 +2097,19 @@ fn test_switch_pr_pre_start_hook_sees_pr_vars(#[from(repo_with_remote)] repo: Te
         String::from_utf8_lossy(&output.stderr),
     );
 
-    let contents = fs::read_to_string(&marker).expect("pre-start hook should have written marker");
-    assert_eq!(
-        contents.trim(),
-        "pr_number=42 pr_url=https://github.com/owner/test-repo/pull/42",
-        "pre-start hook should see canonical pr_number and pr_url variables",
-    );
+    let expected = "pr_number=42 pr_url=https://github.com/owner/test-repo/pull/42";
+    for marker in ["pre_start.txt", "post_start.txt", "post_switch.txt"] {
+        let path = repo.root_path().join(marker);
+        // post-* hooks run in the background; poll until the file appears.
+        wait_for_file_content(&path);
+        let contents = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{marker} should have been written: {e}"));
+        assert_eq!(
+            contents.trim(),
+            expected,
+            "{marker} hook should see canonical pr_number and pr_url variables",
+        );
+    }
 }
 
 /// Test fork PR when origin points to fork (no remote for base repo)

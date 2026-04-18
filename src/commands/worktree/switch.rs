@@ -905,6 +905,16 @@ pub fn execute_switch(
                 .and_then(|b| repo.worktree_for_branch(b).ok().flatten())
                 .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
+            // PR/MR identity travels into both the pre-start hook below and the
+            // SwitchResult — switch_extra_vars then forwards it to background
+            // post-switch / post-start hooks.
+            let (pr_number, pr_url) = match &method {
+                CreationMethod::ForkRef {
+                    number, ref_url, ..
+                } => (Some(*number), Some(ref_url.clone())),
+                CreationMethod::Regular { .. } => (None, None),
+            };
+
             // Execute post-create commands
             if run_hooks {
                 let ctx = CommandContext::new(repo, config, Some(&branch), &worktree_path, force);
@@ -922,12 +932,11 @@ pub fn execute_switch(
                         .collect();
                         ctx.execute_pre_start_commands(&extra_vars)?;
                     }
-                    CreationMethod::ForkRef {
-                        number, ref_url, ..
-                    } => {
-                        let num_str = number.to_string();
+                    CreationMethod::ForkRef { .. } => {
+                        let num_str = pr_number.unwrap().to_string();
+                        let url = pr_url.as_deref().unwrap();
                         let extra_vars: Vec<(&str, &str)> =
-                            vec![("pr_number", &num_str), ("pr_url", ref_url)];
+                            vec![("pr_number", &num_str), ("pr_url", url)];
                         ctx.execute_pre_start_commands(&extra_vars)?;
                     }
                 }
@@ -943,6 +952,8 @@ pub fn execute_switch(
                     base_branch,
                     base_worktree_path,
                     from_remote,
+                    pr_number,
+                    pr_url,
                 },
                 SwitchBranchInfo {
                     branch: Some(branch),

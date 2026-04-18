@@ -31,6 +31,12 @@ pub enum SwitchResult {
         base_worktree_path: Option<String>,
         /// Remote tracking branch if auto-created from remote (e.g., "origin/feature")
         from_remote: Option<String>,
+        /// PR/MR number when created via `pr:N` / `mr:N` (carried into post-* hook
+        /// templates as `pr_number`).
+        pr_number: Option<u32>,
+        /// PR/MR web URL when created via `pr:N` / `mr:N` (carried into post-* hook
+        /// templates as `pr_url`).
+        pr_url: Option<String>,
     },
 }
 
@@ -256,6 +262,8 @@ mod tests {
             base_branch: Some("main".to_string()),
             base_worktree_path: Some("/test/main".to_string()),
             from_remote: None,
+            pr_number: None,
+            pr_url: None,
         };
         assert_eq!(result.path(), &path);
     }
@@ -269,6 +277,8 @@ mod tests {
             base_branch: None,
             base_worktree_path: None,
             from_remote: Some("origin/feature".to_string()),
+            pr_number: None,
+            pr_url: None,
         };
         assert_eq!(result.path(), &path);
     }
