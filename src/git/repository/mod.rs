@@ -628,6 +628,14 @@ impl Repository {
         sha_cache::clear_all(self)
     }
 
+    /// Count all cached git command results without clearing.
+    ///
+    /// Surfaces the same state that `clear_git_commands_cache` would sweep,
+    /// for the `wt config state get` parity view.
+    pub fn git_commands_cache_count(&self) -> usize {
+        sha_cache::count_all(self)
+    }
+
     /// Get the directory where worktrunk background logs are stored.
     ///
     /// Returns `<git-common-dir>/wt/logs/` (typically `.git/wt/logs/`).

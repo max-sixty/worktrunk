@@ -3,11 +3,9 @@ source: tests/integration_tests/step_alias.rs
 info:
   program: wt
   args:
-    - step
-    - greet
-    - "--dry-run"
-    - "--var"
-    - name=World
+    - run
+    - "--env=staging"
+    - foo
     - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
@@ -48,5 +46,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Alias [1mgreet[22m would run:
-[107m [0m [2m[0m[2m[34mecho[0m[2m Hello World from feature
+[36m◎[39m [36mRunning alias [1mrun[22m[39m
+[0mgot --env=staging foo

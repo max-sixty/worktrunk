@@ -914,6 +914,9 @@ fn test_state_get_empty(repo: TestRepo) {
         [36mCI STATUS CACHE[39m
         [107m [0m (none)
 
+        [36mGIT COMMANDS CACHE[39m
+        [107m [0m (none)
+
         [36mHINTS[39m
         [107m [0m (none)
 
@@ -924,6 +927,9 @@ fn test_state_get_empty(repo: TestRepo) {
         [107m [0m (none)
 
         [36mDIAGNOSTIC[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mTRASH[39m @ _REPO_/.git/wt/trash
         [107m [0m (none)
         ");
     });
@@ -1023,6 +1029,17 @@ fn test_state_get_comprehensive(repo: TestRepo) {
         "remove output",
     );
 
+    // Create trash entries (staged worktree removals)
+    let trash_dir = git_dir.join("wt/trash");
+    std::fs::create_dir_all(trash_dir.join("myproject.feature-1234567890")).unwrap();
+    std::fs::create_dir_all(trash_dir.join("myproject.bugfix-9999999999")).unwrap();
+
+    // Create git commands cache entries (SHA-keyed caches)
+    let sha_cache_dir = git_dir.join("wt/cache/merge-tree-conflicts");
+    std::fs::create_dir_all(&sha_cache_dir).unwrap();
+    std::fs::write(sha_cache_dir.join("aaaa-bbbb.json"), "{}").unwrap();
+    std::fs::write(sha_cache_dir.join("cccc-dddd.json"), "{}").unwrap();
+
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
@@ -1040,10 +1057,12 @@ fn test_state_get_json_empty(repo: TestRepo) {
       "command_log": [],
       "default_branch": "main",
       "diagnostic": [],
+      "git_commands_cache": 0,
       "hints": [],
       "hook_output": [],
       "markers": [],
       "previous_branch": null,
+      "trash": [],
       "vars": []
     }
     "#);
@@ -1082,40 +1101,62 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
         ),
     );
 
+    // Populate trash + git commands cache for parity coverage
+    let git_dir = repo.root_path().join(".git");
+    std::fs::create_dir_all(git_dir.join("wt/trash/myproject.feature-1234567890")).unwrap();
+    let sha_cache_dir = git_dir.join("wt/cache/is-ancestor");
+    std::fs::create_dir_all(&sha_cache_dir).unwrap();
+    std::fs::write(sha_cache_dir.join("aaaa-bbbb.json"), "{}").unwrap();
+
     let output = wt_state_get_json_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
-    {
-      "ci_status": [
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+    let normalized = serde_json::to_string_pretty(&json).unwrap();
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""modified_at": \d+"#, r#""modified_at": "<MTIME>""#);
+    settings.bind(|| {
+        assert_snapshot!(normalized, @r#"
         {
-          "branch": "feature",
-          "checked_at": 1735776000,
-          "head": "abc12345def67890",
-          "status": "passed"
+          "ci_status": [
+            {
+              "branch": "feature",
+              "checked_at": 1735776000,
+              "head": "abc12345def67890",
+              "status": "passed"
+            }
+          ],
+          "command_log": [],
+          "default_branch": "main",
+          "diagnostic": [],
+          "git_commands_cache": 1,
+          "hints": [],
+          "hook_output": [],
+          "markers": [
+            {
+              "branch": "feature",
+              "marker": "🚧 WIP",
+              "set_at": 1735776000
+            }
+          ],
+          "previous_branch": "feature",
+          "trash": [
+            {
+              "modified_at": "<MTIME>",
+              "name": "myproject.feature-1234567890",
+              "path": "_REPO_/.git/wt/trash/myproject.feature-1234567890"
+            }
+          ],
+          "vars": [
+            {
+              "branch": "main",
+              "key": "env",
+              "value": "staging"
+            }
+          ]
         }
-      ],
-      "command_log": [],
-      "default_branch": "main",
-      "diagnostic": [],
-      "hints": [],
-      "hook_output": [],
-      "markers": [
-        {
-          "branch": "feature",
-          "marker": "🚧 WIP",
-          "set_at": 1735776000
-        }
-      ],
-      "previous_branch": "feature",
-      "vars": [
-        {
-          "branch": "main",
-          "key": "env",
-          "value": "staging"
-        }
-      ]
-    }
-    "#);
+        "#);
+    });
 }
 
 #[rstest]
@@ -1167,6 +1208,7 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
           ],
           "default_branch": "main",
           "diagnostic": [],
+          "git_commands_cache": 0,
           "hints": [],
           "hook_output": [
             {
@@ -1192,6 +1234,7 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
           ],
           "markers": [],
           "previous_branch": null,
+          "trash": [],
           "vars": []
         }
         "#);

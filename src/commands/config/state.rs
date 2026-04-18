@@ -1,7 +1,30 @@
 //! State management commands.
 //!
-//! Commands for getting, setting, and clearing stored state like default branch,
-//! previous branch, CI status, markers, and logs.
+//! Commands for getting, setting, and clearing stored state. State lives in
+//! git config (under `worktrunk.*`) and in the `.git/wt/` directory tree.
+//!
+//! # `state get` ↔ `state clear` parity
+//!
+//! The aggregate `wt config state get` (`handle_state_show`) MUST surface every
+//! category that the aggregate `wt config state clear` (`handle_state_clear_all`)
+//! removes. A user should never be able to run `state clear` and have something
+//! disappear that `state get` never mentioned.
+//!
+//! Categories covered by both paths:
+//!
+//! - Default branch cache (git config `worktrunk.default_branch.*`)
+//! - Previous branch (git config `worktrunk.history`)
+//! - Branch markers (git config `worktrunk.state.<branch>.marker`)
+//! - Vars (git config `worktrunk.state.<branch>.vars.*`)
+//! - CI status cache (`.git/wt/cache/ci-status/`)
+//! - Git commands cache (`.git/wt/cache/{merge-tree-conflicts,is-ancestor,…}/`)
+//! - Hints (git config `worktrunk.hints.*`)
+//! - Logs (`.git/wt/logs/`)
+//! - Trash (`.git/wt/trash/`)
+//!
+//! When adding a new category, update BOTH `handle_state_show` and
+//! `handle_state_clear_all`, plus the `after_long_help` blocks for `state get`
+//! and `state clear` in `src/cli/config.rs`, in the same change.
 //!
 //! # Log layout invariant
 //!
@@ -124,6 +147,51 @@ fn sort_hook_entries(entries: &mut [HookOutputEntry]) {
             .cmp(&a_time)
             .then_with(|| a.relative_display.cmp(&b.relative_display))
     });
+}
+
+/// A top-level entry staged under `wt_trash_dir()`.
+///
+/// Worktree removal renames directories into `.git/wt/trash/<name>-<timestamp>`
+/// and a background `rm -rf` cleans them up; entries still present here are
+/// awaiting (or escaped) that sweep.
+struct TrashEntry {
+    /// Filename, e.g. `myproject.feature-1234567890`.
+    name: String,
+    /// Absolute path, forward-slashed for cross-platform display.
+    path: String,
+    metadata: std::fs::Metadata,
+}
+
+/// List top-level entries under `wt_trash_dir()`.
+///
+/// Only the first level matters — each entry is one staged worktree (a
+/// directory) or a stray file. Sorted by mtime (newest first) with name as
+/// tie-breaker. Individual dirent/metadata failures are skipped: `state get`
+/// is a read-only inspector and can race with the background `rm -rf`, so a
+/// partial listing is more useful than a hard failure.
+fn list_trash_entries(repo: &Repository) -> anyhow::Result<Vec<TrashEntry>> {
+    let trash_dir = repo.wt_trash_dir();
+    if !trash_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut out: Vec<TrashEntry> = std::fs::read_dir(&trash_dir)?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let metadata = entry.metadata().ok()?;
+            Some(TrashEntry {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                path: entry.path().to_slash_lossy().into_owned(),
+                metadata,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        let a_time = a.metadata.modified().ok();
+        let b_time = b.metadata.modified().ok();
+        b_time.cmp(&a_time).then_with(|| a.name.cmp(&b.name))
+    });
+    Ok(out)
 }
 
 /// Clear stale entries from the wt/trash directory.
@@ -1035,16 +1103,36 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
     // Get hints
     let hints = repo.list_shown_hints();
 
+    // Get trash entries
+    let trash: Vec<serde_json::Value> = list_trash_entries(repo)?
+        .iter()
+        .map(|e| {
+            let modified_at = e
+                .metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs());
+            serde_json::json!({
+                "name": e.name,
+                "path": e.path,
+                "modified_at": modified_at,
+            })
+        })
+        .collect();
+
     let output = serde_json::json!({
         "default_branch": default_branch,
         "previous_branch": previous_branch,
         "markers": markers,
         "ci_status": ci_status,
+        "git_commands_cache": repo.git_commands_cache_count(),
         "vars": vars_data,
         "command_log": command_log,
         "hook_output": hook_output,
         "diagnostic": diagnostic,
-        "hints": hints
+        "hints": hints,
+        "trash": trash,
     });
 
     println!("{}", serde_json::to_string_pretty(&output)?);
@@ -1148,6 +1236,21 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     }
     writeln!(out)?;
 
+    // Show git commands cache summary
+    writeln!(out, "{}", format_heading("GIT COMMANDS CACHE", None))?;
+    let sha_count = repo.git_commands_cache_count();
+    if sha_count == 0 {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else {
+        let label = if sha_count == 1 { "entry" } else { "entries" };
+        writeln!(
+            out,
+            "{}",
+            format_with_gutter(&format!("{sha_count} {label}"), None)
+        )?;
+    }
+    writeln!(out)?;
+
     // Show hints
     writeln!(out, "{}", format_heading("HINTS", None))?;
     let hints = repo.list_shown_hints();
@@ -1162,6 +1265,36 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
 
     // Show log files
     render_all_log_sections(&mut out, repo)?;
+    writeln!(out)?;
+
+    // Show trash (staged worktree removals awaiting background delete)
+    let trash_dir = repo.wt_trash_dir();
+    let trash_display = format_path_for_display(&trash_dir);
+    writeln!(
+        out,
+        "{}",
+        format_heading("TRASH", Some(&format!("@ {trash_display}")))
+    )?;
+    let trash = list_trash_entries(repo)?;
+    if trash.is_empty() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else {
+        let rows: Vec<Vec<String>> = trash
+            .iter()
+            .map(|e| {
+                let age = e
+                    .metadata
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| format_relative_time_short(d.as_secs() as i64))
+                    .unwrap_or_else(|| "?".to_string());
+                vec![e.name.clone(), age]
+            })
+            .collect();
+        let rendered = crate::md_help::render_data_table(&["Entry", "Age"], &rows);
+        writeln!(out, "{}", rendered.trim_end())?;
+    }
 
     // Display through pager; fall back to direct stdout if pager unavailable
     if let Err(e) = show_help_in_pager(&out, true) {

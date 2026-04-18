@@ -502,3 +502,44 @@ command = "cat >/dev/null && echo 'feat: squashed commit message'"
         "Should indicate squash proceeds without hooks. Output:\n{output}"
     );
 }
+
+/// `wt config approvals add` accepts the prompt — covers the success branch of
+/// `add_approvals` after `approve_command_batch` returns Ok(true).
+#[rstest]
+fn test_config_approvals_add_accept(repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.write_project_config(r#"pre-start = "echo 'test command'""#);
+    repo.commit("Add config");
+
+    let env_vars = repo.test_env_vars();
+    let (output, exit_code) =
+        exec_wt_in_pty(&repo, &["config", "approvals", "add"], &env_vars, "y\n");
+
+    assert_eq!(exit_code, 0, "add should exit cleanly. Output:\n{output}");
+    assert!(
+        output.contains("Commands approved"),
+        "Should show approval success. Output:\n{output}"
+    );
+}
+
+/// `wt config approvals add` declines the prompt — covers the declined branch
+/// of `add_approvals` after `approve_command_batch` returns Ok(false).
+#[rstest]
+fn test_config_approvals_add_decline(repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.write_project_config(r#"pre-start = "echo 'test command'""#);
+    repo.commit("Add config");
+
+    let env_vars = repo.test_env_vars();
+    let (output, exit_code) =
+        exec_wt_in_pty(&repo, &["config", "approvals", "add"], &env_vars, "n\n");
+
+    assert_eq!(
+        exit_code, 0,
+        "decline should exit cleanly. Output:\n{output}"
+    );
+    assert!(
+        output.contains("Commands declined"),
+        "Should show decline message. Output:\n{output}"
+    );
+}

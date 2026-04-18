@@ -521,6 +521,36 @@ notify = "echo 'USER_POST_MERGE_RAN' > user_postmerge.txt"
     wait_for_file(&marker_file);
 }
 
+#[rstest]
+fn test_combined_user_and_project_post_merge(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"[post-merge]
+install = "echo 'PROJECT_RAN' > project_postmerge.txt"
+"#,
+    );
+    repo.commit("Add project config");
+
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature content", "Add feature");
+
+    repo.write_test_config(
+        r#"[post-merge]
+sync = "echo 'USER_RAN' > user_postmerge.txt"
+"#,
+    );
+
+    snapshot_merge(
+        "combined_user_and_project_post_merge",
+        &repo,
+        &["main", "--yes", "--no-remove"],
+        Some(&feature_wt),
+    );
+
+    let main_worktree = repo.root_path();
+    wait_for_file(&main_worktree.join("user_postmerge.txt"));
+    wait_for_file(&main_worktree.join("project_postmerge.txt"));
+}
+
 // ============================================================================
 // User Pre-Remove Hook Tests
 // ============================================================================
