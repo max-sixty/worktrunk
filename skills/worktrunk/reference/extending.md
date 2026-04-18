@@ -134,7 +134,7 @@ wt s feature/api  # multiple tokens pass through in order
 wt s 'has a space'  # spaces and metacharacters are escaped safely
 ```
 
-`{{ args }}` is a sequence — `{{ args[0] }}` returns the first argument, `{{ args | length }}` its count, and `{% for a in args %}{{ a }}{% endfor %}` iterates. Each element is individually shell-escaped, so `wt run 'a b' 'c;d'` splices into the command line as `'a b' 'c;d'` and can't inject shell syntax. Positionals interleave freely with flags — `wt deploy foo --dry-run bar` collects `["foo", "bar"]` into `args`. On the JSON stdin context passed to each command, `args` arrives as a JSON-encoded string (e.g. `"[\"foo\",\"bar\"]"`) because the context is a flat string map — decode with `json.loads` or equivalent if a script consumer needs the list.
+Access elements with `{{ args[0] }}`, iterate with `{% for a in args %}…{% endfor %}`, or count with `{{ args | length }}`. Each element is individually shell-escaped, so `wt run 'a b' 'c;d'` splices in as `'a b' 'c;d'` without shell injection.
 
 An `up` alias that fetches all remotes and rebases each worktree onto its upstream:
 
