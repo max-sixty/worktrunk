@@ -1141,7 +1141,6 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
 /// This handles:
 /// - macOS PTY control sequences (^D followed by backspaces)
 /// - Leading ANSI reset codes that vary between macOS and Linux
-/// - Background spawn failure warnings (intermittent under CI load)
 ///
 /// Note: CRLF normalization is done eagerly in PTY exec functions, not here.
 pub fn add_pty_filters(settings: &mut insta::Settings) {
@@ -1153,12 +1152,6 @@ pub fn add_pty_filters(settings: &mut insta::Settings) {
     // macOS and Linux PTYs generate ANSI codes slightly differently.
     // This handles lines that start with ESC[0m (reset).
     settings.add_filter(r"(?m)^\x1b\[0m", "");
-
-    // Background hook spawning (fork+exec) intermittently fails under heavy
-    // nextest parallelism when the PTY test runs alongside 3000+ other tests.
-    // The warning is a CI load artifact, not a product issue — strip it so
-    // the snapshot stays stable. Covered by non-PTY integration tests.
-    settings.add_filter(r"(?m)[^\n]*Failed to spawn pipeline[^\n]*\n?", "");
 }
 
 /// Add filters for binary paths (target/debug/wt) in PTY output.
