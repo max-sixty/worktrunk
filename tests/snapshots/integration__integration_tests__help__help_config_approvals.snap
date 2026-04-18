@@ -3,7 +3,7 @@ source: tests/integration_tests/help.rs
 info:
   program: wt
   args:
-    - hook
+    - config
     - approvals
     - "--help"
   env:
@@ -31,9 +31,9 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-wt hook approvals - Manage command approvals
+wt config approvals - Manage command approvals
 
-Usage: [1m[36mwt hook approvals[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
+Usage: [1m[36mwt config approvals[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 [1m[32mCommands:[0m
   [1m[36madd[0m    Store approvals in approvals.toml
@@ -53,18 +53,18 @@ Usage: [1m[36mwt hook approvals[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
 
-Project hooks require approval on first run to prevent untrusted projects from running arbitrary commands.
+Project hooks and project aliases prompt for approval on first run to prevent untrusted projects from running arbitrary commands. Approvals from both flows are stored together.
 
 [1m[32mExamples[0m
 
-Pre-approve all commands for current project:
-[107m [0m [2m[0m[2m[34mwt[0m[2m hook approvals add[0m
+Pre-approve all hook and alias commands for current project:
+[107m [0m [2m[0m[2m[34mwt[0m[2m config approvals add[0m
 
 Clear approvals for current project:
-[107m [0m [2m[0m[2m[34mwt[0m[2m hook approvals clear[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config approvals clear[0m
 
 Clear global approvals:
-[107m [0m [2m[0m[2m[34mwt[0m[2m hook approvals clear [0m[2m[36m--global[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config approvals clear [0m[2m[36m--global[0m[2m[0m
 
 [1m[32mHow approvals work[0m
 

@@ -32,7 +32,7 @@ use super::hooks::{
     HookCommandSpec, check_name_filter_matched, count_sourced_commands, prepare_background_hooks,
     prepare_sourced_steps, run_hook_with_filter, spawn_hook_pipeline,
 };
-use super::project_config::collect_commands_for_hooks;
+use super::project_config::{collect_commands_for_aliases, collect_commands_for_hooks};
 
 fn run_filtered_hook(
     ctx: &CommandContext,
@@ -388,7 +388,7 @@ pub fn run_hook(
     }
 }
 
-/// Handle `wt hook approvals add` command - approve all commands in the project
+/// Handle `wt config approvals add` command - approve all hook and alias commands in the project
 pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     use super::command_approval::approve_command_batch;
 
@@ -404,9 +404,11 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
         .load_project_config()?
         .ok_or(GitError::ProjectConfigNotFound { config_path })?;
 
-    // Collect all commands from the project config
+    // Collect all commands from the project config: hooks first (lifecycle order),
+    // then aliases (alphabetical via BTreeMap).
     let all_hooks: Vec<_> = HookType::iter().collect();
-    let commands = collect_commands_for_hooks(&project_config, &all_hooks);
+    let mut commands = collect_commands_for_hooks(&project_config, &all_hooks);
+    commands.extend(collect_commands_for_aliases(&project_config));
 
     if commands.is_empty() {
         eprintln!("{}", info_message("No commands configured in project"));
@@ -447,7 +449,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Handle `wt hook approvals clear` command - clear approved commands
+/// Handle `wt config approvals clear` command - clear approved commands
 pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
     let mut approvals = Approvals::load().context("Failed to load approvals")?;
 

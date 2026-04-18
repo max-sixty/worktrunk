@@ -748,7 +748,7 @@ impl GitError {
             }
 
             GitError::NotInteractive => {
-                let approvals_cmd = suggest_command("hook", &["approvals", "add"], &[]);
+                let approvals_cmd = suggest_command("config", &["approvals", "add"], &[]);
                 write!(
                     f,
                     "{}\n{}",
