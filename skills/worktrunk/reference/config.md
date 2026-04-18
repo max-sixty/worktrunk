@@ -481,6 +481,7 @@ Commands:
   show       Show configuration files & locations
   update     Update deprecated config settings
   approvals  Manage command approvals
+  alias      Inspect and preview aliases
   plugins    Plugin management
   state      Manage internal data and cache
 
@@ -603,6 +604,55 @@ Usage: wt config approvals [OPTIONS] <COMMAND>
 Commands:
   add    Store approvals in approvals.toml
   clear  Clear approved commands from approvals.toml
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Global Options:
+  -C <path>
+          Working directory for this command
+
+      --config <path>
+          User config file path
+
+  -v, --verbose...
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
+```
+
+## wt config alias
+
+Inspect and preview aliases.
+
+Aliases are command templates configured in user (`~/.config/worktrunk/config.toml`) or project (`.config/wt.toml`) config and run as `wt <name>`. See [Aliases](https://worktrunk.dev/extending/#aliases) for the configuration format.
+
+### Examples
+
+Show the template for `deploy`:
+```bash
+$ wt config alias show deploy
+```
+
+Preview an invocation without running it:
+```bash
+$ wt config alias dry-run deploy
+$ wt config alias dry-run deploy -- --env=staging
+```
+
+### Command reference
+
+```
+wt config alias - Inspect and preview aliases
+
+Usage: wt config alias [OPTIONS] <COMMAND>
+
+Commands:
+  show     Show an alias's template as configured
+  dry-run  Preview an alias invocation with template expansion
 
 Options:
   -h, --help

@@ -478,6 +478,7 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
   <b><span class=c>show</span></b>       Show configuration files &amp; locations
   <b><span class=c>update</span></b>     Update deprecated config settings
   <b><span class=c>approvals</span></b>  Manage command approvals
+  <b><span class=c>alias</span></b>      Inspect and preview aliases
   <b><span class=c>plugins</span></b>    Plugin management
   <b><span class=c>state</span></b>      Manage internal data and cache
 
@@ -592,6 +593,50 @@ Usage: <b><span class=c>wt config approvals</span></b> <span class=c>[OPTIONS]</
 <b><span class=g>Commands:</span></b>
   <b><span class=c>add</span></b>    Store approvals in approvals.toml
   <b><span class=c>clear</span></b>  Clear approved commands from approvals.toml
+
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+{% end %}
+
+## wt config alias
+
+Inspect and preview aliases.
+
+Aliases are command templates configured in user (`~/.config/worktrunk/config.toml`) or project (`.config/wt.toml`) config and run as `wt <name>`. See [Aliases](@/extending.md#aliases) for the configuration format.
+
+### Examples
+
+Show the template for `deploy`:
+{{ terminal(cmd="wt config alias show deploy") }}
+
+Preview an invocation without running it:
+{{ terminal(cmd="wt config alias dry-run deploy|||wt config alias dry-run deploy -- --env=staging") }}
+
+### Command reference
+
+{% terminal() %}
+wt config alias - Inspect and preview aliases
+
+Usage: <b><span class=c>wt config alias</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
+
+<b><span class=g>Commands:</span></b>
+  <b><span class=c>show</span></b>     Show an alias&#39;s template as configured
+  <b><span class=c>dry-run</span></b>  Preview an alias invocation with template expansion
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>

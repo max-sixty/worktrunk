@@ -3,8 +3,7 @@ source: tests/integration_tests/step_alias.rs
 info:
   program: wt
   args:
-    - step
-    - hello
+    - deploy
     - "--dry-run"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
@@ -40,10 +39,9 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Alias [1mhello[22m would run:
-[107m [0m [2m[0m[2m[34mecho[0m[2m Hello from feature
+[31m✗[39m [31m--dry-run is no longer supported; use `wt config alias dry-run deploy` instead[39m

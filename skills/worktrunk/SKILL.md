@@ -1,6 +1,6 @@
 ---
 name: worktrunk
-description: Guidance for Worktrunk, a CLI tool for managing git worktrees. Covers configuration (user config at ~/.config/worktrunk/config.toml and project hooks at .config/wt.toml), usage, and troubleshooting. Use for "setting up commit message generation", "configuring hooks", "automating tasks", or general worktrunk questions.
+description: Guidance for Worktrunk (the `wt` CLI) — git worktree management, hooks, and config. Load when editing .config/wt.toml or ~/.config/worktrunk/config.toml; adding, modifying, or debugging hooks (post-merge, post-start, pre-commit, pre-merge, post-switch, etc.); configuring commit message generation or command aliases; or troubleshooting wt behavior. Also answers general worktrunk/wt questions.
 version: 0.39.0
 license: MIT OR Apache-2.0
 compatibility: Requires worktrunk CLI (https://worktrunk.dev)

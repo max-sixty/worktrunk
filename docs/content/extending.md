@@ -116,7 +116,7 @@ deploy = "make deploy BRANCH={{ branch }} ENV={{ env }}"
 open = "open http://localhost:{{ branch | hash_port }}"
 ```
 
-{{ terminal(cmd="wt deploy --env=staging|||wt deploy --dry-run --env=prod") }}
+{{ terminal(cmd="wt deploy|||wt deploy --env=staging") }}
 
 `wt deploy` resolves `deploy` against configured aliases first, then falls through to a `wt-deploy` PATH binary if no alias matches. Built-in subcommands always take precedence — an alias named `list` or `switch` is unreachable.
 
@@ -129,11 +129,22 @@ Tokens after the alias name are parsed left-to-right. The template itself declar
 | `--KEY=VALUE` or `--KEY VALUE` where `{{ KEY }}` is referenced | Bound — `KEY` becomes the template value |
 | Anything else | Forwarded to `{{ args }}` (after `--`, even flag-shaped tokens forward) |
 
-`--KEY VALUE` consumes the next token unconditionally, so `--env --dry-run` with `{{ env }}` referenced binds `env=--dry-run`. Use `--KEY=VALUE` to be unambiguous.
+`--KEY VALUE` consumes the next token unconditionally, so `--env --other` with `{{ env }}` referenced binds `env=--other`. Use `--KEY=VALUE` to be unambiguous.
 
-Built-in flags (`--yes`/`-y`, `--dry-run`) are always recognized, so an alias can't shadow them. Built-in template variables (`branch`, `worktree_path`, `commit`, …) can be overridden — `--branch=override` for an alias referencing `{{ branch }}` binds to the user's value, but only inside the template; the worktree's actual branch is unchanged.
+Built-in template variables (`branch`, `worktree_path`, `commit`, …) can be overridden — `--branch=override` for an alias referencing `{{ branch }}` binds to the user's value, but only inside the template; the worktree's actual branch is unchanged.
 
 Hyphens in variable names are canonicalized to underscores at parse time. `--my-var=value` binds to `{{ my_var }}` because minijinja parses `{{ my-var }}` as subtraction.
+
+### Inspecting and previewing
+
+Two subcommands introspect aliases without running them:
+
+- `wt config alias show <name>` prints the configured template text, tagged by source (`user`/`project`).
+- `wt config alias dry-run <name> [-- args...]` parses the invocation with the same parser `wt <name>` uses, then prints the rendered command without executing.
+
+{{ terminal(cmd="wt config alias show deploy|||wt config alias dry-run deploy|||wt config alias dry-run deploy -- --env=staging") }}
+
+Arguments after `--` in `dry-run` are forwarded verbatim — `wt config alias dry-run s -- target-branch` previews exactly what `wt s target-branch` would run. Templates referencing `vars.*` are shown unexpanded, mirroring execution semantics: those values are read from git config just before each step runs.
 
 ### Forwarding positional arguments
 

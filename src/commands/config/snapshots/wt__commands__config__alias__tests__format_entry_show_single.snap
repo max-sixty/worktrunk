@@ -1,0 +1,6 @@
+---
+source: src/commands/config/alias.rs
+expression: out.ansi_strip()
+---
+○ Alias greet (user):
+  echo {{ branch }}

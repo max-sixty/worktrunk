@@ -6,9 +6,7 @@ info:
     - config
     - alias
     - dry-run
-    - s
-    - "--"
-    - target-branch
+    - hello
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -46,7 +44,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[2m○[22m Alias [1ms[22m (project) would run:
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch target-branch
+[2m○[22m Alias [1mhello[22m (project) would run:
+[107m [0m [2m[0m[2m[34mecho[0m[2m Hello from feature
 
 ----- stderr -----

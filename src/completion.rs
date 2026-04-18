@@ -225,6 +225,30 @@ pub(crate) fn hook_command_name_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(HookCommandCompleter)
 }
 
+/// Alias name completion for `wt config alias <show|dry-run> <name>`.
+///
+/// Completes with the merged user + project alias name set. Returns all
+/// candidates unfiltered — the outer `maybe_handle_env_completion` does
+/// bash-specific prefix filtering; fish/zsh apply their own matching.
+pub(crate) fn alias_name_completer() -> ArgValueCompleter {
+    ArgValueCompleter::new(AliasNameCompleter)
+}
+
+#[derive(Clone, Copy)]
+struct AliasNameCompleter;
+
+impl ValueCompleter for AliasNameCompleter {
+    fn complete(&self, current: &OsStr) -> Vec<CompletionCandidate> {
+        if current.to_str().is_some_and(|s| s.starts_with('-')) {
+            return Vec::new();
+        }
+        load_aliases_for_completion()
+            .into_keys()
+            .map(CompletionCandidate::new)
+            .collect()
+    }
+}
+
 #[derive(Clone, Copy)]
 struct HookCommandCompleter;
 

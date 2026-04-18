@@ -3,10 +3,11 @@ source: tests/integration_tests/step_alias.rs
 info:
   program: wt
   args:
-    - "-y"
-    - step
+    - config
+    - alias
+    - dry-run
     - greet
-    - "--dry-run"
+    - "--"
     - "--name"
     - World
   env:
@@ -46,7 +47,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+[2m○[22m Alias [1mgreet[22m (project) would run:
+[107m [0m [2m[0m[2m[34mecho[0m[2m Hello World from feature
 
 ----- stderr -----
-[2m○[22m Alias [1mgreet[22m would run:
-[107m [0m [2m[0m[2m[34mecho[0m[2m Hello World from feature

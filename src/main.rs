@@ -47,26 +47,26 @@ use commands::repository_ext::RepositoryCliExt;
 use commands::worktree::{handle_no_ff_merge, handle_push};
 use commands::{
     MergeOptions, OperationMode, RebaseResult, RemoveTarget, SquashResult, SwitchOptions,
-    add_approvals, clear_approvals, handle_claude_install, handle_claude_install_statusline,
-    handle_claude_uninstall, handle_completions, handle_config_create, handle_config_show,
-    handle_config_update, handle_configure_shell, handle_custom_command, handle_hints_clear,
-    handle_hints_get, handle_hook_show, handle_init, handle_list, handle_logs_list, handle_merge,
-    handle_opencode_install, handle_opencode_uninstall, handle_promote, handle_rebase,
-    handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
-    handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
-    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set, resolve_worktree_arg,
-    run_hook, step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune,
-    step_relocate,
+    add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show, handle_claude_install,
+    handle_claude_install_statusline, handle_claude_uninstall, handle_completions,
+    handle_config_create, handle_config_show, handle_config_update, handle_configure_shell,
+    handle_custom_command, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
+    handle_list, handle_logs_list, handle_merge, handle_opencode_install,
+    handle_opencode_uninstall, handle_promote, handle_rebase, handle_show_theme, handle_squash,
+    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
+    handle_state_show, handle_switch, handle_unconfigure_shell, handle_vars_clear, handle_vars_get,
+    handle_vars_list, handle_vars_set, resolve_worktree_arg, run_hook, step_commit,
+    step_copy_ignored, step_diff, step_eval, step_for_each, step_prune, step_relocate,
 };
 use output::handle_remove_output;
 use worktrunk::git::BranchDeletionMode;
 
 use cli::{
-    ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigPluginsClaudeCommand,
-    ConfigPluginsCommand, ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction,
-    HintsAction, HookCommand, ListArgs, ListSubcommand, LogsAction, MarkerAction, MergeArgs,
-    PreviousBranchAction, RemoveArgs, StateCommand, StepCommand, SwitchArgs, SwitchFormat,
-    VarsAction,
+    ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigAliasCommand, ConfigCommand,
+    ConfigPluginsClaudeCommand, ConfigPluginsCommand, ConfigPluginsOpencodeCommand,
+    ConfigShellCommand, DefaultBranchAction, HintsAction, HookCommand, ListArgs, ListSubcommand,
+    LogsAction, MarkerAction, MergeArgs, PreviousBranchAction, RemoveArgs, StateCommand,
+    StepCommand, SwitchArgs, SwitchFormat, VarsAction,
 };
 use worktrunk::HookType;
 
@@ -493,6 +493,10 @@ fn handle_config_command(action: ConfigCommand, yes: bool) -> anyhow::Result<()>
         ConfigCommand::Approvals { action } => match action {
             ApprovalsCommand::Add { all } => add_approvals(all),
             ApprovalsCommand::Clear { global } => clear_approvals(global),
+        },
+        ConfigCommand::Alias { action } => match action {
+            ConfigAliasCommand::Show { name } => handle_alias_show(name),
+            ConfigAliasCommand::DryRun { name, args } => handle_alias_dry_run(name, args),
         },
         ConfigCommand::Plugins { action } => handle_plugins_command(action, yes),
         ConfigCommand::State { action } => handle_state_command(action),

@@ -42,6 +42,7 @@ Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
   [1m[36mshow[0m       Show configuration files & locations
   [1m[36mupdate[0m     Update deprecated config settings
   [1m[36mapprovals[0m  Manage command approvals
+  [1m[36malias[0m      Inspect and preview aliases
   [1m[36mplugins[0m    Plugin management
   [1m[36mstate[0m      Manage internal data and cache
 

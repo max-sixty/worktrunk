@@ -4,9 +4,10 @@ mod list;
 mod step;
 
 pub(crate) use config::{
-    ApprovalsCommand, CiStatusAction, ConfigCommand, ConfigPluginsClaudeCommand,
-    ConfigPluginsCommand, ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction,
-    HintsAction, LogsAction, MarkerAction, PreviousBranchAction, StateCommand, VarsAction,
+    ApprovalsCommand, CiStatusAction, ConfigAliasCommand, ConfigCommand,
+    ConfigPluginsClaudeCommand, ConfigPluginsCommand, ConfigPluginsOpencodeCommand,
+    ConfigShellCommand, DefaultBranchAction, HintsAction, LogsAction, MarkerAction,
+    PreviousBranchAction, StateCommand, VarsAction,
 };
 pub(crate) use hook::{HookCommand, rewrite_var_shorthand};
 pub(crate) use list::ListSubcommand;
@@ -2086,6 +2087,7 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 | `CLICOLOR_FORCE` | Force colored output even when not a TTY |
 <!-- subdoc: show -->
 <!-- subdoc: approvals -->
+<!-- subdoc: alias -->
 <!-- subdoc: state -->"#)]
     Config {
         #[command(subcommand)]

@@ -5,10 +5,8 @@ info:
   args:
     - config
     - alias
-    - dry-run
-    - s
-    - "--"
-    - target-branch
+    - show
+    - release
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -46,7 +44,12 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[2m○[22m Alias [1ms[22m (project) would run:
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch target-branch
+[2m○[22m Alias [1mrelease[22m (project):
+[107m [0m [2m# install[0m[2m
+[107m [0m [2m[0m[2m[34mnpm[0m[2m install
+[107m [0m [2m# build[0m[2m
+[107m [0m [2m[0m[2m[34mnpm[0m[2m run build
+[107m [0m [2m# lint[0m[2m
+[107m [0m [2m[0m[2m[34mnpm[0m[2m run lint
 
 ----- stderr -----

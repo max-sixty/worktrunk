@@ -147,6 +147,26 @@ pub struct SourcedStep {
     pub is_pipeline: bool,
 }
 
+/// Extract the per-step command name lists from a `CommandConfig`.
+///
+/// Shared by the formatters that describe alias / hook pipelines — `Single`
+/// steps become one-element inner vecs, `Concurrent` steps become multi-element
+/// vecs, each slot carrying the optional command name. Feeds directly into
+/// [`format_pipeline_summary_from_names`].
+pub(crate) fn step_names_from_config(
+    cfg: &worktrunk::config::CommandConfig,
+) -> Vec<Vec<Option<&str>>> {
+    cfg.steps()
+        .iter()
+        .map(|step| match step {
+            worktrunk::config::HookStep::Single(cmd) => vec![cmd.name.as_deref()],
+            worktrunk::config::HookStep::Concurrent(cmds) => {
+                cmds.iter().map(|c| c.name.as_deref()).collect()
+            }
+        })
+        .collect()
+}
+
 /// Format a pipeline summary from per-step command names.
 ///
 /// `step_names[i]` is the list of commands in step `i`; `Some(name)` for named

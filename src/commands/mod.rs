@@ -31,12 +31,12 @@ pub(crate) use alias::{
     HelpContext, alias_names_for_suggestions, augment_help, step_alias, try_alias,
 };
 pub(crate) use config::{
-    add_approvals, clear_approvals, handle_claude_install, handle_claude_install_statusline,
-    handle_claude_uninstall, handle_config_create, handle_config_show, handle_config_update,
-    handle_hints_clear, handle_hints_get, handle_logs_list, handle_opencode_install,
-    handle_opencode_uninstall, handle_state_clear, handle_state_clear_all, handle_state_get,
-    handle_state_set, handle_state_show, handle_vars_clear, handle_vars_get, handle_vars_list,
-    handle_vars_set,
+    add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show, handle_claude_install,
+    handle_claude_install_statusline, handle_claude_uninstall, handle_config_create,
+    handle_config_show, handle_config_update, handle_hints_clear, handle_hints_get,
+    handle_logs_list, handle_opencode_install, handle_opencode_uninstall, handle_state_clear,
+    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show,
+    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set,
 };
 pub(crate) use configure_shell::{
     handle_configure_shell, handle_show_theme, handle_unconfigure_shell,

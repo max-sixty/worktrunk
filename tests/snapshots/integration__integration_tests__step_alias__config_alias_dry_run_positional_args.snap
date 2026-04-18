@@ -3,10 +3,12 @@ source: tests/integration_tests/step_alias.rs
 info:
   program: wt
   args:
-    - step
-    - deploy
-    - "--dry-run"
-    - "--yes"
+    - config
+    - alias
+    - dry-run
+    - s
+    - "--"
+    - target-branch
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -44,8 +46,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+[2m○[22m Alias [1ms[22m (project) would run:
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch target-branch
 
 ----- stderr -----
-[2m○[22m Alias [1mdeploy[22m would run:
-[107m [0m [2m[0m[2m[34mgit[0m[2m config worktrunk.state.main.vars.target [0m[2m[32m'prod'[0m[2m
-[107m [0m [2m[0m[2m[34mecho[0m[2m deploying to [0m[2m[32m{{[0m[2m vars.target [0m[2m[32m}}[0m[2m

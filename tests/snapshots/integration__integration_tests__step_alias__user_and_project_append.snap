@@ -3,9 +3,10 @@ source: tests/integration_tests/step_alias.rs
 info:
   program: wt
   args:
-    - step
+    - config
+    - alias
+    - dry-run
     - shared
-    - "--dry-run"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -43,8 +44,10 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+[2m○[22m Alias [1mshared[22m (user) would run:
+[107m [0m [2m[0m[2m[34mecho[0m[2m user-version
+
+[2m○[22m Alias [1mshared[22m (project) would run:
+[107m [0m [2m[0m[2m[34mecho[0m[2m project-version
 
 ----- stderr -----
-[2m○[22m Alias [1mshared[22m would run:
-[107m [0m [2m[0m[2m[34mecho[0m[2m user-version
-[107m [0m [2m[0m[2m[34mecho[0m[2m project-version

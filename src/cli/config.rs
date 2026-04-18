@@ -307,10 +307,65 @@ Skips gracefully if the statusline is already configured."#
     InstallStatusline,
 }
 
+// Ordering: introspection adjacent to invocation — show prints the template,
+// dry-run previews the expansion for a given invocation.
+#[derive(Subcommand)]
+pub enum ConfigAliasCommand {
+    /// Show an alias's template as configured
+    #[command(
+        after_long_help = r#"Prints each pipeline step's raw template indented with a gutter, tagged by source (user / project). Duplicate names defined in both configs show as two entries, runtime order (user first, then project).
+
+## Examples
+
+Show the template for `deploy`:
+```console
+$ wt config alias show deploy
+```"#
+    )]
+    Show {
+        /// Alias name
+        #[arg(add = crate::completion::alias_name_completer())]
+        name: String,
+    },
+
+    /// Preview an alias invocation with template expansion
+    #[command(
+        after_long_help = r#"Runs the same parser used at invocation time, applies template expansion (including `{{ args }}` and any `--var`/`--KEY=VALUE` assignments), and prints the resulting command without executing it. Templates referencing `vars.*` are shown unexpanded — those values resolve from git config at execution time, after earlier steps have had a chance to set them.
+
+Arguments after `--` are forwarded verbatim as if typed after `wt <name>`.
+
+## Examples
+
+Preview with no arguments:
+```console
+$ wt config alias dry-run deploy
+```
+
+Preview with positional args:
+```console
+$ wt config alias dry-run deploy -- staging us-east-1
+```
+
+Preview with a variable assignment:
+```console
+$ wt config alias dry-run deploy -- --env=staging
+```"#
+    )]
+    DryRun {
+        /// Alias name
+        #[arg(add = crate::completion::alias_name_completer())]
+        name: String,
+
+        /// Arguments forwarded to the alias as if typed after `wt <name>`
+        #[arg(last = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+}
+
 // Ordering: user journey — shell (install integration), create (bootstrap
 // config files), show (inspect), update (migrate deprecations), approvals
-// (security policy for project commands), plugins (optional add-ons), state
-// (advanced diagnostics).
+// (security policy for project commands), aliases (inspect/preview user &
+// project aliases), plugins (optional add-ons), state (advanced diagnostics).
 #[derive(Subcommand)]
 pub enum ConfigCommand {
     /// Shell integration setup
@@ -428,6 +483,28 @@ Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval
     Approvals {
         #[command(subcommand)]
         action: ApprovalsCommand,
+    },
+
+    /// Inspect and preview aliases
+    #[command(
+        after_long_help = r#"Aliases are command templates configured in user (`~/.config/worktrunk/config.toml`) or project (`.config/wt.toml`) config and run as `wt <name>`. See [Aliases](@/extending.md#aliases) for the configuration format.
+
+## Examples
+
+Show the template for `deploy`:
+```console
+$ wt config alias show deploy
+```
+
+Preview an invocation without running it:
+```console
+$ wt config alias dry-run deploy
+$ wt config alias dry-run deploy -- --env=staging
+```"#
+    )]
+    Alias {
+        #[command(subcommand)]
+        action: ConfigAliasCommand,
     },
 
     /// Plugin management
