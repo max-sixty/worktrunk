@@ -158,7 +158,7 @@ fn resolve_verify(verify: bool, no_verify_deprecated: bool) -> bool {
     }
 }
 
-fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
+fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
     match action {
         HookCommand::Show {
             hook_type,
@@ -166,65 +166,55 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
         } => handle_hook_show(hook_type.as_deref(), expanded),
         HookCommand::PreSwitch {
             name,
-            yes,
             dry_run,
             vars,
         } => run_non_toggle_hook(HookType::PreSwitch, yes, dry_run, &name, &vars),
         HookCommand::PostSwitch {
             name,
-            yes,
             dry_run,
             foreground,
             vars,
         } => run_toggleable_hook(HookType::PostSwitch, yes, dry_run, foreground, &name, &vars),
         HookCommand::PreStart {
             name,
-            yes,
             dry_run,
             vars,
         } => run_non_toggle_hook(HookType::PreStart, yes, dry_run, &name, &vars),
         HookCommand::PostStart {
             name,
-            yes,
             dry_run,
             foreground,
             vars,
         } => run_toggleable_hook(HookType::PostStart, yes, dry_run, foreground, &name, &vars),
         HookCommand::PreCommit {
             name,
-            yes,
             dry_run,
             vars,
         } => run_non_toggle_hook(HookType::PreCommit, yes, dry_run, &name, &vars),
         HookCommand::PostCommit {
             name,
-            yes,
             dry_run,
             foreground,
             vars,
         } => run_toggleable_hook(HookType::PostCommit, yes, dry_run, foreground, &name, &vars),
         HookCommand::PreMerge {
             name,
-            yes,
             dry_run,
             vars,
         } => run_non_toggle_hook(HookType::PreMerge, yes, dry_run, &name, &vars),
         HookCommand::PostMerge {
             name,
-            yes,
             dry_run,
             foreground,
             vars,
         } => run_toggleable_hook(HookType::PostMerge, yes, dry_run, foreground, &name, &vars),
         HookCommand::PreRemove {
             name,
-            yes,
             dry_run,
             vars,
         } => run_non_toggle_hook(HookType::PreRemove, yes, dry_run, &name, &vars),
         HookCommand::PostRemove {
             name,
-            yes,
             dry_run,
             foreground,
             vars,
@@ -250,11 +240,11 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
     }
 }
 
-fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
+fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
     match action {
         StepCommand::Commit(args) => {
             let verify = resolve_verify(args.verify, args.no_verify_deprecated);
-            step_commit(args.branch, args.yes, verify, args.stage, args.show_prompt)
+            step_commit(args.branch, yes, verify, args.stage, args.show_prompt)
         }
         StepCommand::Squash(args) => {
             let verify = resolve_verify(args.verify, args.no_verify_deprecated);
@@ -263,7 +253,7 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
                 commands::step_show_squash_prompt(args.target.as_deref())
             } else {
                 // Approval is handled inside handle_squash (like step_commit)
-                handle_squash(args.target.as_deref(), args.yes, verify, args.stage).map(|result| {
+                handle_squash(args.target.as_deref(), yes, verify, args.stage).map(|result| {
                     match result {
                         SquashResult::Squashed | SquashResult::NoNetChanges => {}
                         SquashResult::NoCommitsAhead(branch) => {
@@ -328,7 +318,6 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
         }
         StepCommand::Prune {
             dry_run,
-            yes,
             min_age,
             foreground,
             format,
@@ -340,7 +329,7 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
             clobber,
         } => step_relocate(branches, dry_run, commit, clobber),
         StepCommand::External(args) => {
-            commands::AliasOptions::parse(args).and_then(commands::step_alias)
+            commands::AliasOptions::parse(args).and_then(|opts| commands::step_alias(opts, yes))
         }
     }
 }
@@ -446,7 +435,7 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
     }
 }
 
-fn handle_config_shell_command(action: ConfigShellCommand) -> anyhow::Result<()> {
+fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow::Result<()> {
     match action {
         ConfigShellCommand::Init { shell, cmd } => {
             // Generate shell code to stdout
@@ -455,7 +444,6 @@ fn handle_config_shell_command(action: ConfigShellCommand) -> anyhow::Result<()>
         }
         ConfigShellCommand::Install {
             shell,
-            yes,
             dry_run,
             cmd,
         } => {
@@ -480,11 +468,7 @@ fn handle_config_shell_command(action: ConfigShellCommand) -> anyhow::Result<()>
                     crate::output::print_shell_install_result(&scan_result)
                 })
         }
-        ConfigShellCommand::Uninstall {
-            shell,
-            yes,
-            dry_run,
-        } => {
+        ConfigShellCommand::Uninstall { shell, dry_run } => {
             let explicit_shell = shell.is_some();
             handle_unconfigure_shell(shell, yes, dry_run, &binary_name())
                 .map_err(|e| anyhow::anyhow!("{}", e))
@@ -502,33 +486,31 @@ fn handle_config_shell_command(action: ConfigShellCommand) -> anyhow::Result<()>
     }
 }
 
-fn handle_config_command(action: ConfigCommand) -> anyhow::Result<()> {
+fn handle_config_command(action: ConfigCommand, yes: bool) -> anyhow::Result<()> {
     match action {
-        ConfigCommand::Shell { action } => handle_config_shell_command(action),
+        ConfigCommand::Shell { action } => handle_config_shell_command(action, yes),
         ConfigCommand::Create { project } => handle_config_create(project),
         ConfigCommand::Show { full, format } => handle_config_show(full, format),
-        ConfigCommand::Update { yes, print } => handle_config_update(yes, print),
+        ConfigCommand::Update { print } => handle_config_update(yes, print),
         ConfigCommand::Approvals { action } => match action {
             ApprovalsCommand::Add { all } => add_approvals(all),
             ApprovalsCommand::Clear { global } => clear_approvals(global),
         },
-        ConfigCommand::Plugins { action } => handle_plugins_command(action),
+        ConfigCommand::Plugins { action } => handle_plugins_command(action, yes),
         ConfigCommand::State { action } => handle_state_command(action),
     }
 }
 
-fn handle_plugins_command(action: ConfigPluginsCommand) -> anyhow::Result<()> {
+fn handle_plugins_command(action: ConfigPluginsCommand, yes: bool) -> anyhow::Result<()> {
     match action {
         ConfigPluginsCommand::Claude { action } => match action {
-            ConfigPluginsClaudeCommand::Install { yes } => handle_claude_install(yes),
-            ConfigPluginsClaudeCommand::Uninstall { yes } => handle_claude_uninstall(yes),
-            ConfigPluginsClaudeCommand::InstallStatusline { yes } => {
-                handle_claude_install_statusline(yes)
-            }
+            ConfigPluginsClaudeCommand::Install => handle_claude_install(yes),
+            ConfigPluginsClaudeCommand::Uninstall => handle_claude_uninstall(yes),
+            ConfigPluginsClaudeCommand::InstallStatusline => handle_claude_install_statusline(yes),
         },
         ConfigPluginsCommand::Opencode { action } => match action {
-            ConfigPluginsOpencodeCommand::Install { yes } => handle_opencode_install(yes),
-            ConfigPluginsOpencodeCommand::Uninstall { yes } => handle_opencode_uninstall(yes),
+            ConfigPluginsOpencodeCommand::Install => handle_opencode_install(yes),
+            ConfigPluginsOpencodeCommand::Uninstall => handle_opencode_uninstall(yes),
         },
     }
 }
@@ -579,7 +561,7 @@ fn handle_select_command(_branches: bool, _remotes: bool) -> anyhow::Result<()> 
     Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into())
 }
 
-fn handle_switch_command(args: SwitchArgs) -> anyhow::Result<()> {
+fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> {
     let verify = resolve_verify(args.verify, args.no_verify_deprecated);
 
     // With no branch argument, `wt switch` opens a TUI picker — config
@@ -619,7 +601,7 @@ fn handle_switch_command(args: SwitchArgs) -> anyhow::Result<()> {
                     base: args.base.as_deref(),
                     execute: args.execute.as_deref(),
                     execute_args: &args.execute_args,
-                    yes: args.yes,
+                    yes,
                     clobber: args.clobber,
                     change_dir: change_dir_flag,
                     verify,
@@ -782,7 +764,7 @@ fn validate_remove_targets(
 ///    in `.git/wt/trash/` older than 24 hours are removed by a detached
 ///    `rm -rf`. Runs last so it never delays the user-visible progress or
 ///    success message. See [`commands::process::sweep_stale_trash`].
-fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
+fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
     let json_mode = args.format == SwitchFormat::Json;
     let verify = resolve_verify(args.verify, args.no_verify_deprecated);
     UserConfig::load()
@@ -850,7 +832,7 @@ fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
                 }
 
                 // "Approve at the Gate": approval happens AFTER validation passes
-                let run_hooks = verify && approve_remove(args.yes)?;
+                let run_hooks = verify && approve_remove(yes)?;
 
                 handle_remove_output(&result, args.foreground, run_hooks, false, false)?;
                 if json_mode {
@@ -885,7 +867,7 @@ fn handle_remove_command(args: RemoveArgs) -> anyhow::Result<()> {
                 // Approve hooks (only if we have valid plans)
                 // TODO(pre-remove-context): Approval context uses current worktree,
                 // but hooks execute in each target worktree.
-                let run_hooks = verify && approve_remove(args.yes)?;
+                let run_hooks = verify && approve_remove(yes)?;
 
                 // Execute all validated plans: others first, branch-only next, current last
                 let show_branch =
@@ -1132,7 +1114,7 @@ fn init_logging(verbose_level: u8) {
         .init();
 }
 
-fn handle_merge_command(args: MergeArgs) -> anyhow::Result<()> {
+fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {
     if args.no_verify {
         eprintln!(
             "{}",
@@ -1147,7 +1129,7 @@ fn handle_merge_command(args: MergeArgs) -> anyhow::Result<()> {
         remove: flag_pair(args.remove, args.no_remove),
         ff: flag_pair(args.ff, args.no_ff),
         verify: flag_pair(args.verify, args.no_hooks || args.no_verify),
-        yes: args.yes,
+        yes,
         stage: args.stage,
         format: args.format,
     })
@@ -1156,20 +1138,21 @@ fn handle_merge_command(args: MergeArgs) -> anyhow::Result<()> {
 fn dispatch_command(
     command: Commands,
     working_dir: Option<std::path::PathBuf>,
+    yes: bool,
 ) -> anyhow::Result<()> {
     match command {
-        Commands::Config { action } => handle_config_command(action),
-        Commands::Step { action } => handle_step_command(action),
-        Commands::Hook { action } => handle_hook_command(action),
+        Commands::Config { action } => handle_config_command(action, yes),
+        Commands::Step { action } => handle_step_command(action, yes),
+        Commands::Hook { action } => handle_hook_command(action, yes),
         Commands::Select { branches, remotes } => handle_select_command(branches, remotes),
         Commands::List(args) => handle_list_command(args),
-        Commands::Switch(args) => handle_switch_command(args),
-        Commands::Remove(args) => handle_remove_command(args),
-        Commands::Merge(args) => handle_merge_command(args),
+        Commands::Switch(args) => handle_switch_command(args, yes),
+        Commands::Remove(args) => handle_remove_command(args, yes),
+        Commands::Merge(args) => handle_merge_command(args, yes),
         // `working_dir` is the top-level `-C <path>` flag, applied as the
         // child's current directory so global `-C` works for custom
         // subcommands the same way it does for built-ins.
-        Commands::Custom(args) => handle_custom_command(args, working_dir),
+        Commands::Custom(args) => handle_custom_command(args, working_dir, yes),
     }
 }
 
@@ -1272,6 +1255,7 @@ fn main() {
         directory,
         config,
         verbose,
+        yes,
         command,
     } = cli;
     // Globals were already applied in `parse_cli` before help rendering;
@@ -1288,7 +1272,7 @@ fn main() {
         return;
     };
 
-    let result = dispatch_command(command, directory);
+    let result = dispatch_command(command, directory, yes);
 
     match result {
         Ok(()) => finish_command(verbose, &command_line, None),

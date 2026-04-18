@@ -271,12 +271,15 @@ fn load_merged_aliases(
 /// non-alias `rest` (positional args meant for a `wt-<name>` PATH binary)
 /// doesn't surface as a parse error.
 ///
+/// `global_yes` is the top-level `--yes`/`-y` flag, passed through to
+/// `run_alias`.
+///
 /// Alias execution needs a git repository; without one this returns `Ok(None)`
 /// so the caller falls through to PATH lookup. Config load errors propagate —
 /// a broken `wt.toml` should fail loudly here just as it does for `wt list`,
 /// rather than silently turning into an "unrecognized subcommand" once we
 /// fall through to PATH lookup.
-pub fn try_alias(name: String, rest: Vec<String>) -> anyhow::Result<Option<()>> {
+pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::Result<Option<()>> {
     let Ok(repo) = Repository::current() else {
         return Ok(None);
     };
@@ -290,12 +293,15 @@ pub fn try_alias(name: String, rest: Vec<String>) -> anyhow::Result<Option<()>> 
     alias_args.push(name);
     alias_args.extend(rest);
     let opts = AliasOptions::parse(alias_args)?;
-    run_alias(opts, repo, user_config, project_config, aliases).map(Some)
+    run_alias(opts, repo, user_config, project_config, aliases, global_yes).map(Some)
 }
 
 /// Run a configured alias from `wt step <name>`. Errors with a clap-style
 /// "unrecognized subcommand" if the alias isn't configured.
-pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
+///
+/// `global_yes` is the top-level `--yes`/`-y` flag, passed through to
+/// `run_alias`.
+pub fn step_alias(opts: AliasOptions, global_yes: bool) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let user_config = UserConfig::load()?;
     let project_config = ProjectConfig::load(&repo, true)?;
@@ -314,7 +320,7 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
             .collect();
         unknown_step_command_exit(&opts.name, &alias_names);
     }
-    run_alias(opts, repo, user_config, project_config, aliases)
+    run_alias(opts, repo, user_config, project_config, aliases, global_yes)
 }
 
 /// Return alias names for use as suggestions when a top-level subcommand is
@@ -339,16 +345,24 @@ pub fn alias_names_for_suggestions() -> Vec<String> {
 
 /// Execute `cmd_config` for `opts.name`. Caller must have already verified
 /// `aliases.contains_key(&opts.name)`.
+///
+/// `global_yes` is the top-level `--yes`/`-y` flag; it OR's with `opts.yes`
+/// (the post-alias `--yes` parsed by `AliasOptions`) so either form skips
+/// approval. The post-alias form is kept intact for now — removing it is a
+/// separate cleanup.
 fn run_alias(
     opts: AliasOptions,
     repo: Repository,
     user_config: UserConfig,
     project_config: Option<ProjectConfig>,
     aliases: BTreeMap<String, CommandConfig>,
+    global_yes: bool,
 ) -> anyhow::Result<()> {
     let cmd_config = aliases
         .get(&opts.name)
         .expect("caller verified alias is configured");
+
+    let skip_approval = global_yes || opts.yes;
 
     // Check if this alias needs project-config approval (skip for --dry-run).
     // project_id is required for approval — re-derive with error propagation
@@ -360,7 +374,7 @@ fn run_alias(
             .project_identifier()
             .context("Cannot determine project identifier for alias approval")?;
         let approved =
-            approve_alias_commands(&project_commands, &opts.name, &project_id, opts.yes)?;
+            approve_alias_commands(&project_commands, &opts.name, &project_id, skip_approval)?;
         if !approved {
             return Ok(());
         }

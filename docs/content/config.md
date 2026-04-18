@@ -495,6 +495,9 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 {% end %}
 
 # Subcommands
@@ -553,6 +556,9 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 {% end %}
 
 ## wt config approvals
@@ -601,6 +607,9 @@ Usage: <b><span class=c>wt config approvals</span></b> <span class=c>[OPTIONS]</
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 {% end %}
 
 ## wt config state
@@ -673,6 +682,9 @@ Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 {% end %}
 
 ## wt config state default-branch
@@ -728,6 +740,9 @@ Usage: <b><span class=c>wt config state default-branch</span></b> <span class=c>
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 {% end %}
 
 ## wt config state logs
@@ -830,6 +845,9 @@ Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]<
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 {% end %}
 
 ## wt config state ci-status
@@ -888,6 +906,9 @@ Usage: <b><span class=c>wt config state ci-status</span></b> <span class=c>[OPTI
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 {% end %}
 
 ## wt config state marker
@@ -958,6 +979,9 @@ Usage: <b><span class=c>wt config state marker</span></b> <span class=c>[OPTIONS
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 {% end %}
 
 ## wt config state vars
@@ -1030,6 +1054,9 @@ Usage: <b><span class=c>wt config state vars</span></b> <span class=c>[OPTIONS]<
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 {% end %}
 
 <!-- END AUTO-GENERATED from `wt config --help-page` -->

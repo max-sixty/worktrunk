@@ -70,9 +70,6 @@ Options:
           Print help (see a summary with '-h')
 
 Automation:
-  -y, --yes
-          Skip approval prompts
-
       --no-hooks
           Skip hooks
 
@@ -96,6 +93,9 @@ Global Options:
 
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 
 Unlike `git merge`, this merges the current branch into the target branch — not the target into current. Similar to clicking "Merge pull request" on GitHub, but locally. The target defaults to the default branch.
 
