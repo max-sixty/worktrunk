@@ -129,18 +129,18 @@ fn test_clear_approvals_global_no_approvals(repo: TestRepo) {
 
 #[rstest]
 fn test_clear_approvals_global_with_approvals(repo: TestRepo) {
-    // Remove origin so project_id uses directory name (matches test expectation)
+    // Remove origin so project_identifier uses the canonical worktree path —
+    // matches what `Repository::project_identifier` computes at runtime.
     repo.run_git(&["remote", "remove", "origin"]);
-    let project_id = format!("{}/origin", repo.root_path().display());
     repo.commit("Initial commit");
     repo.write_project_config(r#"post-create = "echo 'test'""#);
     repo.commit("Add config");
 
-    // Manually approve the command
+    // Manually approve the command using the same project id wt will compute.
     let mut approvals = Approvals::default();
     approvals
         .approve_command(
-            project_id,
+            repo.project_id(),
             "echo 'test'".to_string(),
             Some(repo.test_approvals_path()),
         )
