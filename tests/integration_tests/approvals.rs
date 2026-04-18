@@ -1,11 +1,14 @@
 //! Integration tests for add-approvals and clear-approvals commands
 
 use crate::common::{
-    BareRepoTest, TestRepo, TestRepoBase, make_snapshot_cmd, repo, setup_snapshot_settings,
-    setup_temp_snapshot_settings, wt_command,
+    BareRepoTest, TestRepo, TestRepoBase, make_snapshot_cmd, repo, set_temp_home_env,
+    setup_snapshot_settings, setup_snapshot_settings_with_home, setup_temp_snapshot_settings,
+    temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
+use std::fs;
+use tempfile::TempDir;
 use worktrunk::config::Approvals;
 
 /// Helper to snapshot add-approvals command
@@ -179,6 +182,45 @@ fn test_clear_approvals_after_clear(repo: TestRepo) {
     snapshot_clear_approvals("clear_approvals_after_clear", &repo, &[]);
 }
 
+/// `clear` reads approvals from the legacy `[projects.X]` section in `config.toml`
+/// when `approvals.toml` is absent, and clears them. Exercises the
+/// `Approvals::load` fallback path documented in `src/config/approvals.rs`.
+#[rstest]
+fn test_clear_approvals_legacy_config_storage(repo: TestRepo, temp_home: TempDir) {
+    // Remove origin so project_identifier uses full canonical path
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Get the canonical path for the project identifier (escaped for TOML)
+    let project_id_str = repo.project_id();
+
+    // Write approved commands as a sibling config.toml of the test approvals path.
+    // The fallback reads config.toml from the same directory as approvals.toml.
+    let config_path = repo.test_approvals_path().with_file_name("config.toml");
+    fs::write(
+        &config_path,
+        format!(
+            r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
+
+[projects.'{project_id_str}']
+approved-commands = ["cargo build", "cargo test", "npm install"]
+"#
+        ),
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
+        cmd.args(["config", "approvals", "clear"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!("clear_approvals_legacy_config_storage", cmd);
+    });
+}
+
 #[rstest]
 fn test_clear_approvals_multiple_approvals(repo: TestRepo) {
     // Remove origin so project_id uses directory name (matches test expectation)
@@ -228,16 +270,18 @@ lint = "echo 'third'"
 
 #[rstest]
 fn test_add_approvals_all_already_approved(repo: TestRepo) {
-    let project_id = format!("{}/origin", repo.root_path().display());
+    // Remove origin so project_identifier uses the canonical worktree path —
+    // matches what `Repository::project_identifier` computes at runtime.
+    repo.run_git(&["remote", "remove", "origin"]);
     repo.commit("Initial commit");
     repo.write_project_config(r#"post-create = "echo 'test'""#);
     repo.commit("Add config");
 
-    // Manually approve the command
+    // Manually approve the command using the same project id wt will compute.
     let mut approvals = Approvals::default();
     approvals
         .approve_command(
-            project_id,
+            repo.project_id(),
             "echo 'test'".to_string(),
             Some(repo.test_approvals_path()),
         )

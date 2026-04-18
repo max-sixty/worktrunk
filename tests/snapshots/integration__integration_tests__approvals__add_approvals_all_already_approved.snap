@@ -40,15 +40,11 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
 [33m▲[39m [33mProject config: [1mpost-create[22m hook is deprecated in favor of [1mpre-start[22m[39m
 [2m↳[22m [2mTo see details, run [4mwt config show[24m; to apply updates, run [4mwt config update[24m[22m
-[33m▲[39m [33m[1morigin[22m needs approval to execute [1m1[22m command:[39m
-[2m○[22m pre-start:
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'test'[0m[2m
-[31m✗[39m [31mCannot prompt for approval in non-interactive environment[39m
-[2m↳[22m [2mTo skip prompts in CI/CD, add [4m--yes[24m; to pre-approve commands, run [4mwt config approvals add[24m[22m
+[2m○[22m All commands already approved

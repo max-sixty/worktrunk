@@ -527,8 +527,12 @@ pub enum StateCommand {
 - **Branch markers**: User-defined branch notes
 - **Vars**: Custom variables per branch
 - **CI status**: Cached GitHub/GitLab CI status per branch (30s TTL)
+- **Git commands cache**: SHA-keyed merge-tree, ancestry, and diff-stats results
 - **Hints**: One-time hints that have been shown
 - **Log files**: Operation and debug logs
+- **Trash**: Staged worktree directories awaiting background deletion
+
+Every category that `wt config state clear` sweeps is shown here.
 
 CI cache entries show status, age, and the commit SHA they were fetched for."#)]
     Get {
@@ -568,9 +572,9 @@ Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` t
 
 Worktrunk detects the default branch automatically:
 
-1. **Worktrunk cache** — Checks `git config worktrunk.default-branch` (single command)
+1. **Worktrunk cache** — Checks `git config worktrunk.default-branch`
 2. **Git cache** — Detects primary remote and checks its HEAD (e.g., `origin/HEAD`)
-3. **Remote query** — If not cached, queries `git ls-remote` (100ms–2s)
+3. **Remote query** — If not cached, queries `git ls-remote` — typically 100ms–2s
 4. **Local inference** — If no remote, infers from local branches
 
 Once detected, the result is cached in `worktrunk.default-branch` for fast access.

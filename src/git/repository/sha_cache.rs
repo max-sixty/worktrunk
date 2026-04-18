@@ -317,6 +317,26 @@ pub(crate) fn clear_all(repo: &Repository) -> usize {
     cleared
 }
 
+/// Count all cached SHA-keyed entries across every kind.
+///
+/// Called by `wt config state get` to surface the same state that
+/// `clear_all` would sweep, preserving get ↔ clear parity.
+pub(crate) fn count_all(repo: &Repository) -> usize {
+    let mut count = 0;
+    for kind in ALL_KINDS {
+        let dir = cache_dir(repo, kind);
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if entry.path().extension().is_some_and(|ext| ext == "json") {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
