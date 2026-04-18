@@ -270,16 +270,18 @@ lint = "echo 'third'"
 
 #[rstest]
 fn test_add_approvals_all_already_approved(repo: TestRepo) {
-    let project_id = format!("{}/origin", repo.root_path().display());
+    // Remove origin so project_identifier uses the canonical worktree path —
+    // matches what `Repository::project_identifier` computes at runtime.
+    repo.run_git(&["remote", "remove", "origin"]);
     repo.commit("Initial commit");
     repo.write_project_config(r#"post-create = "echo 'test'""#);
     repo.commit("Add config");
 
-    // Manually approve the command
+    // Manually approve the command using the same project id wt will compute.
     let mut approvals = Approvals::default();
     approvals
         .approve_command(
-            project_id,
+            repo.project_id(),
             "echo 'test'".to_string(),
             Some(repo.test_approvals_path()),
         )
