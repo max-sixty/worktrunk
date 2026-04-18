@@ -1233,6 +1233,62 @@ s = "wt switch {{ args }}"
     ));
 }
 
+/// `wt config alias show <name>` with the same alias defined in both user and
+/// project config prints both entries in runtime order (user first).
+#[rstest]
+fn test_config_alias_show_user_and_project(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "echo from project"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = "echo from user"
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "config",
+        &["alias", "show", "deploy"],
+        Some(&feature_path),
+    ));
+}
+
+/// Unknown alias name with no similar configured aliases shows a plain error
+/// without a "did you mean" tail.
+#[rstest]
+fn test_config_alias_show_unknown_no_suggestions(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "echo hi"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    // Query name shares no meaningful prefix with any configured alias — the
+    // Jaro-Winkler threshold rejects it, so the error has no suggestion list.
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "config",
+        &["alias", "show", "zzzzzzzz"],
+        Some(&feature_path),
+    ));
+}
+
 /// `wt step` with no subcommand lists built-in steps plus configured aliases.
 ///
 /// Skipped on Windows: clap renders `[experimental]` subcommand tags
