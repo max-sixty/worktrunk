@@ -68,9 +68,9 @@ Without a subcommand, runs [2mget[0m. Use [2mset[0m to override, or [2mclea
 
 Worktrunk detects the default branch automatically:
 
-1. [1mWorktrunk cache[0m — Checks [2mgit config worktrunk.default-branch[0m (single command)
+1. [1mWorktrunk cache[0m — Checks [2mgit config worktrunk.default-branch[0m
 2. [1mGit cache[0m — Detects primary remote and checks its HEAD (e.g., [2morigin/HEAD[0m)
-3. [1mRemote query[0m — If not cached, queries [2mgit ls-remote[0m (100ms–2s)
+3. [1mRemote query[0m — If not cached, queries [2mgit ls-remote[0m — typically 100ms–2s
 4. [1mLocal inference[0m — If no remote, infers from local branches
 
 Once detected, the result is cached in [2mworktrunk.default-branch[0m for fast access.
