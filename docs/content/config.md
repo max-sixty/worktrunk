@@ -701,9 +701,9 @@ Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` t
 
 Worktrunk detects the default branch automatically:
 
-1. **Worktrunk cache** — Checks `git config worktrunk.default-branch` (single command)
+1. **Worktrunk cache** — Checks `git config worktrunk.default-branch`
 2. **Git cache** — Detects primary remote and checks its HEAD (e.g., `origin/HEAD`)
-3. **Remote query** — If not cached, queries `git ls-remote` (100ms–2s)
+3. **Remote query** — If not cached, queries `git ls-remote` — typically 100ms–2s
 4. **Local inference** — If no remote, infers from local branches
 
 Once detected, the result is cached in `worktrunk.default-branch` for fast access.

@@ -309,11 +309,12 @@ fn test_bare_repo_repo_path_with_inherited_relative_git_dir() {
     let main_worktree = test.create_worktree("main", "main");
     test.commit_in(&main_worktree, "Initial commit");
 
-    // Helper: run `wt step print-repo-path --yes` and extract the
+    // Helper: run `wt step print-repo-path` and extract the
     // `REPO_PATH=...` value emitted by the alias. We compare these as-is
     // so platform-specific path formatting (e.g. msys-style paths that
     // Git Bash uses on Windows for `echo`) doesn't affect the test — we
     // only assert that both invocations produce the *same* value.
+    // No `-y` needed: user-config aliases skip approval entirely.
     let extract_repo_path = |out: &std::process::Output| -> String {
         let combined = format!(
             "{}{}",
@@ -331,7 +332,7 @@ fn test_bare_repo_repo_path_with_inherited_relative_git_dir() {
     test.configure_wt_cmd(&mut baseline);
     baseline
         .env("WORKTRUNK_CONFIG_PATH", &user_config)
-        .args(["step", "print-repo-path", "--yes"])
+        .args(["step", "print-repo-path"])
         .current_dir(&main_worktree);
     let baseline_out = baseline.output().unwrap();
     assert!(
@@ -359,7 +360,7 @@ fn test_bare_repo_repo_path_with_inherited_relative_git_dir() {
         .env("WORKTRUNK_CONFIG_PATH", &user_config)
         .env("GIT_DIR", &relative_git_dir)
         .env("GIT_PREFIX", "")
-        .args(["step", "print-repo-path", "--yes"])
+        .args(["step", "print-repo-path"])
         .current_dir(&main_worktree);
     let via_alias_out = via_alias.output().unwrap();
     assert!(
@@ -483,7 +484,7 @@ fn test_repo_path_via_real_git_alias_bare_dot_git_layout() {
     let mut baseline = Command::new(wt_bin());
     apply_wt_env(&mut baseline);
     baseline
-        .args(["step", "print-repo-path", "--yes"])
+        .args(["step", "print-repo-path"])
         .current_dir(&repo_dir);
     let baseline_out = baseline.output().unwrap();
     assert!(
@@ -494,14 +495,14 @@ fn test_repo_path_via_real_git_alias_bare_dot_git_layout() {
     );
     let baseline_repo_path = extract_repo_path(&baseline_out);
 
-    // Via the real git alias: `git wt step print-repo-path --yes`. From the
+    // Via the real git alias: `git wt step print-repo-path`. From the
     // `repo/` dir (not inside the worktree), git sets `GIT_DIR=.git`
     // (relative) when exporting the alias environment — the exact bug vector
     // from #1914.
     let mut via_alias = Command::new("git");
     apply_wt_env(&mut via_alias);
     via_alias
-        .args(["wt", "step", "print-repo-path", "--yes"])
+        .args(["wt", "step", "print-repo-path"])
         .current_dir(&repo_dir);
     let via_alias_out = via_alias.output().unwrap();
     assert!(
