@@ -126,29 +126,14 @@ Tokens after the alias name are parsed left-to-right. The template itself declar
 
 | Token shape | Routes to |
 |---|---|
-| `--KEY=VALUE` or `--KEY VALUE` where the template references `{{ KEY }}` | Bound — `KEY` becomes the template value |
-| `--KEY=VALUE` where the template doesn't reference `KEY` | Forwarded literally to `{{ args }}` |
-| `--KEY VALUE` where the template doesn't reference `KEY` | Both tokens forwarded literally to `{{ args }}` |
-| `--KEY` at end of args | Forwarded literally to `{{ args }}` |
-| Bare positional (no `--` prefix) | Forwarded to `{{ args }}` |
-| Anything after a literal `--` | Forwarded to `{{ args }}` regardless of shape |
+| `--KEY=VALUE` or `--KEY VALUE` where `{{ KEY }}` is referenced | Bound — `KEY` becomes the template value |
+| Anything else | Forwarded to `{{ args }}` (after `--`, even flag-shaped tokens forward) |
 
-The space form `--KEY VALUE` consumes the next token as the value unconditionally — even when it starts with `--`. So `--env --dry-run` with `{{ env }}` referenced binds `env=--dry-run` rather than activating dry-run. Use the `=` form or put built-in flags before the bound key to avoid this.
+`--KEY VALUE` consumes the next token unconditionally, so `--env --dry-run` with `{{ env }}` referenced binds `env=--dry-run`. Use `--KEY=VALUE` to be unambiguous.
 
 Built-in flags (`--yes`/`-y`, `--dry-run`) are always recognized, so an alias can't shadow them. Built-in template variables (`branch`, `worktree_path`, `commit`, …) can be overridden — `--branch=override` for an alias referencing `{{ branch }}` binds to the user's value, but only inside the template; the worktree's actual branch is unchanged.
 
 Hyphens in variable names are canonicalized to underscores at parse time. `--my-var=value` binds to `{{ my_var }}` because minijinja parses `{{ my-var }}` as subtraction.
-
-### Escaping with `--`
-
-Use `--` to forward a flag-shaped value literally instead of letting the parser bind it. Everything after `--` goes into `{{ args }}` verbatim:
-
-```toml
-[aliases]
-search = "rg {{ args }}"
-```
-
-{{ terminal(cmd="wt search -- --hidden --glob '*.rs' pattern  # --hidden and --glob reach rg, not the alias parser") }}
 
 ### Forwarding positional arguments
 
