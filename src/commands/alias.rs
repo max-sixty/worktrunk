@@ -81,7 +81,6 @@ const TOP_LEVEL_BUILTINS: &[&str] = &[
 pub struct AliasOptions {
     pub name: String,
     pub dry_run: bool,
-    pub yes: bool,
     pub vars: Vec<(String, String)>,
     /// Tokens forwarded to the template as `{{ args }}` (a `ShellArgs`
     /// sequence). Contains plain positionals, `--KEY=VALUE` / `--KEY` tokens
@@ -96,10 +95,9 @@ impl AliasOptions {
     /// Parse alias options from `wt step <alias>` / `wt <alias>` args.
     ///
     /// The first element is the alias name; remaining tokens are walked
-    /// left-to-right. Built-in control flags (`--dry-run`, `--yes`/`-y`) are
-    /// captured first. Everything else routes using `referenced_vars` — the
-    /// set of top-level variables the alias's templates reference — as the
-    /// binding signal:
+    /// left-to-right. `--dry-run` is captured as a built-in control flag.
+    /// Everything else routes using `referenced_vars` — the set of top-level
+    /// variables the alias's templates reference — as the binding signal:
     ///
     /// - `--` — stop normal parsing; all subsequent tokens append to
     ///   `positional_args` verbatim, letting users pass flag-shaped values
@@ -113,6 +111,14 @@ impl AliasOptions {
     ///   independently.
     /// - Any other token — positional.
     ///
+    /// `--yes`/`-y` is a top-level global flag (`wt -y <alias>`) and is not
+    /// recognized after the alias name — clap's `global = true` doesn't
+    /// propagate across an `external_subcommand` boundary. A post-alias
+    /// `--yes` falls into the `--KEY` branch and forwards as a positional
+    /// (via `referenced_vars.contains("yes")` being false for typical
+    /// templates); `-y` flows through the bare-token branch for the same
+    /// reason.
+    ///
     /// Hyphens in keys are canonicalized to underscores because minijinja
     /// parses `{{ my-var }}` as subtraction — users write `--my-var=v` and
     /// reference `{{ my_var }}`.
@@ -122,7 +128,6 @@ impl AliasOptions {
         };
 
         let mut dry_run = false;
-        let mut yes = false;
         let mut vars = Vec::new();
         let mut positional_args = Vec::new();
         let mut literal_mode = false;
@@ -144,11 +149,6 @@ impl AliasOptions {
                 }
                 "--dry-run" => {
                     dry_run = true;
-                    i += 1;
-                    continue;
-                }
-                "--yes" | "-y" => {
-                    yes = true;
                     i += 1;
                     continue;
                 }
@@ -192,7 +192,6 @@ impl AliasOptions {
         Ok(Self {
             name,
             dry_run,
-            yes,
             vars,
             positional_args,
         })
@@ -392,10 +391,9 @@ pub fn alias_names_for_suggestions() -> Vec<String> {
 /// Execute `cmd_config` for `opts.name`. Caller must have already verified
 /// `aliases.contains_key(&opts.name)`.
 ///
-/// `global_yes` is the top-level `--yes`/`-y` flag; it OR's with `opts.yes`
-/// (the post-alias `--yes` parsed by `AliasOptions`) so either form skips
-/// approval. The post-alias form is kept intact for now — removing it is a
-/// separate cleanup.
+/// `global_yes` is the top-level `--yes`/`-y` flag and is the only source for
+/// skipping approval — the post-alias form (`wt deploy --yes`) is no longer
+/// recognized. Use `wt -y deploy` or `wt --yes deploy` instead.
 fn run_alias(
     opts: AliasOptions,
     repo: Repository,
@@ -408,7 +406,7 @@ fn run_alias(
         .get(&opts.name)
         .expect("caller verified alias is configured");
 
-    let skip_approval = global_yes || opts.yes;
+    let skip_approval = global_yes;
 
     // Check if this alias needs project-config approval (skip for --dry-run).
     // project_id is required for approval — re-derive with error propagation
@@ -866,36 +864,17 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [],
             positional_args: [],
         }
         "#);
 
-        // Built-in control flags: `--dry-run`, `--yes`, `-y` bypass routing.
+        // `--dry-run` is the only built-in control flag in the parser;
+        // `--yes`/`-y` is a top-level global and is not consumed here.
         assert_debug_snapshot!(parse(&["deploy", "--dry-run"]).unwrap(), @r#"
         AliasOptions {
             name: "deploy",
             dry_run: true,
-            yes: false,
-            vars: [],
-            positional_args: [],
-        }
-        "#);
-        assert_debug_snapshot!(parse(&["deploy", "--yes"]).unwrap(), @r#"
-        AliasOptions {
-            name: "deploy",
-            dry_run: false,
-            yes: true,
-            vars: [],
-            positional_args: [],
-        }
-        "#);
-        assert_debug_snapshot!(parse(&["deploy", "-y"]).unwrap(), @r#"
-        AliasOptions {
-            name: "deploy",
-            dry_run: false,
-            yes: true,
             vars: [],
             positional_args: [],
         }
@@ -906,7 +885,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [
                 (
                     "env",
@@ -922,7 +900,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [],
             positional_args: [
                 "--env=staging",
@@ -935,7 +912,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [
                 (
                     "env",
@@ -951,7 +927,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [],
             positional_args: [
                 "--env",
@@ -966,7 +941,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [],
             positional_args: [
                 "--env",
@@ -980,7 +954,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [],
             positional_args: [
                 "--env",
@@ -994,7 +967,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [
                 (
                     "my_var",
@@ -1008,7 +980,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [
                 (
                     "long_var_name",
@@ -1023,7 +994,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [
                 (
                     "my_var",
@@ -1038,7 +1008,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [
                 (
                     "region",
@@ -1054,7 +1023,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [
                 (
                     "url",
@@ -1070,7 +1038,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [
                 (
                     "env",
@@ -1088,7 +1055,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [],
             positional_args: [
                 "--=value",
@@ -1101,7 +1067,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [
                 (
                     "env",
@@ -1120,7 +1085,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [
                 (
                     "env",
@@ -1142,7 +1106,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [
                 (
                     "var",
@@ -1156,7 +1119,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [],
             positional_args: [
                 "--var=x=1",
@@ -1169,7 +1131,6 @@ cmd = [
         AliasOptions {
             name: "s",
             dry_run: false,
-            yes: false,
             vars: [],
             positional_args: [
                 "some-branch",
@@ -1180,7 +1141,6 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [],
             positional_args: [
                 "one",
@@ -1190,12 +1150,11 @@ cmd = [
         }
         "#);
 
-        // Control flags can interleave with positionals.
+        // `--dry-run` interleaves with positionals.
         assert_debug_snapshot!(parse(&["deploy", "foo", "--dry-run", "bar"]).unwrap(), @r#"
         AliasOptions {
             name: "deploy",
             dry_run: true,
-            yes: false,
             vars: [],
             positional_args: [
                 "foo",
@@ -1210,11 +1169,37 @@ cmd = [
         AliasOptions {
             name: "deploy",
             dry_run: false,
-            yes: false,
             vars: [],
             positional_args: [
                 "foo bar",
                 "x;rm -rf /",
+            ],
+        }
+        "#);
+
+        // Post-alias `-y` falls into the positional branch; approval-skip
+        // only works when `-y`/`--yes` is placed before the alias name
+        // (`wt -y deploy`), where clap captures it as a global flag.
+        assert_debug_snapshot!(parse(&["deploy", "-y"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            vars: [],
+            positional_args: [
+                "-y",
+            ],
+        }
+        "#);
+        // Post-alias `--yes` falls into the bare `--KEY` branch. Unless a
+        // template references `{{ yes }}` (which is unusual), it forwards as
+        // a positional.
+        assert_debug_snapshot!(parse(&["deploy", "--yes"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            vars: [],
+            positional_args: [
+                "--yes",
             ],
         }
         "#);
@@ -1228,7 +1213,6 @@ cmd = [
         // (bound var or positional), so there are no "unknown flag" errors.
         assert_snapshot!(parse(&[]).unwrap_err(), @"Missing alias name");
     }
-
     /// Verify BUILTIN_STEP_COMMANDS stays in sync with the actual StepCommand variants.
     ///
     /// If a new step subcommand is added without updating BUILTIN_STEP_COMMANDS,

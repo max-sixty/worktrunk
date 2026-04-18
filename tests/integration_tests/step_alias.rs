@@ -1,15 +1,15 @@
 //! Integration tests for `wt step <alias>`
 
 use crate::common::{
-    TestRepo, configure_directive_files, directive_files, make_snapshot_cmd, repo,
-    setup_snapshot_settings, wt_bin,
+    TestRepo, configure_directive_files, directive_files, make_snapshot_cmd,
+    make_snapshot_cmd_with_global_flags, repo, setup_snapshot_settings, wt_bin,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::io::Write;
 use std::process::Stdio;
 
-/// Alias from project config runs with template expansion (--yes bypasses approval)
+/// Alias from project config runs with template expansion (-y bypasses approval)
 #[rstest]
 fn test_step_alias_from_project_config(mut repo: TestRepo) {
     repo.write_project_config(
@@ -24,11 +24,12 @@ hello = "echo Hello from {{ branch }}"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
         &repo,
         "step",
-        &["hello", "--yes"],
+        &["hello"],
         Some(&feature_path),
+        &["-y"],
     ));
 }
 
@@ -135,15 +136,16 @@ greet = "echo Hello {{ name }} from {{ branch }}"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
         &repo,
         "step",
-        &["greet", "--dry-run", "--name=World", "--yes"],
+        &["greet", "--dry-run", "--name=World"],
         Some(&feature_path),
+        &["-y"],
     ));
 }
 
-/// Alias command failure propagates exit code (--yes bypasses approval)
+/// Alias command failure propagates exit code (-y bypasses approval)
 #[rstest]
 fn test_step_alias_exit_code(mut repo: TestRepo) {
     repo.write_project_config(
@@ -158,11 +160,12 @@ fail = "exit 42"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
         &repo,
         "step",
-        &["fail", "--yes"],
+        &["fail"],
         Some(&feature_path),
+        &["-y"],
     ));
 }
 
@@ -205,11 +208,12 @@ hello = "echo Hello from {{ branch }}"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
         &repo,
         "hello",
-        &["--yes"],
+        &[],
         Some(&feature_path),
+        &["-y"],
     ));
 }
 
@@ -230,11 +234,12 @@ commit = "echo custom-commit"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
         &repo,
         "commit",
-        &["--yes"],
+        &[],
         Some(&feature_path),
+        &["-y"],
     ));
 }
 
@@ -317,14 +322,15 @@ shared = "echo user-version"
         )
     );
 
-    // Project alias available (--yes bypasses approval for project-config aliases)
+    // Project alias available (-y bypasses approval for project-config aliases)
     assert_cmd_snapshot!(
         "project_alias",
-        make_snapshot_cmd(
+        make_snapshot_cmd_with_global_flags(
             &repo,
             "step",
-            &["project-cmd", "--dry-run", "--yes"],
+            &["project-cmd", "--dry-run"],
             Some(&feature_path),
+            &["-y"],
         )
     );
 
@@ -360,12 +366,13 @@ greet = "echo USER"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    // Both commands execute: user first, then project (--yes approves project alias)
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    // Both commands execute: user first, then project (-y approves project alias)
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
         &repo,
         "step",
-        &["greet", "--yes"],
+        &["greet"],
         Some(&feature_path),
+        &["-y"],
     ));
 }
 
@@ -511,16 +518,17 @@ deploy = "echo user deploy"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    // Both run with --yes: user first, then project (project needs approval)
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    // Both run with -y: user first, then project (project needs approval)
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
         &repo,
         "step",
-        &["deploy", "--yes"],
+        &["deploy"],
         Some(&feature_path),
+        &["-y"],
     ));
 }
 
-/// --yes bypasses approval for project-config alias without saving
+/// -y bypasses approval for project-config alias without saving
 #[rstest]
 fn test_alias_approval_yes_bypasses(mut repo: TestRepo) {
     repo.write_project_config(
@@ -535,13 +543,19 @@ deploy = "echo deploying"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    // First run with --yes succeeds
+    // First run with -y succeeds
     assert_cmd_snapshot!(
         "alias_approval_yes_first_run",
-        make_snapshot_cmd(&repo, "step", &["deploy", "--yes"], Some(&feature_path),)
+        make_snapshot_cmd_with_global_flags(
+            &repo,
+            "step",
+            &["deploy"],
+            Some(&feature_path),
+            &["-y"],
+        )
     );
 
-    // Second run without --yes should still prompt (--yes doesn't save approval)
+    // Second run without -y should still prompt (-y doesn't save approval)
     assert_cmd_snapshot!(
         "alias_approval_yes_second_run_prompts",
         make_snapshot_cmd(&repo, "step", &["deploy"], Some(&feature_path),)
@@ -1032,12 +1046,13 @@ deploy = [
     let _guard = settings.bind_to_scope();
 
     // Must succeed: dry-run must not require vars.* to be resolvable.
-    // --yes bypasses approval for project-config aliases.
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    // -y bypasses approval for project-config aliases.
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
         &repo,
         "step",
-        &["deploy", "--dry-run", "--yes"],
+        &["deploy", "--dry-run"],
         Some(&feature_path),
+        &["-y"],
     ));
 }
 
@@ -1056,7 +1071,7 @@ broken = "echo {{ vars..target }}"
 
     let output = repo
         .wt_command()
-        .args(["step", "broken", "--dry-run", "--yes"])
+        .args(["-y", "step", "broken", "--dry-run"])
         .current_dir(&feature_path)
         .output()
         .unwrap();
@@ -1218,11 +1233,12 @@ run = "echo got {{ args }}"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
         &repo,
         "run",
-        &["one", "two three", "four", "--yes"],
+        &["one", "two three", "four"],
         Some(&feature_path),
+        &["-y"],
     ));
 }
 
@@ -1242,11 +1258,12 @@ show = '''echo first={{ args[0] }}; echo count={{ args | length }}; echo each={%
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
         &repo,
         "show",
-        &["alpha", "beta gamma", "--yes"],
+        &["alpha", "beta gamma"],
         Some(&feature_path),
+        &["-y"],
     ));
 }
 
@@ -1266,11 +1283,12 @@ run = "echo [{{ args }}]"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
         &repo,
         "run",
-        &["--yes"],
+        &[],
         Some(&feature_path),
+        &["-y"],
     ));
 }
 
@@ -1291,11 +1309,12 @@ s = "wt switch {{ args }}"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
         &repo,
         "s",
-        &["target-branch", "--dry-run", "--yes"],
+        &["target-branch", "--dry-run"],
         Some(&feature_path),
+        &["-y"],
     ));
 }
 
