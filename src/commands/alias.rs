@@ -30,14 +30,14 @@
 //! the EXEC directive file is scrubbed so alias bodies cannot inject
 //! arbitrary shell into the interactive session.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use anyhow::{Context, bail};
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 use color_print::cformat;
 use worktrunk::config::{
     ALIAS_ARGS_KEY, CommandConfig, HookStep, ProjectConfig, UserConfig, append_aliases,
-    template_references_var, validate_template_syntax,
+    referenced_vars_for_config, template_references_var, validate_template_syntax,
 };
 use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, format_bash_with_gutter, info_message, progress_message};
@@ -91,21 +91,36 @@ pub struct AliasOptions {
 }
 
 impl AliasOptions {
-    /// Parse alias options from `wt step <alias>` args.
+    /// Parse alias options from `wt step <alias>` args, routing each token
+    /// using `referenced_vars` (the union of `{{ key }}` references across the
+    /// alias's pipeline templates).
     ///
-    /// First element is the alias name, remaining tokens are either flags:
-    /// `--dry-run`, `--yes`/`-y`, `--var KEY=VALUE`, or `--KEY=VALUE`; or
-    /// positional args that get forwarded to the template as `{{ args }}`.
+    /// First element is the alias name. Remaining tokens are walked
+    /// left-to-right under this grammar:
     ///
-    /// Unknown `--key=value` flags are treated as template variable assignments,
-    /// so `--env=staging` is equivalent to `--var env=staging`. The `=` is
-    /// required — bare `--key` flags (without a value) are rejected. Use
-    /// `--var KEY=VALUE` if a variable name collides with a built-in flag.
+    /// - `--` — literal-forward escape: every later token goes straight into
+    ///   `positional_args`, no var binding, no flag consumption.
+    /// - `--yes` / `-y` — sets `yes`.
+    /// - `--dry-run` — sets `dry_run`.
+    /// - `--KEY=VALUE` — binds `KEY=VALUE` if `KEY` is in `referenced_vars`,
+    ///   otherwise forwards the whole `--KEY=VALUE` token as a positional.
+    /// - `--KEY VALUE` (separated by space, `VALUE` doesn't start with `--`)
+    ///   — binds `KEY=VALUE` if `KEY` is in `referenced_vars`, otherwise
+    ///   forwards `--KEY` as a positional and re-examines `VALUE` at its
+    ///   normal position.
+    /// - `--KEY` followed by another `--…` (or end of args) — forwards
+    ///   `--KEY` as a positional.
+    /// - Anything else — forwards as a positional.
     ///
-    /// Hyphens in variable names are canonicalized to underscores so users can
-    /// write `--my-var=value` and reference `{{ my_var }}` in templates
-    /// (minijinja parses `{{ my-var }}` as subtraction).
-    pub fn parse(args: Vec<String>) -> anyhow::Result<Self> {
+    /// Hyphens in variable names are canonicalized to underscores before
+    /// lookup and storage (minijinja parses `{{ my-var }}` as subtraction),
+    /// so `--my-var=value` binds to `{{ my_var }}` when the template
+    /// references it.
+    ///
+    /// `referenced_vars` is expected to contain the canonical underscore
+    /// form. `referenced_vars_for_config` produces it directly from the
+    /// alias's template.
+    pub fn parse(args: Vec<String>, referenced_vars: &BTreeSet<String>) -> anyhow::Result<Self> {
         let Some(name) = args.first().cloned() else {
             bail!("Missing alias name");
         };
@@ -114,41 +129,60 @@ impl AliasOptions {
         let mut yes = false;
         let mut vars = Vec::new();
         let mut positional_args = Vec::new();
+        let mut literal_mode = false;
         let mut i = 1;
         while i < args.len() {
-            match args[i].as_str() {
-                "--dry-run" => dry_run = true,
-                "--yes" | "-y" => yes = true,
-                "--var" => {
-                    i += 1;
-                    if i >= args.len() {
-                        bail!("--var requires a KEY=VALUE argument");
-                    }
-                    let pair =
-                        crate::cli::parse_key_val(&args[i]).map_err(|e| anyhow::anyhow!(e))?;
-                    vars.push(pair);
-                }
-                arg if arg.starts_with("--var=") => {
-                    let pair = crate::cli::parse_key_val(arg.strip_prefix("--var=").unwrap())
-                        .map_err(|e| anyhow::anyhow!(e))?;
-                    vars.push(pair);
-                }
-                arg if arg.starts_with("--") => {
-                    let rest = &arg[2..];
-                    if rest.contains('=') {
-                        let pair =
-                            crate::cli::parse_key_val(rest).map_err(|e| anyhow::anyhow!(e))?;
-                        vars.push(pair);
-                    } else {
-                        bail!(
-                            "Unknown flag '{arg}' for alias '{name}' (use --{rest}=VALUE to pass a variable)"
-                        );
-                    }
-                }
-                other => {
-                    positional_args.push(other.to_string());
-                }
+            let arg = &args[i];
+            if literal_mode {
+                positional_args.push(arg.clone());
+                i += 1;
+                continue;
             }
+            if arg == "--" {
+                literal_mode = true;
+                i += 1;
+                continue;
+            }
+            if arg == "--yes" || arg == "-y" {
+                yes = true;
+                i += 1;
+                continue;
+            }
+            if arg == "--dry-run" {
+                dry_run = true;
+                i += 1;
+                continue;
+            }
+            if let Some(rest) = arg.strip_prefix("--") {
+                if let Some((key, value)) = rest.split_once('=') {
+                    if key.is_empty() {
+                        bail!("invalid KEY=VALUE: key cannot be empty");
+                    }
+                    let canon = key.replace('-', "_");
+                    if referenced_vars.contains(&canon) {
+                        vars.push((canon, value.to_string()));
+                    } else {
+                        positional_args.push(arg.clone());
+                    }
+                    i += 1;
+                    continue;
+                }
+                let canon = rest.replace('-', "_");
+                if let Some(next) = args.get(i + 1)
+                    && !next.starts_with("--")
+                    && referenced_vars.contains(&canon)
+                {
+                    vars.push((canon, next.clone()));
+                    i += 2;
+                    continue;
+                }
+                // No bindable destination: forward the flag token as positional;
+                // the next token is re-examined at its normal position.
+                positional_args.push(arg.clone());
+                i += 1;
+                continue;
+            }
+            positional_args.push(arg.clone());
             i += 1;
         }
 
@@ -283,24 +317,33 @@ pub fn try_alias(name: String, rest: Vec<String>) -> anyhow::Result<Option<()>> 
     let user_config = UserConfig::load()?;
     let project_config = ProjectConfig::load(&repo, true)?;
     let aliases = load_merged_aliases(&repo, &user_config, project_config.as_ref());
-    if !aliases.contains_key(&name) {
+    let Some(cmd_config) = aliases.get(&name) else {
         return Ok(None);
-    }
+    };
+    let referenced = referenced_vars_for_config(cmd_config);
     let mut alias_args = Vec::with_capacity(1 + rest.len());
     alias_args.push(name);
     alias_args.extend(rest);
-    let opts = AliasOptions::parse(alias_args)?;
+    let opts = AliasOptions::parse(alias_args, &referenced)?;
     run_alias(opts, repo, user_config, project_config, aliases).map(Some)
 }
 
 /// Run a configured alias from `wt step <name>`. Errors with a clap-style
 /// "unrecognized subcommand" if the alias isn't configured.
-pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
+///
+/// Argument parsing happens inside this function — not at the clap dispatch
+/// site in `main.rs` — because the routing of `--KEY=VALUE` tokens depends on
+/// which template variables the alias references, which requires the alias's
+/// resolved `CommandConfig`.
+pub fn step_alias(args: Vec<String>) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let user_config = UserConfig::load()?;
     let project_config = ProjectConfig::load(&repo, true)?;
     let aliases = load_merged_aliases(&repo, &user_config, project_config.as_ref());
-    if !aliases.contains_key(&opts.name) {
+    let Some(name) = args.first().cloned() else {
+        bail!("Missing alias name");
+    };
+    let Some(cmd_config) = aliases.get(&name) else {
         // Mirror clap's native `unrecognized subcommand` error so `wt step
         // <typo>` reads the same as `wt <typo>`. Aliases are fed into the
         // `SuggestedSubcommand` list so a typo like `wt step deplyo` still
@@ -312,8 +355,10 @@ pub fn step_alias(opts: AliasOptions) -> anyhow::Result<()> {
             .filter(|k| !BUILTIN_STEP_COMMANDS.contains(&k.as_str()))
             .map(|k| k.as_str())
             .collect();
-        unknown_step_command_exit(&opts.name, &alias_names);
-    }
+        unknown_step_command_exit(&name, &alias_names);
+    };
+    let referenced = referenced_vars_for_config(cmd_config);
+    let opts = AliasOptions::parse(args, &referenced)?;
     run_alias(opts, repo, user_config, project_config, aliases)
 }
 
@@ -717,8 +762,17 @@ mod tests {
     use super::*;
     use ansi_str::AnsiStr;
 
+    /// Parse with an explicit `referenced_vars` set. Tests build the set
+    /// directly to exercise routing without needing a full template fixture.
+    fn parse_with(args: &[&str], referenced: &[&str]) -> anyhow::Result<AliasOptions> {
+        let refs: BTreeSet<String> = referenced.iter().map(|s| s.to_string()).collect();
+        AliasOptions::parse(args.iter().map(|s| s.to_string()).collect(), &refs)
+    }
+
+    /// Convenience wrapper for tests that don't care about var routing —
+    /// every `--KEY=VALUE` token forwards as a positional.
     fn parse(args: &[&str]) -> anyhow::Result<AliasOptions> {
-        AliasOptions::parse(args.iter().map(|s| s.to_string()).collect())
+        parse_with(args, &[])
     }
 
     /// Parse a TOML snippet of the form `cmd = ...` into a CommandConfig.
@@ -793,8 +847,9 @@ cmd = [
     }
 
     #[test]
-    fn test_parse() {
+    fn test_parse_built_in_flags() {
         use insta::assert_debug_snapshot;
+        // Plain alias name only.
         assert_debug_snapshot!(parse(&["deploy"]).unwrap(), @r#"
         AliasOptions {
             name: "deploy",
@@ -804,6 +859,7 @@ cmd = [
             positional_args: [],
         }
         "#);
+        // --dry-run, --yes, -y are recognized regardless of referenced_vars.
         assert_debug_snapshot!(parse(&["deploy", "--dry-run"]).unwrap(), @r#"
         AliasOptions {
             name: "deploy",
@@ -831,86 +887,13 @@ cmd = [
             positional_args: [],
         }
         "#);
-        assert_debug_snapshot!(parse(&["deploy", "--var", "key=value"]).unwrap(), @r#"
-        AliasOptions {
-            name: "deploy",
-            dry_run: false,
-            yes: false,
-            vars: [
-                (
-                    "key",
-                    "value",
-                ),
-            ],
-            positional_args: [],
-        }
-        "#);
-        // --var=key=value (equals form)
-        assert_debug_snapshot!(parse(&["deploy", "--var=key=value"]).unwrap(), @r#"
-        AliasOptions {
-            name: "deploy",
-            dry_run: false,
-            yes: false,
-            vars: [
-                (
-                    "key",
-                    "value",
-                ),
-            ],
-            positional_args: [],
-        }
-        "#);
-        // Value containing equals sign
-        assert_debug_snapshot!(parse(&["deploy", "--var", "url=http://host?a=1"]).unwrap(), @r#"
-        AliasOptions {
-            name: "deploy",
-            dry_run: false,
-            yes: false,
-            vars: [
-                (
-                    "url",
-                    "http://host?a=1",
-                ),
-            ],
-            positional_args: [],
-        }
-        "#);
-        // Multiple vars + flags
-        assert_debug_snapshot!(parse(&["deploy", "--var", "a=1", "--var", "b=2", "--dry-run"]).unwrap(), @r#"
-        AliasOptions {
-            name: "deploy",
-            dry_run: true,
-            yes: false,
-            vars: [
-                (
-                    "a",
-                    "1",
-                ),
-                (
-                    "b",
-                    "2",
-                ),
-            ],
-            positional_args: [],
-        }
-        "#);
-        // Empty value accepted
-        assert_debug_snapshot!(parse(&["deploy", "--var", "key="]).unwrap(), @r#"
-        AliasOptions {
-            name: "deploy",
-            dry_run: false,
-            yes: false,
-            vars: [
-                (
-                    "key",
-                    "",
-                ),
-            ],
-            positional_args: [],
-        }
-        "#);
-        // --key=value shorthand
-        assert_debug_snapshot!(parse(&["deploy", "--env=staging"]).unwrap(), @r#"
+    }
+
+    #[test]
+    fn test_parse_key_value_routing() {
+        use insta::assert_debug_snapshot;
+        // --KEY=VALUE binds when the template references KEY.
+        assert_debug_snapshot!(parse_with(&["deploy", "--env=staging"], &["env"]).unwrap(), @r#"
         AliasOptions {
             name: "deploy",
             dry_run: false,
@@ -924,8 +907,20 @@ cmd = [
             positional_args: [],
         }
         "#);
-        // --key=value with equals in value
-        assert_debug_snapshot!(parse(&["deploy", "--url=http://host?a=1"]).unwrap(), @r#"
+        // --KEY=VALUE forwards as positional when KEY is NOT referenced.
+        assert_debug_snapshot!(parse_with(&["deploy", "--env=staging"], &[]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [],
+            positional_args: [
+                "--env=staging",
+            ],
+        }
+        "#);
+        // Equals-in-value still parses correctly when bound.
+        assert_debug_snapshot!(parse_with(&["deploy", "--url=http://host?a=1"], &["url"]).unwrap(), @r#"
         AliasOptions {
             name: "deploy",
             dry_run: false,
@@ -939,27 +934,8 @@ cmd = [
             positional_args: [],
         }
         "#);
-        // --key=value mixed with --var and flags
-        assert_debug_snapshot!(parse(&["deploy", "--env=prod", "--var", "region=us-east", "--dry-run"]).unwrap(), @r#"
-        AliasOptions {
-            name: "deploy",
-            dry_run: true,
-            yes: false,
-            vars: [
-                (
-                    "env",
-                    "prod",
-                ),
-                (
-                    "region",
-                    "us-east",
-                ),
-            ],
-            positional_args: [],
-        }
-        "#);
-        // --key= (empty value)
-        assert_debug_snapshot!(parse(&["deploy", "--env="]).unwrap(), @r#"
+        // Empty value accepted on bind.
+        assert_debug_snapshot!(parse_with(&["deploy", "--env="], &["env"]).unwrap(), @r#"
         AliasOptions {
             name: "deploy",
             dry_run: false,
@@ -973,8 +949,85 @@ cmd = [
             positional_args: [],
         }
         "#);
-        // Hyphens in shorthand key are canonicalized to underscores
-        assert_debug_snapshot!(parse(&["deploy", "--my-var=value"]).unwrap(), @r#"
+        // Empty value forwarded literally when KEY is not referenced.
+        assert_debug_snapshot!(parse_with(&["deploy", "--env="], &[]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [],
+            positional_args: [
+                "--env=",
+            ],
+        }
+        "#);
+    }
+
+    #[test]
+    fn test_parse_space_separated_routing() {
+        use insta::assert_debug_snapshot;
+        // --KEY VALUE binds when KEY is referenced and VALUE is non-flag.
+        assert_debug_snapshot!(parse_with(&["deploy", "--env", "staging"], &["env"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "env",
+                    "staging",
+                ),
+            ],
+            positional_args: [],
+        }
+        "#);
+        // --KEY VALUE forwards both as positionals when KEY is NOT referenced.
+        assert_debug_snapshot!(parse_with(&["deploy", "--env", "staging"], &[]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [],
+            positional_args: [
+                "--env",
+                "staging",
+            ],
+        }
+        "#);
+        // --KEY followed by another --flag: --KEY forwards alone, the next
+        // flag is processed at its normal position.
+        assert_debug_snapshot!(parse_with(&["deploy", "--env", "--other"], &["env"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [],
+            positional_args: [
+                "--env",
+                "--other",
+            ],
+        }
+        "#);
+        // --KEY at end of args: nothing to consume, forwards alone.
+        assert_debug_snapshot!(parse_with(&["deploy", "--env"], &["env"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [],
+            positional_args: [
+                "--env",
+            ],
+        }
+        "#);
+    }
+
+    #[test]
+    fn test_parse_hyphen_canonicalization() {
+        use insta::assert_debug_snapshot;
+        // Hyphens in the key are canonicalized to underscores before lookup
+        // and storage. The set is keyed in canonical form.
+        assert_debug_snapshot!(parse_with(&["deploy", "--my-var=value"], &["my_var"]).unwrap(), @r#"
         AliasOptions {
             name: "deploy",
             dry_run: false,
@@ -988,8 +1041,8 @@ cmd = [
             positional_args: [],
         }
         "#);
-        // Hyphens in --var KEY=VALUE are canonicalized too
-        assert_debug_snapshot!(parse(&["deploy", "--var", "my-var=value"]).unwrap(), @r#"
+        // Already-underscored keys pass through.
+        assert_debug_snapshot!(parse_with(&["deploy", "--my_var=value"], &["my_var"]).unwrap(), @r#"
         AliasOptions {
             name: "deploy",
             dry_run: false,
@@ -1003,53 +1056,8 @@ cmd = [
             positional_args: [],
         }
         "#);
-        // Hyphens in --var=KEY=VALUE form
-        assert_debug_snapshot!(parse(&["deploy", "--var=my-var=value"]).unwrap(), @r#"
-        AliasOptions {
-            name: "deploy",
-            dry_run: false,
-            yes: false,
-            vars: [
-                (
-                    "my_var",
-                    "value",
-                ),
-            ],
-            positional_args: [],
-        }
-        "#);
-        // Already-underscored keys pass through unchanged
-        assert_debug_snapshot!(parse(&["deploy", "--my_var=value"]).unwrap(), @r#"
-        AliasOptions {
-            name: "deploy",
-            dry_run: false,
-            yes: false,
-            vars: [
-                (
-                    "my_var",
-                    "value",
-                ),
-            ],
-            positional_args: [],
-        }
-        "#);
-        // Multiple hyphens in a single key
-        assert_debug_snapshot!(parse(&["deploy", "--long-var-name=x"]).unwrap(), @r#"
-        AliasOptions {
-            name: "deploy",
-            dry_run: false,
-            yes: false,
-            vars: [
-                (
-                    "long_var_name",
-                    "x",
-                ),
-            ],
-            positional_args: [],
-        }
-        "#);
-        // Hyphens in value are preserved (only key is canonicalized)
-        assert_debug_snapshot!(parse(&["deploy", "--region=us-east-1"]).unwrap(), @r#"
+        // Hyphens in the value are preserved (only the key is canonicalized).
+        assert_debug_snapshot!(parse_with(&["deploy", "--region=us-east-1"], &["region"]).unwrap(), @r#"
         AliasOptions {
             name: "deploy",
             dry_run: false,
@@ -1063,7 +1071,109 @@ cmd = [
             positional_args: [],
         }
         "#);
-        // Single positional is forwarded as `{{ args }}`
+    }
+
+    #[test]
+    fn test_parse_literal_forward_escape() {
+        use insta::assert_debug_snapshot;
+        // After `--`, every token is positional regardless of whether it
+        // looks like a flag or whether the template would have bound it.
+        assert_debug_snapshot!(parse_with(&["deploy", "--env=staging", "--", "--env=other", "x"], &["env"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "env",
+                    "staging",
+                ),
+            ],
+            positional_args: [
+                "--env=other",
+                "x",
+            ],
+        }
+        "#);
+        // `--` itself is consumed but does not appear in positionals;
+        // built-in flags after `--` forward as positional too.
+        assert_debug_snapshot!(parse_with(&["deploy", "--", "--yes", "-y", "--dry-run"], &[]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [],
+            positional_args: [
+                "--yes",
+                "-y",
+                "--dry-run",
+            ],
+        }
+        "#);
+        // Trailing `--` with nothing after: consumed silently, no positionals.
+        assert_debug_snapshot!(parse_with(&["deploy", "--"], &[]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [],
+            positional_args: [],
+        }
+        "#);
+        // A second `--` inside literal mode is just another positional —
+        // literal_mode never resets, matching POSIX `--` semantics.
+        assert_debug_snapshot!(parse_with(&["deploy", "--", "a", "--", "b"], &[]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [],
+            positional_args: [
+                "a",
+                "--",
+                "b",
+            ],
+        }
+        "#);
+    }
+
+    #[test]
+    fn test_parse_mixed_pipeline() {
+        use insta::assert_debug_snapshot;
+        // Multiple referenced vars bind from a mix of `--KEY VALUE` and
+        // `--KEY=VALUE` forms; bare positionals interleave.
+        assert_debug_snapshot!(
+            parse_with(
+                &["deploy", "--env", "prod", "--region=us-east", "thing"],
+                &["env", "region"],
+            ).unwrap(),
+            @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [
+                (
+                    "env",
+                    "prod",
+                ),
+                (
+                    "region",
+                    "us-east",
+                ),
+            ],
+            positional_args: [
+                "thing",
+            ],
+        }
+        "#
+        );
+    }
+
+    #[test]
+    fn test_parse_positionals() {
+        use insta::assert_debug_snapshot;
+        // Single positional forwarded.
         assert_debug_snapshot!(parse(&["s", "some-branch"]).unwrap(), @r#"
         AliasOptions {
             name: "s",
@@ -1075,7 +1185,7 @@ cmd = [
             ],
         }
         "#);
-        // Multiple positionals preserve CLI order
+        // Multiple positionals preserve CLI order.
         assert_debug_snapshot!(parse(&["deploy", "one", "two", "three"]).unwrap(), @r#"
         AliasOptions {
             name: "deploy",
@@ -1089,7 +1199,7 @@ cmd = [
             ],
         }
         "#);
-        // Positionals can interleave with flags; flags are captured, positionals keep order
+        // Built-in flags can interleave with positionals.
         assert_debug_snapshot!(parse(&["deploy", "foo", "--dry-run", "bar"]).unwrap(), @r#"
         AliasOptions {
             name: "deploy",
@@ -1102,8 +1212,8 @@ cmd = [
             ],
         }
         "#);
-        // Positionals containing spaces or shell metacharacters pass through verbatim —
-        // escaping happens only at template render time.
+        // Positionals with shell metacharacters pass through verbatim —
+        // escaping happens at template render time.
         assert_debug_snapshot!(parse(&["deploy", "foo bar", "x;rm -rf /"]).unwrap(), @r#"
         AliasOptions {
             name: "deploy",
@@ -1122,11 +1232,26 @@ cmd = [
     fn test_parse_errors() {
         use insta::assert_snapshot;
         assert_snapshot!(parse(&[]).unwrap_err(), @"Missing alias name");
-        assert_snapshot!(parse(&["deploy", "--var"]).unwrap_err(), @"--var requires a KEY=VALUE argument");
-        assert_snapshot!(parse(&["deploy", "--var", "noequals"]).unwrap_err(), @"invalid KEY=VALUE: no `=` found in `noequals`");
-        assert_snapshot!(parse(&["deploy", "--verbose"]).unwrap_err(), @"Unknown flag '--verbose' for alias 'deploy' (use --verbose=VALUE to pass a variable)");
-        assert_snapshot!(parse(&["deploy", "--var", "=value"]).unwrap_err(), @"invalid KEY=VALUE: key cannot be empty");
+        // `--=value` has an empty key — caught even when bind would forward.
         assert_snapshot!(parse(&["deploy", "--=value"]).unwrap_err(), @"invalid KEY=VALUE: key cannot be empty");
+    }
+
+    /// `referenced_vars_for_config` unions across pipeline steps so a var
+    /// referenced in any one command is a binding candidate for the whole
+    /// alias. Single-step templates that fail to parse contribute nothing.
+    #[test]
+    fn test_referenced_vars_for_config_unions_steps() {
+        let cfg = cfg_from_toml(
+            r#"
+cmd = [
+    "echo {{ env }}",
+    { build = "make {{ target }}", lint = "lint {{ args }}" },
+]
+"#,
+        );
+        let refs = worktrunk::config::referenced_vars_for_config(&cfg);
+        let names: Vec<&str> = refs.iter().map(String::as_str).collect();
+        assert_eq!(names, vec!["args", "env", "target"]);
     }
 
     /// Verify BUILTIN_STEP_COMMANDS stays in sync with the actual StepCommand variants.

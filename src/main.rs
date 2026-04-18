@@ -339,9 +339,7 @@ fn handle_step_command(action: StepCommand) -> anyhow::Result<()> {
             commit,
             clobber,
         } => step_relocate(branches, dry_run, commit, clobber),
-        StepCommand::External(args) => {
-            commands::AliasOptions::parse(args).and_then(commands::step_alias)
-        }
+        StepCommand::External(args) => commands::step_alias(args),
     }
 }
 

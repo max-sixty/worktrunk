@@ -78,7 +78,7 @@ pub const DEPRECATED_TEMPLATE_VARS: &[&str] = &[
     "main_worktree_path",
 ];
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 
 /// Positional CLI args forwarded from `wt <alias> a b c` into the alias's
@@ -414,6 +414,24 @@ pub fn template_references_var(template: &str, var: &str) -> bool {
         return false;
     };
     tmpl.undeclared_variables(false).contains(var)
+}
+
+/// Union of top-level variables referenced by every command in a `CommandConfig`.
+///
+/// Drives alias-arg routing in `AliasOptions::parse`: a `--KEY=VALUE` token
+/// binds to `{{ KEY }}` only when KEY appears in this set; otherwise it
+/// forwards as a positional. Templates that fail to parse contribute nothing
+/// (the deferred expansion path will surface the syntax error at execution
+/// time).
+pub fn referenced_vars_for_config(cfg: &super::CommandConfig) -> BTreeSet<String> {
+    let env = minijinja::Environment::new();
+    let mut out = BTreeSet::new();
+    for cmd in cfg.commands() {
+        if let Ok(tmpl) = env.template_from_str(&cmd.template) {
+            out.extend(tmpl.undeclared_variables(false));
+        }
+    }
+    out
 }
 
 /// Parse-only syntax check for a template.
