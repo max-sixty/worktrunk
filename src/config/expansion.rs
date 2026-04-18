@@ -404,16 +404,36 @@ fn setup_template_env(repo: &Repository) -> Environment<'static> {
     env
 }
 
-/// Check if a template references a specific top-level variable.
+/// Top-level variables referenced by a single template.
 ///
 /// Uses minijinja's AST analysis rather than string matching, avoiding false
-/// positives from literal text like `template_vars.txt`.
+/// positives from literal text like `template_vars.txt`. Templates that fail
+/// to parse contribute nothing — a syntax error surfaces later at expansion
+/// time with a richer message.
+fn referenced_vars(template: &str) -> std::collections::HashSet<String> {
+    minijinja::Environment::new()
+        .template_from_str(template)
+        .map(|tmpl| tmpl.undeclared_variables(false))
+        .unwrap_or_default()
+}
+
+/// Check if a template references a specific top-level variable.
 pub fn template_references_var(template: &str, var: &str) -> bool {
-    let env = minijinja::Environment::new();
-    let Ok(tmpl) = env.template_from_str(template) else {
-        return false;
-    };
-    tmpl.undeclared_variables(false).contains(var)
+    referenced_vars(template).contains(var)
+}
+
+/// Union of top-level variables referenced across every command in `cfg`.
+///
+/// Drives the alias argument parser's routing decision: `--key=value` binds
+/// to `{{ key }}` when the key appears here, otherwise the token forwards as
+/// a positional. A var referenced in any step of a pipeline is a binding
+/// candidate for the whole invocation.
+pub fn referenced_vars_for_config(
+    cfg: &super::CommandConfig,
+) -> std::collections::BTreeSet<String> {
+    cfg.commands()
+        .flat_map(|cmd| referenced_vars(&cmd.template))
+        .collect()
 }
 
 /// Parse-only syntax check for a template.
@@ -1585,5 +1605,50 @@ mod tests {
         // Should list available vars in hint
         assert!(!err.available_vars.is_empty(), "should list available vars");
         assert!(err.available_vars.contains(&"branch".to_string()));
+    }
+
+    #[test]
+    fn test_referenced_vars_for_config() {
+        // Round-trip via TOML — `CommandConfig` has no public multi-step
+        // constructor, so the same fixture pattern used in alias tests applies.
+        fn cfg(toml_str: &str) -> super::super::CommandConfig {
+            #[derive(serde::Deserialize)]
+            struct Wrap {
+                cmd: super::super::CommandConfig,
+            }
+            toml::from_str::<Wrap>(toml_str).unwrap().cmd
+        }
+
+        // Single template: one var.
+        let set = referenced_vars_for_config(&cfg(r#"cmd = "echo {{ env }}""#));
+        assert!(set.contains("env"));
+
+        // Multi-step pipeline unions vars across all steps, including
+        // concurrent groups.
+        let set = referenced_vars_for_config(&cfg(r#"
+cmd = [
+    "echo {{ env }}",
+    { a = "echo {{ region }}", b = "echo {{ version }}" },
+]
+"#));
+        assert!(set.contains("env"));
+        assert!(set.contains("region"));
+        assert!(set.contains("version"));
+
+        // No template vars → empty set.
+        let set = referenced_vars_for_config(&cfg(r#"cmd = "echo hi""#));
+        assert!(set.is_empty());
+
+        // Unparsable template contributes nothing (syntax error surfaces
+        // later at expansion time). Sibling templates still contribute.
+        let set =
+            referenced_vars_for_config(&cfg(r#"cmd = ["echo {{ unclosed", "echo {{ good }}"]"#));
+        assert_eq!(set, ["good".to_string()].into_iter().collect());
+
+        // `vars.*` dotted access reports as a `vars` reference — the dotted
+        // suffix is a lookup on the sequence object, not a top-level var.
+        let set = referenced_vars_for_config(&cfg(r#"cmd = "echo {{ vars.env }}""#));
+        assert!(set.contains("vars"));
+        assert!(!set.contains("env"));
     }
 }

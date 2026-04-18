@@ -117,11 +117,25 @@ wt deploy --env=staging
 
 `wt deploy` resolves `deploy` against configured aliases first, then falls through to a `wt-deploy` PATH binary if no alias matches. Built-in subcommands always take precedence — an alias named `list` or `switch` is unreachable.
 
-Hyphens in variable names are canonicalized to underscores at parse time, so `--my-var=value` is referenced as `{{ my_var }}` in templates. This lets flags use natural kebab-case while avoiding the minijinja parser's interpretation of `{{ my-var }}` as subtraction.
+### How args are routed
+
+Tokens after the alias name are parsed left-to-right. The template itself declares which variables are in play via `{{ name }}` references, so the parser uses those references as the binding signal — no separate "here's a var" declaration is needed.
+
+| Token | Behavior |
+|---|---|
+| `--` | Stops routing. All subsequent tokens forward verbatim as positionals, including flag-shaped ones and `--yes` / `--dry-run`. |
+| `--KEY=VALUE` | Binds `KEY=VALUE` if the template references `{{ KEY }}`. Otherwise forwards the whole token as a positional. |
+| `--KEY VALUE` | Binds both if the template references `{{ KEY }}` AND `VALUE` doesn't start with `--`. Otherwise forwards just `--KEY`; `VALUE` is processed independently on the next iteration. |
+| `--KEY` at end of args, or with `KEY` not referenced | Forwards `--KEY` as a positional. |
+| Any other token | Positional. |
+
+Hyphens in keys are canonicalized to underscores, so `--my-var=value` binds to `{{ my_var }}` — minijinja parses `{{ my-var }}` as subtraction, so the underscore form is what templates reference.
+
+User-provided keys shadow built-in template variables when the template references them: `--branch=override` wins over the worktree's actual branch name if `{{ branch }}` appears in the template.
 
 ### Forwarding positional arguments
 
-Non-flag tokens after the alias name are forwarded to the template as `{{ args }}`. Bare `{{ args }}` renders as a space-joined, shell-escaped string ready to append to a command line — so `wt s some-branch` with `s = "wt switch {{ args }}"` expands to `wt switch some-branch`.
+Non-bound tokens forward to the template as `{{ args }}`. Bare `{{ args }}` renders as a space-joined, shell-escaped string ready to append to a command line — so `wt s some-branch` with `s = "wt switch {{ args }}"` expands to `wt switch some-branch`.
 
 ```toml
 [aliases]
@@ -135,6 +149,12 @@ wt s 'has a space'  # spaces and metacharacters are escaped safely
 ```
 
 Access elements with `{{ args[0] }}`, iterate with `{% for a in args %}…{% endfor %}`, or count with `{{ args | length }}`. Each element is individually shell-escaped, so `wt run 'a b' 'c;d'` splices in as `'a b' 'c;d'` without shell injection.
+
+Use `--` to force tokens into `args` that would otherwise bind or activate a built-in flag — for example, forwarding a literal `--dry-run` to a subcommand instead of having it enable dry-run mode on the alias itself:
+
+```
+wt run -- cargo build --dry-run
+```
 
 An `up` alias that fetches all remotes and rebases each worktree onto its upstream:
 

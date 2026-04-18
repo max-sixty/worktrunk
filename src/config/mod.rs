@@ -122,8 +122,8 @@ pub use deprecation::{
 };
 pub use expansion::{
     ALIAS_ARGS_KEY, DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS, TemplateExpandError, expand_template,
-    redact_credentials, sanitize_branch_name, sanitize_db, short_hash, template_references_var,
-    validate_template, validate_template_syntax,
+    redact_credentials, referenced_vars_for_config, sanitize_branch_name, sanitize_db, short_hash,
+    template_references_var, validate_template, validate_template_syntax,
 };
 pub use hooks::HooksConfig;
 pub use project::{ProjectCiConfig, ProjectConfig, ProjectListConfig, valid_project_config_keys};

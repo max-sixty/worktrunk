@@ -37,8 +37,10 @@ const KNOWN_HOOK_LONG_FLAGS: &[&str] = &[
 ];
 
 /// Rewrite `wt hook <type> --KEY=VALUE` into `wt hook <type> --var KEY=VALUE`
-/// for unknown `--key=value` flags, matching the ergonomics of the alias
-/// variable shorthand (see `AliasOptions::parse`).
+/// for unknown `--key=value` flags, so hook invocations can use the same
+/// `--KEY=VALUE` shorthand that `wt <alias>` supports. (Aliases route via
+/// template references; hooks have no such discriminator, so the rewrite
+/// here is an unconditional "unknown `--KEY=VALUE` means var".)
 ///
 /// Only args after a `hook <type>` prefix are touched, and only when `<type>`
 /// is a hook that accepts `--var`.

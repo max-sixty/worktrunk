@@ -120,30 +120,7 @@ fn test_step_alias_unknown_no_aliases(mut repo: TestRepo) {
     ));
 }
 
-/// --var flag adds extra template variables (--yes bypasses approval)
-#[rstest]
-fn test_step_alias_with_var(mut repo: TestRepo) {
-    repo.write_project_config(
-        r#"
-[aliases]
-greet = "echo Hello {{ name }} from {{ branch }}"
-"#,
-    );
-    repo.commit("Add alias config");
-    let feature_path = repo.add_worktree("feature");
-
-    let settings = setup_snapshot_settings(&repo);
-    let _guard = settings.bind_to_scope();
-
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["greet", "--dry-run", "--var", "name=World", "--yes"],
-        Some(&feature_path),
-    ));
-}
-
-/// --key=value shorthand for --var key=value
+/// `--KEY=VALUE` binds a referenced template variable.
 #[rstest]
 fn test_step_alias_with_shorthand_var(mut repo: TestRepo) {
     repo.write_project_config(
@@ -1344,4 +1321,103 @@ deploy = "echo deploying"
         false,
         Some(&feature_path),
     );
+}
+
+/// `--KEY=VALUE` with an unreferenced key forwards as a positional — it does
+/// NOT silently bind. The template references `args`, so `--env=staging`
+/// reaches the command line as an argument.
+#[rstest]
+fn test_alias_unreferenced_key_forwards_as_positional(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+echo-args = "echo {{ args }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "echo-args",
+        &["--env=staging", "foo", "--yes"],
+        Some(&feature_path),
+    ));
+}
+
+/// `--KEY VALUE` (space-separated) binds when the template references `KEY`.
+#[rstest]
+fn test_alias_space_form_binds_referenced_key(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "echo env={{ env }} args={{ args }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "deploy",
+        &["--env", "staging", "foo", "--yes"],
+        Some(&feature_path),
+    ));
+}
+
+/// `--` ends routing: everything after is forwarded verbatim, even tokens
+/// that would otherwise bind or activate built-in control flags. Only
+/// bindings and flags *before* `--` take effect.
+#[rstest]
+fn test_alias_double_dash_stops_routing(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "echo env={{ env }} args={{ args }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "deploy",
+        &["--yes", "--env=staging", "--", "--env=other", "foo"],
+        Some(&feature_path),
+    ));
+}
+
+/// User-provided `--KEY=VALUE` overshadows a built-in template var when the
+/// template references it. `build_hook_context` inserts built-ins first and
+/// `extra_refs` overwrite — so `--branch=override` wins over the worktree's
+/// real branch.
+#[rstest]
+fn test_alias_user_key_overshadows_builtin_var(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+show-branch = "echo {{ branch }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "show-branch",
+        &["--branch=override", "--yes"],
+        Some(&feature_path),
+    ));
 }
