@@ -1,7 +1,8 @@
 use crate::common::{
     TestRepo, configure_directive_files, directive_files, make_snapshot_cmd,
     make_snapshot_cmd_with_global_flags, repo, repo_with_remote, set_temp_home_env,
-    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wt_command,
+    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wait_for_file_content,
+    wt_command,
 };
 use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
@@ -2009,6 +2010,106 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
         configure_mock_gh_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork", cmd);
     });
+}
+
+/// `pre-start`, `post-start`, and `post-switch` hooks on PR/MR-created worktrees
+/// see `pr_number` and `pr_url` in their template context. Both GitHub PRs and
+/// GitLab MRs canonicalize to the same `pr_*` names — hook authors don't need
+/// to branch on platform. Pre-switch fires before PR resolution and never sees
+/// them.
+#[rstest]
+fn test_switch_pr_hooks_see_pr_vars(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set up the same fork-PR scenario as test_switch_pr_fork: a refs/pull/42/head on the
+    // bare remote, origin redirected to GitHub-style URL, and `gh api` mocked.
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .run()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    // Each hook writes its own marker in the primary worktree so we can verify
+    // post-switch + post-start (background) populate pr_number/pr_url too.
+    // {{ repo_path }} is always the main repo's working tree.
+    repo.write_project_config(
+        r#"pre-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_start.txt"
+post-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_start.txt"
+post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_switch.txt"
+"#,
+    );
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:42", "--yes"]);
+    configure_mock_gh_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch pr:42 should run");
+    assert!(
+        output.status.success(),
+        "wt switch pr:42 failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let expected = "pr_number=42 pr_url=https://github.com/owner/test-repo/pull/42";
+    for marker in ["pre_start.txt", "post_start.txt", "post_switch.txt"] {
+        let path = repo.root_path().join(marker);
+        // post-* hooks run in the background; poll until the file appears.
+        wait_for_file_content(&path);
+        let contents = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{marker} should have been written: {e}"));
+        assert_eq!(
+            contents.trim(),
+            expected,
+            "{marker} hook should see canonical pr_number and pr_url variables",
+        );
+    }
 }
 
 /// Test fork PR when origin points to fork (no remote for base repo)

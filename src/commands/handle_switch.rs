@@ -208,22 +208,37 @@ pub(crate) fn approve_switch_hooks(
 
 /// Compute extra template variables from a switch result.
 ///
-/// Returns base branch context (`base`, `base_worktree_path`) for hooks and template expansion.
-pub(crate) fn switch_extra_vars(result: &SwitchResult) -> Vec<(&str, &str)> {
+/// Returns base branch context (`base`, `base_worktree_path`) and, for
+/// `pr:N` / `mr:N` creations, `pr_number` and `pr_url` for hooks and template
+/// expansion. The caller owns the `pr_number` string buffer because the
+/// returned slice borrows from it.
+pub(crate) fn switch_extra_vars<'a>(
+    result: &'a SwitchResult,
+    pr_number_buf: &'a mut String,
+) -> Vec<(&'a str, &'a str)> {
     match result {
         SwitchResult::Created {
             base_branch,
             base_worktree_path,
+            pr_number,
+            pr_url,
             ..
-        } => [
-            base_branch.as_deref().map(|b| ("base", b)),
-            base_worktree_path
-                .as_deref()
-                .map(|p| ("base_worktree_path", p)),
-        ]
-        .into_iter()
-        .flatten()
-        .collect(),
+        } => {
+            if let Some(n) = pr_number {
+                *pr_number_buf = n.to_string();
+            }
+            [
+                base_branch.as_deref().map(|b| ("base", b)),
+                base_worktree_path
+                    .as_deref()
+                    .map(|p| ("base_worktree_path", p)),
+                pr_number.map(|_| ("pr_number", pr_number_buf.as_str())),
+                pr_url.as_deref().map(|u| ("pr_url", u)),
+            ]
+            .into_iter()
+            .flatten()
+            .collect()
+        }
         SwitchResult::Existing { .. } | SwitchResult::AlreadyAt(_) => Vec::new(),
     }
 }
@@ -418,7 +433,8 @@ pub fn handle_switch(
     // "target = bare vars" for switch/create and kept symmetric with pre-switch.
     let target_path_str = worktrunk::path::to_posix_path(&result.path().to_string_lossy());
 
-    let mut extra_vars = switch_extra_vars(&result);
+    let mut pr_number_buf = String::new();
+    let mut extra_vars = switch_extra_vars(&result, &mut pr_number_buf);
     if let Some(target_branch) = branch_info.branch.as_deref() {
         extra_vars.push(("target", target_branch));
     }

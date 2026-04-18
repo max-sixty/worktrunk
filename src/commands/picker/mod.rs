@@ -747,7 +747,8 @@ pub fn handle_picker(
 
         // Spawn background hooks after success message
         if hooks_approved {
-            let extra_vars = switch_extra_vars(&result);
+            let mut pr_number_buf = String::new();
+            let extra_vars = switch_extra_vars(&result, &mut pr_number_buf);
             spawn_switch_background_hooks(
                 &repo,
                 &config,

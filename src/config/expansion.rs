@@ -97,20 +97,29 @@ fn hook_extras(hook_type: HookType) -> &'static [&'static str] {
     use HookType::*;
     match hook_type {
         // Switch: source branch (`base`) and destination (`target`).
+        // `pr_number`/`pr_url` are populated for `post-switch` when creating
+        // via `pr:N` / `mr:N`; pre-switch fires before the PR/MR API call,
+        // so they're never set there but remain accepted for portability.
         PreSwitch | PostSwitch => &[
             "base",
             "base_worktree_path",
             "target",
             "target_worktree_path",
+            "pr_number",
+            "pr_url",
         ],
         // Create/start: source worktree (`base`) and newly-created destination
         // (`target`). On create, the destination branch equals the bare `branch`
         // var — `target` is accepted for template portability with switch hooks.
+        // `pr_number`/`pr_url` are populated when creating via `pr:N` / `mr:N`
+        // (GitLab MRs reuse the same `pr_*` names).
         PreStart | PostStart => &[
             "base",
             "base_worktree_path",
             "target",
             "target_worktree_path",
+            "pr_number",
+            "pr_url",
         ],
         // Commit: integration target for the pre-commit squash.
         PreCommit | PostCommit => &["target"],
@@ -1718,6 +1727,35 @@ mod tests {
                 "test"
             )
             .is_ok()
+        );
+
+        // `pr_number`/`pr_url` are available in pre-start (populated when
+        // creating via `pr:N` / `mr:N`).
+        for var in ["pr_number", "pr_url"] {
+            assert!(
+                validate_template(
+                    &format!("{{{{ {var} }}}}"),
+                    ValidationScope::Hook(HookType::PreStart),
+                    &test.repo,
+                    "test"
+                )
+                .is_ok(),
+                "{var} should validate in pre-start scope"
+            );
+        }
+
+        // `pr_number` is not available in pre-merge (different hook type).
+        let err = validate_template(
+            "{{ pr_number }}",
+            ValidationScope::Hook(HookType::PreMerge),
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("undefined value"),
+            "got: {}",
+            err.message
         );
 
         // `args` is not available in SwitchExecute.
