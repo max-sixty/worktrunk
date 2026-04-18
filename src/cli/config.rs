@@ -74,10 +74,6 @@ Use --yes to skip confirmation."#
         #[arg(value_enum)]
         shell: Option<Shell>,
 
-        /// Skip confirmation prompt
-        #[arg(short, long)]
-        yes: bool,
-
         /// Show what would be changed
         #[arg(long)]
         dry_run: bool,
@@ -122,10 +118,6 @@ Detects various forms of the integration pattern regardless of:
         /// Shell to uninstall (default: all)
         #[arg(value_enum)]
         shell: Option<Shell>,
-
-        /// Skip confirmation prompt
-        #[arg(short, long)]
-        yes: bool,
 
         /// Show what would be changed
         #[arg(long)]
@@ -178,11 +170,7 @@ $ wt config plugins opencode install --yes
 The plugin is written to `~/.config/opencode/plugins/worktrunk.ts`.
 Override with the `OPENCODE_CONFIG_DIR` environment variable."#
     )]
-    Install {
-        /// Skip confirmation prompt
-        #[arg(short, long)]
-        yes: bool,
-    },
+    Install,
 
     /// Remove the activity tracking plugin
     #[command(
@@ -194,11 +182,7 @@ Override with the `OPENCODE_CONFIG_DIR` environment variable."#
 $ wt config plugins opencode uninstall
 ```"#
     )]
-    Uninstall {
-        /// Skip confirmation prompt
-        #[arg(short, long)]
-        yes: bool,
-    },
+    Uninstall,
 }
 
 // Ordering: action + inverse adjacent (add, clear).
@@ -295,11 +279,7 @@ $ claude plugin install worktrunk@worktrunk
 
 Requires `claude` CLI. Skips gracefully if already installed."#
     )]
-    Install {
-        /// Skip confirmation prompt
-        #[arg(short, long)]
-        yes: bool,
-    },
+    Install,
 
     /// Remove the Worktrunk plugin
     #[command(
@@ -309,11 +289,7 @@ Requires `claude` CLI. Skips gracefully if already installed."#
 $ claude plugin uninstall worktrunk@worktrunk
 ```"#
     )]
-    Uninstall {
-        /// Skip confirmation prompt
-        #[arg(short, long)]
-        yes: bool,
-    },
+    Uninstall,
 
     /// Configure the Claude Code statusline
     #[command(
@@ -328,11 +304,7 @@ Preserves existing settings. Creates the `.claude/` directory and `settings.json
 
 Skips gracefully if the statusline is already configured."#
     )]
-    InstallStatusline {
-        /// Skip confirmation prompt
-        #[arg(short, long)]
-        yes: bool,
-    },
+    InstallStatusline,
 }
 
 // Ordering: user journey — shell (install integration), create (bootstrap
@@ -423,12 +395,8 @@ $ wt config update --print
 ```"#
     )]
     Update {
-        /// Skip confirmation prompt
-        #[arg(short, long)]
-        yes: bool,
-
         /// Print the migrated config to stdout instead of writing it
-        #[arg(long, conflicts_with = "yes")]
+        #[arg(long)]
         print: bool,
     },
 
@@ -600,9 +568,9 @@ Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` t
 
 Worktrunk detects the default branch automatically:
 
-1. **Worktrunk cache** — Checks `git config worktrunk.default-branch` (single command)
+1. **Worktrunk cache** — Checks `git config worktrunk.default-branch`
 2. **Git cache** — Detects primary remote and checks its HEAD (e.g., `origin/HEAD`)
-3. **Remote query** — If not cached, queries `git ls-remote` (100ms–2s)
+3. **Remote query** — If not cached, queries `git ls-remote` — typically 100ms–2s
 4. **Local inference** — If no remote, infers from local branches
 
 Once detected, the result is cached in `worktrunk.default-branch` for fast access.

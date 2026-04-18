@@ -407,10 +407,6 @@ pub enum HookCommand {
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Vec<String>,
 
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
         /// Show what would run without executing
         #[arg(long)]
         dry_run: bool,
@@ -430,10 +426,6 @@ pub enum HookCommand {
         /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Vec<String>,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
 
         /// Show what would run without executing
         #[arg(long)]
@@ -460,10 +452,6 @@ pub enum HookCommand {
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Vec<String>,
 
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
         /// Show what would run without executing
         #[arg(long)]
         dry_run: bool,
@@ -483,10 +471,6 @@ pub enum HookCommand {
         /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Vec<String>,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
 
         /// Show what would run without executing
         #[arg(long)]
@@ -510,10 +494,6 @@ pub enum HookCommand {
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Vec<String>,
 
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
         /// Show what would run without executing
         #[arg(long)]
         dry_run: bool,
@@ -533,10 +513,6 @@ pub enum HookCommand {
         /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Vec<String>,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
 
         /// Show what would run without executing
         #[arg(long)]
@@ -560,10 +536,6 @@ pub enum HookCommand {
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Vec<String>,
 
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
         /// Show what would run without executing
         #[arg(long)]
         dry_run: bool,
@@ -583,10 +555,6 @@ pub enum HookCommand {
         /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Vec<String>,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
 
         /// Show what would run without executing
         #[arg(long)]
@@ -610,10 +578,6 @@ pub enum HookCommand {
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Vec<String>,
 
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
         /// Show what would run without executing
         #[arg(long)]
         dry_run: bool,
@@ -633,10 +597,6 @@ pub enum HookCommand {
         /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Vec<String>,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
 
         /// Show what would run without executing
         #[arg(long)]
