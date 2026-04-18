@@ -18,18 +18,19 @@ use minijinja::{Environment, ErrorKind, UndefinedBehavior, Value};
 use regex::Regex;
 use shell_escape::escape;
 
-use crate::git::Repository;
+use crate::git::{HookType, Repository};
 use crate::path::to_posix_path;
 use crate::styling::{
     eprintln, error_message, format_bash_with_gutter, format_with_gutter, hint_message,
     info_message, verbosity,
 };
 
-/// Known template variables available in hook commands.
+/// Template variables available in every context.
 ///
-/// These are populated by `build_hook_context()` in `command_executor.rs`.
-/// Some variables are conditional (e.g., `upstream` only exists if tracking is configured).
-pub const TEMPLATE_VARS: &[&str] = &[
+/// Populated by `build_hook_context()` in `command_executor.rs`. `upstream`
+/// is conditional on branch tracking configuration but is included here so
+/// templates may reference it in any context (guarded by `{% if upstream %}`).
+pub const BASE_VARS: &[&str] = &[
     "repo",
     "owner",
     "branch",
@@ -43,17 +44,7 @@ pub const TEMPLATE_VARS: &[&str] = &[
     "remote",
     "remote_url",
     "upstream",
-    "hook_type",            // Added by expand_commands / expand_command_template
-    "hook_name", // Added by expand_commands / expand_command_template (named commands only)
-    "target",    // Added by merge/remove hooks via extra_vars
-    "target_worktree_path", // Added by merge/remove hooks via extra_vars
-    "base",      // Added by creation/switch hooks via extra_vars
-    "base_worktree_path", // Added by creation/switch hooks via extra_vars
-    "cwd",       // Execution directory (always exists on disk)
-    // Positional args forwarded to aliases (injected as ShellArgs object by expand_template).
-    "args",
-    // Note: `vars` is NOT listed here — it's a structured object injected by expand_template,
-    // not a simple string that --var can override.
+    "cwd",
 ];
 
 /// Reserved context key carrying a JSON-encoded `Vec<String>` of positional
@@ -66,7 +57,7 @@ pub const ALIAS_ARGS_KEY: &str = "args";
 
 /// Deprecated template variable aliases (still valid for backward compatibility).
 ///
-/// These map to current variables:
+/// These map to current variables and are available in every scope:
 /// - `main_worktree` → `repo`
 /// - `repo_root` → `repo_path`
 /// - `worktree` → `worktree_path`
@@ -77,6 +68,79 @@ pub const DEPRECATED_TEMPLATE_VARS: &[&str] = &[
     "worktree",
     "main_worktree_path",
 ];
+
+/// The context in which a template will be expanded.
+///
+/// Validation uses this to answer "which variables are available here?" —
+/// the single source of truth for hook-type-specific vars, alias-only vars,
+/// and the `--execute` context. Each hook type gets the base set plus its
+/// own extras (e.g., `target` for merge/remove, `base` for create/switch).
+#[derive(Debug, Clone, Copy)]
+pub enum ValidationScope {
+    /// A hook of the given type. Adds hook infrastructure vars (`hook_type`,
+    /// `hook_name`) plus hook-specific vars (`base`, `target`, etc.).
+    Hook(HookType),
+    /// The `--execute` template or trailing args for `wt switch --create`.
+    /// Adds `base` / `base_worktree_path` for the source worktree.
+    SwitchExecute,
+    /// An alias body. Adds `args` for positional CLI forwarding.
+    Alias,
+}
+
+/// Hook-type-specific extras that sit on top of [`BASE_VARS`].
+///
+/// These are the vars injected by callers via `extra_vars` when running a
+/// hook. Keeping the mapping in one place means "which vars work in a
+/// `post-merge` hook?" is answerable without chasing inline comments.
+fn hook_extras(hook_type: HookType) -> &'static [&'static str] {
+    use HookType::*;
+    match hook_type {
+        // Switch: source branch (`base`) and destination (`target`).
+        // Post-switch has already switched, so only `base` is set — but we
+        // accept both here so user templates stay portable between pre/post.
+        PreSwitch | PostSwitch => &[
+            "base",
+            "base_worktree_path",
+            "target",
+            "target_worktree_path",
+        ],
+        // Create/start: source worktree the new branch was created from.
+        PreStart | PostStart => &["base", "base_worktree_path"],
+        // Commit: integration target for the pre-commit squash.
+        PreCommit | PostCommit => &["target"],
+        // Merge: where the feature is being merged into.
+        PreMerge | PostMerge => &["target", "target_worktree_path"],
+        // Remove: where the user ends up after removal.
+        PreRemove | PostRemove => &["target", "target_worktree_path"],
+    }
+}
+
+/// Vars added by the hook execution infrastructure itself (`expand_commands`
+/// / `expand_command_template`), regardless of hook type.
+const HOOK_INFRASTRUCTURE_VARS: &[&str] = &["hook_type", "hook_name"];
+
+/// All template variables available in a given scope.
+///
+/// The returned list is `BASE_VARS` + scope-specific extras + deprecated
+/// aliases. Used by [`validate_template`] to build the placeholder context
+/// and by error messages to list what the user could have typed.
+pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
+    let mut vars: Vec<&'static str> = BASE_VARS.to_vec();
+    match scope {
+        ValidationScope::Hook(hook_type) => {
+            vars.extend(HOOK_INFRASTRUCTURE_VARS);
+            vars.extend(hook_extras(hook_type));
+        }
+        ValidationScope::SwitchExecute => {
+            vars.extend(["base", "base_worktree_path"]);
+        }
+        ValidationScope::Alias => {
+            vars.push(ALIAS_ARGS_KEY);
+        }
+    }
+    vars.extend(DEPRECATED_TEMPLATE_VARS);
+    vars
+}
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -427,27 +491,30 @@ pub fn validate_template_syntax(template: &str, name: &str) -> Result<(), miniji
         .map(|_| ())
 }
 
-/// Validate that a template can be expanded without errors.
+/// Validate that a template can be expanded without errors in the given scope.
 ///
-/// Performs a trial expansion with placeholder values for all known template variables
-/// ([`TEMPLATE_VARS`] + [`DEPRECATED_TEMPLATE_VARS`]). Catches syntax errors and
-/// undefined variable references *before* irreversible operations like worktree creation.
+/// Performs a trial expansion with placeholder values for exactly the variables
+/// available in `scope` (see [`vars_available_in`]). Catches syntax errors and
+/// undefined variable references *before* irreversible operations like worktree
+/// creation — including context-mismatch typos like `{{ args }}` in a hook or
+/// `{{ target }}` in a `pre-start` hook.
 ///
-/// This is deliberately more permissive than real expansion: all known variables are
-/// provided, even conditional ones (`upstream`, `commit`, etc.) that may be absent at
-/// expansion time. This means a template like `{{ upstream }}` passes validation but
-/// could fail later if no upstream tracking is configured. This is an acceptable
-/// trade-off — the alternative (predicting which optional variables will be available)
-/// would be fragile and context-dependent.
+/// This is deliberately more permissive than real expansion: conditional vars
+/// like `upstream` are provided even when they may be absent at runtime. A
+/// template like `{{ upstream }}` passes validation but could fail later if
+/// tracking isn't configured — the alternative (predicting which optional
+/// variables will be available) would be fragile and context-dependent.
 ///
 /// No verbose logging is performed — this is a pre-flight check, not the real expansion.
 pub fn validate_template(
     template: &str,
+    scope: ValidationScope,
     repo: &Repository,
     name: &str,
 ) -> Result<(), TemplateExpandError> {
-    let all_vars = TEMPLATE_VARS.iter().chain(DEPRECATED_TEMPLATE_VARS.iter());
-    let mut context: HashMap<String, minijinja::Value> = all_vars
+    let available = vars_available_in(scope);
+    let mut context: HashMap<String, minijinja::Value> = available
+        .iter()
         .filter(|&&k| k != ALIAS_ARGS_KEY)
         .map(|&k| (k.to_string(), minijinja::Value::from("PLACEHOLDER")))
         .collect();
@@ -456,12 +523,15 @@ pub fn validate_template(
         "vars".to_string(),
         minijinja::Value::from_serialize(std::collections::BTreeMap::<String, String>::new()),
     );
-    // Inject `args` as an empty sequence so `{{ args }}`, `{{ args[0] | default(...) }}`,
-    // `{{ args | length }}`, and `{% for a in args %}…{% endfor %}` all validate.
-    context.insert(
-        ALIAS_ARGS_KEY.to_string(),
-        Value::from_object(ShellArgs::new(Vec::new())),
-    );
+    // In alias scope, inject `args` as an empty sequence so `{{ args }}`,
+    // `{{ args[0] | default(...) }}`, `{{ args | length }}`, and
+    // `{% for a in args %}…{% endfor %}` all validate.
+    if matches!(scope, ValidationScope::Alias) {
+        context.insert(
+            ALIAS_ARGS_KEY.to_string(),
+            Value::from_object(ShellArgs::new(Vec::new())),
+        );
+    }
 
     let env = setup_template_env(repo);
 
@@ -471,11 +541,7 @@ pub fn validate_template(
 
     tmpl.render(minijinja::Value::from_object(context))
         .map_err(|e| {
-            let mut keys: Vec<String> = TEMPLATE_VARS
-                .iter()
-                .chain(DEPRECATED_TEMPLATE_VARS.iter())
-                .map(|k| k.to_string())
-                .collect();
+            let mut keys: Vec<String> = available.iter().map(|k| k.to_string()).collect();
             keys.sort();
             build_template_error(&e, template, name, keys)
         })?;
@@ -1529,38 +1595,118 @@ mod tests {
     #[test]
     fn test_validate_template_valid() {
         let test = test_repo();
+        let hook = ValidationScope::Hook(HookType::PostStart);
 
         // Static text
-        assert!(validate_template("echo hello", &test.repo, "test").is_ok());
+        assert!(validate_template("echo hello", hook, &test.repo, "test").is_ok());
 
-        // Known variables
-        assert!(validate_template("{{ branch }}", &test.repo, "test").is_ok());
-        assert!(validate_template("{{ repo }}/{{ branch }}", &test.repo, "test").is_ok());
+        // Base variables are available in every scope
+        assert!(validate_template("{{ branch }}", hook, &test.repo, "test").is_ok());
+        assert!(validate_template("{{ repo }}/{{ branch }}", hook, &test.repo, "test").is_ok());
 
         // Filters
-        assert!(validate_template("{{ branch | sanitize }}", &test.repo, "test").is_ok());
-        assert!(validate_template("{{ branch | sanitize_db }}", &test.repo, "test").is_ok());
-        assert!(validate_template("{{ branch | sanitize_hash }}", &test.repo, "test").is_ok());
-        assert!(validate_template("{{ branch | hash_port }}", &test.repo, "test").is_ok());
+        assert!(validate_template("{{ branch | sanitize }}", hook, &test.repo, "test").is_ok());
+        assert!(validate_template("{{ branch | sanitize_db }}", hook, &test.repo, "test").is_ok());
+        assert!(
+            validate_template("{{ branch | sanitize_hash }}", hook, &test.repo, "test").is_ok()
+        );
+        assert!(validate_template("{{ branch | hash_port }}", hook, &test.repo, "test").is_ok());
 
         // Conditionals with optional vars
         assert!(
             validate_template(
                 "{% if upstream %}{{ upstream }}{% endif %}",
+                hook,
                 &test.repo,
                 "test"
             )
             .is_ok()
         );
 
-        // Deprecated vars still valid
-        assert!(validate_template("{{ main_worktree }}", &test.repo, "test").is_ok());
+        // Deprecated vars still valid in every scope
+        assert!(validate_template("{{ main_worktree }}", hook, &test.repo, "test").is_ok());
 
-        // `args` is injected as an empty sequence, so templates referencing it validate.
-        assert!(validate_template("wt switch {{ args }}", &test.repo, "test").is_ok());
-        assert!(validate_template("{{ args | length }}", &test.repo, "test").is_ok());
+        // `args` validates only in Alias scope.
+        let alias = ValidationScope::Alias;
+        assert!(validate_template("wt switch {{ args }}", alias, &test.repo, "test").is_ok());
+        assert!(validate_template("{{ args | length }}", alias, &test.repo, "test").is_ok());
         assert!(
-            validate_template("{% for a in args %}{{ a }}{% endfor %}", &test.repo, "test").is_ok()
+            validate_template(
+                "{% for a in args %}{{ a }}{% endfor %}",
+                alias,
+                &test.repo,
+                "test"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_validate_template_scope_rejects_out_of_scope_vars() {
+        let test = test_repo();
+
+        // `args` is alias-only — referencing it in a hook fails validation.
+        let err = validate_template(
+            "{{ args }}",
+            ValidationScope::Hook(HookType::PreStart),
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("undefined value"),
+            "got: {}",
+            err.message
+        );
+
+        // `target` is unavailable in pre-start — catch the typo at validation time.
+        let err = validate_template(
+            "{{ target }}",
+            ValidationScope::Hook(HookType::PreStart),
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("undefined value"),
+            "got: {}",
+            err.message
+        );
+
+        // `base` is available in pre-start.
+        assert!(
+            validate_template(
+                "{{ base }}",
+                ValidationScope::Hook(HookType::PreStart),
+                &test.repo,
+                "test"
+            )
+            .is_ok()
+        );
+
+        // `target` is available in pre-merge.
+        assert!(
+            validate_template(
+                "{{ target }}",
+                ValidationScope::Hook(HookType::PreMerge),
+                &test.repo,
+                "test"
+            )
+            .is_ok()
+        );
+
+        // `args` is not available in SwitchExecute.
+        let err = validate_template(
+            "{{ args }}",
+            ValidationScope::SwitchExecute,
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("undefined value"),
+            "got: {}",
+            err.message
         );
     }
 
@@ -1568,7 +1714,8 @@ mod tests {
     fn test_validate_template_syntax_error() {
         let test = test_repo();
 
-        let err = validate_template("{{ unclosed", &test.repo, "test").unwrap_err();
+        let err = validate_template("{{ unclosed", ValidationScope::Alias, &test.repo, "test")
+            .unwrap_err();
         assert!(err.message.contains("syntax error"), "got: {}", err.message);
     }
 
@@ -1576,7 +1723,13 @@ mod tests {
     fn test_validate_template_undefined_var() {
         let test = test_repo();
 
-        let err = validate_template("{{ nonexistent_var }}", &test.repo, "test").unwrap_err();
+        let err = validate_template(
+            "{{ nonexistent_var }}",
+            ValidationScope::Hook(HookType::PostStart),
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
         assert!(
             err.message.contains("undefined value"),
             "got: {}",
