@@ -9,7 +9,7 @@ use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
-use super::hooks::{execute_hook, prepare_background_hooks, spawn_hook_pipeline};
+use super::hooks::{announce_and_spawn_background_hooks, execute_hook, prepare_background_hooks};
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::repository_ext::{
     RepositoryCliExt, check_not_default_branch, compute_integration_reason, is_primary_worktree,
@@ -358,9 +358,12 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             extra.push(("short_commit", sc));
         }
 
-        for steps in prepare_background_hooks(&ctx, HookType::PostMerge, &extra, display_path)? {
-            spawn_hook_pipeline(&ctx, steps)?;
-        }
+        let pipelines: Vec<_> =
+            prepare_background_hooks(&ctx, HookType::PostMerge, &extra, display_path)?
+                .into_iter()
+                .map(|g| (ctx, g))
+                .collect();
+        announce_and_spawn_background_hooks(pipelines, false)?;
     }
 
     if json_mode {
