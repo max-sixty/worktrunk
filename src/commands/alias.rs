@@ -105,10 +105,13 @@ impl AliasOptions {
     /// - `--KEY=VALUE` — binds `KEY` (hyphen→underscore) if
     ///   `referenced_vars` contains it, otherwise forwards the whole token
     ///   as a positional.
-    /// - `--KEY VALUE` — if `referenced_vars` contains `KEY` AND the next
-    ///   token doesn't start with `--`, consume both and bind. Otherwise
-    ///   forward just `--KEY` as a positional; the next token is processed
-    ///   independently.
+    /// - `--KEY VALUE` — if a next token exists, consumes both. Binds when
+    ///   `referenced_vars` contains `KEY`; otherwise forwards both as
+    ///   positionals. At end of args, `--KEY` alone forwards as a
+    ///   positional. The next token is taken at face value even when it
+    ///   starts with `--`, so `--env --dry-run` with `env` referenced binds
+    ///   `env=--dry-run` rather than activating dry-run — put flags before
+    ///   the bound key, or use `--KEY=VALUE` to be unambiguous.
     /// - Any other token — positional.
     ///
     /// `--yes`/`-y` is a top-level global flag (`wt -y <alias>`) and is not
@@ -167,15 +170,18 @@ impl AliasOptions {
                     continue;
                 }
 
-                // Bare `--KEY`: consume the next token only when the alias
-                // binds KEY and the next token looks like a value (doesn't
-                // start with `--`). Otherwise forward `--KEY` and let the
-                // loop re-examine the next token at its normal position.
+                // Bare `--KEY`: consume two tokens whenever a next exists,
+                // mirroring the atomic `--KEY=VALUE` form. Bind if KEY is
+                // referenced; otherwise forward both as positionals. At end
+                // of args, forward `--KEY` alone.
                 let canon = rest.replace('-', "_");
-                let next = args.get(i + 1);
-                let value_eligible = next.is_some_and(|n| !n.starts_with("--"));
-                if referenced_vars.contains(&canon) && value_eligible {
-                    vars.push((canon, next.unwrap().clone()));
+                if let Some(next) = args.get(i + 1) {
+                    if referenced_vars.contains(&canon) {
+                        vars.push((canon, next.clone()));
+                    } else {
+                        positional_args.push(arg.to_string());
+                        positional_args.push(next.clone());
+                    }
                     i += 2;
                     continue;
                 }
@@ -935,16 +941,36 @@ cmd = [
         }
         "#);
 
-        // `--KEY --other` with referenced `env`: next starts with `--`, so
-        // `--env` forwards and `--other` is processed independently.
+        // `--KEY --other` with referenced `env`: the space form consumes
+        // two tokens unconditionally, so `--other` binds as the value of
+        // `env`. Use `--env=VALUE` to avoid this, or reorder so the flag
+        // comes first.
         assert_debug_snapshot!(parse_with(&["deploy", "--env", "--other"], &["env"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            vars: [
+                (
+                    "env",
+                    "--other",
+                ),
+            ],
+            positional_args: [],
+        }
+        "#);
+
+        // Same shape, unreferenced `env`: both tokens consumed as the pair
+        // and forwarded as positionals. `--other` is not re-examined, so
+        // built-in flags like `--dry-run` can be swallowed here — put them
+        // before the bound key.
+        assert_debug_snapshot!(parse_with(&["deploy", "--env", "--dry-run"], &[]).unwrap(), @r#"
         AliasOptions {
             name: "deploy",
             dry_run: false,
             vars: [],
             positional_args: [
                 "--env",
-                "--other",
+                "--dry-run",
             ],
         }
         "#);

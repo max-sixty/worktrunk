@@ -126,10 +126,9 @@ Tokens after the alias name are parsed left-to-right. The template itself declar
 
 | Token | Behavior |
 |---|---|
-| `--` | Stops routing. All subsequent tokens forward verbatim as positionals, including flag-shaped ones and `--yes` / `--dry-run`. |
-| `--KEY=VALUE` | Binds `KEY=VALUE` if the template references `{{ KEY }}`. Otherwise forwards the whole token as a positional. |
-| `--KEY VALUE` | Binds both if the template references `{{ KEY }}` AND `VALUE` doesn't start with `--`. Otherwise forwards just `--KEY`; `VALUE` is processed independently on the next iteration. |
-| `--KEY` at end of args, or with `KEY` not referenced | Forwards `--KEY` as a positional. |
+| `--` | Stops routing. All subsequent tokens forward verbatim as positionals, including flag-shaped ones and `--dry-run`. |
+| `--KEY=VALUE` or `--KEY VALUE` | Binds `KEY` to `VALUE` if the template references `{{ KEY }}`. Otherwise forwards both parts as positionals. The space form always consumes the next token as the value, even if it starts with `--` — so `--env --dry-run` binds `env=--dry-run`. Use the `=` form or put flags first to avoid this. |
+| `--KEY` at end of args | Forwards `--KEY` as a positional. No next token to consume. |
 | Any other token | Positional. |
 
 Hyphens in keys are canonicalized to underscores, so `--my-var=value` binds to `{{ my_var }}` — minijinja parses `{{ my-var }}` as subtraction, so the underscore form is what templates reference.
