@@ -44,12 +44,10 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[36mdeploy (user)[39m
-[2m(single command)[22m
+[2m○[22m Alias [1mdeploy[22m (user):
 [107m [0m [2m[0m[2m[34mecho[0m[2m from user
 
-[36mdeploy (project)[39m
-[2m(single command)[22m
+[2m○[22m Alias [1mdeploy[22m (project):
 [107m [0m [2m[0m[2m[34mecho[0m[2m from project
 
 ----- stderr -----

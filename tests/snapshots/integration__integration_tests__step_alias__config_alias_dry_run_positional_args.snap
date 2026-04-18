@@ -46,8 +46,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[36ms (project)[39m
-[2m(single command)[22m
+[2m○[22m Alias [1ms[22m (project) would run:
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch target-branch
 
 ----- stderr -----

@@ -44,8 +44,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[36mdeploy (project)[39m
-[2mpipeline: publish[22m
+[2m○[22m Alias [1mdeploy[22m (project) would run:
 [107m [0m [2m[0m[2m[34mgit[0m[2m config worktrunk.state.main.vars.target [0m[2m[32m'prod'[0m[2m
 [107m [0m [2m# publish[0m[2m
 [107m [0m [2m[0m[2m[34mecho[0m[2m deploying to [0m[2m[32m{{[0m[2m vars.target [0m[2m[32m}}[0m[2m

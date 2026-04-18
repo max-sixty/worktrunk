@@ -44,8 +44,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[36mrelease (project)[39m
-[2mpipeline: install; build, lint[22m
+[2m○[22m Alias [1mrelease[22m (project):
 [107m [0m [2m# install[0m[2m
 [107m [0m [2m[0m[2m[34mnpm[0m[2m install
 [107m [0m [2m# build[0m[2m

@@ -2,11 +2,12 @@
 //!
 //! Introspection and preview for aliases configured in user config
 //! (`~/.config/worktrunk/config.toml`) and project config (`.config/wt.toml`).
-//! `show` prints the template text, source-labeled and annotated with the
-//! pipeline structure the announcement uses at runtime. `dry-run` parses a
-//! per-invocation argument vector with the same parser `wt <alias>` uses, then
-//! expands templates using the same context as execution — so previews match
-//! what the real run will do.
+//! `show` prints the template text, source-labeled, with one gutter block per
+//! alias entry and `# <name>` comment lines above named pipeline steps.
+//! `dry-run` parses a per-invocation argument vector with the same parser
+//! `wt <alias>` uses, then expands templates using the same context as
+//! execution — so previews match what the real run will do. The two share a
+//! layout; only the header verb differs (`:` vs ` would run:`).
 //!
 //! ## Why `dry-run` lives here rather than on the alias dispatch
 //!
@@ -21,18 +22,17 @@ use std::collections::HashMap;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, Command, CommandConfig, ProjectConfig, UserConfig, append_aliases,
+    ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, append_aliases,
     template_references_var, validate_template_syntax,
 };
 use worktrunk::git::Repository;
-use worktrunk::styling::{format_bash_with_gutter, format_heading, println};
+use worktrunk::styling::{format_bash_with_gutter, info_message, println};
 
 use crate::commands::alias::{AliasOptions, AliasSource};
 use crate::commands::command_executor::{
     CommandContext, build_hook_context, expand_shell_template,
 };
 use crate::commands::did_you_mean;
-use crate::commands::hooks::{format_pipeline_summary_from_names, step_names_from_config};
 
 /// Show the configured template(s) for an alias, tagged by source.
 ///
@@ -58,7 +58,7 @@ pub fn handle_alias_show(name: String) -> anyhow::Result<()> {
             println!();
         }
         let bodies: Vec<String> = cfg.commands().map(|c| c.template.clone()).collect();
-        println!("{}", format_entry(&name, cfg, *source, &bodies));
+        println!("{}", format_entry(&name, cfg, *source, &bodies, None));
     }
     Ok(())
 }
@@ -116,7 +116,10 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
             .commands()
             .map(|c| render_preview(&c.template, &context_map, &repo, &name))
             .collect::<anyhow::Result<_>>()?;
-        println!("{}", format_entry(&name, cfg, *source, &bodies));
+        println!(
+            "{}",
+            format_entry(&name, cfg, *source, &bodies, Some("would run"))
+        );
     }
     Ok(())
 }
@@ -188,52 +191,38 @@ fn unknown_alias_error(
     }
 }
 
-/// Format one heading + pipeline summary + body block.
-///
-/// `bodies[i]` is the text to show for `cfg.commands().nth(i)`. `show` passes
-/// the raw template; `dry-run` passes the rendered result. Keeping the layout
-/// in one place guarantees the two views stay visually aligned.
-fn format_entry(name: &str, cfg: &CommandConfig, source: AliasSource, bodies: &[String]) -> String {
-    let mut out = String::new();
-    out.push_str(&format_heading(
-        &format!("{name} ({})", source.label()),
-        None,
-    ));
-    out.push('\n');
-    out.push_str(&pipeline_summary_line(cfg));
-    for (cmd, body) in cfg.commands().zip(bodies) {
-        out.push('\n');
-        out.push_str(&format_bash_with_gutter(&command_display(cmd, body)));
-    }
-    out
-}
-
-/// Display form for a single command: `# <name>` comment line above the body
-/// when the command is named, body alone when anonymous. Shared between `show`
-/// (body is the raw template) and `dry-run` (body is the rendered template).
-fn command_display(cmd: &Command, body: &str) -> String {
-    match &cmd.name {
-        Some(name) => format!("# {name}\n{body}"),
-        None => body.to_string(),
-    }
-}
-
-/// One-line pipeline summary — same shape used by "Running alias" at runtime.
-/// When no steps are named, falls back to a bracketed hint so the line stays
-/// non-empty and alignment with `show`/`dry-run` output is consistent.
-fn pipeline_summary_line(cfg: &CommandConfig) -> String {
-    let step_names = step_names_from_config(cfg);
-    let summary = format_pipeline_summary_from_names(&step_names, |n| n.to_string(), |_| None);
-    if summary.is_empty() {
-        let count = cfg.commands().count();
-        if count == 1 {
-            cformat!("<dim>(single command)</>")
-        } else {
-            cformat!("<dim>pipeline: {count} unnamed steps</>")
+/// Format one alias entry: `○ Alias <name> (<source>)[ <verb>]:` header
+/// followed by a single gutter block of the command bodies. Each named step
+/// gets a `# <name>` comment line above its body; anonymous steps render the
+/// body alone. Joining into one block matches the old `--dry-run` layout and
+/// keeps `show`/`dry-run` visually aligned — the only difference is the verb.
+fn format_entry(
+    name: &str,
+    cfg: &CommandConfig,
+    source: AliasSource,
+    bodies: &[String],
+    verb: Option<&str>,
+) -> String {
+    let label = source.label();
+    let suffix = match verb {
+        Some(v) => format!(" {v}:"),
+        None => ":".to_string(),
+    };
+    let mut body = String::new();
+    for (cmd, rendered) in cfg.commands().zip(bodies) {
+        if !body.is_empty() {
+            body.push('\n');
         }
-    } else {
-        cformat!("<dim>pipeline: {summary}</>")
+        if let Some(step_name) = &cmd.name {
+            body.push_str(&format!("# {step_name}\n"));
+        }
+        body.push_str(rendered);
     }
+    info_message(cformat!(
+        "Alias <bold>{name}</> ({label}){suffix}\n{}",
+        format_bash_with_gutter(&body)
+    ))
+    .to_string()
 }
 
 #[cfg(test)]
@@ -250,58 +239,15 @@ mod tests {
     }
 
     #[test]
-    fn test_pipeline_summary_line() {
-        use insta::assert_snapshot;
-
-        // Single unnamed command
-        let cfg = cfg_from_toml(r#"cmd = "echo hi""#);
-        assert_snapshot!(pipeline_summary_line(&cfg).ansi_strip(), @"(single command)");
-
-        // Single concurrent step with named commands
-        let cfg = cfg_from_toml(
-            r#"
-[cmd]
-build = "cargo build"
-test = "cargo test"
-"#,
-        );
-        assert_snapshot!(
-            pipeline_summary_line(&cfg).ansi_strip(),
-            @"pipeline: build, test"
-        );
-
-        // Pipeline with named + concurrent steps
-        let cfg = cfg_from_toml(
-            r#"
-cmd = [
-    { install = "npm install" },
-    { build = "npm run build", lint = "npm run lint" },
-]
-"#,
-        );
-        assert_snapshot!(
-            pipeline_summary_line(&cfg).ansi_strip(),
-            @"pipeline: install; build, lint"
-        );
-
-        // Pipeline of all-unnamed commands falls back to a count
-        let cfg = cfg_from_toml(r#"cmd = ["echo a", "echo b"]"#);
-        assert_snapshot!(
-            pipeline_summary_line(&cfg).ansi_strip(),
-            @"pipeline: 2 unnamed steps"
-        );
-    }
-
-    #[test]
-    fn test_format_entry_single_command() {
+    fn test_format_entry_show_single() {
         let cfg = cfg_from_toml(r#"cmd = "echo {{ branch }}""#);
         let bodies: Vec<String> = cfg.commands().map(|c| c.template.clone()).collect();
-        let out = format_entry("greet", &cfg, AliasSource::User, &bodies);
+        let out = format_entry("greet", &cfg, AliasSource::User, &bodies, None);
         insta::assert_snapshot!(out.ansi_strip());
     }
 
     #[test]
-    fn test_format_entry_pipeline() {
+    fn test_format_entry_show_pipeline() {
         let cfg = cfg_from_toml(
             r#"
 cmd = [
@@ -311,7 +257,29 @@ cmd = [
 "#,
         );
         let bodies: Vec<String> = cfg.commands().map(|c| c.template.clone()).collect();
-        let out = format_entry("deploy", &cfg, AliasSource::Project, &bodies);
+        let out = format_entry("deploy", &cfg, AliasSource::Project, &bodies, None);
+        insta::assert_snapshot!(out.ansi_strip());
+    }
+
+    #[test]
+    fn test_format_entry_dry_run_pipeline() {
+        // The verb only changes the header suffix — body layout is identical.
+        let cfg = cfg_from_toml(
+            r#"
+cmd = [
+    { install = "npm install" },
+    { build = "npm run build", lint = "npm run lint" },
+]
+"#,
+        );
+        let bodies: Vec<String> = cfg.commands().map(|c| c.template.clone()).collect();
+        let out = format_entry(
+            "deploy",
+            &cfg,
+            AliasSource::Project,
+            &bodies,
+            Some("would run"),
+        );
         insta::assert_snapshot!(out.ansi_strip());
     }
 }

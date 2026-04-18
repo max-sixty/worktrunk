@@ -2,8 +2,7 @@
 source: src/commands/config/alias.rs
 expression: out.ansi_strip()
 ---
-deploy (project)
-pipeline: install; build, lint
+○ Alias deploy (project):
   # install
   npm install
   # build
