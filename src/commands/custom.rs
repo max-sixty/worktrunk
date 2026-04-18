@@ -39,7 +39,9 @@ use crate::enhance_and_exit_error;
 /// `args[0]` is the subcommand name; `args[1..]` are the arguments to pass
 /// through. `working_dir`, if set, is the value of the top-level `-C <path>`
 /// flag — applied as the child's current directory so global `-C` works the
-/// same for custom subcommands as it does for built-ins.
+/// same for custom subcommands as it does for built-ins. `yes` is the global
+/// `--yes`/`-y` flag, passed to alias dispatch so it can skip approval prompts
+/// for project-config aliases.
 ///
 /// On success (child exit code 0), returns `Ok(())`. On non-zero exit, returns
 /// `WorktrunkError::AlreadyDisplayed` with the child's exit code so `main`
@@ -49,6 +51,7 @@ use crate::enhance_and_exit_error;
 pub(crate) fn handle_custom_command(
     args: Vec<OsString>,
     working_dir: Option<PathBuf>,
+    yes: bool,
 ) -> Result<()> {
     let mut iter = args.into_iter();
     let name_os = iter
@@ -77,7 +80,7 @@ pub(crate) fn handle_custom_command(
         .map(|a| a.to_str().map(|s| s.to_owned()))
         .collect();
     if let Some(alias_args) = alias_args
-        && let Some(()) = try_alias(name.clone(), alias_args)?
+        && let Some(()) = try_alias(name.clone(), alias_args, yes)?
     {
         return Ok(());
     }
@@ -241,7 +244,7 @@ mod tests {
         // with a non-UTF-8 argv could in principle reach this path. We
         // construct the same `Vec<OsString>` shape directly.
         let bad_name = OsString::from_vec(vec![0xFF, 0xFE]);
-        let err = handle_custom_command(vec![bad_name], None).unwrap_err();
+        let err = handle_custom_command(vec![bad_name], None, false).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("not valid UTF-8"),

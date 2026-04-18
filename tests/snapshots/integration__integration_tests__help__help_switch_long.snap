@@ -91,9 +91,6 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           Include remote branches
 
 [1m[32mAutomation:[0m
-  [1m[36m-y[0m, [1m[36m--yes[0m
-          Skip approval prompts
-
       [1m[36m--no-hooks[0m
           Skip hooks
 
@@ -117,6 +114,9 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  [1m[36m-y[0m, [1m[36m--yes[0m
+          Skip approval prompts
 
 Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike [2mgit switch[0m, this navigates between worktrees rather than changing branches in place.
 
