@@ -129,7 +129,7 @@ Tokens after the alias name are parsed left-to-right. The template itself declar
 
 Built-in template variables (`branch`, `worktree_path`, `commit`, …) can be overridden — `--branch=override` for an alias referencing `{{ branch }}` binds to the user's value, but only inside the template; the worktree's actual branch is unchanged.
 
-Hyphens in variable names are canonicalized to underscores at parse time. `--my-var=value` binds to `{{ my_var }}` because minijinja parses `{{ my-var }}` as subtraction.
+Hyphens in variable names are canonicalized to underscores at parse time. `--my-var=value` binds to `{{ my_var }}`.
 
 ### Inspecting and previewing
 
@@ -143,8 +143,6 @@ wt config alias show deploy
 wt config alias dry-run deploy
 wt config alias dry-run deploy -- --env=staging
 ```
-
-Arguments after `--` in `dry-run` are forwarded verbatim — `wt config alias dry-run s -- target-branch` previews exactly what `wt s target-branch` would run. Templates referencing `vars.*` are shown unexpanded, mirroring execution semantics: those values are read from git config just before each step runs.
 
 ### Forwarding positional arguments
 
