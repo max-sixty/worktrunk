@@ -35,7 +35,7 @@ Hooks are shell commands that run at key points in the worktree lifecycle. Ten h
 Hooks live in two places:
 
 - **User config** (`~/.config/worktrunk/config.toml`) — personal, applies everywhere, trusted
-- **Project config** (`.config/wt.toml`) — shared with the team, requires [approval](https://worktrunk.dev/hook/#wt-hook-approvals) on first run
+- **Project config** (`.config/wt.toml`) — shared with the team, requires [approval](https://worktrunk.dev/config/#wt-config-approvals) on first run
 
 Three formats, from simplest to most expressive.
 

@@ -6,8 +6,9 @@ use super::config::ApprovalsCommand;
 
 /// Hook subcommands that accept `--var KEY=VALUE` (and the `--KEY=VALUE` shorthand).
 ///
-/// Excludes `show`, `approvals`, and `run-pipeline`, which don't expand
-/// template variables. `post-create` is the deprecated alias for `pre-start`.
+/// Excludes `show`, `run-pipeline`, and the deprecated `approvals` (now under
+/// `wt config approvals`), which don't expand template variables. `post-create`
+/// is the deprecated alias for `pre-start`.
 const HOOK_SUBCOMMANDS_WITH_VARS: &[&str] = &[
     "pre-switch",
     "post-switch",
@@ -376,8 +377,7 @@ mod tests {
 
 // Ordering: worktree lifecycle phases (switch → start → commit → merge →
 // remove), with each phase's `pre-` immediately before its `post-`. `show`
-// first (read-only introspection), `approvals` last (administration). Hidden
-// commands last.
+// first (read-only introspection). Hidden commands last.
 /// Run configured hooks
 #[derive(Subcommand)]
 pub enum HookCommand {
@@ -653,31 +653,8 @@ pub enum HookCommand {
     #[command(hide = true, name = "run-pipeline")]
     RunPipeline,
 
-    /// Manage command approvals
-    #[command(
-        after_long_help = r#"Project hooks require approval on first run to prevent untrusted projects from running arbitrary commands.
-
-## Examples
-
-Pre-approve all commands for current project:
-```console
-$ wt hook approvals add
-```
-
-Clear approvals for current project:
-```console
-$ wt hook approvals clear
-```
-
-Clear global approvals:
-```console
-$ wt hook approvals clear --global
-```
-
-## How approvals work
-
-Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves. Use `--yes` to bypass prompts in CI."#
-    )]
+    /// Deprecated: use `wt config approvals` instead
+    #[command(hide = true)]
     Approvals {
         #[command(subcommand)]
         action: ApprovalsCommand,

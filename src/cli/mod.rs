@@ -1203,7 +1203,7 @@ Project commands require approval on first run:
 - Use `--yes` to bypass prompts — useful for CI and automation
 - Use `--no-hooks` to skip hooks
 
-Manage approvals with `wt hook approvals add` and `wt hook approvals clear`.
+Manage approvals with `wt config approvals add` and `wt config approvals clear`.
 
 # Configuration
 
@@ -1610,10 +1610,8 @@ remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null
 
 - [`wt merge`](@/merge.md) — Runs hooks automatically during merge
 - [`wt switch`](@/switch.md) — Runs pre-start/post-start hooks on `--create`
-- [`wt config`](@/config.md) — Manage hook approvals
+- [`wt config approvals`](@/config.md#wt-config-approvals) — Manage approvals
 - [`wt config state logs`](@/config.md#wt-config-state-logs) — Access background hook logs
-
-<!-- subdoc: approvals -->
 "#
     )]
     Hook {
@@ -2088,6 +2086,7 @@ $ WORKTRUNK_COMMIT__GENERATION__COMMAND="echo 'test: automated commit'" wt merge
 | `NO_COLOR` | Disable colored output ([standard](https://no-color.org/)) |
 | `CLICOLOR_FORCE` | Force colored output even when not a TTY |
 <!-- subdoc: show -->
+<!-- subdoc: approvals -->
 <!-- subdoc: state -->"#)]
     Config {
         #[command(subcommand)]

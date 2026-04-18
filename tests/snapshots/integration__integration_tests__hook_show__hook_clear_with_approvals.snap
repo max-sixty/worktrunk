@@ -3,7 +3,7 @@ source: tests/integration_tests/hook_show.rs
 info:
   program: wt
   args:
-    - hook
+    - config
     - approvals
     - clear
   env:

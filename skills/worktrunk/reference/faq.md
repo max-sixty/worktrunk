@@ -81,7 +81,7 @@ Created by `wt switch <branch>` when switching to a branch that doesn't have a w
 | File | Created by | Purpose |
 |------|------------|---------|
 | `~/.config/worktrunk/config.toml` | `wt config create` | User preferences |
-| `~/.config/worktrunk/approvals.toml` | Approving project commands | Approved hook commands |
+| `~/.config/worktrunk/approvals.toml` | Approving project commands | Approved hook and alias commands |
 | `.config/wt.toml` | `wt config create --project` | Project hooks (checked into repo) |
 
 User config location: `$XDG_CONFIG_HOME/worktrunk/` (or `~/.config/worktrunk/`) on Linux/macOS, `%APPDATA%\worktrunk\` on Windows.
@@ -171,7 +171,7 @@ Worktrunk runs `git` commands internally and optionally runs `gh` (GitHub) or `g
 3. **LLM commands** (`~/.config/worktrunk/config.toml`) — Commit message generation and [branch summaries](https://worktrunk.dev/llm-commits/#branch-summaries)
 4. **--execute flag** — Explicitly provided commands
 
-User hooks don't require approval (you defined them). Commands from project hooks require approval on first run. Approved commands are saved to the approvals file (`approvals.toml`). If a command changes, Worktrunk requires new approval.
+User hooks and user aliases don't require approval (you defined them). Commands from project hooks and project aliases require approval on first run. Approved commands are saved to the approvals file (`approvals.toml`). If a command changes, Worktrunk requires new approval.
 
 ### Example approval prompt
 
