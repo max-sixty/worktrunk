@@ -258,7 +258,7 @@ pub(crate) fn generate_summary(
             let reset = Reset;
             cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no changes to summarize\n")
         }
-        Err(e) => format!("Error: {e}"),
+        Err(e) => format!("Error: {e:#}"),
     }
 }
 

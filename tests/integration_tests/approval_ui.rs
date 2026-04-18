@@ -665,11 +665,10 @@ deploy = "echo 'ran' > marker.txt"
 /// The post-alias `--yes` form (`wt deploy --yes`) does not skip approval —
 /// clap's `global = true` does not propagate flags across an
 /// `external_subcommand` boundary, so the post-alias position never reaches
-/// the global parser. Under the template-ref routing grammar, `--yes`
-/// forwards as a positional (unless a template references `{{ yes }}`), so
-/// the alias hits the normal approval path and fails in a non-interactive
-/// environment. Skipping approval requires `-y` / `--yes` before the alias
-/// name (`wt -y deploy`).
+/// the global `-y` parser. Under the smart-routing grammar `--yes` simply
+/// forwards as a positional into `{{ args }}` (since `yes` is not a
+/// referenced template var), and the alias still hits the approval path.
+/// Use `wt -y deploy` / `wt --yes deploy` to skip approval.
 #[rstest]
 fn test_post_alias_yes_does_not_skip_approval(repo: TestRepo) {
     repo.write_project_config(
@@ -688,18 +687,18 @@ deploy = "echo 'ran' > marker.txt"
 
     assert!(
         !output.status.success(),
-        "wt deploy --yes should not skip approval"
+        "wt deploy --yes should fail at approval now that post-alias --yes is just a forwarded arg"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("approval") || stderr.contains("non-interactive"),
-        "expected approval-prompt error, got: {stderr}"
+        stderr.contains("approval") || stderr.contains("Cannot prompt"),
+        "expected approval-failure error, got: {stderr}"
     );
 
     let marker = repo.root_path().join("marker.txt");
     assert!(
         !marker.exists(),
-        "alias must not run when approval is not granted"
+        "alias must not run when approval is denied"
     );
 }
 

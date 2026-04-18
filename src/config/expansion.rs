@@ -96,16 +96,21 @@ fn hook_extras(hook_type: HookType) -> &'static [&'static str] {
     use HookType::*;
     match hook_type {
         // Switch: source branch (`base`) and destination (`target`).
-        // Post-switch has already switched, so only `base` is set — but we
-        // accept both here so user templates stay portable between pre/post.
         PreSwitch | PostSwitch => &[
             "base",
             "base_worktree_path",
             "target",
             "target_worktree_path",
         ],
-        // Create/start: source worktree the new branch was created from.
-        PreStart | PostStart => &["base", "base_worktree_path"],
+        // Create/start: source worktree (`base`) and newly-created destination
+        // (`target`). On create, the destination branch equals the bare `branch`
+        // var — `target` is accepted for template portability with switch hooks.
+        PreStart | PostStart => &[
+            "base",
+            "base_worktree_path",
+            "target",
+            "target_worktree_path",
+        ],
         // Commit: integration target for the pre-commit squash.
         PreCommit | PostCommit => &["target"],
         // Merge: where the feature is being merged into.
@@ -142,7 +147,7 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
     vars
 }
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 
 /// Positional CLI args forwarded from `wt <alias> a b c` into the alias's
@@ -488,13 +493,13 @@ pub fn template_references_var(template: &str, var: &str) -> bool {
 
 /// Union of top-level variables referenced across every command in `cfg`.
 ///
-/// Drives the alias argument parser's routing decision: `--key=value` binds
-/// to `{{ key }}` when the key appears here, otherwise the token forwards as
-/// a positional. A var referenced in any step of a pipeline is a binding
-/// candidate for the whole invocation.
-pub fn referenced_vars_for_config(
-    cfg: &super::CommandConfig,
-) -> std::collections::BTreeSet<String> {
+/// Drives alias-arg routing in `AliasOptions::parse`: a `--KEY=VALUE` token
+/// binds to `{{ KEY }}` only when KEY appears in this set; otherwise it
+/// forwards as a positional. A var referenced in any step of a pipeline is
+/// a binding candidate for the whole invocation. Templates that fail to
+/// parse contribute nothing — the deferred expansion path surfaces the
+/// syntax error at execution time.
+pub fn referenced_vars_for_config(cfg: &super::CommandConfig) -> BTreeSet<String> {
     cfg.commands()
         .flat_map(|cmd| referenced_vars(&cmd.template))
         .collect()
@@ -1679,10 +1684,10 @@ mod tests {
             err.message
         );
 
-        // `target` is unavailable in pre-start — catch the typo at validation time.
+        // `base` is unavailable in pre-merge — catch the typo at validation time.
         let err = validate_template(
-            "{{ target }}",
-            ValidationScope::Hook(HookType::PreStart),
+            "{{ base }}",
+            ValidationScope::Hook(HookType::PreMerge),
             &test.repo,
             "test",
         )
