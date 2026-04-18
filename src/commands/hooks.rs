@@ -417,7 +417,7 @@ fn spawn_hook_pipeline_quiet(ctx: &CommandContext, steps: Vec<SourcedStep>) -> a
     ) {
         eprintln!(
             "{}",
-            warning_message(format!("Failed to spawn pipeline: {err}"))
+            warning_message(format!("Failed to spawn pipeline: {err:#}"))
         );
     } else {
         let cmd_display = format!("{} hook run-pipeline", wt_bin.display());
