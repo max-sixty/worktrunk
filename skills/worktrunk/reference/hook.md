@@ -134,12 +134,13 @@ Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the ope
 | Operation | Bare vars | `base` | `target` |
 |-----------|-----------|--------|----------|
 | switch/create | destination | where you came from | = bare vars |
+| commit (during merge/squash) | worktree being squashed | = bare vars | integration target |
 | merge | feature being merged | = bare vars | merge target |
 | remove | branch being removed | = bare vars | where you end up |
 
 Pre and post hooks share the same perspective — `{{ branch | hash_port }}` produces the same port in `post-start` and `post-remove`. `cwd` is the worktree root where the hook command runs. It differs from `worktree_path` in three cases: pre-switch, where the hook runs in the source but `worktree_path` is the destination; post-remove, where the active worktree is gone so the hook runs in primary; and post-merge with removal, same — the active worktree is gone, so the hook runs in target.
 
-Some variables are conditional: `upstream` requires remote tracking; `base`/`target` are only in two-worktree hooks; `vars` keys may not exist. Undefined variables error — use conditionals or defaults for optional behavior:
+Some variables are conditional: `upstream` requires remote tracking; `base` only appears in switch/create hooks; `target_worktree_path` requires the target to have a worktree; `vars` keys may not exist. Undefined variables error — use conditionals or defaults for optional behavior:
 
 ```toml
 [pre-start]
