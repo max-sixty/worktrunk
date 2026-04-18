@@ -662,11 +662,14 @@ deploy = "echo 'ran' > marker.txt"
     assert_eq!(content.trim(), "ran");
 }
 
-/// The post-alias `--yes` form (`wt deploy --yes`) still works via
-/// `AliasOptions::parse`, intentionally preserved for backwards compatibility
-/// until the hand-rolled parser is removed in a later cleanup.
+/// The post-alias `--yes` form (`wt deploy --yes`) is no longer supported —
+/// clap's `global = true` does not propagate flags across an
+/// `external_subcommand` boundary, so the post-alias position never reached
+/// the global parser. `AliasOptions::parse` previously consumed it as a
+/// special case; that double-path was removed in favor of the canonical
+/// pre-alias form (`wt -y deploy` / `wt --yes deploy`).
 #[rstest]
-fn test_post_alias_yes_still_works(repo: TestRepo) {
+fn test_post_alias_yes_no_longer_supported(repo: TestRepo) {
     repo.write_project_config(
         r#"[aliases]
 deploy = "echo 'ran' > marker.txt"
@@ -682,14 +685,20 @@ deploy = "echo 'ran' > marker.txt"
         .expect("Failed to run wt deploy --yes");
 
     assert!(
-        output.status.success(),
-        "wt deploy --yes failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+        !output.status.success(),
+        "wt deploy --yes should error now that the post-alias form is removed"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Unknown flag '--yes'"),
+        "expected unknown-flag error, got: {stderr}"
     );
 
     let marker = repo.root_path().join("marker.txt");
-    let content = std::fs::read_to_string(&marker).expect("marker.txt should exist");
-    assert_eq!(content.trim(), "ran");
+    assert!(
+        !marker.exists(),
+        "alias must not run when --yes is rejected"
+    );
 }
 
 /// The global `-y` flag skips approval when dispatched through
