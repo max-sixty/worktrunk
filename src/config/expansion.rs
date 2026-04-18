@@ -12,6 +12,7 @@ use std::borrow::Cow;
 use std::fmt::{self, Write};
 use std::sync::Arc;
 
+use anyhow::Context;
 use color_print::cformat;
 use minijinja::value::{Enumerator, Object, ObjectRepr};
 use minijinja::{Environment, ErrorKind, UndefinedBehavior, Value};
@@ -489,18 +490,19 @@ pub fn template_references_var(template: &str, var: &str) -> bool {
 ///
 /// Drives alias-arg routing in `AliasOptions::parse`: a `--KEY=VALUE` token
 /// binds to `{{ KEY }}` only when KEY appears in this set; otherwise it
-/// forwards as a positional. Templates that fail to parse contribute nothing
-/// (the deferred expansion path will surface the syntax error at execution
-/// time).
-pub fn referenced_vars_for_config(cfg: &super::CommandConfig) -> BTreeSet<String> {
+/// forwards as a positional. A syntax error in any template fails here so the
+/// user sees it before flags are routed — a silent skip could mask a typo and
+/// silently change how subsequent CLI args bind.
+pub fn referenced_vars_for_config(cfg: &super::CommandConfig) -> anyhow::Result<BTreeSet<String>> {
     let env = minijinja::Environment::new();
     let mut out = BTreeSet::new();
     for cmd in cfg.commands() {
-        if let Ok(tmpl) = env.template_from_str(&cmd.template) {
-            out.extend(tmpl.undeclared_variables(false));
-        }
+        let tmpl = env
+            .template_from_str(&cmd.template)
+            .with_context(|| format!("Failed to parse template: {:?}", cmd.template))?;
+        out.extend(tmpl.undeclared_variables(false));
     }
-    out
+    Ok(out)
 }
 
 /// Parse-only syntax check for a template.
@@ -1740,6 +1742,15 @@ mod tests {
         let err = validate_template("{{ unclosed", ValidationScope::Alias, &test.repo, "test")
             .unwrap_err();
         assert!(err.message.contains("syntax error"), "got: {}", err.message);
+    }
+
+    #[test]
+    fn test_referenced_vars_for_config_syntax_error_propagates() {
+        let cfg = super::super::CommandConfig::single("echo {{ unclosed");
+        let err = referenced_vars_for_config(&cfg).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("Failed to parse template"), "got: {msg}");
+        assert!(msg.contains("syntax error"), "got: {msg}");
     }
 
     #[test]
