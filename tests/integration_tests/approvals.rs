@@ -53,6 +53,25 @@ fn test_add_approvals_empty_config(repo: TestRepo) {
     snapshot_add_approvals("add_approvals_empty_config", &repo, &[]);
 }
 
+/// `wt hook approvals` is the deprecated alias for `wt config approvals`.
+/// Both `add` and `clear` must emit the deprecation warning and still forward
+/// to the same handler.
+#[rstest]
+#[case::add("add", "hook_approvals_deprecated_add")]
+#[case::clear("clear", "hook_approvals_deprecated_clear")]
+fn test_hook_approvals_emits_deprecation_warning(
+    repo: TestRepo,
+    #[case] action: &str,
+    #[case] snapshot_name: &str,
+) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "hook", &[], None);
+        cmd.arg("approvals").arg(action);
+        assert_cmd_snapshot!(snapshot_name, cmd);
+    });
+}
+
 /// Regression: `wt config approvals add` must walk project aliases as well as
 /// hooks. With only an alias declared (no hook commands), the alias should
 /// appear in the approval batch.
