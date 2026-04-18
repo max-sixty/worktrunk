@@ -1263,6 +1263,8 @@ Hooks can use template variables that expand at runtime:
 | `{{ base_worktree_path }}` | Base worktree path |
 | `{{ target }}` | Target branch name |
 | `{{ target_worktree_path }}` | Target worktree path |
+| `{{ pr_number }}` | PR/MR number (when creating via `pr:N` / `mr:N`) |
+| `{{ pr_url }}` | PR/MR web URL (when creating via `pr:N` / `mr:N`) |
 | `{{ cwd }}` | Directory where the hook command runs |
 | `{{ repo }}` | Repository directory name |
 | `{{ repo_path }}` | Absolute path to repository root |
@@ -1285,7 +1287,7 @@ Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the ope
 
 Pre and post hooks share the same perspective — `{{ branch | hash_port }}` produces the same port in `post-start` and `post-remove`. `cwd` is the worktree root where the hook command runs. It differs from `worktree_path` in three cases: pre-switch, where the hook runs in the source but `worktree_path` is the destination; post-remove, where the active worktree is gone so the hook runs in primary; and post-merge with removal, same — the active worktree is gone, so the hook runs in target.
 
-Some variables are conditional: `upstream` requires remote tracking; `base`/`target` are only in two-worktree hooks; `vars` keys may not exist. Undefined variables error — use conditionals or defaults for optional behavior:
+Some variables are conditional: `upstream` requires remote tracking; `base`/`target` are only in two-worktree hooks; `pr_number`/`pr_url` are only populated for `pre-start` hooks when creating via `pr:N` or `mr:N`; `vars` keys may not exist. Undefined variables error — use conditionals or defaults for optional behavior:
 
 ```toml
 [pre-start]

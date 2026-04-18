@@ -49,6 +49,8 @@ pub const TEMPLATE_VARS: &[&str] = &[
     "target_worktree_path", // Added by merge/remove hooks via extra_vars
     "base",      // Added by creation/switch hooks via extra_vars
     "base_worktree_path", // Added by creation/switch hooks via extra_vars
+    "pr_number", // Added by pre-start hooks when creating via `pr:N` / `mr:N` (GitLab reuses pr_*)
+    "pr_url",    // Added by pre-start hooks when creating via `pr:N` / `mr:N` (GitLab reuses pr_*)
     "cwd",       // Execution directory (always exists on disk)
     // Positional args forwarded to aliases (injected as ShellArgs object by expand_template).
     "args",

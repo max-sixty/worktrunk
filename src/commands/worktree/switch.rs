@@ -923,18 +923,11 @@ pub fn execute_switch(
                         ctx.execute_pre_start_commands(&extra_vars)?;
                     }
                     CreationMethod::ForkRef {
-                        ref_type,
-                        number,
-                        ref_url,
-                        ..
+                        number, ref_url, ..
                     } => {
                         let num_str = number.to_string();
-                        let (num_key, url_key) = match ref_type {
-                            RefType::Pr => ("pr_number", "pr_url"),
-                            RefType::Mr => ("mr_number", "mr_url"),
-                        };
                         let extra_vars: Vec<(&str, &str)> =
-                            vec![(num_key, &num_str), (url_key, ref_url)];
+                            vec![("pr_number", &num_str), ("pr_url", ref_url)];
                         ctx.execute_pre_start_commands(&extra_vars)?;
                     }
                 }
