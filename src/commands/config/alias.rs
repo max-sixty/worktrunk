@@ -91,7 +91,7 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
     // so a flag binds if any entry's template references it.
     let mut referenced: BTreeSet<String> = BTreeSet::new();
     for (cfg, _) in &entries {
-        referenced.extend(referenced_vars_for_config(cfg));
+        referenced.extend(referenced_vars_for_config(cfg)?);
     }
     let mut parse_args = Vec::with_capacity(1 + args.len());
     parse_args.push(name.clone());
