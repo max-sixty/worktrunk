@@ -327,7 +327,7 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
     let Some(cmd_config) = aliases.get(&name) else {
         return Ok(None);
     };
-    let referenced = referenced_vars_for_config(cmd_config);
+    let referenced = referenced_vars_for_config(cmd_config)?;
     let mut alias_args = Vec::with_capacity(1 + rest.len());
     alias_args.push(name);
     alias_args.extend(rest);
@@ -367,7 +367,7 @@ pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
             .collect();
         unknown_step_command_exit(&name, &alias_names);
     };
-    let referenced = referenced_vars_for_config(cmd_config);
+    let referenced = referenced_vars_for_config(cmd_config)?;
     let opts = AliasOptions::parse(args, &referenced)?;
     run_alias(opts, repo, user_config, project_config, aliases, global_yes)
 }
@@ -1258,7 +1258,7 @@ cmd = [
 
     /// `referenced_vars_for_config` unions across pipeline steps so a var
     /// referenced in any one command is a binding candidate for the whole
-    /// alias. Single-step templates that fail to parse contribute nothing.
+    /// alias.
     #[test]
     fn test_referenced_vars_for_config_unions_steps() {
         let cfg = cfg_from_toml(
@@ -1269,7 +1269,7 @@ cmd = [
 ]
 "#,
         );
-        let refs = worktrunk::config::referenced_vars_for_config(&cfg);
+        let refs = worktrunk::config::referenced_vars_for_config(&cfg).unwrap();
         let names: Vec<&str> = refs.iter().map(String::as_str).collect();
         assert_eq!(names, vec!["args", "env", "target"]);
     }

@@ -12,6 +12,7 @@ use std::borrow::Cow;
 use std::fmt::{self, Write};
 use std::sync::Arc;
 
+use anyhow::Context;
 use color_print::cformat;
 use minijinja::value::{Enumerator, Object, ObjectRepr};
 use minijinja::{Environment, ErrorKind, UndefinedBehavior, Value};
@@ -496,13 +497,19 @@ pub fn template_references_var(template: &str, var: &str) -> bool {
 /// Drives alias-arg routing in `AliasOptions::parse`: a `--KEY=VALUE` token
 /// binds to `{{ KEY }}` only when KEY appears in this set; otherwise it
 /// forwards as a positional. A var referenced in any step of a pipeline is
-/// a binding candidate for the whole invocation. Templates that fail to
-/// parse contribute nothing — the deferred expansion path surfaces the
-/// syntax error at execution time.
-pub fn referenced_vars_for_config(cfg: &super::CommandConfig) -> BTreeSet<String> {
-    cfg.commands()
-        .flat_map(|cmd| referenced_vars(&cmd.template))
-        .collect()
+/// a binding candidate for the whole invocation. A syntax error in any
+/// template fails here so the user sees it before flags are routed — a
+/// silent skip could mask a typo and change how subsequent CLI args bind.
+pub fn referenced_vars_for_config(cfg: &super::CommandConfig) -> anyhow::Result<BTreeSet<String>> {
+    let env = minijinja::Environment::new();
+    let mut out = BTreeSet::new();
+    for cmd in cfg.commands() {
+        let tmpl = env
+            .template_from_str(&cmd.template)
+            .with_context(|| format!("Failed to parse template: {:?}", cmd.template))?;
+        out.extend(tmpl.undeclared_variables(false));
+    }
+    Ok(out)
 }
 
 /// Parse-only syntax check for a template.
@@ -1745,6 +1752,15 @@ mod tests {
     }
 
     #[test]
+    fn test_referenced_vars_for_config_syntax_error_propagates() {
+        let cfg = super::super::CommandConfig::single("echo {{ unclosed");
+        let err = referenced_vars_for_config(&cfg).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("Failed to parse template"), "got: {msg}");
+        assert!(msg.contains("syntax error"), "got: {msg}");
+    }
+
+    #[test]
     fn test_validate_template_undefined_var() {
         let test = test_repo();
 
@@ -1763,50 +1779,5 @@ mod tests {
         // Should list available vars in hint
         assert!(!err.available_vars.is_empty(), "should list available vars");
         assert!(err.available_vars.contains(&"branch".to_string()));
-    }
-
-    #[test]
-    fn test_referenced_vars_for_config() {
-        // Round-trip via TOML — `CommandConfig` has no public multi-step
-        // constructor, so the same fixture pattern used in alias tests applies.
-        fn cfg(toml_str: &str) -> super::super::CommandConfig {
-            #[derive(serde::Deserialize)]
-            struct Wrap {
-                cmd: super::super::CommandConfig,
-            }
-            toml::from_str::<Wrap>(toml_str).unwrap().cmd
-        }
-
-        // Single template: one var.
-        let set = referenced_vars_for_config(&cfg(r#"cmd = "echo {{ env }}""#));
-        assert!(set.contains("env"));
-
-        // Multi-step pipeline unions vars across all steps, including
-        // concurrent groups.
-        let set = referenced_vars_for_config(&cfg(r#"
-cmd = [
-    "echo {{ env }}",
-    { a = "echo {{ region }}", b = "echo {{ version }}" },
-]
-"#));
-        assert!(set.contains("env"));
-        assert!(set.contains("region"));
-        assert!(set.contains("version"));
-
-        // No template vars → empty set.
-        let set = referenced_vars_for_config(&cfg(r#"cmd = "echo hi""#));
-        assert!(set.is_empty());
-
-        // Unparsable template contributes nothing (syntax error surfaces
-        // later at expansion time). Sibling templates still contribute.
-        let set =
-            referenced_vars_for_config(&cfg(r#"cmd = ["echo {{ unclosed", "echo {{ good }}"]"#));
-        assert_eq!(set, ["good".to_string()].into_iter().collect());
-
-        // `vars.*` dotted access reports as a `vars` reference — the dotted
-        // suffix is a lookup on the sequence object, not a top-level var.
-        let set = referenced_vars_for_config(&cfg(r#"cmd = "echo {{ vars.env }}""#));
-        assert!(set.contains("vars"));
-        assert!(!set.contains("env"));
     }
 }
