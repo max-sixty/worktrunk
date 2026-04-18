@@ -8,7 +8,7 @@ use worktrunk::styling::{
 
 use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
-use super::hooks::{HookCommandSpec, prepare_background_hooks, spawn_hook_pipeline};
+use super::hooks::{HookCommandSpec, spawn_background_hooks};
 use super::repository_ext::warn_about_untracked_files;
 
 // Re-export StageMode from config for use by CLI
@@ -236,11 +236,7 @@ impl CommitOptions<'_> {
                 .into_iter()
                 .map(|target| ("target", target))
                 .collect();
-            for steps in
-                prepare_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?
-            {
-                spawn_hook_pipeline(self.ctx, steps)?;
-            }
+            spawn_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?;
         }
 
         Ok(())

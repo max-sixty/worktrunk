@@ -121,33 +121,9 @@ fn test_step_alias_unknown_no_aliases(mut repo: TestRepo) {
     ));
 }
 
-/// --var flag adds extra template variables (-y bypasses approval)
+/// `--KEY=VALUE` binds to `{{ KEY }}` when the template references it.
 #[rstest]
-fn test_step_alias_with_var(mut repo: TestRepo) {
-    repo.write_project_config(
-        r#"
-[aliases]
-greet = "echo Hello {{ name }} from {{ branch }}"
-"#,
-    );
-    repo.commit("Add alias config");
-    let feature_path = repo.add_worktree("feature");
-
-    let settings = setup_snapshot_settings(&repo);
-    let _guard = settings.bind_to_scope();
-
-    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
-        &repo,
-        "step",
-        &["greet", "--dry-run", "--var", "name=World"],
-        Some(&feature_path),
-        &["-y"],
-    ));
-}
-
-/// --key=value shorthand for --var key=value
-#[rstest]
-fn test_step_alias_with_shorthand_var(mut repo: TestRepo) {
+fn test_step_alias_binds_referenced_var(mut repo: TestRepo) {
     repo.write_project_config(
         r#"
 [aliases]
@@ -167,6 +143,136 @@ greet = "echo Hello {{ name }} from {{ branch }}"
         Some(&feature_path),
         &["-y"],
     ));
+}
+
+/// `--KEY VALUE` (space-separated) binds the same way `--KEY=VALUE` does
+/// when KEY is referenced and VALUE doesn't look like a flag.
+#[rstest]
+fn test_step_alias_binds_space_separated_var(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+greet = "echo Hello {{ name }} from {{ branch }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
+        &repo,
+        "step",
+        &["greet", "--dry-run", "--name", "World"],
+        Some(&feature_path),
+        &["-y"],
+    ));
+}
+
+/// `--KEY=VALUE` for a key the template doesn't reference forwards to
+/// `{{ args }}` instead of binding silently.
+#[rstest]
+fn test_step_alias_unreferenced_key_forwards_to_args(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+run = "echo got {{ args }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
+        &repo,
+        "run",
+        &["--env=staging", "foo"],
+        Some(&feature_path),
+        &["-y"],
+    ));
+}
+
+/// `--` is a literal-forward escape: every later token goes to `{{ args }}`,
+/// so flag-shaped values that would normally bind are passed through verbatim.
+#[rstest]
+fn test_step_alias_double_dash_escape(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+run = "echo got {{ args }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
+        &repo,
+        "run",
+        &["--", "--env=staging", "literal"],
+        Some(&feature_path),
+        &["-y"],
+    ));
+}
+
+/// `--KEY=VALUE` overrides built-in template variables. The user-supplied
+/// value wins because `extra_refs` is applied after built-ins are seeded.
+#[rstest]
+fn test_step_alias_user_var_overshadows_builtin(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+show = "echo branch={{ branch }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
+        &repo,
+        "show",
+        &["--branch=override"],
+        Some(&feature_path),
+        &["-y"],
+    ));
+}
+
+/// Multi-step pipeline: each step's `{{ KEY }}` references contribute to
+/// the binding-eligible set, so a single invocation can bind both `env`
+/// (referenced in step 1) and `region` (referenced in step 2).
+#[rstest]
+fn test_step_alias_multi_step_binds_across_pipeline(mut repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = [
+    "echo step1 env={{ env }}",
+    { publish = "echo step2 region={{ region }}" },
+]
+"#,
+    );
+    repo.commit("initial");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    let mut cmd = make_snapshot_cmd(
+        &repo,
+        "step",
+        &["deploy", "--env=prod", "--region=us-east"],
+        Some(&feature_path),
+    );
+    cmd.env("WORKTRUNK_TEST_SERIAL_CONCURRENT", "1");
+    assert_cmd_snapshot!(cmd);
 }
 
 /// Alias command failure propagates exit code (-y bypasses approval)

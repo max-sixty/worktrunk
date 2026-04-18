@@ -918,6 +918,8 @@ pub fn execute_switch(
             // Execute post-create commands
             if run_hooks {
                 let ctx = CommandContext::new(repo, config, Some(&branch), &worktree_path, force);
+                let target_wt_posix =
+                    worktrunk::path::to_posix_path(&worktree_path.to_string_lossy());
 
                 match &method {
                     CreationMethod::Regular { base_branch, .. } => {
@@ -926,6 +928,8 @@ pub fn execute_switch(
                             base_worktree_path
                                 .as_ref()
                                 .map(|p| ("base_worktree_path", p.as_str())),
+                            Some(("target", branch.as_str())),
+                            Some(("target_worktree_path", target_wt_posix.as_str())),
                         ]
                         .into_iter()
                         .flatten()
@@ -936,8 +940,12 @@ pub fn execute_switch(
                         number, ref_url, ..
                     } => {
                         let num_str = number.to_string();
-                        let extra_vars: Vec<(&str, &str)> =
-                            vec![("pr_number", &num_str), ("pr_url", ref_url)];
+                        let extra_vars: Vec<(&str, &str)> = vec![
+                            ("pr_number", &num_str),
+                            ("pr_url", ref_url),
+                            ("target", &branch),
+                            ("target_worktree_path", &target_wt_posix),
+                        ];
                         ctx.execute_pre_start_commands(&extra_vars)?;
                     }
                 }

@@ -4,11 +4,9 @@ info:
   program: wt
   args:
     - step
-    - greet
-    - "--dry-run"
-    - "--var"
-    - name=World
-    - "--yes"
+    - deploy
+    - "--env=prod"
+    - "--region=us-east"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -40,6 +38,7 @@ info:
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_SERIAL_CONCURRENT: "1"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
@@ -48,5 +47,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Alias [1mgreet[22m would run:
-[107m [0m [2m[0m[2m[34mecho[0m[2m Hello World from feature
+[36m◎[39m [36mRunning alias [1mdeploy[22m: [1mpublish[22m[39m
+[0mstep1 env=prod
+[0mstep2 region=us-east

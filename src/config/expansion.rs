@@ -96,9 +96,7 @@ fn hook_extras(hook_type: HookType) -> &'static [&'static str] {
     use HookType::*;
     match hook_type {
         // Switch: source branch (`base`) and destination (`target`).
-        // Post-switch has already switched, so only `base` is set — but we
-        // accept both here so user templates stay portable between pre/post.
-        // `pr_number`/`pr_url` are populated for post-switch when creating
+        // `pr_number`/`pr_url` are populated for `post-switch` when creating
         // via `pr:N` / `mr:N`; pre-switch fires before the PR/MR API call,
         // so they're never set there but remain accepted for portability.
         PreSwitch | PostSwitch => &[
@@ -109,10 +107,19 @@ fn hook_extras(hook_type: HookType) -> &'static [&'static str] {
             "pr_number",
             "pr_url",
         ],
-        // Create/start: source worktree the new branch was created from.
-        // `pr_number`/`pr_url` are populated when creating via `pr:N` /
-        // `mr:N` (GitLab MRs reuse the same `pr_*` names).
-        PreStart | PostStart => &["base", "base_worktree_path", "pr_number", "pr_url"],
+        // Create/start: source worktree (`base`) and newly-created destination
+        // (`target`). On create, the destination branch equals the bare `branch`
+        // var — `target` is accepted for template portability with switch hooks.
+        // `pr_number`/`pr_url` are populated when creating via `pr:N` / `mr:N`
+        // (GitLab MRs reuse the same `pr_*` names).
+        PreStart | PostStart => &[
+            "base",
+            "base_worktree_path",
+            "target",
+            "target_worktree_path",
+            "pr_number",
+            "pr_url",
+        ],
         // Commit: integration target for the pre-commit squash.
         PreCommit | PostCommit => &["target"],
         // Merge: where the feature is being merged into.
@@ -149,7 +156,7 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
     vars
 }
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 
 /// Positional CLI args forwarded from `wt <alias> a b c` into the alias's
@@ -485,6 +492,24 @@ pub fn template_references_var(template: &str, var: &str) -> bool {
         return false;
     };
     tmpl.undeclared_variables(false).contains(var)
+}
+
+/// Union of top-level variables referenced by every command in a `CommandConfig`.
+///
+/// Drives alias-arg routing in `AliasOptions::parse`: a `--KEY=VALUE` token
+/// binds to `{{ KEY }}` only when KEY appears in this set; otherwise it
+/// forwards as a positional. Templates that fail to parse contribute nothing
+/// (the deferred expansion path will surface the syntax error at execution
+/// time).
+pub fn referenced_vars_for_config(cfg: &super::CommandConfig) -> BTreeSet<String> {
+    let env = minijinja::Environment::new();
+    let mut out = BTreeSet::new();
+    for cmd in cfg.commands() {
+        if let Ok(tmpl) = env.template_from_str(&cmd.template) {
+            out.extend(tmpl.undeclared_variables(false));
+        }
+    }
+    out
 }
 
 /// Parse-only syntax check for a template.
@@ -1666,10 +1691,10 @@ mod tests {
             err.message
         );
 
-        // `target` is unavailable in pre-start — catch the typo at validation time.
+        // `base` is unavailable in pre-merge — catch the typo at validation time.
         let err = validate_template(
-            "{{ target }}",
-            ValidationScope::Hook(HookType::PreStart),
+            "{{ base }}",
+            ValidationScope::Hook(HookType::PreMerge),
             &test.repo,
             "test",
         )
