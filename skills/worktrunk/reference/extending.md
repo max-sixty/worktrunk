@@ -105,7 +105,7 @@ Aliases are custom commands invoked as `wt <name>`. They share the same template
 
 ```toml
 [aliases]
-deploy = "make deploy BRANCH={{ branch }}"
+deploy = "make deploy BRANCH={{ branch }} ENV={{ env }}"
 open = "open http://localhost:{{ branch | hash_port }}"
 ```
 
@@ -115,6 +115,35 @@ wt deploy --env=staging
 ```
 
 `wt deploy` resolves `deploy` against configured aliases first, then falls through to a `wt-deploy` PATH binary if no alias matches. Built-in subcommands always take precedence — an alias named `list` or `switch` is unreachable.
+
+### How arguments are routed
+
+Tokens after the alias name fall into one of these buckets, decided by what the alias's template references:
+
+| Token shape | Routes to |
+|---|---|
+| `--KEY=VALUE` or `--KEY VALUE` where the template references `{{ KEY }}` | Bound — `KEY` becomes the template value |
+| `--KEY=VALUE` where the template doesn't reference `KEY` | Forwarded literally to `{{ args }}` |
+| `--KEY` followed by another flag or end of args | Forwarded literally to `{{ args }}` |
+| Bare positional (no `--` prefix) | Forwarded to `{{ args }}` |
+| Anything after a literal `--` | Forwarded to `{{ args }}` regardless of shape |
+
+Built-in template variables (`branch`, `worktree_path`, `commit`, …) can be overridden — `--branch=override` for an alias referencing `{{ branch }}` binds to the user's value, but only inside the template; the worktree's actual branch is unchanged.
+
+Hyphens in variable names are canonicalized to underscores at parse time. `--my-var=value` binds to `{{ my_var }}` because minijinja parses `{{ my-var }}` as subtraction.
+
+### Escaping with `--`
+
+Use `--` to forward a flag-shaped value literally instead of letting the parser bind it. Everything after `--` goes into `{{ args }}` verbatim:
+
+```toml
+[aliases]
+search = "rg {{ args }}"
+```
+
+```bash
+wt search -- --hidden --glob '*.rs' pattern  # --hidden and --glob reach rg, not the alias parser
+```
 
 ### Inspecting and previewing
 
@@ -130,8 +159,6 @@ wt config alias dry-run deploy -- --env=staging
 ```
 
 Arguments after `--` in `dry-run` are forwarded verbatim — `wt config alias dry-run s -- target-branch` previews exactly what `wt s target-branch` would run. Templates referencing `vars.*` are shown unexpanded, mirroring execution semantics: those values are read from git config just before each step runs.
-
-Hyphens in variable names are canonicalized to underscores at parse time, so `--my-var=value` is referenced as `{{ my_var }}` in templates. This lets flags use natural kebab-case while avoiding the minijinja parser's interpretation of `{{ my-var }}` as subtraction.
 
 ### Forwarding positional arguments
 

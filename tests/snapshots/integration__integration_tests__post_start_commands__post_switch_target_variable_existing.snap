@@ -1,11 +1,10 @@
 ---
-source: tests/integration_tests/approvals.rs
+source: tests/integration_tests/post_start_commands.rs
 info:
   program: wt
   args:
-    - config
-    - approvals
-    - clear
+    - switch
+    - feature
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -45,4 +44,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[32m✓[39m [32mCleared 1 approval for this project[39m
+[33m▲[39m [33mWorktree for [1mfeature[22m @ [1m_REPO_.feature[22m, but cannot change directory — shell integration not installed[39m
+[2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
+[36m◎[39m [36mRunning post-switch: [1mproject[22m @ [1m_REPO_.feature[22m[39m

@@ -17,13 +17,13 @@
 //! alias-dispatch path single-purpose (always runs) and gives preview a
 //! natural home alongside `show`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
     ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, append_aliases,
-    template_references_var, validate_template_syntax,
+    referenced_vars_for_config, template_references_var, validate_template_syntax,
 };
 use worktrunk::git::Repository;
 use worktrunk::styling::{format_bash_with_gutter, info_message, println};
@@ -86,11 +86,17 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
     }
 
     // Reuse the real parser so previews stay aligned with runtime parsing —
-    // including `--var KEY=VALUE`, `--KEY=VALUE`, and positional forwarding.
+    // including `--KEY=VALUE` routing and positional forwarding. When both
+    // user and project configs define the alias, union the referenced vars
+    // so a flag binds if any entry's template references it.
+    let mut referenced: BTreeSet<String> = BTreeSet::new();
+    for (cfg, _) in &entries {
+        referenced.extend(referenced_vars_for_config(cfg));
+    }
     let mut parse_args = Vec::with_capacity(1 + args.len());
     parse_args.push(name.clone());
     parse_args.extend(args);
-    let opts = AliasOptions::parse(parse_args)?;
+    let opts = AliasOptions::parse(parse_args, &referenced)?;
 
     let wt = repo.current_worktree();
     let wt_path = wt.root().context("Failed to get worktree root")?;

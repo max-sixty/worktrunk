@@ -260,9 +260,10 @@ fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
 /// Announce and spawn background hooks for one or more hook types.
 ///
 /// Displays a single combined summary line covering all hook types, then
-/// spawns each source group as an independent pipeline. Use this instead
-/// of calling `spawn_hook_pipeline` directly when multiple hook types
-/// fire together (e.g., post-switch + post-start on create).
+/// spawns each source group as an independent pipeline. For a single hook
+/// type, prefer `spawn_background_hooks` — it wraps the prepare+announce
+/// step. Use this directly when multiple hook types fire together (e.g.,
+/// post-switch + post-start on create).
 ///
 /// Each pipeline carries its own `CommandContext` so that different hook types
 /// can use different contexts (e.g., post-remove uses the removed branch while
@@ -341,27 +342,42 @@ pub fn announce_and_spawn_background_hooks(
     Ok(())
 }
 
-/// Spawn a hook pipeline as a background `wt hook run-pipeline` process.
+/// Prepare and spawn all source-group pipelines for a single hook type.
 ///
-/// Displays a summary line and spawns the pipeline. For multiple hook types
-/// that should share a single display line, use `announce_and_spawn_background_hooks`.
+/// Wraps `prepare_background_hooks` + `announce_and_spawn_background_hooks` so
+/// callers produce exactly one `Running {hook}: …` announce line even when
+/// both user and project configs contribute pipelines. Iterating the prepared
+/// groups and calling `spawn_hook_pipeline` per group is a footgun — it prints
+/// one announce line per source.
+pub fn spawn_background_hooks(
+    ctx: &CommandContext,
+    hook_type: HookType,
+    extra_vars: &[(&str, &str)],
+    display_path: Option<&Path>,
+) -> anyhow::Result<()> {
+    let pipelines: Vec<_> = prepare_background_hooks(ctx, hook_type, extra_vars, display_path)?
+        .into_iter()
+        .map(|g| (*ctx, g))
+        .collect();
+    announce_and_spawn_background_hooks(pipelines, false)
+}
+
+/// Spawn a filter-matched hook pipeline as a background `wt hook run-pipeline`.
+///
+/// The name-filter path merges user + project matches into one pipeline (vs.
+/// the source-grouped path that produces one pipeline per source). For the
+/// source-grouped path, use `spawn_background_hooks` instead.
+///
+/// `check_name_filter_matched` must have run first — it guarantees `steps` is
+/// non-empty. The filter path always calls with `display_path: None`, so no
+/// path annotation is rendered.
 pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> anyhow::Result<()> {
-    if steps.is_empty() {
-        return Ok(());
-    }
-
     let hook_type = steps[0].hook_type;
-    let display_path = steps[0].display_path.as_ref();
     let summary = format_pipeline_summary(&steps);
-    let message = match display_path {
-        Some(path) => {
-            let path_display = format_path_for_display(path);
-            cformat!("Running {hook_type}: {summary} @ <bold>{path_display}</>")
-        }
-        None => format!("Running {hook_type}: {summary}"),
-    };
-    eprintln!("{}", progress_message(message));
-
+    eprintln!(
+        "{}",
+        progress_message(format!("Running {hook_type}: {summary}"))
+    );
     spawn_hook_pipeline_quiet(ctx, steps)
 }
 
@@ -437,7 +453,7 @@ fn spawn_hook_pipeline_quiet(ctx: &CommandContext, steps: Vec<SourcedStep>) -> a
     ) {
         eprintln!(
             "{}",
-            warning_message(format!("Failed to spawn pipeline: {err}"))
+            warning_message(format!("Failed to spawn pipeline: {err:#}"))
         );
     } else {
         let cmd_display = format!("{} hook run-pipeline", wt_bin.display());

@@ -521,6 +521,36 @@ notify = "echo 'USER_POST_MERGE_RAN' > user_postmerge.txt"
     wait_for_file(&marker_file);
 }
 
+#[rstest]
+fn test_combined_user_and_project_post_merge(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"[post-merge]
+install = "echo 'PROJECT_RAN' > project_postmerge.txt"
+"#,
+    );
+    repo.commit("Add project config");
+
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature content", "Add feature");
+
+    repo.write_test_config(
+        r#"[post-merge]
+sync = "echo 'USER_RAN' > user_postmerge.txt"
+"#,
+    );
+
+    snapshot_merge(
+        "combined_user_and_project_post_merge",
+        &repo,
+        &["main", "--yes", "--no-remove"],
+        Some(&feature_wt),
+    );
+
+    let main_worktree = repo.root_path();
+    wait_for_file(&main_worktree.join("user_postmerge.txt"));
+    wait_for_file(&main_worktree.join("project_postmerge.txt"));
+}
+
 // ============================================================================
 // User Pre-Remove Hook Tests
 // ============================================================================
@@ -1417,6 +1447,28 @@ fn test_standalone_hook_post_merge(repo: TestRepo) {
     crate::common::wait_for_file_content(&marker);
     let content = fs::read_to_string(&marker).unwrap();
     assert!(content.contains("STANDALONE_POST_MERGE"));
+}
+
+#[rstest]
+fn test_standalone_hook_post_merge_combined_user_and_project(repo: TestRepo) {
+    // Both user and project configs contribute to post-merge — a single
+    // `Running post-merge:` announce line must cover both sources.
+    repo.write_project_config(r#"post-merge = "echo 'PROJECT_RAN' > project.txt""#);
+    repo.write_test_config(
+        r#"[post-merge]
+notify = "echo 'USER_RAN' > user.txt"
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "hook", &["post-merge", "--yes"], None);
+        assert_cmd_snapshot!("standalone_hook_post_merge_combined_sources", cmd);
+    });
+
+    let root = repo.root_path();
+    wait_for_file(&root.join("user.txt"));
+    wait_for_file(&root.join("project.txt"));
 }
 
 #[rstest]

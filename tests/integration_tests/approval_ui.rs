@@ -662,14 +662,15 @@ deploy = "echo 'ran' > marker.txt"
     assert_eq!(content.trim(), "ran");
 }
 
-/// The post-alias `--yes` form (`wt deploy --yes`) is no longer supported —
+/// The post-alias `--yes` form (`wt deploy --yes`) does not skip approval —
 /// clap's `global = true` does not propagate flags across an
-/// `external_subcommand` boundary, so the post-alias position never reached
-/// the global parser. `AliasOptions::parse` previously consumed it as a
-/// special case; that double-path was removed in favor of the canonical
-/// pre-alias form (`wt -y deploy` / `wt --yes deploy`).
+/// `external_subcommand` boundary, so the post-alias position never reaches
+/// the global `-y` parser. Under the smart-routing grammar `--yes` simply
+/// forwards as a positional into `{{ args }}` (since `yes` is not a
+/// referenced template var), and the alias still hits the approval path.
+/// Use `wt -y deploy` / `wt --yes deploy` to skip approval.
 #[rstest]
-fn test_post_alias_yes_no_longer_supported(repo: TestRepo) {
+fn test_post_alias_yes_does_not_skip_approval(repo: TestRepo) {
     repo.write_project_config(
         r#"[aliases]
 deploy = "echo 'ran' > marker.txt"
@@ -686,18 +687,18 @@ deploy = "echo 'ran' > marker.txt"
 
     assert!(
         !output.status.success(),
-        "wt deploy --yes should error now that the post-alias form is removed"
+        "wt deploy --yes should fail at approval now that post-alias --yes is just a forwarded arg"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Unknown flag '--yes'"),
-        "expected unknown-flag error, got: {stderr}"
+        stderr.contains("approval") || stderr.contains("Cannot prompt"),
+        "expected approval-failure error, got: {stderr}"
     );
 
     let marker = repo.root_path().join("marker.txt");
     assert!(
         !marker.exists(),
-        "alias must not run when --yes is rejected"
+        "alias must not run when approval is denied"
     );
 }
 

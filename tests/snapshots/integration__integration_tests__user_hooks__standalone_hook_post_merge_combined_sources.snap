@@ -1,11 +1,11 @@
 ---
-source: tests/integration_tests/approvals.rs
+source: tests/integration_tests/user_hooks.rs
 info:
   program: wt
   args:
-    - config
-    - approvals
-    - clear
+    - hook
+    - post-merge
+    - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -45,4 +45,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[32m✓[39m [32mCleared 1 approval for this project[39m
+[36m◎[39m [36mRunning post-merge: [1muser:notify[22m, [1mproject[22m[39m

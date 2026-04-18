@@ -414,7 +414,15 @@ pub fn handle_switch(
     // Build extra vars for base/target context (used by both hooks and --execute).
     // "base" is the source worktree the user switched from (all switches),
     // or the branch they branched from (creates).
+    // "target" matches the bare vars (the destination) — documented as
+    // "target = bare vars" for switch/create and kept symmetric with pre-switch.
+    let target_path_str = worktrunk::path::to_posix_path(&result.path().to_string_lossy());
+
     let mut extra_vars = switch_extra_vars(&result);
+    if let Some(target_branch) = branch_info.branch.as_deref() {
+        extra_vars.push(("target", target_branch));
+    }
+    extra_vars.push(("target_worktree_path", &target_path_str));
     // For existing switches, add source worktree as base
     if matches!(
         result,

@@ -1,11 +1,15 @@
 ---
-source: tests/integration_tests/approvals.rs
+source: tests/integration_tests/step_alias.rs
 info:
   program: wt
   args:
     - config
-    - approvals
-    - clear
+    - alias
+    - dry-run
+    - greet
+    - "--"
+    - "--name"
+    - World
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -43,6 +47,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+[2m○[22m Alias [1mgreet[22m (project) would run:
+[107m [0m [2m[0m[2m[34mecho[0m[2m Hello World from feature
 
 ----- stderr -----
-[32m✓[39m [32mCleared 1 approval for this project[39m

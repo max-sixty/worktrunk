@@ -1313,6 +1313,75 @@ approved-commands = [
 }
 
 #[rstest]
+fn test_post_start_target_variable_expands_to_branch(repo: TestRepo) {
+    // `{{ target }}` in post-start should equal the bare `{{ branch }}` —
+    // symmetric with `pre-switch`, which already injects `target`.
+    repo.write_project_config(r#"post-start = "echo '{{ target }}' > target_marker.txt""#);
+    repo.commit("Add post-start with target var");
+
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo '{{ target }}' > target_marker.txt"]
+"#,
+    );
+
+    snapshot_switch(
+        "post_start_target_variable",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let marker = worktree_path.join("target_marker.txt");
+    wait_for_file_content(&marker);
+
+    let content = fs::read_to_string(&marker).unwrap();
+    assert_eq!(
+        content.trim(),
+        "feature",
+        "target should resolve to the newly created branch, got: {content}"
+    );
+}
+
+#[rstest]
+fn test_post_switch_target_variable_on_existing_switch(repo: TestRepo) {
+    // `{{ target }}` in post-switch must equal the destination branch for
+    // switches to an existing worktree — not just creates.
+    repo.write_project_config(r#"post-switch = "echo '{{ target }}' > target_marker.txt""#);
+    repo.commit("Add post-switch with target var");
+
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo '{{ target }}' > target_marker.txt"]
+"#,
+    );
+
+    // Create the destination worktree first, then switch back to main so the
+    // next invocation exercises the existing-worktree switch path (not create).
+    repo.wt_command()
+        .args(["switch", "--create", "feature", "--no-hooks", "--yes"])
+        .output()
+        .expect("failed to pre-create feature worktree");
+    repo.wt_command()
+        .args(["switch", "main", "--no-hooks", "--yes"])
+        .output()
+        .expect("failed to switch back to main");
+
+    snapshot_switch("post_switch_target_variable_existing", &repo, &["feature"]);
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let marker = worktree_path.join("target_marker.txt");
+    wait_for_file_content(&marker);
+
+    let content = fs::read_to_string(&marker).unwrap();
+    assert_eq!(
+        content.trim(),
+        "feature",
+        "target should resolve to the switched-to branch, got: {content}"
+    );
+}
+
+#[rstest]
 fn test_post_start_mixed_user_pipeline_project_flat(repo: TestRepo) {
     // User has a pipeline, project has flat concurrent commands.
     // Both should execute.
