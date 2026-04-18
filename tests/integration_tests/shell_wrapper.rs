@@ -1549,9 +1549,6 @@ approved-commands = ["echo 'fish background task'"]
     // when using the --source flag (instead of being hidden with generic
     // wrapper error messages like "Error: cargo build failed").
 
-    // This test runs `cargo run` inside a PTY which can take longer than the
-    // default 60s timeout when cargo checks/compiles dependencies. Extended
-    // timeout configured in .config/nextest.toml.
     // Note: Nushell not included - this test builds custom scripts with bash syntax
     #[rstest]
     #[case("bash")]
@@ -1559,6 +1556,30 @@ approved-commands = ["echo 'fish background task'"]
     #[case("fish")]
     fn test_source_flag_forwards_errors(#[case] shell: &str, repo: TestRepo) {
         use std::env;
+        use std::os::unix::fs::PermissionsExt;
+
+        // Stub `cargo` instead of invoking the real one. The wrapper's
+        // `--source` branch shells out to `cargo run --bin wt --quiet --
+        // <args>`. Real cargo unlinks and re-links `target/debug/wt` on every
+        // invocation (~4% non-existence window measured locally), which
+        // races concurrent tests that `spawn(target/debug/wt)` and produces
+        // ENOENT flakes on Linux CI. The stub strips the cargo args and
+        // execs the existing wt binary directly — same end-to-end coverage
+        // of error pass-through through the `--source` branch, no race.
+        let stub_dir = repo.root_path().join("stub-bin");
+        fs::create_dir_all(&stub_dir).unwrap();
+        let stub_cargo = stub_dir.join("cargo");
+        fs::write(
+            &stub_cargo,
+            "#!/bin/sh\nshift 5\nexec \"$WORKTRUNK_BIN\" \"$@\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&stub_cargo, fs::Permissions::from_mode(0o755)).unwrap();
+        let stub_path = format!(
+            "{}:{}",
+            stub_dir.display(),
+            env::var("PATH").unwrap_or_default()
+        );
 
         // Get the worktrunk source directory (where this test is running from)
         // This is the directory that contains Cargo.toml with the workspace
@@ -1568,9 +1589,9 @@ approved-commands = ["echo 'fish background task'"]
         let mut script = String::new();
         append_wrapper_setup(&mut script, shell, &repo);
 
-        // Try to run wt --source with an invalid subcommand
-        // The --source flag triggers cargo build (which succeeds)
-        // Then it tries to run 'wt foo' which should fail with "unrecognized subcommand"
+        // Try to run wt --source with an invalid subcommand. The wrapper
+        // routes this through the stub `cargo`, which execs the real wt;
+        // wt then fails with clap's "unrecognized subcommand" error.
         script.push_str("wt --source foo\n");
 
         // Wrap in subshell to merge stderr
@@ -1582,6 +1603,7 @@ approved-commands = ["echo 'fish background task'"]
         let config_path = repo.test_config_path().to_string_lossy().to_string();
         let approvals_path = repo.test_approvals_path().to_string_lossy().to_string();
         let env_vars: Vec<(&str, &str)> = vec![
+            ("PATH", &stub_path),
             ("CLICOLOR_FORCE", "1"),
             ("WORKTRUNK_CONFIG_PATH", &config_path),
             ("WORKTRUNK_APPROVALS_PATH", &approvals_path),
