@@ -6,10 +6,6 @@ pub struct CommitArgs {
     #[arg(short, long, add = crate::completion::worktree_only_completer())]
     pub(crate) branch: Option<String>,
 
-    /// Skip approval prompts
-    #[arg(short, long, help_heading = "Automation")]
-    pub(crate) yes: bool,
-
     /// Skip hooks
     #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
     pub(crate) verify: bool,
@@ -36,10 +32,6 @@ pub struct SquashArgs {
     /// Defaults to default branch.
     #[arg(add = crate::completion::branch_value_completer())]
     pub(crate) target: Option<String>,
-
-    /// Skip approval prompts
-    #[arg(short, long, help_heading = "Automation")]
-    pub(crate) yes: bool,
 
     /// Skip hooks
     #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
@@ -555,10 +547,6 @@ $ wt step prune
         /// Show what would be removed
         #[arg(long)]
         dry_run: bool,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
 
         /// Skip worktrees younger than this
         #[arg(long, default_value = "1h")]

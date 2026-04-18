@@ -497,6 +497,9 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 # Subcommands
@@ -557,6 +560,9 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt config state
@@ -643,6 +649,9 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt config state default-branch
@@ -700,6 +709,9 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt config state logs
@@ -812,6 +824,9 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt config state ci-status
@@ -870,6 +885,9 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt config state marker
@@ -939,6 +957,9 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt config state vars
@@ -1022,4 +1043,7 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```

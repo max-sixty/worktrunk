@@ -583,3 +583,158 @@ fn test_step_hook_run_all_commands(repo: TestRepo) {
         "All commands should have run in order"
     );
 }
+
+/// The global `-y` / `--yes` flag skips approval when placed before the
+/// subcommand (e.g. `wt -y switch --create …`), not only in the per-command
+/// position where it used to live. Non-TTY invocations would fail on an
+/// approval prompt, so a clean exit confirms `-y` was honored.
+#[rstest]
+fn test_global_yes_before_subcommand(repo: TestRepo) {
+    repo.write_project_config(r#"post-create = "echo 'test command'""#);
+    repo.commit("Add config");
+
+    // Place `-y` before the subcommand name.
+    let output = repo
+        .wt_command()
+        .args(["-y", "switch", "--create", "feature-global-y"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to run wt -y switch");
+
+    assert!(
+        output.status.success(),
+        "wt -y switch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The global `--yes` flag skips approval for `wt hook <type>`, matching the
+/// per-command form at the same position.
+#[rstest]
+fn test_global_yes_for_hook(repo: TestRepo) {
+    repo.write_project_config(r#"pre-merge = "echo 'ran' > marker.txt""#);
+    repo.commit("Add pre-merge hook");
+
+    let output = repo
+        .wt_command()
+        .args(["--yes", "hook", "pre-merge"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to run wt --yes hook pre-merge");
+
+    assert!(
+        output.status.success(),
+        "wt --yes hook pre-merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let marker = repo.root_path().join("marker.txt");
+    let content = std::fs::read_to_string(&marker).expect("marker.txt should exist");
+    assert_eq!(content.trim(), "ran");
+}
+
+/// The global `-y` flag skips approval for project-config aliases, matching
+/// the post-alias `--yes` form.
+#[rstest]
+fn test_global_yes_for_alias(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[aliases]
+deploy = "echo 'ran' > marker.txt"
+"#,
+    );
+    repo.commit("Add alias");
+
+    let output = repo
+        .wt_command()
+        .args(["-y", "deploy"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to run wt -y deploy");
+
+    assert!(
+        output.status.success(),
+        "wt -y deploy failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let marker = repo.root_path().join("marker.txt");
+    let content = std::fs::read_to_string(&marker).expect("marker.txt should exist");
+    assert_eq!(content.trim(), "ran");
+}
+
+/// The post-alias `--yes` form (`wt deploy --yes`) still works via
+/// `AliasOptions::parse`, intentionally preserved for backwards compatibility
+/// until the hand-rolled parser is removed in a later cleanup.
+#[rstest]
+fn test_post_alias_yes_still_works(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[aliases]
+deploy = "echo 'ran' > marker.txt"
+"#,
+    );
+    repo.commit("Add alias");
+
+    let output = repo
+        .wt_command()
+        .args(["deploy", "--yes"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to run wt deploy --yes");
+
+    assert!(
+        output.status.success(),
+        "wt deploy --yes failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let marker = repo.root_path().join("marker.txt");
+    let content = std::fs::read_to_string(&marker).expect("marker.txt should exist");
+    assert_eq!(content.trim(), "ran");
+}
+
+/// The global `-y` flag skips approval when dispatched through
+/// `wt step <alias>`, covering the `step_alias` threading path.
+#[rstest]
+fn test_global_yes_for_step_alias(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[aliases]
+deploy = "echo 'ran' > marker.txt"
+"#,
+    );
+    repo.commit("Add alias");
+
+    let output = repo
+        .wt_command()
+        .args(["-y", "step", "deploy"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to run wt -y step deploy");
+
+    assert!(
+        output.status.success(),
+        "wt -y step deploy failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let marker = repo.root_path().join("marker.txt");
+    let content = std::fs::read_to_string(&marker).expect("marker.txt should exist");
+    assert_eq!(content.trim(), "ran");
+}
+
+/// Commands without approval prompts accept `-y` without erroring — e.g.
+/// `wt -y list` is a valid no-op.
+#[rstest]
+fn test_global_yes_on_command_without_approval(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args(["-y", "list"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to run wt -y list");
+
+    assert!(
+        output.status.success(),
+        "wt -y list failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
