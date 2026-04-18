@@ -45,4 +45,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m No approvals to clear for this project
+[32m✓[39m [32mCleared 3 approvals for this project[39m

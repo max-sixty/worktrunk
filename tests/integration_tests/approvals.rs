@@ -101,18 +101,18 @@ fn test_clear_approvals_no_approvals(repo: TestRepo) {
 
 #[rstest]
 fn test_clear_approvals_with_approvals(repo: TestRepo) {
-    // Remove origin so project_id uses directory name (matches test expectation)
+    // Remove origin so project_identifier uses the canonical worktree path —
+    // matches what `Repository::project_identifier` computes at runtime.
     repo.run_git(&["remote", "remove", "origin"]);
-    let project_id = format!("{}/origin", repo.root_path().display());
     repo.commit("Initial commit");
     repo.write_project_config(r#"post-create = "echo 'test'""#);
     repo.commit("Add config");
 
-    // Manually approve the command by writing to test config
+    // Manually approve the command using the same project id wt will compute.
     let mut approvals = Approvals::default();
     approvals
         .approve_command(
-            project_id,
+            repo.project_id(),
             "echo 'test'".to_string(),
             Some(repo.test_approvals_path()),
         )
@@ -156,18 +156,18 @@ fn test_clear_approvals_global_with_approvals(repo: TestRepo) {
 
 #[rstest]
 fn test_clear_approvals_after_clear(repo: TestRepo) {
-    // Remove origin so project_id uses directory name (matches test expectation)
+    // Remove origin so project_identifier uses the canonical worktree path —
+    // matches what `Repository::project_identifier` computes at runtime.
     repo.run_git(&["remote", "remove", "origin"]);
-    let project_id = format!("{}/origin", repo.root_path().display());
     repo.commit("Initial commit");
     repo.write_project_config(r#"post-create = "echo 'test'""#);
     repo.commit("Add config");
 
-    // Manually approve the command
+    // Manually approve the command using the same project id wt will compute.
     let mut approvals = Approvals::default();
     approvals
         .approve_command(
-            project_id.clone(),
+            repo.project_id(),
             "echo 'test'".to_string(),
             Some(repo.test_approvals_path()),
         )
@@ -223,7 +223,8 @@ approved-commands = ["cargo build", "cargo test", "npm install"]
 
 #[rstest]
 fn test_clear_approvals_multiple_approvals(repo: TestRepo) {
-    // Remove origin so project_id uses directory name (matches test expectation)
+    // Remove origin so project_identifier uses the canonical worktree path —
+    // matches what `Repository::project_identifier` computes at runtime.
     repo.run_git(&["remote", "remove", "origin"]);
     repo.write_project_config(
         r#"
@@ -235,8 +236,8 @@ lint = "echo 'third'"
     );
     repo.commit("Add config with multiple commands");
 
-    // Manually approve all commands
-    let project_id = format!("{}/origin", repo.root_path().display());
+    // Manually approve all commands using the same project id wt will compute.
+    let project_id = repo.project_id();
     let mut approvals = Approvals::default();
     approvals
         .approve_command(
