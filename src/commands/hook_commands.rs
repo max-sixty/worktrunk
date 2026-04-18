@@ -27,8 +27,8 @@ use super::command_executor::{FailureStrategy, command_summary_name};
 use super::context::CommandEnv;
 use super::hook_filter::{HookSource, ParsedFilter};
 use super::hooks::{
-    HookCommandSpec, check_name_filter_matched, count_sourced_commands, prepare_background_hooks,
-    prepare_sourced_steps, run_hook_with_filter, spawn_hook_pipeline,
+    HookCommandSpec, check_name_filter_matched, count_sourced_commands, prepare_sourced_steps,
+    run_hook_with_filter, spawn_background_hooks, spawn_hook_pipeline,
 };
 
 fn run_filtered_hook(
@@ -86,11 +86,8 @@ fn run_post_hook(
             return spawn_hook_pipeline(ctx, steps);
         }
 
-        // No name filter: prepare as pipeline steps and spawn per source.
-        for steps in prepare_background_hooks(ctx, hook_type, extra_vars, None)? {
-            spawn_hook_pipeline(ctx, steps)?;
-        }
-        return Ok(());
+        // No name filter: prepare and spawn source-grouped pipelines.
+        return spawn_background_hooks(ctx, hook_type, extra_vars, None);
     }
 
     run_filtered_hook(

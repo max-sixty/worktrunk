@@ -240,9 +240,10 @@ fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
 /// Announce and spawn background hooks for one or more hook types.
 ///
 /// Displays a single combined summary line covering all hook types, then
-/// spawns each source group as an independent pipeline. Use this instead
-/// of calling `spawn_hook_pipeline` directly when multiple hook types
-/// fire together (e.g., post-switch + post-start on create).
+/// spawns each source group as an independent pipeline. For a single hook
+/// type, prefer `spawn_background_hooks` — it wraps the prepare+announce
+/// step. Use this directly when multiple hook types fire together (e.g.,
+/// post-switch + post-start on create).
 ///
 /// Each pipeline carries its own `CommandContext` so that different hook types
 /// can use different contexts (e.g., post-remove uses the removed branch while
@@ -321,10 +322,32 @@ pub fn announce_and_spawn_background_hooks(
     Ok(())
 }
 
+/// Prepare and spawn all source-group pipelines for a single hook type.
+///
+/// Wraps `prepare_background_hooks` + `announce_and_spawn_background_hooks` so
+/// callers produce exactly one `Running {hook}: …` announce line even when
+/// both user and project configs contribute pipelines. Iterating the prepared
+/// groups and calling `spawn_hook_pipeline` per group is a footgun — it prints
+/// one announce line per source.
+pub fn spawn_background_hooks(
+    ctx: &CommandContext,
+    hook_type: HookType,
+    extra_vars: &[(&str, &str)],
+    display_path: Option<&Path>,
+) -> anyhow::Result<()> {
+    let pipelines: Vec<_> = prepare_background_hooks(ctx, hook_type, extra_vars, display_path)?
+        .into_iter()
+        .map(|g| (*ctx, g))
+        .collect();
+    announce_and_spawn_background_hooks(pipelines, false)
+}
+
 /// Spawn a hook pipeline as a background `wt hook run-pipeline` process.
 ///
-/// Displays a summary line and spawns the pipeline. For multiple hook types
-/// that should share a single display line, use `announce_and_spawn_background_hooks`.
+/// Displays a summary line and spawns the pipeline. Use for a single,
+/// already-merged pipeline (e.g., filter-matched steps from multiple sources).
+/// For source-grouped pipelines from `prepare_background_hooks`, use
+/// `spawn_background_hooks` — it combines sources into one announce line.
 pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> anyhow::Result<()> {
     if steps.is_empty() {
         return Ok(());
