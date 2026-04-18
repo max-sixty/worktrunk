@@ -116,9 +116,20 @@ deploy = "make deploy BRANCH={{ branch }}"
 open = "open http://localhost:{{ branch | hash_port }}"
 ```
 
-{{ terminal(cmd="wt deploy|||wt deploy --dry-run|||wt deploy --env=staging") }}
+{{ terminal(cmd="wt deploy|||wt deploy --env=staging") }}
 
 `wt deploy` resolves `deploy` against configured aliases first, then falls through to a `wt-deploy` PATH binary if no alias matches. Built-in subcommands always take precedence — an alias named `list` or `switch` is unreachable.
+
+### Inspecting and previewing
+
+Two subcommands introspect aliases without running them:
+
+- `wt config alias show <name>` prints the configured template text, tagged by source (`user`/`project`).
+- `wt config alias dry-run <name> [-- args...]` parses the invocation with the same parser `wt <name>` uses, then prints the rendered command without executing.
+
+{{ terminal(cmd="wt config alias show deploy|||wt config alias dry-run deploy|||wt config alias dry-run deploy -- --env=staging") }}
+
+Arguments after `--` in `dry-run` are forwarded verbatim — `wt config alias dry-run s -- target-branch` previews exactly what `wt s target-branch` would run. Templates referencing `vars.*` are shown unexpanded, mirroring execution semantics: those values are read from git config just before each step runs.
 
 Hyphens in variable names are canonicalized to underscores at parse time, so `--my-var=value` is referenced as `{{ my_var }}` in templates. This lets flags use natural kebab-case while avoiding the minijinja parser's interpretation of `{{ my-var }}` as subtraction.
 

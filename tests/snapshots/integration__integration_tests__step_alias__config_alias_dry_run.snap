@@ -6,9 +6,7 @@ info:
     - config
     - alias
     - dry-run
-    - greet
-    - "--"
-    - "--name=World"
+    - hello
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -46,8 +44,8 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[36mgreet (project)[39m
+[36mhello (project)[39m
 [2m(single command)[22m
-[107m [0m [2m[0m[2m[34mecho[0m[2m Hello World from feature
+[107m [0m [2m[0m[2m[34mecho[0m[2m Hello from feature
 
 ----- stderr -----

@@ -1,0 +1,12 @@
+---
+source: src/commands/config/alias.rs
+expression: out.ansi_strip()
+---
+deploy (project)
+pipeline: install; build, lint
+  # install
+  npm install
+  # build
+  npm run build
+  # lint
+  npm run lint

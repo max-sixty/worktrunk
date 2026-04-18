@@ -32,9 +32,10 @@ hello = "echo Hello from {{ branch }}"
     ));
 }
 
-/// --dry-run shows the expanded command without running it (no approval needed)
+/// `wt config alias dry-run <name>` shows the expanded command without running it
+/// (no approval needed — preview never executes project commands).
 #[rstest]
-fn test_step_alias_dry_run(mut repo: TestRepo) {
+fn test_config_alias_dry_run(mut repo: TestRepo) {
     repo.write_project_config(
         r#"
 [aliases]
@@ -47,11 +48,10 @@ hello = "echo Hello from {{ branch }}"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    // No --yes needed: --dry-run skips approval
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
-        "step",
-        &["hello", "--dry-run"],
+        "config",
+        &["alias", "dry-run", "hello"],
         Some(&feature_path),
     ));
 }
@@ -137,8 +137,8 @@ greet = "echo Hello {{ name }} from {{ branch }}"
 
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
-        "step",
-        &["greet", "--dry-run", "--var", "name=World", "--yes"],
+        "config",
+        &["alias", "dry-run", "greet", "--", "--var", "name=World"],
         Some(&feature_path),
     ));
 }
@@ -160,8 +160,8 @@ greet = "echo Hello {{ name }} from {{ branch }}"
 
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
-        "step",
-        &["greet", "--dry-run", "--name=World", "--yes"],
+        "config",
+        &["alias", "dry-run", "greet", "--", "--name=World"],
         Some(&feature_path),
     ));
 }
@@ -334,27 +334,32 @@ shared = "echo user-version"
         "user_alias",
         make_snapshot_cmd(
             &repo,
-            "step",
-            &["user-cmd", "--dry-run"],
+            "config",
+            &["alias", "dry-run", "user-cmd"],
             Some(&feature_path),
         )
     );
 
-    // Project alias available (--yes bypasses approval for project-config aliases)
+    // Project alias available — dry-run never needs approval (it doesn't execute).
     assert_cmd_snapshot!(
         "project_alias",
         make_snapshot_cmd(
             &repo,
-            "step",
-            &["project-cmd", "--dry-run", "--yes"],
+            "config",
+            &["alias", "dry-run", "project-cmd"],
             Some(&feature_path),
         )
     );
 
-    // Both run on collision: user first, then project (append semantics)
+    // Both definitions visible on collision: user first, then project (matches runtime order).
     assert_cmd_snapshot!(
         "user_and_project_append",
-        make_snapshot_cmd(&repo, "step", &["shared", "--dry-run"], Some(&feature_path),)
+        make_snapshot_cmd(
+            &repo,
+            "config",
+            &["alias", "dry-run", "shared"],
+            Some(&feature_path),
+        )
     );
 }
 
@@ -1033,12 +1038,12 @@ deploy = [
     );
 }
 
-/// `--dry-run` for a pipeline where a later step references `{{ vars.X }}`
-/// set by an earlier step succeeds, mirroring the lazy execution path. The
-/// unresolved `vars.*` reference is shown as the raw template since its value
-/// isn't knowable until the earlier step actually runs.
+/// `dry-run` for a pipeline where a later step references `{{ vars.X }}` set by
+/// an earlier step succeeds, mirroring the lazy execution path. The unresolved
+/// `vars.*` reference is shown as the raw template since its value isn't
+/// knowable until the earlier step actually runs.
 #[rstest]
-fn test_step_alias_dry_run_vars_across_steps(mut repo: TestRepo) {
+fn test_config_alias_dry_run_vars_across_steps(mut repo: TestRepo) {
     repo.write_project_config(
         r#"
 [aliases]
@@ -1055,19 +1060,18 @@ deploy = [
     let _guard = settings.bind_to_scope();
 
     // Must succeed: dry-run must not require vars.* to be resolvable.
-    // --yes bypasses approval for project-config aliases.
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
-        "step",
-        &["deploy", "--dry-run", "--yes"],
+        "config",
+        &["alias", "dry-run", "deploy"],
         Some(&feature_path),
     ));
 }
 
-/// `--dry-run` still catches template syntax errors (e.g., `{{ vars..foo }}`)
-/// even on the lazy path where `vars.*` rendering is skipped.
+/// `dry-run` still catches template syntax errors (e.g., `{{ vars..foo }}`) even
+/// on the lazy path where `vars.*` rendering is skipped.
 #[rstest]
-fn test_step_alias_dry_run_catches_syntax_error(mut repo: TestRepo) {
+fn test_config_alias_dry_run_catches_syntax_error(mut repo: TestRepo) {
     repo.write_project_config(
         r#"
 [aliases]
@@ -1079,7 +1083,7 @@ broken = "echo {{ vars..target }}"
 
     let output = repo
         .wt_command()
-        .args(["step", "broken", "--dry-run", "--yes"])
+        .args(["config", "alias", "dry-run", "broken"])
         .current_dir(&feature_path)
         .output()
         .unwrap();
@@ -1092,6 +1096,129 @@ broken = "echo {{ vars..target }}"
         stderr.contains("syntax error"),
         "expected 'syntax error' in stderr, got:\n{stderr}"
     );
+}
+
+/// Retired `wt <alias> --dry-run` flag produces an actionable error pointing at
+/// the new subcommand. Snapshots the top-level path; the shared parser covers
+/// both `wt <alias>` and `wt step <alias>` dispatch routes (unit test in
+/// `commands::alias::tests::test_parse_errors` verifies the message verbatim).
+#[rstest]
+fn test_retired_dry_run_flag(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "echo hi"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "deploy",
+        &["--dry-run"],
+        Some(&feature_path),
+    ));
+}
+
+/// `wt config alias show <name>` prints the configured template text, source-labeled.
+#[rstest]
+fn test_config_alias_show_single(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "make deploy BRANCH={{ branch }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "config",
+        &["alias", "show", "deploy"],
+        Some(&feature_path),
+    ));
+}
+
+/// Unknown alias name triggers a did-you-mean suggestion.
+#[rstest]
+fn test_config_alias_show_unknown_suggests(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "make deploy"
+hello = "echo hi"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "config",
+        &["alias", "show", "deplyo"],
+        Some(&feature_path),
+    ));
+}
+
+/// Multi-step pipeline renders with per-step structure in the header.
+#[rstest]
+fn test_config_alias_show_pipeline(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[[aliases.release]]
+install = "npm install"
+
+[[aliases.release]]
+build = "npm run build"
+lint = "npm run lint"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "config",
+        &["alias", "show", "release"],
+        Some(&feature_path),
+    ));
+}
+
+/// Positional args via `wt config alias dry-run <name> -- foo bar` flow through as `{{ args }}`.
+#[rstest]
+fn test_config_alias_dry_run_positional_args(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+s = "wt switch {{ args }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "config",
+        &["alias", "dry-run", "s", "--", "target-branch"],
+        Some(&feature_path),
+    ));
 }
 
 /// `wt step` with no subcommand lists built-in steps plus configured aliases.
@@ -1298,8 +1425,8 @@ run = "echo [{{ args }}]"
 }
 
 /// `wt s some-branch` with `s = "wt switch {{ args }}"` forwards the
-/// positional into the expanded command. Verified via `--dry-run` so the
-/// inner `wt switch` is not actually executed.
+/// positional into the expanded command. Verified via `wt config alias dry-run`
+/// so the inner `wt switch` is not actually executed.
 #[rstest]
 fn test_top_level_alias_positional_expands_in_dry_run(mut repo: TestRepo) {
     repo.write_project_config(
@@ -1316,8 +1443,8 @@ s = "wt switch {{ args }}"
 
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
-        "s",
-        &["target-branch", "--dry-run", "--yes"],
+        "config",
+        &["alias", "dry-run", "s", "--", "target-branch"],
         Some(&feature_path),
     ));
 }

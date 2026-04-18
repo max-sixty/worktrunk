@@ -1404,6 +1404,41 @@ fn test_complete_single_dash_shows_both_short_and_long_flags(repo: TestRepo) {
     }
 }
 
+/// `wt config alias show <TAB>` and `wt config alias dry-run <TAB>` complete
+/// with the merged user + project alias name set.
+#[rstest]
+fn test_config_alias_name_completion(repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "echo deploying"
+test = "cargo test"
+"#,
+    );
+    repo.commit("Add alias config");
+
+    for subcommand in ["show", "dry-run"] {
+        let output = repo
+            .completion_cmd(&["wt", "config", "alias", subcommand, ""])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "completion for `wt config alias {subcommand} <TAB>` failed"
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let values = value_suggestions(&stdout);
+        assert!(
+            values.contains(&"deploy"),
+            "`wt config alias {subcommand}` should suggest configured aliases, got:\n{stdout}"
+        );
+        assert!(
+            values.contains(&"test"),
+            "`wt config alias {subcommand}` should suggest configured aliases, got:\n{stdout}"
+        );
+    }
+}
+
 /// Test static shell completions command for package managers.
 ///
 /// The `wt config shell completions <shell>` command outputs static completion
