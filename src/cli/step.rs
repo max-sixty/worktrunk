@@ -7,7 +7,7 @@ pub struct CommitArgs {
     pub(crate) branch: Option<String>,
 
     /// Skip hooks
-    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true)]
     pub(crate) verify: bool,
 
     /// Skip hooks (deprecated alias for --no-hooks)
@@ -34,7 +34,7 @@ pub struct SquashArgs {
     pub(crate) target: Option<String>,
 
     /// Skip hooks
-    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true)]
     pub(crate) verify: bool,
 
     /// Skip hooks (deprecated alias for --no-hooks)
@@ -450,7 +450,7 @@ Note: This command is experimental and may change in future versions.
     )]
     ForEach {
         /// Output format (text, json)
-        #[arg(long, default_value = "text", help_heading = "Automation")]
+        #[arg(long, default_value = "text")]
         format: crate::cli::SwitchFormat,
 
         /// Command template (see --help for all variables)
@@ -557,7 +557,7 @@ $ wt step prune
         foreground: bool,
 
         /// Output format (text, json)
-        #[arg(long, default_value = "text", help_heading = "Automation")]
+        #[arg(long, default_value = "text")]
         format: crate::cli::SwitchFormat,
     },
 

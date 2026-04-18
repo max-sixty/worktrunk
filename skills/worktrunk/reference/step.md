@@ -129,6 +129,9 @@ Options:
   -b, --branch <BRANCH>
           Branch to operate on (defaults to current worktree)
 
+      --no-hooks
+          Skip hooks
+
       --stage <STAGE>
           What to stage before committing [default: all]
 
@@ -144,10 +147,6 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
-
-Automation:
-      --no-hooks
-          Skip hooks
 
 Global Options:
   -C <path>
@@ -217,6 +216,9 @@ Arguments:
           Defaults to default branch.
 
 Options:
+      --no-hooks
+          Skip hooks
+
       --stage <STAGE>
           What to stage before committing [default: all]
 
@@ -232,10 +234,6 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
-
-Automation:
-      --no-hooks
-          Skip hooks
 
 Global Options:
   -C <path>
@@ -596,10 +594,6 @@ Arguments:
           Command template (see --help for all variables)
 
 Options:
-  -h, --help
-          Print help (see a summary with '-h')
-
-Automation:
       --format <FORMAT>
           Output format (text, json)
 
@@ -608,6 +602,9 @@ Automation:
           - json: JSON output
 
           [default: text]
+
+  -h, --help
+          Print help (see a summary with '-h')
 
 Global Options:
   -C <path>
@@ -758,10 +755,6 @@ Options:
       --foreground
           Run removal in foreground (block until complete)
 
-  -h, --help
-          Print help (see a summary with '-h')
-
-Automation:
       --format <FORMAT>
           Output format (text, json)
 
@@ -770,6 +763,9 @@ Automation:
           - json: JSON output
 
           [default: text]
+
+  -h, --help
+          Print help (see a summary with '-h')
 
 Global Options:
   -C <path>

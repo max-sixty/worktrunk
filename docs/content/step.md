@@ -129,6 +129,9 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
   <b><span class=c>-b</span></b>, <b><span class=c>--branch</span></b><span class=c> &lt;BRANCH&gt;</span>
           Branch to operate on (defaults to current worktree)
 
+      <b><span class=c>--no-hooks</span></b>
+          Skip hooks
+
       <b><span class=c>--stage</span></b><span class=c> &lt;STAGE&gt;</span>
           What to stage before committing [default: all]
 
@@ -144,10 +147,6 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
-
-<b><span class=g>Automation:</span></b>
-      <b><span class=c>--no-hooks</span></b>
-          Skip hooks
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -213,6 +212,9 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
           Defaults to default branch.
 
 <b><span class=g>Options:</span></b>
+      <b><span class=c>--no-hooks</span></b>
+          Skip hooks
+
       <b><span class=c>--stage</span></b><span class=c> &lt;STAGE&gt;</span>
           What to stage before committing [default: all]
 
@@ -228,10 +230,6 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
-
-<b><span class=g>Automation:</span></b>
-      <b><span class=c>--no-hooks</span></b>
-          Skip hooks
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -568,10 +566,6 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
           Command template (see --help for all variables)
 
 <b><span class=g>Options:</span></b>
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
-
-<b><span class=g>Automation:</span></b>
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
           Output format (text, json)
 
@@ -580,6 +574,9 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
           - <b><span class=c>json</span></b>: JSON output
 
           [default: text]
+
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -720,10 +717,6 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
       <b><span class=c>--foreground</span></b>
           Run removal in foreground (block until complete)
 
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
-
-<b><span class=g>Automation:</span></b>
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
           Output format (text, json)
 
@@ -732,6 +725,9 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
           - <b><span class=c>json</span></b>: JSON output
 
           [default: text]
+
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
