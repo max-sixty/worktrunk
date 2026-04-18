@@ -342,29 +342,22 @@ pub fn spawn_background_hooks(
     announce_and_spawn_background_hooks(pipelines, false)
 }
 
-/// Spawn a hook pipeline as a background `wt hook run-pipeline` process.
+/// Spawn a filter-matched hook pipeline as a background `wt hook run-pipeline`.
 ///
-/// Displays a summary line and spawns the pipeline. Use for a single,
-/// already-merged pipeline (e.g., filter-matched steps from multiple sources).
-/// For source-grouped pipelines from `prepare_background_hooks`, use
-/// `spawn_background_hooks` — it combines sources into one announce line.
+/// The name-filter path merges user + project matches into one pipeline (vs.
+/// the source-grouped path that produces one pipeline per source). For the
+/// source-grouped path, use `spawn_background_hooks` instead.
+///
+/// `check_name_filter_matched` must have run first — it guarantees `steps` is
+/// non-empty. The filter path always calls with `display_path: None`, so no
+/// path annotation is rendered.
 pub fn spawn_hook_pipeline(ctx: &CommandContext, steps: Vec<SourcedStep>) -> anyhow::Result<()> {
-    if steps.is_empty() {
-        return Ok(());
-    }
-
     let hook_type = steps[0].hook_type;
-    let display_path = steps[0].display_path.as_ref();
     let summary = format_pipeline_summary(&steps);
-    let message = match display_path {
-        Some(path) => {
-            let path_display = format_path_for_display(path);
-            cformat!("Running {hook_type}: {summary} @ <bold>{path_display}</>")
-        }
-        None => format!("Running {hook_type}: {summary}"),
-    };
-    eprintln!("{}", progress_message(message));
-
+    eprintln!(
+        "{}",
+        progress_message(format!("Running {hook_type}: {summary}"))
+    );
     spawn_hook_pipeline_quiet(ctx, steps)
 }
 
