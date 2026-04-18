@@ -1359,11 +1359,12 @@ echo-args = "echo {{ args }}"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
         &repo,
         "echo-args",
-        &["--env=staging", "foo", "--yes"],
+        &["--env=staging", "foo"],
         Some(&feature_path),
+        &["-y"],
     ));
 }
 
@@ -1382,17 +1383,17 @@ deploy = "echo env={{ env }} args={{ args }}"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
         &repo,
         "deploy",
-        &["--env", "staging", "foo", "--yes"],
+        &["--env", "staging", "foo"],
         Some(&feature_path),
+        &["-y"],
     ));
 }
 
-/// `--` ends routing: everything after is forwarded verbatim, even tokens
-/// that would otherwise bind or activate built-in control flags. Only
-/// bindings and flags *before* `--` take effect.
+/// `--` ends routing: everything after is forwarded verbatim as positionals.
+/// Bindings before `--` still apply.
 #[rstest]
 fn test_alias_double_dash_stops_routing(mut repo: TestRepo) {
     repo.write_project_config(
@@ -1407,11 +1408,12 @@ deploy = "echo env={{ env }} args={{ args }}"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
         &repo,
         "deploy",
-        &["--yes", "--env=staging", "--", "--env=other", "foo"],
+        &["--env=staging", "--", "--env=other", "foo"],
         Some(&feature_path),
+        &["-y"],
     ));
 }
 
@@ -1433,10 +1435,11 @@ show-branch = "echo {{ branch }}"
     let settings = setup_snapshot_settings(&repo);
     let _guard = settings.bind_to_scope();
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
+    assert_cmd_snapshot!(make_snapshot_cmd_with_global_flags(
         &repo,
         "show-branch",
-        &["--branch=override", "--yes"],
+        &["--branch=override"],
         Some(&feature_path),
+        &["-y"],
     ));
 }
