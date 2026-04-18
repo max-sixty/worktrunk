@@ -42,7 +42,7 @@ Hooks are shell commands that run at key points in the worktree lifecycle. Ten h
 Hooks live in two places:
 
 - **User config** (`~/.config/worktrunk/config.toml`) — personal, applies everywhere, trusted
-- **Project config** (`.config/wt.toml`) — shared with the team, requires [approval](@/hook.md#wt-hook-approvals) on first run
+- **Project config** (`.config/wt.toml`) — shared with the team, requires [approval](@/config.md#wt-config-approvals) on first run
 
 Three formats, from simplest to most expressive.
 
@@ -121,6 +121,19 @@ open = "open http://localhost:{{ branch | hash_port }}"
 `wt deploy` resolves `deploy` against configured aliases first, then falls through to a `wt-deploy` PATH binary if no alias matches. Built-in subcommands always take precedence — an alias named `list` or `switch` is unreachable.
 
 Hyphens in variable names are canonicalized to underscores at parse time, so `--my-var=value` is referenced as `{{ my_var }}` in templates. This lets flags use natural kebab-case while avoiding the minijinja parser's interpretation of `{{ my-var }}` as subtraction.
+
+### Forwarding positional arguments
+
+Non-flag tokens after the alias name are forwarded to the template as `{{ args }}`. Bare `{{ args }}` renders as a space-joined, shell-escaped string ready to append to a command line — so `wt s some-branch` with `s = "wt switch {{ args }}"` expands to `wt switch some-branch`.
+
+```toml
+[aliases]
+s = "wt switch {{ args }}"
+```
+
+{{ terminal(cmd="wt s some-branch|||wt s feature/api  # multiple tokens pass through in order|||wt s 'has a space'  # spaces and metacharacters are escaped safely") }}
+
+Access elements with `{{ args[0] }}`, iterate with `{% for a in args %}…{% endfor %}`, or count with `{{ args | length }}`. Each element is individually shell-escaped, so `wt run 'a b' 'c;d'` splices in as `'a b' 'c;d'` without shell injection.
 
 An `up` alias that fetches all remotes and rebases each worktree onto its upstream:
 

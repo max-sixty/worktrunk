@@ -128,10 +128,18 @@ Files to update:
 | `Cargo.toml` | `rust-version` | `"1.93"` |
 | `tests/helpers/wt-perf/Cargo.toml` | `rust-version` | `"1.93"` |
 | `rust-toolchain.toml` | `channel` | `"1.93.0"` |
-| `flake.nix` | MSRV comment | `1.93` |
 
-After bumping, run the full test suite (`cargo run -- hook pre-merge --yes`)
-and verify `cargo msrv verify` passes.
+`flake.nix` reads the channel from `rust-toolchain.toml`, so no separate bump
+is needed. After updating the toolchain, refresh `flake.lock` so the locked
+`rust-overlay` revision knows about the new version:
+
+```bash
+nix flake update
+```
+
+Commit `flake.lock` alongside the other toolchain changes. After bumping, run
+the full test suite (`cargo run -- hook pre-merge --yes`) and verify
+`cargo msrv verify` passes.
 
 ## Weekly Maintenance: Statusline Cache-Check
 

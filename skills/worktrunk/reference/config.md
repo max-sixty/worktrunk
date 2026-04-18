@@ -476,12 +476,13 @@ Includes shell integration, hooks, and saved state.
 Usage: wt config [OPTIONS] <COMMAND>
 
 Commands:
-  shell    Shell integration setup
-  create   Create configuration file
-  show     Show configuration files & locations
-  update   Update deprecated config settings
-  plugins  Plugin management
-  state    Manage internal data and cache
+  shell      Shell integration setup
+  create     Create configuration file
+  show       Show configuration files & locations
+  update     Update deprecated config settings
+  approvals  Manage command approvals
+  plugins    Plugin management
+  state      Manage internal data and cache
 
 Options:
   -h, --help
@@ -546,6 +547,60 @@ Output:
           - json: JSON output
 
           [default: text]
+
+Global Options:
+  -C <path>
+          Working directory for this command
+
+      --config <path>
+          User config file path
+
+  -v, --verbose...
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
+```
+
+## wt config approvals
+
+Manage command approvals.
+
+Project hooks and project aliases prompt for approval on first run to prevent untrusted projects from running arbitrary commands. Approvals from both flows are stored together.
+
+### Examples
+
+Pre-approve all hook and alias commands for current project:
+```bash
+$ wt config approvals add
+```
+
+Clear approvals for current project:
+```bash
+$ wt config approvals clear
+```
+
+Clear global approvals:
+```bash
+$ wt config approvals clear --global
+```
+
+### How approvals work
+
+Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves. Use `--yes` to bypass prompts in CI.
+
+### Command reference
+
+```
+wt config approvals - Manage command approvals
+
+Usage: wt config approvals [OPTIONS] <COMMAND>
+
+Commands:
+  add    Store approvals in approvals.toml
+  clear  Clear approved commands from approvals.toml
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
 
 Global Options:
   -C <path>
@@ -993,7 +1048,7 @@ dev = "npm start -- --port {{ vars.config.port }}"
 
 ### Storage format
 
-Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain only letters, digits, hyphens, and underscores — dots conflict with git config's section separator.
+Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain only letters, digits and hyphens — dots conflict with git config's section separator, underscores with its variable name format.
 
 ### Command reference
 

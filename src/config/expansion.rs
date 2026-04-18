@@ -9,8 +9,11 @@
 //! See `wt hook --help` for available filters and functions.
 
 use std::borrow::Cow;
+use std::fmt::{self, Write};
+use std::sync::Arc;
 
 use color_print::cformat;
+use minijinja::value::{Enumerator, Object, ObjectRepr};
 use minijinja::{Environment, ErrorKind, UndefinedBehavior, Value};
 use regex::Regex;
 use shell_escape::escape;
@@ -47,9 +50,19 @@ pub const TEMPLATE_VARS: &[&str] = &[
     "base",      // Added by creation/switch hooks via extra_vars
     "base_worktree_path", // Added by creation/switch hooks via extra_vars
     "cwd",       // Execution directory (always exists on disk)
-                 // Note: `vars` is NOT listed here — it's a structured object injected by expand_template,
-                 // not a simple string that --var can override.
+    // Positional args forwarded to aliases (injected as ShellArgs object by expand_template).
+    "args",
+    // Note: `vars` is NOT listed here — it's a structured object injected by expand_template,
+    // not a simple string that --var can override.
 ];
+
+/// Reserved context key carrying a JSON-encoded `Vec<String>` of positional
+/// CLI args forwarded to an alias. The key flows through
+/// `HashMap<String, String>` — stable for stdin JSON — and
+/// [`expand_template`] rehydrates it as a `ShellArgs` object so bare
+/// `{{ args }}` renders as a space-joined, shell-escaped string while
+/// indexing, iteration, and `length` behave like a sequence.
+pub const ALIAS_ARGS_KEY: &str = "args";
 
 /// Deprecated template variable aliases (still valid for backward compatibility).
 ///
@@ -67,6 +80,54 @@ pub const DEPRECATED_TEMPLATE_VARS: &[&str] = &[
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+
+/// Positional CLI args forwarded from `wt <alias> a b c` into the alias's
+/// template context. Bare `{{ args }}` renders as a space-joined,
+/// shell-escaped string ready to append to a command line; `{{ args[0] }}`
+/// and `{% for a in args %}…{% endfor %}` and `{{ args | length }}` all
+/// behave as expected because the object reports as an
+/// [`ObjectRepr::Seq`].
+///
+/// Shell escaping happens at render time via `shell_escape::unix::escape`
+/// rather than through the template environment's formatter — the formatter
+/// would otherwise quote the already-escaped joined string as a whole. The
+/// formatter installed by `expand_template` detects `ShellArgs` and writes
+/// it through unmodified.
+#[derive(Debug)]
+struct ShellArgs(Vec<String>);
+
+impl ShellArgs {
+    fn new(args: Vec<String>) -> Self {
+        Self(args)
+    }
+}
+
+impl Object for ShellArgs {
+    fn repr(self: &Arc<Self>) -> ObjectRepr {
+        ObjectRepr::Seq
+    }
+
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        let idx = key.as_usize()?;
+        self.0.get(idx).cloned().map(Value::from)
+    }
+
+    fn enumerate(self: &Arc<Self>) -> Enumerator {
+        Enumerator::Seq(self.0.len())
+    }
+
+    fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        for arg in &self.0 {
+            if !first {
+                f.write_char(' ')?;
+            }
+            first = false;
+            f.write_str(&escape(Cow::Borrowed(arg)))?;
+        }
+        Ok(())
+    }
+}
 
 /// Hash a string to a port in range 10000-19999.
 fn string_to_port(s: &str) -> u16 {
@@ -387,12 +448,19 @@ pub fn validate_template(
 ) -> Result<(), TemplateExpandError> {
     let all_vars = TEMPLATE_VARS.iter().chain(DEPRECATED_TEMPLATE_VARS.iter());
     let mut context: HashMap<String, minijinja::Value> = all_vars
+        .filter(|&&k| k != ALIAS_ARGS_KEY)
         .map(|&k| (k.to_string(), minijinja::Value::from("PLACEHOLDER")))
         .collect();
     // Inject vars as empty map so {{ vars.key | default(...) }} doesn't error
     context.insert(
         "vars".to_string(),
         minijinja::Value::from_serialize(std::collections::BTreeMap::<String, String>::new()),
+    );
+    // Inject `args` as an empty sequence so `{{ args }}`, `{{ args[0] | default(...) }}`,
+    // `{{ args | length }}`, and `{% for a in args %}…{% endfor %}` all validate.
+    context.insert(
+        ALIAS_ARGS_KEY.to_string(),
+        Value::from_object(ShellArgs::new(Vec::new())),
     );
 
     let env = setup_template_env(repo);
@@ -442,13 +510,20 @@ pub fn expand_template(
     repo: &Repository,
     name: &str,
 ) -> Result<String, TemplateExpandError> {
-    // Build context map with raw values (shell escaping is applied at output time via formatter)
+    // Build context map with raw values (shell escaping is applied at output time via formatter).
+    // The `args` key is reserved: run_alias encodes positional CLI args as a JSON list string,
+    // and we rehydrate it here as a `ShellArgs` object so `{{ args }}` behaves sequence-like.
     let mut context = HashMap::new();
     for (key, value) in vars {
-        context.insert(
-            key.to_string(),
-            minijinja::Value::from((*value).to_string()),
-        );
+        if *key == ALIAS_ARGS_KEY {
+            let parsed: Vec<String> = serde_json::from_str(value).unwrap_or_default();
+            context.insert(key.to_string(), Value::from_object(ShellArgs::new(parsed)));
+        } else {
+            context.insert(
+                key.to_string(),
+                minijinja::Value::from((*value).to_string()),
+            );
+        }
     }
 
     // Inject vars data as a nested object: {{ vars.env }}, {{ vars.config.port }}
@@ -488,6 +563,15 @@ pub fn expand_template(
         // when filters modify already-escaped strings.
         env.set_formatter(|out, _state, value| {
             if value.is_none() {
+                return Ok(());
+            }
+            // ShellArgs renders each element pre-escaped and space-joined
+            // (see [`ShellArgs::render`]); passing through its Display
+            // output avoids re-escaping the whole joined string as one
+            // opaque token. Iteration and indexing yield plain string
+            // values that still flow through the generic escape branch.
+            if value.downcast_object_ref::<ShellArgs>().is_some() {
+                write!(out, "{value}")?;
                 return Ok(());
             }
             let s = value.to_string();
@@ -1351,6 +1435,98 @@ mod tests {
     }
 
     #[test]
+    fn test_expand_template_args_sequence() {
+        let test = test_repo();
+        let args_json = serde_json::to_string(&["foo", "bar baz", "qux"]).unwrap();
+        let mut vars = HashMap::new();
+        vars.insert("args", args_json.as_str());
+
+        // Bare {{ args }} with shell escaping: space-joined, per-element escaped,
+        // NOT wrapped in outer quotes as a single token.
+        assert_eq!(
+            expand_template("wt switch {{ args }}", &vars, true, &test.repo, "test").unwrap(),
+            "wt switch foo 'bar baz' qux"
+        );
+
+        // Indexing returns a plain string — flows through the shell-escape formatter.
+        assert_eq!(
+            expand_template("{{ args[0] }}", &vars, true, &test.repo, "test").unwrap(),
+            "foo"
+        );
+        assert_eq!(
+            expand_template("{{ args[1] }}", &vars, true, &test.repo, "test").unwrap(),
+            "'bar baz'"
+        );
+
+        // Length works like any sequence.
+        assert_eq!(
+            expand_template("{{ args | length }}", &vars, false, &test.repo, "test").unwrap(),
+            "3"
+        );
+
+        // Iteration yields per-element string values; each escaped by the formatter.
+        assert_eq!(
+            expand_template(
+                "{% for a in args %}[{{ a }}]{% endfor %}",
+                &vars,
+                true,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "[foo]['bar baz'][qux]"
+        );
+    }
+
+    #[test]
+    fn test_expand_template_args_empty() {
+        let test = test_repo();
+        let args_json = serde_json::to_string(&Vec::<String>::new()).unwrap();
+        let mut vars = HashMap::new();
+        vars.insert("args", args_json.as_str());
+
+        // Empty args renders empty. No stray whitespace, no error.
+        assert_eq!(
+            expand_template("wt switch{{ args }}", &vars, true, &test.repo, "test").unwrap(),
+            "wt switch"
+        );
+
+        // Length still defined for empty.
+        assert_eq!(
+            expand_template("{{ args | length }}", &vars, false, &test.repo, "test").unwrap(),
+            "0"
+        );
+
+        // Iteration yields nothing.
+        assert_eq!(
+            expand_template(
+                "{% for a in args %}X{% endfor %}",
+                &vars,
+                true,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_expand_template_args_shell_metachar_safety() {
+        // The point of ShellArgs is that bare {{ args }} is safe to splice into
+        // a command line even when args contain shell metacharacters — each
+        // element is individually single-quoted by `shell_escape::unix::escape`,
+        // and the outer formatter doesn't re-quote the joined result.
+        let test = test_repo();
+        let args_json = serde_json::to_string(&["; rm -rf /", "$(whoami)", "a'b"]).unwrap();
+        let mut vars = HashMap::new();
+        vars.insert("args", args_json.as_str());
+
+        let rendered = expand_template("echo {{ args }}", &vars, true, &test.repo, "test").unwrap();
+        assert_eq!(rendered, r#"echo '; rm -rf /' '$(whoami)' 'a'\''b'"#);
+    }
+
+    #[test]
     fn test_validate_template_valid() {
         let test = test_repo();
 
@@ -1379,6 +1555,13 @@ mod tests {
 
         // Deprecated vars still valid
         assert!(validate_template("{{ main_worktree }}", &test.repo, "test").is_ok());
+
+        // `args` is injected as an empty sequence, so templates referencing it validate.
+        assert!(validate_template("wt switch {{ args }}", &test.repo, "test").is_ok());
+        assert!(validate_template("{{ args | length }}", &test.repo, "test").is_ok());
+        assert!(
+            validate_template("{% for a in args %}{{ a }}{% endfor %}", &test.repo, "test").is_ok()
+        );
     }
 
     #[test]

@@ -313,7 +313,7 @@ lint = "pre-commit run"
     });
 }
 
-/// Test `wt hook clear` when no approvals exist for the project.
+/// Test `wt config approvals clear` when no approvals exist for the project.
 #[rstest]
 fn test_hook_clear_no_approvals(repo: TestRepo, temp_home: TempDir) {
     // Remove origin so project_identifier uses full canonical path
@@ -335,7 +335,7 @@ fn test_hook_clear_no_approvals(repo: TestRepo, temp_home: TempDir) {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
-        cmd.args(["hook", "approvals", "clear"])
+        cmd.args(["config", "approvals", "clear"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
 
@@ -343,7 +343,7 @@ fn test_hook_clear_no_approvals(repo: TestRepo, temp_home: TempDir) {
     });
 }
 
-/// Test `wt hook clear` when project has approvals to clear.
+/// Test `wt config approvals clear` when project has approvals to clear.
 #[rstest]
 fn test_hook_clear_with_approvals(repo: TestRepo, temp_home: TempDir) {
     // Remove origin so project_identifier uses full canonical path
@@ -372,7 +372,7 @@ approved-commands = ["cargo build", "cargo test", "npm install"]
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
-        cmd.args(["hook", "approvals", "clear"])
+        cmd.args(["config", "approvals", "clear"])
             .current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
 

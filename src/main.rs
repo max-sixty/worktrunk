@@ -237,10 +237,16 @@ fn handle_hook_command(action: HookCommand) -> anyhow::Result<()> {
             &vars,
         ),
         HookCommand::RunPipeline => commands::run_pipeline(),
-        HookCommand::Approvals { action } => match action {
-            ApprovalsCommand::Add { all } => add_approvals(all),
-            ApprovalsCommand::Clear { global } => clear_approvals(global),
-        },
+        HookCommand::Approvals { action } => {
+            eprintln!(
+                "{}",
+                warning_message("wt hook approvals is deprecated; use wt config approvals instead")
+            );
+            match action {
+                ApprovalsCommand::Add { all } => add_approvals(all),
+                ApprovalsCommand::Clear { global } => clear_approvals(global),
+            }
+        }
     }
 }
 
@@ -502,6 +508,10 @@ fn handle_config_command(action: ConfigCommand) -> anyhow::Result<()> {
         ConfigCommand::Create { project } => handle_config_create(project),
         ConfigCommand::Show { full, format } => handle_config_show(full, format),
         ConfigCommand::Update { yes, print } => handle_config_update(yes, print),
+        ConfigCommand::Approvals { action } => match action {
+            ApprovalsCommand::Add { all } => add_approvals(all),
+            ApprovalsCommand::Clear { global } => clear_approvals(global),
+        },
         ConfigCommand::Plugins { action } => handle_plugins_command(action),
         ConfigCommand::State { action } => handle_state_command(action),
     }

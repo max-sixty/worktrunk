@@ -36,8 +36,8 @@ use anyhow::{Context, bail};
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 use color_print::cformat;
 use worktrunk::config::{
-    CommandConfig, HookStep, ProjectConfig, UserConfig, append_aliases, template_references_var,
-    validate_template_syntax,
+    ALIAS_ARGS_KEY, CommandConfig, HookStep, ProjectConfig, UserConfig, append_aliases,
+    template_references_var, validate_template_syntax,
 };
 use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, format_bash_with_gutter, info_message, progress_message};
@@ -83,13 +83,19 @@ pub struct AliasOptions {
     pub dry_run: bool,
     pub yes: bool,
     pub vars: Vec<(String, String)>,
+    /// Non-flag positional tokens passed after the alias name. Forwarded into
+    /// the template context as `{{ args }}` (a `ShellArgs` sequence). Appear
+    /// in CLI order, interleaving freely with flags: `wt s foo --dry-run bar`
+    /// collects `["foo", "bar"]`.
+    pub positional_args: Vec<String>,
 }
 
 impl AliasOptions {
     /// Parse alias options from `wt step <alias>` args.
     ///
-    /// First element is the alias name, remaining are flags:
-    /// `--dry-run`, `--yes`/`-y`, `--var KEY=VALUE`, or `--KEY=VALUE`.
+    /// First element is the alias name, remaining tokens are either flags:
+    /// `--dry-run`, `--yes`/`-y`, `--var KEY=VALUE`, or `--KEY=VALUE`; or
+    /// positional args that get forwarded to the template as `{{ args }}`.
     ///
     /// Unknown `--key=value` flags are treated as template variable assignments,
     /// so `--env=staging` is equivalent to `--var env=staging`. The `=` is
@@ -107,6 +113,7 @@ impl AliasOptions {
         let mut dry_run = false;
         let mut yes = false;
         let mut vars = Vec::new();
+        let mut positional_args = Vec::new();
         let mut i = 1;
         while i < args.len() {
             match args[i].as_str() {
@@ -139,7 +146,7 @@ impl AliasOptions {
                     }
                 }
                 other => {
-                    bail!("Unexpected argument '{other}' for alias '{name}'");
+                    positional_args.push(other.to_string());
                 }
             }
             i += 1;
@@ -150,6 +157,7 @@ impl AliasOptions {
             dry_run,
             yes,
             vars,
+            positional_args,
         })
     }
 }
@@ -369,7 +377,15 @@ fn run_alias(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    let context_map = build_hook_context(&ctx, &extra_refs)?;
+    let mut context_map = build_hook_context(&ctx, &extra_refs)?;
+    // Forward positional CLI args to templates as `{{ args }}`. Encoded as a
+    // JSON list so it flows through the stable `HashMap<String, String>`
+    // context — `expand_template` rehydrates it into a `ShellArgs` sequence.
+    context_map.insert(
+        ALIAS_ARGS_KEY.to_string(),
+        serde_json::to_string(&opts.positional_args)
+            .expect("Vec<String> serialization should never fail"),
+    );
 
     // Build JSON context for stdin
     let context_json = serde_json::to_string(&context_map)
@@ -785,6 +801,7 @@ cmd = [
             dry_run: false,
             yes: false,
             vars: [],
+            positional_args: [],
         }
         "#);
         assert_debug_snapshot!(parse(&["deploy", "--dry-run"]).unwrap(), @r#"
@@ -793,6 +810,7 @@ cmd = [
             dry_run: true,
             yes: false,
             vars: [],
+            positional_args: [],
         }
         "#);
         assert_debug_snapshot!(parse(&["deploy", "--yes"]).unwrap(), @r#"
@@ -801,6 +819,7 @@ cmd = [
             dry_run: false,
             yes: true,
             vars: [],
+            positional_args: [],
         }
         "#);
         assert_debug_snapshot!(parse(&["deploy", "-y"]).unwrap(), @r#"
@@ -809,6 +828,7 @@ cmd = [
             dry_run: false,
             yes: true,
             vars: [],
+            positional_args: [],
         }
         "#);
         assert_debug_snapshot!(parse(&["deploy", "--var", "key=value"]).unwrap(), @r#"
@@ -822,6 +842,7 @@ cmd = [
                     "value",
                 ),
             ],
+            positional_args: [],
         }
         "#);
         // --var=key=value (equals form)
@@ -836,6 +857,7 @@ cmd = [
                     "value",
                 ),
             ],
+            positional_args: [],
         }
         "#);
         // Value containing equals sign
@@ -850,6 +872,7 @@ cmd = [
                     "http://host?a=1",
                 ),
             ],
+            positional_args: [],
         }
         "#);
         // Multiple vars + flags
@@ -868,6 +891,7 @@ cmd = [
                     "2",
                 ),
             ],
+            positional_args: [],
         }
         "#);
         // Empty value accepted
@@ -882,6 +906,7 @@ cmd = [
                     "",
                 ),
             ],
+            positional_args: [],
         }
         "#);
         // --key=value shorthand
@@ -896,6 +921,7 @@ cmd = [
                     "staging",
                 ),
             ],
+            positional_args: [],
         }
         "#);
         // --key=value with equals in value
@@ -910,6 +936,7 @@ cmd = [
                     "http://host?a=1",
                 ),
             ],
+            positional_args: [],
         }
         "#);
         // --key=value mixed with --var and flags
@@ -928,6 +955,7 @@ cmd = [
                     "us-east",
                 ),
             ],
+            positional_args: [],
         }
         "#);
         // --key= (empty value)
@@ -942,6 +970,7 @@ cmd = [
                     "",
                 ),
             ],
+            positional_args: [],
         }
         "#);
         // Hyphens in shorthand key are canonicalized to underscores
@@ -956,6 +985,7 @@ cmd = [
                     "value",
                 ),
             ],
+            positional_args: [],
         }
         "#);
         // Hyphens in --var KEY=VALUE are canonicalized too
@@ -970,6 +1000,7 @@ cmd = [
                     "value",
                 ),
             ],
+            positional_args: [],
         }
         "#);
         // Hyphens in --var=KEY=VALUE form
@@ -984,6 +1015,7 @@ cmd = [
                     "value",
                 ),
             ],
+            positional_args: [],
         }
         "#);
         // Already-underscored keys pass through unchanged
@@ -998,6 +1030,7 @@ cmd = [
                     "value",
                 ),
             ],
+            positional_args: [],
         }
         "#);
         // Multiple hyphens in a single key
@@ -1012,6 +1045,7 @@ cmd = [
                     "x",
                 ),
             ],
+            positional_args: [],
         }
         "#);
         // Hyphens in value are preserved (only key is canonicalized)
@@ -1026,6 +1060,60 @@ cmd = [
                     "us-east-1",
                 ),
             ],
+            positional_args: [],
+        }
+        "#);
+        // Single positional is forwarded as `{{ args }}`
+        assert_debug_snapshot!(parse(&["s", "some-branch"]).unwrap(), @r#"
+        AliasOptions {
+            name: "s",
+            dry_run: false,
+            yes: false,
+            vars: [],
+            positional_args: [
+                "some-branch",
+            ],
+        }
+        "#);
+        // Multiple positionals preserve CLI order
+        assert_debug_snapshot!(parse(&["deploy", "one", "two", "three"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [],
+            positional_args: [
+                "one",
+                "two",
+                "three",
+            ],
+        }
+        "#);
+        // Positionals can interleave with flags; flags are captured, positionals keep order
+        assert_debug_snapshot!(parse(&["deploy", "foo", "--dry-run", "bar"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: true,
+            yes: false,
+            vars: [],
+            positional_args: [
+                "foo",
+                "bar",
+            ],
+        }
+        "#);
+        // Positionals containing spaces or shell metacharacters pass through verbatim —
+        // escaping happens only at template render time.
+        assert_debug_snapshot!(parse(&["deploy", "foo bar", "x;rm -rf /"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            dry_run: false,
+            yes: false,
+            vars: [],
+            positional_args: [
+                "foo bar",
+                "x;rm -rf /",
+            ],
         }
         "#);
     }
@@ -1037,7 +1125,6 @@ cmd = [
         assert_snapshot!(parse(&["deploy", "--var"]).unwrap_err(), @"--var requires a KEY=VALUE argument");
         assert_snapshot!(parse(&["deploy", "--var", "noequals"]).unwrap_err(), @"invalid KEY=VALUE: no `=` found in `noequals`");
         assert_snapshot!(parse(&["deploy", "--verbose"]).unwrap_err(), @"Unknown flag '--verbose' for alias 'deploy' (use --verbose=VALUE to pass a variable)");
-        assert_snapshot!(parse(&["deploy", "arg1"]).unwrap_err(), @"Unexpected argument 'arg1' for alias 'deploy'");
         assert_snapshot!(parse(&["deploy", "--var", "=value"]).unwrap_err(), @"invalid KEY=VALUE: key cannot be empty");
         assert_snapshot!(parse(&["deploy", "--=value"]).unwrap_err(), @"invalid KEY=VALUE: key cannot be empty");
     }

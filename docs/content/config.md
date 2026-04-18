@@ -473,12 +473,13 @@ Includes shell integration, hooks, and saved state.
 Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>shell</span></b>    Shell integration setup
-  <b><span class=c>create</span></b>   Create configuration file
-  <b><span class=c>show</span></b>     Show configuration files &amp; locations
-  <b><span class=c>update</span></b>   Update deprecated config settings
-  <b><span class=c>plugins</span></b>  Plugin management
-  <b><span class=c>state</span></b>    Manage internal data and cache
+  <b><span class=c>shell</span></b>      Shell integration setup
+  <b><span class=c>create</span></b>     Create configuration file
+  <b><span class=c>show</span></b>       Show configuration files &amp; locations
+  <b><span class=c>update</span></b>     Update deprecated config settings
+  <b><span class=c>approvals</span></b>  Manage command approvals
+  <b><span class=c>plugins</span></b>    Plugin management
+  <b><span class=c>state</span></b>      Manage internal data and cache
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
@@ -541,6 +542,54 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
           - <b><span class=c>json</span></b>: JSON output
 
           [default: text]
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
+          + trace.log/output.log under .git/wt/logs/)
+{% end %}
+
+## wt config approvals
+
+Manage command approvals.
+
+Project hooks and project aliases prompt for approval on first run to prevent untrusted projects from running arbitrary commands. Approvals from both flows are stored together.
+
+### Examples
+
+Pre-approve all hook and alias commands for current project:
+{{ terminal(cmd="wt config approvals add") }}
+
+Clear approvals for current project:
+{{ terminal(cmd="wt config approvals clear") }}
+
+Clear global approvals:
+{{ terminal(cmd="wt config approvals clear --global") }}
+
+### How approvals work
+
+Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves. Use `--yes` to bypass prompts in CI.
+
+### Command reference
+
+{% terminal() %}
+wt config approvals - Manage command approvals
+
+Usage: <b><span class=c>wt config approvals</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
+
+<b><span class=g>Commands:</span></b>
+  <b><span class=c>add</span></b>    Store approvals in approvals.toml
+  <b><span class=c>clear</span></b>  Clear approved commands from approvals.toml
+
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -952,7 +1001,7 @@ dev = "npm start -- --port {{ vars.config.port }}"
 
 ### Storage format
 
-Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain only letters, digits, hyphens, and underscores — dots conflict with git config's section separator.
+Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain only letters, digits and hyphens — dots conflict with git config's section separator, underscores with its variable name format.
 
 ### Command reference
 

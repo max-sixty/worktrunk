@@ -55,7 +55,7 @@ Project commands require approval on first run:
 - Use `--yes` to bypass prompts — useful for CI and automation
 - Use `--no-hooks` to skip hooks
 
-Manage approvals with `wt hook approvals add` and `wt hook approvals clear`.
+Manage approvals with `wt config approvals add` and `wt config approvals clear`.
 
 # Configuration
 
@@ -477,63 +477,6 @@ Commands:
   post-merge   Run post-merge hooks
   pre-remove   Run pre-remove hooks
   post-remove  Run post-remove hooks
-  approvals    Manage command approvals
-
-Options:
-  -h, --help
-          Print help (see a summary with '-h')
-
-Global Options:
-  -C <path>
-          Working directory for this command
-
-      --config <path>
-          User config file path
-
-  -v, --verbose...
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
-          + trace.log/output.log under .git/wt/logs/)
-```
-
-# Subcommands
-
-## wt hook approvals
-
-Manage command approvals.
-
-Project hooks require approval on first run to prevent untrusted projects from running arbitrary commands.
-
-### Examples
-
-Pre-approve all commands for current project:
-```bash
-$ wt hook approvals add
-```
-
-Clear approvals for current project:
-```bash
-$ wt hook approvals clear
-```
-
-Clear global approvals:
-```bash
-$ wt hook approvals clear --global
-```
-
-### How approvals work
-
-Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves. Use `--yes` to bypass prompts in CI.
-
-### Command reference
-
-```
-wt hook approvals - Manage command approvals
-
-Usage: wt hook approvals [OPTIONS] <COMMAND>
-
-Commands:
-  add    Store approvals in approvals.toml
-  clear  Clear approved commands from approvals.toml
 
 Options:
   -h, --help
