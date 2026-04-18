@@ -258,6 +258,16 @@ pub(crate) struct Cli {
     )]
     pub verbose: u8,
 
+    /// Skip approval prompts
+    #[arg(
+        long,
+        short = 'y',
+        global = true,
+        display_order = 103,
+        help_heading = "Global Options"
+    )]
+    pub yes: bool,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -343,10 +353,6 @@ pub(crate) struct SwitchArgs {
     #[arg(long, overrides_with = "no_cd", hide = true)]
     pub(crate) cd: bool,
 
-    /// Skip approval prompts
-    #[arg(short, long, help_heading = "Automation")]
-    pub(crate) yes: bool,
-
     /// Skip hooks
     #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
     pub(crate) verify: bool,
@@ -414,10 +420,6 @@ pub(crate) struct RemoveArgs {
     /// Run removal in foreground (block until complete)
     #[arg(long)]
     pub(crate) foreground: bool,
-
-    /// Skip approval prompts
-    #[arg(short, long, help_heading = "Automation")]
-    pub(crate) yes: bool,
 
     /// Skip hooks
     #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
@@ -488,10 +490,6 @@ pub(crate) struct MergeArgs {
     /// Allow fast-forward (default)
     #[arg(long, overrides_with = "no_ff", hide = true)]
     pub(crate) ff: bool,
-
-    /// Skip approval prompts
-    #[arg(short, long, help_heading = "Automation")]
-    pub(crate) yes: bool,
 
     /// Force running hooks
     #[arg(long, overrides_with_all = ["no_hooks", "no_verify"], hide = true)]

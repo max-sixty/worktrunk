@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde::Serialize;
 use worktrunk::HookType;
-use worktrunk::config::{UserConfig, expand_template, template_references_var, validate_template};
+use worktrunk::config::{
+    UserConfig, ValidationScope, expand_template, template_references_var, validate_template,
+};
 use worktrunk::git::{GitError, Repository, SwitchSuggestionCtx, current_or_recover};
 use worktrunk::styling::{eprintln, info_message};
 
@@ -522,9 +524,19 @@ fn validate_switch_templates(
 ) -> anyhow::Result<()> {
     // Validate --execute template and trailing args
     if let Some(cmd) = execute {
-        validate_template(cmd, repo, "--execute command")?;
+        validate_template(
+            cmd,
+            ValidationScope::SwitchExecute,
+            repo,
+            "--execute command",
+        )?;
         for arg in execute_args {
-            validate_template(arg, repo, "--execute argument")?;
+            validate_template(
+                arg,
+                ValidationScope::SwitchExecute,
+                repo,
+                "--execute argument",
+            )?;
         }
     }
 
@@ -552,7 +564,12 @@ fn validate_switch_templates(
                         Some(n) => format!("{source} {hook_type}:{n}"),
                         None => format!("{source} {hook_type} hook"),
                     };
-                    validate_template(&cmd.template, repo, &name)?;
+                    validate_template(
+                        &cmd.template,
+                        ValidationScope::Hook(hook_type),
+                        repo,
+                        &name,
+                    )?;
                 }
             }
         }

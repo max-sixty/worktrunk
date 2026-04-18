@@ -71,6 +71,9 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
 
+  [1m[36m-y[0m, [1m[36m--yes[0m
+          Skip approval prompts
+
 Shows uncommitted changes, divergence from the default branch and remote, and optional CI status and LLM summaries.
 
 The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete.

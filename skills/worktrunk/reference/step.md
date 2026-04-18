@@ -70,6 +70,9 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 # Subcommands
@@ -126,6 +129,9 @@ Options:
   -b, --branch <BRANCH>
           Branch to operate on (defaults to current worktree)
 
+      --no-hooks
+          Skip hooks
+
       --stage <STAGE>
           What to stage before committing [default: all]
 
@@ -142,13 +148,6 @@ Options:
   -h, --help
           Print help (see a summary with '-h')
 
-Automation:
-  -y, --yes
-          Skip approval prompts
-
-      --no-hooks
-          Skip hooks
-
 Global Options:
   -C <path>
           Working directory for this command
@@ -159,6 +158,9 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt step squash
@@ -214,6 +216,9 @@ Arguments:
           Defaults to default branch.
 
 Options:
+      --no-hooks
+          Skip hooks
+
       --stage <STAGE>
           What to stage before committing [default: all]
 
@@ -230,13 +235,6 @@ Options:
   -h, --help
           Print help (see a summary with '-h')
 
-Automation:
-  -y, --yes
-          Skip approval prompts
-
-      --no-hooks
-          Skip hooks
-
 Global Options:
   -C <path>
           Working directory for this command
@@ -247,6 +245,9 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt step diff
@@ -315,6 +316,9 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt step copy-ignored
@@ -447,6 +451,9 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt step eval
@@ -528,6 +535,9 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt step for-each
@@ -584,10 +594,6 @@ Arguments:
           Command template (see --help for all variables)
 
 Options:
-  -h, --help
-          Print help (see a summary with '-h')
-
-Automation:
       --format <FORMAT>
           Output format (text, json)
 
@@ -596,6 +602,9 @@ Automation:
           - json: JSON output
 
           [default: text]
+
+  -h, --help
+          Print help (see a summary with '-h')
 
 Global Options:
   -C <path>
@@ -607,6 +616,9 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt step promote
@@ -684,6 +696,9 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt step prune
@@ -740,13 +755,6 @@ Options:
       --foreground
           Run removal in foreground (block until complete)
 
-  -h, --help
-          Print help (see a summary with '-h')
-
-Automation:
-  -y, --yes
-          Skip approval prompts
-
       --format <FORMAT>
           Output format (text, json)
 
@@ -755,6 +763,9 @@ Automation:
           - json: JSON output
 
           [default: text]
+
+  -h, --help
+          Print help (see a summary with '-h')
 
 Global Options:
   -C <path>
@@ -766,6 +777,9 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt step relocate
@@ -864,4 +878,7 @@ Global Options:
   -v, --verbose...
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
           + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```

@@ -53,6 +53,9 @@ Usage: [1m[36mwt config approvals add[0m [36m[OPTIONS][0m
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
           Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
 
+  [1m[36m-y[0m, [1m[36m--yes[0m
+          Skip approval prompts
+
 Prompts for approval of all project commands and saves them to approvals.toml.
 
 By default, shows only unapproved commands. Use [2m--all[0m to review all commands

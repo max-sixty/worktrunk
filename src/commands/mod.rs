@@ -31,7 +31,7 @@ pub(crate) use alias::{
     AliasOptions, HelpContext, alias_names_for_suggestions, augment_help, step_alias, try_alias,
 };
 pub(crate) use config::{
-    handle_alias_dry_run, handle_alias_show, handle_claude_install,
+    add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show, handle_claude_install,
     handle_claude_install_statusline, handle_claude_uninstall, handle_config_create,
     handle_config_show, handle_config_update, handle_hints_clear, handle_hints_get,
     handle_logs_list, handle_opencode_install, handle_opencode_uninstall, handle_state_clear,
@@ -45,7 +45,7 @@ pub(crate) use custom::handle_custom_command;
 pub(crate) use eval::step_eval;
 pub(crate) use for_each::step_for_each;
 pub(crate) use handle_switch::{SwitchOptions, handle_switch};
-pub(crate) use hook_commands::{add_approvals, clear_approvals, handle_hook_show, run_hook};
+pub(crate) use hook_commands::{handle_hook_show, run_hook};
 pub(crate) use init::{handle_completions, handle_init};
 pub(crate) use list::handle_list;
 pub(crate) use merge::{MergeOptions, handle_merge};

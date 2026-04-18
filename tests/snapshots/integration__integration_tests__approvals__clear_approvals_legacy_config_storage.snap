@@ -1,5 +1,5 @@
 ---
-source: tests/integration_tests/hook_show.rs
+source: tests/integration_tests/approvals.rs
 info:
   program: wt
   args:

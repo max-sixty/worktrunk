@@ -51,7 +51,6 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
       [1m[36m--remotes[0m   Include remote branches
 
 [1m[32mAutomation:[0m
-  [1m[36m-y[0m, [1m[36m--yes[0m              Skip approval prompts
       [1m[36m--no-hooks[0m         Skip hooks
       [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m  Output format [default: text] [possible values: text, json]
 
@@ -59,5 +58,6 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
   [1m[36m-C[0m[36m [0m[36m<path>[0m            Working directory for this command
       [1m[36m--config[0m[36m [0m[36m<path>[0m  User config file path
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m     Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+  [1m[36m-y[0m, [1m[36m--yes[0m            Skip approval prompts
 
 ----- stderr -----

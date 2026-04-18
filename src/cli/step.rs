@@ -6,12 +6,8 @@ pub struct CommitArgs {
     #[arg(short, long, add = crate::completion::worktree_only_completer())]
     pub(crate) branch: Option<String>,
 
-    /// Skip approval prompts
-    #[arg(short, long, help_heading = "Automation")]
-    pub(crate) yes: bool,
-
     /// Skip hooks
-    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true)]
     pub(crate) verify: bool,
 
     /// Skip hooks (deprecated alias for --no-hooks)
@@ -37,12 +33,8 @@ pub struct SquashArgs {
     #[arg(add = crate::completion::branch_value_completer())]
     pub(crate) target: Option<String>,
 
-    /// Skip approval prompts
-    #[arg(short, long, help_heading = "Automation")]
-    pub(crate) yes: bool,
-
     /// Skip hooks
-    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true)]
     pub(crate) verify: bool,
 
     /// Skip hooks (deprecated alias for --no-hooks)
@@ -458,7 +450,7 @@ Note: This command is experimental and may change in future versions.
     )]
     ForEach {
         /// Output format (text, json)
-        #[arg(long, default_value = "text", help_heading = "Automation")]
+        #[arg(long, default_value = "text")]
         format: crate::cli::SwitchFormat,
 
         /// Command template (see --help for all variables)
@@ -556,10 +548,6 @@ $ wt step prune
         #[arg(long)]
         dry_run: bool,
 
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
         /// Skip worktrees younger than this
         #[arg(long, default_value = "1h")]
         min_age: String,
@@ -569,7 +557,7 @@ $ wt step prune
         foreground: bool,
 
         /// Output format (text, json)
-        #[arg(long, default_value = "text", help_heading = "Automation")]
+        #[arg(long, default_value = "text")]
         format: crate::cli::SwitchFormat,
     },
 
