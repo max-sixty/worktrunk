@@ -94,8 +94,11 @@ pub struct SwitchOptions<'a> {
 
 /// Run pre-switch hooks before branch resolution or worktree creation.
 ///
-/// The hook context uses the **destination** branch argument as `{{ branch }}`,
-/// so hooks receive the user's raw input before resolution.
+/// Symbolic arguments (`-`, `@`, `^`) are resolved to concrete branch names
+/// before building the hook context so `{{ target }}`, `{{ target_worktree_path }}`,
+/// and the Active overrides point at the real destination. When resolution
+/// fails (e.g., no previous branch for `-`), the raw argument is used — the
+/// same error surfaces later from `plan_switch` with the canonical message.
 ///
 /// Directional vars:
 /// - `base` / `base_worktree_path`: current (source) branch and worktree
@@ -108,7 +111,10 @@ pub(crate) fn run_pre_switch_hooks(
 ) -> anyhow::Result<()> {
     let current_wt = repo.current_worktree();
     let current_path = current_wt.path().to_path_buf();
-    let pre_ctx = CommandContext::new(repo, config, Some(target_branch), &current_path, yes);
+    let resolved_target = repo
+        .resolve_worktree_name(target_branch)
+        .unwrap_or_else(|_| target_branch.to_string());
+    let pre_ctx = CommandContext::new(repo, config, Some(&resolved_target), &current_path, yes);
 
     let pre_switch_approved = approve_hooks(&pre_ctx, &[HookType::PreSwitch])?;
     if pre_switch_approved {
@@ -124,7 +130,7 @@ pub(crate) fn run_pre_switch_hooks(
         // Target vars and Active overrides: destination worktree.
         // For existing worktrees: override bare vars (worktree_path, worktree_name,
         // worktree) to point to the destination (Active), not the source.
-        let dest_path = repo.worktree_for_branch(target_branch).ok().flatten();
+        let dest_path = repo.worktree_for_branch(&resolved_target).ok().flatten();
         let dest_name = dest_path
             .as_ref()
             .and_then(|p| p.file_name())
@@ -132,7 +138,7 @@ pub(crate) fn run_pre_switch_hooks(
             .map(|s| s.to_string());
         let dest_path_str = dest_path.map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
-        extra_vars.push(("target", target_branch));
+        extra_vars.push(("target", &resolved_target));
         if let Some(ref p) = dest_path_str {
             // Existing destination: override bare vars to Active (destination)
             extra_vars.push(("target_worktree_path", p));

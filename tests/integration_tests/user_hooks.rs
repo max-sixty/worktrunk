@@ -2550,6 +2550,78 @@ capture = "echo 'wt_path={{ worktree_path }} base={{ base }} base_wt={{ base_wor
     );
 }
 
+/// Regression test for #2309: `wt switch -` should resolve the symbolic
+/// argument before setting up pre-switch hook template variables, so
+/// `{{ target }}`, `{{ target_worktree_path }}`, and the Active bare vars
+/// (`{{ worktree_path }}`, `{{ worktree_name }}`) reflect the actual destination
+/// instead of the raw `-` argument or the source worktree.
+#[rstest]
+fn test_pre_switch_vars_with_dash_shortcut(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Establish switch history: main -> feature. This records main as previous,
+    // so `wt switch -` from feature resolves back to main.
+    repo.wt_command()
+        .args(["switch", "feature", "--yes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // Install the pre-switch hook after the history-building switch so the
+    // capture reflects only the `-` switch we care about.
+    repo.write_test_config(
+        r#"[pre-switch]
+capture = "echo 'target={{ target }} target_wt={{ target_worktree_path }} wt_path={{ worktree_path }} wt_name={{ worktree_name }}' > pre_switch_dash.txt"
+"#,
+    );
+
+    let switch_output = repo
+        .wt_command()
+        .args(["switch", "-", "--yes"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        switch_output.status.success(),
+        "`wt switch -` should succeed with a pre-switch hook referencing target_worktree_path.\n\
+         stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&switch_output.stdout),
+        String::from_utf8_lossy(&switch_output.stderr),
+    );
+
+    let vars_file = feature_path.join("pre_switch_dash.txt");
+    let content = fs::read_to_string(&vars_file).unwrap();
+
+    let main_name = repo
+        .root_path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+
+    assert!(
+        content.contains("target=main"),
+        "{{{{ target }}}} should resolve to 'main' when using `-`, got: {content}"
+    );
+    // Both `target_worktree_path` and `worktree_path` should end at the main
+    // worktree directory — the layout is `... /<main_name> <next-field>=`.
+    assert!(
+        content.contains(&format!("/{main_name} wt_path="))
+            || content.contains(&format!(r"\{main_name} wt_path=")),
+        "{{{{ target_worktree_path }}}} should point to the main worktree, got: {content}"
+    );
+    assert!(
+        content.contains(&format!("/{main_name} wt_name="))
+            || content.contains(&format!(r"\{main_name} wt_name=")),
+        "{{{{ worktree_path }}}} should point to the main worktree (Active), got: {content}"
+    );
+    assert!(
+        content.contains(&format!("wt_name={main_name}")),
+        "{{{{ worktree_name }}}} should be the main worktree name, got: {content}"
+    );
+}
+
 /// Post-remove: target/target_worktree_path point to where user ends up.
 #[rstest]
 fn test_post_remove_has_target_vars(mut repo: TestRepo) {
