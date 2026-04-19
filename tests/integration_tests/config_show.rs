@@ -2,6 +2,7 @@ use crate::common::{
     TestRepo, repo, set_temp_home_env, set_xdg_config_path, setup_home_snapshot_settings,
     setup_snapshot_settings, setup_snapshot_settings_with_home, temp_home, wt_command,
 };
+use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
@@ -661,6 +662,56 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
 
         assert_cmd_snapshot!(cmd);
     });
+}
+
+#[rstest]
+fn test_config_show_detects_zsh_integration_in_sourced_file(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    let sourced_dir = temp_home.path().join(".zsh").join("config.d");
+    fs::create_dir_all(&sourced_dir).unwrap();
+    fs::write(
+        temp_home.path().join(".zshrc"),
+        "source $HOME/.zsh/config.d/init.zsh\n",
+    )
+    .unwrap();
+    fs::write(
+        sourced_dir.join("init.zsh"),
+        r#"if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    repo.configure_mock_commands(&mut cmd);
+    cmd.arg("config").arg("show").current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let clean = stderr.ansi_strip().into_owned();
+    assert!(
+        clean.contains(
+            "zsh: Already configured shell extension & completions @ ~/.zsh/config.d/init.zsh:1"
+        ),
+        "Expected sourced zsh config to be detected, got:\n{clean}"
+    );
+    assert!(
+        !clean.contains("zsh: Not configured shell extension & completions"),
+        "Expected zsh to be configured, got:\n{clean}"
+    );
 }
 
 /// Test that config show displays fish shell with completions configured
