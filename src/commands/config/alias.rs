@@ -19,7 +19,6 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::io::Write;
-use std::process;
 
 use anyhow::Context;
 use clap::error::{ContextKind, ContextValue, ErrorKind};
@@ -28,7 +27,7 @@ use worktrunk::config::{
     ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, append_aliases,
     referenced_vars_for_config, template_references_var, validate_template_syntax,
 };
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{format_bash_with_gutter, info_message, println};
 
 use crate::commands::alias::{AliasOptions, AliasSource};
@@ -48,7 +47,13 @@ pub fn handle_alias_show(name: String) -> anyhow::Result<()> {
     let entries = entries_for_name(&repo, &user_config, project_config.as_ref(), &name);
 
     if entries.is_empty() {
-        unknown_alias_exit(&repo, &user_config, project_config.as_ref(), &name, "show");
+        return Err(unknown_alias_error(
+            &repo,
+            &user_config,
+            project_config.as_ref(),
+            &name,
+            "show",
+        ));
     }
 
     for (i, (cfg, source)) in entries.iter().enumerate() {
@@ -75,13 +80,13 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
     let entries = entries_for_name(&repo, &user_config, project_config.as_ref(), &name);
 
     if entries.is_empty() {
-        unknown_alias_exit(
+        return Err(unknown_alias_error(
             &repo,
             &user_config,
             project_config.as_ref(),
             &name,
             "dry-run",
-        );
+        ));
     }
 
     // Reuse the real parser so previews stay aligned with runtime parsing —
@@ -167,11 +172,11 @@ fn entries_for_name(
     entries
 }
 
-/// Render an "unrecognized alias 'X'" error matching clap's `InvalidSubcommand`
+/// Print an "unrecognized alias 'X'" error matching clap's `InvalidSubcommand`
 /// layout — same `error:` / `tip:` / `Usage:` block and exit code 2 as
-/// `wt <typo>` and `wt step <typo>` — then exit. `sub` is `"show"` or
-/// `"dry-run"`, anchoring the error on the real clap subcommand so the Usage
-/// line reads `Usage: wt config alias <sub> <NAME>`.
+/// `wt <typo>` and `wt step <typo>`. `sub` is `"show"` or `"dry-run"`,
+/// anchoring the error on the real clap subcommand so the Usage line reads
+/// `Usage: wt config alias <sub> <NAME>`.
 ///
 /// Built as a real `clap::Error` with `ErrorKind::InvalidSubcommand`, rendered
 /// by clap, then string-substituted to say "alias" instead of "subcommand" —
@@ -179,15 +184,24 @@ fn entries_for_name(
 /// reads more honestly at this surface. Going through clap's rendering gets
 /// NO_COLOR / TTY detection, singular-vs-plural "similar" phrasing, and
 /// styling correct automatically; modifying the final string is cheaper than
-/// reimplementing those. Plural `subcommands` is rewritten before singular
-/// `subcommand` so the substring match doesn't leave `aliass`.
-fn unknown_alias_exit(
+/// reimplementing those.
+///
+/// Substitutions are scoped to clap's fixed phrases, never the bare word
+/// "subcommand" — otherwise an alias or typo containing the literal string
+/// `subcommand` (e.g. `my-subcommand`) would be mangled when echoed into
+/// the error. Plural `subcommands` is rewritten before singular `subcommand`
+/// because `"similar subcommand"` is a prefix of `"similar subcommands"`.
+///
+/// Returns `AlreadyDisplayed { exit_code: 2 }` rather than calling
+/// `process::exit`, so `main`'s `finish_command` still runs `terminate_output`
+/// (ANSI reset for shell integration) and `diagnostic::write_if_verbose`.
+fn unknown_alias_error(
     repo: &Repository,
     user_config: &UserConfig,
     project_config: Option<&ProjectConfig>,
     name: &str,
     sub: &str,
-) -> ! {
+) -> anyhow::Error {
     let project_id = repo.project_identifier().ok();
     let mut merged = user_config.aliases(project_id.as_deref());
     if let Some(pc) = project_config {
@@ -226,12 +240,13 @@ fn unknown_alias_exit(
         .render()
         .ansi()
         .to_string()
-        .replace("subcommands", "aliases")
-        .replace("subcommand", "alias");
+        .replace("unrecognized subcommand", "unrecognized alias")
+        .replace("similar subcommands", "similar aliases")
+        .replace("similar subcommand", "similar alias");
 
     let mut stream = anstream::AutoStream::auto(std::io::stderr());
     let _ = write!(stream, "{rewritten}");
-    process::exit(2)
+    WorktrunkError::AlreadyDisplayed { exit_code: 2 }.into()
 }
 
 /// Format one alias entry: `○ Alias <name> (<source>)[ <verb>]:` header

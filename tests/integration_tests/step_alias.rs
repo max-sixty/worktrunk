@@ -1291,6 +1291,34 @@ hello = "echo hi"
     ));
 }
 
+/// Aliases or typos that literally contain `subcommand` must be echoed
+/// verbatim — the word-substitution pass that rewrites clap's
+/// "unrecognized subcommand" to "unrecognized alias" must only touch
+/// clap's fixed phrases, not the user's input.
+#[rstest]
+fn test_config_alias_show_unknown_preserves_user_input(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+"my-subcommand" = "echo hi"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    // Typo `my-subcommond` is close enough to `my-subcommand` to suggest it —
+    // both the echoed typo and the suggestion must keep `subcommand` intact.
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "config",
+        &["alias", "show", "my-subcommond"],
+        Some(&feature_path),
+    ));
+}
+
 /// Single-match case: tip phrasing switches to the singular form
 /// ("a similar alias exists") — mirrors clap's own singular rendering.
 #[rstest]
