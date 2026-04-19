@@ -18,10 +18,12 @@
 //! natural home alongside `show`.
 
 use std::collections::{BTreeSet, HashMap};
+use std::io::Write;
 use std::process;
 
 use anyhow::Context;
-use color_print::{ceprintln, cformat};
+use clap::error::{ContextKind, ContextValue, ErrorKind};
+use color_print::cformat;
 use worktrunk::config::{
     ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, append_aliases,
     referenced_vars_for_config, template_references_var, validate_template_syntax,
@@ -168,14 +170,17 @@ fn entries_for_name(
 /// Render an "unrecognized alias 'X'" error matching clap's `InvalidSubcommand`
 /// layout — same `error:` / `tip:` / `Usage:` block and exit code 2 as
 /// `wt <typo>` and `wt step <typo>` — then exit. `sub` is `"show"` or
-/// `"dry-run"`, used to render the Usage line from the real clap subcommand.
+/// `"dry-run"`, anchoring the error on the real clap subcommand so the Usage
+/// line reads `Usage: wt config alias <sub> <NAME>`.
 ///
-/// Rendered manually rather than through clap because `ErrorKind::InvalidSubcommand`
-/// bakes the word "subcommand" into its message. The alias name is a
-/// positional arg, not a subcommand, so "unrecognized alias" reads more
-/// honestly at this surface. Styling mirrors clap's default subcommand
-/// rendering (plain red `error:`, green `tip:`, bold+underline `Usage:`) so
-/// the four surfaces share one visual shape.
+/// Built as a real `clap::Error` with `ErrorKind::InvalidSubcommand`, rendered
+/// by clap, then string-substituted to say "alias" instead of "subcommand" —
+/// the positional is an alias name, not a subcommand, so the tighter wording
+/// reads more honestly at this surface. Going through clap's rendering gets
+/// NO_COLOR / TTY detection, singular-vs-plural "similar" phrasing, and
+/// styling correct automatically; modifying the final string is cheaper than
+/// reimplementing those. Plural `subcommands` is rewritten before singular
+/// `subcommand` so the substring match doesn't leave `aliass`.
 fn unknown_alias_exit(
     repo: &Repository,
     user_config: &UserConfig,
@@ -202,23 +207,30 @@ fn unknown_alias_exit(
     // synthesize the error ahead of that, set it to the display_name
     // `apply_help_template_recursive` would apply.
     sub_cmd.set_bin_name(format!("wt config alias {sub}"));
-    let usage = sub_cmd.render_usage().ansi().to_string();
+    let usage = sub_cmd.render_usage();
 
-    let tip_block = if suggestions.is_empty() {
-        String::new()
-    } else {
-        let joined: String = suggestions
-            .iter()
-            .map(|s| cformat!("'<green>{s}</>'"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        cformat!("\n  <green>tip:</> some similar aliases exist: {joined}\n")
-    };
-
-    ceprintln!(
-        "<bold,red>error:</> unrecognized alias '<yellow>{name}</>'\n{tip_block}\n{usage}\n\nFor more information, try '<bold>--help</>'.",
+    let mut err = clap::Error::new(ErrorKind::InvalidSubcommand).with_cmd(sub_cmd);
+    err.insert(
+        ContextKind::InvalidSubcommand,
+        ContextValue::String(name.to_string()),
     );
+    if !suggestions.is_empty() {
+        err.insert(
+            ContextKind::SuggestedSubcommand,
+            ContextValue::Strings(suggestions),
+        );
+    }
+    err.insert(ContextKind::Usage, ContextValue::StyledStr(usage));
 
+    let rewritten = err
+        .render()
+        .ansi()
+        .to_string()
+        .replace("subcommands", "aliases")
+        .replace("subcommand", "alias");
+
+    let mut stream = anstream::AutoStream::auto(std::io::stderr());
+    let _ = write!(stream, "{rewritten}");
     process::exit(2)
 }
 

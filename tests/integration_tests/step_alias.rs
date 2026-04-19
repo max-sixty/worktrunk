@@ -1291,6 +1291,30 @@ hello = "echo hi"
     ));
 }
 
+/// Single-match case: tip phrasing switches to the singular form
+/// ("a similar alias exists") — mirrors clap's own singular rendering.
+#[rstest]
+fn test_config_alias_show_unknown_singular_suggestion(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "make deploy"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "config",
+        &["alias", "show", "deplyo"],
+        Some(&feature_path),
+    ));
+}
+
 /// `wt config alias dry-run <typo>` produces the same clap-native typo error
 /// as `show` — consistent format across both introspection subcommands.
 #[rstest]
