@@ -12,11 +12,13 @@
 //!    the remaining args, inheriting stdio, and propagate the exit code.
 //!    Mirrors how `git foo` finds `git-foo`.
 //! 3. Otherwise, synthesize clap's native `InvalidSubcommand` error (with
-//!    aliases included in the "did you mean" candidates) and route it through
-//!    `enhance_and_exit_error` so the output matches what clap would have
-//!    produced without `external_subcommand` — same formatting, suggestions,
-//!    Usage line, and nested-subcommand tip (e.g. `wt squash` →
-//!    `perhaps wt step squash?`).
+//!    aliases included in the "did you mean" candidates) and return it via
+//!    `enhance_clap_error` so the output matches what clap would have produced
+//!    without `external_subcommand` — same formatting, suggestions, Usage
+//!    line, and nested-subcommand tip (e.g. `wt squash` →
+//!    `perhaps wt step squash?`). Returning (rather than exiting) lets
+//!    `finish_command` run its cleanup (diagnostic writes, ANSI reset for
+//!    shell integration).
 //!
 //! Built-in subcommands always take precedence — clap only dispatches
 //! `Commands::Custom` when no built-in matched, so there is no way for an
@@ -32,7 +34,7 @@ use worktrunk::git::WorktrunkError;
 
 use crate::cli::build_command;
 use crate::commands::{alias_names_for_suggestions, did_you_mean, try_alias};
-use crate::enhance_and_exit_error;
+use crate::enhance_clap_error;
 
 /// Handle a `Commands::Custom` invocation.
 ///
@@ -46,8 +48,8 @@ use crate::enhance_and_exit_error;
 /// On success (child exit code 0), returns `Ok(())`. On non-zero exit, returns
 /// `WorktrunkError::AlreadyDisplayed` with the child's exit code so `main`
 /// can propagate it without printing an extra error line. When the command
-/// isn't found on PATH, diverges via `enhance_and_exit_error` with clap's
-/// standard exit code 2.
+/// isn't found on PATH, returns `AlreadyDisplayed` via `enhance_clap_error`
+/// with clap's standard exit code 2.
 pub(crate) fn handle_custom_command(
     args: Vec<OsString>,
     working_dir: Option<PathBuf>,
@@ -86,7 +88,7 @@ pub(crate) fn handle_custom_command(
     }
 
     // Fall through to `wt-<name>` PATH binary. Nested-subcommand hints
-    // (`wt squash` → `wt step squash`) are applied by `enhance_and_exit_error`
+    // (`wt squash` → `wt step squash`) are applied by `enhance_clap_error`
     // when we fall through below, so a name that matches a nested subcommand
     // still gets its tip even though we look at PATH before erroring (nested
     // names aren't expected to collide with real `wt-*` binaries, and if they
@@ -97,10 +99,12 @@ pub(crate) fn handle_custom_command(
     }
 
     // Not an alias and not on PATH — emit clap's native `InvalidSubcommand`
-    // error. Routing through `enhance_and_exit_error` keeps the rendering
+    // error. Routing through `enhance_clap_error` keeps the rendering
     // consistent with every other clap error (same tip/Usage formatting) and
-    // layers the wt-specific nested-subcommand hint on top.
-    enhance_and_exit_error(unrecognized_subcommand_error(&name));
+    // layers the wt-specific nested-subcommand hint on top. Returning
+    // `AlreadyDisplayed` (rather than calling `process::exit`) lets
+    // `finish_command` run its cleanup before wt exits.
+    Err(enhance_clap_error(unrecognized_subcommand_error(&name)))
 }
 
 /// Build a `clap::Error` that mirrors what clap itself would have raised for

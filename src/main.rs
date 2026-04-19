@@ -8,7 +8,8 @@ use color_print::{ceprintln, cformat};
 use std::process;
 use worktrunk::config::{UserConfig, set_config_path};
 use worktrunk::git::{
-    Repository, ResolvedWorktree, current_or_recover, cwd_removed_hint, exit_code, set_base_path,
+    Repository, ResolvedWorktree, WorktrunkError, current_or_recover, cwd_removed_hint, exit_code,
+    set_base_path,
 };
 use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, hint_message, info_message, warning_message,
@@ -70,12 +71,12 @@ use cli::{
 };
 use worktrunk::HookType;
 
-/// Enhance clap errors with command-specific hints, then exit.
-///
-/// For unrecognized subcommands that match nested commands, suggests the full path.
-pub(crate) fn enhance_and_exit_error(err: clap::Error) -> ! {
-    // For unrecognized subcommands, check if they match a nested subcommand
-    // e.g., `wt squash` -> suggest `wt step squash`
+/// Render a clap error to stderr, appending a wt-specific nested-subcommand
+/// tip when the unknown name matches something under `wt step` / `wt hook`
+/// (e.g., `wt squash` → `wt step squash`). Shared between the diverging
+/// `enhance_and_exit_error` (pre-dispatch) and the non-diverging
+/// `enhance_clap_error` (post-dispatch).
+fn print_enhanced_clap_error(err: &clap::Error) {
     if err.kind() == ClapErrorKind::InvalidSubcommand
         && let Some(unknown) = err.get(clap::error::ContextKind::InvalidSubcommand)
     {
@@ -86,14 +87,31 @@ pub(crate) fn enhance_and_exit_error(err: clap::Error) -> ! {
   <yellow>tip:</>  perhaps <cyan,bold>{suggestion}</cyan,bold>?",
                 err.render().ansi()
             );
-            process::exit(2);
+            return;
         }
     }
+    let _ = err.print();
+}
 
-    // Note: `wt switch` without arguments now opens the interactive picker,
-    // so this error enhancement is no longer triggered for that case.
+/// Enhance clap errors with command-specific hints, then exit.
+///
+/// Used by the pre-dispatch parse path, where no `finish_command` cleanup has
+/// been set up yet — `process::exit` directly is fine. Post-dispatch callers
+/// (e.g. alias typos from `wt step <typo>` / `wt <typo>`) use
+/// [`enhance_clap_error`] so they flow back through `handle_command_failure`
+/// and run the diagnostic/output-reset cleanup.
+pub(crate) fn enhance_and_exit_error(err: clap::Error) -> ! {
+    print_enhanced_clap_error(&err);
+    process::exit(err.exit_code());
+}
 
-    err.exit()
+/// Print an enhanced clap error and return `AlreadyDisplayed` so the caller
+/// can propagate it through normal error handling, letting `finish_command`
+/// run (diagnostic writes, ANSI reset for shell integration).
+pub(crate) fn enhance_clap_error(err: clap::Error) -> anyhow::Error {
+    let exit_code = err.exit_code();
+    print_enhanced_clap_error(&err);
+    WorktrunkError::AlreadyDisplayed { exit_code }.into()
 }
 
 #[cfg(not(unix))]

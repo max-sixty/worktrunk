@@ -267,12 +267,12 @@ fn alias_needs_approval(
 }
 
 /// Synthesize clap's native `InvalidSubcommand` error for `wt step <name>`
-/// and exit through `enhance_and_exit_error`, so the output matches what
+/// and return it via `enhance_clap_error`, so the output matches what
 /// `wt <typo>` produces at the top level. Suggestion candidates include both
 /// the visible built-in `wt step` subcommands and the user's configured
 /// aliases — `SuggestedSubcommand` takes arbitrary strings, so aliases show
 /// up in the `tip:` line for typos like `wt step deplyo` → `'deploy'`.
-fn unknown_step_command_exit(name: &str, alias_names: &[&str]) -> ! {
+fn unknown_step_command_error(name: &str, alias_names: &[&str]) -> anyhow::Error {
     let mut top = crate::cli::build_command();
     let step_cmd = top
         .find_subcommand_mut("step")
@@ -305,7 +305,7 @@ fn unknown_step_command_exit(name: &str, alias_names: &[&str]) -> ! {
         );
     }
     err.insert(ContextKind::Usage, ContextValue::StyledStr(usage));
-    crate::enhance_and_exit_error(err)
+    crate::enhance_clap_error(err)
 }
 
 /// Format the "Running alias …" announcement.
@@ -430,7 +430,7 @@ pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
             .filter(|k| !BUILTIN_STEP_COMMANDS.contains(&k.as_str()))
             .map(|k| k.as_str())
             .collect();
-        unknown_step_command_exit(&name, &alias_names);
+        return Err(unknown_step_command_error(&name, &alias_names));
     };
     let referenced = referenced_vars_for_config(cmd_config)?;
     if !referenced.contains("help") && help_flag_requested(&args[1..]) {
