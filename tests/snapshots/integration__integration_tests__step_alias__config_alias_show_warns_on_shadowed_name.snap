@@ -48,4 +48,4 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34mecho[0m[2m custom list
 
 ----- stderr -----
-[33m▲[39m [33malias `list` is shadowed by the built-in `wt list` — invoke via `wt step list` instead[39m
+[33m▲[39m [33mAlias [1mlist[22m is shadowed by built-in [1mwt list[22m — invoke via [1mwt step list[22m[39m

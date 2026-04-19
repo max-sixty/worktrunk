@@ -75,8 +75,8 @@ fn warn_if_shadowed(name: &str) {
     if TOP_LEVEL_BUILTINS.contains(&name) {
         worktrunk::styling::eprintln!(
             "{}",
-            worktrunk::styling::warning_message(format!(
-                "alias `{name}` is shadowed by the built-in `wt {name}` — invoke via `wt step {name}` instead"
+            worktrunk::styling::warning_message(cformat!(
+                "Alias <bold>{name}</> is shadowed by built-in <bold>wt {name}</> — invoke via <bold>wt step {name}</>"
             ))
         );
     }

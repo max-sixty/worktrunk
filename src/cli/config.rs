@@ -330,7 +330,7 @@ $ wt config alias show deploy
 
     /// Preview an alias invocation with template expansion
     #[command(
-        after_long_help = r#"Runs the same parser used at invocation time, applies template expansion (including `{{ args }}` and any `--var`/`--KEY=VALUE` assignments), and prints the resulting command without executing it. Templates referencing `vars.*` are shown unexpanded — those values resolve from git config at execution time, after earlier steps have had a chance to set them.
+        after_long_help = r#"Runs the same parser used at invocation time, applies template expansion (including `{{ args }}` and any `--KEY=VALUE` assignments), and prints the resulting command without executing it. Templates referencing `vars.*` are shown unexpanded — those values resolve from git config at execution time, after earlier steps have had a chance to set them.
 
 Arguments after `--` are forwarded verbatim as if typed after `wt <name>`.
 
