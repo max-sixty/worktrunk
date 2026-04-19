@@ -174,7 +174,7 @@ fn format_routing_summary(opts: &AliasOptions) -> Option<String> {
         let bound = opts
             .vars
             .iter()
-            .map(|(k, v)| format!("{k}={v}"))
+            .map(|(k, v)| format!("{k}={}", shell_escape::unix::escape(v.into())))
             .collect::<Vec<_>>()
             .join(", ");
         lines.push_str(&format!("# bound: {bound}\n"));
