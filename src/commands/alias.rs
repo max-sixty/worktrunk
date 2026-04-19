@@ -40,7 +40,7 @@ use worktrunk::config::{
     referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
-use worktrunk::styling::{eprintln, progress_message, warning_message};
+use worktrunk::styling::{eprintln, println, progress_message, warning_message};
 
 use crate::commands::command_approval::approve_alias_commands;
 use crate::commands::command_executor::{
@@ -97,10 +97,12 @@ fn help_flag_requested(args: &[String]) -> bool {
 /// inspection path and documents the `--` escape for forwarding `--help` into
 /// the alias body.
 fn emit_alias_help_hint(name: &str) {
-    println!("`{name}` is an alias. Inspect with:");
-    println!("  wt config alias show {name}");
-    println!("  wt config alias dry-run {name}");
-    println!("Forward `--help` to the alias body with `wt {name} -- --help`.");
+    println!(
+        "`{name}` is an alias. Inspect with:
+  wt config alias show {name}
+  wt config alias dry-run {name}
+Forward `--help` to the alias body with `wt {name} -- --help`."
+    );
 }
 
 /// Options parsed from alias-dispatch args (`wt step <alias>` or `wt <alias>`).

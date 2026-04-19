@@ -38,6 +38,8 @@ const STDOUT_ALLOWED_PATHS: &[&str] = &[
     "config/hints.rs",
     // Alias introspection output (show / dry-run), intended to be pipeable
     "config/alias.rs",
+    // Alias --help hint output (conventional `--help` destination)
+    "alias.rs",
     // Template evaluation output for scripting
     "eval.rs",
     // LLM prompt output for wt step commit --show-prompt
