@@ -40,7 +40,7 @@ use worktrunk::config::{
     referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
-use worktrunk::styling::{eprintln, progress_message};
+use worktrunk::styling::{eprintln, progress_message, warning_message};
 
 use crate::commands::command_approval::approve_alias_commands;
 use crate::commands::command_executor::{
@@ -72,7 +72,7 @@ const BUILTIN_STEP_COMMANDS: &[&str] = &[
 /// alias dispatch sees the name, so `wt list` always runs the built-in even
 /// if `[aliases] list = …` is configured. Kept in sync with `Cli` via
 /// `test_top_level_builtins_match_clap`.
-const TOP_LEVEL_BUILTINS: &[&str] = &[
+pub(crate) const TOP_LEVEL_BUILTINS: &[&str] = &[
     "config", "hook", "list", "merge", "remove", "select", "step", "switch",
 ];
 
@@ -130,13 +130,20 @@ impl AliasOptions {
     /// `referenced_vars` is expected to contain the canonical underscore
     /// form. `referenced_vars_for_config` produces it directly from the
     /// alias's template.
-    pub fn parse(args: Vec<String>, referenced_vars: &BTreeSet<String>) -> anyhow::Result<Self> {
+    ///
+    /// Returns `(options, warnings)`. Warnings are advisory — callers emit
+    /// them; the parser stays pure so tests can inspect both halves.
+    pub fn parse(
+        args: Vec<String>,
+        referenced_vars: &BTreeSet<String>,
+    ) -> anyhow::Result<(Self, Vec<String>)> {
         let Some(name) = args.first().cloned() else {
             bail!("Missing alias name");
         };
 
         let mut vars = Vec::new();
         let mut positional_args = Vec::new();
+        let mut warnings = Vec::new();
         let mut literal_mode = false;
         let mut i = 1;
         while i < args.len() {
@@ -177,6 +184,14 @@ impl AliasOptions {
                 let canon = rest.replace('-', "_");
                 if let Some(next) = args.get(i + 1) {
                     if referenced_vars.contains(&canon) {
+                        // Warn on the footgun case: `--KEY --VALUE` with KEY
+                        // referenced binds VALUE as the value. Almost always
+                        // a typo — the user probably meant `--KEY=--VALUE`.
+                        if next.starts_with("--") {
+                            warnings.push(format!(
+                                "`--{rest} {next}` bound `{canon}` to `{next}` — use `--{rest}={next}` if that was intended"
+                            ));
+                        }
                         vars.push((canon, next.clone()));
                     } else {
                         positional_args.push(arg.clone());
@@ -193,11 +208,14 @@ impl AliasOptions {
             i += 1;
         }
 
-        Ok(Self {
-            name,
-            vars,
-            positional_args,
-        })
+        Ok((
+            Self {
+                name,
+                vars,
+                positional_args,
+            },
+            warnings,
+        ))
     }
 }
 
@@ -324,8 +342,17 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
     let mut alias_args = Vec::with_capacity(1 + rest.len());
     alias_args.push(name);
     alias_args.extend(rest);
-    let opts = AliasOptions::parse(alias_args, &referenced)?;
-    run_alias(opts, repo, user_config, project_config, aliases, global_yes).map(Some)
+    let (opts, warnings) = AliasOptions::parse(alias_args, &referenced)?;
+    run_alias(
+        opts,
+        warnings,
+        repo,
+        user_config,
+        project_config,
+        aliases,
+        global_yes,
+    )
+    .map(Some)
 }
 
 /// Run a configured alias from `wt step <name>`. Errors with a clap-style
@@ -361,8 +388,16 @@ pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
         unknown_step_command_exit(&name, &alias_names);
     };
     let referenced = referenced_vars_for_config(cmd_config)?;
-    let opts = AliasOptions::parse(args, &referenced)?;
-    run_alias(opts, repo, user_config, project_config, aliases, global_yes)
+    let (opts, warnings) = AliasOptions::parse(args, &referenced)?;
+    run_alias(
+        opts,
+        warnings,
+        repo,
+        user_config,
+        project_config,
+        aliases,
+        global_yes,
+    )
 }
 
 /// Return alias names for use as suggestions when a top-level subcommand is
@@ -393,6 +428,7 @@ pub fn alias_names_for_suggestions() -> Vec<String> {
 /// recognized. Use `wt -y deploy` or `wt --yes deploy` instead.
 fn run_alias(
     opts: AliasOptions,
+    warnings: Vec<String>,
     repo: Repository,
     user_config: UserConfig,
     project_config: Option<ProjectConfig>,
@@ -402,6 +438,12 @@ fn run_alias(
     let cmd_config = aliases
         .get(&opts.name)
         .expect("caller verified alias is configured");
+
+    // Surface parser advisories (e.g. `--KEY --VALUE` footgun) before
+    // announcing the run so they're visible in execution output.
+    for warning in &warnings {
+        eprintln!("{}", warning_message(warning));
+    }
 
     // Check if this alias needs project-config approval. project_id is required
     // for approval — re-derive with error propagation rather than relying on
@@ -729,7 +771,17 @@ mod tests {
 
     /// Parse with an explicit `referenced_vars` set. Tests build the set
     /// directly to exercise routing without needing a full template fixture.
+    /// Drops warnings — see `parse_with_warnings` to inspect them.
     fn parse_with(args: &[&str], referenced: &[&str]) -> anyhow::Result<AliasOptions> {
+        parse_with_warnings(args, referenced).map(|(opts, _)| opts)
+    }
+
+    /// Like `parse_with` but also returns the warning vector, for tests that
+    /// assert on advisory output.
+    fn parse_with_warnings(
+        args: &[&str],
+        referenced: &[&str],
+    ) -> anyhow::Result<(AliasOptions, Vec<String>)> {
         let refs: BTreeSet<String> = referenced.iter().map(|s| s.to_string()).collect();
         AliasOptions::parse(args.iter().map(|s| s.to_string()).collect(), &refs)
     }
@@ -951,6 +1003,70 @@ cmd = [
             positional_args: [
                 "--env",
             ],
+        }
+        "#);
+    }
+
+    #[test]
+    fn test_parse_warns_on_footgun_space_form() {
+        // `--KEY VALUE` binds VALUE even when it's flag-shaped. The parser
+        // emits an advisory pointing at `--KEY=VALUE` so the user can
+        // disambiguate if the bind was unintended.
+        let (_, warnings) = parse_with_warnings(&["deploy", "--env", "--other"], &["env"]).unwrap();
+        insta::assert_debug_snapshot!(warnings, @r#"
+        [
+            "`--env --other` bound `env` to `--other` — use `--env=--other` if that was intended",
+        ]
+        "#);
+
+        // Unreferenced pair: both tokens forward as positionals — not a
+        // binding, so no warning.
+        let (_, warnings) = parse_with_warnings(&["deploy", "--env", "--other"], &[]).unwrap();
+        assert!(warnings.is_empty());
+
+        // Ordinary bind: warning stays silent.
+        let (_, warnings) = parse_with_warnings(&["deploy", "--env", "prod"], &["env"]).unwrap();
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_parse_duplicate_key_last_write_wins() {
+        use insta::assert_debug_snapshot;
+        // Duplicate `--KEY=` bindings are kept in order in the Vec;
+        // `build_hook_context` inserts them into a HashMap so the last one
+        // wins at expansion time. Parser preserves order so that behavior is
+        // testable and deterministic.
+        assert_debug_snapshot!(parse_with(&["deploy", "--env=a", "--env=b"], &["env"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            vars: [
+                (
+                    "env",
+                    "a",
+                ),
+                (
+                    "env",
+                    "b",
+                ),
+            ],
+            positional_args: [],
+        }
+        "#);
+        // Mixed space/equals forms follow the same rule.
+        assert_debug_snapshot!(parse_with(&["deploy", "--env", "a", "--env=b"], &["env"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            vars: [
+                (
+                    "env",
+                    "a",
+                ),
+                (
+                    "env",
+                    "b",
+                ),
+            ],
+            positional_args: [],
         }
         "#);
     }

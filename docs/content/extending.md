@@ -108,71 +108,52 @@ See [Tips & Patterns](@/tips-patterns.md) for more recipes: dev server per workt
 
 ## Aliases
 
-Aliases are custom commands invoked as `wt <name>`. They share the same template variables and approval model as hooks.
+`[aliases]` defines commands invoked as `wt <name>`. Templates and approvals behave like hooks.
 
 ```toml
 [aliases]
-deploy = "make deploy BRANCH={{ branch }} ENV={{ env }}"
+deploy = "fly deploy --config=fly.{{ env }}.toml --app=myapp-{{ branch }}"
 open = "open http://localhost:{{ branch | hash_port }}"
+since-main = "git log --oneline {{ default_branch }}..HEAD"
 ```
 
-{{ terminal(cmd="wt deploy|||wt deploy --env=staging") }}
+{{ terminal(cmd="wt deploy --env=staging|||wt open") }}
 
-`wt deploy` resolves `deploy` against configured aliases first, then falls through to a `wt-deploy` PATH binary if no alias matches. Built-in subcommands always take precedence — an alias named `list` or `switch` is unreachable.
+`wt <name>` resolves to a built-in first, then an alias, then a [custom subcommand](#custom-subcommands).
 
-### How arguments are routed
+### Passing values
 
-Tokens after the alias name are parsed left-to-right. The template itself declares which variables are in play via `{{ name }}` references — the parser uses those references as the binding signal, so no separate "here's a var" declaration is needed.
+`--KEY=VALUE` (or `--KEY VALUE`) binds `KEY` whenever `{{ KEY }}` appears in the template — `wt deploy --env=staging` sets `{{ env }}` to `staging`. Everything else joins `{{ args }}` (see [Forwarding](#forwarding-positional-arguments)).
 
-| Token shape | Routes to |
-|---|---|
-| `--KEY=VALUE` or `--KEY VALUE` where `{{ KEY }}` is referenced | Bound — `KEY` becomes the template value |
-| Anything else | Forwarded to `{{ args }}` (after `--`, even flag-shaped tokens forward) |
+Built-in variables can be overridden: `--branch=foo` sets `{{ branch }}` inside the template — the worktree's actual branch doesn't move.
 
-`--KEY VALUE` consumes the next token unconditionally, so `--env --other` with `{{ env }}` referenced binds `env=--other`. Use `--KEY=VALUE` to be unambiguous.
-
-Built-in template variables (`branch`, `worktree_path`, `commit`, …) can be overridden — `--branch=override` for an alias referencing `{{ branch }}` binds to the user's value, but only inside the template; the worktree's actual branch is unchanged.
-
-Hyphens in variable names are canonicalized to underscores at parse time. `--my-var=value` binds to `{{ my_var }}`.
-
-### Inspecting and previewing
-
-Two subcommands introspect aliases without running them:
-
-- `wt config alias show <name>` prints the configured template text, tagged by source (`user`/`project`).
-- `wt config alias dry-run <name> [-- args...]` parses the invocation with the same parser `wt <name>` uses, then prints the rendered command without executing.
-
-{{ terminal(cmd="wt config alias show deploy|||wt config alias dry-run deploy|||wt config alias dry-run deploy -- --env=staging") }}
+Hyphens in keys become underscores: `--my-var=x` sets `{{ my_var }}`.
 
 ### Forwarding positional arguments
 
-Non-bound tokens forward to the template as `{{ args }}`. Bare `{{ args }}` renders as a space-joined, shell-escaped string ready to append to a command line — so `wt s some-branch` with `s = "wt switch {{ args }}"` expands to `wt switch some-branch`.
+`{{ args }}` renders as a space-joined, shell-escaped string — ready to splice into a command:
 
 ```toml
 [aliases]
 s = "wt switch {{ args }}"
 ```
 
-{{ terminal(cmd="wt s some-branch|||wt s feature/api  # multiple tokens pass through in order|||wt s 'has a space'  # spaces and metacharacters are escaped safely") }}
+{{ terminal(cmd="wt s some-branch|||wt s feature/api|||wt s 'has a space'") }}
 
-Access elements with `{{ args[0] }}`, iterate with `{% for a in args %}…{% endfor %}`, or count with `{{ args | length }}`. Each element is individually shell-escaped, so `wt run 'a b' 'c;d'` splices in as `'a b' 'c;d'` without shell injection.
+Index with `{{ args[0] }}`, loop with `{% for a in args %}…{% endfor %}`, count with `{{ args | length }}`. Each element is escaped individually, so `wt run 'a b' 'c;d'` renders as `'a b' 'c;d'` — no shell injection.
 
-An `up` alias that fetches all remotes and rebases each worktree onto its upstream:
+Tokens after `--` forward unconditionally, bypassing any binding. `wt deploy -- --branch=foo` forwards `--branch=foo` to `{{ args }}` even though the template references `{{ branch }}`.
 
-```toml
-[aliases]
-up = '''
-git fetch --all --prune && wt step for-each -- '
-  git rev-parse --verify @{u} >/dev/null 2>&1 || exit 0
-  g=$(git rev-parse --git-dir)
-  test -d "$g/rebase-merge" -o -d "$g/rebase-apply" && exit 0
-  git rebase @{u} --no-autostash || git rebase --abort
-''''
-```
+### Inspecting and previewing
+
+- `wt config alias show <name>` prints the template.
+- `wt config alias dry-run <name> [-- args...]` prints the rendered command.
+
+{{ terminal(cmd="wt config alias show deploy|||wt config alias dry-run deploy|||wt config alias dry-run deploy -- --env=staging") }}
 
 ### Multi-step pipelines
 
-Multi-step aliases run commands in order using `[[aliases.NAME]]` blocks. Each block is one step; multiple keys within a block run concurrently.
+`[[aliases.NAME]]` defines a pipeline. Each block runs serially; keys within a block run concurrently.
 
 ```toml
 [[aliases.release]]
@@ -192,7 +173,22 @@ publish = "cargo publish"
 
 When both user and project config define the same alias name, both run — user first, then project. Project-config aliases require approval on first run, same as project hooks. User-config aliases are trusted.
 
-Inside an alias body, an inner `wt switch` (or `wt switch --create`) passes its `cd` through to the parent shell, so an alias wrapping `wt switch --create` lands the shell in the new worktree just like running it directly.
+An alias that calls `wt switch` (or `wt switch --create`) changes the parent shell's directory, just like running `wt switch` directly.
+
+### Recipe: rebase every worktree onto its upstream
+
+```toml
+[aliases]
+up = '''
+git fetch --all --prune && wt step for-each -- '
+  git rev-parse --verify @{u} >/dev/null 2>&1 || exit 0
+  g=$(git rev-parse --git-dir)
+  test -d "$g/rebase-merge" -o -d "$g/rebase-apply" && exit 0
+  git rebase @{u} --no-autostash || git rebase --abort
+''''
+```
+
+`wt up` fetches all remotes, then iterates every worktree: skip if no upstream, skip if mid-rebase, otherwise rebase and auto-abort on conflict.
 
 ### Recipe: move or copy in-progress changes to a new worktree
 

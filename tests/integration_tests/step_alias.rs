@@ -1395,6 +1395,32 @@ deploy = "echo hi"
     ));
 }
 
+/// `wt config alias show <name>` on an alias whose name is also a top-level
+/// built-in subcommand warns that the alias is unreachable via `wt <name>`.
+/// The alias is still configured, so the show output itself is shown — the
+/// warning is an advisory on stderr.
+#[rstest]
+fn test_config_alias_show_warns_on_shadowed_name(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+list = "echo custom list"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "config",
+        &["alias", "show", "list"],
+        Some(&feature_path),
+    ));
+}
+
 /// `wt step` with no subcommand lists built-in steps plus configured aliases.
 ///
 /// Skipped on Windows: clap renders `[experimental]` subcommand tags

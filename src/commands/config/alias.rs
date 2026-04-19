@@ -28,7 +28,7 @@ use worktrunk::config::{
 use worktrunk::git::Repository;
 use worktrunk::styling::{format_bash_with_gutter, info_message, println};
 
-use crate::commands::alias::{AliasOptions, AliasSource};
+use crate::commands::alias::{AliasOptions, AliasSource, TOP_LEVEL_BUILTINS};
 use crate::commands::command_executor::{
     CommandContext, build_hook_context, expand_shell_template,
 };
@@ -53,6 +53,8 @@ pub fn handle_alias_show(name: String) -> anyhow::Result<()> {
         ));
     }
 
+    warn_if_shadowed(&name);
+
     for (i, (cfg, source)) in entries.iter().enumerate() {
         if i > 0 {
             println!();
@@ -61,6 +63,23 @@ pub fn handle_alias_show(name: String) -> anyhow::Result<()> {
         println!("{}", format_entry(&name, cfg, *source, &bodies, None));
     }
     Ok(())
+}
+
+/// Emit a warning if `name` is a top-level built-in subcommand. Aliases with
+/// these names are unreachable via `wt <name>` — clap matches the built-in
+/// first — but still callable via `wt step <name>` when the name isn't also
+/// a step built-in. Reported in `show`/`dry-run` so the user finds out at the
+/// discovery surface rather than silently during an invocation that never
+/// reaches the alias.
+fn warn_if_shadowed(name: &str) {
+    if TOP_LEVEL_BUILTINS.contains(&name) {
+        worktrunk::styling::eprintln!(
+            "{}",
+            worktrunk::styling::warning_message(format!(
+                "alias `{name}` is shadowed by the built-in `wt {name}` — invoke via `wt step {name}` instead"
+            ))
+        );
+    }
 }
 
 /// Preview an alias invocation: parse the args, build the template context,
@@ -96,7 +115,11 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
     let mut parse_args = Vec::with_capacity(1 + args.len());
     parse_args.push(name.clone());
     parse_args.extend(args);
-    let opts = AliasOptions::parse(parse_args, &referenced)?;
+    let (opts, warnings) = AliasOptions::parse(parse_args, &referenced)?;
+    warn_if_shadowed(&name);
+    for warning in &warnings {
+        worktrunk::styling::eprintln!("{}", worktrunk::styling::warning_message(warning));
+    }
 
     let wt = repo.current_worktree();
     let wt_path = wt.root().context("Failed to get worktree root")?;
@@ -114,6 +137,8 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
             .expect("Vec<String> serialization should never fail"),
     );
 
+    let routing = format_routing_summary(&opts);
+
     for (i, (cfg, source)) in entries.iter().enumerate() {
         if i > 0 {
             println!();
@@ -124,10 +149,46 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
             .collect::<anyhow::Result<_>>()?;
         println!(
             "{}",
-            format_entry(&name, cfg, *source, &bodies, Some("would run"))
+            format_entry_with_routing(
+                &name,
+                cfg,
+                *source,
+                &bodies,
+                Some("would run"),
+                routing.as_deref()
+            )
         );
     }
     Ok(())
+}
+
+/// Summarize how each CLI token routed, as `# ` comment lines suitable for the
+/// top of a dry-run body. Returns `None` when nothing would have been bound or
+/// forwarded — the common no-args case stays clean.
+fn format_routing_summary(opts: &AliasOptions) -> Option<String> {
+    if opts.vars.is_empty() && opts.positional_args.is_empty() {
+        return None;
+    }
+    let mut lines = String::new();
+    if !opts.vars.is_empty() {
+        let bound = opts
+            .vars
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push_str(&format!("# bound: {bound}\n"));
+    }
+    if !opts.positional_args.is_empty() {
+        let args = opts
+            .positional_args
+            .iter()
+            .map(|a| shell_escape::unix::escape(a.into()).into_owned())
+            .collect::<Vec<_>>()
+            .join(" ");
+        lines.push_str(&format!("# args: {args}\n"));
+    }
+    Some(lines)
 }
 
 /// Render a single command template for preview. Mirrors execution-time lazy
@@ -209,14 +270,30 @@ fn format_entry(
     bodies: &[String],
     verb: Option<&str>,
 ) -> String {
+    format_entry_with_routing(name, cfg, source, bodies, verb, None)
+}
+
+/// As `format_entry`, with optional routing comment lines prepended to the
+/// body. Used by `dry-run` to surface `--KEY` bindings and forwarded args.
+fn format_entry_with_routing(
+    name: &str,
+    cfg: &CommandConfig,
+    source: AliasSource,
+    bodies: &[String],
+    verb: Option<&str>,
+    routing: Option<&str>,
+) -> String {
     let label = source.label();
     let suffix = match verb {
         Some(v) => format!(" {v}:"),
         None => ":".to_string(),
     };
     let mut body = String::new();
+    if let Some(routing) = routing {
+        body.push_str(routing);
+    }
     for (cmd, rendered) in cfg.commands().zip(bodies) {
-        if !body.is_empty() {
+        if !body.is_empty() && !body.ends_with('\n') {
             body.push('\n');
         }
         if let Some(step_name) = &cmd.name {
