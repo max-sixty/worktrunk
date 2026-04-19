@@ -3,10 +3,9 @@ source: tests/integration_tests/step_alias.rs
 info:
   program: wt
   args:
-    - config
-    - alias
-    - show
-    - list
+    - deploy
+    - "--"
+    - "--help"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -41,11 +40,13 @@ info:
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
-[2m○[22m Alias [1mlist[22m (project):
-[107m [0m [2m[0m[2m[34mecho[0m[2m custom list
 
 ----- stderr -----
-[33m▲[39m [33mAlias [1mlist[22m is shadowed by built-in [1mwt list[22m[39m
+[33m▲[39m [33m[1morigin[22m needs approval to execute [1m1[22m command:[39m
+[2m○[22m alias [1mdeploy[22m:
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m{{[0m[2m args [0m[2m[32m}}[0m[2m
+[31m✗[39m [31mCannot prompt for approval in non-interactive environment[39m
+[2m↳[22m [2mTo skip prompts in CI/CD, add [4m--yes[24m; to pre-approve commands, run [4mwt config approvals add[24m[22m

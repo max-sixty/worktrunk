@@ -76,6 +76,33 @@ pub(crate) const TOP_LEVEL_BUILTINS: &[&str] = &[
     "config", "hook", "list", "merge", "remove", "select", "step", "switch",
 ];
 
+/// Whether `--help` or `-h` appears in `args` before any `--` literal-forward
+/// terminator. Aliases have no clap-style help page — the template *is* the
+/// help — so dispatchers intercept help requests and redirect the user to
+/// `wt config alias show / dry-run`. After `--`, all tokens forward to
+/// `{{ args }}` verbatim, so `wt <alias> -- --help` bypasses the intercept.
+fn help_flag_requested(args: &[String]) -> bool {
+    for arg in args {
+        if arg == "--" {
+            return false;
+        }
+        if arg == "--help" || arg == "-h" {
+            return true;
+        }
+    }
+    false
+}
+
+/// Print guidance when `wt <alias> --help` is invoked. Points at the canonical
+/// inspection path and documents the `--` escape for forwarding `--help` into
+/// the alias body.
+fn emit_alias_help_hint(name: &str) {
+    println!("`{name}` is an alias. Inspect with:");
+    println!("  wt config alias show {name}");
+    println!("  wt config alias dry-run {name}");
+    println!("Forward `--help` to the alias body with `wt {name} -- --help`.");
+}
+
 /// Options parsed from alias-dispatch args (`wt step <alias>` or `wt <alias>`).
 #[derive(Debug)]
 pub struct AliasOptions {
@@ -187,9 +214,12 @@ impl AliasOptions {
                         // Warn on the footgun case: `--KEY --VALUE` with KEY
                         // referenced binds VALUE as the value. Almost always
                         // a typo — the user probably meant `--KEY=--VALUE`.
+                        // Show the user's typed form (hyphenated) throughout;
+                        // the template binding (underscored) is internal.
+                        // Mirrors the `--var` TODO in hook_commands.rs.
                         if next.starts_with("--") {
                             warnings.push(format!(
-                                "`--{rest} {next}` bound `{canon}` to `{next}` — use `--{rest}={next}` if that was intended"
+                                "`--{rest} {next}` bound `{rest}` to `{next}` — use `--{rest}={next}` if that was intended"
                             ));
                         }
                         vars.push((canon, next.clone()));
@@ -339,6 +369,14 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
         return Ok(None);
     };
     let referenced = referenced_vars_for_config(cmd_config)?;
+    // Aliases can bind a `help` variable; only intercept `--help` when the
+    // template doesn't reference it. `-h` is never a binding, so it's always
+    // safe to intercept. Conservatively: intercept if any help flag appears
+    // and no binding is claimed on `help`.
+    if !referenced.contains("help") && help_flag_requested(&rest) {
+        emit_alias_help_hint(&name);
+        return Ok(Some(()));
+    }
     let mut alias_args = Vec::with_capacity(1 + rest.len());
     alias_args.push(name);
     alias_args.extend(rest);
@@ -365,6 +403,11 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
 ///
 /// `global_yes` is the top-level `--yes`/`-y` flag, passed through to
 /// `run_alias`.
+///
+/// TODO: consider deprecating `wt step <alias>` in favor of top-level
+/// `wt <alias>` (and `wt config alias show/dry-run` for inspection). The step
+/// path exists today as the escape for shadowed names, but that could instead
+/// be handled with a dedicated error hint.
 pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let user_config = UserConfig::load()?;
@@ -388,6 +431,10 @@ pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
         unknown_step_command_exit(&name, &alias_names);
     };
     let referenced = referenced_vars_for_config(cmd_config)?;
+    if !referenced.contains("help") && help_flag_requested(&args[1..]) {
+        emit_alias_help_hint(&name);
+        return Ok(());
+    }
     let (opts, warnings) = AliasOptions::parse(args, &referenced)?;
     run_alias(
         opts,
@@ -915,6 +962,20 @@ cmd = [
             positional_args: [],
         }
         "#);
+        // Pathological: multiple `=` in value. `split_once('=')` only splits on
+        // the first, so everything past the first `=` is the value.
+        assert_debug_snapshot!(parse_with(&["deploy", "--foo=a=b=c"], &["foo"]).unwrap(), @r#"
+        AliasOptions {
+            name: "deploy",
+            vars: [
+                (
+                    "foo",
+                    "a=b=c",
+                ),
+            ],
+            positional_args: [],
+        }
+        "#);
         // Empty value accepted on bind.
         assert_debug_snapshot!(parse_with(&["deploy", "--env="], &["env"]).unwrap(), @r#"
         AliasOptions {
@@ -1027,6 +1088,16 @@ cmd = [
         // Ordinary bind: warning stays silent.
         let (_, warnings) = parse_with_warnings(&["deploy", "--env", "prod"], &["env"]).unwrap();
         assert!(warnings.is_empty());
+
+        // Hyphenated key: warning shows the user's typed form throughout
+        // (`my-env`), not the canonicalized template name (`my_env`).
+        let (_, warnings) =
+            parse_with_warnings(&["deploy", "--my-env", "--other"], &["my_env"]).unwrap();
+        insta::assert_debug_snapshot!(warnings, @r#"
+        [
+            "`--my-env --other` bound `my-env` to `--other` — use `--my-env=--other` if that was intended",
+        ]
+        "#);
     }
 
     #[test]

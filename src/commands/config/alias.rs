@@ -67,16 +67,15 @@ pub fn handle_alias_show(name: String) -> anyhow::Result<()> {
 
 /// Emit a warning if `name` is a top-level built-in subcommand. Aliases with
 /// these names are unreachable via `wt <name>` — clap matches the built-in
-/// first — but still callable via `wt step <name>` when the name isn't also
-/// a step built-in. Reported in `show`/`dry-run` so the user finds out at the
-/// discovery surface rather than silently during an invocation that never
-/// reaches the alias.
+/// first. Reported in `show`/`dry-run` so the user finds out at the discovery
+/// surface rather than silently during an invocation that never reaches the
+/// alias.
 fn warn_if_shadowed(name: &str) {
     if TOP_LEVEL_BUILTINS.contains(&name) {
         worktrunk::styling::eprintln!(
             "{}",
             worktrunk::styling::warning_message(cformat!(
-                "Alias <bold>{name}</> is shadowed by built-in <bold>wt {name}</> — invoke via <bold>wt step {name}</>"
+                "Alias <bold>{name}</> is shadowed by built-in <bold>wt {name}</>"
             ))
         );
     }

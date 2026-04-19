@@ -1242,6 +1242,79 @@ deploy = "echo hi"
     ));
 }
 
+/// Retired `--dry-run` bail also fires through `wt step <alias>` — the parser
+/// is shared, but this pins the `step_alias` dispatch route specifically.
+#[rstest]
+fn test_retired_dry_run_flag_via_step(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "echo hi"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["deploy", "--dry-run"],
+        Some(&feature_path),
+    ));
+}
+
+/// `wt <alias> --help` prints guidance rather than forwarding `--help` into
+/// `{{ args }}`. Aliases have no clap-style help page; the canonical
+/// inspection path is `wt config alias show / dry-run`.
+#[rstest]
+fn test_alias_help_flag_prints_hint(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "echo hi {{ args }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "deploy",
+        &["--help"],
+        Some(&feature_path),
+    ));
+}
+
+/// `wt <alias> -- --help` bypasses the intercept and forwards `--help` into
+/// the alias body — the documented escape.
+#[rstest]
+fn test_alias_help_flag_after_double_dash_forwards(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "echo {{ args }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "deploy",
+        &["--", "--help"],
+        Some(&feature_path),
+    ));
+}
+
 /// `wt config alias show <name>` prints the configured template text, source-labeled.
 #[rstest]
 fn test_config_alias_show_single(mut repo: TestRepo) {
@@ -1417,6 +1490,30 @@ list = "echo custom list"
         &repo,
         "config",
         &["alias", "show", "list"],
+        Some(&feature_path),
+    ));
+}
+
+/// `wt config alias dry-run` on a shadowed name emits the same advisory as
+/// `show` — both are discovery surfaces, so both point out the shadowing.
+#[rstest]
+fn test_config_alias_dry_run_warns_on_shadowed_name(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+list = "echo custom list"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "config",
+        &["alias", "dry-run", "list"],
         Some(&feature_path),
     ));
 }

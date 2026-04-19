@@ -168,10 +168,10 @@ build = "cargo build --release"
 package = "cargo package --no-verify"
 
 [[aliases.release]]
-publish = "cargo publish"
+publish = "cargo publish {{ args }}"
 ```
 
-`test` runs first, then `build` and `package` run together, then `publish` runs last. A step failure aborts the remaining steps.
+`test` runs first, then `build` and `package` run together, then `publish` runs last. A step failure aborts the remaining steps. Every step sees the same `{{ args }}` and bound variables — `wt release -- --dry-run` forwards `--dry-run` to `publish` without affecting earlier steps.
 
 ### Sources and approval
 
