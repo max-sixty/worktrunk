@@ -44,6 +44,9 @@ jobs:
     - name: 🔍 Pre-commit hooks
       uses: pre-commit/action@v3.0.1
 
+    - name: 🧪 install.sh unit tests
+      run: sh dev/install/install_test.sh
+
   feature-check:
     # Guards the library/CLI cleave: the `cli` feature gates clap, skim,
     # crossterm, termimad, env_logger, humantime. If anything reachable from
