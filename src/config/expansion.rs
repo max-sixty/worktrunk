@@ -31,20 +31,30 @@ use crate::styling::{
 /// Populated by `build_hook_context()` in `command_executor.rs`. `upstream`
 /// is conditional on branch tracking configuration but is included here so
 /// templates may reference it in any context (guarded by `{% if upstream %}`).
+///
+/// Ordered to match the user-facing help table in `src/cli/mod.rs`
+/// (`## Template variables`): active-context vars first, then repo/remote
+/// metadata, then the always-available portion of execution context (`cwd`).
+/// Operation-context vars (`base`, `target`, `pr_*`) and infrastructure
+/// vars (`hook_type`, `hook_name`) are not in `BASE_VARS` — they're added
+/// per-scope by `hook_extras` and `HOOK_INFRASTRUCTURE_VARS`.
 pub const BASE_VARS: &[&str] = &[
-    "repo",
-    "owner",
+    // Active context
     "branch",
-    "worktree_name",
-    "repo_path",
     "worktree_path",
-    "default_branch",
-    "primary_worktree_path",
+    "worktree_name",
     "commit",
     "short_commit",
+    "upstream",
+    // Repo / remote metadata
+    "repo",
+    "repo_path",
+    "owner",
+    "primary_worktree_path",
+    "default_branch",
     "remote",
     "remote_url",
-    "upstream",
+    // Execution context (always-available portion)
     "cwd",
 ];
 
@@ -93,6 +103,11 @@ pub enum ValidationScope {
 /// These are the vars injected by callers via `extra_vars` when running a
 /// hook. Keeping the mapping in one place means "which vars work in a
 /// `post-merge` hook?" is answerable without chasing inline comments.
+///
+/// Each arm's order must be a prefix-ordered subset of the operation-context
+/// block in the user-facing help table (`src/cli/mod.rs`, `## Template
+/// variables`): `base, base_worktree_path, target, target_worktree_path,
+/// pr_number, pr_url`.
 fn hook_extras(hook_type: HookType) -> &'static [&'static str] {
     use HookType::*;
     match hook_type {
