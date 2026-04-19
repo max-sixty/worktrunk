@@ -18,9 +18,10 @@
 //! natural home alongside `show`.
 
 use std::collections::{BTreeSet, HashMap};
+use std::process;
 
 use anyhow::Context;
-use color_print::cformat;
+use color_print::{ceprintln, cformat};
 use worktrunk::config::{
     ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, append_aliases,
     referenced_vars_for_config, template_references_var, validate_template_syntax,
@@ -45,12 +46,7 @@ pub fn handle_alias_show(name: String) -> anyhow::Result<()> {
     let entries = entries_for_name(&repo, &user_config, project_config.as_ref(), &name);
 
     if entries.is_empty() {
-        return Err(unknown_alias_error(
-            &repo,
-            &user_config,
-            project_config.as_ref(),
-            &name,
-        ));
+        unknown_alias_exit(&repo, &user_config, project_config.as_ref(), &name, "show");
     }
 
     for (i, (cfg, source)) in entries.iter().enumerate() {
@@ -77,12 +73,13 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
     let entries = entries_for_name(&repo, &user_config, project_config.as_ref(), &name);
 
     if entries.is_empty() {
-        return Err(unknown_alias_error(
+        unknown_alias_exit(
             &repo,
             &user_config,
             project_config.as_ref(),
             &name,
-        ));
+            "dry-run",
+        );
     }
 
     // Reuse the real parser so previews stay aligned with runtime parsing —
@@ -168,33 +165,61 @@ fn entries_for_name(
     entries
 }
 
-/// Build an anyhow error for an unknown alias, with a clap-style "did you mean"
-/// tail pulled from the merged alias name set.
+/// Render an "unrecognized alias 'X'" error matching clap's `InvalidSubcommand`
+/// layout — same `error:` / `tip:` / `Usage:` block and exit code 2 as
+/// `wt <typo>` and `wt step <typo>` — then exit. `sub` is `"show"` or
+/// `"dry-run"`, used to render the Usage line from the real clap subcommand.
 ///
-/// Uses `anyhow::Error::context` so the top-level handler formats the first
-/// line as a header and the suggestion list in the error gutter.
-fn unknown_alias_error(
+/// Rendered manually rather than through clap because `ErrorKind::InvalidSubcommand`
+/// bakes the word "subcommand" into its message. The alias name is a
+/// positional arg, not a subcommand, so "unrecognized alias" reads more
+/// honestly at this surface. Styling mirrors clap's default subcommand
+/// rendering (plain red `error:`, green `tip:`, bold+underline `Usage:`) so
+/// the four surfaces share one visual shape.
+fn unknown_alias_exit(
     repo: &Repository,
     user_config: &UserConfig,
     project_config: Option<&ProjectConfig>,
     name: &str,
-) -> anyhow::Error {
+    sub: &str,
+) -> ! {
     let project_id = repo.project_identifier().ok();
     let mut merged = user_config.aliases(project_id.as_deref());
     if let Some(pc) = project_config {
         append_aliases(&mut merged, &pc.aliases);
     }
     let suggestions = did_you_mean(name, merged.into_keys());
-    let header = format!("unknown alias '{name}'");
-    if suggestions.is_empty() {
-        anyhow::anyhow!(header)
+
+    let mut top = crate::cli::build_command();
+    let sub_cmd = top
+        .find_subcommand_mut("config")
+        .expect("`config` subcommand is defined in the CLI")
+        .find_subcommand_mut("alias")
+        .expect("`config alias` subcommand is defined in the CLI")
+        .find_subcommand_mut(sub)
+        .unwrap_or_else(|| panic!("`config alias {sub}` subcommand is defined in the CLI"));
+    // `render_usage` needs `bin_name`; clap only sets it on match, so when we
+    // synthesize the error ahead of that, set it to the display_name
+    // `apply_help_template_recursive` would apply.
+    sub_cmd.set_bin_name(format!("wt config alias {sub}"));
+    let usage = sub_cmd.render_usage().ansi().to_string();
+
+    let tip_block = if suggestions.is_empty() {
+        String::new()
     } else {
-        let mut detail = String::from("a similar alias exists:");
-        for s in &suggestions {
-            detail.push_str(&format!("\n  {s}"));
-        }
-        anyhow::Error::msg(detail).context(header)
-    }
+        let joined: String = suggestions
+            .iter()
+            .map(|s| cformat!("'<green>{s}</>'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        cformat!("\n  <green>tip:</> some similar aliases exist: {joined}\n")
+    };
+
+    ceprintln!(
+        "<bold,red>error:</> unrecognized alias '<yellow>{name}</>'\n{tip_block}\n{usage}\n\nFor more information, try '<bold>--help</>'.",
+    );
+
+    process::exit(2)
 }
 
 /// Format one alias entry: `○ Alias <name> (<source>)[ <verb>]:` header

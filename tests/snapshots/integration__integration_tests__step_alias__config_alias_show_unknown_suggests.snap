@@ -42,11 +42,14 @@ info:
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: false
-exit_code: 1
+exit_code: 2
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31munknown alias 'deplyo'[39m
-[107m [0m a similar alias exists:
-[107m [0m   deploy
-[107m [0m   hello
+[31m[1merror:[39m[22m unrecognized alias '[33mdeplyo[39m'
+
+  [32mtip:[39m some similar aliases exist: '[32mdeploy[39m', '[32mhello[39m'
+
+[1m[4mUsage:[0m [1mwt config alias show[0m <NAME>
+
+For more information, try '[1m--help[22m'.
