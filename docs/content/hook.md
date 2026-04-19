@@ -114,31 +114,31 @@ Skip all hooks with `--no-hooks`. To run a specific hook when user and project b
 
 Hooks can use template variables that expand at runtime:
 
-| Variable | Description |
-|----------|-------------|
-| `{{ branch }}` | Active branch name |
-| `{{ worktree_path }}` | Active worktree path |
-| `{{ worktree_name }}` | Active worktree directory name |
-| `{{ commit }}` | Active branch HEAD SHA |
-| `{{ short_commit }}` | Active branch HEAD SHA (7 chars) |
-| `{{ upstream }}` | Active branch upstream (if tracking a remote) |
-| `{{ base }}` | Base branch name |
-| `{{ base_worktree_path }}` | Base worktree path |
-| `{{ target }}` | Target branch name |
-| `{{ target_worktree_path }}` | Target worktree path |
-| `{{ cwd }}` | Directory where the hook command runs |
-| `{{ repo }}` | Repository directory name |
-| `{{ repo_path }}` | Absolute path to repository root |
-| `{{ owner }}` | Primary remote owner path (may include subgroups) |
-| `{{ primary_worktree_path }}` | Primary worktree path |
-| `{{ default_branch }}` | Default branch name |
-| `{{ remote }}` | Primary remote name |
-| `{{ remote_url }}` | Remote URL |
-| `{{ pr_number }}` | PR/MR number (when creating via `pr:N` / `mr:N`) |
-| `{{ pr_url }}` | PR/MR web URL (when creating via `pr:N` / `mr:N`) |
-| `{{ hook_type }}` | Hook type being run (e.g. `pre-start`, `pre-merge`) |
-| `{{ hook_name }}` | Hook command name (if named) |
-| `{{ vars.<key> }}` | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) |
+| Kind | Variable | Description |
+|------|----------|-------------|
+| active    | `{{ branch }}`                | Branch name |
+|           | `{{ worktree_path }}`         | Worktree path |
+|           | `{{ worktree_name }}`         | Worktree directory name |
+|           | `{{ commit }}`                | Branch HEAD SHA |
+|           | `{{ short_commit }}`          | Branch HEAD SHA (7 chars) |
+|           | `{{ upstream }}`              | Branch upstream (if tracking a remote) |
+| operation | `{{ base }}`                  | Base branch name |
+|           | `{{ base_worktree_path }}`    | Base worktree path |
+|           | `{{ target }}`                | Target branch name |
+|           | `{{ target_worktree_path }}`  | Target worktree path |
+|           | `{{ pr_number }}`             | PR/MR number (when creating via `pr:N` / `mr:N`) |
+|           | `{{ pr_url }}`                | PR/MR web URL (when creating via `pr:N` / `mr:N`) |
+| repo      | `{{ repo }}`                  | Repository directory name |
+|           | `{{ repo_path }}`             | Absolute path to repository root |
+|           | `{{ owner }}`                 | Primary remote owner path (may include subgroups) |
+|           | `{{ primary_worktree_path }}` | Primary worktree path |
+|           | `{{ default_branch }}`        | Default branch name |
+|           | `{{ remote }}`                | Primary remote name |
+|           | `{{ remote_url }}`            | Remote URL |
+| exec      | `{{ cwd }}`                   | Directory where the hook command runs |
+|           | `{{ hook_type }}`             | Hook type being run (e.g. `pre-start`, `pre-merge`) |
+|           | `{{ hook_name }}`             | Hook command name (if named) |
+| user      | `{{ vars.<key> }}`            | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) |
 
 Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the operation acts on: the destination for switch/create, the source for merge/remove. `base` and `target` give the other side:
 
