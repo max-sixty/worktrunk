@@ -33,7 +33,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, bail};
-use clap::error::{ContextKind, ContextValue, ErrorKind};
 use color_print::cformat;
 use worktrunk::config::{
     ALIAS_ARGS_KEY, CommandConfig, HookStep, ProjectConfig, UserConfig, append_aliases,
@@ -47,8 +46,8 @@ use crate::commands::command_executor::{
     CommandContext, CommandOrigin, FailureStrategy, ForegroundStep, PreparedCommand, PreparedStep,
     build_hook_context, execute_pipeline_foreground,
 };
-use crate::commands::did_you_mean;
 use crate::commands::hooks::{format_pipeline_summary_from_names, step_names_from_config};
+use crate::commands::{build_invalid_subcommand_error, similar_subcommands};
 use crate::output::DirectivePassthrough;
 
 /// Built-in `wt step` subcommand names. Aliases with these names are
@@ -272,7 +271,7 @@ fn alias_needs_approval(
 /// the visible built-in `wt step` subcommands and the user's configured
 /// aliases — `SuggestedSubcommand` takes arbitrary strings, so aliases show
 /// up in the `tip:` line for typos like `wt step deplyo` → `'deploy'`.
-fn unknown_step_command_error(name: &str, alias_names: &[&str]) -> anyhow::Error {
+fn unknown_step_command_error(name: &str, alias_names: &[String]) -> anyhow::Error {
     let mut top = crate::cli::build_command();
     let step_cmd = top
         .find_subcommand_mut("step")
@@ -283,29 +282,8 @@ fn unknown_step_command_error(name: &str, alias_names: &[&str]) -> anyhow::Error
     // <COMMAND>` instead of `Usage: wt step [COMMAND]`. Set it to the same
     // display_name applied by `apply_help_template_recursive`.
     step_cmd.set_bin_name("wt step");
-    let usage = step_cmd.render_usage();
-
-    let builtins = step_cmd
-        .get_subcommands()
-        .filter(|c| !c.is_hide_set())
-        .map(|c| c.get_name().to_string())
-        .filter(|n| n != "help");
-    let candidates = builtins.chain(alias_names.iter().map(|s| s.to_string()));
-    let suggestions = did_you_mean(name, candidates);
-
-    let mut err = clap::Error::new(ErrorKind::InvalidSubcommand).with_cmd(step_cmd);
-    err.insert(
-        ContextKind::InvalidSubcommand,
-        ContextValue::String(name.to_string()),
-    );
-    if !suggestions.is_empty() {
-        err.insert(
-            ContextKind::SuggestedSubcommand,
-            ContextValue::Strings(suggestions),
-        );
-    }
-    err.insert(ContextKind::Usage, ContextValue::StyledStr(usage));
-    crate::enhance_clap_error(err)
+    let suggestions = similar_subcommands(name, step_cmd, alias_names);
+    crate::enhance_clap_error(build_invalid_subcommand_error(step_cmd, name, suggestions))
 }
 
 /// Format the "Running alias …" announcement.
@@ -425,10 +403,10 @@ pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
         // gets `tip: ... 'deploy'` when `deploy` is user-defined. The
         // Aliases block in `wt step --help` is the full discovery surface —
         // the error just needs to point there via `Usage: wt step [COMMAND]`.
-        let alias_names: Vec<&str> = aliases
+        let alias_names: Vec<String> = aliases
             .keys()
             .filter(|k| !BUILTIN_STEP_COMMANDS.contains(&k.as_str()))
-            .map(|k| k.as_str())
+            .cloned()
             .collect();
         return Err(unknown_step_command_error(&name, &alias_names));
     };

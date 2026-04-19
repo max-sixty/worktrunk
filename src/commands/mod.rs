@@ -102,6 +102,56 @@ pub(crate) fn did_you_mean(
         .collect()
 }
 
+/// Return visible subcommand names of `parent` plus `alias_names`, filtered to
+/// those similar to `name`. Hidden subcommands (e.g., deprecated aliases) and
+/// clap's implicit `help` are excluded. Shared by the top-level (`wt <typo>`)
+/// and `wt step <typo>` suggestion paths — both surfaces want "visible
+/// built-ins + configured aliases" as the candidate pool.
+pub(crate) fn similar_subcommands(
+    name: &str,
+    parent: &clap::Command,
+    alias_names: &[String],
+) -> Vec<String> {
+    let builtins = parent
+        .get_subcommands()
+        .filter(|c| !c.is_hide_set())
+        .map(|c| c.get_name().to_string())
+        .filter(|candidate| candidate != "help");
+    did_you_mean(name, builtins.chain(alias_names.iter().cloned()))
+}
+
+/// Build a clap `InvalidSubcommand` error anchored on `anchor`, populating the
+/// standard `InvalidSubcommand` / `SuggestedSubcommand` / `Usage` context so
+/// clap's native formatter produces the `error:` / `tip:` / `Usage:` block.
+///
+/// `anchor` must have its `bin_name` set before this call so the rendered
+/// `Usage:` line reads e.g. `wt step <COMMAND>` rather than the bare leaf
+/// name. Top-level callers can rely on `build_command()`'s display_name; nested
+/// anchors (`wt step`, `wt config alias <sub>`) need an explicit
+/// `anchor.set_bin_name(...)` first.
+pub(crate) fn build_invalid_subcommand_error(
+    anchor: &mut clap::Command,
+    name: &str,
+    suggestions: Vec<String>,
+) -> clap::Error {
+    use clap::error::{ContextKind, ContextValue, ErrorKind};
+
+    let usage = anchor.render_usage();
+    let mut err = clap::Error::new(ErrorKind::InvalidSubcommand).with_cmd(anchor);
+    err.insert(
+        ContextKind::InvalidSubcommand,
+        ContextValue::String(name.to_string()),
+    );
+    if !suggestions.is_empty() {
+        err.insert(
+            ContextKind::SuggestedSubcommand,
+            ContextValue::Strings(suggestions),
+        );
+    }
+    err.insert(ContextKind::Usage, ContextValue::StyledStr(usage));
+    err
+}
+
 /// Force concurrent steps to run serially. Test-only escape hatch — set via
 /// `WORKTRUNK_TEST_SERIAL_CONCURRENT=1` to make output ordering deterministic
 /// for snapshot tests, mirroring how `RAYON_NUM_THREADS=1` is used elsewhere.

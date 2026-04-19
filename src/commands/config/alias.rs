@@ -21,7 +21,6 @@ use std::collections::{BTreeSet, HashMap};
 use std::io::Write;
 
 use anyhow::Context;
-use clap::error::{ContextKind, ContextValue, ErrorKind};
 use color_print::cformat;
 use worktrunk::config::{
     ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, append_aliases,
@@ -31,6 +30,7 @@ use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{format_bash_with_gutter, info_message, println};
 
 use crate::commands::alias::{AliasOptions, AliasSource, TOP_LEVEL_BUILTINS};
+use crate::commands::build_invalid_subcommand_error;
 use crate::commands::command_executor::{
     CommandContext, build_hook_context, expand_shell_template,
 };
@@ -281,20 +281,7 @@ fn unknown_alias_error(
     // synthesize the error ahead of that, set it to the display_name
     // `apply_help_template_recursive` would apply.
     sub_cmd.set_bin_name(format!("wt config alias {sub}"));
-    let usage = sub_cmd.render_usage();
-
-    let mut err = clap::Error::new(ErrorKind::InvalidSubcommand).with_cmd(sub_cmd);
-    err.insert(
-        ContextKind::InvalidSubcommand,
-        ContextValue::String(name.to_string()),
-    );
-    if !suggestions.is_empty() {
-        err.insert(
-            ContextKind::SuggestedSubcommand,
-            ContextValue::Strings(suggestions),
-        );
-    }
-    err.insert(ContextKind::Usage, ContextValue::StyledStr(usage));
+    let err = build_invalid_subcommand_error(sub_cmd, name, suggestions);
 
     let rewritten = err
         .render()

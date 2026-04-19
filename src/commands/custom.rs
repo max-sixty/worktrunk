@@ -29,11 +29,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result};
-use clap::error::{ContextKind, ContextValue, ErrorKind};
 use worktrunk::git::WorktrunkError;
 
 use crate::cli::build_command;
-use crate::commands::{alias_names_for_suggestions, did_you_mean, try_alias};
+use crate::commands::{
+    alias_names_for_suggestions, build_invalid_subcommand_error, similar_subcommands, try_alias,
+};
 use crate::enhance_clap_error;
 
 /// Handle a `Commands::Custom` invocation.
@@ -119,24 +120,9 @@ pub(crate) fn handle_custom_command(
 /// matching the discovery surface of `wt --help`.
 fn unrecognized_subcommand_error(name: &str) -> clap::Error {
     let mut cmd = build_command();
-    let mut err = clap::Error::new(ErrorKind::InvalidSubcommand).with_cmd(&cmd);
-    err.insert(
-        ContextKind::InvalidSubcommand,
-        ContextValue::String(name.to_string()),
-    );
     let alias_names = alias_names_for_suggestions();
     let suggestions = similar_subcommands(name, &cmd, &alias_names);
-    if !suggestions.is_empty() {
-        err.insert(
-            ContextKind::SuggestedSubcommand,
-            ContextValue::Strings(suggestions),
-        );
-    }
-    err.insert(
-        ContextKind::Usage,
-        ContextValue::StyledStr(cmd.render_usage()),
-    );
-    err
+    build_invalid_subcommand_error(&mut cmd, name, suggestions)
 }
 
 /// Spawn the custom binary, inheriting stdio, and propagate its exit code.
@@ -170,19 +156,6 @@ fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Res
 
     let code = status.code().unwrap_or(1);
     Err(WorktrunkError::AlreadyDisplayed { exit_code: code }.into())
-}
-
-/// Return visible built-in subcommand names and configured alias names
-/// similar to `name`. Dedupe matters here: an alias configured with the
-/// same name as a built-in would otherwise appear twice in the candidate
-/// pool and surface duplicated in the `tip:` line.
-fn similar_subcommands(name: &str, cli_cmd: &clap::Command, alias_names: &[String]) -> Vec<String> {
-    let builtins = cli_cmd
-        .get_subcommands()
-        .filter(|c| !c.is_hide_set())
-        .map(|c| c.get_name().to_string())
-        .filter(|candidate| candidate != "help");
-    did_you_mean(name, builtins.chain(alias_names.iter().cloned()))
 }
 
 #[cfg(test)]
