@@ -289,26 +289,28 @@ fn unknown_step_command_error(name: &str, alias_names: &[String]) -> anyhow::Err
     crate::enhance_clap_error(build_invalid_subcommand_error(step_cmd, name, suggestions))
 }
 
-/// Format the "Running alias …" announcement.
+/// Format the informative "Running alias …" announcement, or `None` when
+/// there is nothing beyond the alias name to announce.
 ///
-/// For pipelines or concurrent groups with named commands, includes a summary
-/// of the structure (e.g., `Running alias deploy: install; build, lint`).
-/// When all commands are unnamed, falls back to the bare form
-/// (`Running alias deploy`) — aliases have no natural fallback label for
-/// unnamed steps the way hooks use `user`/`project`.
+/// Returns `Some(…)` only when the alias has at least one named step, so the
+/// banner can carry a pipeline summary (e.g., `Running alias deploy: install;
+/// build, lint`). Single unnamed aliases (`ls = "wt list"`) and all-anonymous
+/// pipelines (`foo = ["a", "b"]`) return `None` — the banner would only echo
+/// the name the user just typed. Callers that still want a confirmation line
+/// (e.g. under `-v`) emit a bare `Running alias <name>` themselves.
 ///
 /// Sibling of `format_command_label` in `commands/mod.rs`, which builds the
 /// non-pipeline `Running {type} {name}` form for hooks. Both apply bold
 /// styling to the alias/command name — keep them in sync if styling evolves.
-fn format_alias_announcement(name: &str, cmd_config: &CommandConfig) -> String {
+fn format_alias_announcement(name: &str, cmd_config: &CommandConfig) -> Option<String> {
     let step_names = step_names_from_config(cmd_config);
     let summary =
         format_pipeline_summary_from_names(&step_names, |n| cformat!("<bold>{n}</>"), |_| None);
 
     if summary.is_empty() {
-        cformat!("Running alias <bold>{name}</>")
+        None
     } else {
-        cformat!("Running alias <bold>{name}</>: {summary}")
+        Some(cformat!("Running alias <bold>{name}</>: {summary}"))
     }
 }
 
@@ -521,10 +523,14 @@ fn run_alias(
         eprintln!("{}", format_with_gutter(&vars, None));
     }
 
-    eprintln!(
-        "{}",
-        progress_message(format_alias_announcement(&opts.name, cmd_config))
-    );
+    if let Some(msg) = format_alias_announcement(&opts.name, cmd_config) {
+        eprintln!("{}", progress_message(msg));
+    } else if verbosity() >= 1 {
+        eprintln!(
+            "{}",
+            progress_message(cformat!("Running alias <bold>{}</>", opts.name))
+        );
+    }
 
     // CD passed through, EXEC scrubbed (see `output::global` for rationale).
     let directives = DirectivePassthrough::inherit_from_env();
@@ -847,17 +853,16 @@ mod tests {
 
     #[test]
     fn test_format_alias_announcement_single_unnamed() {
+        // Single unnamed alias — banner would only echo the name, so suppress.
         let cfg = cfg_from_toml(r#"cmd = "echo hi""#);
-        let msg = format_alias_announcement("deploy", &cfg);
-        insta::assert_snapshot!(msg.ansi_strip(), @"Running alias deploy");
+        assert!(format_alias_announcement("deploy", &cfg).is_none());
     }
 
     #[test]
     fn test_format_alias_announcement_pipeline_all_unnamed() {
-        // Pipeline of unnamed strings → no summary suffix.
+        // Pipeline of unnamed strings — still no summary content to show.
         let cfg = cfg_from_toml(r#"cmd = ["echo a", "echo b"]"#);
-        let msg = format_alias_announcement("deploy", &cfg);
-        insta::assert_snapshot!(msg.ansi_strip(), @"Running alias deploy");
+        assert!(format_alias_announcement("deploy", &cfg).is_none());
     }
 
     #[test]
@@ -870,7 +875,7 @@ build = "cargo build"
 test = "cargo test"
 "#,
         );
-        let msg = format_alias_announcement("check", &cfg);
+        let msg = format_alias_announcement("check", &cfg).expect("summary expected");
         insta::assert_snapshot!(msg.ansi_strip(), @"Running alias check: build, test");
     }
 
@@ -885,7 +890,7 @@ cmd = [
 ]
 "#,
         );
-        let msg = format_alias_announcement("deploy", &cfg);
+        let msg = format_alias_announcement("deploy", &cfg).expect("summary expected");
         insta::assert_snapshot!(msg.ansi_strip(), @"Running alias deploy: install; build, lint");
     }
 
@@ -901,7 +906,7 @@ cmd = [
 ]
 "#,
         );
-        let msg = format_alias_announcement("ci", &cfg);
+        let msg = format_alias_announcement("ci", &cfg).expect("summary expected");
         insta::assert_snapshot!(msg.ansi_strip(), @"Running alias ci: build, test");
     }
 
