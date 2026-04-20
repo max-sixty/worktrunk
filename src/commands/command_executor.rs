@@ -202,7 +202,7 @@ pub fn build_hook_context(
             map.insert("remote_url".into(), url);
         }
         if let Some(branch) = ctx.branch
-            && let Ok(Some(upstream)) = ctx.repo.branch(branch).upstream()
+            && let Ok(Some(upstream)) = ctx.repo.branch(branch).upstream_single()
         {
             map.insert("upstream".into(), upstream);
         }
