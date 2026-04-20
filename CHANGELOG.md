@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.41.0
+
+### Improved
+
+- **Hooks accept the same `--KEY=VALUE` smart routing as aliases**: `wt hook pre-merge --branch=foo --yes` binds `{{ branch }}` when the template references it; unreferenced `--KEY=VALUE` tokens and everything after `--` forward as `{{ args }}`, now available in hook templates. `wt hook --help` lists every hook type. `--var KEY=VALUE` still works but emits a deprecation warning pointing at the new form. ([#2313](https://github.com/max-sixty/worktrunk/pull/2313))
+
+- **`-v` prints resolved template variables for every hook and alias**: Before each `◎ Running …` line, `wt` shows a `template variables:` block listing every variable in scope for that hook type or alias and the value it resolved to for this invocation. Vars in scope but unpopulated render as `(unset)` — which is how e.g. `target_worktree_path` surfaces during `wt switch -` on hooks that don't receive it. Alias `args` renders shell-escaped so the table matches what `{{ args }}` substitutes below. Works in foreground, background hook pipelines, and alias expansion. ([#2316](https://github.com/max-sixty/worktrunk/pull/2316), [#2324](https://github.com/max-sixty/worktrunk/pull/2324), [#2328](https://github.com/max-sixty/worktrunk/pull/2328), thanks @nicolasff for reporting [#2309](https://github.com/max-sixty/worktrunk/issues/2309))
+
+- **O(1) upstream lookup in alias/hook template context**: `Branch::upstream()` triggered a `for-each-ref` scanning every local branch — amortized across bulk consumers like `wt list`, but wasted work for alias/hook template dispatch, which only needs the current branch. A new `upstream_single()` runs a scoped `for-each-ref refs/heads/<branch>`, so the parent-side alias dispatch is fully O(1) in branch count. Noticeable on machines with slow fork cost (macOS Gatekeeper, AV, slow FS). ([#2337](https://github.com/max-sixty/worktrunk/pull/2337), thanks @markjaquith for reporting [#2322](https://github.com/max-sixty/worktrunk/issues/2322))
+
+### Fixed
+
+- **Symbolic switch targets (`-`, `@`, `^`) resolve before pre-switch hooks fire**: `wt switch -` previously built the pre-switch hook context from the raw `-` argument, so `{{ target }}` and `{{ target_worktree_path }}` were wrong or unset. Symbolic targets are now resolved to the concrete branch name before the hook context is built, so hooks see the destination worktree correctly. ([#2310](https://github.com/max-sixty/worktrunk/pull/2310), thanks @nicolasff for reporting [#2309](https://github.com/max-sixty/worktrunk/issues/2309))
+
+- **Typo errors across `wt`, `wt step`, and `wt config alias show/dry-run` share one format**: Four typo surfaces previously split across clap-native `error:` / `tip:` output (exit 2) and custom anyhow gutters (exit 1). All four now render the same clap-native layout — `config alias show/dry-run` say "alias" / "aliases" instead of "subcommand" / "subcommands" since the positional is an alias name. The `wt <typo>` and `wt step <typo>` paths also now run `finish_command` cleanup, so diagnostic dumps and ANSI resets still fire. ([#2306](https://github.com/max-sixty/worktrunk/pull/2306), [#2307](https://github.com/max-sixty/worktrunk/pull/2307), [#2308](https://github.com/max-sixty/worktrunk/pull/2308))
+
+### Documentation
+
+- **Extending and hook guides consolidated**: Recipes on `extending.md` and `hook.md` were trimmed, overlapping sections (pre-start vs post-start, copy-ignored variants, pipeline forms) folded together, template-engine scope clarified, and dev-server / database / target-specific hook recipes moved to [Tips & Patterns](https://worktrunk.dev/tips-patterns/). ([#2314](https://github.com/max-sixty/worktrunk/pull/2314), [#2315](https://github.com/max-sixty/worktrunk/pull/2315), [#2317](https://github.com/max-sixty/worktrunk/pull/2317), [#2318](https://github.com/max-sixty/worktrunk/pull/2318), [#2319](https://github.com/max-sixty/worktrunk/pull/2319), [#2321](https://github.com/max-sixty/worktrunk/pull/2321), [#2323](https://github.com/max-sixty/worktrunk/pull/2323), [#2326](https://github.com/max-sixty/worktrunk/pull/2326), [#2329](https://github.com/max-sixty/worktrunk/pull/2329), [#2333](https://github.com/max-sixty/worktrunk/pull/2333))
+
+- **Render fixes**: Tables inside `<details>` blocks pick up the site's table styling ([#2325](https://github.com/max-sixty/worktrunk/pull/2325)); alternate pages excluded from the sitemap with trailing slashes on nav links ([#2320](https://github.com/max-sixty/worktrunk/pull/2320)); the `[Aliases]` help link renamed to `[Extending Worktrunk guide]` so it reads as a doc pointer rather than a self-reference in terminal help ([#2330](https://github.com/max-sixty/worktrunk/pull/2330)).
+
+### Internal
+
+- **Zola link regex handles code spans in link text**: The skill-sync regex rejected `` [`…code…`](@/…) `` links, silently shipping dead `@/…md` references into skill reference files. The regex now balances code spans, and a post-transform guardrail panics on any leftover `@/…md` so future misses fail loudly. ([#2327](https://github.com/max-sixty/worktrunk/pull/2327))
+
 ## 0.40.0
 
 ### Improved
