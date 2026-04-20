@@ -23,6 +23,8 @@ Worktrunk has three extension mechanisms.
 | **Shareable via repo** | `.config/wt.toml` | `.config/wt.toml` | Distribute the binary |
 | **Language** | Shell commands | Shell commands | Any |
 
+Hooks and aliases share the TOML config file, the [template engine](@/hook.md#template-variables), the `[[block]]` pipeline syntax (blocks run in order, keys within a block run concurrently), and the approval model: user config is trusted; project config requires approval on first run. When both sources define the same name, both run — user first.
+
 ## Hooks
 
 Hooks are shell commands that run at key points in the worktree lifecycle. Ten hooks cover five events:
@@ -37,74 +39,18 @@ Hooks are shell commands that run at key points in the worktree lifecycle. Ten h
 
 `pre-*` hooks block — failure aborts the operation. `post-*` hooks run in the background.
 
-### Configuration
-
-Hooks live in two places:
-
-- **User config** (`~/.config/worktrunk/config.toml`) — personal, applies everywhere, trusted
-- **Project config** (`.config/wt.toml`) — shared with the team, requires [approval](@/config.md#wt-config-approvals) on first run
-
-Three formats, from simplest to most expressive.
-
-A single command as a string:
-
 ```toml
-pre-start = "npm ci"
-```
-
-A named table runs commands concurrently for `post-*` hooks and serially for `pre-*`:
-
-```toml
-[post-start]
-server = "npm start"
-watcher = "npm run watch"
-```
-
-An array of tables is a pipeline — blocks run in order, commands within a block run concurrently:
-
-```toml
-[[post-start]]
-install = "npm ci"
-
-[[post-start]]
-server = "npm start"
-build = "npm run build"
-```
-
-### Template variables
-
-Hook commands are templates. Variables expand at execution time:
-
-```toml
-[post-start]
-server = "npm run dev -- --port {{ branch | hash_port }}"
-env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
-```
-
-Core variables include `branch`, `worktree_path`, `commit`, `repo`, `default_branch`, and context-dependent ones like `target` during merge. Filters like `sanitize`, `hash_port`, and `sanitize_db` transform values for specific uses.
-
-See [`wt hook`](@/hook.md#template-variables) for the full variable and filter reference.
-
-### Common patterns
-
-```toml
-# .config/wt.toml
-
-# Install dependencies when creating a worktree
 [pre-start]
 deps = "npm ci"
 
-# Run tests before merging
-[pre-merge]
-test = "npm test"
-lint = "npm run lint"
-
-# Dev server per worktree on a deterministic port
 [post-start]
 server = "npm run dev -- --port {{ branch | hash_port }}"
+
+[pre-merge]
+test = "npm test"
 ```
 
-See [Tips & Patterns](@/tips-patterns.md) for more recipes: dev server per worktree, database per worktree, tmux sessions, Caddy subdomain routing.
+See [`wt hook`](@/hook.md) for the full configuration reference — TOML forms, template variables and filters, and built-in recipes (dev server per worktree, database per worktree, progressive validation). [Tips & Patterns](@/tips-patterns.md) has more.
 
 ## Aliases
 
@@ -123,7 +69,7 @@ since-main = "git log --oneline {{ default_branch }}..HEAD"
 
 ### Templates
 
-Templates expand with variables for the current worktree and repo — `{{ branch }}`, `{{ worktree_path }}`, `{{ commit }}`, `{{ repo }}`, `{{ default_branch }}`, `{{ cwd }}`, per-branch `{{ vars.<key> }}` — plus `{{ args }}` for positional CLI arguments. Hook operation-context variables (`target`, `base`, `pr_number`) aren't populated in aliases since there's no operation in progress. See [`wt hook`](@/hook.md#template-variables) for the full reference.
+Alias templates have access to the full [variable and filter reference](@/hook.md#template-variables), plus `{{ args }}` for positional CLI arguments. Operation-context variables (`target`, `base`, `pr_number`) aren't populated in aliases since there's no operation in progress.
 
 `--KEY=VALUE` (or `--KEY VALUE`) binds `KEY` whenever `{{ KEY }}` appears in the template — `wt deploy --env=staging` sets `{{ env }}` to `staging`. Everything else joins `{{ args }}` (see [Positional arguments](#positional-arguments)).
 
@@ -155,7 +101,7 @@ Tokens after `--` forward unconditionally, bypassing any binding. `wt deploy -- 
 
 ### Multi-step pipelines
 
-`[[aliases.NAME]]` defines a pipeline. Each block runs serially; keys within a block run concurrently.
+`[[aliases.NAME]]` defines a pipeline using the same `[[block]]` semantics as hooks:
 
 ```toml
 [[aliases.release]]
@@ -169,13 +115,11 @@ package = "cargo package --no-verify"
 publish = "cargo publish {{ args }}"
 ```
 
-`test` runs first, then `build` and `package` run together, then `publish` runs last. A step failure aborts the remaining steps. Every step sees the same `{{ args }}` and bound variables — `wt release -- --dry-run` forwards `--dry-run` to `publish` without affecting earlier steps.
+A step failure aborts the remaining steps. Every step sees the same `{{ args }}` and bound variables — `wt release -- --dry-run` forwards `--dry-run` to `publish` without affecting earlier steps.
 
-### Sources and approval
+### Changing directory
 
-When both user and project config define the same alias name, both run — user first, then project. Project-config aliases require approval on first run, same as project hooks. User-config aliases are trusted.
-
-An alias that calls `wt switch` (or `wt switch --create`) changes the parent shell's directory, just like running `wt switch` directly.
+`wt` commands that change the parent shell's directory — `wt switch`, `wt merge` (leaving the removed source), `wt remove` of the current worktree — still do so when invoked from an alias; the Worktrunk shell integration propagates the change through. Other shell state doesn't persist: the alias runs in a subshell, so `cd`, `export`, and similar commands only affect that subshell.
 
 ### Recipe: rebase every worktree onto its upstream
 
