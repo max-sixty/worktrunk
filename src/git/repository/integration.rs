@@ -433,8 +433,10 @@ impl Repository {
             .effective_integration_targets
             .entry(local_target.to_string())
             .or_insert_with(|| {
-                // Get the upstream ref for the local target (e.g., origin/main for main)
-                let upstream = match self.branch(local_target).upstream() {
+                // Get the upstream ref for the local target (e.g., origin/main for main).
+                // Single-branch lookup — cached per-target in `effective_integration_targets`,
+                // so the bulk scan `upstream()` would run is pure overhead here.
+                let upstream = match self.branch(local_target).upstream_single() {
                     Ok(Some(upstream)) => upstream,
                     _ => return local_target.to_string(),
                 };
