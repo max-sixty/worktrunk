@@ -131,7 +131,7 @@ pub(crate) mod render;
 #[cfg(test)]
 mod spacing_test;
 
-// Layout is calculated in collect.rs
+// Layout is calculated in collect/mod.rs
 use anstyle::Style;
 use anyhow::Context;
 use model::{ListData, ListItem};
@@ -284,7 +284,7 @@ impl SummaryMetrics {
     }
 }
 
-/// Format a summary message for the given items (used by both collect.rs and mod.rs)
+/// Format a summary message for the given items (used by both collect/mod.rs and mod.rs)
 pub(crate) fn format_summary_message(
     items: &[ListItem],
     show_branches: bool,
