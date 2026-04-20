@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
-use worktrunk::config::{CommandConfig, ValidationScope, format_scope_variables};
+use worktrunk::config::{CommandConfig, format_hook_variables};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     eprintln, format_with_gutter, info_message, progress_message, verbosity, warning_message,
@@ -371,10 +371,7 @@ fn print_background_variable_tables(pipelines: &[(CommandContext<'_>, Vec<Source
             eprintln!("{}", info_message("template variables:"));
             eprintln!(
                 "{}",
-                format_with_gutter(
-                    &format_scope_variables(ValidationScope::Hook(sourced.hook_type), &ctx),
-                    None
-                )
+                format_with_gutter(&format_hook_variables(sourced.hook_type, &ctx), None)
             );
             seen.push(sourced.hook_type);
         }

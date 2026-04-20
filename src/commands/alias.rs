@@ -35,8 +35,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, CommandConfig, HookStep, ProjectConfig, UserConfig, ValidationScope,
-    append_aliases, format_scope_variables, referenced_vars_for_config,
+    ALIAS_ARGS_KEY, CommandConfig, HookStep, ProjectConfig, UserConfig, append_aliases,
+    format_alias_variables, referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
 use worktrunk::styling::{
@@ -516,7 +516,7 @@ fn run_alias(
         .expect("HashMap<String, String> serialization should never fail");
 
     if verbosity() >= 1 {
-        let vars = format_scope_variables(ValidationScope::Alias, &context_map);
+        let vars = format_alias_variables(&context_map);
         eprintln!("{}", info_message("template variables:"));
         eprintln!("{}", format_with_gutter(&vars, None));
     }
