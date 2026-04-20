@@ -1877,3 +1877,28 @@ greet = "echo hello {{ args }}"
         assert_cmd_snapshot!("alias_verbose_variable_table", cmd);
     });
 }
+
+/// Multi-token args with whitespace render shell-escaped in the `-v` table,
+/// matching what `{{ args }}` actually expands to on the line below.
+#[rstest]
+fn test_alias_verbose_renders_args_shell_escaped(mut repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+greet = "echo hello {{ args }}"
+"#,
+    );
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd_with_global_flags(
+            &repo,
+            "greet",
+            &["foo", "bar baz"],
+            Some(&feature_path),
+            &["-v"],
+        );
+        assert_cmd_snapshot!("alias_verbose_args_shell_escaped", cmd);
+    });
+}
