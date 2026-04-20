@@ -121,10 +121,10 @@ pub use deprecation::{
     key_belongs_in, warn_unknown_fields,
 };
 pub use expansion::{
-    ALIAS_ARGS_KEY, BASE_VARS, DEPRECATED_TEMPLATE_VARS, TemplateExpandError, ValidationScope,
-    expand_template, redact_credentials, referenced_vars_for_config, sanitize_branch_name,
-    sanitize_db, short_hash, template_references_var, validate_template, validate_template_syntax,
-    vars_available_in,
+    ACTIVE_VARS, ALIAS_ARGS_KEY, DEPRECATED_TEMPLATE_VARS, EXEC_BASE_VARS, REPO_VARS,
+    TemplateExpandError, ValidationScope, base_vars, expand_template, format_hook_variables,
+    redact_credentials, referenced_vars_for_config, sanitize_branch_name, sanitize_db, short_hash,
+    template_references_var, validate_template, validate_template_syntax, vars_available_in,
 };
 pub use hooks::HooksConfig;
 pub use project::{ProjectCiConfig, ProjectConfig, ProjectListConfig, valid_project_config_keys};

@@ -5,12 +5,15 @@ use anyhow::{Context, Result, bail};
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{
-    Command, CommandConfig, HookStep, UserConfig, expand_template, template_references_var,
-    validate_template_syntax,
+    Command, CommandConfig, HookStep, UserConfig, expand_template, format_hook_variables,
+    template_references_var, validate_template_syntax,
 };
 use worktrunk::git::{Repository, WorktrunkError, interrupt_exit_code};
 use worktrunk::path::{format_path_for_display, to_posix_path};
-use worktrunk::styling::{eprintln, error_message, format_bash_with_gutter, progress_message};
+use worktrunk::styling::{
+    eprintln, error_message, format_bash_with_gutter, format_with_gutter, info_message,
+    progress_message, verbosity,
+};
 
 use super::format_command_label;
 use super::hook_filter::HookSource;
@@ -484,6 +487,13 @@ fn announce_command(cmd: &PreparedCommand, origin: &CommandOrigin) {
             };
             eprintln!("{}", progress_message(message));
             eprintln!("{}", format_bash_with_gutter(&cmd.expanded));
+            if verbosity() >= 1 {
+                let ctx: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
+                    .expect("context_json is always serialized from a HashMap<String, String>");
+                let vars = format_hook_variables(*hook_type, &ctx);
+                eprintln!("{}", info_message("template variables:"));
+                eprintln!("{}", format_with_gutter(&vars, None));
+            }
         }
         CommandOrigin::Alias { .. } => {}
     }

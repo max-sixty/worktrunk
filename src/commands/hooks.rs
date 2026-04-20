@@ -1,11 +1,14 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
-use worktrunk::config::CommandConfig;
+use worktrunk::config::{CommandConfig, format_hook_variables};
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{eprintln, progress_message, warning_message};
+use worktrunk::styling::{
+    eprintln, format_with_gutter, info_message, progress_message, verbosity, warning_message,
+};
 
 use super::command_executor::{
     CommandContext, CommandOrigin, FailureStrategy, ForegroundStep, PreparedCommand, PreparedStep,
@@ -335,11 +338,52 @@ pub fn announce_and_spawn_background_hooks(
     };
     eprintln!("{}", progress_message(message));
 
+    if verbosity() >= 1 {
+        print_background_variable_tables(&non_empty);
+    }
+
     for (ctx, group) in non_empty {
         spawn_hook_pipeline_quiet(&ctx, group)?;
     }
 
     Ok(())
+}
+
+/// Emit a `template variables:` block per distinct hook type in `pipelines`.
+///
+/// Background hooks don't flow through `announce_command` (which prints the
+/// table in the foreground path), so this is the symmetric entry point: once
+/// per hook type, using the first command's context. `hook_name` within a
+/// table reflects that first command — the combined announce line above
+/// already enumerates the rest.
+fn print_background_variable_tables(pipelines: &[(CommandContext<'_>, Vec<SourcedStep>)]) {
+    let mut seen: Vec<HookType> = Vec::new();
+    for (_, group) in pipelines {
+        for sourced in group {
+            if seen.contains(&sourced.hook_type) {
+                continue;
+            }
+            let Some(cmd) = first_prepared_command(&sourced.step) else {
+                continue;
+            };
+            let Ok(ctx) = serde_json::from_str::<HashMap<String, String>>(&cmd.context_json) else {
+                continue;
+            };
+            eprintln!("{}", info_message("template variables:"));
+            eprintln!(
+                "{}",
+                format_with_gutter(&format_hook_variables(sourced.hook_type, &ctx), None)
+            );
+            seen.push(sourced.hook_type);
+        }
+    }
+}
+
+fn first_prepared_command(step: &PreparedStep) -> Option<&PreparedCommand> {
+    match step {
+        PreparedStep::Single(cmd) => Some(cmd),
+        PreparedStep::Concurrent(cmds) => cmds.first(),
+    }
 }
 
 /// Prepare and spawn all source-group pipelines for a single hook type.

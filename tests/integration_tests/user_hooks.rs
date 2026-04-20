@@ -7,8 +7,8 @@
 //! - Skipped together with project hooks via --no-hooks
 
 use crate::common::{
-    TestRepo, make_snapshot_cmd, repo, resolve_git_common_dir, setup_snapshot_settings,
-    wait_for_file, wait_for_file_content, wait_for_file_count,
+    TestRepo, make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo, resolve_git_common_dir,
+    setup_snapshot_settings, wait_for_file, wait_for_file_content, wait_for_file_count,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -3252,4 +3252,23 @@ test = "echo TEST"
         stderr.contains("│ LINT") && stderr.contains("│ TEST"),
         "single [[pre-merge]] block should run concurrently: {stderr}",
     );
+}
+
+/// Under `-v`, hooks print a grouped table of resolved template variables —
+/// see issue #2309 for why this helps users understand scope-dependent gaps.
+#[rstest]
+fn test_hook_verbose_prints_variable_table(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    repo.write_test_config(
+        r#"[pre-switch]
+noop = "true"
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd =
+            make_snapshot_cmd_with_global_flags(&repo, "switch", &["feature"], None, &["-v"]);
+        assert_cmd_snapshot!("hook_verbose_variable_table", cmd);
+    });
 }
