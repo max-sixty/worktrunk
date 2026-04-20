@@ -239,8 +239,8 @@ pub fn format_hook_variables(hook_type: HookType, ctx: &HashMap<String, String>)
 /// table in `src/cli/mod.rs` (alongside `cwd`).
 ///
 /// `args` is stored as a JSON-encoded `Vec<String>` per the [`ALIAS_ARGS_KEY`]
-/// contract; the table displays it space-joined and shell-escaped via
-/// [`shell_join`] — matching what `{{ args }}` substitutes in templates.
+/// contract; the table displays it space-joined and shell-escaped so it
+/// matches what `{{ args }}` substitutes in templates.
 pub fn format_alias_variables(ctx: &HashMap<String, String>) -> String {
     let vars: Vec<&'static str> = ACTIVE_VARS
         .iter()
