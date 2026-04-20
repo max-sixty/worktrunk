@@ -452,6 +452,18 @@ fn parse_config_list_z_empty() {
 }
 
 #[test]
+fn parse_config_list_z_entry_without_newline_tolerates_key_only() {
+    // `git config --list -z` always emits `key\nvalue\0`, but the parser
+    // tolerates bare `key\0` by mapping it to `key -> ""` rather than
+    // dropping the entry. Lets a future git oddity be diagnosed at the
+    // use-site instead of silently missing.
+    let input = b"core.bare\0other.key\nfalse\0";
+    let map = super::parse_config_list_z(input);
+    assert_eq!(map["core.bare"], vec![""]);
+    assert_eq!(map["other.key"], vec!["false"]);
+}
+
+#[test]
 fn canonical_config_key_cases() {
     // section + variable: both lowercased
     assert_eq!(

@@ -617,6 +617,28 @@ fn test_primary_remote_errors_with_no_remotes() {
     );
 }
 
+/// `require_target_ref(None)` surfaces `StaleDefaultBranch` when the
+/// persisted default branch no longer resolves locally. Covers the
+/// `target.is_none()` arm added alongside `require_target_branch` for
+/// commands like `wt step commit` that accept any commit-ish target.
+#[test]
+fn test_require_target_ref_surfaces_stale_default_branch() {
+    use worktrunk::git::GitError;
+    let repo = TestRepo::new();
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    r.set_config("worktrunk.default-branch", "nonexistent-branch")
+        .unwrap();
+
+    // Fresh Repository so the OnceCell re-reads the stale value.
+    let r2 = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let err = r2.require_target_ref(None).unwrap_err();
+    let gerr = err.downcast_ref::<GitError>().expect("GitError");
+    assert!(
+        matches!(gerr, GitError::StaleDefaultBranch { branch } if branch == "nonexistent-branch"),
+        "expected StaleDefaultBranch, got {gerr:?}"
+    );
+}
+
 /// `unset_config_value` propagates errors from corrupt git config
 /// rather than returning `Ok(false)` (the exit-code-5 "key absent" case).
 #[test]
