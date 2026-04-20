@@ -16,7 +16,7 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 
 `pre-*` hooks block — failure aborts the operation. `post-*` hooks run in the background with output logged (use [`wt config state logs`](https://worktrunk.dev/config/#wt-config-state-logs) to find and manage log files). Use `-v` to see expanded command details for background hooks.
 
-The most common starting point is `post-start` — it runs background tasks (dev servers, file copying, builds) when creating a worktree.
+The most common starting point is `post-start` — it runs background tasks (dev servers, file copying, builds) without blocking worktree creation. Prefer `post-start` over `pre-start` unless a later step needs the work completed first.
 
 | Hook | Purpose |
 |------|---------|
@@ -297,17 +297,6 @@ copy = "wt step copy-ignored"
 Pipelines matter when there's a dependency chain — typically setup steps that must complete before other tasks can start. Common pattern: install dependencies, then run build + dev server concurrently.
 
 # Designing Effective Hooks
-
-## pre-start vs post-start
-
-Both run when creating a worktree. The difference:
-
-| Hook | Execution | Best for |
-|------|-----------|----------|
-| `pre-start` | Blocks until complete | Tasks the developer needs before working (dependency install) |
-| `post-start` | Background, parallel | Long-running tasks that don't block worktree creation |
-
-Many tasks work well in `post-start` — they'll likely be ready by the time they're needed, especially when the fallback is recompiling. If unsure, prefer `post-start` for faster worktree creation. For finer control over execution order within `post-start`, see [Pipeline ordering](#pipeline-ordering).
 
 ## Copying untracked files
 
