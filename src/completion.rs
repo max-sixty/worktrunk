@@ -461,19 +461,38 @@ fn build_hook_completion_command(name: &'static str) -> Command {
     let about: &'static str = Box::leak(format!("Run {name} hooks").into_boxed_str());
     Command::new(name)
         .about(about)
-        .arg(clap::Arg::new("dry-run").long("dry-run"))
-        .arg(clap::Arg::new("foreground").long("foreground"))
-        .arg(clap::Arg::new("yes").short('y').long("yes"))
+        .arg(
+            clap::Arg::new("dry-run")
+                .long("dry-run")
+                .action(clap::ArgAction::SetTrue)
+                .help("Show what would run without executing"),
+        )
+        .arg(
+            clap::Arg::new("foreground")
+                .long("foreground")
+                .action(clap::ArgAction::SetTrue)
+                .help("Run in foreground (block until complete)"),
+        )
+        .arg(
+            clap::Arg::new("yes")
+                .short('y')
+                .long("yes")
+                .action(clap::ArgAction::SetTrue)
+                .help("Skip approval prompts for project hooks"),
+        )
         .arg(
             clap::Arg::new("var")
                 .long("var")
+                .value_name("KEY=VALUE")
                 .num_args(1)
-                .action(clap::ArgAction::Append),
+                .action(clap::ArgAction::Append)
+                .help("Set template variable (deprecated — prefer --KEY=VALUE)"),
         )
         .arg(
             clap::Arg::new("name")
                 .num_args(0..)
-                .add(hook_command_name_completer()),
+                .add(hook_command_name_completer())
+                .help("Filter by command name(s)"),
         )
 }
 
