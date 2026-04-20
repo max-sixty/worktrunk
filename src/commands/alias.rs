@@ -604,6 +604,12 @@ pub(crate) enum HelpContext {
 /// `arg_required_else_help`), all of which flow through clap's `DisplayHelp`
 /// error. Tolerates running outside a repository: user-config aliases still
 /// list, project-config aliases just get skipped.
+///
+/// This is the help-rendering counterpart to `inject_hook_subcommands` for
+/// aliases. Hooks use Command-tree injection because they have a fixed
+/// schema clap can render faithfully; aliases use text-splicing because the
+/// template body is the content, and the `Aliases:` block carries display
+/// signals (source marker, shadowed-by-builtin) that have no clap analogue.
 pub(crate) fn augment_help(help: &str, context: HelpContext) -> String {
     // Help must not emit deprecation/unknown-field warnings or write `.new`
     // migration files as a side effect of rendering the alias list.
