@@ -123,7 +123,7 @@ Templates expand with variables for the current worktree and repo — `{{ branch
 
 `--KEY=VALUE` (or `--KEY VALUE`) binds `KEY` whenever `{{ KEY }}` appears in the template — `wt deploy --env=staging` sets `{{ env }}` to `staging`. Everything else joins `{{ args }}` (see [Positional arguments](#positional-arguments)).
 
-Built-in variables can be overridden: `--branch=foo` sets `{{ branch }}` inside the template — the worktree's actual branch doesn't move.
+Built-in variables can be overridden: `--branch=foo` sets `{{ branch }}` inside the template.
 
 Hyphens in keys become underscores: `--my-var=x` sets `{{ my_var }}`.
 
@@ -142,9 +142,9 @@ wt s feature/api
 wt s 'has a space'
 ```
 
-Index with `{{ args[0] }}`, loop with `{% for a in args %}…{% endfor %}`, count with `{{ args | length }}`. Each element is escaped individually, so `wt run 'a b' 'c;d'` renders as `'a b' 'c;d'` — no shell injection.
+Index with `{{ args[0] }}`, loop with `{% for a in args %}…{% endfor %}`, count with `{{ args | length }}`. Each element is shell-escaped on render, so a space or `;` in an argument stays literal rather than splitting the argument or terminating the surrounding command.
 
-Tokens after `--` forward unconditionally, bypassing any binding. `wt deploy -- --branch=foo` forwards `--branch=foo` to `{{ args }}` even though the template references `{{ branch }}`.
+Tokens after `--` forward unconditionally, bypassing any binding. Writing `wt deploy -- --branch=foo` forwards the literal `--branch=foo` to `{{ args }}` even though the template references `{{ branch }}`.
 
 ### Inspecting and previewing
 
@@ -198,24 +198,24 @@ git fetch --all --prune && wt step for-each -- '
 
 ### Recipe: move or copy in-progress changes to a new worktree
 
-`wt switch --create` lands you in a clean worktree. To carry staged, unstaged, and untracked changes along, wrap it with git's stash plumbing:
+`wt switch --create` lands you in a clean worktree. To carry staged, unstaged, and untracked changes along, pair it with `git stash`:
 
 ```toml
 # .config/wt.toml
 [aliases]
 move-changes = '''
 if git diff --quiet HEAD && test -z "$(git ls-files --others --exclude-standard)"; then
-  wt switch --create {{ to }}
+  wt switch --create {{ to }} --execute="{{ args }}"
 else
   git stash push --include-untracked --quiet
-  wt switch --create {{ to }} --execute='git stash pop --index'
+  wt switch --create {{ to }} --execute="git stash pop --index; {{ args }}"
 fi
 '''
 ```
 
-Run with `wt move-changes --to=feature-xyz`. The leading guard avoids touching a pre-existing stash when nothing is in flight; otherwise, `git stash push --include-untracked` captures everything, `wt switch --create` makes the new worktree, and `git stash pop --index` (via `--execute`) restores the changes there with the staged/unstaged split intact.
+Run with `wt move-changes --to=feature-xyz`. The guard skips the stash when nothing is in flight; otherwise `git stash push` captures everything and `--execute` pops it in the new worktree with the staged/unstaged split intact. Anything after `--` runs in the new worktree after pop — `wt move-changes --to=feature-xyz -- claude` opens Claude there.
 
-To copy instead of move (source keeps its changes too), add `git stash apply --index --quiet` right after the push. For staged-only flows, swap the stash for `git diff --cached` written to a tempfile and applied with `git apply --index` in the new worktree — that handles files where staged and unstaged hunks overlap on the same lines, where `git stash --staged` falls short.
+To copy instead of move, add `git stash apply --index --quiet` right after the push.
 
 ### Recipe: tail a specific hook log
 
@@ -224,15 +224,15 @@ To copy instead of move (source keeps its changes too), add `git stash apply --i
 ```toml
 [aliases]
 hook-log = '''
-tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name | sanitize_hash }}" '
+tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name | sanitize_hash }}" --arg kind "{{ kind }}" '
   .hook_output[]
-  | select(.branch == "{{ branch | sanitize_hash }}" and .hook_type == "post-start" and .name == $name)
+  | select(.branch == "{{ branch | sanitize_hash }}" and .hook_type == $kind and .name == $name)
   | .path
 ' | head -1)"
 '''
 ```
 
-Run with `wt hook-log --name=<hook-name>` (e.g., `wt hook-log --name=server`) to tail the current worktree's `post-start` hook of that name. The `sanitize_hash` filter produces a filesystem-safe name with a hash suffix that keeps distinct originals unique — the same transformation Worktrunk applies on disk — so the alias resolves the right log even for branch and hook names containing characters like `/`.
+Run with `wt hook-log --kind=post-start --name=server` to tail the log for the `server` hook on the current branch. `--kind` picks the hook type; the branch is pulled from the current worktree via `{{ branch }}`. `sanitize_hash` rewrites `branch` and `name` to filesystem-safe forms with a hash suffix that keeps distinct originals unique — the same transformation Worktrunk applies on disk — so the alias resolves the right log even when either contains characters like `/`.
 
 ## Custom subcommands
 
