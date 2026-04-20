@@ -392,6 +392,47 @@ fn wait_for_stable(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
     wait_for_stable_with_content(rx, parser, None);
 }
 
+/// Check whether skim's match count agrees with the number of visible list rows.
+///
+/// Under heavy macOS load, skim's matcher can update its count indicator ahead of
+/// the display repaint — so the `N/M` counter shows e.g. `1/4` while the list panel
+/// still has a stale row for a filtered-out item. If we snapshot in that window, the
+/// test captures an inconsistent state (count says 1 match, display shows 2 rows).
+///
+/// Returns `false` when we can parse a count and the visible row count disagrees;
+/// returns `true` when there's no disagreement (including when the count can't be
+/// parsed — nothing useful to compare against).
+fn display_matches_count(screen: &str) -> bool {
+    let Some(matched) = parse_match_count(screen) else {
+        return true;
+    };
+    visible_list_rows(screen) == matched
+}
+
+/// Parse skim's `N/M` match counter from the right-panel status area.
+///
+/// Skim paints the counter at the end of a line, optionally jammed against a tab
+/// label (e.g. `summary1/4` when the count is wide enough to overrun the label).
+fn parse_match_count(screen: &str) -> Option<usize> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"(\d+)/\d+\s*$").unwrap());
+    screen
+        .lines()
+        .find_map(|line| re.captures(line.trim_end()))
+        .and_then(|caps| caps[1].parse().ok())
+}
+
+/// Count the number of non-empty rows in the left (list) panel, excluding the
+/// query and header rows.
+fn visible_list_rows(screen: &str) -> usize {
+    let width = SEPARATOR_COL as usize;
+    screen
+        .lines()
+        .skip(2) // query + column header
+        .filter(|line| line.chars().take(width).any(|c| !c.is_whitespace()))
+        .count()
+}
+
 /// Wait for screen content to stabilize, optionally requiring specific content.
 ///
 /// If `expected_content` is provided, waits until the screen contains that string
@@ -446,8 +487,12 @@ fn wait_for_stable_with_content(
             None => true,
         };
 
+        // Reject "stable" states where skim's matcher has advanced past the display
+        // repaint — see `display_matches_count` for background.
+        let display_ready = display_matches_count(&current_content);
+
         // Primary: screen hasn't changed for STABLE_DURATION and content is ready
-        if last_change.elapsed() >= STABLE_DURATION && content_ready {
+        if last_change.elapsed() >= STABLE_DURATION && content_ready && display_ready {
             return;
         }
 
@@ -457,6 +502,7 @@ fn wait_for_stable_with_content(
         // changes don't affect snapshot correctness.
         if let Some(found_time) = content_found_at
             && found_time.elapsed() >= STABLE_DURATION
+            && display_ready
         {
             return;
         }
