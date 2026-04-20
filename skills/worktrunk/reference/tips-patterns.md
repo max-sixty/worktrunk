@@ -221,6 +221,38 @@ Reference Taskfile/Justfile/Makefile in hooks:
 "validate" = "just test lint"
 ```
 
+## Progressive validation
+
+Split checks across hook types — quick feedback before each commit, expensive suites before merge:
+
+```toml
+[[pre-commit]]
+lint = "npm run lint"
+typecheck = "npm run typecheck"
+
+[[pre-merge]]
+test = "npm test"
+build = "npm run build"
+```
+
+`pre-commit` runs on every squash commit during `wt merge`; `pre-merge` runs once per merge after the rebase, so it's the right place for the slow tests.
+
+## Target-specific hooks
+
+Branch on `{{ target }}` to vary behavior per merge destination — for example, deploying to production from `main` and staging from a release branch:
+
+```toml
+post-merge = """
+if [ {{ target }} = main ]; then
+    npm run deploy:production
+elif [ {{ target }} = staging ]; then
+    npm run deploy:staging
+fi
+"""
+```
+
+`{{ target }}` is the branch being merged into. `post-merge` runs in the target's worktree (or the primary worktree if target has none), so deploy commands see the merged code.
+
 ## Shortcuts
 
 Special arguments work across all commands—see [`wt switch`](https://worktrunk.dev/switch/#shortcuts) for the full list.

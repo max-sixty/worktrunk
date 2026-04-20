@@ -540,6 +540,14 @@ fn post_process_for_html(text: &str) -> String {
             "depends on the copy — https://worktrunk.dev/tips-patterns/#eliminate-cold-starts",
             "depends on the copy — see [Tips & Patterns](@/tips-patterns.md#eliminate-cold-starts)",
         )
+        .replace(
+            "expensive tests and builds in `pre-merge` — https://worktrunk.dev/tips-patterns/#progressive-validation",
+            "expensive tests and builds in `pre-merge` — see [Tips & Patterns](@/tips-patterns.md#progressive-validation)",
+        )
+        .replace(
+            "per-environment deploys — https://worktrunk.dev/tips-patterns/#target-specific-hooks",
+            "per-environment deploys — see [Tips & Patterns](@/tips-patterns.md#target-specific-hooks)",
+        )
         // Approval prompt: plain code block → terminal shortcode with colored symbols
         // and gutter. CLI shows a plain ``` block; web shows styled terminal output
         // matching the actual CLI appearance (yellow ▲, dim ○, cyan ❯, gutter bar).
