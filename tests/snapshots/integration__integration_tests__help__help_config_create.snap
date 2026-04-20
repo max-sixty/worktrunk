@@ -188,7 +188,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Aliases[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Command templates that run as `wt <name>`. See Aliases (https://worktrunk.dev/extending/#aliases) for usage and flags.[0m
+[107m [0m [2m# Command templates that run as `wt <name>`. See the Extending Worktrunk guide (https://worktrunk.dev/extending/#aliases) for usage and flags.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [aliases][0m
 [107m [0m [2m# greet = "echo Hello from {{ branch }}"[0m
@@ -352,7 +352,7 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Aliases[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Command templates that run as `wt <name>`. See Aliases (https://worktrunk.dev/extending/#aliases) for usage and flags.[0m
+[107m [0m [2m# Command templates that run as `wt <name>`. See the Extending Worktrunk guide (https://worktrunk.dev/extending/#aliases) for usage and flags.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [aliases][0m
 [107m [0m [2m# deploy = "make deploy BRANCH={{ branch }}"[0m
