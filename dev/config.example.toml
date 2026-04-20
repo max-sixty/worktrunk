@@ -127,7 +127,7 @@
 #
 # ### Aliases
 #
-# Command templates that run as `wt <name>`. See Aliases (https://worktrunk.dev/extending/#aliases) for usage and flags.
+# Command templates that run as `wt <name>`. See the Extending Worktrunk guide (https://worktrunk.dev/extending/#aliases) for usage and flags.
 #
 # [aliases]
 # greet = "echo Hello from {{ branch }}"
