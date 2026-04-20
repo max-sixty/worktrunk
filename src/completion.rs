@@ -503,6 +503,17 @@ fn build_hook_completion_command(name: &'static str) -> Command {
 /// `step_alias`). Aliases that shadow a built-in at a given level are skipped
 /// for that level only — `commit` is shadowed under `step` but offered at the
 /// top level, since `wt commit` runs the alias.
+///
+/// Unlike `inject_hook_subcommands`, this is intentionally *not* called from
+/// `help.rs`. Hooks have a fixed clap-expressible argument schema; aliases
+/// don't — `AliasOptions::parse` routes `--KEY=VALUE` based on which template
+/// vars the alias references, `--dry-run` is rejected, post-alias `--yes`
+/// forwards to `{{ args }}`. A clap stub is a useful approximation for
+/// completion but would misrepresent alias semantics on a `--help` page. The
+/// help-path counterparts are `augment_help` (text-splices the `Aliases:`
+/// section into `wt --help` / `wt step --help`, preserving source markers and
+/// shadowed-by-builtin annotations) and `emit_alias_help_hint` (redirects
+/// `wt <alias> --help` to `wt config alias show` / `dry-run`).
 fn inject_alias_subcommands(cmd: Command) -> Command {
     let aliases = load_aliases_for_completion();
     if aliases.is_empty() {
