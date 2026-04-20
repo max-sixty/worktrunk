@@ -134,18 +134,6 @@ Use `pre-start` instead when an `--execute` command needs the copied files immed
 
 All gitignored files are copied by default. To limit what gets copied, create `.worktreeinclude` with patterns — files must be both gitignored and listed. See [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) for details.
 
-## Local CI gate
-
-`pre-merge` hooks run before merging. Failures abort the merge:
-
-```toml
-[[pre-merge]]
-lint = "uv run ruff check"
-test = "uv run pytest"
-```
-
-This catches issues locally before pushing — like running CI locally.
-
 ## Manual commit messages
 
 The `commit.generation.command` receives the rendered prompt on stdin and returns the commit message on stdout. To write commit messages by hand instead of using an LLM, point it at `$EDITOR`:

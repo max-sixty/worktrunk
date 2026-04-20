@@ -346,49 +346,6 @@ fi
 """
 ```
 
-## Hook type examples
-
-```toml
-post-merge = "cargo install --path ."
-
-[[pre-start]]
-install = "npm ci"
-env = "echo 'PORT={{ branch | hash_port }}' > .env.local"
-
-[[pre-commit]]
-format = "cargo fmt -- --check"
-lint = "cargo clippy -- -D warnings"
-
-[[pre-merge]]
-test = "cargo test"
-build = "cargo build --release"
-
-[pre-switch]
-pull = """
-FETCH_HEAD="$(git rev-parse --git-common-dir)/FETCH_HEAD"
-if [ "$(find "$FETCH_HEAD" -mmin +360 2>/dev/null)" ] || [ ! -f "$FETCH_HEAD" ]; then
-    git pull
-fi
-"""
-
-[post-switch]
-tmux = "[ -n \"$TMUX\" ] && tmux rename-window {{ branch | sanitize }}"
-
-[post-start]
-copy = "wt step copy-ignored"
-server = "npm run dev -- --port {{ branch | hash_port }}"
-
-[post-commit]
-notify = "curl -s https://ci.example.com/trigger?branch={{ branch }}"
-
-[pre-remove]
-archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/null || true"
-
-[post-remove]
-kill-server = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/dev/null || true"
-remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
-```
-
 ## More recipes
 
 - Copy gitignored files between worktrees: `wt step copy-ignored` in `post-start` shares build caches and dependencies; use a `[[post-start]]` pipeline when a later hook depends on the copy — https://worktrunk.dev/tips-patterns/#eliminate-cold-starts
