@@ -11,7 +11,7 @@ Worktrunk has three extension mechanisms.
 
 **[Hooks](#hooks)** run shell commands at lifecycle events — creating a worktree, merging, removing. They're configured in TOML and run automatically.
 
-**[Aliases](#aliases)** define reusable commands invoked as `wt <name>`. Same template variables as hooks, but triggered manually.
+**[Aliases](#aliases)** define reusable commands invoked as `wt <name>`.
 
 **[Custom subcommands](#custom-subcommands)** are standalone executables. Drop `wt-foo` on `PATH` and it becomes `wt foo`. No configuration needed.
 
@@ -108,7 +108,7 @@ See [Tips & Patterns](@/tips-patterns.md) for more recipes: dev server per workt
 
 ## Aliases
 
-`[aliases]` defines commands invoked as `wt <name>`. Templates and approvals behave like hooks.
+`[aliases]` defines commands invoked as `wt <name>`.
 
 ```toml
 [aliases]
@@ -121,15 +121,17 @@ since-main = "git log --oneline {{ default_branch }}..HEAD"
 
 `wt <name>` resolves to a built-in first, then an alias, then a [custom subcommand](#custom-subcommands).
 
-### Passing values
+### Templates
 
-`--KEY=VALUE` (or `--KEY VALUE`) binds `KEY` whenever `{{ KEY }}` appears in the template — `wt deploy --env=staging` sets `{{ env }}` to `staging`. Everything else joins `{{ args }}` (see [Forwarding](#forwarding-positional-arguments)).
+Templates expand with variables for the current worktree and repo — `{{ branch }}`, `{{ worktree_path }}`, `{{ commit }}`, `{{ repo }}`, `{{ default_branch }}`, `{{ cwd }}`, per-branch `{{ vars.<key> }}` — plus `{{ args }}` for positional CLI arguments. Hook operation-context variables (`target`, `base`, `pr_number`) aren't populated in aliases since there's no operation in progress. See [`wt hook`](@/hook.md#template-variables) for the full reference.
+
+`--KEY=VALUE` (or `--KEY VALUE`) binds `KEY` whenever `{{ KEY }}` appears in the template — `wt deploy --env=staging` sets `{{ env }}` to `staging`. Everything else joins `{{ args }}` (see [Positional arguments](#positional-arguments)).
 
 Built-in variables can be overridden: `--branch=foo` sets `{{ branch }}` inside the template — the worktree's actual branch doesn't move.
 
 Hyphens in keys become underscores: `--my-var=x` sets `{{ my_var }}`.
 
-### Forwarding positional arguments
+### Positional arguments
 
 `{{ args }}` renders as a space-joined, shell-escaped string — ready to splice into a command:
 
