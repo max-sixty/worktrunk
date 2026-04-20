@@ -47,6 +47,44 @@ startup latency without output rendering or post-output work (mismatch warnings,
 
 Supported commands: `switch`, `remove`, `list`.
 
+## Cache Handling
+
+Worktrunk maintains a persistent SHA-keyed cache at `.git/wt/cache/` plus a git-config
+cache of the default branch at `worktrunk.default-branch`. Both survive process exits,
+so bench iterations read from prior iterations unless invalidated.
+
+**Rule:** if a benchmark runs a `wt` subcommand that populates these caches, every
+iteration must start cold — otherwise iter 1 measures the real cost and iter 2+ measure
+a cache hit. Invalidate via `criterion::Bencher::iter_batched` with
+`wt_perf::invalidate_caches_auto` as the setup closure (see the cold-cache variants in
+`benches/list.rs` and `benches/remove.rs` for the pattern).
+
+`invalidate_caches_auto` clears:
+
+- `.git/index` (main and linked worktrees)
+- `.git/objects/info/commit-graph*`
+- `.git/packed-refs`
+- `.git/wt/cache/` (all sha_cache kinds + ci-status + summaries)
+- `worktrunk.default-branch` (git config)
+
+User state — `worktrunk.history`, `worktrunk.hints.*`, `worktrunk.state.<branch>.*`,
+`.git/wt/logs/`, `.git/wt/trash/` — is intentionally preserved. It doesn't affect
+read-path performance and benches may depend on it (e.g., branch markers set during
+setup).
+
+**Which commands populate `.git/wt/cache/`:**
+
+| Command | Populates? | Notes |
+|---------|------------|-------|
+| `wt list` | Yes | Post-skeleton tasks. Exits early under `WORKTRUNK_SKELETON_ONLY=1` / `WORKTRUNK_FIRST_OUTPUT=1` — those skip the writing phase. |
+| `wt remove` | Yes | `prepare_worktree_removal` → `compute_integration_lazy` writes `is-ancestor` / `has-added-changes` / `merge-add-probe` whenever `BranchDeletionMode` is not `ForceDelete` (CLI `--force` is `force_worktree`, not `--force-delete`). |
+| `wt switch` | No | No sha_cache writers on the switch path. |
+| `wt` (completion via `COMPLETE=$SHELL`) | No | Only `for-each-ref` + worktree list. |
+
+Default-branch cache contribution is ~17ms per iteration on a typical-8 synthetic repo
+(measured: 166ms with default-branch cached → 183ms fully cold). Small enough that
+always clearing it is simpler than introducing a "warm default-branch" bench mode.
+
 ## Expected Performance
 
 **Modest repos** (500 commits, 100 files):

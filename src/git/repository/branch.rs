@@ -90,15 +90,17 @@ impl<'a> Branch<'a> {
         Ok(remotes)
     }
 
-    /// Get the upstream tracking branch for this branch.
+    /// Get the upstream tracking branch for this branch. Use this when the
+    /// caller (or its caller) will query many branches; use
+    /// [`upstream_single`] when exactly one branch is looked up.
     ///
     /// First call in a process triggers `fetch_all_upstreams` — one
     /// `git for-each-ref` over every local branch, cached for subsequent
-    /// calls. Amortizes well when callers query many branches
-    /// (`wt list`, integration target resolution). Prefer
-    /// [`upstream_single`] on hot paths that look up exactly one branch
-    /// (e.g. alias/hook template expansion), where the bulk scan becomes
-    /// O(branches) overhead the single call can't amortize.
+    /// calls. That bulk scan amortizes well across the per-worktree tasks
+    /// in `wt list`, where every row needs an upstream. On a single-branch
+    /// path (alias/hook template expansion, one-shot lookups during
+    /// switch/merge) the scan is O(branches) overhead with nothing to
+    /// amortize against — reach for [`upstream_single`] instead.
     ///
     /// [`upstream_single`]: Self::upstream_single
     pub fn upstream(&self) -> anyhow::Result<Option<String>> {
@@ -111,7 +113,9 @@ impl<'a> Branch<'a> {
     }
 
     /// Get this branch's upstream without the bulk scan used by
-    /// [`upstream`]. Runs one `git for-each-ref` scoped to this branch's
+    /// [`upstream`]. Prefer this when exactly one branch is being looked
+    /// up; prefer [`upstream`] when the caller (or its caller) will query
+    /// many branches. Runs one `git for-each-ref` scoped to this branch's
     /// ref — O(1) in local branch count.
     ///
     /// Handles the `[gone]` track state the same way as the bulk path:
