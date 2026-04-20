@@ -16,7 +16,7 @@ Worktrunk has three extension mechanisms.
 | **Shareable via repo** | `.config/wt.toml` | `.config/wt.toml` | Distribute the binary |
 | **Language** | Shell commands | Shell commands | Any |
 
-Hooks and aliases share the TOML config file, the [template engine](https://worktrunk.dev/hook/#template-variables), the `[[block]]` pipeline syntax (blocks run in order, keys within a block run concurrently), and the approval model: user config is trusted; project config requires approval on first run. When both sources define the same name, both run — user first.
+Hooks and aliases share the TOML config file, the [template engine](https://worktrunk.dev/hook/#template-variables) (variables, filters, and functions), the `[[block]]` [pipeline syntax](https://worktrunk.dev/hook/#pipeline-ordering) (blocks run in order, keys within a block run concurrently), and the approval model: user config is trusted; project config requires approval on first run. When both sources define the same name, both run — user first.
 
 ## Hooks
 
@@ -65,13 +65,9 @@ wt open
 
 ### Templates
 
-Alias templates have access to the full [variable and filter reference](https://worktrunk.dev/hook/#template-variables), plus `{{ args }}` for positional CLI arguments. Operation-context variables (`target`, `base`, `pr_number`) aren't auto-populated in aliases since there's no operation in progress — but any of them can still be bound on the CLI with `--KEY=VALUE`.
+Aliases use the same [template engine as hooks](https://worktrunk.dev/hook/#template-variables) — same variables, same [filters](https://worktrunk.dev/hook/#worktrunk-filters), same [functions](https://worktrunk.dev/hook/#worktrunk-functions), and the same [`--KEY=VALUE` smart routing](https://worktrunk.dev/hook/#passing-values): bind if the template references `KEY`, else forward to `{{ args }}`. For example, `wt deploy --env=staging` sets `{{ env }}`.
 
-`--KEY=VALUE` (or `--KEY VALUE`) binds `KEY` whenever `{{ KEY }}` appears in the template — `wt deploy --env=staging` sets `{{ env }}` to `staging`. Everything else joins `{{ args }}` (see [Positional arguments](#positional-arguments)).
-
-Built-in variables can be overridden: `--branch=foo` sets `{{ branch }}` inside the template.
-
-Hyphens in keys become underscores: `--my-var=x` sets `{{ my_var }}`.
+Alias templates add `{{ args }}` for positional CLI arguments. Operation-context variables (`target`, `base`, `pr_number`) aren't auto-populated since there's no operation in progress — but any of them can still be bound with `--KEY=VALUE`.
 
 ### Positional arguments
 
@@ -88,7 +84,7 @@ wt s feature/api
 wt s 'has a space'
 ```
 
-Index with `{{ args[0] }}`, loop with `{% for a in args %}…{% endfor %}`, count with `{{ args | length }}`. Each element is shell-escaped on render, so a space or `;` in an argument stays literal rather than splitting the argument or terminating the surrounding command.
+For indexing (`{{ args[0] }}`), looping, and counting, see [Passing values](https://worktrunk.dev/hook/#passing-values).
 
 Tokens after `--` forward unconditionally, bypassing any binding. Writing `wt deploy -- --branch=foo` forwards the literal `--branch=foo` to `{{ args }}` even though the template references `{{ branch }}`.
 
@@ -105,7 +101,7 @@ wt config alias dry-run deploy -- --env=staging
 
 ### Multi-step pipelines
 
-`[[aliases.NAME]]` defines a pipeline using the same `[[block]]` semantics as hooks:
+`[[aliases.NAME]]` defines a pipeline using the same `[[block]]` [semantics as hooks](https://worktrunk.dev/hook/#pipeline-ordering) — blocks run in order, keys within a block run concurrently, a step failure aborts the remainder:
 
 ```toml
 [[aliases.release]]
@@ -119,7 +115,7 @@ package = "cargo package --no-verify"
 publish = "cargo publish {{ args }}"
 ```
 
-A step failure aborts the remaining steps. Every step sees the same `{{ args }}` and bound variables — `wt release -- --dry-run` forwards `--dry-run` to `publish` without affecting earlier steps.
+Every step sees the same `{{ args }}` and bound variables — `wt release -- --dry-run` forwards `--dry-run` to `publish` without affecting earlier steps.
 
 ### Changing directory
 
