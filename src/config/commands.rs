@@ -1,6 +1,6 @@
 //! Command configuration types for hook pipelines.
 //!
-//! See `wt hook --help` → "Pipeline Ordering" for user-facing docs.
+//! See `wt hook --help` → "Hook forms" for user-facing docs.
 //! See [`HookStep`] and [`CommandConfig`] for the internal model.
 //!
 //! # TOML representation notes

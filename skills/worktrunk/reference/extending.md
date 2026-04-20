@@ -16,7 +16,7 @@ Worktrunk has three extension mechanisms.
 | **Shareable via repo** | `.config/wt.toml` | `.config/wt.toml` | Distribute the binary |
 | **Language** | Shell commands | Shell commands | Any |
 
-Hooks and aliases share the TOML config file, the [template engine](https://worktrunk.dev/hook/#template-variables) (variables, filters, and functions), the [`[[block]]` pipeline syntax](https://worktrunk.dev/hook/#pipeline-ordering) (blocks run in order, keys within a block run concurrently), and the approval model: user config is trusted; project config requires approval on first run. When both sources define the same name, both run — user first.
+Hooks and aliases share the TOML config file, the [template engine](https://worktrunk.dev/hook/#template-variables) (variables, filters, and functions), the [`[[block]]` pipeline syntax](https://worktrunk.dev/hook/#hook-forms) (blocks run in order, keys within a block run concurrently), and the approval model: user config is trusted; project config requires approval on first run. When both sources define the same name, both run — user first.
 
 ## Hooks
 
@@ -101,7 +101,7 @@ wt config alias dry-run deploy -- --env=staging
 
 ### Multi-step pipelines
 
-`[[aliases.NAME]]` defines a pipeline using the [same `[[block]]` semantics as hooks](https://worktrunk.dev/hook/#pipeline-ordering) — blocks run in order, keys within a block run concurrently, a step failure aborts the remainder:
+`[[aliases.NAME]]` defines a pipeline using the [same `[[block]]` semantics as hooks](https://worktrunk.dev/hook/#hook-forms) — blocks run in order, keys within a block run concurrently, a step failure aborts the remainder:
 
 ```toml
 [[aliases.release]]

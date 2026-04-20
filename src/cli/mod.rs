@@ -1200,7 +1200,11 @@ Manage approvals with `wt config approvals add` and `wt config approvals clear`.
 
 # Configuration
 
-Hooks can be defined in project config (`.config/wt.toml`) or user config (`~/.config/worktrunk/config.toml`). Both use the same format. Hooks take one of three forms.
+Hooks can be defined in project config (`.config/wt.toml`) or user config (`~/.config/worktrunk/config.toml`). Both use the same format.
+
+## Hook forms
+
+Hooks take one of three forms, determined by their TOML shape.
 
 A string is a single command:
 
@@ -1216,7 +1220,7 @@ server = "npm run dev"
 watch = "npm run watch"
 ```
 
-A pipeline is a sequence of `[[hook]]` blocks run in order. Each block is one step; multiple keys within a block run concurrently:
+A pipeline is a sequence of `[[hook]]` blocks run in order. Each block is one step; multiple keys within a block run concurrently. A failing step aborts the rest of the pipeline:
 
 ```toml
 [[post-start]]
@@ -1228,6 +1232,8 @@ server = "npm run dev"
 ```
 
 Here `install` runs first, then `build` and `server` run together.
+
+Most hooks don't need `[[hook]]` blocks. Reach for them when there's a dependency chain — typically setup that must complete before later steps, like installing dependencies before running a build and dev server concurrently.
 
 Table form for pre-* hooks is deprecated and its behavior will change in a future version — use `[[hook]]` blocks instead.
 
@@ -1385,57 +1391,6 @@ The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` 
 Any `--KEY=VALUE` whose key isn't referenced by a hook template forwards into `{{ args }}` as a literal `--KEY=VALUE` token. Tokens after `--` also forward into `{{ args }}` verbatim. `{{ args }}` renders as a space-joined, shell-escaped string; index with `{{ args[0] }}`, loop with `{% for a in args %}…{% endfor %}`, count with `{{ args | length }}`.
 
 The long form `--var KEY=VALUE` is deprecated but still supported. It force-binds regardless of whether any hook template references `KEY` — useful when a template only references the key conditionally (e.g. `{% if override %}…{% endif %}`).
-
-# Pipeline Ordering [experimental]
-
-By default, all commands in a `post-*` hook run concurrently in the background. The TOML type determines execution order. In the simplest case, a string runs one command:
-
-```toml
-post-start = "npm install"
-```
-
-Most hooks are a map of named commands, which run concurrently:
-
-```toml
-[post-start]
-install = "npm install"
-build = "npm run build"
-lint = "npm run lint"
-```
-
-When one command depends on another — `npm run build` needs `npm install` to finish first — use `[[hook]]` blocks to run steps in order. A failing step aborts the rest of the pipeline:
-
-```toml
-# Two blocks, run in order.
-# Each block runs its entries concurrently.
-
-# install runs first
-[[post-start]]
-install = "npm install"
-
-# ...then build and lint run concurrently
-[[post-start]]
-build = "npm run build"
-lint = "npm run lint"
-```
-
-In summary, the bracket count tracks the shape:
-
-- `post-start = "npm install"` — one command
-- `[post-start]` — one section of concurrent commands
-- `[[post-start]]` — one of multiple sections, run in order
-
-## When to use pipelines
-
-Most hooks don't need pipelines. A table of concurrent post-start commands is fine when they're independent:
-
-```toml
-[post-start]
-server = "npm run dev -- --port {{ branch | hash_port }}"
-copy = "wt step copy-ignored"
-```
-
-Pipelines matter when there's a dependency chain — typically setup steps that must complete before other tasks can start. Common pattern: install dependencies, then run build + dev server concurrently.
 
 # Designing Effective Hooks
 
