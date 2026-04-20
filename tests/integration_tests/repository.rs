@@ -556,6 +556,67 @@ fn test_switch_previous_roundtrip() {
     assert_eq!(r.switch_previous(), Some("feature-a".to_string()));
 }
 
+/// `primary_remote_url` composes `primary_remote` + `remote_url`,
+/// returning the raw URL for the primary remote. `primary_remote_parsed_url`
+/// threads that through `GitRemoteUrl::parse`.
+#[test]
+fn test_primary_remote_url_composition() {
+    let repo = TestRepo::new();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/max-sixty/worktrunk.git",
+    ]);
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert_eq!(
+        r.primary_remote_url(),
+        Some("https://github.com/max-sixty/worktrunk.git".to_string())
+    );
+    let parsed = r.primary_remote_parsed_url().expect("parses");
+    assert_eq!(parsed.owner(), "max-sixty");
+    assert_eq!(parsed.repo(), "worktrunk");
+
+    // Without a remote, both return None.
+    let bare = TestRepo::new();
+    let r2 = Repository::at(bare.root_path().to_path_buf()).unwrap();
+    assert_eq!(r2.primary_remote_url(), None);
+    assert!(r2.primary_remote_parsed_url().is_none());
+}
+
+/// `remote_url` for a configured remote round-trips; unknown remotes
+/// return `None`. Covers the `.filter(|url| !url.is_empty())` branch
+/// via the happy-path URL read.
+#[test]
+fn test_remote_url_known_and_unknown() {
+    let repo = TestRepo::new();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "git@github.com:max-sixty/worktrunk.git",
+    ]);
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert_eq!(
+        r.remote_url("origin"),
+        Some("git@github.com:max-sixty/worktrunk.git".to_string())
+    );
+    assert_eq!(r.remote_url("nonexistent"), None);
+}
+
+/// `primary_remote()` errors when no remotes are configured — covers
+/// the `ok_or_else(|| anyhow!("No remotes configured"))` final arm.
+#[test]
+fn test_primary_remote_errors_with_no_remotes() {
+    let repo = TestRepo::new(); // TestRepo::new() ships without a remote.
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let err = r.primary_remote().unwrap_err();
+    assert!(
+        err.to_string().contains("No remotes configured"),
+        "unexpected error: {err}"
+    );
+}
+
 /// `unset_config_value` propagates errors from corrupt git config
 /// rather than returning `Ok(false)` (the exit-code-5 "key absent" case).
 #[test]
