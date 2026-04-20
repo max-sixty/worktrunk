@@ -526,6 +526,16 @@ fn post_process_for_html(text: &str) -> String {
             "Open an issue at https://github.com/max-sixty/worktrunk.",
             "[Open an issue](https://github.com/max-sixty/worktrunk/issues).",
         )
+        // Tips & Patterns recipe bullets: bare URLs (terminal auto-links) in CLI,
+        // inline markdown links on the web.
+        .replace(
+            "routing — https://worktrunk.dev/tips-patterns/#dev-server-per-worktree",
+            "routing — see [Tips & Patterns](@/tips-patterns.md#dev-server-per-worktree)",
+        )
+        .replace(
+            "hooks reference — https://worktrunk.dev/tips-patterns/#database-per-worktree",
+            "hooks reference — see [Tips & Patterns](@/tips-patterns.md#database-per-worktree)",
+        )
         // Approval prompt: plain code block → terminal shortcode with colored symbols
         // and gutter. CLI shows a plain ``` block; web shows styled terminal output
         // matching the actual CLI appearance (yellow ▲, dim ○, cyan ❯, gutter bar).

@@ -90,7 +90,7 @@ git branch -d feat{% end %}</td>
 - **[Copy build caches](@/step.md#wt-step-copy-ignored)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees
 - **[`wt list --full`](@/list.md#full-mode)** — [CI status](@/list.md#ci-status) and [AI-generated summaries](@/list.md#llm-summaries) per branch
 - **[PR checkout](@/switch.md#pull-requests-and-merge-requests)** — `wt switch pr:123` to jump straight to a PR's branch
-- **[Dev server per worktree](@/hook.md#dev-servers)** — `hash_port` template filter gives each worktree a unique port
+- **[Dev server per worktree](@/tips-patterns.md#dev-server-per-worktree)** — `hash_port` template filter gives each worktree a unique port
 - **[Aliases](@/extending.md#aliases) & [per-branch variables](@/config.md#wt-config-state-vars)** — custom `wt <name>` commands and branch-scoped state for hook templates
 - ...and **[lots more](#next-steps)**
 

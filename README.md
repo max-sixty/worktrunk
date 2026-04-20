@@ -90,7 +90,7 @@ git branch -d feat</pre></td>
 - **[Copy build caches](https://worktrunk.dev/step/#wt-step-copy-ignored)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees
 - **[`wt list --full`](https://worktrunk.dev/list/#full-mode)** — [CI status](https://worktrunk.dev/list/#ci-status) and [AI-generated summaries](https://worktrunk.dev/list/#llm-summaries) per branch
 - **[PR checkout](https://worktrunk.dev/switch/#pull-requests-and-merge-requests)** — `wt switch pr:123` to jump straight to a PR's branch
-- **[Dev server per worktree](https://worktrunk.dev/hook/#dev-servers)** — `hash_port` template filter gives each worktree a unique port
+- **[Dev server per worktree](https://worktrunk.dev/tips-patterns/#dev-server-per-worktree)** — `hash_port` template filter gives each worktree a unique port
 - **[Aliases](https://worktrunk.dev/extending/#aliases) & [per-branch variables](https://worktrunk.dev/config/#wt-config-state-vars)** — custom `wt <name>` commands and branch-scoped state for hook templates
 - ...and **[lots more](#next-steps)**
 

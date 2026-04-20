@@ -65,7 +65,7 @@ wt open
 
 ### Templates
 
-Alias templates have access to the full [variable and filter reference](https://worktrunk.dev/hook/#template-variables), plus `{{ args }}` for positional CLI arguments. Operation-context variables (`target`, `base`, `pr_number`) aren't populated in aliases since there's no operation in progress.
+Alias templates have access to the full [variable and filter reference](https://worktrunk.dev/hook/#template-variables), plus `{{ args }}` for positional CLI arguments. Operation-context variables (`target`, `base`, `pr_number`) aren't auto-populated in aliases since there's no operation in progress — but any of them can still be bound on the CLI with `--KEY=VALUE`.
 
 `--KEY=VALUE` (or `--KEY VALUE`) binds `KEY` whenever `{{ KEY }}` appears in the template — `wt deploy --env=staging` sets `{{ env }}` to `staging`. Everything else joins `{{ args }}` (see [Positional arguments](#positional-arguments)).
 

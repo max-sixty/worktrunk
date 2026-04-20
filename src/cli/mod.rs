@@ -1467,67 +1467,6 @@ copy = "wt step copy-ignored"
 install = "pnpm install"
 ```
 
-## Dev servers
-
-Run a dev server per worktree on a deterministic port using `hash_port`:
-
-```toml
-[post-start]
-server = "npm run dev -- --port {{ branch | hash_port }}"
-
-[post-remove]
-server = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/dev/null || true"
-```
-
-The port is stable across machines and restarts — `feature-api` always gets the same port. Show it in `wt list`:
-
-```toml
-[list]
-url = "http://localhost:{{ branch | hash_port }}"
-```
-
-For subdomain-based routing (useful for cookies/CORS), use `.localhost` subdomains which resolve to 127.0.0.1:
-
-```toml
-[post-start]
-server = "npm run dev -- --host {{ branch | sanitize }}.localhost --port {{ branch | hash_port }}"
-```
-
-## Databases
-
-Each worktree can have its own database. A pipeline sets up the container name and connection string as vars, then later steps and hooks reference them:
-
-```toml
-[[post-start]]
-set-vars = """
-wt config state vars set \
-  container='{{ repo }}-{{ branch | sanitize }}-postgres' \
-  port='{{ ('db-' ~ branch) | hash_port }}' \
-  db_url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
-"""
-
-[[post-start]]
-db = """
-docker run -d --rm \
-  --name {{ vars.container }} \
-  -p {{ vars.port }}:5432 \
-  -e POSTGRES_DB={{ branch | sanitize_db }} \
-  -e POSTGRES_PASSWORD=dev \
-  postgres:16
-"""
-
-[post-remove]
-db-stop = "docker stop {{ vars.container }} 2>/dev/null || true"
-```
-
-The first pipeline step derives names and ports from the branch name and stores them as vars. The second step uses `{{ vars.container }}` and `{{ vars.port }}` — expanded at execution time, after the vars are set. The `post-remove` hook reads the same vars.
-
-The connection string is accessible anywhere — not just in hooks:
-
-```console
-$ DATABASE_URL=$(wt config state vars get db_url) npm start
-```
-
 ## Progressive validation
 
 Quick checks before commit, thorough validation before merge:
@@ -1609,6 +1548,11 @@ archive = "tar -czf ~/.wt-logs/{{ branch }}.tar.gz test-results/ logs/ 2>/dev/nu
 kill-server = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/dev/null || true"
 remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
 ```
+
+## More recipes
+
+- Dev server per worktree: `hash_port` in `post-start` for launch and `post-remove` for cleanup, with optional subdomain routing — https://worktrunk.dev/tips-patterns/#dev-server-per-worktree
+- Database per worktree: a `post-start` pipeline stores container name, port, and connection string as [per-branch vars](@/config.md#wt-config-state-vars) that later hooks reference — https://worktrunk.dev/tips-patterns/#database-per-worktree
 
 ## See also
 
