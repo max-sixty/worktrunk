@@ -3272,3 +3272,32 @@ noop = "true"
         assert_cmd_snapshot!("hook_verbose_variable_table", cmd);
     });
 }
+
+/// Background-path variable dump dedups per hook type when both user and
+/// project configs contribute to the same hook — the table prints once, not
+/// once per source. Also exercises the `PreparedStep::Single` arm of
+/// `print_background_variable_tables`, which the all-named-commands case in
+/// `test_post_start_verbose_shows_per_hook_output` doesn't hit.
+#[rstest]
+fn test_hook_verbose_background_dedups_across_sources(repo: TestRepo) {
+    repo.write_test_config(r#"post-start = "echo user-hook""#);
+    repo.write_project_config(r#"post-start = "echo project-hook""#);
+    repo.commit("add post-start");
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo project-hook"]
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd_with_global_flags(
+            &repo,
+            "switch",
+            &["--create", "feature"],
+            None,
+            &["-v"],
+        );
+        assert_cmd_snapshot!("hook_verbose_background_dedup", cmd);
+    });
+}

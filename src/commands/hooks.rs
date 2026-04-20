@@ -362,12 +362,12 @@ fn print_background_variable_tables(pipelines: &[(CommandContext<'_>, Vec<Source
             if seen.contains(&sourced.hook_type) {
                 continue;
             }
-            let Some(cmd) = first_prepared_command(&sourced.step) else {
-                continue;
+            let cmd = match &sourced.step {
+                PreparedStep::Single(cmd) => cmd,
+                PreparedStep::Concurrent(cmds) => &cmds[0],
             };
-            let Ok(ctx) = serde_json::from_str::<HashMap<String, String>>(&cmd.context_json) else {
-                continue;
-            };
+            let ctx: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
+                .expect("context_json is always serialized from a HashMap<String, String>");
             eprintln!("{}", info_message("template variables:"));
             eprintln!(
                 "{}",
@@ -375,13 +375,6 @@ fn print_background_variable_tables(pipelines: &[(CommandContext<'_>, Vec<Source
             );
             seen.push(sourced.hook_type);
         }
-    }
-}
-
-fn first_prepared_command(step: &PreparedStep) -> Option<&PreparedCommand> {
-    match step {
-        PreparedStep::Single(cmd) => Some(cmd),
-        PreparedStep::Concurrent(cmds) => cmds.first(),
     }
 }
 
