@@ -10,7 +10,7 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
-use std::fmt::{self, Write};
+use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -235,17 +235,27 @@ pub fn format_hook_variables(hook_type: HookType, ctx: &HashMap<String, String>)
 /// Format the resolved template variables for an alias invocation.
 ///
 /// Ordering mirrors [`format_hook_variables`]; alias scope has no operation
-/// or infrastructure vars, and `args` sits between active and repo (it's the
-/// alias analogue of hook-operation context).
+/// or infrastructure vars, and `args` lives in the exec group per the help
+/// table in `src/cli/mod.rs` (alongside `cwd`).
+///
+/// `args` is stored as a JSON-encoded `Vec<String>` per the [`ALIAS_ARGS_KEY`]
+/// contract; the table displays it space-joined and shell-escaped so it
+/// matches what `{{ args }}` substitutes in templates.
 pub fn format_alias_variables(ctx: &HashMap<String, String>) -> String {
     let vars: Vec<&'static str> = ACTIVE_VARS
         .iter()
         .copied()
-        .chain(std::iter::once(ALIAS_ARGS_KEY))
         .chain(REPO_VARS.iter().copied())
         .chain(EXEC_BASE_VARS.iter().copied())
+        .chain(std::iter::once(ALIAS_ARGS_KEY))
         .collect();
-    format_variables_table(&vars, ctx)
+    let mut display_ctx = ctx.clone();
+    if let Some(json) = ctx.get(ALIAS_ARGS_KEY) {
+        let args: Vec<String> = serde_json::from_str(json)
+            .expect("ALIAS_ARGS_KEY is always serialized from a Vec<String>");
+        display_ctx.insert(ALIAS_ARGS_KEY.into(), shell_join(&args));
+    }
+    format_variables_table(&vars, &display_ctx)
 }
 
 /// Positional CLI args forwarded from `wt <alias> a b c` into the alias's
@@ -284,16 +294,18 @@ impl Object for ShellArgs {
     }
 
     fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut first = true;
-        for arg in &self.0 {
-            if !first {
-                f.write_char(' ')?;
-            }
-            first = false;
-            f.write_str(&escape(Cow::Borrowed(arg)))?;
-        }
-        Ok(())
+        f.write_str(&shell_join(&self.0))
     }
+}
+
+/// Space-join shell-escaped args — the canonical rendering of `{{ args }}`
+/// used by both `ShellArgs::render` (template expansion) and the alias
+/// `-v` variable table.
+fn shell_join(args: &[String]) -> String {
+    args.iter()
+        .map(|a| escape(Cow::Borrowed(a)).into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Hash a string to a port in range 10000-19999.
@@ -1973,17 +1985,29 @@ mod tests {
         ctx.insert("repo".into(), "demo".into());
         ctx.insert("repo_path".into(), "/tmp/demo".into());
         ctx.insert("cwd".into(), "/tmp/feature".into());
-        // args is JSON-encoded per `ALIAS_ARGS_KEY` contract.
+        // args is JSON-encoded per `ALIAS_ARGS_KEY` contract; the table
+        // decodes and shell-renders it to match `{{ args }}` substitution.
         ctx.insert(ALIAS_ARGS_KEY.into(), r#"["a","b c"]"#.into());
 
         let out = format_alias_variables(&ctx);
         assert!(
-            out.contains(r#"args                  = ["a","b c"]"#),
+            out.contains("args                  = a 'b c'"),
             "got: {out}"
         );
         // No hook-only keys appear in alias scope.
         assert!(!out.contains("hook_type"), "got: {out}");
         assert!(!out.contains("target"), "got: {out}");
         assert!(!out.contains("base "), "got: {out}");
+    }
+
+    #[test]
+    fn test_format_alias_variables_args_empty() {
+        let mut ctx: HashMap<String, String> = HashMap::new();
+        ctx.insert(ALIAS_ARGS_KEY.into(), "[]".into());
+        let out = format_alias_variables(&ctx);
+        // Empty args render as an empty string after the `=` — distinct from
+        // `(unset)`, which means the key was absent entirely. `args` sits last
+        // in alias ordering, so the output ends with it.
+        assert!(out.ends_with("args                  = "), "got: {out:?}");
     }
 }
