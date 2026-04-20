@@ -243,6 +243,23 @@ fn test_configured_default_branch_is_trusted_without_validation(repo: TestRepo) 
     assert_eq!(result, Some("nonexistent-branch".to_string()));
 }
 
+/// In-process `set` followed by `get` sees the new value even when the
+/// config key has a mixed-case variable name. Regression: previously
+/// `set_config_value` inserted the literal key (`…pushRemote`) while
+/// `config_last` looked up the canonical key (`…pushremote`) — the map
+/// ended up with two entries, and reads missed the write.
+#[rstest]
+fn test_set_config_then_get_mixed_case_variable(repo: TestRepo) {
+    let r = Repository::at(repo.root_path()).unwrap();
+    // Trigger bulk config population before the write.
+    let _ = r.is_bare();
+    r.set_config("branch.main.pushRemote", "origin").unwrap();
+    assert_eq!(
+        r.config_value("branch.main.pushRemote").unwrap(),
+        Some("origin".to_string())
+    );
+}
+
 #[rstest]
 fn test_get_default_branch_no_remote_fails_when_no_match(repo: TestRepo) {
     // Remove origin (fixture has it) for this no-remote test

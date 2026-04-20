@@ -358,6 +358,8 @@ pub fn work_items_for_worktree(
         item_idx,
         item_url,
         llm_command: options.llm_command.clone(),
+        default_branch: options.default_branch.clone(),
+        integration_target: options.integration_target.clone(),
     };
 
     let has_commits = wt.has_commits();
@@ -469,6 +471,8 @@ pub fn work_items_for_branch(
         item_idx,
         item_url: None, // Branches without worktrees don't have URLs
         llm_command: options.llm_command.clone(),
+        default_branch: options.default_branch.clone(),
+        integration_target: options.integration_target.clone(),
     };
 
     let mut items = Vec::with_capacity(11);
@@ -545,6 +549,8 @@ mod tests {
             skip_tasks,
             url_template: Some("http://localhost/{{ branch }}".to_string()),
             llm_command: None,
+            default_branch: None,
+            integration_target: None,
         };
 
         let expected_results = Arc::new(ExpectedResults::default());
@@ -587,6 +593,8 @@ mod tests {
             skip_tasks: HashSet::new(),
             llm_command: None,
             url_template: None,
+            default_branch: None,
+            integration_target: None,
         };
 
         let expected_results = Arc::new(ExpectedResults::default());

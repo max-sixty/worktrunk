@@ -42,6 +42,18 @@ pub struct TaskContext {
     pub item_url: Option<String>,
     /// LLM command for summary generation (from commit.generation config).
     pub llm_command: Option<String>,
+    /// Default branch resolved for this list invocation. Populated from
+    /// the collect-phase check that verifies the persisted value still
+    /// resolves locally; `None` when unset or stale. Tasks read this
+    /// instead of `repo.default_branch()` so a stale persisted value
+    /// degrades silently (empty cells) here rather than emitting a cascade
+    /// of "ambiguous argument" errors.
+    pub default_branch: Option<String>,
+    /// Integration target (`default_branch`, or its upstream when ahead).
+    /// `None` when the default branch is unset or stale — keeps the same
+    /// silent-skip contract as `default_branch` for tasks that compare
+    /// against the integration target.
+    pub integration_target: Option<String>,
 }
 
 impl TaskContext {
@@ -65,20 +77,21 @@ impl TaskContext {
         TaskError::new(self.item_idx, kind, err.to_string(), cause)
     }
 
-    /// Get the default branch (cached in Repository).
+    /// Get the default branch resolved for this list invocation.
     ///
-    /// Used for informational stats (ahead/behind, branch diff).
-    /// Returns None if default branch cannot be determined.
+    /// Used for informational stats (ahead/behind, branch diff). Returns
+    /// `None` if default branch cannot be determined, or if the persisted
+    /// value is stale (see `TaskContext::default_branch` docs).
     pub(super) fn default_branch(&self) -> Option<String> {
-        self.repo.default_branch()
+        self.default_branch.clone()
     }
 
-    /// Get the integration target (cached in Repository).
+    /// Get the integration target resolved for this list invocation.
     ///
     /// Used for integration checks (status symbols, safe deletion).
-    /// Returns None if default branch cannot be determined.
+    /// Returns `None` if default branch cannot be determined or is stale.
     pub(super) fn integration_target(&self) -> Option<String> {
-        self.repo.integration_target()
+        self.integration_target.clone()
     }
 }
 

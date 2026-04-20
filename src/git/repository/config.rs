@@ -41,12 +41,20 @@ impl Repository {
     /// `set` followed by a `get` in the same process sees the new value —
     /// the bulk map is updated in-memory when populated, in addition to the
     /// on-disk `git config` write.
+    ///
+    /// Map keys are canonicalized to match git's emitted form (section +
+    /// variable lowercased, subsection preserved) so writes with mixed-case
+    /// variable names (e.g. `branch.<name>.pushRemote`) land under the same
+    /// key `config_last` looks up. Without this, a later `--list -z`
+    /// populate would emit the canonical form while this insert would leave
+    /// behind a stale duplicate under the literal form.
     pub(super) fn set_config_value(&self, key: &str, value: &str) -> anyhow::Result<()> {
         self.run_command(&["config", key, value])?;
         if let Some(lock) = self.cache.all_config.get() {
+            let canonical = super::canonical_config_key(key);
             lock.write()
                 .unwrap()
-                .insert(key.to_string(), vec![value.to_string()]);
+                .insert(canonical, vec![value.to_string()]);
         }
         Ok(())
     }
@@ -55,6 +63,9 @@ impl Repository {
     ///
     /// Returns `true` if the key was cleared, `false` if it didn't exist.
     /// Propagates actual git config errors (corrupt config, permission denied).
+    ///
+    /// Removes the canonical form (matching what git emits) to stay in
+    /// sync with `set_config_value` and `config_last`.
     pub(super) fn unset_config_value(&self, key: &str) -> anyhow::Result<bool> {
         let output = self.run_command_output(&["config", "--unset", key])?;
         let existed = if output.status.success() {
@@ -70,7 +81,8 @@ impl Repository {
             // `shift_remove` preserves remaining order (swap_remove would
             // reorder); order matters for `primary_remote` which picks the
             // first remote with a configured URL.
-            lock.write().unwrap().shift_remove(key);
+            let canonical = super::canonical_config_key(key);
+            lock.write().unwrap().shift_remove(&canonical);
         }
         Ok(existed)
     }

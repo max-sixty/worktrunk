@@ -287,6 +287,16 @@ pub struct CollectOptions {
     /// LLM command for summary generation (from commit.generation config).
     /// None if not configured — SummaryGenerate task will be skipped.
     pub llm_command: Option<String>,
+
+    /// Default branch resolved for this list invocation. `None` when unset
+    /// or when the persisted value was stale (branch deleted externally).
+    /// Tasks read this through `TaskContext::default_branch` so a stale
+    /// persisted value degrades silently (empty cells) here rather than
+    /// emitting a cascade of "ambiguous argument" errors from every task.
+    pub default_branch: Option<String>,
+    /// Integration target (`default_branch`, or its upstream when ahead).
+    /// `None` when the default branch is unset or stale.
+    pub integration_target: Option<String>,
 }
 
 fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
@@ -613,29 +623,44 @@ pub fn collect(
         }
     };
 
-    // Filter local branches to those without worktrees (CPU-only, no git commands)
-    let (branches_without_worktrees, warn_stale_default) = if show_branches {
-        let all_local = if let Some(result) = local_branches_cell.into_inner() {
-            result?
-        } else {
-            // Config-triggered (not fetched speculatively) — fetch now
-            repo.list_local_branches()?
-        };
-        let worktree_branches = worktree_branch_set(&worktrees);
-        // Opportunistic stale-default-branch check: `default_branch` above
-        // is the persisted value, now trusted without validation on the hot
-        // path. Cross-check it against the branch set we already have — no
-        // extra fork — and surface a warning if it's been deleted externally.
-        let warn_stale_default = default_branch.as_deref().is_some_and(|branch| {
-            !worktree_branches.contains(branch) && !all_local.iter().any(|(name, _)| name == branch)
+    // Opportunistic stale-default-branch check: `default_branch` above is
+    // the persisted value, now trusted without validation on the hot path.
+    // Cross-check against the enumerated branch set and surface a warning
+    // if it's been deleted externally. When `show_branches` is off but a
+    // persisted default is set and isn't a worktree branch, fetch the
+    // local branch list anyway (one `for-each-ref` fork) so the warning
+    // fires on plain `wt list` too — otherwise downstream tasks resolve
+    // against the stale ref and emit a cascade of "ambiguous argument"
+    // noise instead of one clean warning.
+    let worktree_branches = worktree_branch_set(&worktrees);
+    let needs_stale_check = default_branch
+        .as_deref()
+        .is_some_and(|b| !worktree_branches.contains(b));
+    let fetched_local: Option<Vec<(String, String)>> = if show_branches {
+        Some(match local_branches_cell.into_inner() {
+            Some(result) => result?,
+            None => repo.list_local_branches()?,
+        })
+    } else if needs_stale_check {
+        Some(repo.list_local_branches()?)
+    } else {
+        None
+    };
+    let warn_stale_default = needs_stale_check
+        && fetched_local.as_ref().is_some_and(|all| {
+            !all.iter()
+                .any(|(n, _)| Some(n.as_str()) == default_branch.as_deref())
         });
-        let filtered = all_local
+
+    // Filter local branches to those without worktrees (CPU-only, no git commands)
+    let branches_without_worktrees: Vec<(String, String)> = if show_branches {
+        let all_local = fetched_local.unwrap_or_default();
+        all_local
             .into_iter()
             .filter(|(name, _)| !worktree_branches.contains(name.as_str()))
-            .collect();
-        (filtered, warn_stale_default)
+            .collect()
     } else {
-        (Vec::new(), false)
+        Vec::new()
     };
 
     if warn_stale_default && let Some(branch) = default_branch.as_deref() {
@@ -652,6 +677,17 @@ pub fn collect(
             ))
         );
     }
+
+    // When the persisted default is stale, drop it for downstream tasks.
+    // Tasks that resolve against it (ahead-behind, merge-tree-conflicts,
+    // etc.) would otherwise emit a cascade of "ambiguous argument" errors;
+    // passing `None` here preserves the old None-returns silent-skip
+    // behavior that callers already handle for repos with no default branch.
+    let default_branch = if warn_stale_default {
+        None
+    } else {
+        default_branch
+    };
     let remote_branches = if show_remotes {
         if let Some(result) = remote_branches_cell.into_inner() {
             result?
@@ -827,11 +863,16 @@ pub fn collect(
     // Single-line invariant: use safe width to prevent line wrapping
     let max_width = crate::display::terminal_width();
 
-    // Create collection options from skip set
-    let options = CollectOptions {
+    // Create collection options from skip set. `integration_target` is
+    // patched in after the parallel phase below extracts it — at this
+    // point we haven't yet resolved it, but task spawning doesn't happen
+    // until line 1090+ so late population is safe.
+    let mut options = CollectOptions {
         skip_tasks: effective_skip_tasks,
         url_template: url_template.clone(),
         llm_command,
+        default_branch: default_branch.clone(),
+        integration_target: None,
     };
 
     // Track expected results per item - populated as spawns are queued
@@ -983,6 +1024,15 @@ pub fn collect(
     // Extract results from cells
     let previous_branch = previous_branch_cell.into_inner().flatten();
     let integration_target = integration_target_cell.into_inner().flatten();
+
+    // Patch integration_target into options now that it's resolved. When
+    // default_branch is None (unset or stale), also null it out — tasks
+    // otherwise see a target derived from the stale value and emit
+    // "ambiguous argument" noise.
+    options.integration_target = options
+        .default_branch
+        .as_ref()
+        .and(integration_target.clone());
 
     // Update is_previous on items
     if let Some(prev) = previous_branch.as_deref() {
@@ -1500,7 +1550,7 @@ pub fn build_worktree_item(
 pub fn populate_item(
     repo: &Repository,
     item: &mut ListItem,
-    options: CollectOptions,
+    mut options: CollectOptions,
 ) -> anyhow::Result<()> {
     // Extract worktree data (skip if not a worktree item)
     let Some(data) = item.worktree_data() else {
@@ -1510,6 +1560,18 @@ pub fn populate_item(
     // Get integration target for status symbol computation (cached in repo)
     // None if default branch cannot be determined - status symbols will be skipped
     let target = repo.integration_target();
+
+    // Populate default_branch / integration_target if the caller didn't.
+    // Tasks read these through `TaskContext`; `None` here tells them to
+    // skip (see collect()'s stale-default-branch path). Single-item callers
+    // like statusline pass `CollectOptions::default()` and expect the
+    // repo-derived values.
+    if options.default_branch.is_none() {
+        options.default_branch = repo.default_branch();
+    }
+    if options.integration_target.is_none() {
+        options.integration_target = target.clone();
+    }
 
     // Create channel for task results
     let (tx, rx) = chan::unbounded::<Result<TaskResult, TaskError>>();

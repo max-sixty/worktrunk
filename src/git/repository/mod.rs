@@ -1140,7 +1140,7 @@ impl Repository {
 /// - 1 or 2 parts (`section` or `section.variable`): lowercase the whole thing.
 /// - 3+ parts (`section.subsection….variable`): lowercase first and last parts,
 ///   preserve the middle.
-fn canonical_config_key(key: &str) -> String {
+pub(super) fn canonical_config_key(key: &str) -> String {
     let parts: Vec<&str> = key.split('.').collect();
     match parts.len() {
         0 | 1 => key.to_ascii_lowercase(),
