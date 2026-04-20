@@ -69,13 +69,9 @@ since-main = "git log --oneline {{ default_branch }}..HEAD"
 
 ### Templates
 
-Aliases use the same [template engine as hooks](@/hook.md#template-variables) — same variables, same [filters](@/hook.md#worktrunk-filters), same [functions](@/hook.md#worktrunk-functions). Alias templates add `{{ args }}` for positional CLI arguments. Operation-context variables (`target`, `base`, `pr_number`) aren't auto-populated since there's no operation in progress — but any of them can still be bound on the CLI with `--KEY=VALUE`.
+Aliases use the same [template engine as hooks](@/hook.md#template-variables) — same variables, same [filters](@/hook.md#worktrunk-filters), same [functions](@/hook.md#worktrunk-functions), and the same [`--KEY=VALUE` smart routing](@/hook.md#passing-values): bind if the template references `KEY`, else forward to `{{ args }}`. For example, `wt deploy --env=staging` sets `{{ env }}`.
 
-`--KEY=VALUE` (or `--KEY VALUE`) binds `KEY` whenever `{{ KEY }}` appears in the template — `wt deploy --env=staging` sets `{{ env }}` to `staging`. Everything else joins `{{ args }}` (see [Positional arguments](#positional-arguments)).
-
-Built-in variables can be overridden: `--branch=foo` sets `{{ branch }}` inside the template.
-
-Hyphens in keys become underscores: `--my-var=x` sets `{{ my_var }}`.
+Alias templates add `{{ args }}` for positional CLI arguments. Operation-context variables (`target`, `base`, `pr_number`) aren't auto-populated since there's no operation in progress — but any of them can still be bound with `--KEY=VALUE`.
 
 ### Positional arguments
 
@@ -88,7 +84,7 @@ s = "wt switch {{ args }}"
 
 {{ terminal(cmd="wt s some-branch|||wt s feature/api|||wt s 'has a space'") }}
 
-Index with `{{ args[0] }}`, loop with `{% for a in args %}…{% endfor %}`, count with `{{ args | length }}`. Each element is shell-escaped on render, so a space or `;` in an argument stays literal rather than splitting the argument or terminating the surrounding command.
+For indexing (`{{ args[0] }}`), looping, and counting, see [Passing values](@/hook.md#passing-values).
 
 Tokens after `--` forward unconditionally, bypassing any binding. Writing `wt deploy -- --branch=foo` forwards the literal `--branch=foo` to `{{ args }}` even though the template references `{{ branch }}`.
 
