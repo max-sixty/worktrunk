@@ -246,6 +246,25 @@ grep -A 30 "### pre-start" reference/hook.md
 grep -A 20 "## Warning Messages" reference/shell-integration.md
 ```
 
+## Hook Approvals in Non-Interactive Sessions
+
+Project hooks and project aliases prompt for approval on first run, so an untrusted `.config/wt.toml` can't silently execute arbitrary commands. Agents running `wt merge`, `wt switch`, or other commands that trigger hooks will hit an error like:
+
+```
+▲ cargo-difftest needs approval to execute 1 command:
+○ post-merge install:
+  cargo install --path .
+✗ Cannot prompt for approval in non-interactive environment
+↳ To skip prompts in CI/CD, add --yes; to pre-approve commands, run wt config approvals add
+```
+
+Two resolutions exist — pick based on who the agent is running for:
+
+- **`wt config approvals add`** — interactive prompt that stores approvals to `~/.config/worktrunk/approvals.toml`. Run once per project; persists across invocations until the command template changes or the project moves. This is the right choice when the human owns the trust decision.
+- **`--yes`** / `-y` — bypasses approval for a single invocation. Appropriate for CI/CD where hook contents are controlled by the pipeline itself.
+
+**When invoked as an agent, stop and escalate to the user** — pre-approval is a security decision about whether this project's hooks should be trusted to run arbitrary commands on their machine. Tell the user to run `wt config approvals add` (or review and re-run with `--yes` if they accept the CI-style one-shot bypass). Don't reach for `--yes` on the user's behalf just to unblock the command.
+
 ## Advanced: Agent Handoffs
 
 When the user requests spawning a worktree with an agent in a background session ("spawn a worktree for...", "hand off to another agent"), use the appropriate pattern for their terminal multiplexer. Substitute `<agent-cli>` with the CLI you are running as: `claude` for Claude Code, `'opencode run'` for OpenCode.
