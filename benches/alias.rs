@@ -6,25 +6,43 @@
 // dramatically slower than the equivalent subcommand; these benchmarks give
 // that cost a regression-free measurement harness.
 //
-// Benchmark groups:
-//   - noop_alias:        baseline `sh -c 'true'` and `wt --version` vs. `noop = "true"`
-//   - worktree_scaling:  noop-ish alias (`echo hello`) at 1 and 4 worktrees (GH #2322)
-//   - branch_scaling:    noop alias at 1, 10, 100 branches (regresses commit 4f9bd575a)
+// One group (`dispatch`), five variants:
+//   - wt_version:  `wt --version` startup floor (no repo discovery)
+//   - warm/1, warm/100, cold/1, cold/100: noop alias at 1 and 100 worktrees,
+//     warm and cold caches. Each worktree has its own branch, so 100
+//     worktrees ≈ 101 branches — this doubles as the regression guard for
+//     the O(1) upstream lookup from 4f9bd575a. The cold/100 variant is
+//     where a regression to the pre-fix bulk `for-each-ref` would hurt
+//     most (packed-refs scan dominates).
 //
 // Run examples:
-//   cargo bench --bench alias                        # All groups
-//   cargo bench --bench alias noop_alias             # Just parent-side overhead
-//   cargo bench --bench alias branch_scaling         # Verify O(1) in branch count
-//   cargo bench --bench alias -- --sample-size 10    # Fast iteration
+//   cargo bench --bench alias                          # All variants
+//   cargo bench --bench alias -- --skip cold           # Warm only, faster
+//   cargo bench --bench alias -- --sample-size 10      # Fast iteration
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::path::Path;
 use std::process::Command;
-use wt_perf::{RepoConfig, create_repo, isolate_cmd};
+use wt_perf::{RepoConfig, create_repo, invalidate_caches_auto, isolate_cmd};
 
 /// Alias body is a shell builtin so the wall-clock is dominated by the
 /// parent's dispatch — not by running a real subcommand.
 const NOOP_CONFIG: &str = "[aliases]\nnoop = \"echo hello\"\n";
+
+/// Lean repo config for the scaling rows — alias dispatch doesn't care
+/// about commit history depth, so minimal everything keeps setup under
+/// 10s at 100 worktrees (vs. ~60s for `RepoConfig::typical(100)`).
+const fn lean_worktrees(worktrees: usize) -> RepoConfig {
+    RepoConfig {
+        commits_on_main: 1,
+        files: 1,
+        branches: 0,
+        commits_per_branch: 0,
+        worktrees,
+        worktree_commits_ahead: 0,
+        worktree_uncommitted_files: 0,
+    }
+}
 
 /// Build an isolated `wt` invocation pointed at a fixture user config.
 fn wt_cmd(binary: &Path, repo: &Path, user_config: &Path, args: &[&str]) -> Command {
@@ -44,98 +62,49 @@ fn run_and_check(mut cmd: Command, label: &str) {
     );
 }
 
-/// Baseline: raw shell fork/exec of `true` and `wt --version` startup, vs.
-/// a noop alias (`true`) — the purest measurement of parent-side alias
-/// dispatch (config load + repo open + template context build + fork+exec).
-fn bench_noop_alias(c: &mut Criterion) {
-    let mut group = c.benchmark_group("noop_alias");
+fn bench_dispatch(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dispatch");
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
-    let temp = create_repo(&RepoConfig::typical(1));
-    let repo_path = temp.path().join("repo");
-    let user_config = temp.path().join("user-config.toml");
-    std::fs::write(&user_config, NOOP_CONFIG).unwrap();
-
-    group.bench_function("sh_true", |b| {
-        b.iter(|| {
-            Command::new("sh").args(["-c", "true"]).output().unwrap();
-        });
-    });
-
+    // Startup floor: `wt --version` exits before any repo discovery, so the
+    // delta between this and the scaling rows is the parent-side dispatch
+    // cost (config load, repo open, template context build, fork+exec).
     group.bench_function("wt_version", |b| {
         b.iter(|| {
             let mut cmd = Command::new(binary);
             cmd.arg("--version");
-            isolate_cmd(&mut cmd, Some(&user_config));
+            isolate_cmd(&mut cmd, None);
             run_and_check(cmd, "wt_version");
         });
     });
 
-    group.bench_function("noop", |b| {
-        b.iter(|| {
-            run_and_check(wt_cmd(binary, &repo_path, &user_config, &["noop"]), "noop");
-        });
-    });
-
-    group.finish();
-}
-
-/// Parent-side alias dispatch across worktree counts, from GH #2322. The
-/// alias body is still a shell builtin — a real passthrough like `wt list`
-/// would conflate parent-side dispatch with the child command's own cost.
-/// 1 and 4 worktrees match `list.rs`'s scaling points so the two can be
-/// read side-by-side.
-fn bench_worktree_scaling(c: &mut Criterion) {
-    let mut group = c.benchmark_group("worktree_scaling");
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
-
-    for worktrees in [1, 4] {
-        let temp = create_repo(&RepoConfig::typical(worktrees));
+    for worktrees in [1usize, 100] {
+        let temp = create_repo(&lean_worktrees(worktrees));
         let repo_path = temp.path().join("repo");
         let user_config = temp.path().join("user-config.toml");
         std::fs::write(&user_config, NOOP_CONFIG).unwrap();
 
-        group.bench_with_input(
-            BenchmarkId::from_parameter(worktrees),
-            &worktrees,
-            |b, _| {
-                b.iter(|| {
+        for cold in [false, true] {
+            let label = if cold { "cold" } else { "warm" };
+
+            group.bench_with_input(BenchmarkId::new(label, worktrees), &worktrees, |b, _| {
+                let run = || {
                     run_and_check(
                         wt_cmd(binary, &repo_path, &user_config, &["noop"]),
-                        "worktree_scaling",
+                        "dispatch",
                     );
-                });
-            },
-        );
-    }
-
-    group.finish();
-}
-
-/// Regression test for commit 4f9bd575a. Before the fix, `fetch_all_upstreams`
-/// ran a bulk `for-each-ref` in `build_hook_context`, making parent-side alias
-/// setup O(branches). Post-fix, `Branch::upstream_single` reads a single
-/// config value, so the curve across 1/10/100 branches should be flat.
-fn bench_branch_scaling(c: &mut Criterion) {
-    let mut group = c.benchmark_group("branch_scaling");
-    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
-
-    for branches in [1usize, 10, 100] {
-        // `RepoConfig::branches(N, 1)` creates N feature branches plus main,
-        // matching list.rs's "many_branches" labeling convention.
-        let temp = create_repo(&RepoConfig::branches(branches, 1));
-        let repo_path = temp.path().join("repo");
-        let user_config = temp.path().join("user-config.toml");
-        std::fs::write(&user_config, NOOP_CONFIG).unwrap();
-
-        group.bench_with_input(BenchmarkId::from_parameter(branches), &branches, |b, _| {
-            b.iter(|| {
-                run_and_check(
-                    wt_cmd(binary, &repo_path, &user_config, &["noop"]),
-                    "branch_scaling",
-                );
+                };
+                if cold {
+                    b.iter_batched(
+                        || invalidate_caches_auto(&repo_path),
+                        |_| run(),
+                        criterion::BatchSize::SmallInput,
+                    );
+                } else {
+                    b.iter(run);
+                }
             });
-        });
+        }
     }
 
     group.finish();
@@ -147,6 +116,6 @@ criterion_group! {
         .sample_size(30)
         .measurement_time(std::time::Duration::from_secs(15))
         .warm_up_time(std::time::Duration::from_secs(3));
-    targets = bench_noop_alias, bench_worktree_scaling, bench_branch_scaling
+    targets = bench_dispatch
 }
 criterion_main!(benches);
