@@ -128,9 +128,10 @@ pub struct HookOptions {
 /// Map a hook type name to its [`HookType`] variant. Emits a did-you-mean
 /// hint on typos (same `did_you_mean` helper used for unknown subcommands).
 ///
-/// `post-create` is the deprecated alias for `pre-start` — accepted here;
-/// the deprecation warning fires in the execution path so scripted invocations
-/// using the alias still see it.
+/// `post-create` is the deprecated alias for `pre-start` — accepted here so
+/// scripted invocations keep working. The deprecation warning is emitted by
+/// the config loader when `[post-create]` appears in config; CLI invocations
+/// map silently to `pre-start`.
 pub fn parse_hook_type(name: &str) -> anyhow::Result<HookType> {
     match name {
         "pre-switch" => Ok(HookType::PreSwitch),
