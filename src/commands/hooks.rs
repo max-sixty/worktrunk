@@ -336,11 +336,10 @@ pub fn announce_and_spawn_background_hooks(
         }
         None => format!("Running {combined}"),
     };
-    eprintln!("{}", progress_message(message));
-
     if verbosity() >= 1 {
         print_background_variable_tables(&non_empty);
     }
+    eprintln!("{}", progress_message(message));
 
     for (ctx, group) in non_empty {
         spawn_hook_pipeline_quiet(&ctx, group)?;

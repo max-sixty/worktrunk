@@ -485,8 +485,6 @@ fn announce_command(cmd: &PreparedCommand, origin: &CommandOrigin) {
                 }
                 None => full_label,
             };
-            eprintln!("{}", progress_message(message));
-            eprintln!("{}", format_bash_with_gutter(&cmd.expanded));
             if verbosity() >= 1 {
                 let ctx: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
                     .expect("context_json is always serialized from a HashMap<String, String>");
@@ -494,6 +492,8 @@ fn announce_command(cmd: &PreparedCommand, origin: &CommandOrigin) {
                 eprintln!("{}", info_message("template variables:"));
                 eprintln!("{}", format_with_gutter(&vars, None));
             }
+            eprintln!("{}", progress_message(message));
+            eprintln!("{}", format_bash_with_gutter(&cmd.expanded));
         }
         CommandOrigin::Alias { .. } => {}
     }

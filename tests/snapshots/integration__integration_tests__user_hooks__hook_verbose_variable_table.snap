@@ -49,8 +49,6 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34mtrue[0m[2m
 [107m [0m [2m→[22m
 [107m [0m [2m[0m[2m[34mtrue[0m[2m
-[36m◎[39m [36mRunning pre-switch [1muser:noop[22m[39m
-[107m [0m [2m[0m[2m[34mtrue[0m[2m
 [2m○[22m template variables:
 [107m [0m branch                = feature
 [107m [0m worktree_path         = _REPO_.feature
@@ -74,6 +72,8 @@ exit_code: 0
 [107m [0m cwd                   = _REPO_
 [107m [0m hook_type             = pre-switch
 [107m [0m hook_name             = noop
+[36m◎[39m [36mRunning pre-switch [1muser:noop[22m[39m
+[107m [0m [2m[0m[2m[34mtrue[0m[2m
 [0m[2m○[22m Expanding [1mworktree-path[22m
 [107m [0m [2m[0m[2m[32m{{[0m[2m[0m[2m repo_path [0m[2m[32m}}[0m[2m/../[0m[2m[32m{{[0m[2m repo [0m[2m[32m}}[0m[2m.[0m[2m[32m{{[0m[2m branch [0m[2m[36m|[0m[2m [0m[2m[34msanitize[0m[2m [0m[2m[32m}}[0m[2m
 [107m [0m [2m→[22m
