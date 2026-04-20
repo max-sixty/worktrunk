@@ -103,44 +103,31 @@ impl Repository {
     /// 2. Otherwise, get the first remote with a configured URL
     /// 3. Return error if no remotes exist
     ///
-    /// Result is cached in the shared repo cache (shared across all worktrees).
+    /// Resolved from the bulk config map — O(1) once populated.
     ///
     /// [1]: https://git-scm.com/docs/git-config#Documentation/git-config.txt-checkoutdefaultRemote
     pub fn primary_remote(&self) -> anyhow::Result<String> {
-        self.cache
-            .primary_remote
-            .get_or_init(|| {
-                // Check git's checkout.defaultRemote config
-                if let Ok(default_remote) = self.run_command(&["config", "checkout.defaultRemote"])
-                {
-                    let default_remote = default_remote.trim();
-                    if !default_remote.is_empty() && self.remote_url(default_remote).is_some() {
-                        return Some(default_remote.to_string());
-                    }
-                }
+        // Check git's checkout.defaultRemote config
+        if let Some(default_remote) = self.config_last("checkout.defaultRemote")? {
+            let default_remote = default_remote.trim();
+            if !default_remote.is_empty() && self.remote_url(default_remote).is_some() {
+                return Ok(default_remote.to_string());
+            }
+        }
 
-                // Fall back to first remote with a configured URL
-                // Use git config to find remotes with URLs, filtering out phantom remotes
-                // from global config (e.g., `remote.origin.prunetags=true` without a URL)
-                let output = self
-                    .run_command(&["config", "--get-regexp", r"remote\..+\.url"])
-                    .unwrap_or_default();
-                let first_remote = output.lines().find_map(|line| {
-                    // Parse "remote.<name>.url <value>" format
-                    // Use ".url " as delimiter to handle remote names with dots (e.g., "my.remote")
-                    // Use find_map (not next + parse) because the unanchored regex matches
-                    // any config key containing "remote.<something>.url" — not just actual
-                    // remote entries. For example, includeIf.hasconfig:remote.*.url:... keys
-                    // match and can appear before the first real remote URL.
-                    line.strip_prefix("remote.")
-                        .and_then(|s| s.split_once(".url "))
-                        .map(|(name, _)| name)
-                });
-
-                first_remote.map(|s| s.to_string())
-            })
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("No remotes configured"))
+        // Fall back to first remote with a configured URL. Filters out
+        // phantom remotes from global config (e.g., `remote.origin.prunetags
+        // = true` without a URL) by requiring a `remote.<NAME>.url` entry.
+        let guard = self.all_config()?.read().unwrap();
+        let first_remote = guard.keys().find_map(|k| {
+            let rest = k.strip_prefix("remote.")?;
+            // `.url` suffix identifies url entries. Remote names can contain
+            // dots (e.g., "my.remote"), so rsplit from the right: the last
+            // `.url` is always the suffix.
+            let name = rest.strip_suffix(".url")?;
+            Some(name.to_string())
+        });
+        first_remote.ok_or_else(|| anyhow::anyhow!("No remotes configured"))
     }
 
     /// Get the URL for a remote, if configured.
@@ -149,18 +136,12 @@ impl Repository {
     /// rewrites. Use [`effective_remote_url`](Self::effective_remote_url) when you
     /// need forge detection to work with `insteadOf` aliases.
     ///
-    /// Results are cached per-remote in the shared repo cache.
+    /// Resolved from the bulk config map — O(1) once populated.
     pub fn remote_url(&self, remote: &str) -> Option<String> {
-        self.cache
-            .remote_urls
-            .entry(remote.to_string())
-            .or_insert_with(|| {
-                self.run_command(&["config", &format!("remote.{}.url", remote)])
-                    .ok()
-                    .map(|url| url.trim().to_string())
-                    .filter(|url| !url.is_empty())
-            })
-            .clone()
+        self.config_last(&format!("remote.{remote}.url"))
+            .ok()
+            .flatten()
+            .filter(|url| !url.is_empty())
     }
 
     /// Get the effective URL for a remote, with `url.insteadOf` rewrites applied.
@@ -247,17 +228,19 @@ impl Repository {
     /// Returns a list of (remote_name, url) pairs for all remotes with URLs.
     /// Useful for searching across remotes when the specific remote is unknown.
     pub fn all_remote_urls(&self) -> Vec<(String, String)> {
-        let output = match self.run_command(&["config", "--get-regexp", r"remote\..+\.url"]) {
-            Ok(output) => output,
-            Err(_) => return Vec::new(),
+        let Ok(lock) = self.all_config() else {
+            return Vec::new();
         };
-
-        output
-            .lines()
-            .filter_map(|line| {
-                // Parse "remote.<name>.url <value>" format
-                let rest = line.strip_prefix("remote.")?;
-                let (name, url) = rest.split_once(".url ")?;
+        let guard = lock.read().unwrap();
+        guard
+            .iter()
+            .filter_map(|(k, values)| {
+                let rest = k.strip_prefix("remote.")?;
+                let name = rest.strip_suffix(".url")?;
+                let url = values.last()?.trim();
+                if url.is_empty() {
+                    return None;
+                }
                 Some((name.to_string(), url.to_string()))
             })
             .collect()
@@ -265,16 +248,11 @@ impl Repository {
 
     /// Get the URL for the primary remote, if configured.
     ///
-    /// Returns the raw config value. Result is cached in the shared repo cache.
+    /// Returns the raw config value. Resolves via the bulk config map.
     pub fn primary_remote_url(&self) -> Option<String> {
-        self.cache
-            .primary_remote_url
-            .get_or_init(|| {
-                self.primary_remote()
-                    .ok()
-                    .and_then(|remote| self.remote_url(&remote))
-            })
-            .clone()
+        self.primary_remote()
+            .ok()
+            .and_then(|remote| self.remote_url(&remote))
     }
 
     /// Parse the primary remote URL into structured host/owner/repo components.

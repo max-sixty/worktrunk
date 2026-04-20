@@ -2999,15 +2999,21 @@ fn test_list_skips_operations_for_prunable_worktrees(mut repo: TestRepo) {
 /// Tests that wt list works correctly when the configured default branch doesn't exist.
 ///
 /// When a user sets `wt config state default-branch set develop` but the `develop`
-/// branch doesn't exist locally, `wt list` should show a warning and degrade gracefully
-/// (empty cells for columns needing default branch) rather than failing with git errors.
+/// branch doesn't exist locally, `wt list` degrades gracefully — columns needing
+/// default branch show empty cells rather than failing with git errors.
+///
+/// With `--branches`, the opportunistic stale-default check surfaces a
+/// warning using the already-enumerated branch set (no extra fork). Plain
+/// `wt list` (worktrees only) does not have the full branch set and so does
+/// not emit the warning — the user sees a clearer `StaleDefaultBranch`
+/// error the moment they run a default-branch-consuming command.
 #[rstest]
 fn test_list_with_nonexistent_default_branch(repo: TestRepo) {
     // Set default branch to a non-existent branch
     repo.run_git(&["config", "worktrunk.default-branch", "nonexistent"]);
 
-    // wt list should show a warning and degrade gracefully (empty columns for
-    // main-related data) when configured default branch doesn't exist locally
+    // wt list should degrade gracefully (empty columns for main-related data)
+    // when configured default branch doesn't exist locally
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
@@ -3024,6 +3030,19 @@ fn test_list_full_with_nonexistent_default_branch(repo: TestRepo) {
     assert_cmd_snapshot!({
         let mut cmd = list_snapshots::command(&repo, repo.root_path());
         cmd.arg("--full");
+        cmd
+    });
+}
+
+/// With `--branches`, `wt list` emits the stale-default-branch warning via
+/// the already-enumerated branch set — no extra fork.
+#[rstest]
+fn test_list_branches_with_nonexistent_default_branch(repo: TestRepo) {
+    repo.run_git(&["config", "worktrunk.default-branch", "nonexistent"]);
+
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--branches");
         cmd
     });
 }
@@ -3091,7 +3110,7 @@ fn test_list_empty_repo() {
     let guard =
         setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees).bind_to_scope();
     std::mem::forget(guard);
-    // Pre-set default branch cache so the `is_unborn_head_branch` validation path is exercised
+    // Pre-set default branch so the unborn-HEAD case has something to resolve to
     repo.run_git(&["config", "worktrunk.default-branch", "main"]);
     // Should show the branch with empty commit columns and no errors
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));

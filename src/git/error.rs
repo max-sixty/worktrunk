@@ -188,6 +188,13 @@ pub enum GitError {
     ReferenceNotFound {
         reference: String,
     },
+    /// Persisted `worktrunk.default-branch` points at a branch that no longer
+    /// resolves locally. Surfaced when a command would use the default branch
+    /// (no explicit `--target`) and the cached value is stale, so the user
+    /// gets a cache-reset hint instead of a generic "branch not found".
+    StaleDefaultBranch {
+        branch: String,
+    },
 
     // Worktree errors
     NotInWorktree {
@@ -437,6 +444,19 @@ impl GitError {
                     "{}",
                     error_message(cformat!(
                         "No branch, tag, or commit named <bold>{reference}</>"
+                    ))
+                )
+            }
+
+            GitError::StaleDefaultBranch { branch } => {
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!(
+                        "Default branch <bold>{branch}</> does not exist locally"
+                    )),
+                    hint_message(cformat!(
+                        "Reset the cached value with <underline>wt config state default-branch clear</>, or set it explicitly with <underline>wt config state default-branch set BRANCH</>"
                     ))
                 )
             }

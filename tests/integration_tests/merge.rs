@@ -117,6 +117,18 @@ fn test_merge_already_on_target(repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "merge", &[], None));
 }
 
+/// When `worktrunk.default-branch` points at a branch that no longer
+/// resolves locally (user deleted it externally), `wt merge` without
+/// `--target` surfaces `StaleDefaultBranch` with cache-reset hints rather
+/// than the generic `BranchNotFound` "create it?" path.
+#[rstest]
+fn test_merge_with_stale_default_branch_cache(mut repo: TestRepo) {
+    // Configure a cached default branch that doesn't exist locally
+    repo.run_git(&["config", "worktrunk.default-branch", "nonexistent"]);
+    let feature_wt = repo.add_feature();
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "merge", &[], Some(&feature_wt)));
+}
+
 #[rstest]
 fn test_merge_from_primary_worktree_to_other_branch(mut repo: TestRepo) {
     // Create a feature branch with a commit, then merge from main worktree into it.

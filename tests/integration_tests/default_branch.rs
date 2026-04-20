@@ -228,54 +228,19 @@ fn test_default_branch_no_remote_uses_init_config(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_configured_default_branch_does_not_exist_returns_none(repo: TestRepo) {
-    // Configure a non-existent branch
+fn test_configured_default_branch_is_trusted_without_validation(repo: TestRepo) {
+    // Configure a non-existent branch — `default_branch()` no longer
+    // validates that the branch resolves locally on the fast path. The
+    // persisted value is returned as-is; a stale cache surfaces as a
+    // `StaleDefaultBranch` error downstream (e.g., from `wt merge`) with
+    // cache-reset hints.
     repo.git_command()
         .args(["config", "worktrunk.default-branch", "nonexistent-branch"])
         .run()
         .unwrap();
 
-    // Should return None when configured branch doesn't exist locally
     let result = Repository::at(repo.root_path()).unwrap().default_branch();
-    assert!(
-        result.is_none(),
-        "Expected None when configured branch doesn't exist, got: {:?}",
-        result
-    );
-}
-
-#[rstest]
-fn test_invalid_default_branch_config_returns_configured_value(repo: TestRepo) {
-    // Configure a non-existent branch
-    repo.git_command()
-        .args(["config", "worktrunk.default-branch", "nonexistent-branch"])
-        .run()
-        .unwrap();
-
-    // Should report the invalid configuration
-    let invalid = Repository::at(repo.root_path())
-        .unwrap()
-        .invalid_default_branch_config();
-    assert_eq!(invalid, Some("nonexistent-branch".to_string()));
-}
-
-#[rstest]
-fn test_invalid_default_branch_config_returns_none_when_valid(repo: TestRepo) {
-    // Configure the existing "main" branch
-    repo.git_command()
-        .args(["config", "worktrunk.default-branch", "main"])
-        .run()
-        .unwrap();
-
-    // Should return None since the configured branch exists
-    let invalid = Repository::at(repo.root_path())
-        .unwrap()
-        .invalid_default_branch_config();
-    assert!(
-        invalid.is_none(),
-        "Expected None when configured branch exists, got: {:?}",
-        invalid
-    );
+    assert_eq!(result, Some("nonexistent-branch".to_string()));
 }
 
 #[rstest]

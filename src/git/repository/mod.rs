@@ -196,21 +196,27 @@ fn stream_exit_result(
 #[derive(Debug, Default)]
 pub(super) struct RepoCache {
     // ========== Repo-wide values (same for all worktrees) ==========
-    /// Whether this is a bare repository
-    pub(super) is_bare: OnceCell<bool>,
+    /// Every git config key in the merged config (system + global + repo),
+    /// populated by one `git config --list -z` read on first access.
+    ///
+    /// All the single-key config accessors (`is_bare`, `primary_remote`,
+    /// `remote_url`, `default_branch` fast path, hint/marker readers)
+    /// consult this map instead of spawning their own subprocess. Multivars
+    /// (e.g., multiple `remote.origin.url` entries) accumulate in the Vec.
+    /// `RwLock` rather than `OnceCell` so in-process writes via
+    /// [`Repository::set_config_value`] stay coherent after population.
+    ///
+    /// `IndexMap` preserves insertion order, matching git's own `--list -z`
+    /// output order — so accessors that iterate the map (e.g.,
+    /// `primary_remote` picking "first remote with a URL") follow config
+    /// file order the same way the old `--get-regexp` calls did.
+    pub(super) all_config: OnceCell<std::sync::RwLock<indexmap::IndexMap<String, Vec<String>>>>,
     /// Repository root path (main worktree for normal repos, bare directory for bare repos)
     pub(super) repo_path: OnceCell<PathBuf>,
     /// Default branch (main, master, etc.)
     pub(super) default_branch: OnceCell<Option<String>>,
-    /// Invalid default branch config (user configured a branch that doesn't exist).
-    /// Populated by `default_branch()` during config validation.
-    pub(super) invalid_default_branch: OnceCell<Option<String>>,
     /// Effective integration target (local default branch or upstream if ahead)
     pub(super) integration_target: OnceCell<Option<String>>,
-    /// Primary remote name (None if no remotes configured)
-    pub(super) primary_remote: OnceCell<Option<String>>,
-    /// Primary remote URL (None if no remotes configured or no URL)
-    pub(super) primary_remote_url: OnceCell<Option<String>>,
     /// Project identifier derived from remote URL
     pub(super) project_identifier: OnceCell<String>,
     /// Project config (loaded from .config/wt.toml in main worktree)
@@ -228,12 +234,9 @@ pub(super) struct RepoCache {
     /// Batch ahead/behind cache: (base_ref, branch_name) -> (ahead, behind)
     /// Populated by batch_ahead_behind(), used by cached_ahead_behind()
     pub(super) ahead_behind: DashMap<(String, String), (usize, usize)>,
-    /// Raw remote URLs: remote_name -> URL from `.git/config` (no `url.insteadOf`).
-    /// Cached because `primary_remote` validates the URL, then `primary_remote_url`
-    /// reads it again — two calls for the same key without this cache.
-    pub(super) remote_urls: DashMap<String, Option<String>>,
     /// Effective remote URLs: remote_name -> effective URL (with `url.insteadOf` applied).
-    /// Cached because forge detection may query the same remote multiple times.
+    /// Separate from `all_config` because `git remote get-url` applies
+    /// `url.insteadOf` rewrites that aren't visible in raw config.
     pub(super) effective_remote_urls: DashMap<String, Option<String>>,
     /// Resolved refs: unresolved ref (e.g., "main") -> resolved form (e.g., "refs/heads/main")
     /// or original if not a local branch. Populated by `resolve_preferring_branch()`.
@@ -719,51 +722,74 @@ impl Repository {
             .map(|p| p.as_path())
     }
 
+    /// Access the bulk git config map, populating on first call.
+    ///
+    /// Reads every key from the merged git config (system + global + repo)
+    /// via a single `git config --list -z` subprocess. The NUL-delimited
+    /// `-z` format handles values containing newlines or `=`. Populated
+    /// lazily on first access; every config-reading accessor consults this
+    /// map rather than spawning its own subprocess.
+    ///
+    /// Run from `git_common_dir` so linked worktrees of bare repos correctly
+    /// read the bare repo's config.
+    pub(super) fn all_config(
+        &self,
+    ) -> anyhow::Result<&std::sync::RwLock<indexmap::IndexMap<String, Vec<String>>>> {
+        self.cache.all_config.get_or_try_init(|| {
+            let output = Cmd::new("git")
+                .args(["config", "--list", "-z"])
+                .current_dir(&self.git_common_dir)
+                .context(path_to_logging_context(&self.git_common_dir))
+                .run()
+                .context("failed to read git config")?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                bail!("git config --list failed: {}", stderr.trim());
+            }
+            Ok(std::sync::RwLock::new(parse_config_list_z(&output.stdout)))
+        })
+    }
+
+    /// Read the last value for a config key from the bulk map.
+    ///
+    /// Convenience wrapper for the common "single-value" accessor pattern.
+    /// Git treats the last value as authoritative when a key is set multiple
+    /// times; callers that need multivars read through `all_config()` directly.
+    ///
+    /// Keys are normalized to git's canonical form (section and variable
+    /// names lowercased, subsection preserved) so callers may pass the
+    /// mixed-case form from git docs (e.g., `init.defaultBranch`) without
+    /// missing the lookup.
+    pub(super) fn config_last(&self, key: &str) -> anyhow::Result<Option<String>> {
+        let canonical = canonical_config_key(key);
+        let guard = self.all_config()?.read().unwrap();
+        Ok(guard.get(&canonical).and_then(|v| v.last().cloned()))
+    }
+
     /// Check if this is a bare repository (no working tree).
     ///
     /// Bare repositories have no main worktree — all worktrees are linked
     /// worktrees at templated paths, including the default branch.
     ///
-    /// Result is cached in the repository's shared cache (same for all clones).
+    /// Reads `core.bare` from the bulk config map rather than using `git
+    /// rev-parse --is-bare-repository`. The rev-parse approach is unreliable
+    /// when run from inside a `.git` directory — when `core.bare` is unset,
+    /// git infers based on directory context, and from inside `.git/` there's
+    /// no working tree so it returns `true` even for normal repos. This
+    /// affects repos where `core.bare` was never written (e.g., repos cloned
+    /// by Eclipse/EGit). Reading the config value directly avoids this false
+    /// positive.
     ///
-    /// Reads `core.bare` from git config rather than using `git rev-parse
-    /// --is-bare-repository`. The rev-parse approach is unreliable when run from
-    /// inside a `.git` directory — when `core.bare` is unset, git infers based
-    /// on directory context, and from inside `.git/` there's no working tree so
-    /// it returns `true` even for normal repos. This affects repos where
-    /// `core.bare` was never written (e.g., repos cloned by Eclipse/EGit).
-    /// Reading the config value directly avoids this false positive.
-    ///
-    /// Uses `--type=bool` to normalize all git boolean representations (`yes`,
-    /// `1`, `on`, `TRUE`) to `true`/`false`. When `core.bare` is unset (exit 1),
-    /// defaults to non-bare — matching libgit2's behavior.
+    /// When `core.bare` is unset, defaults to non-bare — matching libgit2's
+    /// behavior.
     ///
     /// See <https://github.com/max-sixty/worktrunk/issues/1939>.
     pub fn is_bare(&self) -> anyhow::Result<bool> {
-        self.cache
-            .is_bare
-            .get_or_try_init(|| {
-                // Read core.bare from git config. We run from git_common_dir so
-                // linked worktrees of bare repos correctly read the bare repo's
-                // config (not the worktree's).
-                let output = Cmd::new("git")
-                    .args(["config", "--type=bool", "core.bare"])
-                    .current_dir(&self.git_common_dir)
-                    .context(path_to_logging_context(&self.git_common_dir))
-                    .run()
-                    .context("failed to check if repository is bare")?;
-                // Exit 0 = key found (value printed), 1 = key missing (not bare),
-                // 2+ = config error (corrupt file, invalid type).
-                match output.status.code() {
-                    Some(0) => Ok(String::from_utf8_lossy(&output.stdout).trim() == "true"),
-                    Some(1) => Ok(false),
-                    _ => {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        bail!("git config core.bare failed: {}", stderr.trim());
-                    }
-                }
-            })
-            .copied()
+        Ok(self
+            .config_last("core.bare")?
+            .as_deref()
+            .map(parse_git_bool)
+            .unwrap_or(false))
     }
 
     /// Get the sparse checkout paths for this repository.
@@ -1102,6 +1128,76 @@ impl Repository {
             None => (err.to_string(), None),
         }
     }
+}
+
+/// Normalize a git config key to its canonical form.
+///
+/// Git section and variable names are case-insensitive; subsection names
+/// (the middle parts of 3+-part keys) preserve case. `git config --list`
+/// emits the canonical form — so lookups against the parsed map must
+/// normalize the same way.
+///
+/// - 1 or 2 parts (`section` or `section.variable`): lowercase the whole thing.
+/// - 3+ parts (`section.subsection….variable`): lowercase first and last parts,
+///   preserve the middle.
+fn canonical_config_key(key: &str) -> String {
+    let parts: Vec<&str> = key.split('.').collect();
+    match parts.len() {
+        0 | 1 => key.to_ascii_lowercase(),
+        2 => key.to_ascii_lowercase(),
+        _ => {
+            let (first, rest) = parts.split_first().unwrap();
+            let (last, middle) = rest.split_last().unwrap();
+            let mut out = String::with_capacity(key.len());
+            out.push_str(&first.to_ascii_lowercase());
+            for part in middle {
+                out.push('.');
+                out.push_str(part);
+            }
+            out.push('.');
+            out.push_str(&last.to_ascii_lowercase());
+            out
+        }
+    }
+}
+
+/// Parse the output of `git config --list -z`.
+///
+/// Format: each entry is `key\nvalue\0`. Values may be empty (no `\n`) for
+/// keys set via `git config key ""` — handled as `key -> ""`.
+///
+/// Returns a map from canonical key (as git emits it) to the list of
+/// values, preserving order (matches git's own multivar semantics where
+/// the last value wins).
+fn parse_config_list_z(stdout: &[u8]) -> indexmap::IndexMap<String, Vec<String>> {
+    let mut map: indexmap::IndexMap<String, Vec<String>> = indexmap::IndexMap::new();
+    for entry in stdout.split(|&b| b == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(entry);
+        let (key, value) = match text.split_once('\n') {
+            Some((k, v)) => (k, v),
+            // `key` without any newline → no value set (shouldn't happen
+            // with `--list -z`, but tolerate gracefully).
+            None => (text.as_ref(), ""),
+        };
+        map.entry(key.to_string())
+            .or_default()
+            .push(value.to_string());
+    }
+    map
+}
+
+/// Parse a git boolean config value.
+///
+/// Accepts the forms `git config --type=bool` normalizes: `true/1/yes/on`
+/// (case-insensitive) → `true`; anything else → `false`.
+fn parse_git_bool(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "true" | "1" | "yes" | "on"
+    )
 }
 
 #[cfg(test)]

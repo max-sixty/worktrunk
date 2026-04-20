@@ -12,25 +12,67 @@ use super::{DefaultBranchName, GitError, Repository};
 impl Repository {
     /// Get a git config value. Returns None if the key doesn't exist.
     ///
-    /// Distinguishes "key not found" (exit code 1) from actual errors
-    /// (corrupt config, permission denied, etc.) which are propagated.
+    /// Reads from the bulk config map populated by the private
+    /// `all_config()` accessor. Returns an error only if the bulk read
+    /// itself fails (corrupt config, git subprocess failure).
     pub fn config_value(&self, key: &str) -> anyhow::Result<Option<String>> {
-        let output = self.run_command_output(&["config", key])?;
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            Ok(Some(stdout.trim().to_string()))
-        } else if output.status.code() == Some(1) {
-            Ok(None) // Config key doesn't exist
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git config {}: {}", key, stderr.trim());
-        }
+        self.config_last(key)
     }
 
     /// Set a git config value.
+    ///
+    /// Writes to the on-disk config AND updates the bulk config map if
+    /// populated, so subsequent in-process reads see the new value.
     pub fn set_config(&self, key: &str, value: &str) -> anyhow::Result<()> {
+        self.set_config_value(key, value)
+    }
+
+    /// Unset a git config value.
+    ///
+    /// Returns `true` if the key was cleared, `false` if it didn't exist.
+    /// Removes the key from the bulk config map if populated.
+    pub fn unset_config(&self, key: &str) -> anyhow::Result<bool> {
+        self.unset_config_value(key)
+    }
+
+    /// Write a config value and keep the bulk config map coherent.
+    ///
+    /// Every writer in the codebase routes through this helper so that a
+    /// `set` followed by a `get` in the same process sees the new value —
+    /// the bulk map is updated in-memory when populated, in addition to the
+    /// on-disk `git config` write.
+    pub(super) fn set_config_value(&self, key: &str, value: &str) -> anyhow::Result<()> {
         self.run_command(&["config", key, value])?;
+        if let Some(lock) = self.cache.all_config.get() {
+            lock.write()
+                .unwrap()
+                .insert(key.to_string(), vec![value.to_string()]);
+        }
         Ok(())
+    }
+
+    /// Unset a config key and keep the bulk config map coherent.
+    ///
+    /// Returns `true` if the key was cleared, `false` if it didn't exist.
+    /// Propagates actual git config errors (corrupt config, permission denied).
+    pub(super) fn unset_config_value(&self, key: &str) -> anyhow::Result<bool> {
+        let output = self.run_command_output(&["config", "--unset", key])?;
+        let existed = if output.status.success() {
+            true
+        } else if output.status.code() == Some(5) {
+            // --unset exit code 5 = key didn't exist
+            false
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git config --unset {}: {}", key, stderr.trim());
+        };
+        if let Some(lock) = self.cache.all_config.get() {
+            // `shift_remove` preserves remaining order (swap_remove would
+            // reorder); order matters for `primary_remote` which picks the
+            // first remote with a configured URL.
+            lock.write().unwrap().shift_remove(key);
+        }
+        Ok(existed)
     }
 
     /// Read a user-defined marker from `worktrunk.state.<branch>.marker` in git config.
@@ -42,13 +84,11 @@ impl Repository {
             marker: Option<String>,
         }
 
-        let config_key = format!("worktrunk.state.{branch}.marker");
         let raw = self
-            .run_command(&["config", "--get", &config_key])
+            .config_last(&format!("worktrunk.state.{branch}.marker"))
             .ok()
-            .map(|output| output.trim().to_string())
+            .flatten()
             .filter(|s| !s.is_empty())?;
-
         let parsed: MarkerValue = serde_json::from_str(&raw).ok()?;
         parsed.marker
     }
@@ -62,6 +102,12 @@ impl Repository {
     ///
     /// Returns a `BTreeMap` so it serializes to a minijinja object for template access
     /// via `{{ vars.key }}`.
+    ///
+    /// Reads git config directly — **not** via the bulk `all_config` cache —
+    /// because lazy template expansion in hook/alias pipelines depends on
+    /// seeing writes that earlier steps made via their own `git config`
+    /// subprocesses. Those external writes don't round-trip through our
+    /// coherent `set_config_value` helper.
     pub fn vars_entries(&self, branch: &str) -> std::collections::BTreeMap<String, String> {
         let escaped = regex::escape(branch);
         let pattern = format!(r"^worktrunk\.state\.{escaped}\.vars\.");
@@ -82,8 +128,9 @@ impl Repository {
 
     /// Get all vars entries across all branches in a single git call.
     ///
-    /// Returns a map of branch → (key → value). Uses one `git config --get-regexp`
-    /// instead of N per-branch calls, avoiding N+1 subprocess spawns in `wt list --format=json`.
+    /// Returns a map of branch → (key → value). Reads git config directly
+    /// (see [`Self::vars_entries`] for rationale) but still uses one
+    /// `git config --get-regexp` rather than N per-branch calls.
     pub fn all_vars_entries(
         &self,
     ) -> std::collections::HashMap<String, std::collections::BTreeMap<String, String>> {
@@ -121,7 +168,7 @@ impl Repository {
     /// Stores the branch we're switching FROM, so `wt switch -` can return to it.
     pub fn set_switch_previous(&self, previous: Option<&str>) -> anyhow::Result<()> {
         if let Some(prev) = previous {
-            self.run_command(&["config", "worktrunk.history", prev])?;
+            self.set_config_value("worktrunk.history", prev)?;
         }
         // If previous is None (detached HEAD), don't update history
         Ok(())
@@ -131,9 +178,9 @@ impl Repository {
     ///
     /// Returns the branch we came from, enabling ping-pong switching.
     pub fn switch_previous(&self) -> Option<String> {
-        self.run_command(&["config", "--get", "worktrunk.history"])
+        self.config_last("worktrunk.history")
             .ok()
-            .map(|s| s.trim().to_string())
+            .flatten()
             .filter(|s| !s.is_empty())
     }
 
@@ -142,14 +189,15 @@ impl Repository {
     /// Hints are stored as `worktrunk.hints.<name> = true`.
     /// TODO: Could move to global git config if we accumulate more global hints.
     pub fn has_shown_hint(&self, name: &str) -> bool {
-        self.run_command(&["config", "--get", &format!("worktrunk.hints.{name}")])
-            .is_ok()
+        self.config_last(&format!("worktrunk.hints.{name}"))
+            .ok()
+            .flatten()
+            .is_some()
     }
 
     /// Mark a hint as shown in this repo.
     pub fn mark_hint_shown(&self, name: &str) -> anyhow::Result<()> {
-        self.run_command(&["config", &format!("worktrunk.hints.{name}"), "true"])?;
-        Ok(())
+        self.set_config_value(&format!("worktrunk.hints.{name}"), "true")
     }
 
     /// Clear a hint so it will show again.
@@ -157,31 +205,24 @@ impl Repository {
     /// Returns `true` if the hint was cleared, `false` if it didn't exist.
     /// Propagates actual git config errors (corrupt config, permission denied).
     pub fn clear_hint(&self, name: &str) -> anyhow::Result<bool> {
-        let key = format!("worktrunk.hints.{name}");
-        let output = self.run_command_output(&["config", "--unset", &key])?;
-        if output.status.success() {
-            Ok(true)
-        } else if output.status.code() == Some(5) {
-            Ok(false) // Key didn't exist (--unset uses exit code 5)
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git config --unset {}: {}", key, stderr.trim());
-        }
+        self.unset_config_value(&format!("worktrunk.hints.{name}"))
     }
 
     /// List all hints that have been shown in this repo.
+    ///
+    /// Output is sorted alphabetically for deterministic rendering — the
+    /// `HashMap` backing `all_config` doesn't preserve insertion order.
     pub fn list_shown_hints(&self) -> Vec<String> {
-        self.run_command(&["config", "--get-regexp", r"^worktrunk\.hints\."])
-            .unwrap_or_default()
-            .lines()
-            .filter_map(|line| {
-                // Format: "worktrunk.hints.worktree-path true"
-                line.split_whitespace()
-                    .next()
-                    .and_then(|key| key.strip_prefix("worktrunk.hints."))
-                    .map(String::from)
-            })
-            .collect()
+        let Ok(lock) = self.all_config() else {
+            return Vec::new();
+        };
+        let guard = lock.read().unwrap();
+        let mut hints: Vec<String> = guard
+            .keys()
+            .filter_map(|k| k.strip_prefix("worktrunk.hints.").map(String::from))
+            .collect();
+        hints.sort();
+        hints
     }
 
     /// Clear all hints so they will show again.
@@ -221,35 +262,20 @@ impl Repository {
         self.cache
             .default_branch
             .get_or_init(|| {
-                // Fast path: check worktrunk's persistent cache (git config)
+                // Fast path: trust the persisted value without re-validating
+                // that the branch still resolves locally. This avoids an
+                // extra fork on every command, at the cost of surfacing a
+                // clearer error downstream (see GitError::StaleDefaultBranch)
+                // when the configured branch was deleted externally.
                 let configured = self
-                    .run_command(&["config", "--get", "worktrunk.default-branch"])
+                    .config_last("worktrunk.default-branch")
                     .ok()
+                    .flatten()
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty());
-
-                // If configured, validate it exists locally
-                if let Some(ref branch) = configured {
-                    if self.branch(branch).exists_locally().unwrap_or(false) {
-                        let _ = self.cache.invalid_default_branch.set(None);
-                        return Some(branch.clone());
-                    }
-                    // Check if this is the unborn default branch (HEAD points to it but no commits yet)
-                    if self.is_unborn_head_branch(branch) {
-                        let _ = self.cache.invalid_default_branch.set(None);
-                        return Some(branch.clone());
-                    }
-                    // Configured branch doesn't exist - cache for warning, return None
-                    let _ = self.cache.invalid_default_branch.set(Some(branch.clone()));
-                    log::debug!(
-                        "Configured default branch '{}' doesn't exist locally",
-                        branch
-                    );
-                    return None;
+                if let Some(branch) = configured {
+                    return Some(branch);
                 }
-
-                // Not configured - no invalid branch to report
-                let _ = self.cache.invalid_default_branch.set(None);
 
                 // Detect: try remote, then local inference
                 let detected = self.detect_from_remote().or_else(|| {
@@ -259,32 +285,15 @@ impl Repository {
                 });
 
                 // Cache detected result to git config for future runs
-                if let Some(ref branch) = detected {
-                    let _ = self.run_command(&["config", "worktrunk.default-branch", branch]);
+                if let Some(ref branch) = detected
+                    && let Err(e) = self.set_config_value("worktrunk.default-branch", branch)
+                {
+                    log::debug!("Failed to persist default-branch cache: {e}");
                 }
 
                 detected
             })
             .clone()
-    }
-
-    /// Check if user configured an invalid default branch.
-    ///
-    /// Returns `Some(branch_name)` if user set `worktrunk.default-branch` to a branch
-    /// that doesn't exist locally. Returns `None` if:
-    /// - No branch is configured (detection will be used)
-    /// - Configured branch exists locally
-    ///
-    /// Used to show warnings when the configured branch is invalid.
-    ///
-    /// This is a cache read - `default_branch()` populates both caches when it runs.
-    pub fn invalid_default_branch_config(&self) -> Option<String> {
-        // Ensure default_branch() has run (populates both caches, no-op if already called)
-        let _ = self.default_branch();
-        self.cache
-            .invalid_default_branch
-            .get()
-            .and_then(|opt| opt.clone())
     }
 
     /// Try to detect default branch from remote.
@@ -326,9 +335,18 @@ impl Repository {
     ///
     /// Use this for commands that update a branch ref (merge, push).
     /// Validates before approval prompts to avoid wasting user time.
+    ///
+    /// When `target` is `None` (resolving via the cached default branch)
+    /// and the resolved branch doesn't exist, surfaces
+    /// [`GitError::StaleDefaultBranch`] with cache-reset hints rather than
+    /// the generic "branch not found" — the user didn't type that name,
+    /// the persisted cache did.
     pub fn require_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
         let branch = self.resolve_target_branch(target)?;
         if !self.branch(&branch).exists()? {
+            if target.is_none() {
+                return Err(GitError::StaleDefaultBranch { branch }.into());
+            }
             return Err(GitError::BranchNotFound {
                 branch,
                 show_create_hint: true,
@@ -343,9 +361,17 @@ impl Repository {
     ///
     /// Use this for commands that reference a commit (rebase, squash).
     /// Validates before approval prompts to avoid wasting user time.
+    ///
+    /// When `target` is `None` (resolving via the cached default branch)
+    /// and the resolved reference doesn't exist, surfaces
+    /// [`GitError::StaleDefaultBranch`] with cache-reset hints rather than
+    /// the generic "reference not found".
     pub fn require_target_ref(&self, target: Option<&str>) -> anyhow::Result<String> {
         let reference = self.resolve_target_branch(target)?;
         if !self.ref_exists(&reference)? {
+            if target.is_none() {
+                return Err(GitError::StaleDefaultBranch { branch: reference }.into());
+            }
             return Err(GitError::ReferenceNotFound { reference }.into());
         }
         Ok(reference)
@@ -381,7 +407,7 @@ impl Repository {
         }
 
         // 3. Check git config init.defaultBranch (if branch exists)
-        if let Ok(default) = self.run_command(&["config", "--get", "init.defaultBranch"]) {
+        if let Ok(Some(default)) = self.config_last("init.defaultBranch") {
             let branch = default.trim().to_string();
             if !branch.is_empty() && branches.contains(&branch) {
                 return Ok(branch);
@@ -406,18 +432,6 @@ impl Repository {
 
     // Private helpers for default_branch detection
 
-    /// Check if a branch is the unborn default branch (HEAD points to it but no commits exist).
-    ///
-    /// This is the case in a freshly `git init`-ed repo: HEAD is `refs/heads/main` but the
-    /// branch doesn't exist yet (no commits). We accept this as a valid default branch.
-    fn is_unborn_head_branch(&self, branch: &str) -> bool {
-        self.run_command(&["symbolic-ref", "HEAD"])
-            .ok()
-            .and_then(|s| s.trim().strip_prefix("refs/heads/").map(String::from))
-            .is_some_and(|head_branch| head_branch == branch)
-            && self.all_branches().is_ok_and(|b| b.is_empty())
-    }
-
     fn local_default_branch(&self, remote: &str) -> anyhow::Result<String> {
         let stdout =
             self.run_command(&["rev-parse", "--abbrev-ref", &format!("{}/HEAD", remote)])?;
@@ -434,8 +448,7 @@ impl Repository {
     /// This sets worktrunk's cache (`worktrunk.default-branch`). Use `clear` then
     /// `get` to re-detect from remote.
     pub fn set_default_branch(&self, branch: &str) -> anyhow::Result<()> {
-        self.run_command(&["config", "worktrunk.default-branch", branch])?;
-        Ok(())
+        self.set_config_value("worktrunk.default-branch", branch)
     }
 
     /// Clear the default branch cache.
@@ -446,18 +459,7 @@ impl Repository {
     /// Returns `true` if cache was cleared, `false` if no cache existed.
     /// Propagates actual git config errors (corrupt config, permission denied).
     pub fn clear_default_branch_cache(&self) -> anyhow::Result<bool> {
-        let output = self.run_command_output(&["config", "--unset", "worktrunk.default-branch"])?;
-        if output.status.success() {
-            Ok(true)
-        } else if output.status.code() == Some(5) {
-            Ok(false) // Key didn't exist (--unset uses exit code 5)
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "git config --unset worktrunk.default-branch: {}",
-                stderr.trim()
-            );
-        }
+        self.unset_config_value("worktrunk.default-branch")
     }
 
     // =========================================================================

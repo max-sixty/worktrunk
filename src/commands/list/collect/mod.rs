@@ -614,7 +614,7 @@ pub fn collect(
     };
 
     // Filter local branches to those without worktrees (CPU-only, no git commands)
-    let branches_without_worktrees = if show_branches {
+    let (branches_without_worktrees, warn_stale_default) = if show_branches {
         let all_local = if let Some(result) = local_branches_cell.into_inner() {
             result?
         } else {
@@ -622,13 +622,36 @@ pub fn collect(
             repo.list_local_branches()?
         };
         let worktree_branches = worktree_branch_set(&worktrees);
-        all_local
+        // Opportunistic stale-default-branch check: `default_branch` above
+        // is the persisted value, now trusted without validation on the hot
+        // path. Cross-check it against the branch set we already have — no
+        // extra fork — and surface a warning if it's been deleted externally.
+        let warn_stale_default = default_branch.as_deref().is_some_and(|branch| {
+            !worktree_branches.contains(branch) && !all_local.iter().any(|(name, _)| name == branch)
+        });
+        let filtered = all_local
             .into_iter()
             .filter(|(name, _)| !worktree_branches.contains(name.as_str()))
-            .collect()
+            .collect();
+        (filtered, warn_stale_default)
     } else {
-        Vec::new()
+        (Vec::new(), false)
     };
+
+    if warn_stale_default && let Some(branch) = default_branch.as_deref() {
+        eprintln!(
+            "{}",
+            warning_message(cformat!(
+                "Configured default branch <bold>{branch}</> does not exist locally"
+            ))
+        );
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "To reset, run <underline>wt config state default-branch clear</>"
+            ))
+        );
+    }
     let remote_branches = if show_remotes {
         if let Some(result) = remote_branches_cell.into_inner() {
             result?
@@ -650,15 +673,6 @@ pub fn collect(
             .find(|wt| canonicalize(&wt.path).map(|p| p == root).unwrap_or(false))
             .map(|wt| wt.path.clone())
     });
-    // Show warning if user configured a default branch that doesn't exist locally
-    if let Some(configured) = repo.invalid_default_branch_config() {
-        let msg =
-            cformat!("Configured default branch <bold>{configured}</> does not exist locally");
-        eprintln!("{}", warning_message(msg));
-        let hint = cformat!("To reset, run <underline>wt config state default-branch clear</>");
-        eprintln!("{}", hint_message(hint));
-    }
-
     // Main worktree is the primary worktree (for sorting and is_main display).
     // - Normal repos: the main worktree (repo root)
     // - Bare repos: the default branch's worktree

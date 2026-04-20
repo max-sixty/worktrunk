@@ -630,9 +630,9 @@ pub fn handle_state_get(
                 // Read raw config to get both marker and set_at
                 let config_key = format!("worktrunk.state.{branch_name}.marker");
                 let raw = repo
-                    .run_command(&["config", "--get", &config_key])
+                    .config_value(&config_key)
                     .ok()
-                    .map(|s| s.trim().to_string())
+                    .flatten()
                     .filter(|s| !s.is_empty());
                 let output = match raw {
                     Some(json_str) => {
@@ -753,7 +753,7 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
             });
 
             let config_key = format!("worktrunk.state.{branch_name}.marker");
-            repo.run_command(&["config", &config_key, &json.to_string()])?;
+            repo.set_config(&config_key, &json.to_string())?;
 
             eprintln!(
                 "{}",
@@ -783,10 +783,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
             }
         }
         "previous-branch" => {
-            if repo
-                .run_command(&["config", "--unset", "worktrunk.history"])
-                .is_ok()
-            {
+            if repo.unset_config("worktrunk.history").unwrap_or(false) {
                 eprintln!("{}", success_message("Cleared previous branch"));
             } else {
                 eprintln!("{}", info_message("No previous branch to clear"));
@@ -813,10 +810,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                     None => repo.require_current_branch("clear ci-status for current branch")?,
                 };
                 let config_key = format!("worktrunk.state.{branch_name}.ci-status");
-                if repo
-                    .run_command(&["config", "--unset", &config_key])
-                    .is_ok()
-                {
+                if repo.unset_config(&config_key).unwrap_or(false) {
                     eprintln!(
                         "{}",
                         success_message(cformat!("Cleared CI cache for <bold>{branch_name}</>"))
@@ -838,7 +832,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                 let mut cleared_count = 0;
                 for line in output.lines() {
                     if let Some(config_key) = line.split_whitespace().next() {
-                        repo.run_command(&["config", "--unset", config_key])?;
+                        repo.unset_config(config_key)?;
                         cleared_count += 1;
                     }
                 }
@@ -861,10 +855,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                 };
 
                 let config_key = format!("worktrunk.state.{branch_name}.marker");
-                if repo
-                    .run_command(&["config", "--unset", &config_key])
-                    .is_ok()
-                {
+                if repo.unset_config(&config_key).unwrap_or(false) {
                     eprintln!(
                         "{}",
                         success_message(cformat!("Cleared marker for <bold>{branch_name}</>"))
@@ -913,10 +904,7 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
     }
 
     // Clear previous branch
-    if repo
-        .run_command(&["config", "--unset", "worktrunk.history"])
-        .is_ok()
-    {
+    if repo.unset_config("worktrunk.history").unwrap_or(false) {
         eprintln!("{}", success_message("Cleared previous branch"));
         cleared_any = true;
     }
@@ -928,7 +916,7 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
     let mut markers_cleared = 0;
     for line in markers_output.lines() {
         if let Some(config_key) = line.split_whitespace().next() {
-            let _ = repo.run_command(&["config", "--unset", config_key]);
+            let _ = repo.unset_config(config_key);
             markers_cleared += 1;
         }
     }
@@ -1344,7 +1332,7 @@ pub fn handle_vars_set(key: &str, value: &str, branch: Option<String>) -> anyhow
     };
 
     let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
-    repo.run_command(&["config", &config_key, value])?;
+    repo.set_config(&config_key, value)?;
 
     eprintln!(
         "{}",
@@ -1409,7 +1397,7 @@ pub fn handle_vars_clear(
             let count = entries.len();
             for (key, _) in entries {
                 let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
-                let _ = repo.run_command(&["config", "--unset", &config_key]);
+                let _ = repo.unset_config(&config_key);
             }
             eprintln!(
                 "{}",
@@ -1423,10 +1411,7 @@ pub fn handle_vars_clear(
         let key = key.expect("key required when --all not set");
         validate_vars_key(key)?;
         let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
-        if repo
-            .run_command(&["config", "--unset", &config_key])
-            .is_ok()
-        {
+        if repo.unset_config(&config_key).unwrap_or(false) {
             eprintln!(
                 "{}",
                 success_message(cformat!(
@@ -1452,7 +1437,7 @@ fn clear_all_vars(repo: &Repository) -> anyhow::Result<usize> {
     for (branch, entries) in &all_vars {
         for key in entries.keys() {
             let config_key = format!("worktrunk.state.{branch}.vars.{key}");
-            let _ = repo.run_command(&["config", "--unset", &config_key]);
+            let _ = repo.unset_config(&config_key);
             cleared += 1;
         }
     }

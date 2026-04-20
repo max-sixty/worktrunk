@@ -4,6 +4,7 @@ info:
   program: wt
   args:
     - list
+    - "--branches"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -50,6 +51,8 @@ exit_code: 0
 [2m○[22m [2mShowing 4 worktrees. 24 tasks failed
 
 ----- stderr -----
+[33m▲[39m [33mConfigured default branch [1mnonexistent[22m does not exist locally[39m
+[2m↳[22m [2mTo reset, run [4mwt config state default-branch clear[24m[22m
 [33m▲[39m [33mSome git operations failed:
 [107m [0m [1mmain[22m: ahead-behind (fatal: ambiguous argument 'nonexistent': unknown revision or path not in the working tree.)
 [107m [0m [1mmain[22m: committed-trees-match (fatal: ambiguous argument 'nonexistent^{tree}': unknown revision or path not in the working tree.)

@@ -598,12 +598,19 @@ worktree-path = "{{ nonexistent_variable }}"
     );
 }
 
-/// Test that empty default branch is detected early with actionable error
+/// Test that empty default branch is detected early with actionable error.
+///
+/// Engineers a state where detection genuinely fails (no remote, no
+/// standard branch names, no init.defaultBranch) so `default_branch()`
+/// returns None — relocate's preflight bails with a clear setup hint.
 #[rstest]
 fn test_relocate_empty_default_branch(repo: TestRepo) {
     let parent = worktree_parent(&repo);
 
-    // Create a worktree at a non-standard location
+    // Create a worktree at a non-standard location on a branch with a
+    // non-standard name, then rename `main` to another non-standard name
+    // and remove the remote. With no remote, no main/master/develop/trunk,
+    // and no init.defaultBranch, detection has nothing to go on.
     let wrong_path = parent.join("wrong-location");
     repo.run_git(&[
         "worktree",
@@ -612,15 +619,8 @@ fn test_relocate_empty_default_branch(repo: TestRepo) {
         "feature",
         wrong_path.to_str().unwrap(),
     ]);
-
-    // Set worktrunk.default-branch to a non-existent branch.
-    // The detection logic validates that configured branches exist locally,
-    // and returns None if they don't. This triggers the empty default branch error.
-    repo.run_git(&[
-        "config",
-        "worktrunk.default-branch",
-        "nonexistent-branch-xyz",
-    ]);
+    repo.run_git(&["branch", "-m", "main", "trunk-a"]);
+    repo.run_git(&["remote", "remove", "origin"]);
 
     // Relocate should fail early with helpful error
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["relocate"], None));

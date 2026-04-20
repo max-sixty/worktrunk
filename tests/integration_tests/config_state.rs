@@ -1406,8 +1406,8 @@ fn test_state_hints_get_with_hints(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "hints", "get", &[]).output().unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
-    worktree-path
     another-hint
+    worktree-path
     ");
 }
 

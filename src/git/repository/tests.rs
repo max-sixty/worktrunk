@@ -385,7 +385,8 @@ fn repo_path_error_when_is_bare_fails() {
 
     // Create a Repository with a non-existent git_common_dir.
     // This makes --show-toplevel fail (reaching the is_bare branch),
-    // and then is_bare() also fails because git can't run in a missing dir.
+    // and then is_bare() also fails because the bulk config read
+    // can't run in a missing dir.
     let repo = super::Repository {
         discovery_path: PathBuf::from("/nonexistent/repo"),
         git_common_dir: PathBuf::from("/nonexistent/.git"),
@@ -397,9 +398,95 @@ fn repo_path_error_when_is_bare_fails() {
     // The OS error text is platform-specific (e.g., "No such file or directory" on Unix,
     // "The directory name is invalid." on Windows), so only assert the stable prefix.
     assert!(
-        msg.starts_with("failed to check if repository is bare: "),
+        msg.starts_with("failed to read git config: "),
         "unexpected error message: {msg}"
     );
+}
+
+#[test]
+fn parse_config_list_z_basic() {
+    let input = b"core.bare\nfalse\0remote.origin.url\nhttps://example.com/a.git\0";
+    let map = super::parse_config_list_z(input);
+    assert_eq!(map["core.bare"], vec!["false"]);
+    assert_eq!(map["remote.origin.url"], vec!["https://example.com/a.git"]);
+}
+
+#[test]
+fn parse_config_list_z_multivar() {
+    let input =
+        b"remote.origin.fetch\n+refs/heads/*:refs/remotes/origin/*\0remote.origin.fetch\n+refs/tags/*:refs/tags/*\0";
+    let map = super::parse_config_list_z(input);
+    assert_eq!(
+        map["remote.origin.fetch"],
+        vec![
+            "+refs/heads/*:refs/remotes/origin/*",
+            "+refs/tags/*:refs/tags/*"
+        ]
+    );
+}
+
+#[test]
+fn parse_config_list_z_newline_in_value() {
+    // A value with embedded newlines is preserved verbatim because -z uses
+    // NUL as the record separator. The split_once('\n') only splits on the
+    // first newline (which separates key from value).
+    let input = b"commit.template\nline1\nline2\0core.bare\nfalse\0";
+    let map = super::parse_config_list_z(input);
+    assert_eq!(map["commit.template"], vec!["line1\nline2"]);
+    assert_eq!(map["core.bare"], vec!["false"]);
+}
+
+#[test]
+fn parse_config_list_z_equals_in_value() {
+    // Values containing `=` are preserved — no splitting on `=` because
+    // the key/value separator under `-z` is `\n`.
+    let input = b"user.email\nme=you@example.com\0";
+    let map = super::parse_config_list_z(input);
+    assert_eq!(map["user.email"], vec!["me=you@example.com"]);
+}
+
+#[test]
+fn parse_config_list_z_empty() {
+    let map = super::parse_config_list_z(b"");
+    assert!(map.is_empty());
+}
+
+#[test]
+fn canonical_config_key_cases() {
+    // section + variable: both lowercased
+    assert_eq!(
+        super::canonical_config_key("init.defaultBranch"),
+        "init.defaultbranch"
+    );
+    assert_eq!(
+        super::canonical_config_key("checkout.defaultRemote"),
+        "checkout.defaultremote"
+    );
+    assert_eq!(super::canonical_config_key("core.Bare"), "core.bare");
+    // 3+ parts: section + variable lowercased, subsection preserved
+    assert_eq!(
+        super::canonical_config_key("remote.MyFork.url"),
+        "remote.MyFork.url"
+    );
+    assert_eq!(
+        super::canonical_config_key("branch.MyBranch.pushRemote"),
+        "branch.MyBranch.pushremote"
+    );
+    // 4+ parts: subsection is the middle (spanning dots); only first and last lowercase
+    assert_eq!(
+        super::canonical_config_key("worktrunk.state.MyBranch.marker"),
+        "worktrunk.state.MyBranch.marker"
+    );
+}
+
+#[test]
+fn parse_git_bool_variants() {
+    for truthy in ["true", "TRUE", "True", "1", "yes", "YES", "on", "ON"] {
+        assert!(super::parse_git_bool(truthy), "{truthy} should be true");
+    }
+    for falsy in ["false", "0", "no", "off", "", "anything-else"] {
+        assert!(!super::parse_git_bool(falsy), "{falsy} should be false");
+    }
 }
 
 #[test]

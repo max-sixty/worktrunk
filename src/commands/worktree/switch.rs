@@ -435,24 +435,11 @@ fn resolve_switch_target(
         }
     }
 
-    // Compute base branch for creation
+    // Compute base branch for creation. When the cached default branch
+    // no longer resolves locally, return None and let the downstream
+    // StaleDefaultBranch error emerge at the actual use site.
     let base_branch = if create {
         resolved_base.or_else(|| {
-            // Check for invalid configured default branch
-            if let Some(configured) = repo.invalid_default_branch_config() {
-                eprintln!(
-                    "{}",
-                    warning_message(cformat!(
-                        "Configured default branch <bold>{configured}</> does not exist locally"
-                    ))
-                );
-                eprintln!(
-                    "{}",
-                    hint_message(cformat!(
-                        "To reset, run <underline>wt config state default-branch clear</>"
-                    ))
-                );
-            }
             repo.resolve_target_branch(None)
                 .ok()
                 .filter(|b| repo.branch(b).exists_locally().unwrap_or(false))
@@ -565,15 +552,15 @@ fn setup_fork_branch(
     let branch_merge_key = format!("branch.{}.merge", branch);
     let merge_ref = format!("refs/{}", remote_ref);
 
-    repo.run_command(&["config", &branch_remote_key, remote])
+    repo.set_config(&branch_remote_key, remote)
         .with_context(|| format!("Failed to configure branch.{}.remote", branch))?;
-    repo.run_command(&["config", &branch_merge_key, &merge_ref])
+    repo.set_config(&branch_merge_key, &merge_ref)
         .with_context(|| format!("Failed to configure branch.{}.merge", branch))?;
 
     // Only configure pushRemote if we have a fork URL (not using prefixed branch)
     if let Some(url) = fork_push_url {
         let branch_push_remote_key = format!("branch.{}.pushRemote", branch);
-        repo.run_command(&["config", &branch_push_remote_key, url])
+        repo.set_config(&branch_push_remote_key, url)
             .with_context(|| format!("Failed to configure branch.{}.pushRemote", branch))?;
     }
 
