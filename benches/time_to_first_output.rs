@@ -16,7 +16,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::Path;
 use std::process::Command;
-use wt_perf::{RepoConfig, create_repo, isolate_cmd, setup_fake_remote};
+use wt_perf::{RepoConfig, create_repo, invalidate_caches_auto, isolate_cmd, setup_fake_remote};
 
 fn bench_first_output(c: &mut Criterion) {
     let mut group = c.benchmark_group("first_output");
@@ -35,18 +35,30 @@ fn bench_first_output(c: &mut Criterion) {
         cmd
     };
 
-    // remove: exits after validation, before approval/output
+    // remove: exits after validation, before approval/output.
+    //
+    // `prepare_worktree_removal` calls `compute_integration_lazy`, which
+    // populates `.git/wt/cache/{is-ancestor,has-added-changes,merge-add-probe}`
+    // on the first invocation. Without invalidation between iterations, iter 1
+    // is cold and iter 2+ read from cache — the reported timing would be warm
+    // cache, which doesn't reflect the first-invocation TTFO a user sees.
+    // Invalidate via `iter_batched` so every iteration starts cold.
     group.bench_function("remove", |b| {
-        b.iter(|| {
-            let output = make_cmd(&["remove", "--yes", "--no-hooks", "--force", "feature-wt-1"])
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "Benchmark command failed:\nstderr: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        });
+        b.iter_batched(
+            || invalidate_caches_auto(&repo_path),
+            |_| {
+                let output =
+                    make_cmd(&["remove", "--yes", "--no-hooks", "--force", "feature-wt-1"])
+                        .output()
+                        .unwrap();
+                assert!(
+                    output.status.success(),
+                    "Benchmark command failed:\nstderr: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            },
+            criterion::BatchSize::SmallInput,
+        );
     });
 
     // switch: exits after execute_switch, before mismatch computation and output

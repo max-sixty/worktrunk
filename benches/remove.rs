@@ -15,7 +15,9 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use wt_perf::{RepoConfig, isolate_cmd, run_git, run_git_ok, setup_fake_remote};
+use wt_perf::{
+    RepoConfig, invalidate_caches_auto, isolate_cmd, run_git, run_git_ok, setup_fake_remote,
+};
 
 /// Create a benchmark repo at a specific path with optional hooks.
 fn create_bench_repo(base_path: &Path, with_hooks: bool) -> PathBuf {
@@ -108,21 +110,30 @@ fn bench_remove_e2e(c: &mut Criterion) {
         ))
     };
 
-    // Baseline: first_output (exits before output rendering)
+    // Baseline: first_output (exits before output rendering).
+    //
+    // Invalidates caches per iteration so the timing reflects first-invocation
+    // TTFO — `prepare_worktree_removal` writes to `.git/wt/cache/` via
+    // `compute_integration_lazy`, and reusing it across iterations would
+    // measure warm-cache cost instead.
     group.bench_function("first_output", |b| {
-        b.iter(|| {
-            let mut cmd = Command::new(binary);
-            cmd.args(["remove", "--yes", "--no-hooks", "--force", "feature-wt-1"]);
-            cmd.current_dir(&repo_no_hooks);
-            isolate_cmd(&mut cmd, Some(&user_config_no_hooks));
-            cmd.env("WORKTRUNK_FIRST_OUTPUT", "1");
-            let output = cmd.output().unwrap();
-            assert!(
-                output.status.success(),
-                "first_output failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        });
+        b.iter_batched(
+            || invalidate_caches_auto(&repo_no_hooks),
+            |_| {
+                let mut cmd = Command::new(binary);
+                cmd.args(["remove", "--yes", "--no-hooks", "--force", "feature-wt-1"]);
+                cmd.current_dir(&repo_no_hooks);
+                isolate_cmd(&mut cmd, Some(&user_config_no_hooks));
+                cmd.env("WORKTRUNK_FIRST_OUTPUT", "1");
+                let output = cmd.output().unwrap();
+                assert!(
+                    output.status.success(),
+                    "first_output failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            },
+            criterion::BatchSize::SmallInput,
+        );
     });
 
     // No hooks: --no-hooks (skip hook loading), run from feature worktree
