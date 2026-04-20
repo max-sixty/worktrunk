@@ -377,7 +377,7 @@ jobs:
           sed -i "s/^pkgver=.*/pkgver=${VERSION}/" .github/aur/PKGBUILD
           cat .github/aur/PKGBUILD
       - name: Publish AUR package
-        uses: KSXGitHub/github-actions-deploy-aur@v4.1.2
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.3
         with:
           pkgname: worktrunk-bin
           pkgbuild: .github/aur/PKGBUILD
