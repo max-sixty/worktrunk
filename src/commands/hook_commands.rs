@@ -11,7 +11,9 @@ use anyhow::Context;
 use color_print::cformat;
 use strum::IntoEnumIterator;
 use worktrunk::HookType;
-use worktrunk::config::{Approvals, CommandConfig, ProjectConfig, UserConfig};
+use worktrunk::config::{
+    ALIAS_ARGS_KEY, Approvals, CommandConfig, ProjectConfig, UserConfig, referenced_vars_for_config,
+};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
@@ -25,7 +27,6 @@ use super::command_executor::build_hook_context;
 use super::command_executor::CommandContext;
 use super::command_executor::{FailureStrategy, command_summary_name};
 use super::context::CommandEnv;
-use super::hook_filter::{HookSource, ParsedFilter};
 use super::hooks::{
     HookCommandSpec, check_name_filter_matched, count_sourced_commands, prepare_sourced_steps,
     run_hook_with_filter, spawn_background_hooks, spawn_hook_pipeline,
@@ -152,84 +153,53 @@ fn build_manual_hook_extra_vars<'a>(
     vars
 }
 
-/// Warn about user-provided `--var` flags that aren't referenced by any template
-/// in the hooks that will run. Catches typos in variable names that would
-/// otherwise silently have no effect.
+/// Parse a raw `KEY=VALUE` shorthand token into a canonicalized
+/// `(canonical_key, original_key, value)` triple.
 ///
-/// Only checks top-level variable references (not `{{ vars.foo }}`). Name
-/// filters are respected — if the user runs `wt hook pre-merge test` and `test`
-/// doesn't use the var but `build` does, we still warn because `build` won't run.
-fn warn_unreferenced_custom_vars(
+/// Canonicalization replaces `-` with `_` in the key to match the template
+/// naming convention (minijinja parses `{{ my-var }}` as subtraction), the
+/// same rule `parse_key_val` applies to `--var`. The original key is preserved
+/// for reconstructing `--KEY=VALUE` when forwarding to `{{ args }}`.
+fn parse_shorthand_token(raw: &str) -> anyhow::Result<(String, String, String)> {
+    let (key, value) = raw
+        .split_once('=')
+        .ok_or_else(|| anyhow::anyhow!("invalid shorthand (missing `=`): {raw}"))?;
+    if key.is_empty() {
+        anyhow::bail!("invalid shorthand (empty key): {raw}");
+    }
+    Ok((key.replace('-', "_"), key.to_string(), value.to_string()))
+}
+
+/// Union of top-level template variable names referenced across every command
+/// in both configs for this hook type. Matches alias pipeline semantics:
+/// referenced in any step is a binding candidate for the whole invocation.
+fn referenced_vars_union(
     user_config: Option<&CommandConfig>,
     project_config: Option<&CommandConfig>,
-    name_filters: &[String],
-    custom_vars: &[(String, String)],
-) {
-    if custom_vars.is_empty() {
-        return;
+) -> anyhow::Result<std::collections::BTreeSet<String>> {
+    let mut out = std::collections::BTreeSet::new();
+    if let Some(cfg) = user_config {
+        out.extend(referenced_vars_for_config(cfg)?);
     }
-
-    let parsed_filters: Vec<ParsedFilter<'_>> = name_filters
-        .iter()
-        .map(|f| ParsedFilter::parse(f))
-        .collect();
-    let filter_names: Vec<&str> = parsed_filters
-        .iter()
-        .filter(|f| !f.name.is_empty())
-        .map(|f| f.name)
-        .collect();
-
-    // Empty environment: every variable reference in the template appears as
-    // "undeclared", giving us the full set of referenced top-level names.
-    let env = minijinja::Environment::new();
-    let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    for (source, config) in [
-        (HookSource::User, user_config),
-        (HookSource::Project, project_config),
-    ] {
-        let Some(config) = config else { continue };
-
-        // Skip this source if no filter matches it
-        if !parsed_filters.is_empty() && !parsed_filters.iter().any(|f| f.matches_source(source)) {
-            continue;
-        }
-
-        for step in config.steps() {
-            let commands: &[worktrunk::config::Command] = match step {
-                worktrunk::config::HookStep::Single(cmd) => std::slice::from_ref(cmd),
-                worktrunk::config::HookStep::Concurrent(cmds) => cmds.as_slice(),
-            };
-            for cmd in commands {
-                // If names are filtered, skip commands whose name doesn't match
-                if !filter_names.is_empty()
-                    && !cmd
-                        .name
-                        .as_deref()
-                        .is_some_and(|n| filter_names.contains(&n))
-                {
-                    continue;
-                }
-                if let Ok(tmpl) = env.template_from_str(&cmd.template) {
-                    referenced.extend(tmpl.undeclared_variables(false));
-                }
-            }
-        }
+    if let Some(cfg) = project_config {
+        out.extend(referenced_vars_for_config(cfg)?);
     }
+    Ok(out)
+}
 
-    // TODO: show the original (pre-canonicalized) key in the warning so
-    // `--my-env=staging` produces "my-env" not "my_env". Requires threading
-    // the raw input through parse_key_val.
-    for (key, _) in custom_vars {
-        if !referenced.contains(key) {
-            eprintln!(
-                "{}",
-                warning_message(cformat!(
-                    "--var <bold>{key}</> is not referenced by any hook template — typo?"
-                ))
-            );
-        }
-    }
+/// CLI-origin arguments to a manual `wt hook <type>` invocation. Bundled so
+/// the call sites in `main.rs` don't balloon past clippy's
+/// `too_many_arguments` threshold as the shorthand/forwarding surface grows.
+pub struct HookCliArgs<'a> {
+    /// Positional name filters: `wt hook pre-merge test build` → `["test", "build"]`.
+    pub name_filters: &'a [String],
+    /// Explicit `--var KEY=VALUE` bindings (deprecated force-bind).
+    pub explicit_vars: &'a [(String, String)],
+    /// Raw `KEY=VALUE` tokens from the `--KEY=VALUE` shorthand. Smart-routed:
+    /// bind if any hook template references KEY, else forward to `{{ args }}`.
+    pub shorthand_vars: &'a [String],
+    /// Tokens after `--` that forward to `{{ args }}` verbatim.
+    pub forwarded_args: &'a [String],
 }
 
 /// Handle `wt hook` command
@@ -239,8 +209,13 @@ fn warn_unreferenced_custom_vars(
 ///
 /// Works in detached HEAD state - `{{ branch }}` template variable will be "HEAD".
 ///
-/// Custom variables from `--var KEY=VALUE` are merged into the template context,
-/// allowing hooks to be tested with different values without being in that context.
+/// Template variables come from three sources in [`HookCliArgs`], routed per
+/// alias semantics:
+/// - `shorthand_vars` (`--KEY=VALUE`): binds `{{ KEY }}` if any hook template
+///   references it; otherwise forwards `--KEY=VALUE` into `{{ args }}`.
+/// - `forwarded_args` (tokens after `--`): forwards into `{{ args }}` verbatim.
+/// - `explicit_vars` (`--var KEY=VALUE`): deprecated force-bind. Always binds,
+///   regardless of whether any template references the key.
 ///
 /// The `foreground` parameter controls execution mode for hooks that normally run
 /// in background (post-start, post-switch):
@@ -252,9 +227,14 @@ pub fn run_hook(
     yes: bool,
     foreground: Option<bool>,
     dry_run: bool,
-    name_filters: &[String],
-    custom_vars: &[(String, String)],
+    cli: HookCliArgs<'_>,
 ) -> anyhow::Result<()> {
+    let HookCliArgs {
+        name_filters,
+        explicit_vars,
+        shorthand_vars,
+        forwarded_args,
+    } = cli;
     // Derive context from current environment (branch-optional for CI compatibility)
     let env = CommandEnv::for_action_branchless()?;
     let repo = &env.repo;
@@ -274,12 +254,6 @@ pub fn run_hook(
         }
     }
 
-    // Build extra vars from command-line --var flags
-    let custom_vars_refs: Vec<(&str, &str)> = custom_vars
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-
     // Get effective user hooks (global + per-project merged)
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
     let (user_config, proj_config) = (
@@ -297,19 +271,59 @@ pub fn run_hook(
         return Ok(());
     }
 
-    // Warn about typos in --var flags — vars that no template references
-    warn_unreferenced_custom_vars(user_config, proj_config, name_filters, custom_vars);
+    // Smart-route shorthand: bind when the template references the key,
+    // forward otherwise. Mirrors `AliasOptions::parse` for the alias path.
+    let referenced = referenced_vars_union(user_config, proj_config)?;
+    let mut bindings: Vec<(String, String)> = Vec::new();
+    let mut args: Vec<String> = Vec::new();
+    for raw in shorthand_vars {
+        let (canon_key, orig_key, value) = parse_shorthand_token(raw)?;
+        if referenced.contains(&canon_key) {
+            bindings.push((canon_key, value));
+        } else {
+            args.push(format!("--{orig_key}={value}"));
+        }
+    }
+    args.extend(forwarded_args.iter().cloned());
+
+    // Explicit `--var KEY=VALUE` is deprecated — prefer `--KEY=VALUE`. It
+    // still force-binds (useful when a template references the key only
+    // conditionally, e.g. `{% if override %}`), so keep the binding.
+    if !explicit_vars.is_empty() {
+        eprintln!(
+            "{}",
+            warning_message(
+                "--var is deprecated; use --KEY=VALUE shorthand (binds automatically when any hook template references KEY)",
+            )
+        );
+        bindings.extend(explicit_vars.iter().cloned());
+    }
+
+    let custom_vars_refs: Vec<(&str, &str)> = bindings
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
 
     // Build extra vars per hook type (shared by dry-run and execution paths)
     let default_branch = repo.default_branch();
     let worktree_path_str = worktrunk::path::to_posix_path(&ctx.worktree_path.to_string_lossy());
-    let extra_vars = build_manual_hook_extra_vars(
+    // Splice `args` into the template context as a JSON-encoded sequence.
+    // `expand_template` rehydrates it as `ShellArgs` so bare `{{ args }}`
+    // renders space-joined with per-element shell escaping. Mirrors
+    // `run_alias` at `src/commands/alias.rs`.
+    let args_json =
+        serde_json::to_string(&args).expect("Vec<String> serialization should never fail");
+    let mut extra_vars = build_manual_hook_extra_vars(
         &ctx,
         hook_type,
         &custom_vars_refs,
         default_branch.as_deref(),
         &worktree_path_str,
     );
+    // Forward positional CLI args as `{{ args }}` (empty sequence when
+    // nothing was forwarded). `expand_template` rehydrates this JSON into a
+    // `ShellArgs` sequence that renders space-joined, per-element escaped.
+    extra_vars.push((ALIAS_ARGS_KEY, &args_json));
 
     if dry_run {
         let steps = prepare_sourced_steps(
@@ -618,6 +632,10 @@ fn expand_command_template(
     if let Some(name) = hook_name {
         template_ctx.insert("hook_name".into(), name.into());
     }
+    // Preview has no CLI args to forward. Inject an empty JSON sequence
+    // so templates that reference `{{ args }}` render cleanly rather than
+    // erroring with "undefined value" at the preview site.
+    template_ctx.insert(ALIAS_ARGS_KEY.into(), "[]".into());
     let vars: HashMap<&str, &str> = template_ctx
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))

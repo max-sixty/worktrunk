@@ -248,3 +248,24 @@ Arguments pass through verbatim, stdio is inherited, and the child's exit code p
 ### Examples
 
 - [`worktrunk-sync`](https://github.com/pablospe/worktrunk-sync) — rebases stacked worktree branches in dependency order, inferring the tree from git history. Install with `cargo install worktrunk-sync`, then run as `wt sync`.
+
+## Reference: hooks vs. aliases
+
+Hooks and aliases share a template-variable model and a smart-routing rule for `--KEY=VALUE` shorthand (bind if the template references the key, else forward to `{{ args }}`), so a pattern learned on one surface mostly transfers to the other. A few things differ.
+
+<details>
+<summary>Interface differences</summary>
+
+| Axis | Hooks | Aliases |
+|------|-------|---------|
+| Invocation | `wt hook <type> [args...]` — nested under the `hook` built-in | `wt <name> [args...]` — top-level |
+| Bare positionals | Filter names (`wt hook pre-merge test build` runs only `test` and `build`) | Forwarded to `{{ args }}` |
+| Reach `{{ args }}` from positionals | Must use `--` (`wt hook pre-merge -- extra`) | Any bare positional lands there |
+| Approval skip flag | Post-subcommand `--yes` / `-y` supported (`wt hook pre-merge --yes`) | Only the global form (`wt -y <alias>`); post-alias `--yes` falls through to `{{ args }}` |
+| Source discrimination | `user:` / `project:` / `user:name` / `project:name` filter syntax | Run user first, then project; no filter syntax |
+| Force-bind escape | `--var KEY=VALUE` (deprecated — prefer `--KEY=VALUE` — but still force-binds) | None — smart routing is the only path |
+| `--help` | Clap-rendered per hook type (`wt hook --help`, `wt hook pre-merge --help`) | `wt <alias> --help` redirects to `wt config alias show` / `dry-run` |
+| Inspection | `wt hook show [type] [--expanded]` | `wt config alias show <name>` / `wt config alias dry-run <name>` |
+| Template-context extras | `hook_type`, `hook_name`, per-type operation vars (`base`, `target`, `pr_number`, …) | `args` on top of the shared base variables |
+
+</details>

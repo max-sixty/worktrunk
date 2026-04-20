@@ -138,6 +138,7 @@ Hooks can use template variables that expand at runtime:
 | exec      | `{{ cwd }}`                   | Directory where the hook command runs |
 |           | `{{ hook_type }}`             | Hook type being run (e.g. `pre-start`, `pre-merge`) |
 |           | `{{ hook_name }}`             | Hook command name (if named) |
+|           | `{{ args }}`                  | Tokens forwarded from the CLI — see [Running Hooks Manually](#running-hooks-manually) |
 | user      | `{{ vars.<key> }}`            | Per-branch variables from [`wt config state vars`](@/config.md#wt-config-state-vars) |
 
 Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the operation acts on: the destination for switch/create, the source for merge/remove. `base` and `target` give the other side:
@@ -229,11 +230,17 @@ if ctx['branch'].startswith('feature/') and 'backend' in ctx['repo']:
 
 `wt hook <type>` runs hooks on demand — useful for testing during development, running in CI pipelines, or re-running after a failure.
 
-{{ terminal(cmd="wt hook pre-merge              # Run all pre-merge hooks|||wt hook pre-merge test         # Run hooks named __WT_QUOT__test__WT_QUOT__ from both sources|||wt hook pre-merge test build   # Run hooks named __WT_QUOT__test__WT_QUOT__ and __WT_QUOT__build__WT_QUOT__|||wt hook pre-merge user:        # Run all user hooks|||wt hook pre-merge project:     # Run all project hooks|||wt hook pre-merge user:test    # Run only user's __WT_QUOT__test__WT_QUOT__ hook|||wt hook pre-merge --yes        # Skip approval prompts (for CI)|||wt hook pre-start --branch=feature/test    # Override a template variable") }}
+{{ terminal(cmd="wt hook pre-merge              # Run all pre-merge hooks|||wt hook pre-merge test         # Run hooks named __WT_QUOT__test__WT_QUOT__ from both sources|||wt hook pre-merge test build   # Run hooks named __WT_QUOT__test__WT_QUOT__ and __WT_QUOT__build__WT_QUOT__|||wt hook pre-merge user:        # Run all user hooks|||wt hook pre-merge project:     # Run all project hooks|||wt hook pre-merge user:test    # Run only user's __WT_QUOT__test__WT_QUOT__ hook|||wt hook pre-merge --yes        # Skip approval prompts (for CI)|||wt hook pre-start --branch=feature/test    # Override a template variable|||wt hook pre-merge -- --extra args     # Forward tokens into __WT_OPEN2__ args __WT_CLOSE2__") }}
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
-Any unknown `--KEY=VALUE` flag is treated as a template variable assignment — useful for testing hooks with different contexts without switching to that context. The long form `--var KEY=VALUE` is equivalent and remains the escape hatch when a variable name collides with a built-in flag (e.g. `config`, `yes`, `dry-run`, `foreground`, `verbose`).
+## Passing values
+
+`--KEY=VALUE` binds `KEY` whenever `{{ KEY }}` appears in any command of the hook — the same smart-routing rule `wt <alias>` uses. Built-in variables can be overridden: `--branch=foo` sets `{{ branch }}` inside hook templates (the worktree's actual branch doesn't move). Hyphens in keys become underscores: `--my-var=x` sets `{{ my_var }}`.
+
+Any `--KEY=VALUE` whose key isn't referenced by a hook template forwards into `{{ args }}` as a literal `--KEY=VALUE` token. Tokens after `--` also forward into `{{ args }}` verbatim. `{{ args }}` renders as a space-joined, shell-escaped string; index with `{{ args[0] }}`, loop with `{% for a in args %}…{% endfor %}`, count with `{{ args | length }}`.
+
+The long form `--var KEY=VALUE` is deprecated but still supported. It force-binds regardless of whether any hook template references `KEY` — useful when a template only references the key conditionally (e.g. `{% if override %}…{% endif %}`).
 
 # Pipeline Ordering
 

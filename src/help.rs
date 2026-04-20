@@ -97,6 +97,7 @@ pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::
     // Check for --help-md flag (output raw markdown without ANSI rendering)
     if args.iter().any(|a| a == "--help-md") {
         let mut cmd = cli::build_command();
+        cmd = crate::completion::inject_hook_subcommands(cmd);
         cmd = cmd.color(ColorChoice::Never); // No ANSI codes for raw markdown
 
         // Replace --help-md with --help for clap
@@ -132,6 +133,7 @@ pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::
     }
 
     let mut cmd = cli::build_command();
+    cmd = crate::completion::inject_hook_subcommands(cmd);
     cmd = cmd.color(clap::ColorChoice::Always); // Force clap to emit ANSI codes
 
     if let Err(err) = cmd.try_get_matches_from_mut(&args) {
@@ -206,6 +208,7 @@ fn help_reference_inner(command_path: &[&str], width: Option<usize>, color: Colo
     args.push("--help".to_string());
 
     let mut cmd = cli::build_command();
+    cmd = crate::completion::inject_hook_subcommands(cmd);
     cmd = cmd.color(color);
     if let Some(w) = width {
         cmd = cmd.term_width(w);
@@ -310,6 +313,7 @@ fn extract_about_and_subtitle(cmd: &clap::Command) -> (Option<String>, Option<St
 /// by the docs sync test to auto-populate the `description` field in frontmatter.
 fn handle_help_description(args: &[String]) {
     let mut cmd = cli::build_command();
+    cmd = crate::completion::inject_hook_subcommands(cmd);
     cmd = cmd.color(ColorChoice::Never);
 
     let subcommand = args
@@ -362,6 +366,7 @@ fn handle_help_description(args: &[String]) {
 /// This is used to generate docs/content/merge.md etc from the source.
 fn handle_help_page(args: &[String], plain: bool) {
     let mut cmd = cli::build_command();
+    cmd = crate::completion::inject_hook_subcommands(cmd);
     cmd = cmd.color(ColorChoice::Never);
 
     // Find the subcommand name (the arg before --help-page, or after wt)

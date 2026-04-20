@@ -2003,7 +2003,7 @@ fn test_var_flag_invalid_format_fails() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("invalid KEY=VALUE") || stderr.contains("no `=` found"),
+        stderr.contains("expected KEY=VALUE"),
         "Error should mention invalid format, got: {stderr}"
     );
 }
@@ -2164,67 +2164,41 @@ test = "echo '{{ my_env }}' > custom_output.txt"
 }
 
 #[rstest]
-fn test_var_unreferenced_warning(repo: TestRepo) {
-    // A --var whose key isn't referenced by any hook template should produce a
-    // warning — catches typos that would otherwise silently have no effect.
-    // The hook still runs.
+fn test_shorthand_unreferenced_forwards_to_args(repo: TestRepo) {
+    // `--KEY=VALUE` shorthand for an unreferenced KEY is smart-routed to
+    // `{{ args }}` — the hook template captures the flag verbatim.
     repo.write_test_config(
         r#"[post-create]
-test = "echo '{{ branch }}' > unref_output.txt"
+test = "echo '{{ args }}' > args_output.txt"
 "#,
     );
 
     let output = repo
         .wt_command()
-        .args(["hook", "post-create", "--yes", "--unused_var=value"])
+        .args(["hook", "post-create", "--yes", "--unused-var=value"])
         .output()
         .expect("Failed to run wt hook");
 
     assert!(
         output.status.success(),
-        "Hook should still run despite the warning, stderr: {}",
+        "Hook should succeed, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let contents = fs::read_to_string(repo.root_path().join("args_output.txt")).unwrap();
     assert!(
-        stderr.contains("unused_var") && stderr.contains("not referenced"),
-        "Expected unreferenced-var warning, got: {stderr}"
+        contents.contains("--unused-var=value"),
+        "Unreferenced shorthand should be forwarded to {{{{ args }}}}, got: {contents}"
     );
 }
 
 #[rstest]
-fn test_var_unreferenced_warning_respects_name_filter(repo: TestRepo) {
-    // When a name filter excludes the hook that uses the var, still warn —
-    // the filtered-out hook won't run, so the var has no effect.
+fn test_shorthand_referenced_binds_not_args(repo: TestRepo) {
+    // When KEY is referenced by any hook template, `--KEY=VALUE` binds
+    // `{{ KEY }}` and is NOT forwarded to `{{ args }}`.
     repo.write_test_config(
         r#"[post-create]
-alpha = "echo '{{ branch }}' > alpha.txt"
-beta = "echo '{{ my_env }}' > beta.txt"
-"#,
-    );
-
-    let output = repo
-        .wt_command()
-        .args(["hook", "post-create", "--yes", "alpha", "--my-env=staging"])
-        .output()
-        .expect("Failed to run wt hook");
-
-    assert!(output.status.success());
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("my_env") && stderr.contains("not referenced"),
-        "Expected warning for --my-env when only 'alpha' runs, got: {stderr}"
-    );
-}
-
-#[rstest]
-fn test_var_referenced_no_warning(repo: TestRepo) {
-    // A --var that IS referenced by a template produces no warning.
-    repo.write_test_config(
-        r#"[post-create]
-test = "echo '{{ my_env }}' > ref_output.txt"
+test = "echo '{{ my_env }}:{{ args }}' > combined_output.txt"
 "#,
     );
 
@@ -2236,10 +2210,132 @@ test = "echo '{{ my_env }}' > ref_output.txt"
 
     assert!(output.status.success());
 
+    let contents = fs::read_to_string(repo.root_path().join("combined_output.txt")).unwrap();
+    assert_eq!(contents.trim(), "staging:");
+}
+
+#[rstest]
+fn test_post_double_dash_forwards_to_args(repo: TestRepo) {
+    // Tokens after `--` forward verbatim into `{{ args }}`.
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ args }}' > dashdash_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-create", "--yes", "--", "--fast", "extra"])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(
+        output.status.success(),
+        "Hook should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let contents = fs::read_to_string(repo.root_path().join("dashdash_output.txt")).unwrap();
+    assert!(
+        contents.contains("--fast") && contents.contains("extra"),
+        "Post-`--` tokens should forward verbatim to {{{{ args }}}}, got: {contents}"
+    );
+}
+
+#[rstest]
+fn test_var_deprecation_warning(repo: TestRepo) {
+    // Explicit `--var` still force-binds but emits a deprecation warning
+    // pointing at `--KEY=VALUE` shorthand.
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ my_env }}' > deprecated_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-create", "--yes", "--var", "my_env=staging"])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(output.status.success());
+
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("not referenced"),
-        "Expected no warning, got: {stderr}"
+        stderr.contains("--var is deprecated"),
+        "Expected --var deprecation warning, got: {stderr}"
+    );
+
+    let contents = fs::read_to_string(repo.root_path().join("deprecated_output.txt")).unwrap();
+    assert_eq!(contents.trim(), "staging");
+}
+
+#[rstest]
+fn test_args_indexing_and_length_in_hook_template(repo: TestRepo) {
+    // `{{ args }}` is a ShellArgs sequence — indexing, length, and iteration
+    // all work the same as in alias templates.
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ args[0] | default(__WT_QUOT__none__WT_QUOT__) }}:{{ args | length }}' > args_seq.txt"
+"#
+        .replace("__WT_QUOT__", "'")
+        .as_str(),
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["hook", "post-create", "--yes", "--", "first", "second"])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(output.status.success());
+
+    let contents = fs::read_to_string(repo.root_path().join("args_seq.txt")).unwrap();
+    assert_eq!(contents.trim(), "first:2");
+}
+
+#[rstest]
+fn test_mixed_var_shorthand_and_forwarded_args(repo: TestRepo) {
+    // Explicit `--var` binds, referenced shorthand binds, unreferenced shorthand
+    // + post-`--` tokens forward — all coexist in one invocation without
+    // cross-contamination.
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ my_env }}|{{ override }}|{{ args }}' > mixed_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args([
+            "hook",
+            "post-create",
+            "--yes",
+            "--my-env=prod",
+            "--var",
+            "override=forced",
+            "--unused=x",
+            "--",
+            "extra",
+        ])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(
+        output.status.success(),
+        "Hook should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let contents = fs::read_to_string(repo.root_path().join("mixed_output.txt")).unwrap();
+    let trimmed = contents.trim();
+    assert!(
+        trimmed.starts_with("prod|forced|"),
+        "Expected my_env + override bound, got: {trimmed}"
+    );
+    assert!(
+        trimmed.contains("--unused=x") && trimmed.contains("extra"),
+        "Unreferenced + post-`--` tokens should forward to {{{{ args }}}}, got: {trimmed}"
     );
 }
 

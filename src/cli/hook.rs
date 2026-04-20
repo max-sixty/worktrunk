@@ -1,20 +1,60 @@
-use std::ffi::{OsStr, OsString};
+//! `wt hook` CLI surface.
+//!
+//! Hook invocations share a single `#[command(external_subcommand)]` catch-all
+//! ([`HookCommand::Run`]) that captures everything after `wt hook <type>` as
+//! raw argv — including the `--` literal-forward separator, which clap eats
+//! in a trailing_var_arg positional but preserves in external_subcommand.
+//! [`HookOptions::parse`] walks the argv with the same smart-routing rule as
+//! `AliasOptions::parse`: `--KEY=VALUE` binds `{{ KEY }}` when any hook
+//! template references it; otherwise the token forwards to `{{ args }}`.
+//!
+//! The collapse mirrors the alias pattern. Completion for hook type names
+//! and help-rendering of `wt hook --help` / `wt hook <type> --help` both go
+//! through `completion::inject_hook_subcommands`, which grafts stub
+//! subcommands onto an augmented `Command` tree used only for those two
+//! surfaces — the real parser still dispatches through `HookCommand::Run`.
+//!
+//! # External interface: hooks vs. aliases
+//!
+//! Both surfaces share the core smart-routing rule (`--KEY=VALUE` binds if
+//! referenced, else forwards to `{{ args }}`), post-`--` literal forwarding,
+//! hyphen-to-underscore key canonicalization, and the `ShellArgs` rendering
+//! of `{{ args }}`. Where they diverge:
+//!
+//! | Axis | Hooks | Aliases |
+//! |------|-------|---------|
+//! | Invocation | `wt hook <type> [args...]` — nested external_subcommand under the `hook` built-in | `wt <name> [args...]` — top-level external_subcommand (`Cli::Custom`) |
+//! | Bare positionals | **Filter names** (`wt hook pre-merge test build` runs only `test` and `build`) | Forwarded to `{{ args }}` |
+//! | Reach `{{ args }}` from positionals | Must use `--` (`wt hook pre-merge -- extra`) | Any bare positional lands there |
+//! | Approval skip flag | Post-subcommand `--yes` / `-y` recognized by [`HookOptions::parse`] | Only the global form (`wt -y <alias>`); post-alias `--yes` falls through to `{{ args }}` |
+//! | Source discrimination | `user:` / `project:` / `user:name` / `project:name` filter syntax | Aliases run user first, then project; no filter syntax |
+//! | Force-bind escape | `--var KEY=VALUE` (deprecated; emits warning; still binds unconditionally) | No equivalent — smart routing is the only path |
+//! | Name validation | [`parse_hook_type`] validates the hook type with a did-you-mean hint | No validation — unknown alias falls through to `wt-<name>` PATH binary lookup |
+//! | `--help` | Clap-rendered via injected stubs (both `wt hook --help` and `wt hook <type> --help`) | `wt <alias> --help` redirects to `wt config alias show` / `dry-run` |
+//! | Inspection | `wt hook show [type] [--expanded]` | `wt config alias show <name>` / `dry-run <name>` |
+//! | Trust / approval | User hooks trusted; project hooks require approval per-hook-type | User aliases trusted; project aliases require approval per-alias |
+//! | Hook-specific flags | `--dry-run`, `--foreground`, `--var` parsed by [`HookOptions::parse`] | None — aliases have no CLI-level knobs beyond smart routing |
+//! | Template-context extras | `hook_type`, `hook_name`, per-type operation vars (`base`, `target`, `pr_number`, …) | `args` only, on top of the shared base vars |
 
+use std::ffi::OsString;
+
+use anyhow::{Context, bail};
 use clap::Subcommand;
+use worktrunk::HookType;
 
 use super::config::ApprovalsCommand;
 
-/// Hook subcommands that accept `--var KEY=VALUE` (and the `--KEY=VALUE` shorthand).
-///
-/// Excludes `show`, `run-pipeline`, and the deprecated `approvals` (now under
-/// `wt config approvals`), which don't expand template variables. `post-create`
-/// is the deprecated alias for `pre-start`.
-const HOOK_SUBCOMMANDS_WITH_VARS: &[&str] = &[
+/// Canonical list of hook type names accepted after `wt hook`. Shared by
+/// [`parse_hook_type`], `completion::inject_hook_subcommands`, and the
+/// `wt hook show` value parser so drift is caught by tests rather than at
+/// runtime. `post-create` is the deprecated alias for `pre-start`; it's
+/// accepted by [`parse_hook_type`] but not listed here — completion lists
+/// the canonical names only.
+pub const HOOK_TYPE_NAMES: &[&str] = &[
     "pre-switch",
     "post-switch",
     "pre-start",
     "post-start",
-    "post-create",
     "pre-commit",
     "post-commit",
     "pre-merge",
@@ -23,363 +63,9 @@ const HOOK_SUBCOMMANDS_WITH_VARS: &[&str] = &[
     "post-remove",
 ];
 
-/// Long flags on hook subcommands that must never be rewritten as template
-/// variables. Includes hook-specific flags and global flags (`-C` is a short
-/// flag so it's excluded; the `--` prefix check handles that automatically).
-const KNOWN_HOOK_LONG_FLAGS: &[&str] = &[
-    "--yes",
-    "--dry-run",
-    "--foreground",
-    "--var",
-    "--help",
-    "--config",
-    "--verbose",
-];
-
-/// Rewrite `wt hook <type> --KEY=VALUE` into `wt hook <type> --var KEY=VALUE`
-/// for unknown `--key=value` flags, so hook invocations can use the same
-/// `--KEY=VALUE` shorthand that `wt <alias>` supports. (Aliases route via
-/// template references; hooks have no such discriminator, so the rewrite
-/// here is an unconditional "unknown `--KEY=VALUE` means var".)
-///
-/// Only args after a `hook <type>` prefix are touched, and only when `<type>`
-/// is a hook that accepts `--var`.
-///
-/// Use the long `--var KEY=VALUE` form when a variable name collides with a
-/// built-in flag like `--config` or `--yes`.
-pub(crate) fn rewrite_var_shorthand(args: Vec<OsString>) -> Vec<OsString> {
-    // Locate `hook` in argv, skipping the program name and guarding against
-    // `hook` appearing as the value of `-C` or `--config`.
-    let Some(hook_idx) = args.iter().enumerate().find_map(|(i, arg)| {
-        if i == 0 || arg.as_os_str() != OsStr::new("hook") {
-            return None;
-        }
-        let prev = args[i - 1].as_os_str();
-        if prev == OsStr::new("-C") || prev == OsStr::new("--config") {
-            return None;
-        }
-        Some(i)
-    }) else {
-        return args;
-    };
-
-    let Some(sub_str) = args.get(hook_idx + 1).and_then(|s| s.to_str()) else {
-        return args;
-    };
-    if !HOOK_SUBCOMMANDS_WITH_VARS.contains(&sub_str) {
-        return args;
-    }
-
-    let rewrite_start = hook_idx + 2;
-    let mut out: Vec<OsString> = Vec::with_capacity(args.len());
-    out.extend(args[..rewrite_start].iter().cloned());
-    let mut past_double_dash = false;
-    for token in &args[rewrite_start..] {
-        if token == "--" {
-            past_double_dash = true;
-            out.push(token.clone());
-            continue;
-        }
-        if !past_double_dash
-            && let Some(s) = token.to_str()
-            && let Some(rest) = s.strip_prefix("--")
-            && let Some((key, value)) = rest.split_once('=')
-            && !key.is_empty()
-        {
-            let flag_name = format!("--{key}");
-            if !KNOWN_HOOK_LONG_FLAGS.contains(&flag_name.as_str()) {
-                out.push(OsString::from("--var"));
-                out.push(OsString::from(format!("{key}={value}")));
-                continue;
-            }
-        }
-        out.push(token.clone());
-    }
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn rewrite(args: &[&str]) -> Vec<String> {
-        rewrite_var_shorthand(args.iter().map(OsString::from).collect())
-            .into_iter()
-            .map(|s| s.into_string().unwrap())
-            .collect()
-    }
-
-    #[test]
-    fn test_rewrite_var_shorthand() {
-        // Shorthand gets rewritten
-        assert_eq!(
-            rewrite(&["wt", "hook", "pre-start", "--branch=feature/test"]),
-            vec!["wt", "hook", "pre-start", "--var", "branch=feature/test"]
-        );
-
-        // Multiple shorthand args
-        assert_eq!(
-            rewrite(&[
-                "wt",
-                "hook",
-                "post-merge",
-                "--branch=main",
-                "--target=develop"
-            ]),
-            vec![
-                "wt",
-                "hook",
-                "post-merge",
-                "--var",
-                "branch=main",
-                "--var",
-                "target=develop"
-            ]
-        );
-
-        // Shorthand mixed with known flags
-        assert_eq!(
-            rewrite(&[
-                "wt",
-                "hook",
-                "pre-merge",
-                "--yes",
-                "--branch=feature",
-                "--dry-run"
-            ]),
-            vec![
-                "wt",
-                "hook",
-                "pre-merge",
-                "--yes",
-                "--var",
-                "branch=feature",
-                "--dry-run"
-            ]
-        );
-
-        // Shorthand mixed with name filter positional
-        assert_eq!(
-            rewrite(&["wt", "hook", "pre-merge", "test", "--branch=feature"]),
-            vec!["wt", "hook", "pre-merge", "test", "--var", "branch=feature"]
-        );
-
-        // Deprecated post-create alias still works
-        assert_eq!(
-            rewrite(&["wt", "hook", "post-create", "--branch=x"]),
-            vec!["wt", "hook", "post-create", "--var", "branch=x"]
-        );
-
-        // Value containing equals sign
-        assert_eq!(
-            rewrite(&["wt", "hook", "pre-start", "--url=http://host?a=1"]),
-            vec!["wt", "hook", "pre-start", "--var", "url=http://host?a=1"]
-        );
-
-        // Empty value
-        assert_eq!(
-            rewrite(&["wt", "hook", "pre-start", "--branch="]),
-            vec!["wt", "hook", "pre-start", "--var", "branch="]
-        );
-    }
-
-    #[test]
-    fn test_rewrite_preserves_known_flags() {
-        // --var=KEY=VAL is untouched (still handled by clap's parser)
-        assert_eq!(
-            rewrite(&["wt", "hook", "pre-start", "--var=branch=feature"]),
-            vec!["wt", "hook", "pre-start", "--var=branch=feature"]
-        );
-
-        // --config=path is a global flag, not a variable shorthand
-        assert_eq!(
-            rewrite(&["wt", "hook", "pre-start", "--config=/tmp/config.toml"]),
-            vec!["wt", "hook", "pre-start", "--config=/tmp/config.toml"]
-        );
-
-        // --dry-run, --yes, --foreground pass through
-        assert_eq!(
-            rewrite(&[
-                "wt",
-                "hook",
-                "post-merge",
-                "--yes",
-                "--dry-run",
-                "--foreground"
-            ]),
-            vec![
-                "wt",
-                "hook",
-                "post-merge",
-                "--yes",
-                "--dry-run",
-                "--foreground"
-            ]
-        );
-    }
-
-    #[test]
-    fn test_rewrite_leaves_non_hook_subcommands_alone() {
-        // `wt hook show` doesn't accept --var, so pass through unchanged
-        assert_eq!(
-            rewrite(&["wt", "hook", "show", "--expanded"]),
-            vec!["wt", "hook", "show", "--expanded"]
-        );
-
-        // `wt hook approvals add --all` passes through unchanged
-        assert_eq!(
-            rewrite(&["wt", "hook", "approvals", "add", "--all"]),
-            vec!["wt", "hook", "approvals", "add", "--all"]
-        );
-
-        // `wt switch --foo=bar` is not a hook command, pass through
-        assert_eq!(
-            rewrite(&["wt", "switch", "--foo=bar"]),
-            vec!["wt", "switch", "--foo=bar"]
-        );
-
-        // `wt` alone
-        assert_eq!(rewrite(&["wt"]), vec!["wt"]);
-    }
-
-    #[test]
-    fn test_rewrite_skips_hook_in_flag_value_position() {
-        // `wt -C hook pre-start` — here `hook` is a path, not the subcommand
-        assert_eq!(
-            rewrite(&["wt", "-C", "hook", "pre-start", "--branch=x"]),
-            vec!["wt", "-C", "hook", "pre-start", "--branch=x"]
-        );
-
-        // `wt --config hook pre-start` — same guard
-        assert_eq!(
-            rewrite(&["wt", "--config", "hook", "pre-start", "--branch=x"]),
-            vec!["wt", "--config", "hook", "pre-start", "--branch=x"]
-        );
-    }
-
-    #[test]
-    fn test_rewrite_handles_global_flags_before_hook() {
-        // Global flags before `hook` shouldn't interfere
-        assert_eq!(
-            rewrite(&["wt", "-v", "hook", "pre-start", "--branch=x"]),
-            vec!["wt", "-v", "hook", "pre-start", "--var", "branch=x"]
-        );
-    }
-
-    #[test]
-    fn test_rewrite_ignores_bare_hyphen_args() {
-        // Bare `--`, single dash, and short flags pass through
-        assert_eq!(
-            rewrite(&["wt", "hook", "pre-start", "-y", "--branch=x"]),
-            vec!["wt", "hook", "pre-start", "-y", "--var", "branch=x"]
-        );
-
-        // `--` with no key portion
-        assert_eq!(
-            rewrite(&["wt", "hook", "pre-start", "--=val"]),
-            vec!["wt", "hook", "pre-start", "--=val"]
-        );
-
-        // `--` stops rewriting — args after it are positional
-        assert_eq!(
-            rewrite(&["wt", "hook", "pre-start", "--", "--branch=x"]),
-            vec!["wt", "hook", "pre-start", "--", "--branch=x"]
-        );
-    }
-
-    /// Verify HOOK_SUBCOMMANDS_WITH_VARS stays in sync with HookCommand variants
-    /// that accept `--var`. If a hook subcommand is added/removed without updating
-    /// the list, this test catches the drift.
-    ///
-    /// `post-create` is a deprecated alias for `pre-start` — it appears in the
-    /// list (users can still type `wt hook post-create`) but not as a separate
-    /// clap subcommand, so it's excluded from the reverse check.
-    #[test]
-    fn test_hook_subcommands_with_vars_matches_clap() {
-        use crate::cli::Cli;
-        use clap::CommandFactory;
-
-        let app = Cli::command();
-        let hook_cmd = app
-            .get_subcommands()
-            .find(|c| c.get_name() == "hook")
-            .expect("hook subcommand exists");
-
-        let subs_with_var: Vec<&str> = hook_cmd
-            .get_subcommands()
-            .filter(|c| c.get_arguments().any(|a| a.get_id() == "vars"))
-            .map(|c| c.get_name())
-            .collect();
-
-        for name in &subs_with_var {
-            assert!(
-                HOOK_SUBCOMMANDS_WITH_VARS.contains(name),
-                "Hook subcommand '{name}' accepts --var but is missing from \
-                 HOOK_SUBCOMMANDS_WITH_VARS. Add it so --KEY=VALUE shorthand works."
-            );
-        }
-
-        // Deprecated aliases live in the list but not as separate clap subcommands
-        let deprecated_aliases: &[&str] = &["post-create"];
-        for name in HOOK_SUBCOMMANDS_WITH_VARS {
-            if deprecated_aliases.contains(name) {
-                continue;
-            }
-            assert!(
-                subs_with_var.contains(name),
-                "HOOK_SUBCOMMANDS_WITH_VARS contains '{name}' but that subcommand \
-                 doesn't accept --var. Remove it from the list."
-            );
-        }
-    }
-
-    /// Verify KNOWN_HOOK_LONG_FLAGS stays in sync with actual clap flags on
-    /// hook subcommands. An unlisted flag would be silently rewritten to
-    /// `--var`, which clap then rejects — but the error message would be
-    /// confusing rather than helpful.
-    #[test]
-    fn test_known_hook_long_flags_matches_clap() {
-        use crate::cli::Cli;
-        use clap::CommandFactory;
-
-        let app = Cli::command();
-        let hook_cmd = app
-            .get_subcommands()
-            .find(|c| c.get_name() == "hook")
-            .expect("hook subcommand exists");
-
-        // Collect all long flags from hook subcommands that accept --var
-        let mut clap_flags: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for sub in hook_cmd.get_subcommands() {
-            if !sub.get_arguments().any(|a| a.get_id() == "vars") {
-                continue;
-            }
-            for arg in sub.get_arguments() {
-                if let Some(long) = arg.get_long() {
-                    clap_flags.insert(format!("--{long}"));
-                }
-            }
-        }
-        // Also include global flags that appear after `hook <type>`
-        for arg in app.get_arguments() {
-            if let Some(long) = arg.get_long() {
-                clap_flags.insert(format!("--{long}"));
-            }
-        }
-
-        for flag in &clap_flags {
-            assert!(
-                KNOWN_HOOK_LONG_FLAGS.contains(&flag.as_str()),
-                "Hook subcommand flag '{flag}' is missing from KNOWN_HOOK_LONG_FLAGS. \
-                 Add it so --KEY=VALUE shorthand doesn't rewrite it."
-            );
-        }
-    }
-}
-
-// Ordering: worktree lifecycle phases (switch → start → commit → merge →
-// remove), with each phase's `pre-` immediately before its `post-`. `show`
-// first (read-only introspection). Hidden commands last.
+// Ordering: `show` first (read-only introspection), then the external
+// subcommand catch-all, then hidden commands. Hook types aren't listed
+// as clap variants — `Run` catches them.
 /// Run configured hooks
 #[derive(Subcommand)]
 pub enum HookCommand {
@@ -396,221 +82,6 @@ pub enum HookCommand {
         expanded: bool,
     },
 
-    /// Run pre-switch hooks
-    ///
-    /// Blocking — waits for completion before continuing.
-    PreSwitch {
-        /// Filter by command name(s)
-        ///
-        /// Supports `user:name` or `project:name` to filter by source.
-        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
-        #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Vec<String>,
-
-        /// Show what would run without executing
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Set template variable (KEY=VALUE)
-        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
-        vars: Vec<(String, String)>,
-    },
-
-    /// Run post-switch hooks
-    ///
-    /// Background by default. Use `--foreground` to run in foreground for debugging.
-    PostSwitch {
-        /// Filter by command name(s)
-        ///
-        /// Supports `user:name` or `project:name` to filter by source.
-        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
-        #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Vec<String>,
-
-        /// Show what would run without executing
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Run in foreground (block until complete)
-        #[arg(long)]
-        foreground: bool,
-
-        /// Set template variable (KEY=VALUE)
-        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
-        vars: Vec<(String, String)>,
-    },
-
-    /// Run pre-start hooks
-    ///
-    /// Blocking — waits for completion before continuing.
-    #[command(alias = "post-create")]
-    PreStart {
-        /// Filter by command name(s)
-        ///
-        /// Supports `user:name` or `project:name` to filter by source.
-        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
-        #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Vec<String>,
-
-        /// Show what would run without executing
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Set template variable (KEY=VALUE)
-        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
-        vars: Vec<(String, String)>,
-    },
-
-    /// Run post-start hooks
-    ///
-    /// Background by default. Use `--foreground` to run in foreground for debugging.
-    PostStart {
-        /// Filter by command name(s)
-        ///
-        /// Supports `user:name` or `project:name` to filter by source.
-        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
-        #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Vec<String>,
-
-        /// Show what would run without executing
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Run in foreground (block until complete)
-        #[arg(long)]
-        foreground: bool,
-
-        /// Set template variable (KEY=VALUE)
-        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
-        vars: Vec<(String, String)>,
-    },
-
-    /// Run pre-commit hooks
-    PreCommit {
-        /// Filter by command name(s)
-        ///
-        /// Supports `user:name` or `project:name` to filter by source.
-        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
-        #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Vec<String>,
-
-        /// Show what would run without executing
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Set template variable (KEY=VALUE)
-        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
-        vars: Vec<(String, String)>,
-    },
-
-    /// Run post-commit hooks
-    ///
-    /// Background by default. Use `--foreground` to run in foreground for debugging.
-    PostCommit {
-        /// Filter by command name(s)
-        ///
-        /// Supports `user:name` or `project:name` to filter by source.
-        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
-        #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Vec<String>,
-
-        /// Show what would run without executing
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Run in foreground (block until complete)
-        #[arg(long)]
-        foreground: bool,
-
-        /// Set template variable (KEY=VALUE)
-        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
-        vars: Vec<(String, String)>,
-    },
-
-    /// Run pre-merge hooks
-    PreMerge {
-        /// Filter by command name(s)
-        ///
-        /// Supports `user:name` or `project:name` to filter by source.
-        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
-        #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Vec<String>,
-
-        /// Show what would run without executing
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Set template variable (KEY=VALUE)
-        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
-        vars: Vec<(String, String)>,
-    },
-
-    /// Run post-merge hooks
-    ///
-    /// Background by default. Use `--foreground` to run in foreground for debugging.
-    PostMerge {
-        /// Filter by command name(s)
-        ///
-        /// Supports `user:name` or `project:name` to filter by source.
-        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
-        #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Vec<String>,
-
-        /// Show what would run without executing
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Run in foreground (block until complete)
-        #[arg(long)]
-        foreground: bool,
-
-        /// Set template variable (KEY=VALUE)
-        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
-        vars: Vec<(String, String)>,
-    },
-
-    /// Run pre-remove hooks
-    PreRemove {
-        /// Filter by command name(s)
-        ///
-        /// Supports `user:name` or `project:name` to filter by source.
-        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
-        #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Vec<String>,
-
-        /// Show what would run without executing
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Set template variable (KEY=VALUE)
-        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
-        vars: Vec<(String, String)>,
-    },
-
-    /// Run post-remove hooks
-    ///
-    /// Background by default. Use `--foreground` to run in foreground for debugging.
-    PostRemove {
-        /// Filter by command name(s)
-        ///
-        /// Supports `user:name` or `project:name` to filter by source.
-        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
-        #[arg(add = crate::completion::hook_command_name_completer())]
-        name: Vec<String>,
-
-        /// Show what would run without executing
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Run in foreground (block until complete)
-        #[arg(long)]
-        foreground: bool,
-
-        /// Set template variable (KEY=VALUE)
-        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = super::parse_key_val, action = clap::ArgAction::Append)]
-        vars: Vec<(String, String)>,
-    },
-
     /// Internal: run a serialized pipeline from stdin
     #[command(hide = true, name = "run-pipeline")]
     RunPipeline,
@@ -621,4 +92,381 @@ pub enum HookCommand {
         #[command(subcommand)]
         action: ApprovalsCommand,
     },
+
+    /// Captures `wt hook <type> [ARGS...]` as raw argv. First element is the
+    /// hook type name (clap doesn't validate — [`HookOptions::parse`] does,
+    /// with a did-you-mean error for typos). External_subcommand preserves
+    /// the `--` literal-forward separator, which a `trailing_var_arg`
+    /// positional would eat.
+    #[command(external_subcommand)]
+    Run(Vec<OsString>),
+}
+
+/// Parsed form of `wt hook <type> [ARGS...]` — hook type plus every flag,
+/// filter name, shorthand binding, and forwarded arg, routed per the alias
+/// smart-routing model. `run_hook` consumes this.
+#[derive(Debug)]
+pub struct HookOptions {
+    pub hook_type: HookType,
+    pub yes: bool,
+    pub dry_run: bool,
+    /// `Some(true)` forces foreground for `post-*` hooks that normally run
+    /// in the background. `None` defers to the hook type's default.
+    pub foreground: Option<bool>,
+    /// Positional filter names (`wt hook pre-merge test build`).
+    pub name_filters: Vec<String>,
+    /// Explicit `--var KEY=VALUE` bindings (deprecated force-bind).
+    pub explicit_vars: Vec<(String, String)>,
+    /// Raw `--KEY=VALUE` shorthand tokens, stored as `KEY=VALUE` (the
+    /// original hyphenated key is preserved for forwarding to `{{ args }}`
+    /// when unreferenced).
+    pub shorthand_vars: Vec<String>,
+    /// Tokens after `--` that forward to `{{ args }}` verbatim.
+    pub forwarded_args: Vec<String>,
+}
+
+/// Map a hook type name to its [`HookType`] variant. Emits a did-you-mean
+/// hint on typos (same `did_you_mean` helper used for unknown subcommands).
+///
+/// `post-create` is the deprecated alias for `pre-start` — accepted here;
+/// the deprecation warning fires in the execution path so scripted invocations
+/// using the alias still see it.
+pub fn parse_hook_type(name: &str) -> anyhow::Result<HookType> {
+    match name {
+        "pre-switch" => Ok(HookType::PreSwitch),
+        "post-switch" => Ok(HookType::PostSwitch),
+        "pre-start" | "post-create" => Ok(HookType::PreStart),
+        "post-start" => Ok(HookType::PostStart),
+        "pre-commit" => Ok(HookType::PreCommit),
+        "post-commit" => Ok(HookType::PostCommit),
+        "pre-merge" => Ok(HookType::PreMerge),
+        "post-merge" => Ok(HookType::PostMerge),
+        "pre-remove" => Ok(HookType::PreRemove),
+        "post-remove" => Ok(HookType::PostRemove),
+        other => {
+            let candidates = HOOK_TYPE_NAMES.iter().map(|s| s.to_string());
+            let suggestions = crate::commands::did_you_mean(other, candidates);
+            if let Some(suggestion) = suggestions.first() {
+                bail!("unknown hook type: `{other}` (did you mean `{suggestion}`?)");
+            }
+            bail!(
+                "unknown hook type: `{other}` (expected one of: {})",
+                HOOK_TYPE_NAMES.join(", ")
+            );
+        }
+    }
+}
+
+impl HookOptions {
+    /// Parse `args` as `<hook-type> [FLAGS...] [NAME...] [--KEY=VALUE...] [-- TOKENS...]`.
+    ///
+    /// First element is the hook type name. Remaining tokens are walked
+    /// left-to-right under this grammar:
+    ///
+    /// - `--yes` / `-y` — set `yes` (equivalent to the global `-y` flag,
+    ///   supported post-type so `wt hook pre-merge --yes` works).
+    /// - `--dry-run` — set `dry_run`.
+    /// - `--foreground` — set `foreground = Some(true)` (post-* hooks).
+    /// - `--var KEY=VALUE` / `--var=KEY=VALUE` — explicit force-bind;
+    ///   appended to `explicit_vars`. Deprecated; dispatch warns.
+    /// - `--KEY=VALUE` (other `--` flag with `=`) — captured as shorthand
+    ///   for `run_hook` to smart-route (bind if referenced, else forward).
+    /// - `--` — literal-forward escape; every later token goes into
+    ///   `forwarded_args`.
+    /// - Anything else — positional filter name.
+    pub fn parse(args: &[OsString]) -> anyhow::Result<Self> {
+        let first = args
+            .first()
+            .and_then(|s| s.to_str())
+            .context("missing hook type after `wt hook`")?;
+        let hook_type = parse_hook_type(first)?;
+
+        let mut yes = false;
+        let mut dry_run = false;
+        let mut foreground: Option<bool> = None;
+        let mut name_filters: Vec<String> = Vec::new();
+        let mut explicit_vars: Vec<(String, String)> = Vec::new();
+        let mut shorthand_vars: Vec<String> = Vec::new();
+        let mut forwarded_args: Vec<String> = Vec::new();
+
+        let mut literal_mode = false;
+        let mut i = 1;
+        while i < args.len() {
+            let arg = args[i]
+                .to_str()
+                .with_context(|| format!("non-UTF-8 argument at position {i}"))?;
+            if literal_mode {
+                forwarded_args.push(arg.to_string());
+                i += 1;
+                continue;
+            }
+            match arg {
+                "--" => {
+                    literal_mode = true;
+                    i += 1;
+                    continue;
+                }
+                "--yes" | "-y" => {
+                    yes = true;
+                    i += 1;
+                    continue;
+                }
+                "--dry-run" => {
+                    dry_run = true;
+                    i += 1;
+                    continue;
+                }
+                "--foreground" => {
+                    foreground = Some(true);
+                    i += 1;
+                    continue;
+                }
+                "--var" => {
+                    let value = args
+                        .get(i + 1)
+                        .and_then(|s| s.to_str())
+                        .context("--var requires KEY=VALUE")?;
+                    push_var(&mut explicit_vars, value)?;
+                    i += 2;
+                    continue;
+                }
+                _ => {}
+            }
+            if let Some(rest) = arg.strip_prefix("--var=") {
+                push_var(&mut explicit_vars, rest)?;
+                i += 1;
+                continue;
+            }
+            if let Some(rest) = arg.strip_prefix("--")
+                && let Some((key, value)) = rest.split_once('=')
+                && !key.is_empty()
+            {
+                // Unknown `--KEY=VALUE` — shorthand for smart routing.
+                shorthand_vars.push(format!("{key}={value}"));
+                i += 1;
+                continue;
+            }
+            if arg.starts_with("--") {
+                // Unknown bare flag (`--foo` with no `=`) — refuse rather
+                // than absorb as a filter name, since that would silently
+                // accept typos like `--dryrun` intended as `--dry-run`.
+                bail!(
+                    "unknown flag `{arg}` for `wt hook {first}` (use `--KEY=VALUE` for template \
+                     variables, `--` to forward tokens to {{{{ args }}}})"
+                );
+            }
+            // Bare positional → filter name.
+            name_filters.push(arg.to_string());
+            i += 1;
+        }
+
+        Ok(Self {
+            hook_type,
+            yes,
+            dry_run,
+            foreground,
+            name_filters,
+            explicit_vars,
+            shorthand_vars,
+            forwarded_args,
+        })
+    }
+}
+
+/// Parse `KEY=VALUE` and push `(canonical_key, value)` onto `out`, mirroring
+/// the old `parse_key_val` behavior (hyphen → underscore canonicalization).
+fn push_var(out: &mut Vec<(String, String)>, raw: &str) -> anyhow::Result<()> {
+    let (key, val) = raw
+        .split_once('=')
+        .with_context(|| format!("--var expected KEY=VALUE, got `{raw}`"))?;
+    if key.is_empty() {
+        bail!("--var key cannot be empty");
+    }
+    out.push((key.replace('-', "_"), val.to_string()));
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> anyhow::Result<HookOptions> {
+        let os: Vec<OsString> = args.iter().map(OsString::from).collect();
+        HookOptions::parse(&os)
+    }
+
+    #[test]
+    fn test_parse_minimal() {
+        let opts = parse(&["pre-merge"]).unwrap();
+        assert_eq!(opts.hook_type, HookType::PreMerge);
+        assert!(!opts.yes);
+        assert!(!opts.dry_run);
+        assert_eq!(opts.foreground, None);
+        assert!(opts.name_filters.is_empty());
+        assert!(opts.explicit_vars.is_empty());
+        assert!(opts.shorthand_vars.is_empty());
+        assert!(opts.forwarded_args.is_empty());
+    }
+
+    #[test]
+    fn test_parse_flags() {
+        let opts = parse(&["post-start", "--yes", "--dry-run", "--foreground"]).unwrap();
+        assert_eq!(opts.hook_type, HookType::PostStart);
+        assert!(opts.yes);
+        assert!(opts.dry_run);
+        assert_eq!(opts.foreground, Some(true));
+
+        // `-y` alias for `--yes`.
+        let opts = parse(&["pre-merge", "-y"]).unwrap();
+        assert!(opts.yes);
+    }
+
+    #[test]
+    fn test_parse_name_filters() {
+        let opts = parse(&["pre-merge", "test", "build"]).unwrap();
+        assert_eq!(opts.name_filters, vec!["test", "build"]);
+        assert!(opts.shorthand_vars.is_empty());
+
+        // Source-prefix filters pass through as plain filter names.
+        let opts = parse(&["pre-merge", "user:test", "project:"]).unwrap();
+        assert_eq!(opts.name_filters, vec!["user:test", "project:"]);
+    }
+
+    #[test]
+    fn test_parse_shorthand() {
+        let opts = parse(&["pre-merge", "--branch=feature/x"]).unwrap();
+        assert_eq!(opts.shorthand_vars, vec!["branch=feature/x"]);
+        // Value with `=` inside (URL, etc.) preserves everything after the
+        // first `=` as the value.
+        let opts = parse(&["pre-start", "--url=http://host?a=1"]).unwrap();
+        assert_eq!(opts.shorthand_vars, vec!["url=http://host?a=1"]);
+        // Empty value.
+        let opts = parse(&["pre-start", "--branch="]).unwrap();
+        assert_eq!(opts.shorthand_vars, vec!["branch="]);
+    }
+
+    #[test]
+    fn test_parse_explicit_var() {
+        // Space form.
+        let opts = parse(&["pre-merge", "--var", "branch=x"]).unwrap();
+        assert_eq!(
+            opts.explicit_vars,
+            vec![("branch".to_string(), "x".to_string())]
+        );
+        assert!(opts.shorthand_vars.is_empty());
+
+        // `=` form.
+        let opts = parse(&["pre-merge", "--var=branch=x"]).unwrap();
+        assert_eq!(
+            opts.explicit_vars,
+            vec![("branch".to_string(), "x".to_string())]
+        );
+
+        // Hyphen canonicalization to underscore.
+        let opts = parse(&["pre-merge", "--var", "my-key=val"]).unwrap();
+        assert_eq!(
+            opts.explicit_vars,
+            vec![("my_key".to_string(), "val".to_string())]
+        );
+
+        // Multiple `--var`.
+        let opts = parse(&["pre-merge", "--var", "a=1", "--var", "b=2"]).unwrap();
+        assert_eq!(
+            opts.explicit_vars,
+            vec![
+                ("a".to_string(), "1".to_string()),
+                ("b".to_string(), "2".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_literal_forward_escape() {
+        // Tokens after `--` forward verbatim, even if they look like flags
+        // or would have bound before `--`.
+        let opts = parse(&[
+            "pre-merge",
+            "--branch=x",
+            "--",
+            "--fast",
+            "--branch=y",
+            "extra",
+        ])
+        .unwrap();
+        assert_eq!(opts.shorthand_vars, vec!["branch=x"]);
+        assert_eq!(opts.forwarded_args, vec!["--fast", "--branch=y", "extra"]);
+
+        // Trailing `--` with nothing after — consumed silently.
+        let opts = parse(&["pre-merge", "--"]).unwrap();
+        assert!(opts.forwarded_args.is_empty());
+
+        // `--` preserves filter names parsed before it.
+        let opts = parse(&["pre-merge", "test", "--", "extra"]).unwrap();
+        assert_eq!(opts.name_filters, vec!["test"]);
+        assert_eq!(opts.forwarded_args, vec!["extra"]);
+    }
+
+    #[test]
+    fn test_parse_mixed() {
+        // Every token type in one invocation.
+        let opts = parse(&[
+            "post-merge",
+            "--yes",
+            "test",
+            "--branch=x",
+            "--var",
+            "override=1",
+            "--dry-run",
+            "--",
+            "--fast",
+        ])
+        .unwrap();
+        assert_eq!(opts.hook_type, HookType::PostMerge);
+        assert!(opts.yes);
+        assert!(opts.dry_run);
+        assert_eq!(opts.name_filters, vec!["test"]);
+        assert_eq!(opts.shorthand_vars, vec!["branch=x"]);
+        assert_eq!(
+            opts.explicit_vars,
+            vec![("override".to_string(), "1".to_string())]
+        );
+        assert_eq!(opts.forwarded_args, vec!["--fast"]);
+    }
+
+    #[test]
+    fn test_parse_hook_type_aliases() {
+        // `post-create` is the deprecated alias for `pre-start`.
+        let opts = parse(&["post-create"]).unwrap();
+        assert_eq!(opts.hook_type, HookType::PreStart);
+    }
+
+    #[test]
+    fn test_parse_errors() {
+        // Missing hook type.
+        assert!(HookOptions::parse(&[]).is_err());
+
+        // Unknown hook type; typo that matches a canonical name produces a suggestion.
+        let err = parse(&["pre-mrege"]).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("pre-merge"),
+            "expected did-you-mean suggestion, got: {msg}"
+        );
+
+        // Completely unknown hook type lists all valid names.
+        let err = parse(&["zzz"]).unwrap_err();
+        assert!(err.to_string().contains("expected one of"));
+
+        // `--var` missing value.
+        let err = parse(&["pre-merge", "--var"]).unwrap_err();
+        assert!(err.to_string().contains("--var"));
+
+        // `--var` with empty key.
+        let err = parse(&["pre-merge", "--var", "=value"]).unwrap_err();
+        assert!(err.to_string().contains("empty"));
+
+        // Unknown bare flag rejected (no silent filter-name fallback).
+        let err = parse(&["pre-merge", "--dryrun"]).unwrap_err();
+        assert!(err.to_string().contains("unknown flag"));
+    }
 }

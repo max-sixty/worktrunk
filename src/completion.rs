@@ -425,8 +425,56 @@ thread_local! {
 fn completion_command() -> Command {
     let cmd = cli::build_command();
     let cmd = inject_alias_subcommands(cmd);
+    let cmd = inject_hook_subcommands(cmd);
     let cmd = inject_custom_subcommands(cmd);
     hide_non_positional_options_for_completion(cmd)
+}
+
+/// Inject hook type names as subcommands of `hook` so both completion and
+/// `wt hook --help` list them. Clap doesn't dispatch these at runtime — the
+/// real parser uses the `external_subcommand` `Run(Vec<OsString>)` variant —
+/// but the help renderer and completion engine both walk the `Command` tree
+/// to produce their output, so injecting stubs into an augmented clone shows
+/// the types without affecting argument dispatch.
+///
+/// Mirrors `inject_alias_subcommands` which does the equivalent for
+/// top-level alias names.
+pub(crate) fn inject_hook_subcommands(cmd: Command) -> Command {
+    cmd.mut_subcommand("hook", |mut hook| {
+        for &name in cli::HOOK_TYPE_NAMES {
+            // Skip if a real subcommand already uses this name (won't happen
+            // today, but keeps the injection idempotent).
+            if hook.get_subcommands().any(|s| s.get_name() == name) {
+                continue;
+            }
+            hook = hook.subcommand(build_hook_completion_command(name));
+        }
+        hook
+    })
+}
+
+/// Build a completion stub `clap::Command` for a hook type. Same shape as
+/// `build_alias_completion_command` — declares the known flags (so they show
+/// up in `wt hook pre-merge --<Tab>` completions) and wires the name completer
+/// for the first positional (hook command name filter).
+fn build_hook_completion_command(name: &'static str) -> Command {
+    let about: &'static str = Box::leak(format!("Run {name} hooks").into_boxed_str());
+    Command::new(name)
+        .about(about)
+        .arg(clap::Arg::new("dry-run").long("dry-run"))
+        .arg(clap::Arg::new("foreground").long("foreground"))
+        .arg(clap::Arg::new("yes").short('y').long("yes"))
+        .arg(
+            clap::Arg::new("var")
+                .long("var")
+                .num_args(1)
+                .action(clap::ArgAction::Append),
+        )
+        .arg(
+            clap::Arg::new("name")
+                .num_args(0..)
+                .add(hook_command_name_completer()),
+        )
 }
 
 /// Inject configured aliases as subcommands at both the top level and under

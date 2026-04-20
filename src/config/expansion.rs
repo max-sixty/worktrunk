@@ -160,6 +160,7 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
         ValidationScope::Hook(hook_type) => {
             vars.extend(HOOK_INFRASTRUCTURE_VARS);
             vars.extend(hook_extras(hook_type));
+            vars.push(ALIAS_ARGS_KEY);
         }
         ValidationScope::SwitchExecute => {
             vars.extend(["base", "base_worktree_path"]);
@@ -579,10 +580,10 @@ pub fn validate_template(
         "vars".to_string(),
         minijinja::Value::from_serialize(std::collections::BTreeMap::<String, String>::new()),
     );
-    // In alias scope, inject `args` as an empty sequence so `{{ args }}`,
-    // `{{ args[0] | default(...) }}`, `{{ args | length }}`, and
-    // `{% for a in args %}…{% endfor %}` all validate.
-    if matches!(scope, ValidationScope::Alias) {
+    // In alias and hook scopes, inject `args` as an empty sequence so
+    // `{{ args }}`, `{{ args[0] | default(...) }}`, `{{ args | length }}`,
+    // and `{% for a in args %}…{% endfor %}` all validate.
+    if matches!(scope, ValidationScope::Alias | ValidationScope::Hook(_)) {
         context.insert(
             ALIAS_ARGS_KEY.to_string(),
             Value::from_object(ShellArgs::new(Vec::new())),
@@ -1682,7 +1683,8 @@ mod tests {
         // Deprecated vars still valid in every scope
         assert!(validate_template("{{ main_worktree }}", hook, &test.repo, "test").is_ok());
 
-        // `args` validates only in Alias scope.
+        // `args` validates in both Hook and Alias scopes.
+        assert!(validate_template("echo {{ args }}", hook, &test.repo, "test").is_ok());
         let alias = ValidationScope::Alias;
         assert!(validate_template("wt switch {{ args }}", alias, &test.repo, "test").is_ok());
         assert!(validate_template("{{ args | length }}", alias, &test.repo, "test").is_ok());
@@ -1700,20 +1702,6 @@ mod tests {
     #[test]
     fn test_validate_template_scope_rejects_out_of_scope_vars() {
         let test = test_repo();
-
-        // `args` is alias-only — referencing it in a hook fails validation.
-        let err = validate_template(
-            "{{ args }}",
-            ValidationScope::Hook(HookType::PreStart),
-            &test.repo,
-            "test",
-        )
-        .unwrap_err();
-        assert!(
-            err.message.contains("undefined value"),
-            "got: {}",
-            err.message
-        );
 
         // `base` is unavailable in pre-merge — catch the typo at validation time.
         let err = validate_template(
@@ -1778,6 +1766,17 @@ mod tests {
             err.message.contains("undefined value"),
             "got: {}",
             err.message
+        );
+
+        // `args` is available in hook scope (forwarded via smart routing).
+        assert!(
+            validate_template(
+                "{{ args }}",
+                ValidationScope::Hook(HookType::PreStart),
+                &test.repo,
+                "test",
+            )
+            .is_ok()
         );
 
         // `args` is not available in SwitchExecute.

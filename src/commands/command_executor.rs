@@ -583,6 +583,14 @@ fn expand_commands(
 
     // hook_type is always available as a template variable and in JSON context
     base_context.insert("hook_type".into(), hook_type.to_string());
+    // `{{ args }}` is always available in hook scope. Default to an empty
+    // JSON sequence (rendered via ShellArgs rehydration) so templates can
+    // use `{{ args }}` unconditionally. Manual `wt hook <type>` overrides
+    // via extra_vars earlier in the chain; internal invocations (merge,
+    // switch, etc.) leave the default in place.
+    base_context
+        .entry(worktrunk::config::ALIAS_ARGS_KEY.to_string())
+        .or_insert_with(|| "[]".to_string());
 
     let mut result = Vec::new();
 

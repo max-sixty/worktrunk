@@ -46,17 +46,18 @@ use commands::handle_picker;
 use commands::repository_ext::RepositoryCliExt;
 use commands::worktree::{handle_no_ff_merge, handle_push};
 use commands::{
-    MergeOptions, OperationMode, RebaseResult, RemoveTarget, SquashResult, SwitchOptions,
-    add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show, handle_claude_install,
-    handle_claude_install_statusline, handle_claude_uninstall, handle_completions,
-    handle_config_create, handle_config_show, handle_config_update, handle_configure_shell,
-    handle_custom_command, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
-    handle_list, handle_logs_list, handle_merge, handle_opencode_install,
-    handle_opencode_uninstall, handle_promote, handle_rebase, handle_show_theme, handle_squash,
-    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
-    handle_state_show, handle_switch, handle_unconfigure_shell, handle_vars_clear, handle_vars_get,
-    handle_vars_list, handle_vars_set, resolve_worktree_arg, run_hook, step_commit,
-    step_copy_ignored, step_diff, step_eval, step_for_each, step_prune, step_relocate,
+    HookCliArgs, MergeOptions, OperationMode, RebaseResult, RemoveTarget, SquashResult,
+    SwitchOptions, add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show,
+    handle_claude_install, handle_claude_install_statusline, handle_claude_uninstall,
+    handle_completions, handle_config_create, handle_config_show, handle_config_update,
+    handle_configure_shell, handle_custom_command, handle_hints_clear, handle_hints_get,
+    handle_hook_show, handle_init, handle_list, handle_logs_list, handle_merge,
+    handle_opencode_install, handle_opencode_uninstall, handle_promote, handle_rebase,
+    handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
+    handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
+    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set, resolve_worktree_arg,
+    run_hook, step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune,
+    step_relocate,
 };
 use output::handle_remove_output;
 use worktrunk::git::BranchDeletionMode;
@@ -64,9 +65,9 @@ use worktrunk::git::BranchDeletionMode;
 use cli::{
     ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigAliasCommand, ConfigCommand,
     ConfigPluginsClaudeCommand, ConfigPluginsCommand, ConfigPluginsOpencodeCommand,
-    ConfigShellCommand, DefaultBranchAction, HintsAction, HookCommand, ListArgs, ListSubcommand,
-    LogsAction, MarkerAction, MergeArgs, PreviousBranchAction, RemoveArgs, StateCommand,
-    StepCommand, SwitchArgs, SwitchFormat, VarsAction,
+    ConfigShellCommand, DefaultBranchAction, HintsAction, HookCommand, HookOptions, ListArgs,
+    ListSubcommand, LogsAction, MarkerAction, MergeArgs, PreviousBranchAction, RemoveArgs,
+    StateCommand, StepCommand, SwitchArgs, SwitchFormat, VarsAction,
 };
 use worktrunk::HookType;
 
@@ -116,27 +117,6 @@ fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
     }
 }
 
-fn run_non_toggle_hook(
-    hook_type: HookType,
-    yes: bool,
-    dry_run: bool,
-    names: &[String],
-    vars: &[(String, String)],
-) -> anyhow::Result<()> {
-    run_hook(hook_type, yes, None, dry_run, names, vars)
-}
-
-fn run_toggleable_hook(
-    hook_type: HookType,
-    yes: bool,
-    dry_run: bool,
-    foreground: bool,
-    names: &[String],
-    vars: &[(String, String)],
-) -> anyhow::Result<()> {
-    run_hook(hook_type, yes, Some(foreground), dry_run, names, vars)
-}
-
 fn warn_select_deprecated() {
     eprintln!(
         "{}",
@@ -164,68 +144,6 @@ fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
             hook_type,
             expanded,
         } => handle_hook_show(hook_type.as_deref(), expanded),
-        HookCommand::PreSwitch {
-            name,
-            dry_run,
-            vars,
-        } => run_non_toggle_hook(HookType::PreSwitch, yes, dry_run, &name, &vars),
-        HookCommand::PostSwitch {
-            name,
-            dry_run,
-            foreground,
-            vars,
-        } => run_toggleable_hook(HookType::PostSwitch, yes, dry_run, foreground, &name, &vars),
-        HookCommand::PreStart {
-            name,
-            dry_run,
-            vars,
-        } => run_non_toggle_hook(HookType::PreStart, yes, dry_run, &name, &vars),
-        HookCommand::PostStart {
-            name,
-            dry_run,
-            foreground,
-            vars,
-        } => run_toggleable_hook(HookType::PostStart, yes, dry_run, foreground, &name, &vars),
-        HookCommand::PreCommit {
-            name,
-            dry_run,
-            vars,
-        } => run_non_toggle_hook(HookType::PreCommit, yes, dry_run, &name, &vars),
-        HookCommand::PostCommit {
-            name,
-            dry_run,
-            foreground,
-            vars,
-        } => run_toggleable_hook(HookType::PostCommit, yes, dry_run, foreground, &name, &vars),
-        HookCommand::PreMerge {
-            name,
-            dry_run,
-            vars,
-        } => run_non_toggle_hook(HookType::PreMerge, yes, dry_run, &name, &vars),
-        HookCommand::PostMerge {
-            name,
-            dry_run,
-            foreground,
-            vars,
-        } => run_toggleable_hook(HookType::PostMerge, yes, dry_run, foreground, &name, &vars),
-        HookCommand::PreRemove {
-            name,
-            dry_run,
-            vars,
-        } => run_non_toggle_hook(HookType::PreRemove, yes, dry_run, &name, &vars),
-        HookCommand::PostRemove {
-            name,
-            dry_run,
-            foreground,
-            vars,
-        } => run_hook(
-            HookType::PostRemove,
-            yes,
-            Some(foreground),
-            dry_run,
-            &name,
-            &vars,
-        ),
         HookCommand::RunPipeline => commands::run_pipeline(),
         HookCommand::Approvals { action } => {
             eprintln!(
@@ -236,6 +154,25 @@ fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
                 ApprovalsCommand::Add { all } => add_approvals(all),
                 ApprovalsCommand::Clear { global } => clear_approvals(global),
             }
+        }
+        HookCommand::Run(args) => {
+            // `--help` / `-h` is handled upstream in `maybe_handle_help_with_pager`,
+            // which parses against a clap tree augmented with hook-type
+            // subcommand stubs and renders their help directly. Execution flow
+            // only reaches here for non-help invocations.
+            let opts = HookOptions::parse(&args)?;
+            run_hook(
+                opts.hook_type,
+                yes || opts.yes,
+                opts.foreground,
+                opts.dry_run,
+                HookCliArgs {
+                    name_filters: &opts.name_filters,
+                    explicit_vars: &opts.explicit_vars,
+                    shorthand_vars: &opts.shorthand_vars,
+                    forwarded_args: &opts.forwarded_args,
+                },
+            )
         }
     }
 }
@@ -957,10 +894,11 @@ fn parse_cli() -> Option<Cli> {
     // When available, use built-in setting. Until then, could use try_parse() to intercept
     // MissingRequiredArgument errors and print custom messages with ValueEnum::value_variants().
     let cmd = cli::build_command();
-    let args = cli::rewrite_var_shorthand(std::env::args_os().collect());
-    let matches = cmd.try_get_matches_from(args).unwrap_or_else(|e| {
-        enhance_and_exit_error(e);
-    });
+    let matches = cmd
+        .try_get_matches_from(std::env::args_os())
+        .unwrap_or_else(|e| {
+            enhance_and_exit_error(e);
+        });
     Some(Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit()))
 }
 
