@@ -524,6 +524,57 @@ fn test_unset_config_removes_from_bulk_cache() {
     assert!(!r.unset_config("branch.main.pushRemote").unwrap());
 }
 
+/// `set_default_branch` → `clear_default_branch_cache` round trip,
+/// covering the specialized default-branch writers that route through
+/// `set_config_value` / `unset_config_value`.
+#[test]
+fn test_set_and_clear_default_branch() {
+    let repo = TestRepo::new();
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    r.set_default_branch("main").unwrap();
+    assert_eq!(r.default_branch(), Some("main".to_string()));
+
+    // Clearing an existing cache returns true; a second clear returns false.
+    let r2 = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert!(r2.clear_default_branch_cache().unwrap());
+    assert!(!r2.clear_default_branch_cache().unwrap());
+}
+
+/// `switch_previous` / `set_switch_previous` round trip. Exercises
+/// `worktrunk.history` read + write through the bulk-config helpers.
+#[test]
+fn test_switch_previous_roundtrip() {
+    let repo = TestRepo::new();
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    // Populate the cache first to hit the in-memory update branch.
+    let _ = r.is_bare();
+    assert_eq!(r.switch_previous(), None);
+    r.set_switch_previous(Some("feature-a")).unwrap();
+    assert_eq!(r.switch_previous(), Some("feature-a".to_string()));
+    // `None` is a no-op — doesn't clear.
+    r.set_switch_previous(None).unwrap();
+    assert_eq!(r.switch_previous(), Some("feature-a".to_string()));
+}
+
+/// `unset_config_value` propagates errors from corrupt git config
+/// rather than returning `Ok(false)` (the exit-code-5 "key absent" case).
+#[test]
+fn test_unset_config_propagates_error_on_corrupt_config() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+    let r = Repository::at(root.clone()).unwrap();
+    r.set_default_branch("main").unwrap();
+
+    // Corrupt the git config so subsequent writes fail with a real error
+    // (not the benign exit-code-5 that maps to Ok(false)).
+    fs::write(root.join(".git/config"), "[invalid section\n").unwrap();
+    let err = r.unset_config("worktrunk.default-branch");
+    assert!(
+        err.is_err(),
+        "unset_config should propagate corrupt-config errors: {err:?}"
+    );
+}
+
 // =============================================================================
 // Bug #1: Tag/branch name collision tests
 // =============================================================================
