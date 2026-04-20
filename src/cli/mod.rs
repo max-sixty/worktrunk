@@ -1448,39 +1448,13 @@ Git worktrees share the repository but not untracked files. [`wt step copy-ignor
 copy = "wt step copy-ignored"
 ```
 
-## Progressive validation
-
-Quick checks before commit, thorough validation before merge:
-
-```toml
-[[pre-commit]]
-lint = "npm run lint"
-typecheck = "npm run typecheck"
-
-[[pre-merge]]
-test = "npm test"
-build = "npm run build"
-```
-
-## Target-specific behavior
-
-Different actions for production vs staging:
-
-```toml
-post-merge = """
-if [ {{ target }} = main ]; then
-    npm run deploy:production
-elif [ {{ target }} = staging ]; then
-    npm run deploy:staging
-fi
-"""
-```
-
 ## More recipes
 
 - Copy gitignored files between worktrees: `wt step copy-ignored` in `post-start` shares build caches and dependencies; use a `[[post-start]]` pipeline when a later hook depends on the copy — https://worktrunk.dev/tips-patterns/#eliminate-cold-starts
 - Dev server per worktree: `hash_port` in `post-start` for launch and `post-remove` for cleanup, with optional subdomain routing — https://worktrunk.dev/tips-patterns/#dev-server-per-worktree
 - Database per worktree: a `post-start` pipeline stores container name, port, and connection string as [per-branch vars](@/config.md#wt-config-state-vars) that later hooks reference — https://worktrunk.dev/tips-patterns/#database-per-worktree
+- Progressive validation: quick lint/typecheck in `pre-commit`, expensive tests and builds in `pre-merge` — https://worktrunk.dev/tips-patterns/#progressive-validation
+- Target-specific behavior: branch on `{{ target }}` in `post-merge` for per-environment deploys — https://worktrunk.dev/tips-patterns/#target-specific-hooks
 
 ## See also
 
