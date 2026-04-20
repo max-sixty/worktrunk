@@ -23,7 +23,7 @@ Worktrunk has three extension mechanisms.
 | **Shareable via repo** | `.config/wt.toml` | `.config/wt.toml` | Distribute the binary |
 | **Language** | Shell commands | Shell commands | Any |
 
-Hooks and aliases share the TOML config file, the [template engine](@/hook.md#template-variables), the `[[block]]` pipeline syntax (blocks run in order, keys within a block run concurrently), and the approval model: user config is trusted; project config requires approval on first run. When both sources define the same name, both run — user first.
+Hooks and aliases share the TOML config file, the [template engine](@/hook.md#template-variables) (variables, filters, and functions), the [`[[block]]` pipeline syntax](@/hook.md#pipeline-ordering) (blocks run in order, keys within a block run concurrently), and the approval model: user config is trusted; project config requires approval on first run. When both sources define the same name, both run — user first.
 
 ## Hooks
 
@@ -69,7 +69,7 @@ since-main = "git log --oneline {{ default_branch }}..HEAD"
 
 ### Templates
 
-Alias templates have access to the full [variable and filter reference](@/hook.md#template-variables), plus `{{ args }}` for positional CLI arguments. Operation-context variables (`target`, `base`, `pr_number`) aren't auto-populated in aliases since there's no operation in progress — but any of them can still be bound on the CLI with `--KEY=VALUE`.
+Aliases use the same [template engine as hooks](@/hook.md#template-variables) — same variables, same [filters](@/hook.md#worktrunk-filters), same [functions](@/hook.md#worktrunk-functions). Alias templates add `{{ args }}` for positional CLI arguments. Operation-context variables (`target`, `base`, `pr_number`) aren't auto-populated since there's no operation in progress — but any of them can still be bound on the CLI with `--KEY=VALUE`.
 
 `--KEY=VALUE` (or `--KEY VALUE`) binds `KEY` whenever `{{ KEY }}` appears in the template — `wt deploy --env=staging` sets `{{ env }}` to `staging`. Everything else joins `{{ args }}` (see [Positional arguments](#positional-arguments)).
 
@@ -101,7 +101,7 @@ Tokens after `--` forward unconditionally, bypassing any binding. Writing `wt de
 
 ### Multi-step pipelines
 
-`[[aliases.NAME]]` defines a pipeline using the same `[[block]]` semantics as hooks:
+`[[aliases.NAME]]` defines a pipeline using the [same `[[block]]` semantics as hooks](@/hook.md#pipeline-ordering) — blocks run in order, keys within a block run concurrently, a step failure aborts the remainder:
 
 ```toml
 [[aliases.release]]
@@ -115,7 +115,7 @@ package = "cargo package --no-verify"
 publish = "cargo publish {{ args }}"
 ```
 
-A step failure aborts the remaining steps. Every step sees the same `{{ args }}` and bound variables — `wt release -- --dry-run` forwards `--dry-run` to `publish` without affecting earlier steps.
+Every step sees the same `{{ args }}` and bound variables — `wt release -- --dry-run` forwards `--dry-run` to `publish` without affecting earlier steps.
 
 ### Changing directory
 
