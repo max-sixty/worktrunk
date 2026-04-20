@@ -413,6 +413,118 @@ fn test_clear_hint_propagates_error_on_corrupt_config() {
 }
 
 // =============================================================================
+// Bulk config cache coverage
+// =============================================================================
+
+/// `mark_hint_shown` → `has_shown_hint` → `list_shown_hints` → `clear_hint`
+/// exercises the full write-then-read round trip through the bulk config
+/// cache, including coherent in-memory updates.
+#[test]
+fn test_hint_roundtrip_through_bulk_cache() {
+    let repo = TestRepo::new();
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+
+    // Populate bulk cache before the write so set/unset hit the in-memory
+    // update paths.
+    assert!(!r.is_bare().unwrap());
+
+    r.mark_hint_shown("zebra").unwrap();
+    r.mark_hint_shown("alpha").unwrap();
+    assert!(r.has_shown_hint("zebra"));
+    assert!(r.has_shown_hint("alpha"));
+    assert!(!r.has_shown_hint("unknown"));
+
+    // Deterministic alphabetical ordering (bulk cache is a HashMap — order
+    // must be explicitly sorted for display).
+    let hints = r.list_shown_hints();
+    assert_eq!(hints, vec!["alpha".to_string(), "zebra".to_string()]);
+
+    // Clear one → coherent in-memory removal.
+    assert!(r.clear_hint("alpha").unwrap());
+    assert!(!r.has_shown_hint("alpha"));
+    assert!(r.has_shown_hint("zebra"));
+    assert_eq!(r.list_shown_hints(), vec!["zebra".to_string()]);
+
+    // Clear missing → Ok(false).
+    assert!(!r.clear_hint("never-set").unwrap());
+}
+
+/// `primary_remote()` honours `checkout.defaultRemote` when it points at
+/// a configured remote — covers the early-return branch in the new bulk
+/// lookup.
+#[test]
+fn test_primary_remote_honours_checkout_default_remote() {
+    let repo = TestRepo::new();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/max-sixty/worktrunk.git",
+    ]);
+    repo.run_git(&[
+        "remote",
+        "add",
+        "upstream",
+        "https://github.com/max-sixty/worktrunk.git",
+    ]);
+    repo.run_git(&["config", "checkout.defaultRemote", "upstream"]);
+
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert_eq!(r.primary_remote().unwrap(), "upstream");
+    // With no `checkout.defaultRemote`, falls back to the first remote
+    // with a URL (the filter-out-phantom-entries path).
+    repo.run_git(&["config", "--unset", "checkout.defaultRemote"]);
+    let r2 = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert_eq!(r2.primary_remote().unwrap(), "origin");
+}
+
+/// `all_remote_urls()` enumerates every configured remote via the bulk
+/// map, filtering out phantom entries (keys with `remote.X.*` that have
+/// no `.url`).
+#[test]
+fn test_all_remote_urls_filters_phantom_remotes() {
+    let repo = TestRepo::new();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/max-sixty/worktrunk.git",
+    ]);
+    // A phantom entry: remote.X.prunetags set but no URL → should not appear.
+    repo.run_git(&["config", "remote.phantom.prunetags", "true"]);
+
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let urls = r.all_remote_urls();
+    assert_eq!(urls.len(), 1, "expected only origin, got {urls:?}");
+    assert_eq!(urls[0].0, "origin");
+}
+
+/// `unset_config_value` cleanly removes in-memory state after the bulk
+/// cache is populated. Guards against a regression where the in-memory
+/// remove used the literal key instead of the canonical form.
+#[test]
+fn test_unset_config_removes_from_bulk_cache() {
+    let repo = TestRepo::new();
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+
+    // Populate cache, then write a mixed-case variable key (canonical
+    // variable name is lowercased by git).
+    let _ = r.is_bare();
+    r.set_config("branch.main.pushRemote", "origin").unwrap();
+    assert_eq!(
+        r.config_value("branch.main.pushRemote").unwrap(),
+        Some("origin".to_string())
+    );
+
+    // Unset removes it — subsequent reads return None.
+    assert!(r.unset_config("branch.main.pushRemote").unwrap());
+    assert_eq!(r.config_value("branch.main.pushRemote").unwrap(), None);
+
+    // Unsetting again → Ok(false).
+    assert!(!r.unset_config("branch.main.pushRemote").unwrap());
+}
+
+// =============================================================================
 // Bug #1: Tag/branch name collision tests
 // =============================================================================
 
