@@ -536,6 +536,10 @@ fn post_process_for_html(text: &str) -> String {
             "hooks reference — https://worktrunk.dev/tips-patterns/#database-per-worktree",
             "hooks reference — see [Tips & Patterns](@/tips-patterns.md#database-per-worktree)",
         )
+        .replace(
+            "depends on the copy — https://worktrunk.dev/tips-patterns/#eliminate-cold-starts",
+            "depends on the copy — see [Tips & Patterns](@/tips-patterns.md#eliminate-cold-starts)",
+        )
         // Approval prompt: plain code block → terminal shortcode with colored symbols
         // and gutter. CLI shows a plain ``` block; web shows styled terminal output
         // matching the actual CLI appearance (yellow ▲, dim ○, cyan ❯, gutter bar).

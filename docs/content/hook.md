@@ -392,7 +392,7 @@ remove-db = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null
 
 ## More recipes
 
-- Copy gitignored files between worktrees: `wt step copy-ignored` in `post-start` shares build caches and dependencies; use a `[[post-start]]` pipeline when a later hook depends on the copy — https://worktrunk.dev/tips-patterns/#eliminate-cold-starts
+- Copy gitignored files between worktrees: `wt step copy-ignored` in `post-start` shares build caches and dependencies; use a `[[post-start]]` pipeline when a later hook depends on the copy — see [Tips & Patterns](@/tips-patterns.md#eliminate-cold-starts)
 - Dev server per worktree: `hash_port` in `post-start` for launch and `post-remove` for cleanup, with optional subdomain routing — see [Tips & Patterns](@/tips-patterns.md#dev-server-per-worktree)
 - Database per worktree: a `post-start` pipeline stores container name, port, and connection string as [per-branch vars](@/config.md#wt-config-state-vars) that later hooks reference — see [Tips & Patterns](@/tips-patterns.md#database-per-worktree)
 
