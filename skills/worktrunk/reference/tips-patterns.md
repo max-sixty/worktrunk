@@ -115,7 +115,17 @@ Use [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) t
 copy = "wt step copy-ignored"
 ```
 
-Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
+When another hook depends on the copy — for example, copying `node_modules/` before `pnpm install` so the install reuses cached packages — sequence them with a `[[post-start]]` pipeline:
+
+```toml
+[[post-start]]
+copy = "wt step copy-ignored"
+
+[[post-start]]
+install = "pnpm install"
+```
+
+Use `pre-start` instead when an `--execute` command needs the copied files immediately.
 
 All gitignored files are copied by default. To limit what gets copied, create `.worktreeinclude` with patterns — files must be both gitignored and listed. See [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) for details.
 
