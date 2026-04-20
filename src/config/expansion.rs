@@ -9,7 +9,9 @@
 //! See `wt hook --help` for available filters and functions.
 
 use std::borrow::Cow;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::{self, Write};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -26,27 +28,22 @@ use crate::styling::{
     info_message, verbosity,
 };
 
-/// Template variables available in every context.
+/// Active-context vars: point at the branch the operation acts on.
 ///
-/// Populated by `build_hook_context()` in `command_executor.rs`. `upstream`
-/// is conditional on branch tracking configuration but is included here so
-/// templates may reference it in any context (guarded by `{% if upstream %}`).
-///
-/// Ordered to match the user-facing help table in `src/cli/mod.rs`
-/// (`## Template variables`): active-context vars first, then repo/remote
-/// metadata, then the always-available portion of execution context (`cwd`).
-/// Operation-context vars (`base`, `target`, `pr_*`) and infrastructure
-/// vars (`hook_type`, `hook_name`) are not in `BASE_VARS` — they're added
-/// per-scope by `hook_extras` and `HOOK_INFRASTRUCTURE_VARS`.
-pub const BASE_VARS: &[&str] = &[
-    // Active context
+/// `upstream` is conditional on branch tracking configuration but is listed
+/// here so templates may reference it in any context (guarded by
+/// `{% if upstream %}`).
+pub const ACTIVE_VARS: &[&str] = &[
     "branch",
     "worktree_path",
     "worktree_name",
     "commit",
     "short_commit",
     "upstream",
-    // Repo / remote metadata
+];
+
+/// Repo/remote-metadata vars: describe the repository hosting the operation.
+pub const REPO_VARS: &[&str] = &[
     "repo",
     "repo_path",
     "owner",
@@ -54,9 +51,28 @@ pub const BASE_VARS: &[&str] = &[
     "default_branch",
     "remote",
     "remote_url",
-    // Execution context (always-available portion)
-    "cwd",
 ];
+
+/// Exec-context vars always available outside hook infrastructure.
+///
+/// `cwd` is populated for every template expansion; `hook_type`/`hook_name`
+/// are added by the hook runner itself (`HOOK_INFRASTRUCTURE_VARS`).
+pub const EXEC_BASE_VARS: &[&str] = &["cwd"];
+
+/// Template variables available in every context: the concatenation of
+/// [`ACTIVE_VARS`], [`REPO_VARS`], and [`EXEC_BASE_VARS`].
+///
+/// Populated by `build_hook_context()` in `command_executor.rs`. Operation-
+/// context vars (`base`, `target`, `pr_*`) and infrastructure vars
+/// (`hook_type`, `hook_name`) are not in the base set — they're added per-
+/// scope by `hook_extras` and the hook runner itself.
+pub fn base_vars() -> Vec<&'static str> {
+    let mut v = Vec::with_capacity(ACTIVE_VARS.len() + REPO_VARS.len() + EXEC_BASE_VARS.len());
+    v.extend_from_slice(ACTIVE_VARS);
+    v.extend_from_slice(REPO_VARS);
+    v.extend_from_slice(EXEC_BASE_VARS);
+    v
+}
 
 /// Reserved context key carrying a JSON-encoded `Vec<String>` of positional
 /// CLI args forwarded to an alias. The key flows through
@@ -98,7 +114,7 @@ pub enum ValidationScope {
     Alias,
 }
 
-/// Hook-type-specific extras that sit on top of [`BASE_VARS`].
+/// Hook-type-specific extras that sit on top of [`base_vars`].
 ///
 /// These are the vars injected by callers via `extra_vars` when running a
 /// hook. Keeping the mapping in one place means "which vars work in a
@@ -151,11 +167,11 @@ const HOOK_INFRASTRUCTURE_VARS: &[&str] = &["hook_type", "hook_name"];
 
 /// All template variables available in a given scope.
 ///
-/// The returned list is `BASE_VARS` + scope-specific extras + deprecated
+/// The returned list is [`base_vars`] + scope-specific extras + deprecated
 /// aliases. Used by [`validate_template`] to build the placeholder context
 /// and by error messages to list what the user could have typed.
 pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
-    let mut vars: Vec<&'static str> = BASE_VARS.to_vec();
+    let mut vars: Vec<&'static str> = base_vars();
     match scope {
         ValidationScope::Hook(hook_type) => {
             vars.extend(HOOK_INFRASTRUCTURE_VARS);
@@ -173,8 +189,46 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
     vars
 }
 
-use std::collections::{BTreeSet, HashMap};
-use std::hash::{Hash, Hasher};
+/// Format the resolved template variables for a hook invocation as an
+/// aligned `name = value` block — no heading, no indent, caller wraps.
+///
+/// Ordered per the `## Template variables` help table in `src/cli/mod.rs`:
+/// active, operation, repo, exec. A variable appears if it's in scope for
+/// `hook_type` per [`vars_available_in`]. Values come from `ctx`; vars that
+/// are in-scope but absent from `ctx` render as `(unset)` — this surfaces
+/// operation-specific gaps (e.g., `target_worktree_path` during
+/// `wt switch -`, `upstream` when the branch doesn't track a remote).
+///
+/// `(unset)` relies on an invariant in `build_hook_context`: optional vars
+/// are omitted from the map rather than inserted as empty strings. If a
+/// future caller starts inserting `""`, revisit the empty-vs-absent
+/// distinction here.
+///
+/// Deprecated aliases and `vars.*` (user state) are intentionally omitted.
+pub fn format_hook_variables(hook_type: HookType, ctx: &HashMap<String, String>) -> String {
+    // Flat list in the canonical docs order: active, operation, repo, exec.
+    let vars: Vec<&'static str> = ACTIVE_VARS
+        .iter()
+        .chain(hook_extras(hook_type))
+        .chain(REPO_VARS)
+        .chain(EXEC_BASE_VARS)
+        .chain(HOOK_INFRASTRUCTURE_VARS)
+        .copied()
+        .collect();
+
+    let max_name = vars.iter().map(|v| v.len()).max().unwrap_or(0);
+
+    vars.iter()
+        .map(|var| {
+            let value = match ctx.get(*var) {
+                Some(v) => v.as_str(),
+                None => "(unset)",
+            };
+            format!("{var:<max_name$} = {value}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 /// Positional CLI args forwarded from `wt <alias> a b c` into the alias's
 /// template context. Bare `{{ args }}` renders as a space-joined,
@@ -1831,5 +1885,64 @@ mod tests {
         // Should list available vars in hint
         assert!(!err.available_vars.is_empty(), "should list available vars");
         assert!(err.available_vars.contains(&"branch".to_string()));
+    }
+
+    #[test]
+    fn test_format_hook_variables_groups_and_unset() {
+        let mut ctx: HashMap<String, String> = HashMap::new();
+        ctx.insert("branch".into(), "feature".into());
+        ctx.insert("worktree_path".into(), "/tmp/feature".into());
+        ctx.insert("worktree_name".into(), "feature".into());
+        ctx.insert("base".into(), "main".into());
+        ctx.insert("base_worktree_path".into(), "/tmp/main".into());
+        ctx.insert("target".into(), "-".into());
+        // target_worktree_path deliberately absent — mimics `wt switch -`
+        ctx.insert("repo".into(), "demo".into());
+        ctx.insert("repo_path".into(), "/tmp/demo".into());
+        ctx.insert("cwd".into(), "/tmp/feature".into());
+        ctx.insert("hook_type".into(), "pre-switch".into());
+        ctx.insert("hook_name".into(), "show-variables".into());
+
+        assert_snapshot!(format_hook_variables(HookType::PreSwitch, &ctx), @r"
+        branch                = feature
+        worktree_path         = /tmp/feature
+        worktree_name         = feature
+        commit                = (unset)
+        short_commit          = (unset)
+        upstream              = (unset)
+        base                  = main
+        base_worktree_path    = /tmp/main
+        target                = -
+        target_worktree_path  = (unset)
+        pr_number             = (unset)
+        pr_url                = (unset)
+        repo                  = demo
+        repo_path             = /tmp/demo
+        owner                 = (unset)
+        primary_worktree_path = (unset)
+        default_branch        = (unset)
+        remote                = (unset)
+        remote_url            = (unset)
+        cwd                   = /tmp/feature
+        hook_type             = pre-switch
+        hook_name             = show-variables
+        ");
+    }
+
+    #[test]
+    fn test_format_hook_variables_scope_filters_operation() {
+        // pre-commit only has `target` in operation scope — no base*, pr_*, etc.
+        let mut ctx: HashMap<String, String> = HashMap::new();
+        ctx.insert("target".into(), "main".into());
+        let out = format_hook_variables(HookType::PreCommit, &ctx);
+        assert!(out.contains("target                = main"), "got: {out}");
+        assert!(
+            !out.contains("base "),
+            "pre-commit has no `base`; got: {out}"
+        );
+        assert!(
+            !out.contains("pr_number"),
+            "pre-commit has no `pr_number`; got: {out}"
+        );
     }
 }

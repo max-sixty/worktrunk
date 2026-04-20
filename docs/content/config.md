@@ -494,8 +494,9 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
-          + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/template output + resolved template variables for
+          each hook invocation; -vv: debug logs + diagnostic report + trace.log/output.log under
+          .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -555,8 +556,9 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
-          + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/template output + resolved template variables for
+          each hook invocation; -vv: debug logs + diagnostic report + trace.log/output.log under
+          .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -606,8 +608,9 @@ Usage: <b><span class=c>wt config approvals</span></b> <span class=c>[OPTIONS]</
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
-          + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/template output + resolved template variables for
+          each hook invocation; -vv: debug logs + diagnostic report + trace.log/output.log under
+          .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -650,8 +653,9 @@ Usage: <b><span class=c>wt config alias</span></b> <span class=c>[OPTIONS]</span
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
-          + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/template output + resolved template variables for
+          each hook invocation; -vv: debug logs + diagnostic report + trace.log/output.log under
+          .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -725,8 +729,9 @@ Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
-          + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/template output + resolved template variables for
+          each hook invocation; -vv: debug logs + diagnostic report + trace.log/output.log under
+          .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -783,8 +788,9 @@ Usage: <b><span class=c>wt config state default-branch</span></b> <span class=c>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
-          + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/template output + resolved template variables for
+          each hook invocation; -vv: debug logs + diagnostic report + trace.log/output.log under
+          .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -888,8 +894,9 @@ Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]<
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
-          + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/template output + resolved template variables for
+          each hook invocation; -vv: debug logs + diagnostic report + trace.log/output.log under
+          .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -949,8 +956,9 @@ Usage: <b><span class=c>wt config state ci-status</span></b> <span class=c>[OPTI
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
-          + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/template output + resolved template variables for
+          each hook invocation; -vv: debug logs + diagnostic report + trace.log/output.log under
+          .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -1022,8 +1030,9 @@ Usage: <b><span class=c>wt config state marker</span></b> <span class=c>[OPTIONS
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
-          + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/template output + resolved template variables for
+          each hook invocation; -vv: debug logs + diagnostic report + trace.log/output.log under
+          .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -1097,8 +1106,9 @@ Usage: <b><span class=c>wt config state vars</span></b> <span class=c>[OPTIONS]<
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/template output; -vv: debug logs + diagnostic report
-          + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/template output + resolved template variables for
+          each hook invocation; -vv: debug logs + diagnostic report + trace.log/output.log under
+          .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts

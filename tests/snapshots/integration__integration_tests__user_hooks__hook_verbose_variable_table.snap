@@ -1,11 +1,10 @@
 ---
-source: tests/integration_tests/post_start_commands.rs
+source: tests/integration_tests/user_hooks.rs
 info:
   program: wt
   args:
-    - switch
     - "-v"
-    - "--create"
+    - switch
     - feature
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
@@ -46,24 +45,16 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Expanding [1mworktree-path[22m
-[107m [0m [2m[0m[2m[32m{{[0m[2m[0m[2m repo_path [0m[2m[32m}}[0m[2m/../[0m[2m[32m{{[0m[2m repo [0m[2m[32m}}[0m[2m.[0m[2m[32m{{[0m[2m branch [0m[2m[36m|[0m[2m [0m[2m[34msanitize[0m[2m [0m[2m[32m}}[0m[2m
+[2m○[22m Expanding [1muser:noop[22m
+[107m [0m [2m[0m[2m[34mtrue[0m[2m
 [107m [0m [2m→[22m
-[107m [0m [2m[0m[2m[34m_REPO_/../repo.feature[0m[2m
-[32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m
-[2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
-[33m▲[39m [33mCannot change directory — shell integration not installed[39m
-[2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
-[2m○[22m Expanding [1mproject:setup[22m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'verbose test'[0m[2m [0m[2m[36m>[0m[2m verbose.txt
-[107m [0m [2m→[22m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'verbose test'[0m[2m [0m[2m[36m>[0m[2m verbose.txt
+[107m [0m [2m[0m[2m[34mtrue[0m[2m
 [2m○[22m template variables:
 [107m [0m branch                = feature
 [107m [0m worktree_path         = _REPO_.feature
 [107m [0m worktree_name         = repo.feature
-[107m [0m commit                = d545a78b148af245c616612b474fd2049705c00c
-[107m [0m short_commit          = d545a78
+[107m [0m commit                = 05a4a45d0b981dad5c27db59dca482836d59f89e
+[107m [0m short_commit          = 05a4a45
 [107m [0m upstream              = (unset)
 [107m [0m base                  = main
 [107m [0m base_worktree_path    = _REPO_
@@ -78,7 +69,14 @@ exit_code: 0
 [107m [0m default_branch        = main
 [107m [0m remote                = origin
 [107m [0m remote_url            = ../origin.git
-[107m [0m cwd                   = _REPO_.feature
-[107m [0m hook_type             = post-start
-[107m [0m hook_name             = setup
-[36m◎[39m [36mRunning post-start: [1mproject:setup[22m @ [1m_REPO_.feature[22m[39m
+[107m [0m cwd                   = _REPO_
+[107m [0m hook_type             = pre-switch
+[107m [0m hook_name             = noop
+[36m◎[39m [36mRunning pre-switch [1muser:noop[22m[39m
+[107m [0m [2m[0m[2m[34mtrue[0m[2m
+[0m[2m○[22m Expanding [1mworktree-path[22m
+[107m [0m [2m[0m[2m[32m{{[0m[2m[0m[2m repo_path [0m[2m[32m}}[0m[2m/../[0m[2m[32m{{[0m[2m repo [0m[2m[32m}}[0m[2m.[0m[2m[32m{{[0m[2m branch [0m[2m[36m|[0m[2m [0m[2m[34msanitize[0m[2m [0m[2m[32m}}[0m[2m
+[107m [0m [2m→[22m
+[107m [0m [2m[0m[2m[34m_REPO_/../repo.feature[0m[2m
+[33m▲[39m [33mWorktree for [1mfeature[22m @ [1m_REPO_.feature[22m, but cannot change directory — shell integration not installed[39m
+[2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m

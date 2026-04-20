@@ -1,11 +1,14 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
-use worktrunk::config::CommandConfig;
+use worktrunk::config::{CommandConfig, format_hook_variables};
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{eprintln, progress_message, warning_message};
+use worktrunk::styling::{
+    eprintln, format_with_gutter, info_message, progress_message, verbosity, warning_message,
+};
 
 use super::command_executor::{
     CommandContext, CommandOrigin, FailureStrategy, ForegroundStep, PreparedCommand, PreparedStep,
@@ -333,6 +336,9 @@ pub fn announce_and_spawn_background_hooks(
         }
         None => format!("Running {combined}"),
     };
+    if verbosity() >= 1 {
+        print_background_variable_tables(&non_empty);
+    }
     eprintln!("{}", progress_message(message));
 
     for (ctx, group) in non_empty {
@@ -340,6 +346,36 @@ pub fn announce_and_spawn_background_hooks(
     }
 
     Ok(())
+}
+
+/// Emit a `template variables:` block per distinct hook type in `pipelines`.
+///
+/// Background hooks don't flow through `announce_command` (which prints the
+/// table in the foreground path), so this is the symmetric entry point: once
+/// per hook type, using the first command's context. `hook_name` within a
+/// table reflects that first command — the combined announce line above
+/// already enumerates the rest.
+fn print_background_variable_tables(pipelines: &[(CommandContext<'_>, Vec<SourcedStep>)]) {
+    let mut seen: Vec<HookType> = Vec::new();
+    for (_, group) in pipelines {
+        for sourced in group {
+            if seen.contains(&sourced.hook_type) {
+                continue;
+            }
+            let cmd = match &sourced.step {
+                PreparedStep::Single(cmd) => cmd,
+                PreparedStep::Concurrent(cmds) => &cmds[0],
+            };
+            let ctx: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
+                .expect("context_json is always serialized from a HashMap<String, String>");
+            eprintln!("{}", info_message("template variables:"));
+            eprintln!(
+                "{}",
+                format_with_gutter(&format_hook_variables(sourced.hook_type, &ctx), None)
+            );
+            seen.push(sourced.hook_type);
+        }
+    }
 }
 
 /// Prepare and spawn all source-group pipelines for a single hook type.
