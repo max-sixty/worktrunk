@@ -144,6 +144,8 @@ Help text renders in three contexts — check all three when editing:
 
 Because web docs concatenate everything, the `after_long_help` opener must not restate the `about`/`subtitle`. Start with new information — examples, context, or details not already in the definition. See `docs/CLAUDE.md` → "Command documentation structure" for detailed content principles and good/bad opener patterns.
 
+Link text must stand alone when the URL is stripped (terminal help drops the URL and keeps only the text). Use `` [`wt foo`](...) `` for commands — the backticks signal a `--help` lookup — or a descriptive phrase (`[hook template variables]`, `[Extending Worktrunk guide]`) for doc sections. Avoid bare labels that match the destination's heading (e.g., `See [Aliases](@/extending.md#aliases)` reads as a self-reference in terminal).
+
 After any doc changes, run tests to sync:
 
 ```bash

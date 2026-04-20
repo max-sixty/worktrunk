@@ -487,7 +487,7 @@ Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval
 
     /// Inspect and preview aliases
     #[command(
-        after_long_help = r#"Aliases are command templates configured in user (`~/.config/worktrunk/config.toml`) or project (`.config/wt.toml`) config and run as `wt <name>`. See [Aliases](@/extending.md#aliases) for the configuration format.
+        after_long_help = r#"Aliases are command templates configured in user (`~/.config/worktrunk/config.toml`) or project (`.config/wt.toml`) config and run as `wt <name>`. See the [Extending Worktrunk guide](@/extending.md#aliases) for the configuration format.
 
 ## Examples
 

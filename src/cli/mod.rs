@@ -1714,7 +1714,7 @@ Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/
 
 ### Aliases
 
-Command templates that run as `wt <name>`. See [Aliases](@/extending.md#aliases) for usage and flags.
+Command templates that run as `wt <name>`. See the [Extending Worktrunk guide](@/extending.md#aliases) for usage and flags.
 
 ```toml
 [aliases]
@@ -1891,7 +1891,7 @@ Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/
 
 ## Aliases
 
-Command templates that run as `wt <name>`. See [Aliases](@/extending.md#aliases) for usage and flags.
+Command templates that run as `wt <name>`. See the [Extending Worktrunk guide](@/extending.md#aliases) for usage and flags.
 
 ```toml
 [aliases]

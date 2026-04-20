@@ -219,7 +219,7 @@ Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/
 
 ### Aliases
 
-Command templates that run as `wt <name>`. See [Aliases](@/extending.md#aliases) for usage and flags.
+Command templates that run as `wt <name>`. See the [Extending Worktrunk guide](@/extending.md#aliases) for usage and flags.
 
 ```toml
 [aliases]
@@ -396,7 +396,7 @@ Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/
 
 ## Aliases
 
-Command templates that run as `wt <name>`. See [Aliases](@/extending.md#aliases) for usage and flags.
+Command templates that run as `wt <name>`. See the [Extending Worktrunk guide](@/extending.md#aliases) for usage and flags.
 
 ```toml
 [aliases]
@@ -617,7 +617,7 @@ Usage: <b><span class=c>wt config approvals</span></b> <span class=c>[OPTIONS]</
 
 Inspect and preview aliases.
 
-Aliases are command templates configured in user (`~/.config/worktrunk/config.toml`) or project (`.config/wt.toml`) config and run as `wt <name>`. See [Aliases](@/extending.md#aliases) for the configuration format.
+Aliases are command templates configured in user (`~/.config/worktrunk/config.toml`) or project (`.config/wt.toml`) config and run as `wt <name>`. See the [Extending Worktrunk guide](@/extending.md#aliases) for the configuration format.
 
 ### Examples
 

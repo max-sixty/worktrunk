@@ -236,7 +236,7 @@ Built-in excludes always apply: VCS metadata directories ([2m.bzr/[0m, [2m.hg
 
 [32mAliases[0m
 
-Command templates that run as [2mwt <name>[0m. See Aliases for usage and flags.
+Command templates that run as [2mwt <name>[0m. See the Extending Worktrunk guide for usage and flags.
 
 [107m [0m [2m[36m[aliases][0m
 [107m [0m [2mgreet = [0m[2m[32m"echo Hello from {{ branch }}"[0m
@@ -391,7 +391,7 @@ Built-in excludes always apply: VCS metadata directories ([2m.bzr/[0m, [2m.hg
 
 [1m[32mAliases[0m
 
-Command templates that run as [2mwt <name>[0m. See Aliases for usage and flags.
+Command templates that run as [2mwt <name>[0m. See the Extending Worktrunk guide for usage and flags.
 
 [107m [0m [2m[36m[aliases][0m
 [107m [0m [2mdeploy = [0m[2m[32m"make deploy BRANCH={{ branch }}"[0m
