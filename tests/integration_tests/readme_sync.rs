@@ -106,8 +106,19 @@ static RUST_RAW_STRING_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Regex to convert Zola internal links to full URLs
 /// Matches: [text](@/page.md) or [text](@/page.md#anchor)
+///
+/// Link text tolerates `]` characters when they appear inside a backticked
+/// code span (e.g. `[[block]]`), alternating "a `...` code span" with "any
+/// non-`]`-non-backtick char". Bare backticks are forbidden so the regex
+/// can't bridge across two unrelated code spans on the same line.
 static ZOLA_LINK_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\(@/([^)#]+)\.md(#[^)]*)?\)").unwrap());
+    LazyLock::new(|| Regex::new(r"\[((?:`[^`]*`|[^\]`])+)\]\(@/([^)#]+)\.md(#[^)]*)?\)").unwrap());
+
+/// Regex guardrail: any leftover `](@/...md...)` link that the transform
+/// above failed to rewrite. Used by the sync test to fail loudly on stray
+/// Zola internal links in generated skill content.
+static UNTRANSFORMED_ZOLA_LINK_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\]\(@/[^)]+\.md").unwrap());
 
 /// Regex to convert Zola rawcode shortcode to HTML pre tags
 /// Matches: {% rawcode() %}...{% end %}
@@ -2179,6 +2190,22 @@ fn finalize_skill_content(content: &str) -> String {
             format!("[{text}](https://worktrunk.dev/{page}/{anchor})")
         })
         .into_owned();
+
+    // Guardrail: ZOLA_LINK_PATTERN must catch every Zola internal link before
+    // we ship skill content. A stray `](@/...md...)` means the regex failed to
+    // match — usually because of unexpected chars in the link text — and the
+    // skill file would ship a dead link. Fail loudly instead.
+    if let Some(m) = UNTRANSFORMED_ZOLA_LINK_PATTERN.find(&content) {
+        let snippet_start = content[..m.start()].rfind('\n').map_or(0, |i| i + 1);
+        let snippet_end = content[m.end()..]
+            .find('\n')
+            .map_or(content.len(), |i| m.end() + i);
+        panic!(
+            "ZOLA_LINK_PATTERN failed to transform a Zola internal link in skill content — \
+             likely an unsupported character in the link text. Offending line:\n{}",
+            &content[snippet_start..snippet_end]
+        );
+    }
 
     // Remove "See also" section (just contains links to other pages)
     let content = remove_section(&content, "## See also");
