@@ -2318,6 +2318,116 @@ fn test_command_pages_and_skill_files_are_in_sync() {
     }
 }
 
+/// The hand-authored `## Template variables` table in `src/cli/mod.rs` must
+/// match the variable constants in `src/config/expansion.rs`. Drift means the
+/// help docs lie about which vars hooks and aliases can reference.
+///
+/// Checks presence and group placement; descriptions stay free-form prose.
+#[test]
+fn test_template_variables_table_matches_constants() {
+    use std::collections::{BTreeMap, BTreeSet};
+    use strum::IntoEnumIterator;
+    use worktrunk::config::{
+        ACTIVE_VARS, ALIAS_ARGS_KEY, DEPRECATED_TEMPLATE_VARS, EXEC_BASE_VARS, REPO_VARS,
+        ValidationScope, vars_available_in,
+    };
+    use worktrunk::git::HookType;
+
+    let cli_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli/mod.rs");
+    let content = fs::read_to_string(&cli_path).unwrap();
+
+    // Carve out the `## Template variables` section: from its heading to the
+    // next `\n## ` (next level-2 heading). Anchored on the exact heading so an
+    // unrelated `## Template …` elsewhere can't be mistaken for it.
+    let heading = "\n## Template variables\n";
+    let start = content
+        .find(heading)
+        .expect("`## Template variables` heading missing in src/cli/mod.rs");
+    let rest = &content[start + heading.len()..];
+    let end = rest.find("\n## ").unwrap_or(rest.len());
+    let section = &rest[..end];
+
+    // Parse table rows: `| kind | `{{ name }}` | description |`. The kind
+    // column only appears on the first row of each group — subsequent rows
+    // leave it blank, inheriting the last-seen value.
+    let var_re = Regex::new(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_.<>]*)\s*\}\}").unwrap();
+    let mut actual: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut current_kind: Option<String> = None;
+    for line in section.lines() {
+        if !line.starts_with("| ") || line.starts_with("|---") {
+            continue;
+        }
+        let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+        // cells[0] and cells[last] are empty (leading/trailing `|`).
+        if cells.len() < 4 {
+            continue;
+        }
+        let kind_cell = cells[1];
+        let var_cell = cells[2];
+        // Skip the header row.
+        if kind_cell == "Kind" {
+            continue;
+        }
+        if !kind_cell.is_empty() {
+            current_kind = Some(kind_cell.to_string());
+        }
+        let Some(kind) = current_kind.as_ref() else {
+            continue;
+        };
+        if let Some(cap) = var_re.captures(var_cell) {
+            let name = cap[1].to_string();
+            actual.entry(kind.clone()).or_default().insert(name);
+        }
+    }
+
+    // Build expected groups from constants.
+    let mut expected: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    expected.insert(
+        "active".into(),
+        ACTIVE_VARS.iter().map(|s| s.to_string()).collect(),
+    );
+    expected.insert(
+        "repo".into(),
+        REPO_VARS.iter().map(|s| s.to_string()).collect(),
+    );
+    // `exec` in the docs = runtime infra vars plus `args` (hook+alias body
+    // forwarding). The `hook_type`/`hook_name` names aren't exported as a
+    // constant, so they're inlined here — anchoring them to the table row
+    // they appear in.
+    let mut exec: BTreeSet<String> = EXEC_BASE_VARS.iter().map(|s| s.to_string()).collect();
+    exec.insert("hook_type".into());
+    exec.insert("hook_name".into());
+    exec.insert(ALIAS_ARGS_KEY.to_string());
+    expected.insert("exec".into(), exec);
+    // `user` row has a single entry — the `{{ vars.<key> }}` placeholder.
+    expected.insert("user".into(), BTreeSet::from(["vars.<key>".to_string()]));
+    // `operation` = union of hook-type-specific extras. Derived through the
+    // public `vars_available_in` so this test doesn't depend on the private
+    // `hook_extras` helper.
+    let base: BTreeSet<&&str> = ACTIVE_VARS
+        .iter()
+        .chain(REPO_VARS.iter())
+        .chain(EXEC_BASE_VARS.iter())
+        .chain(DEPRECATED_TEMPLATE_VARS.iter())
+        .collect();
+    let infra_and_args: BTreeSet<&str> = ["hook_type", "hook_name", ALIAS_ARGS_KEY].into();
+    let mut operation: BTreeSet<String> = BTreeSet::new();
+    for ht in HookType::iter() {
+        for v in vars_available_in(ValidationScope::Hook(ht)) {
+            if !base.contains(&v) && !infra_and_args.contains(v) {
+                operation.insert(v.to_string());
+            }
+        }
+    }
+    expected.insert("operation".into(), operation);
+
+    assert_eq!(
+        actual, expected,
+        "`## Template variables` table in src/cli/mod.rs drifted from \
+         constants in src/config/expansion.rs. Update the table or the constants."
+    );
+}
+
 /// Verify that post_process_for_html() transforms the approval prompt code block
 /// into a styled terminal shortcode. If the source text in cli/mod.rs changes
 /// without updating the replacement in help.rs, the .replace() silently stops

@@ -50,7 +50,7 @@ Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m            Working directory for this command
       [1m[36m--config[0m[36m [0m[36m<path>[0m  User config file path
-  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m     Verbose output (-v: info logs + hook/template output + resolved template variables for each hook invocation; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m     Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
   [1m[36m-y[0m, [1m[36m--yes[0m            Skip approval prompts
 
 ----- stderr -----

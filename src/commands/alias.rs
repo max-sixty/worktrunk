@@ -35,11 +35,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, CommandConfig, HookStep, ProjectConfig, UserConfig, append_aliases,
-    referenced_vars_for_config,
+    ALIAS_ARGS_KEY, CommandConfig, HookStep, ProjectConfig, UserConfig, ValidationScope,
+    append_aliases, format_scope_variables, referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
-use worktrunk::styling::{eprintln, println, progress_message, warning_message};
+use worktrunk::styling::{
+    eprintln, format_with_gutter, info_message, println, progress_message, verbosity,
+    warning_message,
+};
 
 use crate::commands::command_approval::approve_alias_commands;
 use crate::commands::command_executor::{
@@ -511,6 +514,12 @@ fn run_alias(
     // Build JSON context for stdin
     let context_json = serde_json::to_string(&context_map)
         .expect("HashMap<String, String> serialization should never fail");
+
+    if verbosity() >= 1 {
+        let vars = format_scope_variables(ValidationScope::Alias, &context_map);
+        eprintln!("{}", info_message("template variables:"));
+        eprintln!("{}", format_with_gutter(&vars, None));
+    }
 
     eprintln!(
         "{}",

@@ -1851,3 +1851,29 @@ deploy = "echo deploying"
         Some(&feature_path),
     );
 }
+
+/// Under `-v`, aliases print a table of resolved template variables before
+/// the announcement — symmetric with the hook-invocation verbose block, but
+/// with alias-scoped vars (`args` included, no `hook_*` keys).
+#[rstest]
+fn test_alias_verbose_prints_variable_table(mut repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+greet = "echo hello {{ args }}"
+"#,
+    );
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd_with_global_flags(
+            &repo,
+            "greet",
+            &["world"],
+            Some(&feature_path),
+            &["-v"],
+        );
+        assert_cmd_snapshot!("alias_verbose_variable_table", cmd);
+    });
+}

@@ -217,9 +217,8 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/template output + resolved template variables for
-          each hook invocation; -vv: debug logs + diagnostic report + trace.log/output.log under
-          .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts

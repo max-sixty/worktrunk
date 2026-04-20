@@ -189,13 +189,13 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
     vars
 }
 
-/// Format the resolved template variables for a hook invocation as an
-/// aligned `name = value` block — no heading, no indent, caller wraps.
+/// Format the resolved template variables for a hook or alias invocation
+/// as an aligned `name = value` block — no heading, no indent, caller wraps.
 ///
 /// Ordered per the `## Template variables` help table in `src/cli/mod.rs`:
 /// active, operation, repo, exec. A variable appears if it's in scope for
-/// `hook_type` per [`vars_available_in`]. Values come from `ctx`; vars that
-/// are in-scope but absent from `ctx` render as `(unset)` — this surfaces
+/// `scope` per [`vars_available_in`]. Values come from `ctx`; vars that are
+/// in-scope but absent from `ctx` render as `(unset)` — this surfaces
 /// operation-specific gaps (e.g., `target_worktree_path` during
 /// `wt switch -`, `upstream` when the branch doesn't track a remote).
 ///
@@ -205,16 +205,33 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
 /// distinction here.
 ///
 /// Deprecated aliases and `vars.*` (user state) are intentionally omitted.
-pub fn format_hook_variables(hook_type: HookType, ctx: &HashMap<String, String>) -> String {
-    // Flat list in the canonical docs order: active, operation, repo, exec.
-    let vars: Vec<&'static str> = ACTIVE_VARS
-        .iter()
-        .chain(hook_extras(hook_type))
-        .chain(REPO_VARS)
-        .chain(EXEC_BASE_VARS)
-        .chain(HOOK_INFRASTRUCTURE_VARS)
-        .copied()
-        .collect();
+pub fn format_scope_variables(scope: ValidationScope, ctx: &HashMap<String, String>) -> String {
+    // Flat list in the canonical docs order: active, operation, repo, exec,
+    // infrastructure.
+    let vars: Vec<&'static str> = match scope {
+        ValidationScope::Hook(hook_type) => ACTIVE_VARS
+            .iter()
+            .chain(hook_extras(hook_type))
+            .chain(REPO_VARS)
+            .chain(EXEC_BASE_VARS)
+            .chain(HOOK_INFRASTRUCTURE_VARS)
+            .copied()
+            .collect(),
+        ValidationScope::Alias => ACTIVE_VARS
+            .iter()
+            .copied()
+            .chain(std::iter::once(ALIAS_ARGS_KEY))
+            .chain(REPO_VARS.iter().copied())
+            .chain(EXEC_BASE_VARS.iter().copied())
+            .collect(),
+        ValidationScope::SwitchExecute => ACTIVE_VARS
+            .iter()
+            .copied()
+            .chain(["base", "base_worktree_path"])
+            .chain(REPO_VARS.iter().copied())
+            .chain(EXEC_BASE_VARS.iter().copied())
+            .collect(),
+    };
 
     let max_name = vars.iter().map(|v| v.len()).max().unwrap_or(0);
 
@@ -1888,7 +1905,7 @@ mod tests {
     }
 
     #[test]
-    fn test_format_hook_variables_groups_and_unset() {
+    fn test_format_scope_variables_hook_groups_and_unset() {
         let mut ctx: HashMap<String, String> = HashMap::new();
         ctx.insert("branch".into(), "feature".into());
         ctx.insert("worktree_path".into(), "/tmp/feature".into());
@@ -1903,7 +1920,9 @@ mod tests {
         ctx.insert("hook_type".into(), "pre-switch".into());
         ctx.insert("hook_name".into(), "show-variables".into());
 
-        assert_snapshot!(format_hook_variables(HookType::PreSwitch, &ctx), @r"
+        assert_snapshot!(
+            format_scope_variables(ValidationScope::Hook(HookType::PreSwitch), &ctx),
+            @r"
         branch                = feature
         worktree_path         = /tmp/feature
         worktree_name         = feature
@@ -1926,15 +1945,16 @@ mod tests {
         cwd                   = /tmp/feature
         hook_type             = pre-switch
         hook_name             = show-variables
-        ");
+        "
+        );
     }
 
     #[test]
-    fn test_format_hook_variables_scope_filters_operation() {
+    fn test_format_scope_variables_hook_filters_operation() {
         // pre-commit only has `target` in operation scope — no base*, pr_*, etc.
         let mut ctx: HashMap<String, String> = HashMap::new();
         ctx.insert("target".into(), "main".into());
-        let out = format_hook_variables(HookType::PreCommit, &ctx);
+        let out = format_scope_variables(ValidationScope::Hook(HookType::PreCommit), &ctx);
         assert!(out.contains("target                = main"), "got: {out}");
         assert!(
             !out.contains("base "),
@@ -1944,5 +1964,28 @@ mod tests {
             !out.contains("pr_number"),
             "pre-commit has no `pr_number`; got: {out}"
         );
+    }
+
+    #[test]
+    fn test_format_scope_variables_alias_includes_args_no_hook_keys() {
+        let mut ctx: HashMap<String, String> = HashMap::new();
+        ctx.insert("branch".into(), "feature".into());
+        ctx.insert("worktree_path".into(), "/tmp/feature".into());
+        ctx.insert("worktree_name".into(), "feature".into());
+        ctx.insert("repo".into(), "demo".into());
+        ctx.insert("repo_path".into(), "/tmp/demo".into());
+        ctx.insert("cwd".into(), "/tmp/feature".into());
+        // args is JSON-encoded per `ALIAS_ARGS_KEY` contract.
+        ctx.insert(ALIAS_ARGS_KEY.into(), r#"["a","b c"]"#.into());
+
+        let out = format_scope_variables(ValidationScope::Alias, &ctx);
+        assert!(
+            out.contains(r#"args                  = ["a","b c"]"#),
+            "got: {out}"
+        );
+        // No hook-only keys appear in alias scope.
+        assert!(!out.contains("hook_type"), "got: {out}");
+        assert!(!out.contains("target"), "got: {out}");
+        assert!(!out.contains("base "), "got: {out}");
     }
 }

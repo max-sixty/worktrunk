@@ -5,8 +5,8 @@ use anyhow::{Context, Result, bail};
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{
-    Command, CommandConfig, HookStep, UserConfig, expand_template, format_hook_variables,
-    template_references_var, validate_template_syntax,
+    Command, CommandConfig, HookStep, UserConfig, ValidationScope, expand_template,
+    format_scope_variables, template_references_var, validate_template_syntax,
 };
 use worktrunk::git::{Repository, WorktrunkError, interrupt_exit_code};
 use worktrunk::path::{format_path_for_display, to_posix_path};
@@ -488,7 +488,7 @@ fn announce_command(cmd: &PreparedCommand, origin: &CommandOrigin) {
             if verbosity() >= 1 {
                 let ctx: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
                     .expect("context_json is always serialized from a HashMap<String, String>");
-                let vars = format_hook_variables(*hook_type, &ctx);
+                let vars = format_scope_variables(ValidationScope::Hook(*hook_type), &ctx);
                 eprintln!("{}", info_message("template variables:"));
                 eprintln!("{}", format_with_gutter(&vars, None));
             }
