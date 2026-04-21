@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.42.0
+
+### Improved
+
+- **Alias banner is silent when there's nothing to summarize**: `◎ Running alias <name>` now only prints when the alias has at least one named step worth naming. Single unnamed aliases (`ls = "wt list"`) and all-anonymous pipelines return no announcement — the banner was just echoing the user's typed name. Pipelines with named steps keep their informative summary (`◎ Running alias deploy: install; build, lint`). `-v` still prints the bare form as a confirmation line. ([#2339](https://github.com/max-sixty/worktrunk/pull/2339), thanks @markjaquith for reporting [#2322](https://github.com/max-sixty/worktrunk/issues/2322))
+
+- **Alias dispatch ~30% faster via batched git config reads**: `RepoCache` now reads every config key with a single `git config --list -z` instead of one `git config` subprocess per key. Config-backed accessors (`is_bare`, `primary_remote`, `remote_url`, `default_branch` fast path, `switch_previous`, `has_shown_hint`, `core.fsmonitor`, `core.pager`, and more) resolve via an O(1) map lookup. Writes route through `set_config_value` / `unset_config` helpers that update the on-disk config and the in-memory map together. Benchmarked on `benches/alias`: `warm/1` 77.4 → 56.9 ms (−29%), `cold/100` 80.5 → 54.5 ms (−30%) — ~25 ms saved per `wt <alias>` invocation. ([#2344](https://github.com/max-sixty/worktrunk/pull/2344), [#2346](https://github.com/max-sixty/worktrunk/pull/2346), thanks @markjaquith for reporting [#2322](https://github.com/max-sixty/worktrunk/issues/2322))
+
+- **Further O(1) single-branch upstream lookups on `wt merge` / `wt switch`**: Follow-up to [#2337](https://github.com/max-sixty/worktrunk/pull/2337). `effective_integration_target` and the `wt switch` tracking-info report switched from bulk `Branch::upstream()` (a `for-each-ref` over every local branch) to `upstream_single()` — `wt list` still uses the bulk cache, but one-shot callers no longer pay for it. ([#2338](https://github.com/max-sixty/worktrunk/pull/2338))
+
+- **Stale cached default branch surfaces a clear error with a reset hint**: `default_branch()`'s fast path no longer re-validates the cached `worktrunk.default-branch` on every call; when the cached value is stale, `require_target_branch` / `require_target_ref` raise a new `StaleDefaultBranch` error that names the cache key and suggests clearing it. `wt list --branches` opportunistically warns when the cached default isn't among the enumerated branches — no extra `git` fork. (The old silent fallback + two preflight warning sites are removed.) ([#2344](https://github.com/max-sixty/worktrunk/pull/2344))
+
+### Documentation
+
+- **`worktrunk` skill: non-interactive hook approval guidance**: `skills/worktrunk/SKILL.md` now covers the hook-approval prompt error that agents hit running `wt merge` (or any command that runs project hooks) in a non-interactive session. Explains `wt config approvals add` (interactive, persists to `~/.config/worktrunk/approvals.toml`) vs `--yes` (single-invocation bypass for CI/CD), and directs agents to escalate rather than auto-`--yes`, since pre-approval is a trust decision. ([#2343](https://github.com/max-sixty/worktrunk/pull/2343))
+
+### Internal
+
+- **Flaky `test_switch_picker_preview_panel_main_diff` on macOS**: Under heavy parallel load, skim's `N/M` match counter updated ahead of the list-panel repaint, so `wait_for_stable` could declare a screen stable with stale rows still visible (~1-in-120 failure rate). The stability check now rejects states where skim's parsed match count doesn't equal the visible list-row count. Closes [#2334](https://github.com/max-sixty/worktrunk/issues/2334). ([#2345](https://github.com/max-sixty/worktrunk/pull/2345))
+
+- **`benches/alias` regression guard for parent-side dispatch overhead**: Five-variant harness (`wt --version` startup floor; noop alias at 1/100 worktrees × warm/cold caches) protects the #2337/#2338 O(1) upstream work and the #2344 bulk config read. ([#2340](https://github.com/max-sixty/worktrunk/pull/2340))
+
+- **Remove/TTFO benches invalidate `wt` caches between iterations**: `benches/remove.rs::first_output` and `benches/time_to_first_output.rs::remove` were reporting warm-cache cost because iter 1 populated `.git/wt/cache/` and iter 2+ hit it. Now use `iter_batched` + `invalidate_caches_auto` (which also clears `worktrunk.default-branch`). `benches/CLAUDE.md` documents the rule and the full list of what `invalidate_caches_auto` clears vs. preserves. ([#2341](https://github.com/max-sixty/worktrunk/pull/2341))
+
 ## 0.41.0
 
 ### Improved
