@@ -3,8 +3,8 @@ source: tests/integration_tests/step_alias.rs
 info:
   program: wt
   args:
+    - "-y"
     - commit
-    - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -44,5 +44,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning alias [1mcommit[22m[39m
 [0mcustom-commit

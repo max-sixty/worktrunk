@@ -3,11 +3,11 @@ source: tests/integration_tests/step_alias.rs
 info:
   program: wt
   args:
+    - "-y"
     - run
     - one
     - two three
     - four
-    - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -47,5 +47,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning alias [1mrun[22m[39m
 [0mgot one two three four

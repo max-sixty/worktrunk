@@ -3,8 +3,8 @@ source: tests/integration_tests/step_alias.rs
 info:
   program: wt
   args:
+    - "-y"
     - run
-    - "--yes"
     - "--"
     - "--env=staging"
     - literal
@@ -47,5 +47,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning alias [1mrun[22m[39m
 [0mgot --env=staging literal
