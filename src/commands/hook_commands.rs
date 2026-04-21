@@ -627,7 +627,9 @@ fn expand_command_template(
         default_branch.as_deref(),
         &worktree_path_str,
     );
-    let mut template_ctx = build_hook_context(ctx, &extra_vars)?;
+    // Eager: preview intentionally shows a fully populated context so users can
+    // see every var that would be available at runtime.
+    let mut template_ctx = build_hook_context(ctx, &extra_vars, None)?;
     template_ctx.insert("hook_type".into(), hook_type.to_string());
     if let Some(name) = hook_name {
         template_ctx.insert("hook_name".into(), name.into());

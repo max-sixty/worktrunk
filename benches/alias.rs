@@ -6,18 +6,21 @@
 // dramatically slower than the equivalent subcommand; these benchmarks give
 // that cost a regression-free measurement harness.
 //
-// One group (`dispatch`), five variants:
+// One group (`dispatch`), variants:
 //   - wt_version:  `wt --version` startup floor (no repo discovery)
-//   - warm/1, warm/100, cold/1, cold/100: noop alias at 1 and 100 worktrees,
-//     warm and cold caches. Each worktree has its own branch, so 100
-//     worktrees ≈ 101 branches — this doubles as the regression guard for
-//     the O(1) upstream lookup from 4f9bd575a. The cold/100 variant is
-//     where a regression to the pre-fix bulk `for-each-ref` would hurt
-//     most (packed-refs scan dominates).
+//   - {noop,commit,everything}/{warm,cold}/{1,100}: alias body variants that
+//     reference zero, one, and all expensive template vars. The three
+//     variants exercise the gating in `build_hook_context` — `noop` skips
+//     both rev-parse and for-each-ref, `commit` keeps rev-parse, `everything`
+//     keeps both. Each worktree has its own branch, so 100 worktrees ≈
+//     101 branches — this doubles as the regression guard for the O(1)
+//     upstream lookup from 4f9bd575a. The cold/100 variant is where a
+//     regression to the pre-fix bulk `for-each-ref` would hurt most
+//     (packed-refs scan dominates).
 //
 // Run examples:
 //   cargo bench --bench alias                          # All variants
-//   cargo bench --bench alias -- --skip cold           # Warm only, faster
+//   cargo bench --bench alias -- noop                  # Just the noop rows
 //   cargo bench --bench alias -- --sample-size 10      # Fast iteration
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
@@ -25,9 +28,22 @@ use std::path::Path;
 use std::process::Command;
 use wt_perf::{RepoConfig, create_repo, invalidate_caches_auto, isolate_cmd};
 
-/// Alias body is a shell builtin so the wall-clock is dominated by the
-/// parent's dispatch — not by running a real subcommand.
-const NOOP_CONFIG: &str = "[aliases]\nnoop = \"echo hello\"\n";
+/// Three aliases whose templates reference different slices of the hook
+/// context, exposing whether `build_hook_context`'s accessors fire.
+///
+/// - `noop` — zero referenced vars; all gated accessors (rev-parse for
+///   `{{ commit }}`, for-each-ref for `{{ upstream }}`) should skip.
+/// - `commit` — references `{{ commit }}`; rev-parse fires, for-each-ref
+///   still skipped.
+/// - `everything` — references every gated var; both accessors fire, matching
+///   the pre-gating baseline cost. The `| default` filters keep the template
+///   valid even when the bench repo has no remote/upstream — referenced-var
+///   detection is AST-level, so the gating decisions are unaffected.
+const ALIAS_CONFIG: &str = r#"[aliases]
+noop = "echo hello"
+commit = "echo {{ commit }}"
+everything = "echo {{ commit }} {{ short_commit }} {{ upstream | default('') }} {{ remote | default('') }} {{ remote_url | default('') }} {{ owner | default('') }} {{ default_branch }} {{ primary_worktree_path }}"
+"#;
 
 /// Lean repo config for the scaling rows — alias dispatch doesn't care
 /// about commit history depth, so minimal everything keeps setup under
@@ -82,28 +98,30 @@ fn bench_dispatch(c: &mut Criterion) {
         let temp = create_repo(&lean_worktrees(worktrees));
         let repo_path = temp.path().join("repo");
         let user_config = temp.path().join("user-config.toml");
-        std::fs::write(&user_config, NOOP_CONFIG).unwrap();
+        std::fs::write(&user_config, ALIAS_CONFIG).unwrap();
 
-        for cold in [false, true] {
-            let label = if cold { "cold" } else { "warm" };
-
-            group.bench_with_input(BenchmarkId::new(label, worktrees), &worktrees, |b, _| {
-                let run = || {
-                    run_and_check(
-                        wt_cmd(binary, &repo_path, &user_config, &["noop"]),
-                        "dispatch",
-                    );
-                };
-                if cold {
-                    b.iter_batched(
-                        || invalidate_caches_auto(&repo_path),
-                        |_| run(),
-                        criterion::BatchSize::SmallInput,
-                    );
-                } else {
-                    b.iter(run);
-                }
-            });
+        for alias in ["noop", "commit", "everything"] {
+            for cold in [false, true] {
+                let cache = if cold { "cold" } else { "warm" };
+                let id = BenchmarkId::new(format!("{alias}/{cache}"), worktrees);
+                group.bench_with_input(id, &worktrees, |b, _| {
+                    let run = || {
+                        run_and_check(
+                            wt_cmd(binary, &repo_path, &user_config, &[alias]),
+                            "dispatch",
+                        );
+                    };
+                    if cold {
+                        b.iter_batched(
+                            || invalidate_caches_auto(&repo_path),
+                            |_| run(),
+                            criterion::BatchSize::SmallInput,
+                        );
+                    } else {
+                        b.iter(run);
+                    }
+                });
+            }
         }
     }
 

@@ -72,7 +72,9 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
         // Build full hook context for this worktree
         // Pass wt.branch directly (not the display string) so detached HEAD maps to None -> "HEAD"
         let ctx = CommandContext::new(&repo, &config, wt.branch.as_deref(), &wt.path, false);
-        let context_map = build_hook_context(&ctx, &[])?;
+        // Eager: `for-each` runs arbitrary user commands; the full context is
+        // also JSON-piped to stdin for scripts, so the extra vars are expected.
+        let context_map = build_hook_context(&ctx, &[], None)?;
 
         // Expand template with full context (shell-escaped)
         let command =

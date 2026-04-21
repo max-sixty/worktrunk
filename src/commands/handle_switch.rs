@@ -485,7 +485,10 @@ pub fn handle_switch(
             result.path(),
             yes,
         );
-        let template_vars = build_hook_context(&ctx, &extra_vars)?;
+        // Eager: `--execute` templates are ad-hoc user input; computing
+        // `referenced` here would be extra minijinja parsing for a single
+        // invocation, which is unlikely to beat the forks it might save.
+        let template_vars = build_hook_context(&ctx, &extra_vars, None)?;
         let vars: HashMap<&str, &str> = template_vars
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
