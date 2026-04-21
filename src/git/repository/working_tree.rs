@@ -119,6 +119,83 @@ impl<'a> WorkingTree<'a> {
     // Worktree-specific methods
     // =========================================================================
 
+    /// Populate the `root`/`git_dir`/`branch` caches with a single batched
+    /// `git rev-parse` invocation and return whether this path is inside a
+    /// work tree.
+    ///
+    /// Folds four rev-parse selectors that would otherwise fire as separate
+    /// forks during alias/hook dispatch (`--is-inside-work-tree` from
+    /// [`Repository::project_config_path`], plus one each for [`Self::root`],
+    /// [`Self::git_dir`], and [`Self::branch`]) into one. `HEAD` is last in
+    /// the argument list because `rev-parse` aborts processing once it hits
+    /// an unresolvable ref — on an unborn branch the preceding selectors'
+    /// stdout still lands, so we can cache `root`/`git_dir` even though the
+    /// command exits non-zero. The `branch` cache is only populated when
+    /// the whole batch succeeded so [`Self::branch`]'s `symbolic-ref`
+    /// fallback still runs for genuine unborn-HEAD paths.
+    pub fn prewarm_info(&self) -> anyhow::Result<bool> {
+        let output = self.run_command_output(&[
+            "rev-parse",
+            "--is-inside-work-tree",
+            "--show-toplevel",
+            "--git-dir",
+            "--symbolic-full-name",
+            "HEAD",
+        ])?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut lines = stdout.lines();
+
+        let is_inside = lines.next().is_some_and(|s| s.trim() == "true");
+
+        // `root` and `git_dir` are safe to cache whenever their lines landed,
+        // because any failure in the batch is from `HEAD` — which is last.
+        if is_inside && let Some(root_raw) = lines.next() {
+            let root = PathBuf::from(root_raw.trim());
+            let root = canonicalize(&root).unwrap_or_else(|_| self.path.clone());
+            self.repo
+                .cache
+                .worktree_roots
+                .entry(self.path.clone())
+                .or_insert(root);
+
+            if let Some(git_dir_raw) = lines.next() {
+                let path = PathBuf::from(git_dir_raw.trim());
+                let absolute = if path.is_relative() {
+                    self.path.join(&path)
+                } else {
+                    path
+                };
+                if let Ok(resolved) = canonicalize(&absolute) {
+                    self.repo
+                        .cache
+                        .git_dirs
+                        .entry(self.path.clone())
+                        .or_insert(resolved);
+                }
+
+                // Only trust the `HEAD` line when the batch as a whole
+                // succeeded. On unborn branches it reads "HEAD" as a fallback
+                // literal, which would be indistinguishable from detached
+                // HEAD without the exit status.
+                if output.status.success()
+                    && let Some(head_raw) = lines.next()
+                {
+                    let branch = head_raw
+                        .trim()
+                        .strip_prefix("refs/heads/")
+                        .map(str::to_owned);
+                    self.repo
+                        .cache
+                        .current_branches
+                        .entry(self.path.clone())
+                        .or_insert(branch);
+                }
+            }
+        }
+
+        Ok(is_inside)
+    }
+
     /// Get the branch checked out in this worktree, or None if in detached HEAD state.
     ///
     /// Result is cached in the repository's shared cache (keyed by worktree path).

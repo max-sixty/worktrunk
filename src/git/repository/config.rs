@@ -494,11 +494,10 @@ impl Repository {
             return Ok(Some(PathBuf::from(path)));
         }
 
-        let in_worktree = self
-            .current_worktree()
-            .run_command(&["rev-parse", "--is-inside-work-tree"])
-            .map(|s| s.trim() == "true")
-            .unwrap_or(false);
+        // Batched rev-parse: asks `--is-inside-work-tree` and also pre-warms
+        // the worktree root / git-dir / branch caches, sparing three later
+        // forks on the typical alias path.
+        let in_worktree = self.current_worktree().prewarm_info().unwrap_or(false);
 
         if in_worktree {
             // Inside a worktree — use it (normal repo or linked worktree in bare repo)
