@@ -1216,6 +1216,65 @@ broken = "echo {{ vars..target }}"
     );
 }
 
+/// `dry-run` propagates template expansion errors (undefined var references)
+/// with the scope-complete `Available variables` hint. Exercises the rendering
+/// path inside `handle_alias_dry_run` — a plain string template (no `vars.*`,
+/// so the lazy escape hatch doesn't apply) that references a var outside the
+/// alias scope.
+#[rstest]
+fn test_config_alias_dry_run_undefined_var(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+oops = "echo {{ not_a_var }}"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args(["config", "alias", "dry-run", "oops"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "dry-run should fail on undefined var; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("undefined value"),
+        "expected 'undefined value' in stderr, got:\n{stderr}"
+    );
+    // Scope override contributes `args` (alias-scope specific) — confirms the
+    // error hint was sourced from `vars_available_in(Alias)`, not the runtime
+    // context map.
+    assert!(
+        stderr.contains("args"),
+        "expected alias-scope 'args' in Available variables hint, got:\n{stderr}"
+    );
+}
+
+/// `for-each` propagates template expansion errors (undefined var references).
+#[rstest]
+fn test_for_each_undefined_var(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args(["step", "for-each", "--", "echo", "{{ not_a_var }}"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "for-each should fail on undefined var; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("undefined value"),
+        "expected 'undefined value' in stderr, got:\n{stderr}"
+    );
+}
+
 /// Retired `wt <alias> --dry-run` flag produces an actionable error pointing at
 /// the new subcommand. Snapshots the top-level path; the shared parser covers
 /// both `wt <alias>` and `wt step <alias>` dispatch routes (unit test in

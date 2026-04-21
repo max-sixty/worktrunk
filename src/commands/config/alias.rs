@@ -133,7 +133,9 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    let mut context_map = build_hook_context(&ctx, &extra_refs)?;
+    // `referenced` is already the union across every matched alias entry; pass
+    // it through so dry-run previews skip the same accessors runtime skips.
+    let mut context_map = build_hook_context(&ctx, &extra_refs, Some(&referenced))?;
     context_map.insert(
         ALIAS_ARGS_KEY.to_string(),
         serde_json::to_string(&opts.positional_args)
@@ -207,7 +209,13 @@ fn render_preview(
             .map_err(|e| anyhow::anyhow!("syntax error in alias {alias_name}: {e}"))?;
         Ok(template.to_string())
     } else {
-        Ok(expand_shell_template(template, context, repo, alias_name)?)
+        Ok(expand_shell_template(
+            template,
+            context,
+            repo,
+            alias_name,
+            Some(worktrunk::config::ValidationScope::Alias),
+        )?)
     }
 }
 

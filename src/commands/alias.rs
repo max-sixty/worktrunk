@@ -503,7 +503,13 @@ fn run_alias(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    let mut context_map = build_hook_context(&ctx, &extra_refs)?;
+    // Gate expensive accessors (rev-parse for {{ commit }}, for-each-ref for
+    // {{ upstream }}) on which vars the alias actually references. Verbose
+    // mode (`-v`) prints the full template-variable table as a debugging aid,
+    // so take the eager path there.
+    let referenced = referenced_vars_for_config(cmd_config)?;
+    let referenced_arg = (verbosity() < 1).then_some(&referenced);
+    let mut context_map = build_hook_context(&ctx, &extra_refs, referenced_arg)?;
     // Forward positional CLI args to templates as `{{ args }}`. Encoded as a
     // JSON list so it flows through the stable `HashMap<String, String>`
     // context — `expand_template` rehydrates it into a `ShellArgs` sequence.

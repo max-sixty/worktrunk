@@ -1,12 +1,13 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{
-    Command, CommandConfig, HookStep, UserConfig, expand_template, format_hook_variables,
-    template_references_var, validate_template_syntax,
+    Command, CommandConfig, HookStep, TemplateExpandError, UserConfig, ValidationScope,
+    expand_template, format_hook_variables, referenced_vars_for_config, template_references_var,
+    validate_template_syntax, vars_available_in,
 };
 use worktrunk::git::{Repository, WorktrunkError, interrupt_exit_code};
 use worktrunk::path::{format_path_for_display, to_posix_path};
@@ -131,9 +132,17 @@ impl<'a> CommandContext<'a> {
 ///
 /// The resulting HashMap is passed to hook commands as JSON on stdin,
 /// and used directly for template variable expansion.
+///
+/// `referenced` gates the expensive accessors — `{{ commit }}` forks `rev-parse`,
+/// `{{ upstream }}` forks `for-each-ref`, `{{ default_branch }}` may fork on the
+/// first run in a repo. When `Some(set)`, an accessor runs only if the set
+/// contains the var it feeds (counting deprecated aliases like
+/// `main_worktree_path` that share accessors with canonical names). When `None`,
+/// every accessor runs — used by preview/debug paths that want the full context.
 pub fn build_hook_context(
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
+    referenced: Option<&BTreeSet<String>>,
 ) -> Result<HashMap<String, String>> {
     let repo_root = ctx.repo.repo_path()?;
     let repo_name = repo_root
@@ -152,59 +161,87 @@ pub fn build_hook_context(
 
     let repo_path = to_posix_path(&repo_root.to_string_lossy());
 
+    // Gate accessors on which vars the template actually uses. `None` forces
+    // every accessor — keeps preview/debug callers that haven't threaded a
+    // `referenced` set through on the eager path.
+    let needs = |name: &str| referenced.is_none_or(|r| r.contains(name));
+
     let mut map = HashMap::new();
     map.insert("repo".into(), repo_name.into());
     map.insert("branch".into(), ctx.branch_or_head().into());
     map.insert("worktree_name".into(), worktree_name.into());
 
-    // Canonical path variables
+    // Canonical path variables (free — no subprocess, no branching)
     map.insert("repo_path".into(), repo_path.clone());
     map.insert("worktree_path".into(), worktree.clone());
 
-    // Deprecated aliases (kept for backward compatibility)
+    // Deprecated aliases (kept for backward compatibility — all free)
     map.insert("main_worktree".into(), repo_name.into());
     map.insert("repo_root".into(), repo_path);
     map.insert("worktree".into(), worktree);
 
-    if let Some(parsed_remote) = ctx.repo.primary_remote_parsed_url() {
-        map.insert("owner".into(), parsed_remote.owner().to_string());
+    // `remote`, `remote_url`, `owner`, and `upstream` all go through the
+    // primary-remote lookup, which resolves from the bulk config cache without
+    // forking on warm runs. Compute it once if any of those vars are in play.
+    if (needs("remote") || needs("remote_url") || needs("owner") || needs("upstream"))
+        && let Ok(remote) = ctx.repo.primary_remote()
+    {
+        if needs("remote") {
+            map.insert("remote".into(), remote.to_string());
+        }
+        if needs("remote_url")
+            && let Some(url) = ctx.repo.remote_url(&remote)
+        {
+            map.insert("remote_url".into(), url);
+        }
+        if needs("owner")
+            && let Some(parsed) = ctx.repo.primary_remote_parsed_url()
+        {
+            map.insert("owner".into(), parsed.owner().to_string());
+        }
+        // Upstream requires the for-each-ref fork; only run when referenced.
+        if needs("upstream")
+            && let Some(branch) = ctx.branch
+            && let Ok(Some(upstream)) = ctx.repo.branch(branch).upstream_single()
+        {
+            map.insert("upstream".into(), upstream);
+        }
     }
 
-    // Default branch
-    if let Some(default_branch) = ctx.repo.default_branch() {
+    if needs("default_branch")
+        && let Some(default_branch) = ctx.repo.default_branch()
+    {
         map.insert("default_branch".into(), default_branch);
     }
 
-    // Primary worktree path (where established files live)
-    if let Ok(Some(path)) = ctx.repo.primary_worktree() {
+    // Primary worktree path (where established files live). `main_worktree_path`
+    // is a deprecated alias backed by the same accessor.
+    if (needs("primary_worktree_path") || needs("main_worktree_path"))
+        && let Ok(Some(path)) = ctx.repo.primary_worktree()
+    {
         let path_str = to_posix_path(&path.to_string_lossy());
-        map.insert("primary_worktree_path".into(), path_str.clone());
-        // Deprecated alias
-        map.insert("main_worktree_path".into(), path_str);
+        if needs("primary_worktree_path") {
+            map.insert("primary_worktree_path".into(), path_str.clone());
+        }
+        if needs("main_worktree_path") {
+            map.insert("main_worktree_path".into(), path_str);
+        }
     }
 
     // Resolve commit from the Active branch, not HEAD at discovery path.
     // This ensures {{ commit }} follows the Active branch even when the
     // CommandContext points to a different worktree than where we're running.
-    let commit_ref = ctx.branch.unwrap_or("HEAD");
-    if let Ok(commit) = ctx.repo.run_command(&["rev-parse", commit_ref]) {
-        let commit = commit.trim();
-        map.insert("commit".into(), commit.into());
-        if commit.len() >= 7 {
-            map.insert("short_commit".into(), commit[..7].into());
-        }
-    }
-
-    if let Ok(remote) = ctx.repo.primary_remote() {
-        map.insert("remote".into(), remote.to_string());
-        // Add remote URL for conditional hook execution (e.g., GitLab vs GitHub)
-        if let Some(url) = ctx.repo.remote_url(&remote) {
-            map.insert("remote_url".into(), url);
-        }
-        if let Some(branch) = ctx.branch
-            && let Ok(Some(upstream)) = ctx.repo.branch(branch).upstream_single()
-        {
-            map.insert("upstream".into(), upstream);
+    // The rev-parse fork is this function's most expensive eager accessor.
+    if needs("commit") || needs("short_commit") {
+        let commit_ref = ctx.branch.unwrap_or("HEAD");
+        if let Ok(commit) = ctx.repo.run_command(&["rev-parse", commit_ref]) {
+            let commit = commit.trim();
+            if needs("commit") {
+                map.insert("commit".into(), commit.into());
+            }
+            if needs("short_commit") && commit.len() >= 7 {
+                map.insert("short_commit".into(), commit[..7].into());
+            }
         }
     }
 
@@ -251,17 +288,48 @@ pub fn wait_first_error<E>(
 /// shell string. Used by the three execution paths — foreground hooks,
 /// background pipelines, and aliases — that defer `vars.*` expansion until
 /// just before the command runs so prior steps can set vars via git config.
+///
+/// When `scope` is provided, an undefined-variable error lists every var
+/// available in that scope (via [`vars_available_in`]) rather than only the
+/// keys currently populated in `context`. This matters under lazy hook-context
+/// gating: `build_hook_context` may skip populating vars the pipeline doesn't
+/// reference, and without the override the error hint would omit vars the user
+/// could legitimately have typed.
 pub fn expand_shell_template(
     template: &str,
     context: &HashMap<String, String>,
     repo: &Repository,
     label: &str,
+    scope: Option<ValidationScope>,
 ) -> Result<String> {
     let vars: HashMap<&str, &str> = context
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    Ok(expand_template(template, &vars, true, repo, label)?)
+    expand_template(template, &vars, true, repo, label)
+        .map_err(|err| override_available_vars(err, scope).into())
+}
+
+/// Replace a template error's `available_vars` with the full scope list.
+///
+/// Only applies when an undefined-value hint is already being shown (the
+/// original `available_vars` is non-empty) and a scope was provided. Syntax
+/// errors carry no hint to preserve.
+fn override_available_vars(
+    mut err: TemplateExpandError,
+    scope: Option<ValidationScope>,
+) -> TemplateExpandError {
+    if let Some(scope) = scope
+        && !err.available_vars.is_empty()
+    {
+        let mut names: Vec<String> = vars_available_in(scope)
+            .into_iter()
+            .map(String::from)
+            .collect();
+        names.sort();
+        err.available_vars = names;
+    }
+    err
 }
 
 /// Short summary name: "user:name" for named commands, "user" otherwise.
@@ -269,6 +337,15 @@ pub(crate) fn command_summary_name(name: Option<&str>, source: HookSource) -> St
     match name {
         Some(n) => format!("{source}:{n}"),
         None => source.to_string(),
+    }
+}
+
+/// The template scope implied by a command's origin — used by
+/// [`expand_shell_template`] to list scope-accurate vars in error hints.
+fn origin_scope(origin: &CommandOrigin) -> ValidationScope {
+    match origin {
+        CommandOrigin::Hook { hook_type, .. } => ValidationScope::Hook(*hook_type),
+        CommandOrigin::Alias { .. } => ValidationScope::Alias,
     }
 }
 
@@ -369,7 +446,10 @@ fn run_concurrent_group(
             let label = expansion_label(cmd, origin);
             let context: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
                 .context("failed to deserialize context_json")?;
-            expanded.push(expand_shell_template(template, &context, repo, &label)?);
+            let scope = Some(origin_scope(origin));
+            expanded.push(expand_shell_template(
+                template, &context, repo, &label, scope,
+            )?);
         } else {
             expanded.push(cmd.expanded.clone());
         }
@@ -440,7 +520,8 @@ fn run_one_command(
         let label = expansion_label(cmd, origin);
         let context: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
             .context("failed to deserialize context_json")?;
-        lazy_expanded = expand_shell_template(template, &context, repo, &label)?;
+        let scope = Some(origin_scope(origin));
+        lazy_expanded = expand_shell_template(template, &context, repo, &label, scope)?;
         &lazy_expanded
     } else {
         &cmd.expanded
@@ -588,8 +669,9 @@ fn expand_commands(
     hook_type: HookType,
     source: HookSource,
     lazy_enabled: bool,
+    referenced: Option<&BTreeSet<String>>,
 ) -> anyhow::Result<Vec<(Command, String, Option<String>)>> {
-    let mut base_context = build_hook_context(ctx, extra_vars)?;
+    let mut base_context = build_hook_context(ctx, extra_vars, referenced)?;
 
     // hook_type is always available as a template variable and in JSON context
     base_context.insert("hook_type".into(), hook_type.to_string());
@@ -628,7 +710,13 @@ fn expand_commands(
             (tpl.clone(), Some(tpl))
         } else {
             (
-                expand_shell_template(&cmd.template, &cmd_context, ctx.repo, &template_name)?,
+                expand_shell_template(
+                    &cmd.template,
+                    &cmd_context,
+                    ctx.repo,
+                    &template_name,
+                    Some(ValidationScope::Hook(hook_type)),
+                )?,
                 None,
             )
         };
@@ -671,7 +759,21 @@ pub fn prepare_steps(
         .collect();
 
     let all_commands: Vec<Command> = command_config.commands().cloned().collect();
-    let all_expanded = expand_commands(&all_commands, ctx, extra_vars, hook_type, source, true)?;
+    // Gate hook-context accessors on the union of vars referenced across the
+    // pipeline — a var used by any step keeps its accessor active for all.
+    // Verbose mode (`-v`) prints the template-variable table for every hook
+    // command as a debugging aid, so take the eager path there.
+    let referenced = referenced_vars_for_config(command_config)?;
+    let referenced_arg = (worktrunk::styling::verbosity() < 1).then_some(&referenced);
+    let all_expanded = expand_commands(
+        &all_commands,
+        ctx,
+        extra_vars,
+        hook_type,
+        source,
+        true,
+        referenced_arg,
+    )?;
     let mut expanded_iter = all_expanded.into_iter();
 
     let mut result = Vec::new();
@@ -883,6 +985,66 @@ mod tests {
 
         let alias_origin = CommandOrigin::Alias { name: "ci".into() };
         assert_eq!(expansion_label(&cmd, &alias_origin), "ci");
+    }
+
+    #[test]
+    fn test_origin_scope_maps_each_variant() {
+        let hook_origin = CommandOrigin::Hook {
+            source: HookSource::User,
+            hook_type: HookType::PreMerge,
+            display_path: None,
+        };
+        assert!(matches!(
+            origin_scope(&hook_origin),
+            ValidationScope::Hook(HookType::PreMerge)
+        ));
+
+        let alias_origin = CommandOrigin::Alias {
+            name: "deploy".into(),
+        };
+        assert!(matches!(
+            origin_scope(&alias_origin),
+            ValidationScope::Alias
+        ));
+    }
+
+    #[test]
+    fn test_override_available_vars_replaces_with_scope_list() {
+        let err = TemplateExpandError {
+            message: "Failed to expand: undefined value".into(),
+            source_line: None,
+            available_vars: vec!["branch".into(), "repo".into()],
+        };
+        let replaced = override_available_vars(err, Some(ValidationScope::Alias));
+        // Alias scope includes `args`, not in the original list.
+        assert!(replaced.available_vars.contains(&"args".to_string()));
+        // List is sorted.
+        let mut sorted = replaced.available_vars.clone();
+        sorted.sort();
+        assert_eq!(replaced.available_vars, sorted);
+    }
+
+    #[test]
+    fn test_override_available_vars_keeps_list_when_no_scope() {
+        let err = TemplateExpandError {
+            message: "Failed to expand: undefined value".into(),
+            source_line: None,
+            available_vars: vec!["branch".into(), "repo".into()],
+        };
+        let kept = override_available_vars(err, None);
+        assert_eq!(kept.available_vars, vec!["branch", "repo"]);
+    }
+
+    #[test]
+    fn test_override_available_vars_skips_syntax_errors() {
+        // Syntax errors carry no `available_vars` hint — don't inject one.
+        let err = TemplateExpandError {
+            message: "Failed to expand: syntax error".into(),
+            source_line: None,
+            available_vars: Vec::new(),
+        };
+        let kept = override_available_vars(err, Some(ValidationScope::Alias));
+        assert!(kept.available_vars.is_empty());
     }
 
     #[test]

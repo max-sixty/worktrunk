@@ -101,7 +101,13 @@ pub fn run_pipeline() -> anyhow::Result<()> {
                 let log_file = create_command_log(&spec, &log_name)?;
                 let step_ctx = step_context(&spec.context, name.as_deref());
                 let label = name.as_deref().unwrap_or("pipeline step");
-                let expanded = expand_shell_template(template, &step_ctx, &repo, label)?;
+                let expanded = expand_shell_template(
+                    template,
+                    &step_ctx,
+                    &repo,
+                    label,
+                    Some(worktrunk::config::ValidationScope::Hook(spec.hook_type)),
+                )?;
                 let step_json = serde_json::to_string(&*step_ctx)
                     .context("failed to serialize step context")?;
                 let mut child =
@@ -199,7 +205,13 @@ fn run_concurrent_group(
         let log_file = create_command_log(spec, &log_name)?;
         let cmd_ctx = step_context(&spec.context, cmd.name.as_deref());
         let label = cmd.name.as_deref().unwrap_or("pipeline step");
-        let expanded = expand_shell_template(&cmd.template, &cmd_ctx, repo, label)?;
+        let expanded = expand_shell_template(
+            &cmd.template,
+            &cmd_ctx,
+            repo,
+            label,
+            Some(worktrunk::config::ValidationScope::Hook(spec.hook_type)),
+        )?;
         let cmd_json =
             serde_json::to_string(&*cmd_ctx).context("failed to serialize step context")?;
         let mut child = spawn_shell_command(&expanded, &spec.worktree_path, &cmd_json, log_file)?;
