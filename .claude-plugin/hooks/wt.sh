@@ -4,13 +4,7 @@
 # Otherwise, on Windows (MSYS/Cygwin), prefers git-wt.exe over wt and
 # rejects wt if it resolves to Windows Terminal (WindowsApps/wt.exe).
 # On other platforms, uses wt directly.
-# Exits silently if git is unavailable or not inside a git repository.
 # Usage: wt.sh [args...]
-
-# bail early if git is not available or not inside a git repository
-if ! command -v git >/dev/null 2>&1 || ! git rev-parse --git-dir >/dev/null 2>&1; then
-    exit 0
-fi
 
 if [[ -n "$WORKTRUNK_BIN" ]]; then
     if ! command -v "$WORKTRUNK_BIN" >/dev/null 2>&1; then
