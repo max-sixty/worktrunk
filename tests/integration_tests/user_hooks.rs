@@ -36,9 +36,9 @@ fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
 
 #[rstest]
 fn test_user_post_create_hook_executes(repo: TestRepo) {
-    // Write user config with post-create hook (no project config)
+    // Write user config with pre-start hook (no project config)
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 log = "echo 'USER_POST_CREATE_RAN' > user_hook_marker.txt"
 "#,
     );
@@ -50,7 +50,7 @@ log = "echo 'USER_POST_CREATE_RAN' > user_hook_marker.txt"
     let marker_file = worktree_path.join("user_hook_marker.txt");
     assert!(
         marker_file.exists(),
-        "User post-create hook should have created marker file"
+        "User pre-start hook should have created marker file"
     );
 
     let contents = fs::read_to_string(&marker_file).unwrap();
@@ -62,13 +62,13 @@ log = "echo 'USER_POST_CREATE_RAN' > user_hook_marker.txt"
 
 #[rstest]
 fn test_user_hooks_run_before_project_hooks(repo: TestRepo) {
-    // Create project config with post-create hook
-    repo.write_project_config(r#"post-create = "echo 'PROJECT_HOOK' >> hook_order.txt""#);
+    // Create project config with pre-start hook
+    repo.write_project_config(r#"pre-start = "echo 'PROJECT_HOOK' >> hook_order.txt""#);
     repo.commit("Add project config");
 
     // Write user config with user hook AND pre-approve project command
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 log = "echo 'USER_HOOK' >> hook_order.txt"
 "#,
     );
@@ -98,7 +98,7 @@ fn test_user_hooks_no_approval_required(repo: TestRepo) {
     // Write user config with hook but NO pre-approved commands
     // (unlike project hooks, user hooks don't require approval)
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 setup = "echo 'NO_APPROVAL_NEEDED' > no_approval.txt"
 "#,
     );
@@ -116,13 +116,13 @@ setup = "echo 'NO_APPROVAL_NEEDED' > no_approval.txt"
 
 #[rstest]
 fn test_no_hooks_flag_skips_all_hooks(repo: TestRepo) {
-    // Create project config with post-create hook
-    repo.write_project_config(r#"post-create = "echo 'PROJECT_HOOK' > project_marker.txt""#);
+    // Create project config with pre-start hook
+    repo.write_project_config(r#"pre-start = "echo 'PROJECT_HOOK' > project_marker.txt""#);
     repo.commit("Add project config");
 
     // Write user config with both user hook and pre-approved project command
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 log = "echo 'USER_HOOK' > user_marker.txt"
 "#,
     );
@@ -160,14 +160,14 @@ approved-commands = ["echo 'PROJECT_HOOK' > project_marker.txt"]
 fn test_user_post_create_hook_failure(repo: TestRepo) {
     // Write user config with failing hook
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 failing = "exit 1"
 "#,
     );
 
-    // Failing pre-start hook (via deprecated post-create name) aborts with FailFast.
+    // Failing pre-start hook (via deprecated pre-start name) aborts with FailFast.
     // The worktree is already created before pre-start runs (it was renamed from
-    // post-create), so the worktree exists but the command exits non-zero.
+    // pre-start), so the worktree exists but the command exits non-zero.
     snapshot_switch("user_post_create_failure", &repo, &["--create", "feature"]);
 
     // Worktree exists (created before pre-start ran) but the command failed
@@ -1137,7 +1137,7 @@ failing = "exit 1"
 fn test_user_hook_template_variables(repo: TestRepo) {
     // Write user config with hook using template variables
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 vars = "echo 'repo={{ repo }} branch={{ branch }}' > template_vars.txt"
 "#,
     );
@@ -1317,19 +1317,16 @@ approved-commands = ["echo 'PROJECT_POST_START' > project_bg.txt"]
 
 #[rstest]
 fn test_standalone_hook_post_create(repo: TestRepo) {
-    // Write project config with post-create hook
-    repo.write_project_config(r#"post-create = "echo 'STANDALONE_POST_CREATE' > hook_ran.txt""#);
+    // Write project config with pre-start hook
+    repo.write_project_config(r#"pre-start = "echo 'STANDALONE_POST_CREATE' > hook_ran.txt""#);
 
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "post-create", "--yes"]);
+    cmd.args(["hook", "pre-start", "--yes"]);
 
     let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "wt hook post-create should succeed"
-    );
+    assert!(output.status.success(), "wt hook pre-start should succeed");
 
     // Hook runs in background — wait for it to write the marker file
     let marker = repo.root_path().join("hook_ran.txt");
@@ -1584,12 +1581,12 @@ fn test_hook_dry_run_shows_expanded_command(repo: TestRepo) {
 /// --dry-run does not execute the hook command
 #[rstest]
 fn test_hook_dry_run_does_not_execute(repo: TestRepo) {
-    repo.write_project_config(r#"post-create = "echo 'SHOULD_NOT_RUN' > hook_ran.txt""#);
+    repo.write_project_config(r#"pre-start = "echo 'SHOULD_NOT_RUN' > hook_ran.txt""#);
 
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "post-create", "--dry-run"]);
+    cmd.args(["hook", "pre-start", "--dry-run"]);
 
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "dry-run should succeed");
@@ -1900,7 +1897,7 @@ first = "echo FIRST"
 fn test_var_flag_overrides_template_variable(repo: TestRepo) {
     // Write user config with a hook that uses a template variable
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 test = "echo '{{ target }}' > target_output.txt"
 "#,
     );
@@ -1909,7 +1906,7 @@ test = "echo '{{ target }}' > target_output.txt"
         .wt_command()
         .args([
             "hook",
-            "post-create",
+            "pre-start",
             "--yes",
             "--var",
             "target=CUSTOM_TARGET",
@@ -1931,7 +1928,7 @@ test = "echo '{{ target }}' > target_output.txt"
 fn test_var_flag_multiple_variables(repo: TestRepo) {
     // Write user config with a hook that uses multiple template variables
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 test = "echo '{{ target }} {{ remote }}' > multi_var_output.txt"
 "#,
     );
@@ -1940,7 +1937,7 @@ test = "echo '{{ target }} {{ remote }}' > multi_var_output.txt"
         .wt_command()
         .args([
             "hook",
-            "post-create",
+            "pre-start",
             "--yes",
             "--var",
             "target=FIRST",
@@ -1964,7 +1961,7 @@ test = "echo '{{ target }} {{ remote }}' > multi_var_output.txt"
 fn test_var_flag_overrides_builtin_variable(repo: TestRepo) {
     // Write user config with a hook that uses the builtin branch variable
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 test = "echo '{{ branch }}' > branch_output.txt"
 "#,
     );
@@ -1973,7 +1970,7 @@ test = "echo '{{ branch }}' > branch_output.txt"
         .wt_command()
         .args([
             "hook",
-            "post-create",
+            "pre-start",
             "--yes",
             "--var",
             "branch=CUSTOM_BRANCH_NAME",
@@ -1995,7 +1992,7 @@ test = "echo '{{ branch }}' > branch_output.txt"
 fn test_var_flag_invalid_format_fails() {
     // Test that invalid KEY=VALUE format is rejected
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_wt"))
-        .args(["hook", "post-create", "--var", "no_equals_sign"])
+        .args(["hook", "pre-start", "--var", "no_equals_sign"])
         .output()
         .expect("Failed to run wt");
 
@@ -2013,14 +2010,14 @@ fn test_var_flag_custom_variable(repo: TestRepo) {
     // Custom variable names (not built-in template vars) are accepted and
     // injected into the template context, matching alias behavior.
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 test = "echo '{{ custom_var }}' > custom_var_output.txt"
 "#,
     );
 
     let output = repo
         .wt_command()
-        .args(["hook", "post-create", "--yes", "--var", "custom_var=hello"])
+        .args(["hook", "pre-start", "--yes", "--var", "custom_var=hello"])
         .output()
         .expect("Failed to run wt hook");
 
@@ -2042,7 +2039,7 @@ test = "echo '{{ custom_var }}' > custom_var_output.txt"
 fn test_var_flag_last_value_wins(repo: TestRepo) {
     // Test that when the same variable is specified multiple times, the last value wins
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 test = "echo '{{ target }}' > target_output.txt"
 "#,
     );
@@ -2051,7 +2048,7 @@ test = "echo '{{ target }}' > target_output.txt"
         .wt_command()
         .args([
             "hook",
-            "post-create",
+            "pre-start",
             "--yes",
             "--var",
             "target=FIRST",
@@ -2075,14 +2072,14 @@ test = "echo '{{ target }}' > target_output.txt"
 fn test_var_shorthand_overrides_template_variable(repo: TestRepo) {
     // `--KEY=VALUE` is equivalent to `--var KEY=VALUE` for template variables.
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 test = "echo '{{ branch }}' > shorthand_output.txt"
 "#,
     );
 
     let output = repo
         .wt_command()
-        .args(["hook", "post-create", "--yes", "--branch=SHORTHAND_BRANCH"])
+        .args(["hook", "pre-start", "--yes", "--branch=SHORTHAND_BRANCH"])
         .output()
         .expect("Failed to run wt hook");
 
@@ -2104,7 +2101,7 @@ test = "echo '{{ branch }}' > shorthand_output.txt"
 fn test_var_shorthand_mixed_with_long_form(repo: TestRepo) {
     // Shorthand and `--var` forms coexist in the same invocation.
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 test = "echo '{{ branch }} {{ target }}' > mixed_output.txt"
 "#,
     );
@@ -2113,7 +2110,7 @@ test = "echo '{{ branch }} {{ target }}' > mixed_output.txt"
         .wt_command()
         .args([
             "hook",
-            "post-create",
+            "pre-start",
             "--yes",
             "--branch=SHORT",
             "--var",
@@ -2138,14 +2135,14 @@ fn test_var_shorthand_custom_variable(repo: TestRepo) {
     // injected into the template context, matching alias behavior. Hyphens in
     // variable names are canonicalized to underscores.
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 test = "echo '{{ my_env }}' > custom_output.txt"
 "#,
     );
 
     let output = repo
         .wt_command()
-        .args(["hook", "post-create", "--yes", "--my-env=staging"])
+        .args(["hook", "pre-start", "--yes", "--my-env=staging"])
         .output()
         .expect("Failed to run wt hook");
 
@@ -2168,14 +2165,14 @@ fn test_shorthand_unreferenced_forwards_to_args(repo: TestRepo) {
     // `--KEY=VALUE` shorthand for an unreferenced KEY is smart-routed to
     // `{{ args }}` — the hook template captures the flag verbatim.
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 test = "echo '{{ args }}' > args_output.txt"
 "#,
     );
 
     let output = repo
         .wt_command()
-        .args(["hook", "post-create", "--yes", "--unused-var=value"])
+        .args(["hook", "pre-start", "--yes", "--unused-var=value"])
         .output()
         .expect("Failed to run wt hook");
 
@@ -2197,14 +2194,14 @@ fn test_shorthand_referenced_binds_not_args(repo: TestRepo) {
     // When KEY is referenced by any hook template, `--KEY=VALUE` binds
     // `{{ KEY }}` and is NOT forwarded to `{{ args }}`.
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 test = "echo '{{ my_env }}:{{ args }}' > combined_output.txt"
 "#,
     );
 
     let output = repo
         .wt_command()
-        .args(["hook", "post-create", "--yes", "--my-env=staging"])
+        .args(["hook", "pre-start", "--yes", "--my-env=staging"])
         .output()
         .expect("Failed to run wt hook");
 
@@ -2218,14 +2215,14 @@ test = "echo '{{ my_env }}:{{ args }}' > combined_output.txt"
 fn test_post_double_dash_forwards_to_args(repo: TestRepo) {
     // Tokens after `--` forward verbatim into `{{ args }}`.
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 test = "echo '{{ args }}' > dashdash_output.txt"
 "#,
     );
 
     let output = repo
         .wt_command()
-        .args(["hook", "post-create", "--yes", "--", "--fast", "extra"])
+        .args(["hook", "pre-start", "--yes", "--", "--fast", "extra"])
         .output()
         .expect("Failed to run wt hook");
 
@@ -2247,14 +2244,14 @@ fn test_var_deprecation_warning(repo: TestRepo) {
     // Explicit `--var` still force-binds but emits a deprecation warning
     // pointing at `--KEY=VALUE` shorthand.
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 test = "echo '{{ my_env }}' > deprecated_output.txt"
 "#,
     );
 
     let output = repo
         .wt_command()
-        .args(["hook", "post-create", "--yes", "--var", "my_env=staging"])
+        .args(["hook", "pre-start", "--yes", "--var", "my_env=staging"])
         .output()
         .expect("Failed to run wt hook");
 
@@ -2275,7 +2272,7 @@ fn test_args_indexing_and_length_in_hook_template(repo: TestRepo) {
     // `{{ args }}` is a ShellArgs sequence — indexing, length, and iteration
     // all work the same as in alias templates.
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 test = "echo '{{ args[0] | default(__WT_QUOT__none__WT_QUOT__) }}:{{ args | length }}' > args_seq.txt"
 "#
         .replace("__WT_QUOT__", "'")
@@ -2284,7 +2281,7 @@ test = "echo '{{ args[0] | default(__WT_QUOT__none__WT_QUOT__) }}:{{ args | leng
 
     let output = repo
         .wt_command()
-        .args(["hook", "post-create", "--yes", "--", "first", "second"])
+        .args(["hook", "pre-start", "--yes", "--", "first", "second"])
         .output()
         .expect("Failed to run wt hook");
 
@@ -2300,7 +2297,7 @@ fn test_mixed_var_shorthand_and_forwarded_args(repo: TestRepo) {
     // + post-`--` tokens forward — all coexist in one invocation without
     // cross-contamination.
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 test = "echo '{{ my_env }}|{{ override }}|{{ args }}' > mixed_output.txt"
 "#,
     );
@@ -2309,7 +2306,7 @@ test = "echo '{{ my_env }}|{{ override }}|{{ args }}' > mixed_output.txt"
         .wt_command()
         .args([
             "hook",
-            "post-create",
+            "pre-start",
             "--yes",
             "--my-env=prod",
             "--var",
@@ -2361,7 +2358,7 @@ fn test_var_shorthand_does_not_leak_into_hook_show() {
 fn test_var_flag_deprecated_alias_works(repo: TestRepo) {
     // Test that deprecated variable aliases (main_worktree, repo_root, worktree) can be overridden
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 test = "echo '{{ main_worktree }}' > alias_output.txt"
 "#,
     );
@@ -2370,7 +2367,7 @@ test = "echo '{{ main_worktree }}' > alias_output.txt"
         .wt_command()
         .args([
             "hook",
-            "post-create",
+            "pre-start",
             "--yes",
             "--var",
             "main_worktree=/custom/path",
@@ -2399,7 +2396,7 @@ fn test_user_hooks_preserve_toml_order(repo: TestRepo) {
     // Write user config with hooks in specific order (NOT alphabetical: vscode, claude, copy, submodule)
     // If order were alphabetical, it would be: claude, copy, submodule, vscode
     repo.write_test_config(
-        r#"[post-create]
+        r#"[pre-start]
 vscode = "echo '1' >> hook_order.txt"
 claude = "echo '2' >> hook_order.txt"
 copy = "echo '3' >> hook_order.txt"

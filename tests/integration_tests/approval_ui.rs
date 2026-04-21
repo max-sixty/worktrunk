@@ -40,7 +40,7 @@ fn snapshot_approval(test_name: &str, repo: &TestRepo, args: &[&str], approve: b
 
 #[rstest]
 fn test_approval_single_command(repo: TestRepo) {
-    repo.write_project_config(r#"post-create = "echo 'Worktree path: {{ worktree_path }}'""#);
+    repo.write_project_config(r#"pre-start = "echo 'Worktree path: {{ worktree_path }}'""#);
 
     repo.commit("Add config");
 
@@ -55,7 +55,7 @@ fn test_approval_single_command(repo: TestRepo) {
 #[rstest]
 fn test_approval_multiple_commands(repo: TestRepo) {
     repo.write_project_config(
-        r#"[post-create]
+        r#"[pre-start]
 branch = "echo 'Branch: {{ branch }}'"
 worktree = "echo 'Worktree: {{ worktree_path }}'"
 repo = "echo 'Repo: {{ repo }}'"
@@ -79,7 +79,7 @@ fn test_approval_mixed_approved_unapproved(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     repo.write_project_config(
-        r#"[post-create]
+        r#"[pre-start]
 first = "echo 'First command'"
 second = "echo 'Second command'"
 third = "echo 'Third command'"
@@ -106,7 +106,7 @@ approved-commands = ["echo 'Second command'"]
 
 #[rstest]
 fn test_yes_flag_does_not_save_approvals(repo: TestRepo) {
-    repo.write_project_config(r#"post-create = "echo 'test command' > output.txt""#);
+    repo.write_project_config(r#"pre-start = "echo 'test command' > output.txt""#);
 
     repo.commit("Add config");
 
@@ -136,7 +136,7 @@ fn test_already_approved_commands_skip_prompt(repo: TestRepo) {
     // Remove origin so worktrunk uses directory name as project identifier
     repo.run_git(&["remote", "remove", "origin"]);
 
-    repo.write_project_config(r#"post-create = "echo 'approved' > output.txt""#);
+    repo.write_project_config(r#"pre-start = "echo 'approved' > output.txt""#);
 
     repo.commit("Add config");
 
@@ -161,7 +161,7 @@ fn test_decline_approval_skips_only_unapproved(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     repo.write_project_config(
-        r#"[post-create]
+        r#"[pre-start]
 first = "echo 'First command'"
 second = "echo 'Second command'"
 third = "echo 'Third command'"
@@ -193,7 +193,7 @@ approved-commands = ["echo 'Second command'"]
 #[rstest]
 fn test_approval_named_commands(repo: TestRepo) {
     repo.write_project_config(
-        r#"[post-create]
+        r#"[pre-start]
 install = "echo 'Installing dependencies...'"
 build = "echo 'Building project...'"
 test = "echo 'Running tests...'"
@@ -282,7 +282,7 @@ fn test_run_hook_post_merge_requires_approval(repo: TestRepo) {
 /// The command should fail with a clear error telling users to use --yes.
 #[rstest]
 fn test_approval_fails_in_non_tty(repo: TestRepo) {
-    repo.write_project_config(r#"post-create = "echo 'test command'""#);
+    repo.write_project_config(r#"pre-start = "echo 'test command'""#);
     repo.commit("Add config");
 
     // Run WITHOUT piping stdin - this simulates non-TTY environment
@@ -297,7 +297,7 @@ fn test_approval_fails_in_non_tty(repo: TestRepo) {
 /// Even in non-TTY environments, --yes should allow commands to execute.
 #[rstest]
 fn test_yes_bypasses_tty_check(repo: TestRepo) {
-    repo.write_project_config(r#"post-create = "echo 'test command'""#);
+    repo.write_project_config(r#"pre-start = "echo 'test command'""#);
     repo.commit("Add config");
 
     // Run with --yes to bypass approval entirely
@@ -590,7 +590,7 @@ fn test_step_hook_run_all_commands(repo: TestRepo) {
 /// approval prompt, so a clean exit confirms `-y` was honored.
 #[rstest]
 fn test_global_yes_before_subcommand(repo: TestRepo) {
-    repo.write_project_config(r#"post-create = "echo 'test command'""#);
+    repo.write_project_config(r#"pre-start = "echo 'test command'""#);
     repo.commit("Add config");
 
     // Place `-y` before the subcommand name.

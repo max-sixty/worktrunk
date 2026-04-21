@@ -350,7 +350,7 @@ broken = "echo {{ branch"
 }
 
 /// Test that undefined variable errors show both template and error with --expanded.
-/// The `base` variable is only defined for post-create hooks, so using it in pre-commit
+/// The `base` variable is only defined for pre-start hooks, so using it in pre-commit
 /// will trigger an undefined variable error that shows both the error and raw template.
 #[rstest]
 fn test_hook_show_expanded_undefined_var(repo: TestRepo, temp_home: TempDir) {
@@ -364,7 +364,7 @@ fn test_hook_show_expanded_undefined_var(repo: TestRepo, temp_home: TempDir) {
     )
     .unwrap();
 
-    // Create project config with `base` variable (only defined for post-create hooks)
+    // Create project config with `base` variable (only defined for pre-start hooks)
     // In pre-commit context, this will be undefined and should show error + template
     repo.write_project_config(
         r#"[pre-commit]

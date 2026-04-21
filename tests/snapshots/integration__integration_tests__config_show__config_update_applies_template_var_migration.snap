@@ -48,15 +48,14 @@ exit_code: 0
 [33m▲[39m [33mUser config: template variable [1mrepo_root[22m is deprecated in favor of [1mrepo_path[22m[39m
 [33m▲[39m [33mUser config: template variable [1mworktree[22m is deprecated in favor of [1mworktree_path[22m[39m
 [33m▲[39m [33mUser config: template variable [1mmain_worktree[22m is deprecated in favor of [1mrepo[22m[39m
-[33m▲[39m [33mUser config: [1mpost-create[22m hook is deprecated in favor of [1mpre-start[22m[39m
 [2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a/test-config.toml/current b/test-config.toml/migrated[m
-[107m [0m [1mindex 89b3165..b3535c5 100644[m
+[107m [0m [1mindex 7cc556b..b3535c5 100644[m
 [107m [0m [1m--- a/test-config.toml/current[m
 [107m [0m [1m+++ b/test-config.toml/migrated[m
 [107m [0m [36m@@ -1,2 +1,2 @@[m
 [107m [0m [31m-worktree-path = "../{{ main_worktree }}.{{ branch }}"[m
-[107m [0m [31m-post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"[m
+[107m [0m [31m-pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"[m
 [107m [0m [32m+[m[32mworktree-path = "../{{ repo }}.{{ branch }}"[m
 [107m [0m [32m+[m[32mpre-start = "ln -sf {{ repo_path }}/node_modules {{ worktree_path }}/node_modules"[m
 [32m✓[39m [32mUpdated user config[39m

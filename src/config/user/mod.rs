@@ -402,26 +402,30 @@ impl UserConfig {
             && config_path.exists()
         {
             if let Ok(content) = std::fs::read_to_string(config_path) {
-                let migrated = super::deprecation::check_and_migrate(
+                match super::deprecation::check_and_migrate(
                     config_path,
                     &content,
                     true,
                     "User config",
                     None,
                     true,
-                )
-                .map(|result| result.migrated_content)
-                .unwrap_or_else(|_| super::deprecation::migrate_content(&content));
+                ) {
+                    Ok(result) => {
+                        super::deprecation::warn_unknown_fields::<UserConfig>(
+                            &content,
+                            config_path,
+                            "User config",
+                        );
 
-                super::deprecation::warn_unknown_fields::<UserConfig>(
-                    &content,
-                    config_path,
-                    "User config",
-                );
-
-                match load_config_file(config_path, &migrated, "User config") {
-                    Ok(table) => deep_merge_table(&mut merged_table, table),
-                    Err(e) => warnings.push(e),
+                        match load_config_file(config_path, &result.migrated_content, "User config")
+                        {
+                            Ok(table) => deep_merge_table(&mut merged_table, table),
+                            Err(e) => warnings.push(e),
+                        }
+                    }
+                    Err(err) => {
+                        warnings.push(LoadError::Validation(err.to_string()));
+                    }
                 }
             }
         } else if let Some(config_path) = config_path.as_ref()

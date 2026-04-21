@@ -213,14 +213,15 @@ impl ProjectConfig {
         // emit_inline_warnings=true: print per-kind warnings inline during config load
         let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
         let repo_for_hints = if write_hints { Some(repo) } else { None };
-        let _ = super::deprecation::check_and_migrate(
+        super::deprecation::check_and_migrate(
             &config_path,
             &contents,
             is_main_worktree,
             "Project config",
             repo_for_hints,
             true, // emit_inline_warnings
-        );
+        )
+        .map_err(|e| ConfigError(e.to_string()))?;
 
         // Warn about unknown fields (only in main worktree where it's actionable).
         if is_main_worktree {

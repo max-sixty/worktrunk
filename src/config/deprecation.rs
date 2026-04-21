@@ -608,35 +608,10 @@ fn is_non_empty_item(item: &toml_edit::Item) -> bool {
     }
 }
 
-/// Migrate `post-create` hooks to `pre-start`.
-///
-/// Renames `post-create` to `pre-start` in hooks sections. Skips if `pre-start` already exists.
-fn migrate_post_create_doc(doc: &mut toml_edit::DocumentMut) -> bool {
-    let mut modified = false;
-
-    // Top-level (user config or project config)
-    if doc.get("pre-start").is_none()
-        && let Some(value) = doc.remove("post-create")
-    {
-        doc.insert("pre-start", value);
-        modified = true;
-    }
-
-    // Per-project overrides (user config)
-    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
-        for (_key, project_value) in projects.iter_mut() {
-            if let Some(project_table) = project_value.as_table_mut()
-                && project_table.get("pre-start").is_none()
-                && let Some(value) = project_table.remove("post-create")
-            {
-                project_table.insert("pre-start", value);
-                modified = true;
-            }
-        }
-    }
-
-    modified
-}
+/// Error message emitted when a config contains the removed `post-create`
+/// hook key. Matches the wording used by `check_and_migrate` when the load
+/// path converts detection into a fatal error.
+const POST_CREATE_REMOVED_MSG: &str = "`post-create` hook was renamed to `pre-start` in v0.32.0 and the silent rewrite has been removed. Rename `post-create` to `pre-start` in your config.";
 
 /// Migrate `[select]` sections to `[switch.picker]`.
 ///
@@ -962,7 +937,6 @@ fn migrate_content_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     let mut modified = false;
     modified |= migrate_commit_generation_doc(doc);
     modified |= migrate_select_doc(doc);
-    modified |= migrate_post_create_doc(doc);
     modified |= migrate_pre_hook_table_form_doc(doc);
     modified |= migrate_ci_doc(doc);
     modified |= migrate_negated_bool_doc(doc, "merge", "no-ff", "ff");
@@ -1220,6 +1194,10 @@ pub fn check_and_migrate(
         Err(_) => (Deprecations::default(), content.to_string()),
     };
 
+    if deprecations.post_create {
+        return Err(anyhow::anyhow!("{label}: {POST_CREATE_REMOVED_MSG}"));
+    }
+
     if deprecations.is_empty() {
         return Ok(CheckAndMigrateResult {
             info: None,
@@ -1422,17 +1400,6 @@ pub fn format_deprecation_warnings(info: &DeprecationInfo) -> String {
             "{}",
             warning_message(cformat!(
                 "{}: <bold>[select]</> is deprecated in favor of <bold>[switch.picker]</>",
-                info.label
-            ))
-        );
-    }
-
-    if info.deprecations.post_create {
-        let _ = writeln!(
-            out,
-            "{}",
-            warning_message(cformat!(
-                "{}: <bold>post-create</> hook is deprecated in favor of <bold>pre-start</>",
                 info.label
             ))
         );
@@ -1746,17 +1713,6 @@ mod tests {
         }
     }
 
-    fn migrate_post_create_to_pre_start(content: &str) -> String {
-        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
-            return content.to_string();
-        };
-        if migrate_post_create_doc(&mut doc) {
-            doc.to_string()
-        } else {
-            content.to_string()
-        }
-    }
-
     #[test]
     fn test_find_deprecated_vars_empty() {
         let content = r#"
@@ -2047,7 +2003,7 @@ approved-commands = [
     #[test]
     fn test_check_and_migrate_write_failure() {
         // Test the write error path by using a non-existent directory
-        let content = r#"post-create = "{{ repo_root }}/script.sh""#;
+        let content = "[merge]\nno-ff = true\n";
         let non_existent_path = std::path::Path::new("/nonexistent/dir/config.toml");
 
         // Should return Ok(Some(_)) even if write fails - the function logs error but doesn't fail
@@ -2060,7 +2016,7 @@ approved-commands = [
     #[test]
     fn test_check_and_migrate_deduplicates_warnings() {
         // Test that calling twice with same path skips the second warning
-        let content = r#"post-create = "{{ repo_root }}/script.sh""#;
+        let content = "[merge]\nno-ff = true\n";
         // Use a unique path that won't collide with other tests
         let unique_path = std::path::Path::new("/nonexistent/dedup_test_12345/config.toml");
 
@@ -3096,97 +3052,6 @@ pre-start = "new"
         assert!(!find_post_create_deprecation(content));
     }
 
-    #[test]
-    fn test_migrate_post_create_top_level() {
-        let content = r#"
-post-create = "npm install"
-
-[post-start]
-server = "npm run dev"
-"#;
-        let result = migrate_post_create_to_pre_start(content);
-        assert!(
-            result.contains("pre-start"),
-            "Should have pre-start: {result}"
-        );
-        assert!(
-            !result.contains("post-create"),
-            "Should not have post-create: {result}"
-        );
-        assert!(
-            result.contains("[post-start]"),
-            "Should preserve other sections: {result}"
-        );
-    }
-
-    #[test]
-    fn test_migrate_post_create_project_level() {
-        let content = r#"
-[projects."my-project"]
-post-create = "npm install"
-"#;
-        let result = migrate_post_create_to_pre_start(content);
-        assert!(
-            result.contains("pre-start"),
-            "Should have pre-start: {result}"
-        );
-        assert!(
-            !result.contains("post-create"),
-            "Should not have post-create: {result}"
-        );
-    }
-
-    #[test]
-    fn test_migrate_post_create_named_commands() {
-        let content = r#"
-[post-create]
-lint = "npm run lint"
-build = "npm run build"
-"#;
-        let result = migrate_post_create_to_pre_start(content);
-        assert!(
-            result.contains("[pre-start]"),
-            "Should rename section header: {result}"
-        );
-        assert!(
-            !result.contains("[post-create]"),
-            "Should not have old section header: {result}"
-        );
-        assert!(
-            result.contains("lint = \"npm run lint\""),
-            "Should preserve named commands: {result}"
-        );
-    }
-
-    #[test]
-    fn test_migrate_post_create_skips_when_pre_start_exists() {
-        let content = r#"
-post-create = "old"
-pre-start = "new"
-"#;
-        let result = migrate_post_create_to_pre_start(content);
-        assert_eq!(
-            result, content,
-            "Should not migrate when pre-start already exists"
-        );
-    }
-
-    #[test]
-    fn test_migrate_post_create_invalid_toml() {
-        let content = "this is { not valid toml";
-        let result = migrate_post_create_to_pre_start(content);
-        assert_eq!(result, content, "Invalid TOML should be returned unchanged");
-    }
-
-    #[test]
-    fn test_migrate_post_create_no_post_create() {
-        let content = r#"
-pre-start = "npm install"
-"#;
-        let result = migrate_post_create_to_pre_start(content);
-        assert_eq!(result, content, "No post-create means no migration");
-    }
-
     fn migrate_switch_picker_timeout(content: &str) -> String {
         let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
             return content.to_string();
@@ -3328,67 +3193,6 @@ post-create = "npm install"
         let deprecations = detect_deprecations(content);
         assert!(deprecations.post_create);
         assert!(!deprecations.is_empty());
-    }
-
-    #[test]
-    fn snapshot_migrate_post_create_to_pre_start() {
-        let content = r#"post-create = "npm install"
-
-[post-start]
-server = "npm run dev"
-"#;
-        let result = migrate_post_create_to_pre_start(content);
-        insta::assert_snapshot!(migration_diff(content, &result));
-    }
-
-    #[test]
-    fn test_format_deprecation_details_post_create() {
-        let content = r#"post-create = "npm install"
-"#;
-        let info = DeprecationInfo {
-            config_path: std::path::PathBuf::from("/tmp/test-config.toml"),
-            deprecations: Deprecations {
-                vars: vec![],
-                commit_gen: CommitGenerationDeprecations::default(),
-                approved_commands: false,
-                select: false,
-                post_create: true,
-                ci_section: false,
-                no_ff: false,
-                no_cd: false,
-                pre_hook_table_form: vec![],
-                switch_picker_timeout_ms: false,
-            },
-            label: "Project config".to_string(),
-            main_worktree_path: None,
-        };
-        let output = format_deprecation_details(&info, content);
-        assert!(
-            output.contains("post-create"),
-            "Should mention post-create: {output}"
-        );
-        assert!(
-            output.contains("pre-start"),
-            "Should mention pre-start: {output}"
-        );
-    }
-
-    #[test]
-    fn test_compute_migrated_content_renames_post_create() {
-        let content = r#"post-create = "npm install"
-
-[post-start]
-server = "npm run dev"
-"#;
-        let migrated = compute_migrated_content(content);
-        assert!(
-            migrated.contains("pre-start"),
-            "Migrated content should have pre-start: {migrated}"
-        );
-        assert!(
-            !migrated.contains("post-create"),
-            "Migrated content should not have post-create: {migrated}"
-        );
     }
 
     // ==================== negated bool format + migration tests ====================
@@ -3735,27 +3539,6 @@ build = "npm run build"
         let arr = project["pre-start"]
             .as_array_of_tables()
             .expect("should be array of tables");
-        assert_eq!(arr.len(), 2);
-    }
-
-    #[test]
-    fn test_migrate_pre_hook_table_form_after_post_create_rename() {
-        // post-create → pre-start rename should happen first, then table form migration
-        let content = r#"
-[post-create]
-install = "npm ci"
-build = "npm run build"
-"#;
-        let result = migrate_content(content);
-        // post-create should be renamed to pre-start AND converted to pipeline
-        assert!(
-            !result.contains("post-create"),
-            "post-create should be renamed: {result}"
-        );
-        let doc: toml_edit::DocumentMut = result.parse().unwrap();
-        let arr = doc["pre-start"]
-            .as_array_of_tables()
-            .expect("should be pipeline array of tables");
         assert_eq!(arr.len(), 2);
     }
 
