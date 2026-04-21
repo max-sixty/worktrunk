@@ -173,27 +173,20 @@ impl Task for AheadBehindTask {
             });
         }
 
-        // Check cache first (populated by batch_ahead_behind if it ran).
-        // Cache lookup has minor overhead (rev-parse for cache key + allocations),
-        // but saves the expensive ahead_behind computation on cache hit.
-        //
         // When the ref has a branch name, compute counts against the branch — not
         // the worktree's current HEAD sha. During rebase/merge conflicts, HEAD is
         // transiently at a different commit than the branch tip, so using the sha
         // would report misleading counts (e.g., `0/0 same_commit` when the branch
         // is actually diverged). The batch path already uses branch names, so this
         // keeps both paths consistent.
-        let (ahead, behind) = if let Some(branch) = ctx.branch_ref.branch.as_deref() {
-            if let Some(counts) = repo.cached_ahead_behind(&base, branch) {
-                counts
-            } else {
-                repo.ahead_behind(&base, branch)
-                    .map_err(|e| ctx.error(Self::KIND, &e))?
-            }
-        } else {
-            repo.ahead_behind(&base, &ctx.branch_ref.commit_sha)
-                .map_err(|e| ctx.error(Self::KIND, &e))?
-        };
+        let head = ctx
+            .branch_ref
+            .branch
+            .as_deref()
+            .unwrap_or(&ctx.branch_ref.commit_sha);
+        let (ahead, behind) = repo
+            .ahead_behind(&base, head)
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::AheadBehind {
             item_idx: ctx.item_idx,

@@ -204,10 +204,22 @@ impl Repository {
     /// For orphan branches with no common ancestor, returns `(0, 0)`.
     /// Caller should check for orphan status separately via `merge_base()`.
     ///
-    /// Uses `merge_base()` internally (which is cached) to compute the common
-    /// ancestor, then counts commits using two-dot syntax. This allows the
-    /// merge-base result to be reused across multiple operations.
+    /// Results are cached in the shared repo cache. `batch_ahead_behind()`
+    /// primes the cache for all local branches at once via a single
+    /// `for-each-ref`; subsequent calls here hit the cache. On a miss, falls
+    /// back to `merge_base()` + `rev-list --count`, also cached on insert.
     pub fn ahead_behind(&self, base: &str, head: &str) -> anyhow::Result<(usize, usize)> {
+        let key = (base.to_string(), head.to_string());
+        match self.cache.ahead_behind.entry(key) {
+            Entry::Occupied(e) => Ok(*e.get()),
+            Entry::Vacant(e) => {
+                let counts = self.compute_ahead_behind(base, head)?;
+                Ok(*e.insert(counts))
+            }
+        }
+    }
+
+    fn compute_ahead_behind(&self, base: &str, head: &str) -> anyhow::Result<(usize, usize)> {
         // Get merge-base (cached in shared repo cache)
         let Some(merge_base) = self.merge_base(base, head)? else {
             // Orphan branch - no common ancestor
@@ -244,13 +256,12 @@ impl Repository {
 
     /// Batch-fetch ahead/behind counts for all local branches vs a base ref.
     ///
-    /// Uses `git for-each-ref --format='%(ahead-behind:BASE)'` (git 2.36+) to get
-    /// all counts in a single command. Returns a map from branch name to (ahead, behind).
+    /// Uses `git for-each-ref --format='%(ahead-behind:BASE)'` (git 2.36+) to
+    /// get all counts in a single command, priming `cache.ahead_behind` so
+    /// subsequent `ahead_behind()` calls hit the cache.
     ///
-    /// Results are cached so subsequent lookups via `cached_ahead_behind()` avoid
-    /// running individual git commands (though cache access still has minor overhead).
-    ///
-    /// On git < 2.36 or if the command fails, returns an empty map.
+    /// On git < 2.36 or if the command fails, returns an empty map (and
+    /// `ahead_behind()` falls back to per-branch computation).
     pub fn batch_ahead_behind(&self, base: &str) -> HashMap<String, (usize, usize)> {
         let format = format!("%(refname:lstrip=2) %(ahead-behind:{})", base);
         let output = match self.run_command(&[
@@ -283,17 +294,6 @@ impl Repository {
             .collect();
 
         results
-    }
-
-    /// Get cached ahead/behind counts for a branch.
-    ///
-    /// Returns cached results from a prior `batch_ahead_behind()` call, or None
-    /// if the branch wasn't in the batch or batch wasn't run.
-    pub fn cached_ahead_behind(&self, base: &str, branch: &str) -> Option<(usize, usize)> {
-        self.cache
-            .ahead_behind
-            .get(&(base.to_string(), branch.to_string()))
-            .map(|r| *r)
     }
 
     /// Get line diff statistics between two refs.
