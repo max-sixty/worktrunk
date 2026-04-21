@@ -468,6 +468,29 @@ impl BranchRef {
     pub fn has_worktree(&self) -> bool {
         self.worktree_path.is_some()
     }
+
+    /// Git ref string suitable for passing to integration helpers.
+    ///
+    /// Remote branches are stored as short names like `origin/foo` (from
+    /// `%(refname:lstrip=2)` in `list_remote_branches`). Git allows local
+    /// branches literally named `origin/foo`, so passing the short form to
+    /// `git rev-parse` resolves to `refs/heads/origin/foo` — the local — and
+    /// the remote row silently computes stats against the wrong ref.
+    ///
+    /// Qualifying the remote case to `refs/remotes/<name>` makes the ref
+    /// unambiguous; local branches keep the short form so
+    /// `resolve_preferring_branch` can still promote them over same-named
+    /// tags.
+    ///
+    /// Returns `None` for detached HEAD (no branch name).
+    pub fn integration_ref(&self) -> Option<String> {
+        let name = self.branch.as_deref()?;
+        Some(if self.is_remote {
+            format!("refs/remotes/{name}")
+        } else {
+            name.to_string()
+        })
+    }
 }
 
 impl From<&WorktreeInfo> for BranchRef {
@@ -801,6 +824,31 @@ mod tests {
         assert_eq!(branch_ref.worktree_path, None);
         assert!(!branch_ref.has_worktree());
         assert!(branch_ref.is_remote);
+    }
+
+    #[test]
+    fn test_branch_ref_integration_ref() {
+        // Remote branches qualify to refs/remotes/ so they don't get shadowed
+        // by a same-named local branch (git allows local branches literally
+        // named `origin/foo`).
+        assert_eq!(
+            BranchRef::remote_branch("origin/foo", "abc").integration_ref(),
+            Some("refs/remotes/origin/foo".to_string())
+        );
+        // Local branches keep the short form so `resolve_preferring_branch`
+        // can still promote them over same-named tags.
+        assert_eq!(
+            BranchRef::local_branch("feature", "abc").integration_ref(),
+            Some("feature".to_string())
+        );
+        // Detached HEAD has no branch name — caller falls back to commit_sha.
+        let detached = BranchRef {
+            branch: None,
+            commit_sha: "abc".into(),
+            worktree_path: None,
+            is_remote: false,
+        };
+        assert_eq!(detached.integration_ref(), None);
     }
 
     #[test]
