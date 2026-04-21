@@ -384,9 +384,7 @@ fn repo_path_error_when_is_bare_fails() {
     use std::sync::Arc;
 
     // Create a Repository with a non-existent git_common_dir.
-    // This makes --show-toplevel fail (reaching the is_bare branch),
-    // and then is_bare() also fails because the bulk config read
-    // can't run in a missing dir.
+    // is_bare() fails because the bulk config read can't run in a missing dir.
     let repo = super::Repository {
         discovery_path: PathBuf::from("/nonexistent/repo"),
         git_common_dir: PathBuf::from("/nonexistent/.git"),

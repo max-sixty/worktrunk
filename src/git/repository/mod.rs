@@ -80,6 +80,7 @@ use wait_timeout::ChildExt;
 use anyhow::{Context, bail};
 
 use dunce::canonicalize;
+use normalize_path::NormalizePath;
 
 use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 
@@ -666,58 +667,58 @@ impl Repository {
     ///
     /// Result is cached in the repository's shared cache (same for all clones).
     ///
-    /// # Why we run from `git_common_dir`
+    /// # Why we anchor on `git_common_dir`
     ///
-    /// We need to return the *main* worktree regardless of which worktree we were discovered
-    /// from. For linked worktrees, `git_common_dir` is the stable reference that's shared
-    /// across all worktrees (e.g., `/myapp/.git` whether you're in `/myapp` or `/myapp.feature`).
+    /// We need to return the *main* worktree regardless of which worktree we
+    /// were discovered from. For linked worktrees, `git_common_dir` is the
+    /// stable reference shared across all worktrees (e.g., `/myapp/.git`
+    /// whether you're in `/myapp` or `/myapp.feature`), so we resolve every
+    /// case below relative to it.
     ///
-    /// # Why the try-fallback approach
+    /// # How we resolve the path
     ///
-    /// `--show-toplevel` behavior depends on whether git has explicit worktree metadata:
+    /// Everything we need is already in the bulk config map (`git config --list -z`,
+    /// populated once per command):
     ///
-    /// | git_common_dir location    | Has `core.worktree`? | `--show-toplevel` works? |
-    /// |----------------------------|----------------------|--------------------------|
-    /// | Normal `.git`              | No (implicit)        | No — "not a work tree"   |
-    /// | Submodule `.git/modules/X` | Yes (explicit)       | Yes — reads config       |
+    /// | git_common_dir location    | Signal                       | Resolution                           |
+    /// |----------------------------|------------------------------|--------------------------------------|
+    /// | Bare `.git`                | `core.bare = true`           | `git_common_dir` is the repo         |
+    /// | Submodule `.git/modules/X` | `core.worktree` set by git   | join + normalize against common dir  |
+    /// | Normal `.git`              | neither set                  | `parent(git_common_dir)`             |
     ///
-    /// Normal repos don't need `core.worktree` because the worktree is implicitly `parent(.git)`.
-    /// Submodules need it because their git data lives in the parent's `.git/modules/`.
-    ///
-    /// So we try `--show-toplevel` first (handles submodules), fall back to `parent()` (handles
-    /// normal repos). This avoids fragile path-based detection of submodules.
+    /// Submodules need `core.worktree` because their git data lives in the
+    /// parent's `.git/modules/`, so the implicit `parent(.git)` rule that
+    /// works for normal repos would point at `.git/modules` — wrong. Git
+    /// writes `core.worktree` explicitly to compensate. Reading it from the
+    /// bulk map matches git's own authority for the working tree and avoids
+    /// a `rev-parse --show-toplevel` subprocess on every call.
     ///
     /// # Errors
     ///
-    /// Returns an error if `is_bare()` fails (e.g., git timeout). This surfaces
-    /// the failure early rather than caching a potentially wrong path.
+    /// Returns an error if the bulk config read fails (e.g., git timeout). This
+    /// surfaces the failure early rather than caching a potentially wrong path.
     pub fn repo_path(&self) -> anyhow::Result<&Path> {
         self.cache
             .repo_path
             .get_or_try_init(|| {
-                // Submodules: --show-toplevel succeeds (git has explicit core.worktree config)
-                if let Ok(out) = Cmd::new("git")
-                    .args(["rev-parse", "--show-toplevel"])
-                    .current_dir(&self.git_common_dir)
-                    .context(path_to_logging_context(&self.git_common_dir))
-                    .run()
-                    && out.status.success()
-                {
-                    return Ok(PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()));
+                if self.is_bare()? {
+                    return Ok(self.git_common_dir.clone());
                 }
 
-                // --show-toplevel failed:
-                // 1. Bare repos (no working tree) → git_common_dir IS the repo
-                // 2. Normal repos from inside .git → parent is the repo
-                if self.is_bare()? {
-                    Ok(self.git_common_dir.clone())
-                } else {
-                    Ok(self
-                        .git_common_dir
-                        .parent()
-                        .expect("Git directory has no parent")
-                        .to_path_buf())
+                if let Some(worktree) = self.config_last("core.worktree")? {
+                    let path = PathBuf::from(&worktree);
+                    return Ok(if path.is_absolute() {
+                        path
+                    } else {
+                        self.git_common_dir.join(path).normalize()
+                    });
                 }
+
+                Ok(self
+                    .git_common_dir
+                    .parent()
+                    .expect("Git directory has no parent")
+                    .to_path_buf())
             })
             .map(|p| p.as_path())
     }
