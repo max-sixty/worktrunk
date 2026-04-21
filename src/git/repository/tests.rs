@@ -527,3 +527,48 @@ fn extract_failed_command_from_other_error() {
     assert_eq!(output, "some other error");
     assert!(cmd.is_none());
 }
+
+#[test]
+fn is_builtin_fsmonitor_enabled_variants() {
+    use super::RepoCache;
+    use indexmap::IndexMap;
+    use std::sync::{Arc, RwLock};
+
+    fn repo_with_fsmonitor(value: Option<&str>) -> super::Repository {
+        let cache = RepoCache::default();
+        let mut map: IndexMap<String, Vec<String>> = IndexMap::new();
+        if let Some(v) = value {
+            map.insert("core.fsmonitor".to_string(), vec![v.to_string()]);
+        }
+        cache.all_config.set(RwLock::new(map)).unwrap();
+        super::Repository {
+            discovery_path: PathBuf::from("/nonexistent/repo"),
+            git_common_dir: PathBuf::from("/nonexistent/.git"),
+            cache: Arc::new(cache),
+        }
+    }
+
+    // Builtin daemon: any git-bool truthy value enables it.
+    for truthy in ["true", "1", "yes", "on", "TRUE"] {
+        assert!(
+            repo_with_fsmonitor(Some(truthy)).is_builtin_fsmonitor_enabled(),
+            "{truthy} should enable builtin fsmonitor"
+        );
+    }
+
+    // Watchman hook path is NOT the builtin daemon — must return false even
+    // though the value is non-empty and truthy in the colloquial sense.
+    assert!(
+        !repo_with_fsmonitor(Some("/usr/local/bin/git-fsmonitor-watchman.sh"))
+            .is_builtin_fsmonitor_enabled()
+    );
+
+    // Explicitly disabled and unset both report false.
+    for falsy in ["false", "0", "no", "off"] {
+        assert!(
+            !repo_with_fsmonitor(Some(falsy)).is_builtin_fsmonitor_enabled(),
+            "{falsy} should disable builtin fsmonitor"
+        );
+    }
+    assert!(!repo_with_fsmonitor(None).is_builtin_fsmonitor_enabled());
+}
