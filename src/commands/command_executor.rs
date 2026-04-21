@@ -988,6 +988,66 @@ mod tests {
     }
 
     #[test]
+    fn test_origin_scope_maps_each_variant() {
+        let hook_origin = CommandOrigin::Hook {
+            source: HookSource::User,
+            hook_type: HookType::PreMerge,
+            display_path: None,
+        };
+        assert!(matches!(
+            origin_scope(&hook_origin),
+            ValidationScope::Hook(HookType::PreMerge)
+        ));
+
+        let alias_origin = CommandOrigin::Alias {
+            name: "deploy".into(),
+        };
+        assert!(matches!(
+            origin_scope(&alias_origin),
+            ValidationScope::Alias
+        ));
+    }
+
+    #[test]
+    fn test_override_available_vars_replaces_with_scope_list() {
+        let err = TemplateExpandError {
+            message: "Failed to expand: undefined value".into(),
+            source_line: None,
+            available_vars: vec!["branch".into(), "repo".into()],
+        };
+        let replaced = override_available_vars(err, Some(ValidationScope::Alias));
+        // Alias scope includes `args`, not in the original list.
+        assert!(replaced.available_vars.contains(&"args".to_string()));
+        // List is sorted.
+        let mut sorted = replaced.available_vars.clone();
+        sorted.sort();
+        assert_eq!(replaced.available_vars, sorted);
+    }
+
+    #[test]
+    fn test_override_available_vars_keeps_list_when_no_scope() {
+        let err = TemplateExpandError {
+            message: "Failed to expand: undefined value".into(),
+            source_line: None,
+            available_vars: vec!["branch".into(), "repo".into()],
+        };
+        let kept = override_available_vars(err, None);
+        assert_eq!(kept.available_vars, vec!["branch", "repo"]);
+    }
+
+    #[test]
+    fn test_override_available_vars_skips_syntax_errors() {
+        // Syntax errors carry no `available_vars` hint — don't inject one.
+        let err = TemplateExpandError {
+            message: "Failed to expand: syntax error".into(),
+            source_line: None,
+            available_vars: Vec::new(),
+        };
+        let kept = override_available_vars(err, Some(ValidationScope::Alias));
+        assert!(kept.available_vars.is_empty());
+    }
+
+    #[test]
     fn test_template_references_var_for_vars() {
         // Real vars references
         assert!(template_references_var("{{ vars.container }}", "vars"));
