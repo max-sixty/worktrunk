@@ -374,8 +374,8 @@ pub fn spawn_detached_exec(
     Ok(log_path)
 }
 
-/// Apply [`worktrunk::priority::FOREGROUND_ENV_VAR`] to a [`Command`] when
-/// spawning a background hook pipeline.
+/// Apply [`worktrunk::priority::FOREGROUND_ENV_VAR`] to a
+/// [`std::process::Command`] when spawning a background hook pipeline.
 fn set_background_hook_env(cmd: &mut std::process::Command, is_background_hook: bool) {
     if is_background_hook {
         cmd.env(
