@@ -818,12 +818,16 @@ impl Repository {
 
     /// Check if git's builtin fsmonitor daemon is enabled.
     ///
-    /// Returns true only for `core.fsmonitor=true` (the builtin daemon).
-    /// Returns false for Watchman hooks, disabled, or unset.
+    /// Returns true for any git-bool truthy value (`true/1/yes/on`), which
+    /// matches how git itself routes the bool-or-string `core.fsmonitor`
+    /// config to the builtin daemon. Returns false for Watchman hook paths,
+    /// disabled, or unset.
     pub fn is_builtin_fsmonitor_enabled(&self) -> bool {
-        self.run_command(&["config", "--get", "core.fsmonitor"])
+        self.config_last("core.fsmonitor")
             .ok()
-            .map(|s| s.trim() == "true")
+            .flatten()
+            .as_deref()
+            .map(parse_git_bool)
             .unwrap_or(false)
     }
 
