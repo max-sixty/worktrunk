@@ -222,8 +222,8 @@ impl Repository {
 
     /// List all hints that have been shown in this repo.
     ///
-    /// Output is sorted alphabetically for deterministic rendering — the
-    /// `HashMap` backing `all_config` doesn't preserve insertion order.
+    /// Output is sorted alphabetically so hints render in a predictable
+    /// user-facing order regardless of git's config file layout.
     pub fn list_shown_hints(&self) -> Vec<String> {
         let Ok(lock) = self.all_config() else {
             return Vec::new();
