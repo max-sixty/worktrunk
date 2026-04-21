@@ -80,7 +80,16 @@ fn parse_diff_sections(diff: &str) -> Vec<(&str, &str)> {
     let mut section_start_byte = 0;
     let mut current_byte = 0;
 
-    for line in diff.lines() {
+    // Iterate with `split_inclusive` so each chunk includes its line terminator
+    // (`\n` or `\r\n`). Advancing by the chunk length keeps `current_byte` aligned
+    // with real byte offsets — `str::lines()` strips terminators, so reconstructing
+    // the offset as `line.len() + 1` under-counts by one byte per CRLF line and
+    // can end up slicing inside a multi-byte UTF-8 character.
+    for full_line in diff.split_inclusive('\n') {
+        let line = full_line
+            .strip_suffix("\r\n")
+            .or_else(|| full_line.strip_suffix('\n'))
+            .unwrap_or(full_line);
         if line.starts_with("diff --git ") {
             // Save previous section
             if let Some(file) = current_file
@@ -93,7 +102,7 @@ fn parse_diff_sections(diff: &str) -> Vec<(&str, &str)> {
             current_file = line.split(" b/").nth(1);
             section_start_byte = current_byte;
         }
-        current_byte += line.len() + 1; // +1 for newline
+        current_byte += full_line.len();
     }
 
     // Save final section
@@ -1352,6 +1361,30 @@ index 111..222 100644
         @@ -1,100 +1,150 @@
          lots of lock content
         ");
+    }
+
+    #[test]
+    fn test_parse_diff_sections_crlf_with_multibyte_utf8() {
+        // Regression: CRLF line endings combined with multi-byte UTF-8
+        // content used to drift the byte offset (one byte lost per line),
+        // eventually slicing inside a char boundary and panicking. See #2355.
+        let mut diff = String::from("diff --git a/a b/a\r\n");
+        for _ in 0..10 {
+            diff.push_str("+测测测\r\n");
+        }
+        diff.push_str("diff --git a/b b/b\r\n");
+        diff.push_str("+more\r\n");
+
+        let sections = parse_diff_sections(&diff);
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].0, "a");
+        assert_eq!(sections[1].0, "b");
+        // Each section must start at the "diff --git" header and together
+        // cover the whole input with no bytes dropped or duplicated.
+        assert!(sections[0].1.starts_with("diff --git a/a b/a"));
+        assert!(sections[1].1.starts_with("diff --git a/b b/b"));
+        let combined: String = sections.iter().map(|(_, s)| *s).collect();
+        assert_eq!(combined, diff);
     }
 
     #[test]
