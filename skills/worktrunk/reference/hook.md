@@ -260,7 +260,7 @@ Any `--KEY=VALUE` whose key isn't referenced by a hook template forwards into `{
 
 The long form `--var KEY=VALUE` is deprecated but still supported. It force-binds regardless of whether any hook template references `KEY` — useful when a template only references the key conditionally (e.g. `{% if override %}…{% endif %}`).
 
-## Recipes
+# Recipes
 
 - [Eliminate cold starts](https://worktrunk.dev/tips-patterns/#eliminate-cold-starts): `wt step copy-ignored` in `post-start` shares build caches and dependencies; use a `[[post-start]]` pipeline when a later hook depends on the copy
 - [Dev server per worktree](https://worktrunk.dev/tips-patterns/#dev-server-per-worktree): `hash_port` in `post-start` for launch and `post-remove` for cleanup, with optional subdomain routing
