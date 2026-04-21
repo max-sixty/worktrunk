@@ -2,7 +2,7 @@
 # Cross-platform wrapper for the worktrunk CLI.
 # If WORKTRUNK_BIN is set, uses that path exclusively.
 # Otherwise, on Windows (MSYS/Cygwin), prefers git-wt.exe over wt and
-# rejects wt if it resolves to Windows Terminal (WindowsApps/wt.exe).
+# rejects wt if it resolves to Windows Terminal (.../WindowsApps/wt.exe).
 # On other platforms, uses wt directly.
 # Usage: wt.sh [args...]
 
@@ -20,7 +20,7 @@ elif [[ "$(uname -o 2>/dev/null)" =~ ^(Msys|Cygwin)$ ]]; then
     elif command -v wt >/dev/null 2>&1; then
         # reject wt if it's the Windows Terminal alias
         if [[ "$(command -v wt)" == *WindowsApps* ]]; then
-            echo "worktrunk: 'wt' resolves to Windows Terminal; install worktrunk as git-wt.exe or remove the Windows Terminal alias — see https://worktrunk.dev/worktrunk/#install" >&2
+            echo "worktrunk: 'wt' resolves to Windows Terminal; install worktrunk as git-wt.exe or remove the Windows Terminal alias. See https://worktrunk.dev/worktrunk/#install" >&2
             exit 1
         fi
 
