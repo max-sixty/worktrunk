@@ -23,12 +23,11 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{Repository, WorktreeInfo};
 use worktrunk::path::format_path_for_display;
-use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
     warning_message,
@@ -81,7 +80,14 @@ struct TempRelocation {
 }
 
 /// Executes relocations in dependency order, handling cycles via temp moves.
-pub struct RelocationExecutor {
+///
+/// Git commands route through `repo.worktree_at(path).run_command(...)` rather
+/// than raw `Cmd::new("git").run()`. `Cmd::run()` returns `Ok(Output)` on
+/// non-zero exit — only spawn errors travel through `?` — so raw `.run()`
+/// would silently swallow a failed `git worktree move` / `git checkout` and
+/// let the caller print a false "Relocated ..." success message.
+pub struct RelocationExecutor<'a> {
+    repo: &'a Repository,
     pending: Vec<ValidatedCandidate>,
     /// Maps canonical current path → index in pending (for cycle detection)
     current_locations: HashMap<PathBuf, usize>,
@@ -96,22 +102,6 @@ pub struct RelocationExecutor {
     /// Counters for summary
     pub skipped: usize,
     pub relocated: usize,
-}
-
-/// Run a `Cmd` and bail with the trimmed stderr if it exits non-zero.
-///
-/// `Cmd::run()` returns `Ok(Output { status: non-zero, .. })` on failed
-/// commands — only spawn errors travel through `?`. Every raw-`Cmd` call
-/// site in this module must promote non-zero exits into errors, or a failed
-/// `git worktree move` / `git checkout` would print a false "Relocated ..."
-/// success message.
-fn run_checked(cmd: Cmd) -> anyhow::Result<std::process::Output> {
-    let output = cmd.run()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).replace('\r', "\n");
-        bail!("{}", stderr.trim());
-    }
-    Ok(output)
 }
 
 // ============================================================================
@@ -283,10 +273,10 @@ pub fn validate_candidates(
 // Phase 3 & 4: Execute relocations
 // ============================================================================
 
-impl RelocationExecutor {
+impl<'a> RelocationExecutor<'a> {
     /// Create executor and classify targets (handling blockers with optional clobber).
     pub fn new(
-        repo: &Repository,
+        repo: &'a Repository,
         validated: Vec<ValidatedCandidate>,
         clobber: bool,
     ) -> anyhow::Result<Self> {
@@ -381,6 +371,7 @@ impl RelocationExecutor {
         }
 
         Ok(Self {
+            repo,
             pending: validated,
             current_locations,
             blocked,
@@ -393,12 +384,7 @@ impl RelocationExecutor {
     }
 
     /// Execute all relocations in dependency order.
-    pub fn execute(
-        &mut self,
-        repo_path: &Path,
-        default_branch: &str,
-        cwd: Option<&Path>,
-    ) -> anyhow::Result<()> {
+    pub fn execute(&mut self, default_branch: &str, cwd: Option<&Path>) -> anyhow::Result<()> {
         // Process until all pending are moved or in temp
         loop {
             let mut made_progress = false;
@@ -411,7 +397,7 @@ impl RelocationExecutor {
 
                 match self.is_target_empty(i) {
                     Some(true) => {
-                        self.move_worktree(i, repo_path, default_branch, cwd)?;
+                        self.move_worktree(i, default_branch, cwd)?;
                         made_progress = true;
                     }
                     Some(false) => {
@@ -477,7 +463,6 @@ impl RelocationExecutor {
     fn move_worktree(
         &mut self,
         idx: usize,
-        repo_path: &Path,
         default_branch: &str,
         cwd: Option<&Path>,
     ) -> anyhow::Result<()> {
@@ -491,16 +476,14 @@ impl RelocationExecutor {
         let dest_display = format_path_for_display(&dest_path);
 
         if is_main {
-            self.move_main_worktree(idx, repo_path, default_branch)?;
+            self.move_main_worktree(idx, default_branch)?;
         } else {
-            run_checked(
-                Cmd::new("git")
-                    .args(["worktree", "move"])
-                    .arg(src_path.to_string_lossy())
-                    .arg(dest_path.to_string_lossy())
-                    .context(&branch),
-            )
-            .context("Failed to move worktree")?;
+            let src = src_path.to_string_lossy();
+            let dest = dest_path.to_string_lossy();
+            self.repo
+                .worktree_at(self.repo.repo_path()?)
+                .run_command(&["worktree", "move", &src, &dest])
+                .context("Failed to move worktree")?;
         }
 
         let msg = cformat!("Relocated <bold>{branch}</>: {src_display} → {dest_display}");
@@ -520,45 +503,32 @@ impl RelocationExecutor {
     }
 
     /// Main worktree can't use `git worktree move`; must create new + switch.
-    fn move_main_worktree(
-        &mut self,
-        idx: usize,
-        repo_path: &Path,
-        default_branch: &str,
-    ) -> anyhow::Result<()> {
+    fn move_main_worktree(&mut self, idx: usize, default_branch: &str) -> anyhow::Result<()> {
         let candidate = &self.pending[idx];
         let branch = candidate.branch();
 
         let msg = cformat!("Switching main worktree to <bold>{default_branch}</>...");
         eprintln!("{}", progress_message(msg));
 
-        run_checked(
-            Cmd::new("git")
-                .args(["checkout", default_branch])
-                .current_dir(repo_path)
-                .context("main"),
-        )
-        .with_context(|| format!("Failed to checkout default branch '{default_branch}'"))?;
+        // Bind the main worktree up front so the rollback path can reuse it
+        // without threading another `?` through a best-effort cleanup.
+        let main_wt = self.repo.worktree_at(self.repo.repo_path()?);
+
+        main_wt
+            .run_command(&["checkout", default_branch])
+            .with_context(|| format!("Failed to checkout default branch '{default_branch}'"))?;
 
         // Try to create worktree; if it fails, rollback to original branch.
-        let add_result = run_checked(
-            Cmd::new("git")
-                .args(["worktree", "add"])
-                .arg(candidate.expected_path.to_string_lossy())
-                .arg(branch)
-                .context(branch),
-        );
+        let dest = candidate.expected_path.to_string_lossy();
+        let add_result = main_wt.run_command(&["worktree", "add", &dest, branch]);
 
         if let Err(e) = add_result {
             // Rollback: checkout the original branch to restore user context
             let rollback_msg = cformat!("Worktree creation failed, restoring <bold>{branch}</>...");
             eprintln!("{}", warning_message(rollback_msg));
 
-            let _ = Cmd::new("git")
-                .args(["checkout", branch])
-                .current_dir(repo_path)
-                .context("main")
-                .run(); // Best-effort rollback
+            // Best-effort rollback: log failures but don't mask the original error.
+            let _ = main_wt.run_command(&["checkout", branch]);
 
             return Err(e).context("Failed to create worktree for main relocation");
         }
@@ -598,14 +568,12 @@ impl RelocationExecutor {
         let msg = cformat!("Moving <bold>{branch}</> to temporary location...");
         eprintln!("{}", progress_message(msg));
 
-        run_checked(
-            Cmd::new("git")
-                .args(["worktree", "move"])
-                .arg(candidate.wt.path.to_string_lossy())
-                .arg(temp_path.to_string_lossy())
-                .context(branch),
-        )
-        .context("Failed to move worktree to temp")?;
+        let src = candidate.wt.path.to_string_lossy();
+        let dest = temp_path.to_string_lossy();
+        self.repo
+            .worktree_at(self.repo.repo_path()?)
+            .run_command(&["worktree", "move", &src, &dest])
+            .context("Failed to move worktree to temp")?;
 
         // Update current_locations to reflect the move
         let old_canonical = candidate
@@ -634,14 +602,12 @@ impl RelocationExecutor {
             let src_display = format_path_for_display(&temp.original_path);
             let dest_display = format_path_for_display(&candidate.expected_path);
 
-            run_checked(
-                Cmd::new("git")
-                    .args(["worktree", "move"])
-                    .arg(temp.temp_path.to_string_lossy())
-                    .arg(candidate.expected_path.to_string_lossy())
-                    .context(branch),
-            )
-            .context("Failed to move worktree from temp to final location")?;
+            let src = temp.temp_path.to_string_lossy();
+            let dest = candidate.expected_path.to_string_lossy();
+            self.repo
+                .worktree_at(self.repo.repo_path()?)
+                .run_command(&["worktree", "move", &src, &dest])
+                .context("Failed to move worktree from temp to final location")?;
 
             let msg = cformat!("Relocated <bold>{branch}</>: {src_display} → {dest_display}");
             eprintln!("{}", success_message(msg));
