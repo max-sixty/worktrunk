@@ -402,6 +402,37 @@ fn repo_path_error_when_is_bare_fails() {
 }
 
 #[test]
+fn repo_path_absolute_core_worktree() {
+    use super::RepoCache;
+    use indexmap::IndexMap;
+    use std::sync::{Arc, RwLock};
+
+    // Git writes `core.worktree` as a relative path for submodules
+    // (`../../../sub`), which the integration test `test_repo_path_in_submodule`
+    // covers. This unit test exercises the absolute-path branch — also legal
+    // per git-config(1) — without needing a filesystem fixture.
+    let cache = RepoCache::default();
+    let mut map: IndexMap<String, Vec<String>> = IndexMap::new();
+    map.insert("core.bare".to_string(), vec!["false".to_string()]);
+    map.insert(
+        "core.worktree".to_string(),
+        vec!["/absolute/worktree".to_string()],
+    );
+    cache.all_config.set(RwLock::new(map)).unwrap();
+
+    let repo = super::Repository {
+        discovery_path: PathBuf::from("/nonexistent/repo"),
+        git_common_dir: PathBuf::from("/nonexistent/.git/modules/sub"),
+        cache: Arc::new(cache),
+    };
+
+    assert_eq!(
+        repo.repo_path().unwrap(),
+        std::path::Path::new("/absolute/worktree")
+    );
+}
+
+#[test]
 fn parse_config_list_z_basic() {
     let input = b"core.bare\nfalse\0remote.origin.url\nhttps://example.com/a.git\0";
     let map = super::parse_config_list_z(input);
