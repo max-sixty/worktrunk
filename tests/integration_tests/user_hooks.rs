@@ -206,6 +206,50 @@ bg = "echo 'USER_POST_START_RAN' > user_bg_marker.txt"
 }
 
 #[rstest]
+fn test_background_hook_sees_worktrunk_foreground_env_var(repo: TestRepo) {
+    // Background hooks run via the detached `wt hook run-pipeline` runner; wt
+    // sets WORKTRUNK_FOREGROUND=-1 on that process so descendants (shell,
+    // user command, nested `wt` invocations) can tell they're backgrounded.
+    // `pre-*` hooks run synchronously in the foreground `wt` process, so they
+    // must NOT see the sentinel.
+    repo.write_test_config(
+        r#"[post-start]
+capture-bg = "echo \"bg=$WORKTRUNK_FOREGROUND\" > post_start_env.txt"
+
+[pre-start]
+capture-fg = "echo \"fg=$WORKTRUNK_FOREGROUND\" > pre_start_env.txt"
+"#,
+    );
+
+    snapshot_switch(
+        "background_hook_env_var_visible",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+
+    // pre-start wrote its marker synchronously; post-start runs in the
+    // background, so poll for the file.
+    let bg_marker = worktree_path.join("post_start_env.txt");
+    wait_for_file_content(&bg_marker);
+    let bg = fs::read_to_string(&bg_marker).unwrap();
+    assert_eq!(
+        bg.trim(),
+        "bg=-1",
+        "post-start (background) hook should see WORKTRUNK_FOREGROUND=-1, got {bg:?}"
+    );
+
+    let fg_marker = worktree_path.join("pre_start_env.txt");
+    let fg = fs::read_to_string(&fg_marker).unwrap();
+    assert_eq!(
+        fg.trim(),
+        "fg=",
+        "pre-start (foreground) hook should NOT see WORKTRUNK_FOREGROUND set, got {fg:?}"
+    );
+}
+
+#[rstest]
 fn test_user_post_start_skipped_with_no_hooks(repo: TestRepo) {
     // Write user config with post-start hook
     repo.write_test_config(

@@ -35,6 +35,17 @@
 //!   `ionice … nice … <cmd>`. Used for detached background spawns where we
 //!   want the wrapper tool itself to apply the policy and then exec the real
 //!   work.
+//!
+//! ## Background-hook context signalling
+//!
+//! When wt spawns a background hook pipeline (detached `wt hook run-pipeline`),
+//! it exports [`FOREGROUND_ENV_VAR`] = [`BACKGROUND_HOOK_VALUE`] (`-1`) into
+//! that process's environment. The variable is inherited by every child the
+//! pipeline spawns (shell, user command, any nested `wt` invocation). Commands
+//! that want to yield priority only when they're running inside a background
+//! hook — rather than always — check it via [`in_background_hook`]. This is
+//! an experimental hook-vs-foreground signal; the variable name and value are
+//! not yet a stable contract.
 
 use std::ffi::OsStr;
 use std::process::Command;
@@ -47,6 +58,32 @@ use std::sync::LazyLock;
 /// stat `$PATH` on every call.
 #[cfg(all(unix, not(target_os = "macos")))]
 static HAS_IONICE: LazyLock<bool> = LazyLock::new(|| which::which("ionice").is_ok());
+
+/// Environment variable wt sets on background hook pipelines so descendants
+/// can tell whether they're running in the foreground or inside a background
+/// hook. Experimental; see the [module docs](self) for context.
+pub const FOREGROUND_ENV_VAR: &str = "WORKTRUNK_FOREGROUND";
+
+/// Value written to [`FOREGROUND_ENV_VAR`] when the enclosing context is a
+/// background hook pipeline. Positive and zero values are reserved for future
+/// use (e.g., signalling foreground hook nesting levels); only `-1` currently
+/// has an observer.
+pub const BACKGROUND_HOOK_VALUE: &str = "-1";
+
+/// Returns `true` when wt detects that the current process is running inside
+/// a background hook pipeline. Checks [`FOREGROUND_ENV_VAR`] against
+/// [`BACKGROUND_HOOK_VALUE`]; any other value (including unset) returns
+/// `false` so interactive and foreground-hook invocations stay at normal
+/// priority.
+pub fn in_background_hook() -> bool {
+    is_background_hook_value(std::env::var_os(FOREGROUND_ENV_VAR).as_deref())
+}
+
+/// Extracted comparison so tests can exercise the match without mutating
+/// process-global environment state (forbidden per `tests/CLAUDE.md`).
+fn is_background_hook_value(value: Option<&OsStr>) -> bool {
+    value == Some(OsStr::new(BACKGROUND_HOOK_VALUE))
+}
 
 /// Lower the current process's scheduling and I/O priority.
 ///
@@ -136,6 +173,26 @@ mod tests {
 
     fn args_of(cmd: &Command) -> Vec<&str> {
         cmd.get_args().map(|a| a.to_str().unwrap()).collect()
+    }
+
+    #[test]
+    fn foreground_env_var_name_and_value() {
+        assert_eq!(FOREGROUND_ENV_VAR, "WORKTRUNK_FOREGROUND");
+        assert_eq!(BACKGROUND_HOOK_VALUE, "-1");
+    }
+
+    #[test]
+    fn background_hook_value_matches_sentinel_only() {
+        // Only the exact sentinel counts as "inside a background hook".
+        // Unset, empty, and other numeric-looking values all stay foreground
+        // so interactive and `pre-*` hook callers run at normal priority.
+        assert!(is_background_hook_value(Some(OsStr::new("-1"))));
+        assert!(!is_background_hook_value(None));
+        assert!(!is_background_hook_value(Some(OsStr::new(""))));
+        assert!(!is_background_hook_value(Some(OsStr::new("0"))));
+        assert!(!is_background_hook_value(Some(OsStr::new("1"))));
+        assert!(!is_background_hook_value(Some(OsStr::new("-2"))));
+        assert!(!is_background_hook_value(Some(OsStr::new(" -1"))));
     }
 
     #[test]

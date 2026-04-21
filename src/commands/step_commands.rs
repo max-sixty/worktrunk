@@ -704,7 +704,14 @@ pub fn step_copy_ignored(
     dry_run: bool,
     force: bool,
 ) -> anyhow::Result<()> {
-    worktrunk::priority::lower_current_process();
+    // Self-lower only when we're running inside a background hook pipeline
+    // (parent `wt` sets `WORKTRUNK_FOREGROUND=-1` on the detached runner).
+    // Foreground callers — interactive `wt step copy-ignored` and synchronous
+    // `pre-*` hook pipelines — are the UI the user is waiting on and must not
+    // be I/O-throttled by `taskpolicy -b` on macOS.
+    if worktrunk::priority::in_background_hook() {
+        worktrunk::priority::lower_current_process();
+    }
     let repo = Repository::current()?;
     let copy_ignored_config = resolve_copy_ignored_config(&repo)?;
 
