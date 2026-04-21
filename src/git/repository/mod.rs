@@ -80,7 +80,6 @@ use wait_timeout::ChildExt;
 use anyhow::{Context, bail};
 
 use dunce::canonicalize;
-use normalize_path::NormalizePath;
 
 use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 
@@ -685,15 +684,23 @@ impl Repository {
     /// | git_common_dir location    | Signal                       | Resolution                           |
     /// |----------------------------|------------------------------|--------------------------------------|
     /// | Bare `.git`                | `core.bare = true`           | `git_common_dir` is the repo         |
-    /// | Submodule `.git/modules/X` | `core.worktree` set by git   | join + normalize against common dir  |
+    /// | Submodule `.git/modules/X` | `core.worktree` set by git   | `rev-parse --show-toplevel`          |
     /// | Normal `.git`              | neither set                  | `parent(git_common_dir)`             |
     ///
     /// Submodules need `core.worktree` because their git data lives in the
     /// parent's `.git/modules/`, so the implicit `parent(.git)` rule that
     /// works for normal repos would point at `.git/modules` — wrong. Git
-    /// writes `core.worktree` explicitly to compensate. Reading it from the
-    /// bulk map matches git's own authority for the working tree and avoids
-    /// a `rev-parse --show-toplevel` subprocess on every call.
+    /// writes `core.worktree` explicitly to compensate.
+    ///
+    /// The bulk `git config --list -z` map merges system + global + local
+    /// scope, but git only honors `core.worktree` from **local** (or
+    /// `[includeIf]`-imported) config for worktree discovery — a global
+    /// `core.worktree` would be read into the bulk map yet ignored by
+    /// git itself. So when the bulk map reports `core.worktree`, we delegate
+    /// to `rev-parse --show-toplevel` to let git apply its own scope rules;
+    /// if that fails (non-local value git ignored), we fall through to the
+    /// normal-repo path. The common case — no `core.worktree` anywhere —
+    /// still skips the subprocess, which is the whole point of this path.
     ///
     /// # Errors
     ///
@@ -707,13 +714,19 @@ impl Repository {
                     return Ok(self.git_common_dir.clone());
                 }
 
-                if let Some(worktree) = self.config_last("core.worktree")? {
-                    let path = PathBuf::from(&worktree);
-                    return Ok(if path.is_absolute() {
-                        path
-                    } else {
-                        self.git_common_dir.join(path).normalize()
-                    });
+                // `core.worktree` in the bulk map could come from any scope,
+                // but git only honors the local one. Let git resolve scope
+                // via `rev-parse --show-toplevel` rather than trusting the
+                // merged value ourselves.
+                if self.config_last("core.worktree")?.is_some()
+                    && let Ok(out) = Cmd::new("git")
+                        .args(["rev-parse", "--show-toplevel"])
+                        .current_dir(&self.git_common_dir)
+                        .context(path_to_logging_context(&self.git_common_dir))
+                        .run()
+                    && out.status.success()
+                {
+                    return Ok(PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()));
                 }
 
                 Ok(self

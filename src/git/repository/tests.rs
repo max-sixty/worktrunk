@@ -402,34 +402,39 @@ fn repo_path_error_when_is_bare_fails() {
 }
 
 #[test]
-fn repo_path_absolute_core_worktree() {
+fn repo_path_ignores_non_local_core_worktree() {
     use super::RepoCache;
     use indexmap::IndexMap;
     use std::sync::{Arc, RwLock};
 
-    // Git writes `core.worktree` as a relative path for submodules
-    // (`../../../sub`), which the integration test `test_repo_path_in_submodule`
-    // covers. This unit test exercises the absolute-path branch — also legal
-    // per git-config(1) — without needing a filesystem fixture.
+    // Regression test: `git config --list -z` merges system + global + local
+    // scope, but git only honors `core.worktree` from local config. A user
+    // with a stray global `core.worktree` in a normal repo should still see
+    // `parent(.git)` as the repo root — `rev-parse --show-toplevel` fails
+    // from inside `.git` in that case and we fall through.
+    let tmp = tempfile::tempdir().unwrap();
+    let git_dir = tmp.path().join(".git");
+    std::fs::create_dir(&git_dir).unwrap();
+
     let cache = RepoCache::default();
     let mut map: IndexMap<String, Vec<String>> = IndexMap::new();
     map.insert("core.bare".to_string(), vec!["false".to_string()]);
+    // Simulate a `core.worktree` picked up from global config. The path
+    // doesn't have to exist — it only has to be present in the bulk map.
     map.insert(
         "core.worktree".to_string(),
-        vec!["/absolute/worktree".to_string()],
+        vec!["/nonexistent/global/worktree".to_string()],
     );
     cache.all_config.set(RwLock::new(map)).unwrap();
 
     let repo = super::Repository {
-        discovery_path: PathBuf::from("/nonexistent/repo"),
-        git_common_dir: PathBuf::from("/nonexistent/.git/modules/sub"),
+        discovery_path: tmp.path().to_path_buf(),
+        git_common_dir: git_dir.clone(),
         cache: Arc::new(cache),
     };
 
-    assert_eq!(
-        repo.repo_path().unwrap(),
-        std::path::Path::new("/absolute/worktree")
-    );
+    // Should fall through to parent(git_common_dir), ignoring the bulk value.
+    assert_eq!(repo.repo_path().unwrap(), tmp.path());
 }
 
 #[test]
