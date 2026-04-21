@@ -70,7 +70,8 @@
 //!
 //! **Stale default branch warning:** The post-skeleton `warn_stale_default`
 //! check compares `default_branch()` (resolved pre-skeleton) against the
-//! fetched local branch list. It's a pure CPU check — no extra git commands.
+//! local branch list — reusing the list fetched for `--branches`, otherwise
+//! adding one `for-each-ref` fork when the persisted default isn't a worktree branch.
 //!
 //! When adding new features, ask: "Can this be computed after skeleton?" If yes, defer it.
 //! The skeleton shows `·` placeholder for gutter symbols, filled in when data loads.
