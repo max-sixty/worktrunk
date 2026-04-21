@@ -3830,11 +3830,10 @@ fn test_project_config_path_env_var_override(repo: TestRepo, temp_home: TempDir)
     );
 }
 
-/// The `post-create` hook key was renamed to `pre-start` in v0.32.0. The silent
-/// migration was removed in the following release: project configs that still
-/// carry the key now fail to load with a fatal error that tells the user to
-/// rename it. Verify via `wt switch --create`, which propagates project config
-/// load failures as a non-zero exit.
+/// `post-create` was renamed to `pre-start` in v0.32.0. Project configs that
+/// still carry the removed key fail to load with a fatal error naming the
+/// replacement. Verify via `wt switch --create`, which propagates project
+/// config load failures as a non-zero exit.
 #[rstest]
 fn test_post_create_in_project_config_is_fatal(repo: TestRepo, temp_home: TempDir) {
     let project_config_dir = repo.root_path().join(".config");
