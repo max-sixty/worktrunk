@@ -1366,6 +1366,15 @@ if ctx['branch'].startswith('feature/') and 'backend' in ctx['repo']:
     subprocess.run(['make', 'seed-db'])
 ```
 
+## Copying untracked files
+
+One specific function to call out in these general hook docs: [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored). Git worktrees share the repository but not untracked files, and this copies gitignored files between worktrees:
+
+```toml
+[post-start]
+copy = "wt step copy-ignored"
+```
+
 # Running Hooks Manually
 
 `wt hook <type>` runs hooks on demand — useful for testing during development, running in CI pipelines, or re-running after a failure.
@@ -1392,24 +1401,13 @@ Any `--KEY=VALUE` whose key isn't referenced by a hook template forwards into `{
 
 The long form `--var KEY=VALUE` is deprecated but still supported. It force-binds regardless of whether any hook template references `KEY` — useful when a template only references the key conditionally (e.g. `{% if override %}…{% endif %}`).
 
-# Designing Effective Hooks
+## Recipes
 
-## Copying untracked files
-
-Git worktrees share the repository but not untracked files. [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) copies gitignored files between worktrees:
-
-```toml
-[post-start]
-copy = "wt step copy-ignored"
-```
-
-## More recipes
-
-- Copy gitignored files between worktrees: `wt step copy-ignored` in `post-start` shares build caches and dependencies; use a `[[post-start]]` pipeline when a later hook depends on the copy — https://worktrunk.dev/tips-patterns/#eliminate-cold-starts
-- Dev server per worktree: `hash_port` in `post-start` for launch and `post-remove` for cleanup, with optional subdomain routing — https://worktrunk.dev/tips-patterns/#dev-server-per-worktree
-- Database per worktree: a `post-start` pipeline stores container name, port, and connection string as [per-branch vars](@/config.md#wt-config-state-vars) that later hooks reference — https://worktrunk.dev/tips-patterns/#database-per-worktree
-- Progressive validation: quick lint/typecheck in `pre-commit`, expensive tests and builds in `pre-merge` — https://worktrunk.dev/tips-patterns/#progressive-validation
-- Target-specific behavior: branch on `{{ target }}` in `post-merge` for per-environment deploys — https://worktrunk.dev/tips-patterns/#target-specific-hooks
+- [Eliminate cold starts](@/tips-patterns.md#eliminate-cold-starts): `wt step copy-ignored` in `post-start` shares build caches and dependencies; use a `[[post-start]]` pipeline when a later hook depends on the copy
+- [Dev server per worktree](@/tips-patterns.md#dev-server-per-worktree): `hash_port` in `post-start` for launch and `post-remove` for cleanup, with optional subdomain routing
+- [Database per worktree](@/tips-patterns.md#database-per-worktree): a `post-start` pipeline stores container name, port, and connection string as [per-branch vars](@/config.md#wt-config-state-vars) that later hooks reference
+- [Progressive validation](@/tips-patterns.md#progressive-validation): quick lint/typecheck in `pre-commit`, expensive tests and builds in `pre-merge`
+- [Target-specific hooks](@/tips-patterns.md#target-specific-hooks): branch on `{{ target }}` in `post-merge` for per-environment deploys
 
 ## See also
 
