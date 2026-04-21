@@ -254,15 +254,15 @@ impl Repository {
         Ok((ahead, behind))
     }
 
-    /// Batch-fetch ahead/behind counts for all local branches vs a base ref.
+    /// Prime `cache.ahead_behind` for all local branches vs a base ref.
     ///
     /// Uses `git for-each-ref --format='%(ahead-behind:BASE)'` (git 2.36+) to
-    /// get all counts in a single command, priming `cache.ahead_behind` so
-    /// subsequent `ahead_behind()` calls hit the cache.
+    /// compute all counts in a single command, so subsequent `ahead_behind()`
+    /// calls hit the cache.
     ///
-    /// On git < 2.36 or if the command fails, returns an empty map (and
-    /// `ahead_behind()` falls back to per-branch computation).
-    pub fn batch_ahead_behind(&self, base: &str) -> HashMap<String, (usize, usize)> {
+    /// On git < 2.36 or if the command fails, this is a no-op and
+    /// `ahead_behind()` falls back to per-branch computation.
+    pub fn batch_ahead_behind(&self, base: &str) {
         let format = format!("%(refname:lstrip=2) %(ahead-behind:{})", base);
         let output = match self.run_command(&[
             "for-each-ref",
@@ -273,27 +273,25 @@ impl Repository {
             Err(e) => {
                 // Fails on git < 2.36 (no %(ahead-behind:) support), invalid base ref, etc.
                 log::debug!("batch_ahead_behind({base}): git for-each-ref failed: {e}");
-                return HashMap::new();
+                return;
             }
         };
 
-        let results: HashMap<String, (usize, usize)> = output
+        output
             .lines()
             .filter_map(|line| {
                 // Format: "branch-name ahead behind"
                 let mut parts = line.rsplitn(3, ' ');
                 let behind: usize = parts.next()?.parse().ok()?;
                 let ahead: usize = parts.next()?.parse().ok()?;
-                let branch = parts.next()?.to_string();
-                // Cache each result for later lookup
+                let branch = parts.next()?;
+                Some((branch, ahead, behind))
+            })
+            .for_each(|(branch, ahead, behind)| {
                 self.cache
                     .ahead_behind
-                    .insert((base.to_string(), branch.clone()), (ahead, behind));
-                Some((branch, (ahead, behind)))
-            })
-            .collect();
-
-        results
+                    .insert((base.to_string(), branch.to_string()), (ahead, behind));
+            });
     }
 
     /// Get line diff statistics between two refs.

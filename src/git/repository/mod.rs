@@ -234,7 +234,7 @@ pub(super) struct RepoCache {
     /// Ahead/behind cache: (base_ref, head) -> (ahead, behind).
     /// Primed in bulk by `batch_ahead_behind()`; populated on demand by
     /// `ahead_behind()` for keys the batch didn't cover (e.g., HEAD SHAs
-    /// during rebase/merge, or git < 2.36 where the batch returns empty).
+    /// during rebase/merge, or git < 2.36 where the batch is a no-op).
     pub(super) ahead_behind: DashMap<(String, String), (usize, usize)>,
     /// Effective remote URLs: remote_name -> effective URL (with `url.insteadOf` applied).
     /// Separate from `all_config` because `git remote get-url` applies
