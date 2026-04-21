@@ -3893,3 +3893,61 @@ fn test_post_create_in_user_config_warns_and_skips(repo: TestRepo, temp_home: Te
         "warning should describe the rename, got: {stderr}"
     );
 }
+
+/// `wt config show` renders the fatal post-create error inline for both user
+/// and project configs, continuing the show flow so the user can still see
+/// their file and other sections.
+#[rstest]
+fn test_config_show_renders_post_create_error(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // User config at XDG path.
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "post-create = \"npm install\"\n",
+    )
+    .unwrap();
+
+    // Project config in the repo.
+    let project_config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&project_config_dir).unwrap();
+    fs::write(
+        project_config_dir.join("wt.toml"),
+        "post-create = \"bundle install\"\n",
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    repo.configure_mock_commands(&mut cmd);
+    cmd.args(["config", "show"]).current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt config show should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Both sections should render the rename guidance.
+    assert!(
+        combined.matches("post-create").count() >= 2,
+        "expected post-create message in both user and project sections, got: {combined}"
+    );
+    assert!(
+        combined.contains("User config: `post-create`"),
+        "user section should name the removed key, got: {combined}"
+    );
+    assert!(
+        combined.contains("Project config: `post-create`"),
+        "project section should name the removed key, got: {combined}"
+    );
+}
