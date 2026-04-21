@@ -668,39 +668,33 @@ impl Repository {
     ///
     /// Result is cached in the repository's shared cache (same for all clones).
     ///
-    /// # Why we anchor on `git_common_dir`
+    /// # Resolution strategy
     ///
-    /// We need to return the *main* worktree regardless of which worktree we
-    /// were discovered from. For linked worktrees, `git_common_dir` is the
-    /// stable reference shared across all worktrees (e.g., `/myapp/.git`
-    /// whether you're in `/myapp` or `/myapp.feature`), so we resolve every
-    /// case below relative to it.
+    /// We anchor on `git_common_dir` so that linked worktrees return the
+    /// *main* worktree regardless of which worktree we were discovered
+    /// from — `git_common_dir` is the stable reference shared across all
+    /// worktrees (e.g., `/myapp/.git` whether you're in `/myapp` or
+    /// `/myapp.feature`).
     ///
-    /// # How we resolve the path
-    ///
-    /// Everything we need is already in the bulk config map (`git config --list -z`,
-    /// populated once per command):
-    ///
-    /// | git_common_dir location    | Signal                       | Resolution                           |
-    /// |----------------------------|------------------------------|--------------------------------------|
-    /// | Bare `.git`                | `core.bare = true`           | `git_common_dir` is the repo         |
-    /// | Submodule `.git/modules/X` | `core.worktree` set by git   | `rev-parse --show-toplevel`          |
-    /// | Normal `.git`              | neither set                  | `parent(git_common_dir)`             |
+    /// | git_common_dir location    | Signal                     | Resolution                    |
+    /// |----------------------------|----------------------------|-------------------------------|
+    /// | Bare `.git`                | `core.bare = true`         | `git_common_dir` is the repo  |
+    /// | Submodule `.git/modules/X` | `core.worktree` set by git | `rev-parse --show-toplevel`   |
+    /// | Normal `.git`              | neither set                | `parent(git_common_dir)`      |
     ///
     /// Submodules need `core.worktree` because their git data lives in the
-    /// parent's `.git/modules/`, so the implicit `parent(.git)` rule that
-    /// works for normal repos would point at `.git/modules` — wrong. Git
-    /// writes `core.worktree` explicitly to compensate.
+    /// parent's `.git/modules/` — the `parent(.git)` rule would point at
+    /// `.git/modules`, which is wrong. Git writes `core.worktree`
+    /// explicitly to compensate.
     ///
-    /// The bulk `git config --list -z` map merges system + global + local
-    /// scope, but git only honors `core.worktree` from **local** (or
-    /// `[includeIf]`-imported) config for worktree discovery — a global
-    /// `core.worktree` would be read into the bulk map yet ignored by
-    /// git itself. So when the bulk map reports `core.worktree`, we delegate
-    /// to `rev-parse --show-toplevel` to let git apply its own scope rules;
-    /// if that fails (non-local value git ignored), we fall through to the
-    /// normal-repo path. The common case — no `core.worktree` anywhere —
-    /// still skips the subprocess, which is the whole point of this path.
+    /// We can't read `core.worktree` straight from the bulk config map:
+    /// `git config --list -z` merges system/global/local scope, but git
+    /// only honors `core.worktree` from **local** config for worktree
+    /// discovery. So when the bulk map reports it, we delegate to
+    /// `rev-parse --show-toplevel` and let git apply its scope rules; if
+    /// the probe fails (non-local value, git ignored it) we fall through
+    /// to the normal-repo path. The common case — no `core.worktree`
+    /// anywhere — skips the subprocess, which is the point.
     ///
     /// # Errors
     ///
