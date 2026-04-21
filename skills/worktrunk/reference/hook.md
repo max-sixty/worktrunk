@@ -227,7 +227,7 @@ if ctx['branch'].startswith('feature/') and 'backend' in ctx['repo']:
 
 ## Copying untracked files
 
-One specific function to call out in these general hook docs: [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored). Git worktrees share the repository but not untracked files, and this copies gitignored files between worktrees:
+One specific command worth calling out: [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored). Git worktrees share the repository but not untracked files, and this copies gitignored files between worktrees:
 
 ```toml
 [post-start]
