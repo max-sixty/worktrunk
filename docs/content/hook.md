@@ -31,8 +31,8 @@ The most common starting point is `post-start` — it runs background tasks (dev
 |------|---------|
 | `pre-switch` | Runs before branch resolution or worktree creation. `{{ branch }}` is the destination as typed (before resolution) |
 | `post-switch` | Triggers on all switch results: creating, switching to existing, or staying on current |
-| `pre-start` | Tasks that must complete before `post-start`/`--execute`: dependency install, env file generation |
-| `post-start` | Dev servers, long builds, file watchers, copying caches |
+| `pre-start` | Runs once when a new worktree is created, blocking `post-start`/`--execute` until complete: dependency install, env file generation |
+| `post-start` | Runs once when a new worktree is created, in the background: dev servers, long builds, file watchers, copying caches |
 | `pre-commit` | Formatters, linters, type checking — runs during `wt merge` before the squash commit |
 | `post-commit` | CI triggers, notifications, background linting |
 | `pre-merge` | Tests, security scans, build verification — runs after rebase, before merge to target |
