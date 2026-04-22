@@ -274,6 +274,76 @@ fn test_for_each_json(mut repo: TestRepo) {
     );
 }
 
+/// `{{ commit }}` must resolve per-worktree when iterating across worktrees
+/// whose branches differ from the running worktree's branch. This exercises
+/// the `rev-parse <branch>` fallback in `build_hook_context` — the on-branch
+/// cache-reuse path would return the main worktree's SHA for every iteration.
+#[rstest]
+fn test_for_each_commit_matches_per_worktree_head(repo: TestRepo) {
+    // Give each fixture feature worktree a distinct HEAD so a buggy cache
+    // reuse (same SHA everywhere) fails visibly.
+    let mut expected = std::collections::HashMap::new();
+    expected.insert("main".to_string(), repo.git_output(&["rev-parse", "HEAD"]));
+    for branch in ["feature-a", "feature-b", "feature-c"] {
+        let wt_path = repo
+            .root_path()
+            .parent()
+            .unwrap()
+            .join(format!("repo.{branch}"));
+        repo.run_git_in(
+            &wt_path,
+            &["commit", "--allow-empty", "-m", &format!("{branch} tip")],
+        );
+        let sha = repo
+            .git_command()
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&wt_path)
+            .run()
+            .unwrap();
+        expected.insert(
+            branch.to_string(),
+            String::from_utf8_lossy(&sha.stdout).trim().to_owned(),
+        );
+    }
+
+    // echo both fields so we can match each SHA to its branch.
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "for-each",
+            "--",
+            "echo",
+            "{{ branch }} {{ commit }}",
+        ])
+        .output()
+        .expect("run wt step for-each");
+
+    assert!(
+        output.status.success(),
+        "for-each failed: stderr={}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // for-each pipes foreground output through wt's styling layer, which may
+    // wrap lines in ANSI codes. Substring-match `branch sha` anywhere in the
+    // combined output — each worktree's echo contributes exactly one such
+    // pairing, so a mis-resolved SHA (e.g., main's SHA appearing after
+    // feature-b's branch label) is still caught.
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for (branch, sha) in &expected {
+        let needle = format!("{branch} {sha}");
+        assert!(
+            combined.contains(&needle),
+            "expected {branch}'s {{{{ commit }}}} = {sha} in output\noutput={combined}",
+        );
+    }
+}
+
 #[rstest]
 fn test_for_each_json_with_failure(repo: TestRepo) {
     repo.commit("initial");
