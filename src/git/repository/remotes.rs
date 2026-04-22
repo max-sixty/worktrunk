@@ -315,15 +315,17 @@ impl Repository {
 
     /// Check if a ref is a remote tracking branch.
     ///
-    /// Returns true if the ref exists under `refs/remotes/` (e.g., `origin/main`).
-    /// Returns false for local branches, tags, SHAs, and non-existent refs.
+    /// Returns true if the ref appears in the remote-branch inventory
+    /// (e.g., `origin/main`). Returns false for local branches, tags, SHAs,
+    /// non-existent refs, and `<remote>/HEAD` symrefs (which the inventory
+    /// excludes).
+    ///
+    /// Resolved from the remote-branch inventory — no subprocess calls once
+    /// it's populated.
     pub fn is_remote_tracking_branch(&self, ref_name: &str) -> bool {
-        self.run_command(&[
-            "rev-parse",
-            "--verify",
-            &format!("refs/remotes/{}", ref_name),
-        ])
-        .is_ok()
+        self.remote_branches()
+            .ok()
+            .is_some_and(|branches| branches.iter().any(|r| r.short_name == ref_name))
     }
 
     /// Strip the remote prefix from a remote-tracking branch name.
