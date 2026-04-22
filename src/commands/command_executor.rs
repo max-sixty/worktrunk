@@ -461,10 +461,17 @@ fn run_one_command(
     };
 
     let log_label = command_log_label(cmd, origin);
+    // Hooks get a documented JSON context on stdin; aliases inherit stdin so
+    // interactive children (e.g. `wt switch`'s picker) keep their controlling
+    // terminal. Piping JSON into an interactive alias body steals the tty.
+    let stdin_json = match origin {
+        CommandOrigin::Hook { .. } => Some(cmd.context_json.as_str()),
+        CommandOrigin::Alias { .. } => None,
+    };
     let result = execute_shell_command(
         wt_path,
         command_str,
-        Some(&cmd.context_json),
+        stdin_json,
         log_label.as_deref(),
         directives.clone(),
     );

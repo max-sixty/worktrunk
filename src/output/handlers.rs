@@ -1439,6 +1439,11 @@ pub fn execute_shell_command(
 
     if let Some(content) = stdin_content {
         cmd = cmd.stdin_bytes(content);
+    } else {
+        // Inherit the parent's stdin so interactive children (e.g. TUI
+        // pickers) keep their controlling terminal. Without this, `Cmd`
+        // defaults stdin to null and `stdin().is_terminal()` checks fail.
+        cmd = cmd.stdin(Stdio::inherit());
     }
 
     if let Some(path) = directives.cd_file {
