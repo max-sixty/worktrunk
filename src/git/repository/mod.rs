@@ -33,7 +33,13 @@
 //! **What is NOT cached.** Values that change during command execution are intentionally
 //! excluded:
 //! - `WorkingTree::is_dirty()` — changes as we stage and commit
-//! - `Repository::list_worktrees()` — changes as we create and remove worktrees
+//!
+//! [`Repository::list_worktrees`] is cached despite mutating commands adding or
+//! removing worktrees. The cache is safe because no caller reads the list
+//! through the same `Repository` after its own mutation — mutating paths
+//! either read once up front and thread the slice through, or rebuild a
+//! fresh `Repository::at(...)` before any post-mutation probe. This mirrors
+//! the invariant the branch inventories already rely on.
 //!
 //! **Access patterns.** See the [`RepoCache`] doc comment for the two storage patterns
 //! (repo-wide `OnceCell` vs per-key `DashMap`) and their infallible/fallible variants.
@@ -277,6 +283,13 @@ pub(super) struct RepoCache {
     /// commit first. Populated lazily via [`Repository::remote_branches`].
     /// Excludes `<remote>/HEAD` symrefs.
     pub(super) remote_branches: OnceCell<Vec<RemoteBranch>>,
+    /// Worktree inventory: one `git worktree list --porcelain` scan, cached
+    /// for the lifetime of the repository. Populated lazily via
+    /// [`Repository::list_worktrees`]. The picker warms this on the main
+    /// thread (for its preview-window sizing estimate) so the background
+    /// `collect::collect` pass hits memory instead of respawning the
+    /// subprocess on the critical path to skeleton.
+    pub(super) worktrees: OnceCell<Vec<WorktreeInfo>>,
     /// Commit details cache: commit SHA -> (timestamp, subject).
     /// Multiple items sharing the same HEAD commit (e.g., worktrees on main)
     /// would otherwise each spawn a `git log -1` for the same SHA.
