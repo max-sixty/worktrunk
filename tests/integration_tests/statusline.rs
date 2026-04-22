@@ -412,9 +412,17 @@ fn test_statusline_json_basic(repo: TestRepo) {
     assert!(item["is_current"].as_bool().unwrap());
     assert!(item["is_main"].as_bool().unwrap());
 
-    // commit object should exist with sha
+    // commit object should exist with sha, message, and non-zero timestamp
     assert!(item["commit"]["sha"].is_string());
     assert!(item["commit"]["short_sha"].is_string());
+    assert!(
+        !item["commit"]["message"].as_str().unwrap().is_empty(),
+        "commit.message should be populated from git log"
+    );
+    assert!(
+        item["commit"]["timestamp"].as_i64().unwrap() > 0,
+        "commit.timestamp should be populated from git log"
+    );
 }
 
 #[rstest]

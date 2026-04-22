@@ -1605,6 +1605,28 @@ pub fn populate_item(
     item: &mut ListItem,
     mut options: CollectOptions,
 ) -> anyhow::Result<()> {
+    // Populate commit details (timestamp + subject) directly. The main
+    // `collect()` path batches this across all items pre-skeleton; the
+    // single-item statusline path has no such batch, so fetch the one SHA
+    // here. Skip null OIDs (unborn branches) and prunable worktrees —
+    // matches the behavior in `collect()`.
+    let is_prunable = item.worktree_data().is_some_and(|d| d.is_prunable());
+    if item.head != worktrunk::git::NULL_OID && !is_prunable {
+        match repo.commit_details_many(&[&item.head]) {
+            Ok(map) => {
+                if let Some((timestamp, commit_message)) = map.get(&item.head) {
+                    item.commit = Some(CommitDetails {
+                        timestamp: *timestamp,
+                        commit_message: commit_message.clone(),
+                    });
+                }
+            }
+            Err(err) => {
+                log::warn!("populate_item: commit_details_many failed: {err}");
+            }
+        }
+    }
+
     // Extract worktree data (skip if not a worktree item)
     let Some(data) = item.worktree_data() else {
         return Ok(());
