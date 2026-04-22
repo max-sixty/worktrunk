@@ -1,4 +1,4 @@
-use crate::common::{TEST_EPOCH, TestRepo, repo, wt_command};
+use crate::common::{TEST_EPOCH, TestRepo, repo, repo_with_remote, wt_command};
 use insta::assert_snapshot;
 use rstest::rstest;
 use std::path::{Path, PathBuf};
@@ -341,6 +341,46 @@ fn test_state_get_ci_status_nonexistent_branch(repo: TestRepo) {
     [31m✗[39m [31mNo branch named [1mnonexistent[22m[39m
     [2m↳[22m [2mTo create a new branch, run [4mwt switch --create nonexistent[24m; to list branches, run [4mwt list --branches --remotes[24m[22m
     ");
+}
+
+/// `wt config state ci-status --branch origin/foo` must resolve cleanly when a
+/// local branch literally named `origin/foo` shadows a remote-tracking ref of
+/// the same name. Smoke test: exercises the shadowing code path. The
+/// visible-to-user consequences of the underlying bug (is_remote flag out of
+/// sync with the HEAD SHA, affecting how `gh`/`glab` get invoked) aren't
+/// observable without mocking those tools, but this guards against
+/// regressions that would make the command error on ambiguity (e.g., naive
+/// use of `rev-parse --symbolic-full-name`, which fails on shadowed refs).
+#[rstest]
+fn test_state_get_ci_status_shadow_origin_prefixed(#[from(repo_with_remote)] repo: TestRepo) {
+    // Remote `foo` pushed to origin.
+    repo.create_branch("foo");
+    repo.run_git(&["checkout", "foo"]);
+    std::fs::write(repo.root_path().join("remote.txt"), "remote").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "Remote foo commit"]);
+    repo.push_branch("foo");
+
+    // Drop local `foo` so only `refs/remotes/origin/foo` remains.
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["branch", "-D", "foo"]);
+
+    // Local branch literally named `origin/foo` with different history.
+    repo.run_git(&["checkout", "-b", "origin/foo"]);
+    std::fs::write(repo.root_path().join("local.txt"), "local").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "Local origin/foo"]);
+    repo.run_git(&["checkout", "main"]);
+
+    let output = wt_state_cmd(&repo, "ci-status", "get", &["--branch", "origin/foo"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "command should succeed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "no-ci");
 }
 
 #[rstest]

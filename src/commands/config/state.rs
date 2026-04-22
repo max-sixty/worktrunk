@@ -43,7 +43,7 @@ use anyhow::Context;
 use color_print::cformat;
 use path_slash::PathExt as _;
 use worktrunk::config::config_path;
-use worktrunk::git::Repository;
+use worktrunk::git::{BranchRef, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     eprintln, format_heading, format_with_gutter, info_message, println, success_message,
@@ -660,34 +660,53 @@ pub fn handle_state_get(
                 None => repo.require_current_branch("get ci-status for current branch")?,
             };
 
-            // Determine if this is a remote ref by checking git refs directly.
-            // This is authoritative - we check actual refs, not guessing from name.
-            let is_remote = repo
+            // Ask git for both qualified forms in one call so the remote/local
+            // determination and the HEAD SHA come from the same ref. A local
+            // branch literally named `origin/foo` can shadow a remote-tracking
+            // ref of the same name — preferring refs/heads/ matches git's
+            // default disambiguation (see `BranchRef::full_ref`).
+            let local_ref = format!("refs/heads/{branch_name}");
+            let remote_ref = format!("refs/remotes/{branch_name}");
+            let output = repo
                 .run_command(&[
-                    "show-ref",
-                    "--verify",
-                    "--quiet",
-                    &format!("refs/remotes/{}", branch_name),
+                    "for-each-ref",
+                    "--format=%(refname)%00%(objectname)",
+                    &local_ref,
+                    &remote_ref,
                 ])
-                .is_ok();
+                .context("list refs for ci-status")?;
 
-            // Get the HEAD commit for this branch
-            let head = repo
-                .run_command(&["rev-parse", &branch_name])
-                .map(|s| s.trim().to_string())
-                .unwrap_or_default();
-
-            if head.is_empty() {
-                return Err(worktrunk::git::GitError::BranchNotFound {
-                    branch: branch_name,
-                    show_create_hint: true,
-                    last_fetch_ago: None,
+            let mut local_sha: Option<&str> = None;
+            let mut remote_sha: Option<&str> = None;
+            for line in output.lines() {
+                let Some((ref_name, sha)) = line.split_once('\0') else {
+                    continue;
+                };
+                if ref_name == local_ref {
+                    local_sha = Some(sha);
+                } else if ref_name == remote_ref {
+                    remote_sha = Some(sha);
                 }
-                .into());
             }
 
-            let ci_branch = CiBranchName::from_branch_ref(&branch_name, is_remote);
-            let pr_status = PrStatus::detect(&repo, &ci_branch, &head);
+            let branch_ref = match (local_sha, remote_sha) {
+                (Some(sha), _) => BranchRef::local_branch(&branch_name, sha),
+                (None, Some(sha)) => BranchRef::remote_branch(&branch_name, sha),
+                (None, None) => {
+                    return Err(worktrunk::git::GitError::BranchNotFound {
+                        branch: branch_name,
+                        show_create_hint: true,
+                        last_fetch_ago: None,
+                    }
+                    .into());
+                }
+            };
+
+            let short_name = branch_ref
+                .short_name()
+                .expect("local/remote BranchRef always has short_name");
+            let ci_branch = CiBranchName::from_branch_ref(short_name, branch_ref.is_remote());
+            let pr_status = PrStatus::detect(&repo, &ci_branch, &branch_ref.commit_sha);
 
             if format == SwitchFormat::Json {
                 let output = pr_status
