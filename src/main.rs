@@ -653,7 +653,7 @@ fn validate_remove_targets(
                         force,
                         config,
                         None,
-                        worktrees.as_deref(),
+                        worktrees,
                     ) {
                         Ok(result) => plans.current = Some(result),
                         Err(e) => plans.record_error(e),
@@ -674,7 +674,7 @@ fn validate_remove_targets(
                     force,
                     config,
                     None,
-                    worktrees.as_deref(),
+                    worktrees,
                 ) {
                     Ok(result) => plans.others.push(result),
                     Err(e) => plans.record_error(e),
@@ -687,7 +687,7 @@ fn validate_remove_targets(
                     force,
                     config,
                     None,
-                    worktrees.as_deref(),
+                    worktrees,
                 ) {
                     Ok(result) => plans.branch_only.push(result),
                     Err(e) => plans.record_error(e),

@@ -46,8 +46,9 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
     // Filter out prunable worktrees (directory deleted) - can't run commands there
     let worktrees: Vec<_> = repo
         .list_worktrees()?
-        .into_iter()
+        .iter()
         .filter(|wt| !wt.is_prunable())
+        .cloned()
         .collect();
     let config = UserConfig::load()?;
 

@@ -518,13 +518,14 @@ pub fn collect(
     //   on `RepoCache`)
     //
     // After this scope completes, we have all raw data and can do CPU-only work.
-    let worktrees_cell: OnceCell<anyhow::Result<Vec<WorktreeInfo>>> = OnceCell::new();
     let default_branch_cell: OnceCell<Option<String>> = OnceCell::new();
     let url_template_cell: OnceCell<Option<String>> = OnceCell::new();
 
     rayon::scope(|s| {
         s.spawn(|_| {
-            let _ = worktrees_cell.set(repo.list_worktrees());
+            // Prime the worktree list on `RepoCache`; consumers below read it
+            // through `repo.list_worktrees()`.
+            let _ = repo.list_worktrees();
         });
         s.spawn(|_| {
             let _ = default_branch_cell.set(repo.default_branch());
@@ -558,10 +559,7 @@ pub fn collect(
     });
 
     // Extract results
-    let worktrees = worktrees_cell
-        .into_inner()
-        .unwrap()
-        .context("Failed to list worktrees")?;
+    let worktrees: &[WorktreeInfo] = repo.list_worktrees().context("Failed to list worktrees")?;
     if worktrees.is_empty() {
         return Ok(None);
     }
@@ -644,7 +642,7 @@ pub fn collect(
     // so the warning fires on plain `wt list` too — otherwise downstream
     // tasks resolve against the stale ref and emit a cascade of "ambiguous
     // argument" noise instead of one clean warning.
-    let worktree_branches = worktree_branch_set(&worktrees);
+    let worktree_branches = worktree_branch_set(worktrees);
     let needs_stale_check = default_branch
         .as_deref()
         .is_some_and(|b| !worktree_branches.contains(b));
@@ -764,7 +762,7 @@ pub fn collect(
 
     // Sort worktrees: current first, main second, then by timestamp descending
     let sorted_worktrees = sort_worktrees_with_cache(
-        worktrees.clone(),
+        worktrees.to_vec(),
         &main_worktree,
         current_worktree_path.as_ref(),
         &timestamps,
