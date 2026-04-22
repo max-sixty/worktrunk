@@ -776,6 +776,19 @@ impl Repository {
         Ok(guard.get(&canonical).and_then(|v| v.last().cloned()))
     }
 
+    /// Read a git-bool config value, defaulting to `false` when the key is
+    /// unset or absent.
+    ///
+    /// Returns `Err` only when the bulk config read itself fails. A missing
+    /// key is `Ok(false)`, matching git's own behaviour for unset booleans.
+    pub(super) fn config_bool(&self, key: &str) -> anyhow::Result<bool> {
+        Ok(self
+            .config_last(key)?
+            .as_deref()
+            .map(parse_git_bool)
+            .unwrap_or(false))
+    }
+
     /// Check if this is a bare repository (no working tree).
     ///
     /// Bare repositories have no main worktree — all worktrees are linked
@@ -795,11 +808,7 @@ impl Repository {
     ///
     /// See <https://github.com/max-sixty/worktrunk/issues/1939>.
     pub fn is_bare(&self) -> anyhow::Result<bool> {
-        Ok(self
-            .config_last("core.bare")?
-            .as_deref()
-            .map(parse_git_bool)
-            .unwrap_or(false))
+        self.config_bool("core.bare")
     }
 
     /// Get the sparse checkout paths for this repository.
@@ -833,12 +842,7 @@ impl Repository {
     /// config to the builtin daemon. Returns false for Watchman hook paths,
     /// disabled, or unset.
     pub fn is_builtin_fsmonitor_enabled(&self) -> bool {
-        self.config_last("core.fsmonitor")
-            .ok()
-            .flatten()
-            .as_deref()
-            .map(parse_git_bool)
-            .unwrap_or(false)
+        self.config_bool("core.fsmonitor").unwrap_or(false)
     }
 
     /// Start the fsmonitor daemon at a worktree path.
