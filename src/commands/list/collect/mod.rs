@@ -761,16 +761,13 @@ pub fn collect(
         .chain(remote_branches.iter().map(|(_, sha)| sha.as_str()))
         .filter(|sha| *sha != worktrunk::git::NULL_OID)
         .collect();
-    let commit_details_map = match repo.commit_details_many(&all_shas) {
-        Ok(map) => map,
-        Err(err) => {
-            eprintln!(
-                "{}",
-                warning_message(cformat!("Failed to batch-fetch commit details: {err}"))
-            );
-            std::collections::HashMap::new()
-        }
-    };
+    let commit_details_map = repo.commit_details_many(&all_shas).unwrap_or_else(|err| {
+        eprintln!(
+            "{}",
+            warning_message(cformat!("Failed to batch-fetch commit details: {err}"))
+        );
+        std::collections::HashMap::new()
+    });
 
     // Sort worktrees: current first, main second, then by timestamp descending
     let sorted_worktrees = sort_worktrees_with_cache(
@@ -1609,22 +1606,19 @@ pub fn populate_item(
     // `collect()` path batches this across all items pre-skeleton; the
     // single-item statusline path has no such batch, so fetch the one SHA
     // here. Skip null OIDs (unborn branches) and prunable worktrees —
-    // matches the behavior in `collect()`.
+    // matches the behavior in `collect()`. Silent on batch failure: the
+    // statusline is a compact prompt element with no room for warnings, and
+    // `commit.message` / `commit.timestamp` fall through to their defaults.
     let is_prunable = item.worktree_data().is_some_and(|d| d.is_prunable());
-    if item.head != worktrunk::git::NULL_OID && !is_prunable {
-        match repo.commit_details_many(&[&item.head]) {
-            Ok(map) => {
-                if let Some((timestamp, commit_message)) = map.get(&item.head) {
-                    item.commit = Some(CommitDetails {
-                        timestamp: *timestamp,
-                        commit_message: commit_message.clone(),
-                    });
-                }
-            }
-            Err(err) => {
-                log::warn!("populate_item: commit_details_many failed: {err}");
-            }
-        }
+    if item.head != worktrunk::git::NULL_OID
+        && !is_prunable
+        && let Ok(map) = repo.commit_details_many(&[&item.head])
+        && let Some((timestamp, commit_message)) = map.get(&item.head)
+    {
+        item.commit = Some(CommitDetails {
+            timestamp: *timestamp,
+            commit_message: commit_message.clone(),
+        });
     }
 
     // Extract worktree data (skip if not a worktree item)

@@ -644,6 +644,24 @@ fn commit_details_many_empty_input_is_noop() {
 }
 
 #[test]
+fn commit_details_many_fails_loudly_on_unknown_sha() {
+    // `git log --no-walk` refuses the whole batch on a single bad ref. The
+    // error surfaces as an `Err`, which `collect()` turns into a user-facing
+    // warning. Pin this behavior so we don't silently fall back to
+    // empty-map defaults.
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    let bogus = "0000000000000000000000000000000000000001";
+    let err = test.repo.commit_details_many(&[bogus]).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("git") || msg.contains("unknown") || msg.contains("bad"),
+        "error message should surface git's complaint about the bogus SHA, got: {msg}"
+    );
+}
+
+#[test]
 fn commit_details_many_preserves_multibyte_utf8_subject() {
     // Pin that multibyte UTF-8 round-trips through the NUL-delimited parser —
     // `splitn(3, '\0')` works on byte positions, so char boundaries inside the
