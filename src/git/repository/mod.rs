@@ -304,6 +304,12 @@ pub(super) struct RepoCache {
     /// (working-tree diff + conflict detection) share one subprocess per worktree
     /// instead of spawning `git status` twice.
     pub(super) status_porcelain: DashMap<PathBuf, String>,
+    /// Sentinel marking that [`WorkingTree::prewarm_info`] has run to completion
+    /// for this worktree path, holding its resolved `is_inside` value. Decouples
+    /// the short-circuit from `worktree_roots` / `git_dirs`, which can also be
+    /// populated by bare accessors (`root()`, `git_dir()`) on paths outside a
+    /// work tree — so they're not reliable "is_inside" signals on their own.
+    pub(super) prewarm_is_inside: DashMap<PathBuf, bool>,
 }
 
 /// Result of resolving a worktree name.

@@ -390,6 +390,14 @@ pub fn handle_picker(
     let state = PreviewState::new();
     worktrunk::shell_exec::trace_instant("Picker layout detected");
 
+    // Prime the current worktree's root / git-dir / branch / HEAD-SHA caches
+    // with one batched `git rev-parse`. Subsumes the two standalone forks that
+    // the speculative preview block below would otherwise make via `branch()`
+    // and `root()`, and is also short-circuited when `collect::collect` calls
+    // `repo.url_template()` → `load_project_config()` → `project_config_path()`
+    // (which runs `prewarm_info` again — now a cache hit).
+    let _ = repo.current_worktree().prewarm_info();
+
     // Preview cache + dedicated pool are created up-front so the speculative
     // first-item preview can run in parallel with `collect::collect` below.
     // Wrapped in `Arc` because the progressive handler (running on the
