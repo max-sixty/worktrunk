@@ -343,6 +343,55 @@ fn test_state_get_ci_status_nonexistent_branch(repo: TestRepo) {
     ");
 }
 
+/// Resolve a branch that exists only as a remote-tracking ref (no local
+/// counterpart). Exercises the `remote_branch` arm of the BranchRef match.
+#[rstest]
+fn test_state_get_ci_status_remote_only_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.create_branch("foo");
+    repo.run_git(&["checkout", "foo"]);
+    std::fs::write(repo.root_path().join("f.txt"), "f").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "foo commit"]);
+    repo.push_branch("foo");
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["branch", "-D", "foo"]);
+
+    let output = wt_state_cmd(&repo, "ci-status", "get", &["--branch", "origin/foo"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "command should succeed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "no-ci");
+}
+
+/// A fresh cached CI status returns from `get` without re-fetching. Exercises
+/// the cache-hit path where `PrStatus::detect` returns `Some` and the match
+/// arm unwraps `ci_status`.
+#[rstest]
+fn test_state_get_ci_status_returns_cached_status(repo: TestRepo) {
+    let head = repo.head_sha();
+    write_ci_cache(
+        &repo,
+        "main",
+        &format!(
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"{head}","branch":"main"}}"#
+        ),
+    );
+
+    let output = wt_state_cmd(&repo, "ci-status", "get", &["--branch", "main"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "command should succeed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "passed");
+}
+
 /// `wt config state ci-status --branch origin/foo` must resolve cleanly when a
 /// local branch literally named `origin/foo` shadows a remote-tracking ref of
 /// the same name. Smoke test: exercises the shadowing code path. The

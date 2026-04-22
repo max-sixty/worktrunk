@@ -678,10 +678,7 @@ pub fn handle_state_get(
 
             let mut local_sha: Option<&str> = None;
             let mut remote_sha: Option<&str> = None;
-            for line in output.lines() {
-                let Some((ref_name, sha)) = line.split_once('\0') else {
-                    continue;
-                };
+            for (ref_name, sha) in output.lines().filter_map(|l| l.split_once('\0')) {
                 if ref_name == local_ref {
                     local_sha = Some(sha);
                 } else if ref_name == remote_ref {
