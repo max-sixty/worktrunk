@@ -611,6 +611,20 @@ fn truncate_template(template: &str) -> &str {
 /// Rebuilds the args as if the user invoked `wt-sync <rest>` directly, passing
 /// the `COMPLETE` env var so the custom binary generates completions.
 fn forward_completion_to_custom(binary: &str, args: &[OsString], shell: &OsStr) -> Option<String> {
+    try_forward_completion_to_custom(binary, args, shell)
+        .ok()
+        .flatten()
+}
+
+/// Like [`forward_completion_to_custom`], but surfaces spawn/wait errors
+/// instead of flattening them to `None`. Keeps production callers on the
+/// `Option`-returning wrapper while letting tests distinguish spawn failures
+/// (e.g., transient `ETXTBSY`) from a child that ran but produced no output.
+fn try_forward_completion_to_custom(
+    binary: &str,
+    args: &[OsString],
+    shell: &OsStr,
+) -> std::io::Result<Option<String>> {
     // Build args for the custom binary: [binary_name, rest_args...]
     let mut child_args: Vec<OsString> = vec![OsString::from(binary)];
     child_args.extend_from_slice(&args[1..]);
@@ -639,14 +653,12 @@ fn forward_completion_to_custom(binary: &str, args: &[OsString], shell: &OsStr) 
     let result = cmd
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .spawn()
-        .ok()?
-        .wait_with_output()
-        .ok()?;
+        .spawn()?
+        .wait_with_output()?;
     if result.status.success() {
-        String::from_utf8(result.stdout).ok()
+        Ok(String::from_utf8(result.stdout).ok())
     } else {
-        None
+        Ok(None)
     }
 }
 
@@ -970,6 +982,36 @@ mod tests {
         assert!(result.is_none());
     }
 
+    /// Invoke `try_forward_completion_to_custom`, polling past transient
+    /// `ETXTBSY` spawn failures.
+    ///
+    /// Under parallel test execution, another thread can fork() while we hold
+    /// the freshly-written script open for write. The child briefly inherits
+    /// the writable fd, and Linux refuses to exec a file with outstanding
+    /// writers (ETXTBSY). The condition clears within microseconds, so poll
+    /// until the kernel lets us through. Surfaced elsewhere — e.g. under
+    /// `cargo llvm-cov`, where coverage instrumentation widens every
+    /// fork-to-exec window enough to hit this reliably.
+    #[cfg(unix)]
+    fn forward_with_etxtbsy_retry(
+        binary: &str,
+        args: &[OsString],
+        shell: &OsStr,
+    ) -> std::io::Result<Option<String>> {
+        use std::io::ErrorKind;
+        let mut result: Option<std::io::Result<Option<String>>> = None;
+        worktrunk::testing::wait_for("ETXTBSY to clear and script to exec", || {
+            match try_forward_completion_to_custom(binary, args, shell) {
+                Err(e) if e.kind() == ErrorKind::ExecutableFileBusy => false,
+                other => {
+                    result = Some(other);
+                    true
+                }
+            }
+        });
+        result.expect("wait_for returned without recording a result")
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_forward_to_custom_binary() {
@@ -979,13 +1021,13 @@ mod tests {
         std::fs::write(&script, "#!/bin/sh\nprintf '%s\\n%s' '--all' '--verbose'\n").unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        let result = forward_completion_to_custom(
+        let output = forward_with_etxtbsy_retry(
             script.to_str().unwrap(),
             &[OsString::from("fake"), OsString::from("--")],
             OsStr::new("bash"),
-        );
-        assert!(result.is_some());
-        let output = result.unwrap();
+        )
+        .expect("spawn failed")
+        .expect("script exited non-zero or produced invalid UTF-8");
         assert!(output.contains("--all"));
         assert!(output.contains("--verbose"));
     }
@@ -999,11 +1041,13 @@ mod tests {
         std::fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        let result = forward_completion_to_custom(
+        // The script spawned successfully but exited 1 — Ok(None), not Err.
+        let result = forward_with_etxtbsy_retry(
             script.to_str().unwrap(),
             &[OsString::from("fail")],
             OsStr::new("bash"),
-        );
+        )
+        .expect("spawn failed");
         assert!(result.is_none());
     }
 }
