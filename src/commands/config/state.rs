@@ -825,8 +825,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                     Some(b) => b,
                     None => repo.require_current_branch("clear ci-status for current branch")?,
                 };
-                let config_key = format!("worktrunk.state.{branch_name}.ci-status");
-                if repo.unset_config(&config_key).unwrap_or(false) {
+                if CachedCiStatus::clear_one(&repo, &branch_name) {
                     eprintln!(
                         "{}",
                         success_message(cformat!("Cleared CI cache for <bold>{branch_name}</>"))

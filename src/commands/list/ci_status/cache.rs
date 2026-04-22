@@ -150,6 +150,17 @@ impl CachedCiStatus {
             .collect()
     }
 
+    /// Clear the cached CI status for a single branch.
+    ///
+    /// Returns `true` if a cache file was removed, `false` otherwise (no file
+    /// existed, or the removal failed). Mirrors `clear_all`'s best-effort
+    /// swallowing so the caller's success vs info message stays a simple
+    /// boolean.
+    pub(crate) fn clear_one(repo: &Repository, branch: &str) -> bool {
+        let path = Self::cache_file(repo, branch);
+        fs::remove_file(&path).is_ok()
+    }
+
     /// Clear all cached CI statuses, returns count cleared.
     pub(crate) fn clear_all(repo: &Repository) -> usize {
         let cache_dir = Self::cache_dir(repo);

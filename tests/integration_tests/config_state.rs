@@ -51,14 +51,18 @@ fn state_get_settings() -> insta::Settings {
     settings
 }
 
-/// Write CI status to the file-based cache at .git/wt/cache/ci-status/<branch>.json
-fn write_ci_cache(repo: &TestRepo, branch: &str, json: &str) {
-    let git_dir = repo.root_path().join(".git");
-    let cache_dir = git_dir.join("wt").join("cache").join("ci-status");
-    std::fs::create_dir_all(&cache_dir).unwrap();
-
+/// Path to the file-based CI cache entry at `.git/wt/cache/ci-status/<branch>.json`.
+fn ci_cache_file(repo: &TestRepo, branch: &str) -> PathBuf {
     let safe_branch = sanitize_for_filename(branch);
-    let cache_file = cache_dir.join(format!("{safe_branch}.json"));
+    repo.root_path()
+        .join(".git/wt/cache/ci-status")
+        .join(format!("{safe_branch}.json"))
+}
+
+/// Write CI status to the file-based cache.
+fn write_ci_cache(repo: &TestRepo, branch: &str, json: &str) {
+    let cache_file = ci_cache_file(repo, branch);
+    std::fs::create_dir_all(cache_file.parent().unwrap()).unwrap();
     std::fs::write(&cache_file, json).unwrap();
 }
 
@@ -443,29 +447,39 @@ fn test_state_clear_ci_status_all_empty(repo: TestRepo) {
 
 #[rstest]
 fn test_state_clear_ci_status_branch(repo: TestRepo) {
-    // Add CI cache entry
-    repo.git_command().args([
-        "config",
-        "worktrunk.state.main.ci-status",
-        &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#),
-    ])
-    .run()
-    .unwrap();
+    let head = repo.head_sha();
+    write_ci_cache(
+        &repo,
+        "main",
+        &format!(
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"{head}","branch":"main"}}"#
+        ),
+    );
+    let cache_file = ci_cache_file(&repo, "main");
+    assert!(cache_file.exists(), "cache file should exist before clear");
 
     let output = wt_state_cmd(&repo, "ci-status", "clear", &[])
         .output()
         .unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared CI cache for [1mmain[22m[39m");
+    assert!(
+        !cache_file.exists(),
+        "cache file should be gone after clear"
+    );
 }
 
 #[rstest]
 fn test_state_clear_ci_status_branch_not_cached(repo: TestRepo) {
+    let cache_file = ci_cache_file(&repo, "main");
+    assert!(!cache_file.exists(), "cache file should not exist");
+
     let output = wt_state_cmd(&repo, "ci-status", "clear", &[])
         .output()
         .unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No CI cache for [1mmain[22m");
+    assert!(!cache_file.exists(), "cache file should still not exist");
 }
 
 // ============================================================================
@@ -1385,20 +1399,26 @@ fn test_state_clear_ci_status_specific_branch(repo: TestRepo) {
         .run()
         .unwrap();
 
-    // Add CI cache via git config for the specific branch
-    repo.git_command().args([
-        "config",
-        "worktrunk.state.feature.ci-status",
-        &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#),
-    ])
-    .run()
-    .unwrap();
+    let head = repo.head_sha();
+    write_ci_cache(
+        &repo,
+        "feature",
+        &format!(
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"{head}","branch":"feature"}}"#
+        ),
+    );
+    let cache_file = ci_cache_file(&repo, "feature");
+    assert!(cache_file.exists(), "cache file should exist before clear");
 
     let output = wt_state_cmd(&repo, "ci-status", "clear", &["--branch", "feature"])
         .output()
         .unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared CI cache for [1mfeature[22m[39m");
+    assert!(
+        !cache_file.exists(),
+        "cache file should be gone after clear"
+    );
 }
 
 #[rstest]
@@ -1408,12 +1428,15 @@ fn test_state_clear_ci_status_specific_branch_not_cached(repo: TestRepo) {
         .args(["branch", "feature"])
         .run()
         .unwrap();
+    let cache_file = ci_cache_file(&repo, "feature");
+    assert!(!cache_file.exists(), "cache file should not exist");
 
     let output = wt_state_cmd(&repo, "ci-status", "clear", &["--branch", "feature"])
         .output()
         .unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No CI cache for [1mfeature[22m");
+    assert!(!cache_file.exists(), "cache file should still not exist");
 }
 
 #[rstest]
