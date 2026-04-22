@@ -344,6 +344,64 @@ fn test_for_each_commit_matches_per_worktree_head(repo: TestRepo) {
     }
 }
 
+/// `{{ commit }}` for a sibling worktree on detached HEAD must resolve to that
+/// worktree's HEAD — not the running worktree's HEAD. The cache key for
+/// `WorkingTree::head_sha` is the worktree path, and HEAD is per-worktree, so
+/// reading via `repo.current_worktree()` in a detached sibling would return
+/// the main worktree's SHA. Build a divergence: advance `feature-b` past the
+/// shared tip, then detach it at that new SHA so its HEAD differs from main.
+#[rstest]
+fn test_for_each_commit_detached_sibling_matches_per_worktree_head(repo: TestRepo) {
+    let feature_b_path = repo.worktree_path("feature-b").to_path_buf();
+    repo.run_git_in(
+        &feature_b_path,
+        &["commit", "--allow-empty", "-m", "feature-b tip"],
+    );
+    repo.detach_head_in_worktree("feature-b");
+
+    let main_sha = repo.git_output(&["rev-parse", "HEAD"]);
+    let feature_b_sha = repo.head_sha_in(&feature_b_path);
+    assert_ne!(
+        main_sha, feature_b_sha,
+        "detached sibling must have a distinct HEAD so a buggy fallback to the running worktree's SHA is visible",
+    );
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "for-each",
+            "--",
+            "echo",
+            "{{ branch }} {{ commit }}",
+        ])
+        .output()
+        .expect("run wt step for-each");
+
+    assert!(
+        output.status.success(),
+        "for-each failed: stderr={}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Detached HEAD surfaces as `{{ branch }} == "HEAD"`. The sibling's commit
+    // must be its own HEAD, not the running worktree's.
+    let needle = format!("HEAD {feature_b_sha}");
+    assert!(
+        combined.contains(&needle),
+        "expected detached sibling's {{{{ commit }}}} = {feature_b_sha} in output\noutput={combined}",
+    );
+    assert!(
+        !combined.contains(&format!("HEAD {main_sha}")),
+        "detached sibling's {{{{ commit }}}} must not resolve to main's SHA {main_sha}\noutput={combined}",
+    );
+}
+
 #[rstest]
 fn test_for_each_json_with_failure(repo: TestRepo) {
     repo.commit("initial");
