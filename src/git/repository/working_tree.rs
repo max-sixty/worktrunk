@@ -233,21 +233,20 @@ impl<'a> WorkingTree<'a> {
             return Ok(WorkingTreeGitInfo::default());
         }
 
-        // `root` and `git_dir` are safe to cache whenever their lines landed
-        // AND canonicalize succeeds, because any failure in the batch is from
-        // HEAD — which comes after. Skipping the cache on canonicalize failure
-        // preserves the invariant that `worktree_roots` / `git_dirs` contain
-        // only confirmed paths; a later bare accessor call will retry.
-        let root = lines
-            .next()
-            .and_then(|raw| canonicalize(PathBuf::from(raw.trim())).ok());
-        if let Some(canonical) = &root {
-            self.repo
-                .cache
-                .worktree_roots
-                .entry(self.path.clone())
-                .or_insert_with(|| canonical.clone());
-        }
+        // `root` and `git_dir` are safe to cache whenever their lines landed,
+        // because any failure in the batch is from HEAD — which comes after.
+        // `--show-toplevel` always emits a line when `is_inside=true`; if
+        // canonicalize of that line fails (e.g., pathological filesystem
+        // state), fall back to `self.path` which is already canonicalized by
+        // `worktree_at` and guaranteed inside the work tree.
+        let raw_toplevel = lines.next().unwrap_or("").trim();
+        let canonical = canonicalize(PathBuf::from(raw_toplevel)).unwrap_or(self.path.clone());
+        self.repo
+            .cache
+            .worktree_roots
+            .entry(self.path.clone())
+            .or_insert_with(|| canonical.clone());
+        let root = Some(canonical);
 
         let git_dir = lines.next().and_then(|raw| {
             let path = PathBuf::from(raw.trim());
