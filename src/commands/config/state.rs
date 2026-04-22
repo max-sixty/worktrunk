@@ -660,24 +660,17 @@ pub fn handle_state_get(
                 None => repo.require_current_branch("get ci-status for current branch")?,
             };
 
-            // Determine if this is a remote ref by checking git refs directly.
-            // This is authoritative - we check actual refs, not guessing from name.
             let is_remote = repo.is_remote_tracking_branch(&branch_name);
 
-            // Get the HEAD commit for this branch
             let head = repo
                 .run_command(&["rev-parse", &branch_name])
-                .map(|s| s.trim().to_string())
-                .unwrap_or_default();
-
-            if head.is_empty() {
-                return Err(worktrunk::git::GitError::BranchNotFound {
-                    branch: branch_name,
+                .map_err(|_| worktrunk::git::GitError::BranchNotFound {
+                    branch: branch_name.clone(),
                     show_create_hint: true,
                     last_fetch_ago: None,
-                }
-                .into());
-            }
+                })?
+                .trim()
+                .to_string();
 
             let ci_branch = CiBranchName::from_branch_ref(&branch_name, is_remote);
             let pr_status = PrStatus::detect(&repo, &ci_branch, &head);
