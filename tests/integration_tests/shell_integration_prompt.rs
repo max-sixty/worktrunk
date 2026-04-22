@@ -1,7 +1,7 @@
 //! Tests for the shell integration first-run prompt
 //!
 //! These tests verify that `prompt_shell_integration` behaves correctly across scenarios:
-//! - Skips when shell integration is active (WORKTRUNK_DIRECTIVE_FILE set)
+//! - Skips when shell integration is active (WORKTRUNK_DIRECTIVE_CD_FILE set)
 //! - Skips when already prompted (config flag true)
 //! - Skips when already installed (config line exists in shell config)
 //! - Shows hint when not a TTY (non-interactive)
@@ -13,7 +13,7 @@ use std::fs;
 use worktrunk::config::UserConfig;
 
 ///
-/// When WORKTRUNK_DIRECTIVE_FILE is set (shell integration active), we should:
+/// When WORKTRUNK_DIRECTIVE_CD_FILE is set (shell integration active), we should:
 /// 1. Never call prompt_shell_integration()
 /// 2. Have zero overhead from the prompt feature
 #[rstest]
@@ -30,12 +30,15 @@ fn test_switch_with_active_shell_integration_no_prompt(repo: TestRepo) {
         String::from_utf8_lossy(&create_output.stderr)
     );
 
-    // Now switch with shell integration "active" (directive file set)
-    // The directive file must exist (shell wrapper creates it before calling wt)
-    let directive_file = repo.root_path().join("directive.txt");
-    fs::write(&directive_file, "").unwrap();
+    // Now switch with shell integration "active" (CD directive file set)
+    // The file must exist (shell wrapper creates it before calling wt)
+    let cd_file = repo.root_path().join("directive_cd.txt");
+    let exec_file = repo.root_path().join("directive_exec.txt");
+    fs::write(&cd_file, "").unwrap();
+    fs::write(&exec_file, "").unwrap();
     let mut cmd = repo.wt_command();
-    cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
+    cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &cd_file);
+    cmd.env("WORKTRUNK_DIRECTIVE_EXEC_FILE", &exec_file);
 
     let output = cmd.args(["switch", "feature"]).output().unwrap();
 
@@ -46,11 +49,11 @@ fn test_switch_with_active_shell_integration_no_prompt(repo: TestRepo) {
         "Switch should succeed.\nstderr: {stderr}\nstdout: {stdout}"
     );
 
-    // The directive file should have cd command (shell integration active)
-    let directive = fs::read_to_string(&directive_file).unwrap_or_default();
+    // The CD file should have a path (shell integration active)
+    let cd_content = fs::read_to_string(&cd_file).unwrap_or_default();
     assert!(
-        directive.contains("cd "),
-        "Directive should contain cd command when shell integration active"
+        !cd_content.trim().is_empty(),
+        "CD file should contain a path when shell integration active"
     );
 
     // No install prompt in output (would contain "Install shell integration")
@@ -228,7 +231,7 @@ mod pty_tests {
     /// Test: Already installed (config line exists) → skip prompt
     ///
     /// This covers the "installed but shell not restarted" scenario where:
-    /// - Shell integration is not active (no WORKTRUNK_DIRECTIVE_FILE)
+    /// - Shell integration is not active (no directive env vars)
     /// - But the config line is already in shell config files
     /// - We should detect this and skip the prompt (not show interactive prompt)
     /// - We should NOT mark as prompted (no interactive prompt shown)
@@ -245,8 +248,12 @@ mod pty_tests {
         fs::write(&bashrc, format!("{config_line}\n")).unwrap();
 
         let mut env_vars = repo.test_env_vars();
-        // Remove WORKTRUNK_DIRECTIVE_FILE if present (ensure shell integration not active)
-        env_vars.retain(|(k, _)| k != "WORKTRUNK_DIRECTIVE_FILE");
+        // Remove directive env vars (ensure shell integration not active)
+        env_vars.retain(|(k, _)| {
+            k != "WORKTRUNK_DIRECTIVE_CD_FILE"
+                && k != "WORKTRUNK_DIRECTIVE_EXEC_FILE"
+                && k != "WORKTRUNK_DIRECTIVE_FILE"
+        });
         // Set SHELL to bash since we're testing with .bashrc
         env_vars.push(("SHELL".to_string(), "/bin/bash".to_string()));
 

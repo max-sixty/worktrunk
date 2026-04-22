@@ -1,8 +1,12 @@
+# HOW THE BINARY GETS BUILT:
+# Has a dummy integration test (tests/builds.rs) that triggers binary compilation
+# when running `cargo test`. Combined with `workspace.default-members` including
+# this package, `cargo test` automatically builds the binary.
 [package]
 name = "wt-perf"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.93"
 publish = false
 description = "Performance testing and tracing tools for worktrunk"
 
@@ -13,6 +17,9 @@ dunce = "1"
 
 # For CLI
 clap = { version = "4", features = ["derive"] }
+
+# For JSON output
+serde_json = "1"
 
 # For trace parsing (reuse worktrunk's trace module)
 worktrunk = { path = "../../.." }

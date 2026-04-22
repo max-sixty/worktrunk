@@ -1,7 +1,8 @@
 use crate::common::{
-    TestRepo, configure_directive_file, directive_file, make_snapshot_cmd,
+    TestRepo, configure_directive_files, directive_files, make_snapshot_cmd,
     make_snapshot_cmd_with_global_flags, repo, repo_with_remote, set_temp_home_env,
-    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wt_command,
+    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wait_for_file_content,
+    wt_command,
 };
 use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
@@ -39,16 +40,16 @@ fn snapshot_switch_impl(
 ) {
     let settings = setup_snapshot_settings(repo);
     settings.bind(|| {
-        // Directive file guard - declared at closure scope to live through command execution
+        // Directive file guards - declared at closure scope to live through command execution
         let maybe_directive = if with_directive_file {
-            Some(directive_file())
+            Some(directive_files())
         } else {
             None
         };
 
         let mut cmd = make_snapshot_cmd(repo, "switch", args, cwd);
-        if let Some((ref directive_path, ref _guard)) = maybe_directive {
-            configure_directive_file(&mut cmd, directive_path);
+        if let Some((ref cd_path, ref exec_path, ref _guard)) = maybe_directive {
+            configure_directive_files(&mut cmd, cd_path, exec_path);
         }
         if let Some(shell_path) = shell {
             cmd.env("SHELL", shell_path);
@@ -720,7 +721,7 @@ echo 'repo={{ repo }}'
     });
 }
 
-// --no-verify flag tests
+// --no-hooks flag tests
 #[rstest]
 fn test_switch_no_config_commands_execute_still_runs(repo: TestRepo) {
     snapshot_switch(
@@ -731,7 +732,7 @@ fn test_switch_no_config_commands_execute_still_runs(repo: TestRepo) {
             "no-hooks-test",
             "--execute",
             "echo 'execute command runs'",
-            "--no-verify",
+            "--no-hooks",
         ],
     );
 }
@@ -770,11 +771,11 @@ approved-commands = ["{}"]
     )
     .unwrap();
 
-    // With --no-verify, the post-start command should be skipped
+    // With --no-hooks, the post-start command should be skipped
     snapshot_switch(
         "switch_no_hooks_skips_post_start",
         &repo,
-        &["--create", "no-post-start", "--no-verify"],
+        &["--create", "no-post-start", "--no-hooks"],
     );
 }
 
@@ -782,7 +783,7 @@ approved-commands = ["{}"]
 fn test_switch_no_config_commands_with_existing_worktree(mut repo: TestRepo) {
     repo.add_worktree("existing-no-hooks");
 
-    // With --no-verify, the --execute command should still run
+    // With --no-hooks, the --execute command should still run
     snapshot_switch(
         "switch_no_hooks_existing",
         &repo,
@@ -790,7 +791,7 @@ fn test_switch_no_config_commands_with_existing_worktree(mut repo: TestRepo) {
             "existing-no-hooks",
             "--execute",
             "echo 'execute still runs'",
-            "--no-verify",
+            "--no-hooks",
         ],
     );
 }
@@ -810,14 +811,36 @@ fn test_switch_no_config_commands_with_yes(repo: TestRepo) {
 
     repo.commit("Add config");
 
-    // With --no-verify, even --yes shouldn't execute config commands
+    // With --no-hooks, even --yes shouldn't execute config commands
     // (HOME is automatically set to repo.home_path() by configure_wt_cmd)
     snapshot_switch(
         "switch_no_hooks_with_yes",
         &repo,
-        &["--create", "yes-no-hooks", "--yes", "--no-verify"],
+        &["--create", "yes-no-hooks", "--yes", "--no-hooks"],
     );
 }
+
+// --no-verify backward compatibility
+#[rstest]
+fn test_switch_no_verify_deprecated_still_works(repo: TestRepo) {
+    // --no-verify should still work but emit a deprecation warning
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "deprecated-flag-test", "--no-verify"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--no-verify is deprecated"),
+        "Expected deprecation warning in stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("--no-hooks"),
+        "Expected --no-hooks suggestion in stderr: {stderr}"
+    );
+}
+
 // Branch inference and special branch tests
 #[rstest]
 fn test_switch_create_no_remote(repo: TestRepo) {
@@ -1538,6 +1561,67 @@ fn test_switch_create_no_hint_with_custom_worktree_path(repo: TestRepo) {
     );
 }
 
+/// Test that the worktree-path hint is suppressed when a project-specific
+/// worktree-path is configured (not just a global one).
+///
+/// Regression test for #1939: `has_custom_worktree_path()` only checked the
+/// global `worktree-path` setting, causing a misleading hint even when a
+/// project-specific template was configured.
+#[rstest]
+fn test_switch_create_no_hint_with_project_specific_worktree_path(repo: TestRepo) {
+    // Set origin to a GitHub URL so the project identifier matches
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/test-org/test-repo.git",
+    ]);
+
+    // Redirect GitHub URL to local bare remote for actual git operations
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/test-org/test-repo.git",
+    ]);
+
+    // Set project-specific worktree-path (no global worktree-path set)
+    repo.write_test_config(
+        r#"
+[projects."github.com/test-org/test-repo"]
+worktree-path = "{{ repo_path }}/../{{ branch | sanitize }}"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "project-feature"])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "switch --create should succeed, stderr: {stderr}"
+    );
+
+    // Hint should be suppressed when project-specific worktree-path exists
+    assert!(
+        !stderr.contains("customize worktree locations"),
+        "Hint should be suppressed when project has custom worktree-path. stderr: {stderr}"
+    );
+}
+
 // ============================================================================
 // PR Syntax Tests (pr:<number>)
 // ============================================================================
@@ -1928,6 +2012,106 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
+/// `pre-start`, `post-start`, and `post-switch` hooks on PR/MR-created worktrees
+/// see `pr_number` and `pr_url` in their template context. Both GitHub PRs and
+/// GitLab MRs canonicalize to the same `pr_*` names — hook authors don't need
+/// to branch on platform. Pre-switch fires before PR resolution and never sees
+/// them.
+#[rstest]
+fn test_switch_pr_hooks_see_pr_vars(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set up the same fork-PR scenario as test_switch_pr_fork: a refs/pull/42/head on the
+    // bare remote, origin redirected to GitHub-style URL, and `gh api` mocked.
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .run()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    // Each hook writes its own marker in the primary worktree so we can verify
+    // post-switch + post-start (background) populate pr_number/pr_url too.
+    // {{ repo_path }} is always the main repo's working tree.
+    repo.write_project_config(
+        r#"pre-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_start.txt"
+post-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_start.txt"
+post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_switch.txt"
+"#,
+    );
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:42", "--yes"]);
+    configure_mock_gh_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch pr:42 should run");
+    assert!(
+        output.status.success(),
+        "wt switch pr:42 failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let expected = "pr_number=42 pr_url=https://github.com/owner/test-repo/pull/42";
+    for marker in ["pre_start.txt", "post_start.txt", "post_switch.txt"] {
+        let path = repo.root_path().join(marker);
+        // post-* hooks run in the background; poll until the file appears.
+        wait_for_file_content(&path);
+        let contents = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{marker} should have been written: {e}"));
+        assert_eq!(
+            contents.trim(),
+            expected,
+            "{marker} hook should see canonical pr_number and pr_url variables",
+        );
+    }
+}
+
 /// Test fork PR when origin points to fork (no remote for base repo)
 ///
 /// User scenario:
@@ -1971,6 +2155,115 @@ fn test_switch_pr_fork_no_upstream_remote(#[from(repo_with_remote)] repo: TestRe
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
         configure_mock_gh_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork_no_upstream", cmd);
+    });
+}
+
+/// Test fork PR when origin points to fork but `gh repo set-default` is configured
+///
+/// User scenario:
+/// 1. User forked owner/test-repo to contributor/test-repo
+/// 2. User cloned their fork, so origin = contributor/test-repo
+/// 3. User added upstream remote pointing to owner/test-repo
+/// 4. User ran `gh repo set-default owner/test-repo`
+/// 5. User runs `wt switch pr:42` where the PR is on owner/test-repo
+/// 6. Worktrunk queries the gh default repo instead of origin → success
+#[rstest]
+fn test_switch_pr_fork_gh_default_repo(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a PR ref on the remote
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .run()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
+    // Get the bare remote's actual URL before modifying remotes
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    // Set origin to the FORK (contributor's repo) — this is the bug scenario
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/contributor/test-repo.git",
+    ]);
+
+    // Add upstream remote pointing to the parent repo
+    repo.run_git(&[
+        "remote",
+        "add",
+        "upstream",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // Redirect both GitHub URLs to the local bare remote for git operations
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/contributor/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        "--add",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // Cross-repo PR: head is contributor's fork, base is owner's repo
+    let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    fs::write(mock_bin.join("pr_response.json"), gh_response).unwrap();
+
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command(
+            "repo set-default --view",
+            MockResponse::output("owner/test-repo\n"),
+        )
+        .command("api", MockResponse::file("pr_response.json"))
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_fork_gh_default", cmd);
     });
 }
 
@@ -2043,6 +2336,248 @@ fn test_switch_pr_base_conflict(repo: TestRepo) {
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--base", "main", "pr:101"], None);
         assert_cmd_snapshot!("switch_pr_base_conflict", cmd);
+    });
+}
+
+/// `wt switch --create X --base pr:N` resolves the PR to its head branch for
+/// a same-repo PR, fetching the branch so it's usable as the base.
+#[rstest]
+fn test_switch_base_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
+    // Create the PR source branch on the remote so we have something to fetch
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    // Rewrite origin so find_remote_for_repo matches owner/test-repo
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &[
+                "--create",
+                "feat/visual-tweaks",
+                "--base",
+                "pr:101",
+                "--no-cd",
+            ],
+            None,
+        );
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_base_pr_same_repo", cmd);
+    });
+}
+
+/// `wt switch --create X --base pr:N` resolves a fork PR to its head commit
+/// SHA via refs/pull/N/head without creating a tracking branch.
+#[rstest]
+fn test_switch_base_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a PR head commit and push it as refs/pull/42/head on the remote
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .run()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    // head.repo differs from base.repo → fork PR
+    let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let mut settings = setup_snapshot_settings(&repo);
+    // Fork base resolves to a commit SHA (no tracking branch created). Mask it
+    // so the snapshot is stable across the test repo's non-deterministic SHAs.
+    // Can't use \b because ANSI escape characters aren't word boundaries.
+    settings.add_filter(r"[0-9a-f]{40}", "[SHA]");
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &["--create", "my-work", "--base", "pr:42", "--no-cd"],
+            None,
+        );
+        configure_mock_gh_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_base_pr_fork", cmd);
+    });
+
+    // The PR branch name must NOT have been created as a local branch — we
+    // just based `my-work` on the PR's head commit.
+    let branches = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["branch", "--list"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .into_owned();
+    assert!(
+        !branches.contains("feature-fix"),
+        "fork PR head should not produce a local tracking branch: {branches}"
+    );
+    assert!(
+        !branches.contains("contributor/feature-fix"),
+        "prefixed fork PR branch should not be created: {branches}"
+    );
+}
+
+/// `wt switch --create X --base mr:N` resolves a same-repo MR to its source
+/// branch, fetching it so the base is usable.
+#[rstest]
+fn test_switch_base_mr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    let glab_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "author": {"username": "alice"},
+        "state": "opened",
+        "draft": false,
+        "source_branch": "feature-auth",
+        "source_project_id": 123,
+        "target_project_id": 123,
+        "web_url": "https://gitlab.com/owner/test-repo/-/merge_requests/101"
+    }"#;
+
+    let mock_bin = setup_mock_glab_for_mr(&repo, Some(glab_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &["--create", "feat/follow-up", "--base", "mr:101", "--no-cd"],
+            None,
+        );
+        configure_mock_glab_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_base_mr_same_repo", cmd);
+    });
+}
+
+/// `--base pr:N` is ignored when `--create` is absent: we warn and do NOT
+/// hit the network. `gh` is intentionally not mocked — if the resolver ran,
+/// the command would fail with "gh: command not found".
+#[rstest]
+fn test_switch_base_pr_without_create(#[from(repo_with_remote)] mut repo: TestRepo) {
+    // A branch that already exists so `wt switch` can succeed without --create
+    repo.add_worktree("existing");
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &["existing", "--base", "pr:101", "--no-cd"],
+            None,
+        );
+        assert_cmd_snapshot!("switch_base_pr_without_create", cmd);
     });
 }
 
@@ -3635,6 +4170,103 @@ fn test_switch_with_relative_worktree_paths(repo: TestRepo) {
 
     // Verify switching to the relative-path worktree works
     snapshot_switch("switch_to_relative_paths", &repo, &["relative-test"]);
+}
+
+// -- JSON format tests --
+
+#[rstest]
+fn test_switch_format_json_create(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "json-test",
+            "--no-cd",
+            "--yes",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "created");
+    assert_eq!(json["branch"], "json-test");
+    assert!(json["path"].as_str().unwrap().contains("json-test"));
+    assert_eq!(json["created_branch"], true);
+}
+
+#[rstest]
+fn test_switch_format_json_existing(mut repo: TestRepo) {
+    // Create worktree first
+    repo.add_worktree("existing-json");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "existing-json",
+            "--no-cd",
+            "--yes",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "existing");
+    assert_eq!(json["branch"], "existing-json");
+    // created_branch should be absent for existing switches
+    assert!(json.get("created_branch").is_none());
+}
+
+#[rstest]
+fn test_switch_format_json_already_at(mut repo: TestRepo) {
+    // Create worktree and switch to it
+    let path = repo.add_worktree("already-json");
+
+    let output = repo
+        .wt_command()
+        .current_dir(&path)
+        .args([
+            "switch",
+            "already-json",
+            "--no-cd",
+            "--yes",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["action"], "already_at");
+    assert_eq!(json["branch"], "already-json");
+}
+
+#[rstest]
+fn test_switch_format_table_rejected_by_clap(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "table-test",
+            "--no-cd",
+            "--yes",
+            "--format=table",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("invalid value"), "stderr: {stderr}");
 }
 
 /// Test that `[switch] cd = false` config is respected when no flags provided

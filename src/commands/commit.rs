@@ -7,9 +7,8 @@ use worktrunk::styling::{
 };
 
 use super::command_executor::CommandContext;
-use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, prepare_background_hooks, spawn_prepared_hooks,
-};
+use super::command_executor::FailureStrategy;
+use super::hooks::{HookCommandSpec, spawn_background_hooks};
 use super::repository_ext::warn_about_untracked_files;
 
 // Re-export StageMode from config for use by CLI
@@ -168,10 +167,7 @@ impl CommitOptions<'_> {
 
         // Show skip message
         if !self.verify && any_hooks_exist {
-            eprintln!(
-                "{}",
-                info_message("Skipping pre-commit hooks (--no-verify)")
-            );
+            eprintln!("{}", info_message("Skipping pre-commit hooks (--no-hooks)"));
         }
 
         if self.verify {
@@ -189,10 +185,10 @@ impl CommitOptions<'_> {
                     project_config: proj_cfg,
                     hook_type: HookType::PreCommit,
                     extra_vars: &extra_vars,
-                    name_filter: None,
+                    name_filters: &[],
                     display_path: crate::output::pre_hook_display_path(self.ctx.worktree_path),
                 },
-                HookFailureStrategy::FailFast,
+                FailureStrategy::FailFast,
             )
             .map_err(worktrunk::git::add_hook_skip_hint)?;
         }
@@ -233,16 +229,14 @@ impl CommitOptions<'_> {
             self.stage_mode,
         )?;
 
-        // Spawn post-commit hooks in background (respects --no-verify)
+        // Spawn post-commit hooks in background (respects --no-hooks)
         if self.verify {
             let extra_vars: Vec<(&str, &str)> = self
                 .target_branch
                 .into_iter()
                 .map(|target| ("target", target))
                 .collect();
-            let hooks =
-                prepare_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?;
-            spawn_prepared_hooks(self.ctx, hooks)?;
+            spawn_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?;
         }
 
         Ok(())

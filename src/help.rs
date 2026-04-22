@@ -51,7 +51,7 @@ use ansi_str::AnsiStr;
 use clap::ColorChoice;
 use clap::error::ErrorKind;
 use worktrunk::docs::convert_dollar_console_to_terminal;
-use worktrunk::styling::eprintln;
+use worktrunk::styling::{eprintln, println};
 
 use crate::cli;
 
@@ -68,8 +68,14 @@ use crate::cli;
 /// Uses `Error::render()` to get clap's pre-formatted help, which already
 /// respects `-h` (short) vs `--help` (long) distinction.
 ///
-/// Returns `true` if help was handled (caller should exit), `false` to continue normal parsing.
-pub fn maybe_handle_help_with_pager() -> bool {
+/// On a help/version/doc-generation request, prints output and calls
+/// `process::exit(0)`. Otherwise returns so the caller can continue normal parsing.
+///
+/// `alias_help_context` is computed by the caller from the same early-parse
+/// pass that extracts global options. When `Some`, the configured aliases are
+/// spliced into the rendered output — at the top level for `wt --help`, or
+/// under the Aliases section for `wt step --help`.
+pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::HelpContext>) {
     let args: Vec<String> = std::env::args().collect();
 
     // --help uses pager, -h prints directly (git convention)
@@ -91,6 +97,7 @@ pub fn maybe_handle_help_with_pager() -> bool {
     // Check for --help-md flag (output raw markdown without ANSI rendering)
     if args.iter().any(|a| a == "--help-md") {
         let mut cmd = cli::build_command();
+        cmd = crate::completion::inject_hook_subcommands(cmd);
         cmd = cmd.color(ColorChoice::Never); // No ANSI codes for raw markdown
 
         // Replace --help-md with --help for clap
@@ -126,44 +133,49 @@ pub fn maybe_handle_help_with_pager() -> bool {
     }
 
     let mut cmd = cli::build_command();
+    cmd = crate::completion::inject_hook_subcommands(cmd);
     cmd = cmd.color(clap::ColorChoice::Always); // Force clap to emit ANSI codes
 
-    match cmd.try_get_matches_from_mut(args) {
-        Ok(_) => false, // Normal args, not help
-        Err(err) => {
-            match err.kind() {
-                ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
-                    // err.render() returns a StyledStr containing ANSI codes.
-                    // Use .ansi() to preserve them; .to_string() strips ANSI codes.
-                    let clap_output = err.render().ansi().to_string();
+    if let Err(err) = cmd.try_get_matches_from_mut(&args) {
+        match err.kind() {
+            ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
+                // err.render() returns a StyledStr containing ANSI codes.
+                // Use .ansi() to preserve them; .to_string() strips ANSI codes.
+                let clap_output = err.render().ansi().to_string();
 
-                    // Render markdown sections (tables, code blocks, prose) with proper wrapping.
-                    // Since we disabled clap's wrapping above, our renderer controls all line breaks.
-                    let width = worktrunk::styling::terminal_width();
-                    let help = crate::md_help::render_markdown_in_help_with_width(
-                        &clap_output,
-                        Some(width),
-                    );
+                // Splice configured aliases into `wt --help` and
+                // `wt step --help` (and their `-h` / bare-subcommand
+                // equivalents) so the help surfaces both the built-ins and
+                // the user's aliases. Other help pages pass through.
+                let clap_output = match alias_help_context {
+                    Some(ctx) => crate::commands::augment_help(&clap_output, ctx),
+                    None => clap_output,
+                };
 
-                    // show_help_in_pager checks if stdout or stderr is a TTY.
-                    // If neither is a TTY (e.g., `wt --help &>file`), it skips the pager.
-                    // use_pager=false for -h (short help), true for --help (long help)
-                    if let Err(e) = crate::help_pager::show_help_in_pager(&help, use_pager) {
-                        log::debug!("Pager invocation failed: {}", e);
-                        eprintln!("{}", help);
-                    }
-                    process::exit(0);
+                // Render markdown sections (tables, code blocks, prose) with proper wrapping.
+                // Since we disabled clap's wrapping above, our renderer controls all line breaks.
+                let width = worktrunk::styling::terminal_width();
+                let help =
+                    crate::md_help::render_markdown_in_help_with_width(&clap_output, Some(width));
+
+                // show_help_in_pager checks if stdout or stderr is a TTY.
+                // If neither is a TTY (e.g., `wt --help &>file`), it skips the pager.
+                // use_pager=false for -h (short help), true for --help (long help)
+                if let Err(e) = crate::help_pager::show_help_in_pager(&help, use_pager) {
+                    log::debug!("Pager invocation failed: {}", e);
+                    println!("{}", help);
                 }
-                ErrorKind::DisplayVersion => {
-                    // Print to stderr - stdout is reserved for data/scripts
-                    // Use eprint! because clap's Error Display already includes a trailing newline
-                    eprint!("{}", err);
-                    process::exit(0);
-                }
-                _ => {
-                    // Not help or version - will be re-parsed by Cli::parse()
-                    false
-                }
+                process::exit(0);
+            }
+            ErrorKind::DisplayVersion => {
+                // Print to stdout — POSIX convention, and scripts rely on
+                // `version=$(wt --version)` working without redirection (#2072).
+                // Use print! because clap's Error Display already includes a trailing newline.
+                print!("{}", err);
+                process::exit(0);
+            }
+            _ => {
+                // Not help or version - will be re-parsed by Cli::parse()
             }
         }
     }
@@ -196,6 +208,7 @@ fn help_reference_inner(command_path: &[&str], width: Option<usize>, color: Colo
     args.push("--help".to_string());
 
     let mut cmd = cli::build_command();
+    cmd = crate::completion::inject_hook_subcommands(cmd);
     cmd = cmd.color(color);
     if let Some(w) = width {
         cmd = cmd.term_width(w);
@@ -300,6 +313,7 @@ fn extract_about_and_subtitle(cmd: &clap::Command) -> (Option<String>, Option<St
 /// by the docs sync test to auto-populate the `description` field in frontmatter.
 fn handle_help_description(args: &[String]) {
     let mut cmd = cli::build_command();
+    cmd = crate::completion::inject_hook_subcommands(cmd);
     cmd = cmd.color(ColorChoice::Never);
 
     let subcommand = args
@@ -352,6 +366,7 @@ fn handle_help_description(args: &[String]) {
 /// This is used to generate docs/content/merge.md etc from the source.
 fn handle_help_page(args: &[String], plain: bool) {
     let mut cmd = cli::build_command();
+    cmd = crate::completion::inject_hook_subcommands(cmd);
     cmd = cmd.color(ColorChoice::Never);
 
     // Find the subcommand name (the arg before --help-page, or after wt)

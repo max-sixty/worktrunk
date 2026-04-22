@@ -191,8 +191,16 @@ pub(super) fn detect_gitlab(
 }
 
 /// Detect GitLab pipeline status for a branch (when no MR exists).
-pub(super) fn detect_gitlab_pipeline(branch: &str, local_head: &str) -> Option<PrStatus> {
-    // Get most recent pipeline for the branch using JSON output
+pub(super) fn detect_gitlab_pipeline(
+    repo: &Repository,
+    branch: &str,
+    local_head: &str,
+) -> Option<PrStatus> {
+    let repo_root = repo.current_worktree().root().ok()?;
+
+    // Get most recent pipeline for the branch using JSON output.
+    // Set cwd to the repo root so `glab` resolves the correct project from
+    // `.git/config` — matches `detect_gitlab` and `fetch_mr_details`.
     let output = match non_interactive_cmd("glab")
         .args([
             "ci",
@@ -204,6 +212,7 @@ pub(super) fn detect_gitlab_pipeline(branch: &str, local_head: &str) -> Option<P
             "--output",
             "json",
         ])
+        .current_dir(&repo_root)
         .run()
     {
         Ok(output) => output,

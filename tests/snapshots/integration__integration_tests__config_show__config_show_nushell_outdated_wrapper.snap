@@ -20,6 +20,7 @@ info:
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     NO_COLOR: ""
+    OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -33,6 +34,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -40,8 +42,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
 [2m↳[22m [2mEmpty file (using defaults)[22m
 
@@ -57,9 +57,10 @@ exit_code: 0
 [2m○[22m [2mbash: Skipped; ~/.bashrc not found[22m
 [2m○[22m [2mzsh: Skipped; ~/.zshrc not found[22m
 [2m○[22m [2mfish: Skipped; ~/.config/fish/functions not found[22m
-[2m↳[22m [2mTo configure, run [4mwt config shell install[24m[22m
 
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m
 [2m○[22m git: [1m[VERSION][22m
 [2m○[22m Hyperlinks: [1minactive[22m
+
+----- stderr -----

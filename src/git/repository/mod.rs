@@ -15,7 +15,54 @@
 //! - `diff.rs` - Diff, history, and commit operations
 //! - `config.rs` - Git config, hints, markers, and default branch detection
 //! - `integration.rs` - Integration detection (same commit, ancestor, trees match)
+//!
+//! # Caching
+//!
+//! Most repository data — remote URLs, config, default branch, merge-bases — is stable
+//! for the duration of a single CLI command. [`RepoCache`] exploits this by caching
+//! read-only values so repeated queries hit memory instead of spawning git processes.
+//!
+//! **Lifetime.** A cache is created once per `Repository::at()` call and never
+//! invalidated. There is no expiry, no dirty-tracking, no
+//! manual flush — the cache lives exactly as long as the command.
+//!
+//! **Sharing.** `Repository` holds an `Arc<RepoCache>`, so cloning a `Repository`
+//! (e.g., to pass into parallel worktree operations in `wt list`) shares the same
+//! cache. Callers that need a *separate* cache must call `Repository::at()` again.
+//!
+//! **What is NOT cached.** Values that change during command execution are intentionally
+//! excluded:
+//! - `WorkingTree::is_dirty()` — changes as we stage and commit
+//! - `Repository::list_worktrees()` — changes as we create and remove worktrees
+//!
+//! **Access patterns.** See the [`RepoCache`] doc comment for the two storage patterns
+//! (repo-wide `OnceCell` vs per-key `DashMap`) and their infallible/fallible variants.
+//!
+//! **Invariants:**
+//! - A cached value, once written, is never updated within the same command.
+//! - All cache access is lock-free at the call site — `OnceCell` and `DashMap` handle
+//!   synchronization internally.
+//! - Code that mutates repository state (committing, creating worktrees) must not read
+//!   its own mutations through the cache. Use direct git commands for post-mutation
+//!   state.
+//!
+//! **Process-level singletons.** Outside `RepoCache`, several modules use `OnceLock`/`LazyLock`
+//! for process-global singletons that are computed once and never change:
+//! - Resource limiters: `CMD_SEMAPHORE` (shell_exec), `HEAVY_OPS_SEMAPHORE` (git),
+//!   `LLM_SEMAPHORE` (summary), `COPY_POOL` (copy)
+//! - Global state: `OUTPUT_STATE` (output), `TRACE` and `OUTPUT` (log_files), `COMMAND_LOG`
+//! - Config: `CONFIG_PATH` (config/user/path), `SHELL_CONFIG`, `GIT_ENV_OVERRIDES` (shell_exec)
+//! - Git discovery: `GIT_COMMON_DIR_CACHE` (below) — memoizes `git rev-parse --git-common-dir`
+//!   across `Repository::at()` calls
+//!
+//! These are lazy initialization, not caches — they have no invalidation concerns
+//! because the container is initialized once and never replaced — unlike `RepoCache`,
+//! there is no risk of reading stale external state.
+//!
+//! The picker also maintains a `PreviewCache` (`Arc<DashMap>` in `commands/picker/items.rs`)
+//! for rendered preview output, scoped to a single picker session.
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -28,15 +75,16 @@ use crate::shell_exec::Cmd;
 
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
+use wait_timeout::ChildExt;
 
 use anyhow::{Context, bail};
 
 use dunce::canonicalize;
 
-use crate::config::{ProjectConfig, ResolvedConfig, UserConfig};
+use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
-use super::{DefaultBranchName, GitError, LineDiff, WorktreeInfo};
+use super::{DefaultBranchName, GitError, IntegrationReason, LineDiff, WorktreeInfo};
 
 // Re-export types needed by submodules
 pub(super) use super::{BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl};
@@ -48,6 +96,7 @@ mod config;
 mod diff;
 mod integration;
 mod remotes;
+mod sha_cache;
 mod working_tree;
 mod worktrees;
 
@@ -80,6 +129,28 @@ impl std::fmt::Display for StreamCommandError {
 
 impl std::error::Error for StreamCommandError {}
 
+/// Convert a child exit status into `Ok(())` or a [`StreamCommandError`].
+fn stream_exit_result(
+    status: std::process::ExitStatus,
+    buffer: &Arc<Mutex<Vec<String>>>,
+    cmd_str: &str,
+) -> anyhow::Result<()> {
+    if status.success() {
+        return Ok(());
+    }
+    let lines = buffer.lock().unwrap();
+    let exit_info = status
+        .code()
+        .map(|c| format!("exit code {c}"))
+        .unwrap_or_else(|| "killed by signal".to_string());
+    Err(StreamCommandError {
+        output: lines.join("\n"),
+        command: cmd_str.to_string(),
+        exit_info,
+    }
+    .into())
+}
+
 // ============================================================================
 // Repository Cache
 // ============================================================================
@@ -92,24 +163,60 @@ impl std::error::Error for StreamCommandError {}
 ///
 /// Wrapped in Arc to allow releasing the outer HashMap lock before accessing
 /// cached values, avoiding deadlocks when cached methods call each other.
+///
+/// # Cache access patterns
+///
+/// Repo-wide values use `OnceCell::get_or_init` / `get_or_try_init` — single
+/// initialization, no key.
+///
+/// Keyed values use `DashMap`. Both patterns hold the shard lock across
+/// check-and-insert (no TOCTOU gap). Choose based on whether computation
+/// is fallible:
+///
+/// **Infallible** — use `entry().or_insert_with()`:
+///
+/// ```rust,ignore
+/// self.cache.some_map
+///     .entry(key)
+///     .or_insert_with(|| compute())
+///     .clone()
+/// ```
+///
+/// **Fallible** — use explicit `Entry` matching to propagate errors:
+///
+/// ```rust,ignore
+/// match self.cache.some_map.entry(key) {
+///     Entry::Occupied(e) => Ok(e.get().clone()),
+///     Entry::Vacant(e) => {
+///         let value = compute()?;
+///         Ok(e.insert(value).clone())
+///     }
+/// }
+/// ```
 #[derive(Debug, Default)]
 pub(super) struct RepoCache {
     // ========== Repo-wide values (same for all worktrees) ==========
-    /// Whether this is a bare repository
-    pub(super) is_bare: OnceCell<bool>,
+    /// Every git config key in the merged config (system + global + repo),
+    /// populated by one `git config --list -z` read on first access.
+    ///
+    /// All the single-key config accessors (`is_bare`, `primary_remote`,
+    /// `remote_url`, `default_branch` fast path, hint/marker readers)
+    /// consult this map instead of spawning their own subprocess. Multivars
+    /// (e.g., multiple `remote.origin.url` entries) accumulate in the Vec.
+    /// `RwLock` rather than `OnceCell` so in-process writes via
+    /// [`Repository::set_config_value`] stay coherent after population.
+    ///
+    /// `IndexMap` preserves insertion order, matching git's own `--list -z`
+    /// output order — so accessors that iterate the map (e.g.,
+    /// `primary_remote` picking "first remote with a URL") follow config
+    /// file order the same way the old `--get-regexp` calls did.
+    pub(super) all_config: OnceCell<std::sync::RwLock<indexmap::IndexMap<String, Vec<String>>>>,
     /// Repository root path (main worktree for normal repos, bare directory for bare repos)
     pub(super) repo_path: OnceCell<PathBuf>,
     /// Default branch (main, master, etc.)
     pub(super) default_branch: OnceCell<Option<String>>,
-    /// Invalid default branch config (user configured a branch that doesn't exist).
-    /// Populated by `default_branch()` during config validation.
-    pub(super) invalid_default_branch: OnceCell<Option<String>>,
     /// Effective integration target (local default branch or upstream if ahead)
     pub(super) integration_target: OnceCell<Option<String>>,
-    /// Primary remote name (None if no remotes configured)
-    pub(super) primary_remote: OnceCell<Option<String>>,
-    /// Primary remote URL (None if no remotes configured or no URL)
-    pub(super) primary_remote_url: OnceCell<Option<String>>,
     /// Project identifier derived from remote URL
     pub(super) project_identifier: OnceCell<String>,
     /// Project config (loaded from .config/wt.toml in main worktree)
@@ -124,18 +231,64 @@ pub(super) struct RepoCache {
     pub(super) sparse_checkout_paths: OnceCell<Vec<String>>,
     /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
     pub(super) merge_base: DashMap<(String, String), Option<String>>,
-    /// Batch ahead/behind cache: (base_ref, branch_name) -> (ahead, behind)
-    /// Populated by batch_ahead_behind(), used by cached_ahead_behind()
+    /// Ahead/behind cache: (base_ref, head) -> (ahead, behind).
+    /// Primed in bulk by `batch_ahead_behind()`; populated on demand by
+    /// `ahead_behind()` for keys the batch didn't cover (e.g., HEAD SHAs
+    /// during rebase/merge, or git < 2.36 where the batch is a no-op).
     pub(super) ahead_behind: DashMap<(String, String), (usize, usize)>,
     /// Effective remote URLs: remote_name -> effective URL (with `url.insteadOf` applied).
-    /// Cached because forge detection may query the same remote multiple times.
+    /// Separate from `all_config` because `git remote get-url` applies
+    /// `url.insteadOf` rewrites that aren't visible in raw config.
     pub(super) effective_remote_urls: DashMap<String, Option<String>>,
+    /// Resolved refs: unresolved ref (e.g., "main") -> resolved form (e.g., "refs/heads/main")
+    /// or original if not a local branch. Populated by `resolve_preferring_branch()`.
+    pub(super) resolved_refs: DashMap<String, String>,
+    /// Effective integration targets: local_target -> effective ref (may be upstream).
+    /// Cached because `integration_reason()` calls `effective_integration_target()` for
+    /// every branch, but the result depends only on the target ref's relationship with
+    /// its upstream — stable for the duration of a command.
+    pub(super) effective_integration_targets: DashMap<String, String>,
+    /// Integration reason cache: (branch, target) -> (effective_target, reason).
+    /// Populated by `integration_reason()`, avoids redundant `compute_integration_lazy()`
+    /// calls when the same branch is checked multiple times (e.g., step_prune Phase 1
+    /// followed by prepare_worktree_removal).
+    pub(super) integration_reasons: DashMap<(String, String), (String, Option<IntegrationReason>)>,
+
+    /// Tree SHA cache: tree spec (e.g., "refs/heads/main^{tree}") -> SHA.
+    /// The tree SHA for a given ref doesn't change during a command.
+    pub(super) tree_shas: DashMap<String, String>,
+
+    /// Commit SHA cache: ref (e.g., "main", "refs/heads/main") -> commit SHA.
+    /// The commit SHA for a given ref doesn't change during a command.
+    /// Used by `rev_parse_commit()` to key the persistent `sha_cache` by SHA.
+    pub(super) commit_shas: DashMap<String, String>,
+
+    /// Upstream tracking branch cache: local branch -> upstream (e.g., "origin/main").
+    /// None means "no upstream configured". Lazily loaded on first access via
+    /// `Branch::upstream()` → `fetch_all_upstreams()`.
+    pub(super) upstreams: OnceCell<HashMap<String, Option<String>>>,
+    /// Commit details cache: commit SHA -> (timestamp, subject).
+    /// Multiple items sharing the same HEAD commit (e.g., worktrees on main)
+    /// would otherwise each spawn a `git log -1` for the same SHA.
+    pub(super) commit_details: DashMap<String, (i64, String)>,
+    /// In-memory branch diff stats cache: (base_sha, head_sha) -> LineDiff.
+    /// Sits in front of the persistent `sha_cache` to prevent parallel tasks
+    /// from racing through the file-based cache for the same SHA pair.
+    pub(super) diff_stats: DashMap<(String, String), LineDiff>,
 
     // ========== Per-worktree values (keyed by path) ==========
+    /// Per-worktree git directory: worktree_path -> canonicalized git dir
+    /// (e.g., `.git/worktrees/<name>` for linked worktrees, `.git` for main)
+    pub(super) git_dirs: DashMap<PathBuf, PathBuf>,
     /// Worktree root paths: worktree_path -> canonicalized root
     pub(super) worktree_roots: DashMap<PathBuf, PathBuf>,
     /// Current branch per worktree: worktree_path -> branch name (None = detached HEAD)
     pub(super) current_branches: DashMap<PathBuf, Option<String>>,
+    /// Cached `git status --porcelain` output per worktree: worktree_path -> raw porcelain.
+    /// Populated by `WorkingTree::status_porcelain_cached()` so parallel tasks
+    /// (working-tree diff + conflict detection) share one subprocess per worktree
+    /// instead of spawning `git status` twice.
+    pub(super) status_porcelain: DashMap<PathBuf, String>,
 }
 
 /// Result of resolving a worktree name.
@@ -164,6 +317,21 @@ static BASE_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 /// Default base path when -C flag is not provided.
 static DEFAULT_BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("."));
+
+/// Process-wide cache for `git rev-parse --git-common-dir` resolution,
+/// keyed by the discovery path passed to [`Repository::at`].
+///
+/// Unlike per-Repository caches, this lives for the whole process so that
+/// multiple Repository instances pointed at the same path (e.g.
+/// `init_command_log` early in `main`, then a command handler later) skip
+/// the duplicate `git rev-parse` subprocess. The value (a canonicalized
+/// `.git` directory) is invariant for the lifetime of the process.
+///
+/// Keys are stored as-is (not canonicalized) — the goal is only to dedupe
+/// repeated calls with the same path. The duplicate case we care about (both
+/// callers go through `base_path()`) always passes the same `PathBuf`, so
+/// equality on the raw path is sufficient.
+static GIT_COMMON_DIR_CACHE: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new(DashMap::new);
 
 /// Initialize the global base path for repository operations.
 ///
@@ -266,11 +434,56 @@ impl Repository {
     /// Prefer [`config()`](Self::config) for behavior settings. This is only needed
     /// for operations that require the full `UserConfig` (e.g., path template formatting,
     /// approval state, hook resolution).
+    ///
+    /// Each config layer (system file, user file, env vars) degrades
+    /// independently — a failure in one preserves data from earlier layers.
+    /// Issues are surfaced on stderr so they're visible without `RUST_LOG`.
     pub fn user_config(&self) -> &UserConfig {
         self.cache.user_config.get_or_init(|| {
-            UserConfig::load()
-                .inspect_err(|err| log::warn!("Failed to load user config, using defaults: {err}"))
-                .unwrap_or_default()
+            let (config, warnings) = UserConfig::load_with_warnings();
+            for warning in &warnings {
+                match warning {
+                    LoadError::File { path, label, err } => {
+                        crate::styling::eprintln!(
+                            "{}",
+                            crate::styling::warning_message(format!(
+                                "{label} at {} failed to parse, skipping",
+                                crate::path::format_path_for_display(path),
+                            ))
+                        );
+                        crate::styling::eprintln!(
+                            "{}",
+                            crate::styling::format_with_gutter(&err.to_string(), None)
+                        );
+                    }
+                    LoadError::Env { err, vars } => {
+                        let var_list: Vec<_> = vars
+                            .iter()
+                            .map(|(name, value)| format!("{name}={value}"))
+                            .collect();
+                        crate::styling::eprintln!(
+                            "{}",
+                            crate::styling::warning_message(format!(
+                                "Ignoring env var overrides: {}",
+                                var_list.join(", ")
+                            ))
+                        );
+                        crate::styling::eprintln!(
+                            "{}",
+                            crate::styling::format_with_gutter(err.trim(), None)
+                        );
+                    }
+                    LoadError::Validation(err) => {
+                        crate::styling::eprintln!(
+                            "{}",
+                            crate::styling::warning_message(format!(
+                                "Config validation warning: {err}"
+                            ))
+                        );
+                    }
+                }
+            }
+            config
         })
     }
 
@@ -288,7 +501,15 @@ impl Repository {
     ///
     /// Always returns a canonicalized absolute path to ensure consistent
     /// comparison with `WorkingTree::git_dir()`.
+    ///
+    /// Result is cached process-wide in [`GIT_COMMON_DIR_CACHE`] so multiple
+    /// `Repository::at()` calls for the same discovery path don't each spawn
+    /// `git rev-parse --git-common-dir`.
     fn resolve_git_common_dir(discovery_path: &Path) -> anyhow::Result<PathBuf> {
+        if let Some(cached) = GIT_COMMON_DIR_CACHE.get(discovery_path) {
+            return Ok(cached.clone());
+        }
+
         let output = Cmd::new("git")
             .args(["rev-parse", "--git-common-dir"])
             .current_dir(discovery_path)
@@ -309,7 +530,10 @@ impl Repository {
         } else {
             path
         };
-        canonicalize(&absolute_path).context("Failed to resolve git common directory")
+        let resolved =
+            canonicalize(&absolute_path).context("Failed to resolve git common directory")?;
+        GIT_COMMON_DIR_CACHE.insert(discovery_path.to_path_buf(), resolved.clone());
+        Ok(resolved)
     }
 
     /// Get the path this repository was discovered from.
@@ -330,11 +554,16 @@ impl Repository {
     /// Get a worktree view at a specific path.
     ///
     /// Use this when you need to operate on a worktree other than the current one.
+    ///
+    /// The path is canonicalized when it exists so that callers passing
+    /// equivalent forms (e.g., cwd from JSON vs path from `git worktree list
+    /// --porcelain`) hit the same per-worktree cache entries in `RepoCache`.
+    /// Falls back to the raw path if canonicalization fails (e.g., path does
+    /// not yet exist for a worktree about to be created).
     pub fn worktree_at(&self, path: impl Into<PathBuf>) -> WorkingTree<'_> {
-        WorkingTree {
-            repo: self,
-            path: path.into(),
-        }
+        let raw = path.into();
+        let path = canonicalize(&raw).unwrap_or(raw);
+        WorkingTree { repo: self, path }
     }
 
     /// Get a branch handle for branch-specific operations.
@@ -399,6 +628,19 @@ impl Repository {
         self.git_common_dir().join("wt")
     }
 
+    /// Clear all cached git command results, returning the count removed.
+    pub fn clear_git_commands_cache(&self) -> usize {
+        sha_cache::clear_all(self)
+    }
+
+    /// Count all cached git command results without clearing.
+    ///
+    /// Surfaces the same state that `clear_git_commands_cache` would sweep,
+    /// for the `wt config state get` parity view.
+    pub fn git_commands_cache_count(&self) -> usize {
+        sha_cache::count_all(self)
+    }
+
     /// Get the directory where worktrunk background logs are stored.
     ///
     /// Returns `<git-common-dir>/wt/logs/` (typically `.git/wt/logs/`).
@@ -426,60 +668,125 @@ impl Repository {
     ///
     /// Result is cached in the repository's shared cache (same for all clones).
     ///
-    /// # Why we run from `git_common_dir`
+    /// # Resolution strategy
     ///
-    /// We need to return the *main* worktree regardless of which worktree we were discovered
-    /// from. For linked worktrees, `git_common_dir` is the stable reference that's shared
-    /// across all worktrees (e.g., `/myapp/.git` whether you're in `/myapp` or `/myapp.feature`).
+    /// We anchor on `git_common_dir` so that linked worktrees return the
+    /// *main* worktree regardless of which worktree we were discovered
+    /// from — `git_common_dir` is the stable reference shared across all
+    /// worktrees (e.g., `/myapp/.git` whether you're in `/myapp` or
+    /// `/myapp.feature`).
     ///
-    /// # Why the try-fallback approach
+    /// | git_common_dir location    | Signal                     | Resolution                    |
+    /// |----------------------------|----------------------------|-------------------------------|
+    /// | Bare `.git`                | `core.bare = true`         | `git_common_dir` is the repo  |
+    /// | Submodule `.git/modules/X` | `core.worktree` set by git | `rev-parse --show-toplevel`   |
+    /// | Normal `.git`              | neither set                | `parent(git_common_dir)`      |
     ///
-    /// `--show-toplevel` behavior depends on whether git has explicit worktree metadata:
+    /// Submodules need `core.worktree` because their git data lives in the
+    /// parent's `.git/modules/` — the `parent(.git)` rule would point at
+    /// `.git/modules`, which is wrong. Git writes `core.worktree`
+    /// explicitly to compensate.
     ///
-    /// | git_common_dir location    | Has `core.worktree`? | `--show-toplevel` works? |
-    /// |----------------------------|----------------------|--------------------------|
-    /// | Normal `.git`              | No (implicit)        | No — "not a work tree"   |
-    /// | Submodule `.git/modules/X` | Yes (explicit)       | Yes — reads config       |
-    ///
-    /// Normal repos don't need `core.worktree` because the worktree is implicitly `parent(.git)`.
-    /// Submodules need it because their git data lives in the parent's `.git/modules/`.
-    ///
-    /// So we try `--show-toplevel` first (handles submodules), fall back to `parent()` (handles
-    /// normal repos). This avoids fragile path-based detection of submodules.
+    /// We can't read `core.worktree` straight from the bulk config map:
+    /// `git config --list -z` merges system/global/local scope, but git
+    /// only honors `core.worktree` from **local** config for worktree
+    /// discovery. So when the bulk map reports it, we delegate to
+    /// `rev-parse --show-toplevel` and let git apply its scope rules; if
+    /// the probe fails (non-local value, git ignored it) we fall through
+    /// to the normal-repo path. The common case — no `core.worktree`
+    /// anywhere — skips the subprocess, which is the point.
     ///
     /// # Errors
     ///
-    /// Returns an error if `is_bare()` fails (e.g., git timeout). This surfaces
-    /// the failure early rather than caching a potentially wrong path.
+    /// Returns an error if the bulk config read fails (e.g., git timeout). This
+    /// surfaces the failure early rather than caching a potentially wrong path.
     pub fn repo_path(&self) -> anyhow::Result<&Path> {
         self.cache
             .repo_path
             .get_or_try_init(|| {
-                // Submodules: --show-toplevel succeeds (git has explicit core.worktree config)
-                if let Ok(out) = Cmd::new("git")
-                    .args(["rev-parse", "--show-toplevel"])
-                    .current_dir(&self.git_common_dir)
-                    .context(path_to_logging_context(&self.git_common_dir))
-                    .run()
+                if self.is_bare()? {
+                    return Ok(self.git_common_dir.clone());
+                }
+
+                // `core.worktree` in the bulk map could come from any scope,
+                // but git only honors the local one. Let git resolve scope
+                // via `rev-parse --show-toplevel` rather than trusting the
+                // merged value ourselves.
+                if self.config_last("core.worktree")?.is_some()
+                    && let Ok(out) = Cmd::new("git")
+                        .args(["rev-parse", "--show-toplevel"])
+                        .current_dir(&self.git_common_dir)
+                        .context(path_to_logging_context(&self.git_common_dir))
+                        .run()
                     && out.status.success()
                 {
                     return Ok(PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()));
                 }
 
-                // --show-toplevel failed:
-                // 1. Bare repos (no working tree) → git_common_dir IS the repo
-                // 2. Normal repos from inside .git → parent is the repo
-                if self.is_bare()? {
-                    Ok(self.git_common_dir.clone())
-                } else {
-                    Ok(self
-                        .git_common_dir
-                        .parent()
-                        .expect("Git directory has no parent")
-                        .to_path_buf())
-                }
+                Ok(self
+                    .git_common_dir
+                    .parent()
+                    .expect("Git directory has no parent")
+                    .to_path_buf())
             })
             .map(|p| p.as_path())
+    }
+
+    /// Access the bulk git config map, populating on first call.
+    ///
+    /// Reads every key from the merged git config (system + global + repo)
+    /// via a single `git config --list -z` subprocess. The NUL-delimited
+    /// `-z` format handles values containing newlines or `=`. Populated
+    /// lazily on first access; every config-reading accessor consults this
+    /// map rather than spawning its own subprocess.
+    ///
+    /// Run from `git_common_dir` so linked worktrees of bare repos correctly
+    /// read the bare repo's config.
+    pub(super) fn all_config(
+        &self,
+    ) -> anyhow::Result<&std::sync::RwLock<indexmap::IndexMap<String, Vec<String>>>> {
+        self.cache.all_config.get_or_try_init(|| {
+            let output = Cmd::new("git")
+                .args(["config", "--list", "-z"])
+                .current_dir(&self.git_common_dir)
+                .context(path_to_logging_context(&self.git_common_dir))
+                .run()
+                .context("failed to read git config")?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                bail!("git config --list failed: {}", stderr.trim());
+            }
+            Ok(std::sync::RwLock::new(parse_config_list_z(&output.stdout)))
+        })
+    }
+
+    /// Read the last value for a config key from the bulk map.
+    ///
+    /// Convenience wrapper for the common "single-value" accessor pattern.
+    /// Git treats the last value as authoritative when a key is set multiple
+    /// times; callers that need multivars read through `all_config()` directly.
+    ///
+    /// Keys are normalized to git's canonical form (section and variable
+    /// names lowercased, subsection preserved) so callers may pass the
+    /// mixed-case form from git docs (e.g., `init.defaultBranch`) without
+    /// missing the lookup.
+    pub(super) fn config_last(&self, key: &str) -> anyhow::Result<Option<String>> {
+        let canonical = canonical_config_key(key);
+        let guard = self.all_config()?.read().unwrap();
+        Ok(guard.get(&canonical).and_then(|v| v.last().cloned()))
+    }
+
+    /// Read a git-bool config value, defaulting to `false` when the key is
+    /// unset or absent.
+    ///
+    /// Returns `Err` only when the bulk config read itself fails. A missing
+    /// key is `Ok(false)`, matching git's own behaviour for unset booleans.
+    pub(super) fn config_bool(&self, key: &str) -> anyhow::Result<bool> {
+        Ok(self
+            .config_last(key)?
+            .as_deref()
+            .map(parse_git_bool)
+            .unwrap_or(false))
     }
 
     /// Check if this is a bare repository (no working tree).
@@ -487,26 +794,21 @@ impl Repository {
     /// Bare repositories have no main worktree — all worktrees are linked
     /// worktrees at templated paths, including the default branch.
     ///
-    /// Result is cached in the repository's shared cache (same for all clones).
-    /// Runs `git rev-parse --is-bare-repository` from git_common_dir to correctly
-    /// detect bare repos even when called from a linked worktree.
+    /// Reads `core.bare` from the bulk config map rather than using `git
+    /// rev-parse --is-bare-repository`. The rev-parse approach is unreliable
+    /// when run from inside a `.git` directory — when `core.bare` is unset,
+    /// git infers based on directory context, and from inside `.git/` there's
+    /// no working tree so it returns `true` even for normal repos. This
+    /// affects repos where `core.bare` was never written (e.g., repos cloned
+    /// by Eclipse/EGit). Reading the config value directly avoids this false
+    /// positive.
+    ///
+    /// When `core.bare` is unset, defaults to non-bare — matching libgit2's
+    /// behavior.
+    ///
+    /// See <https://github.com/max-sixty/worktrunk/issues/1939>.
     pub fn is_bare(&self) -> anyhow::Result<bool> {
-        self.cache
-            .is_bare
-            .get_or_try_init(|| {
-                // Run from git_common_dir, not discovery_path. This is important for
-                // worktrees of bare repos: running from the worktree returns false,
-                // but running from the bare repo returns true.
-                let output = Cmd::new("git")
-                    .args(["rev-parse", "--is-bare-repository"])
-                    .current_dir(&self.git_common_dir)
-                    .context(path_to_logging_context(&self.git_common_dir))
-                    .run()
-                    .context("failed to check if repository is bare")?;
-                Ok(output.status.success()
-                    && String::from_utf8_lossy(&output.stdout).trim() == "true")
-            })
-            .copied()
+        self.config_bool("core.bare")
     }
 
     /// Get the sparse checkout paths for this repository.
@@ -535,13 +837,12 @@ impl Repository {
 
     /// Check if git's builtin fsmonitor daemon is enabled.
     ///
-    /// Returns true only for `core.fsmonitor=true` (the builtin daemon).
-    /// Returns false for Watchman hooks, disabled, or unset.
+    /// Returns true for any git-bool truthy value (`true/1/yes/on`), which
+    /// matches how git itself routes the bool-or-string `core.fsmonitor`
+    /// config to the builtin daemon. Returns false for Watchman hook paths,
+    /// disabled, or unset.
     pub fn is_builtin_fsmonitor_enabled(&self) -> bool {
-        self.run_command(&["config", "--get", "core.fsmonitor"])
-            .ok()
-            .map(|s| s.trim() == "true")
-            .unwrap_or(false)
+        self.config_bool("core.fsmonitor").unwrap_or(false)
     }
 
     /// Start the fsmonitor daemon at a worktree path.
@@ -556,14 +857,14 @@ impl Repository {
     /// waiting for EOF that never comes.
     pub fn start_fsmonitor_daemon_at(&self, path: &Path) {
         log::debug!("$ git fsmonitor--daemon start [{}]", path.display());
-        let result = std::process::Command::new("git")
-            .args(["fsmonitor--daemon", "start"])
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(["fsmonitor--daemon", "start"])
             .current_dir(path)
-            .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+            .stderr(Stdio::null());
+        crate::shell_exec::scrub_directive_env_vars(&mut cmd);
+        let result = cmd.status();
         match result {
             Ok(status) if !status.success() => {
                 log::debug!("fsmonitor daemon start exited {status} (usually fine)");
@@ -726,13 +1027,14 @@ impl Repository {
             delay_ms
         );
 
-        let mut child = std::process::Command::new("git")
-            .args(args)
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(args)
             .current_dir(&self.discovery_path)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
+            .stderr(Stdio::piped());
+        crate::shell_exec::scrub_directive_env_vars(&mut cmd);
+        let mut child = cmd
             .spawn()
             .with_context(|| format!("Failed to spawn: {}", cmd_str))?;
 
@@ -778,49 +1080,39 @@ impl Repository {
 
         let start = Instant::now();
 
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    let _ = stdout_handle.join();
-                    let _ = stderr_handle.join();
+        // Phase 1: If delay threshold is enabled, wait that long for the child to
+        // exit. If it finishes before the threshold, output stays buffered (quiet).
+        if delay_ms >= 0 {
+            let delay = Duration::from_millis(delay_ms as u64);
+            let remaining = delay.saturating_sub(start.elapsed());
 
-                    if status.success() {
-                        return Ok(());
-                    }
-                    // Failed - return buffered output as error
-                    let lines = buffer.lock().unwrap();
-                    let exit_info = status
-                        .code()
-                        .map(|c| format!("exit code {c}"))
-                        .unwrap_or_else(|| "killed by signal".to_string());
-                    return Err(StreamCommandError {
-                        output: lines.join("\n"),
-                        command: cmd_str,
-                        exit_info,
-                    }
-                    .into());
-                }
-                Ok(None) => {
-                    // Still running - check if we should switch to streaming (skip if delay_ms < 0)
-                    if delay_ms >= 0
-                        && !streaming.load(Ordering::Relaxed)
-                        && start.elapsed() >= Duration::from_millis(delay_ms as u64)
-                    {
-                        streaming.store(true, Ordering::Relaxed);
-
-                        if let Some(ref msg) = progress_message {
-                            let _ = writeln!(std::io::stderr(), "{}", msg);
-                        }
-                        for line in buffer.lock().unwrap().drain(..) {
-                            let _ = writeln!(std::io::stderr(), "{}", line);
-                        }
-                        let _ = std::io::stderr().flush();
-                    }
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(e) => bail!("Failed to wait for command: {}", e),
+            // Zero delay means "stream immediately", not "try a zero-timeout reap".
+            if !remaining.is_zero()
+                && let Some(status) = child
+                    .wait_timeout(remaining)
+                    .context("Failed to wait for command")?
+            {
+                let _ = stdout_handle.join();
+                let _ = stderr_handle.join();
+                return stream_exit_result(status, &buffer, &cmd_str);
             }
+
+            // Delay threshold exceeded — switch to streaming
+            streaming.store(true, Ordering::Relaxed);
+            if let Some(ref msg) = progress_message {
+                let _ = writeln!(std::io::stderr(), "{}", msg);
+            }
+            for line in buffer.lock().unwrap().drain(..) {
+                let _ = writeln!(std::io::stderr(), "{}", line);
+            }
+            let _ = std::io::stderr().flush();
         }
+
+        // Phase 2: Block until the child exits (no polling).
+        let status = child.wait().context("Failed to wait for command")?;
+        let _ = stdout_handle.join();
+        let _ = stderr_handle.join();
+        stream_exit_result(status, &buffer, &cmd_str)
     }
 
     /// Run a git command and return the raw Output (for inspecting exit codes).
@@ -854,6 +1146,76 @@ impl Repository {
             None => (err.to_string(), None),
         }
     }
+}
+
+/// Normalize a git config key to its canonical form.
+///
+/// Git section and variable names are case-insensitive; subsection names
+/// (the middle parts of 3+-part keys) preserve case. `git config --list`
+/// emits the canonical form — so lookups against the parsed map must
+/// normalize the same way.
+///
+/// - 1 or 2 parts (`section` or `section.variable`): lowercase the whole thing.
+/// - 3+ parts (`section.subsection….variable`): lowercase first and last parts,
+///   preserve the middle.
+pub(super) fn canonical_config_key(key: &str) -> String {
+    let parts: Vec<&str> = key.split('.').collect();
+    match parts.len() {
+        0 | 1 => key.to_ascii_lowercase(),
+        2 => key.to_ascii_lowercase(),
+        _ => {
+            let (first, rest) = parts.split_first().unwrap();
+            let (last, middle) = rest.split_last().unwrap();
+            let mut out = String::with_capacity(key.len());
+            out.push_str(&first.to_ascii_lowercase());
+            for part in middle {
+                out.push('.');
+                out.push_str(part);
+            }
+            out.push('.');
+            out.push_str(&last.to_ascii_lowercase());
+            out
+        }
+    }
+}
+
+/// Parse the output of `git config --list -z`.
+///
+/// Format: each entry is `key\nvalue\0`. Values may be empty (no `\n`) for
+/// keys set via `git config key ""` — handled as `key -> ""`.
+///
+/// Returns a map from canonical key (as git emits it) to the list of
+/// values, preserving order (matches git's own multivar semantics where
+/// the last value wins).
+fn parse_config_list_z(stdout: &[u8]) -> indexmap::IndexMap<String, Vec<String>> {
+    let mut map: indexmap::IndexMap<String, Vec<String>> = indexmap::IndexMap::new();
+    for entry in stdout.split(|&b| b == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(entry);
+        let (key, value) = match text.split_once('\n') {
+            Some((k, v)) => (k, v),
+            // `key` without any newline → no value set (shouldn't happen
+            // with `--list -z`, but tolerate gracefully).
+            None => (text.as_ref(), ""),
+        };
+        map.entry(key.to_string())
+            .or_default()
+            .push(value.to_string());
+    }
+    map
+}
+
+/// Parse a git boolean config value.
+///
+/// Accepts the forms `git config --type=bool` normalizes: `true/1/yes/on`
+/// (case-insensitive) → `true`; anything else → `false`.
+fn parse_git_bool(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "true" | "1" | "yes" | "on"
+    )
 }
 
 #[cfg(test)]

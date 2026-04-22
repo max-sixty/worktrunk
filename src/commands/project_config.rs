@@ -43,6 +43,26 @@ pub fn collect_commands_for_hooks(
     commands
 }
 
+/// Collect commands for every project-config alias, in `BTreeMap` (alphabetical) order.
+///
+/// Mirrors `approve_alias_commands` in `command_approval.rs`: unnamed steps within
+/// an alias inherit the alias name, so users see a stable label in approval prompts.
+pub fn collect_commands_for_aliases(project_config: &ProjectConfig) -> Vec<ApprovableCommand> {
+    project_config
+        .aliases
+        .iter()
+        .flat_map(|(alias_name, alias_cfg)| {
+            alias_cfg.commands().map(move |cmd| ApprovableCommand {
+                phase: Phase::Alias,
+                command: Command::new(
+                    Some(cmd.name.clone().unwrap_or_else(|| alias_name.clone())),
+                    cmd.template.clone(),
+                ),
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

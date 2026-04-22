@@ -9,14 +9,15 @@ metadata:
 
 ## Shell Integration
 
-Worktrunk uses file-based directive passing for shell integration:
+Worktrunk uses split file-based directive passing for shell integration:
 
-1. Shell wrapper creates a temp file via `mktemp`
-2. Shell wrapper sets `WORKTRUNK_DIRECTIVE_FILE` env var to the file path
-3. wt writes shell commands (like `cd '/path'`) to that file
-4. Shell wrapper sources the file after wt exits
+1. Shell wrapper creates two temp files via `mktemp` (cd and exec)
+2. Shell wrapper sets `WORKTRUNK_DIRECTIVE_CD_FILE` and `WORKTRUNK_DIRECTIVE_EXEC_FILE`
+3. wt writes a raw path to the CD file; shell commands to the EXEC file (for `--execute`)
+4. Shell wrapper reads the CD file with `cd -- "$(< file)"` (no shell parsing)
+5. Shell wrapper sources the EXEC file if non-empty
 
-When `WORKTRUNK_DIRECTIVE_FILE` is not set (direct binary call), commands execute
+When neither directive env var is set (direct binary call), commands execute
 directly and shell integration hints are shown.
 
 ## Output Functions
@@ -105,9 +106,18 @@ Examples:
 
 ## Security
 
-`WORKTRUNK_DIRECTIVE_FILE` is automatically removed from spawned subprocesses
-(via `shell_exec::Cmd`). This prevents hooks from writing to the directive
-file.
+The split-trust design enforces two trust levels:
+
+- `WORKTRUNK_DIRECTIVE_CD_FILE` holds a raw path (no shell parsing), so it's
+  safe to pass through to alias/hook child processes — a body that writes to it
+  can at worst redirect `cd`.
+- `WORKTRUNK_DIRECTIVE_EXEC_FILE` holds arbitrary shell that the wrapper
+  sources verbatim, so wt scrubs this env var from alias/hook child processes.
+  A hook body writing to it would inject shell into the parent session.
+
+All directive env vars are removed from spawned subprocesses by default via
+`shell_exec::scrub_directive_env_vars()`. `DirectivePassthrough::inherit_from_env()`
+re-adds only the CD file (and legacy compat file) for trusted contexts.
 
 ## Windows Compatibility (Git Bash / MSYS2)
 
@@ -355,7 +365,7 @@ acknowledges state without changing anything.
 | Hint ↳                                          | Info ○                                |
 | ------------------------------------------------ | ------------------------------------- |
 | "To continue, run `wt merge`"                    | "Already up to date with main"        |
-| "Commit or stash changes first"                  | "Skipping hooks (--no-verify)"        |
+| "Commit or stash changes first"                  | "Skipping hooks (--no-hooks)"         |
 | "Branch can be deleted"                           | "Worktree preserved (main worktree)"  |
 | "Failed command, exit code 128:"                   |                                       |
 
@@ -406,7 +416,7 @@ shouldn't clutter user output:
 "To rebase onto main, run wt step rebase or wt merge"
 
 // GOOD - recovery command after shadowing a remote branch
-"To switch to the remote branch, delete this branch and run without --create: wt remove feature && wt switch feature"
+"To switch to the remote branch, delete this branch and run without --create: wt remove --foreground feature && wt switch feature"
 
 // BAD - command without context
 "wt remove feature -D deletes unmerged branches"
@@ -585,6 +595,17 @@ Removed worktree for bugfix
 
 Signs of poor temporal locality: collecting messages in a buffer, single success
 message for batch operations, no progress before slow operations.
+
+## Defer Non-Essential Work Until After Primary Output
+
+Fire-and-forget cleanup and cache sweeps run after the command's final
+user-visible message — never before. Placing them at the start delays
+time-to-first-output with work the user didn't ask for.
+
+Worktrunk marks the boundary with `WORKTRUNK_FIRST_OUTPUT`: handlers
+early-return where output begins, so work before that return is on the hot
+path, work after it is not. See `handle_remove_command` —
+`sweep_stale_trash` runs after `handle_remove_output`.
 
 ## Information Display: Show Once, Not Twice
 

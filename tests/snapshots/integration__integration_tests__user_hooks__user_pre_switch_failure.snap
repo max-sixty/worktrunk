@@ -21,6 +21,7 @@ info:
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     NO_COLOR: ""
+    OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -34,6 +35,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -46,4 +48,4 @@ exit_code: 1
 [36m◎[39m [36mRunning pre-switch [1muser:block[22m[39m
 [107m [0m [2m[0m[2m[34mexit[0m[2m 1
 [0m[31m✗[39m [31mpre-switch command failed: [1mblock[22m: exit status: 1[39m
-[2m↳[22m [2mTo skip pre-switch hooks, re-run with [4m--no-verify[24m[22m
+[2m↳[22m [2mTo skip pre-switch hooks, re-run with [4m--no-hooks[24m[22m

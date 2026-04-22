@@ -24,14 +24,13 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt step promote - [experimental] Swap a branch into the main worktree[0m
 
 Exchanges branches and gitignored files between two worktrees.[0m
@@ -56,14 +55,17 @@ Usage: [1m[36mwt step promote[0m [36m[OPTIONS][0m [36m[BRANCH][0m
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  [1m[36m-y[0m, [1m[36m--yes[0m
+          Skip approval prompts
 
 [1mExperimental.[0m Use promote for temporary testing when the main worktree has special significance (Docker Compose, IDE configs, heavy build artifacts anchored to project root), and hooks & tools aren't yet set up to run on arbitrary worktrees. The idiomatic Worktrunk workflow does not use [2mpromote[0m; instead each worktree has a full environment. [2mpromote[0m is the only Worktrunk command which changes a branch in an existing worktree.
 
 [1m[32mExample[0m
 
 [107m [0m [2m# from ~/project (main worktree)[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m step promote feature[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m step promote feature[0m
 
 Before:
 
@@ -91,3 +93,5 @@ Without an argument, promotes the current branch — or restores the default bra
 Gitignored files (build artifacts, [2mnode_modules/[0m, [2m.env[0m) are swapped along with the branches so each worktree keeps the artifacts that belong to its branch. Files are discovered using the same mechanism as [2mcopy-ignored[0m and can be filtered with [2m.worktreeinclude[0m.
 
 The swap uses [2mrename()[0m for each entry — fast regardless of entry size, since only filesystem metadata changes. If the worktree is on a different filesystem from [2m.git/[0m, it falls back to reflink copy.
+
+----- stderr -----

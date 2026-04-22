@@ -23,14 +23,13 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt remove - Remove worktree; delete branch if merged[0m
 
 Defaults to the current worktree.[0m
@@ -60,11 +59,19 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
           Print help (see a summary with '-h')
 
 [1m[32mAutomation:[0m
-  [1m[36m-y[0m, [1m[36m--yes[0m
-          Skip approval prompts
-
-      [1m[36m--no-verify[0m
+      [1m[36m--no-hooks[0m
           Skip hooks
+
+      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
+          Output format[0m
+          
+          JSON prints structured result to stdout after removal completes.[0m
+
+          Possible values:
+          - [1m[36mtext[0m: Human-readable text output
+          - [1m[36mjson[0m: JSON output
+          
+          [default: text]
 
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m
@@ -74,26 +81,29 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  [1m[36m-y[0m, [1m[36m--yes[0m
+          Skip approval prompts
 
 [1m[32mExamples[0m
 
 Remove current worktree:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m remove[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m remove[0m
 
 Remove specific worktrees / branches:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m remove feature-branch[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m remove old-feature another-branch[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m remove feature-branch[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m remove old-feature another-branch[0m
 
 Keep the branch:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m remove [0m[2m[36m--no-delete-branch[0m[2m feature-branch[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m remove [0m[2m[36m--no-delete-branch[0m[2m feature-branch[0m
 
 Force-delete an unmerged branch:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m remove [0m[2m[36m-D[0m[2m experimental[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m remove [0m[2m[36m-D[0m[2m experimental[0m
 
 [1m[32mBranch cleanup[0m
 
@@ -121,15 +131,17 @@ Worktrunk has two force flags for different situations:
  [2m--force[0m ([2m-f[0m)        Worktree Worktree has untracked files 
  [2m--force-delete[0m ([2m-D[0m) Branch   Branch has unmerged commits  
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m remove feature [0m[2m[36m--force[0m[2m       # Remove worktree with untracked files[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m remove feature [0m[2m[36m-D[0m[2m            # Delete unmerged branch[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m remove feature [0m[2m[36m--force[0m[2m [0m[2m[36m-D[0m[2m    # Both[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m--force[0m[2m       # Remove worktree with untracked files[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m-D[0m[2m            # Delete unmerged branch[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m--force[0m[2m [0m[2m[36m-D[0m[2m    # Both[0m[2m[0m
 
 Without [2m--force[0m, removal fails if the worktree contains untracked files. Without [2m--force-delete[0m, removal keeps branches with unmerged changes. Use [2m--no-delete-branch[0m to keep the branch regardless of merge status.
 
 [1m[32mBackground removal[0m
 
-Removal runs in the background by default — the command returns immediately. Logs are written to [2m.git/wt/logs/{branch}-remove.log[0m. Use [2m--foreground[0m to run in the foreground.
+Removal runs in the background by default — the command returns immediately. The worktree is renamed into [2m.git/wt/trash/[0m (instant same-filesystem rename), git metadata is pruned, the branch is deleted, and a detached [2mrm -rf[0m finishes cleanup. Cross-filesystem worktrees fall back to [2mgit worktree remove[0m. Logs: [2m.git/wt/logs/{branch}/internal/remove.log[0m. Use [2m--foreground[0m to run in the foreground.
+
+After each [2mwt remove[0m, entries in [2m.git/wt/trash/[0m older than 24 hours are swept by a detached [2mrm -rf[0m — eventual cleanup for directories orphaned when a previous background removal was interrupted (SIGKILL, reboot, disk full).
 
 [1m[32mHooks[0m
 
@@ -143,3 +155,5 @@ Detached worktrees have no branch name. Pass the worktree path instead: [2mwt r
 
 - [2mwt merge[0m — Remove worktree after merging
 - [2mwt list[0m — View all worktrees
+
+----- stderr -----

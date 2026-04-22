@@ -32,7 +32,7 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 $ wt switch feature                        # Existing branch → creates worktree
 $ wt switch --create feature               # New branch and worktree
 $ wt switch --create fix --base release    # New branch from release
-$ wt switch --create temp --no-verify      # Skip hooks
+$ wt switch --create temp --no-hooks       # Skip hooks
 ```
 
 ## Shortcuts
@@ -46,12 +46,15 @@ $ wt switch --create temp --no-verify      # Skip hooks
 | `mr:{N}` | GitLab MR !N's branch |
 
 ```bash
-$ wt switch -                      # Back to previous
-$ wt switch ^                      # Default branch worktree
-$ wt switch --create fix --base=@  # Branch from current HEAD
-$ wt switch pr:123                 # PR #123's branch
-$ wt switch mr:101                 # MR !101's branch
+$ wt switch -                           # Back to previous
+$ wt switch ^                           # Default branch worktree
+$ wt switch --create fix --base=@       # Branch from current HEAD
+$ wt switch --create fix --base=pr:123  # Branch from PR #123's head
+$ wt switch pr:123                      # PR #123's branch
+$ wt switch mr:101                      # MR !101's branch
 ```
+
+Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
 
 ## Interactive picker
 
@@ -69,6 +72,7 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 | `1`–`5` | Switch preview tab |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
+<!-- Alt-r (remove worktree) works but is omitted: cursor resets after skim reload (#1695). Add once fixed. See #1881. -->
 
 **Preview tabs** — toggle with number keys:
 
@@ -135,7 +139,8 @@ Options:
   -b, --base <BASE>
           Base branch
 
-          Defaults to default branch.
+          Defaults to default branch. Supports the same shortcuts as the branch argument: ^, @, -,
+          pr:{N}, mr:{N}.
 
   -x, --execute <EXECUTE>
           Command to run after switch
@@ -181,11 +186,20 @@ Picker Options:
           Include remote branches
 
 Automation:
-  -y, --yes
-          Skip approval prompts
-
-      --no-verify
+      --no-hooks
           Skip hooks
+
+      --format <FORMAT>
+          Output format
+
+          JSON prints structured result to stdout. Designed for tool integration (e.g., Claude Code
+          WorktreeCreate hooks).
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
 
 Global Options:
   -C <path>
@@ -195,5 +209,9 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```

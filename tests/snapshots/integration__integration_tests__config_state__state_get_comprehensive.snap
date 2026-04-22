@@ -1,6 +1,6 @@
 ---
 source: tests/integration_tests/config_state.rs
-expression: "String::from_utf8_lossy(&output.stderr)"
+expression: "String::from_utf8_lossy(&output.stdout)"
 ---
 [36mDEFAULT BRANCH[39m
 [107m [0m main
@@ -25,6 +25,9 @@ expression: "String::from_utf8_lossy(&output.stderr)"
  ─────── ────── ─── ──────── 
  feature passed now abc12345
 
+[36mGIT COMMANDS CACHE[39m
+[107m [0m 2 entries
+
 [36mHINTS[39m
 [107m [0m (none)
 
@@ -32,7 +35,16 @@ expression: "String::from_utf8_lossy(&output.stderr)"
 [107m [0m (none)
 
 [36mHOOK OUTPUT[39m @ <PATH>
-            File            Size  Age   
- ────────────────────────── ──── ────── 
- bugfix-remove.log          13B  future 
- feature-post-start-npm.log 10B  future
+              File               Size  Age   
+ ─────────────────────────────── ──── ────── 
+ bugfix/internal/remove.log      13B  future 
+ feature/user/post-start/npm.log 10B  future
+
+[36mDIAGNOSTIC[39m @ <PATH>
+[107m [0m (none)
+
+[36mTRASH[39m @ _REPO_/.git/wt/trash
+            Entry              Age   
+ ──────────────────────────── ────── 
+ myproject.bugfix-9999999999  future 
+ myproject.feature-1234567890 future

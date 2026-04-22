@@ -9,52 +9,82 @@
 //! See `wt hook --help` for available filters and functions.
 
 use std::borrow::Cow;
+use std::collections::{BTreeSet, HashMap};
+use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
+use anyhow::Context;
 use color_print::cformat;
+use minijinja::value::{Enumerator, Object, ObjectRepr};
 use minijinja::{Environment, ErrorKind, UndefinedBehavior, Value};
 use regex::Regex;
 use shell_escape::escape;
 
-use crate::git::Repository;
+use crate::git::{HookType, Repository};
 use crate::path::to_posix_path;
 use crate::styling::{
     eprintln, error_message, format_bash_with_gutter, format_with_gutter, hint_message,
     info_message, verbosity,
 };
 
-/// Known template variables available in hook commands.
+/// Active-context vars: point at the branch the operation acts on.
 ///
-/// These are populated by `build_hook_context()` in `command_executor.rs`.
-/// Some variables are conditional (e.g., `upstream` only exists if tracking is configured).
-///
-/// This list is the single source of truth for `--var` validation in CLI.
-pub const TEMPLATE_VARS: &[&str] = &[
-    "repo",
+/// `upstream` is conditional on branch tracking configuration but is listed
+/// here so templates may reference it in any context (guarded by
+/// `{% if upstream %}`).
+pub const ACTIVE_VARS: &[&str] = &[
     "branch",
-    "worktree_name",
-    "repo_path",
     "worktree_path",
-    "default_branch",
-    "primary_worktree_path",
+    "worktree_name",
     "commit",
     "short_commit",
+    "upstream",
+];
+
+/// Repo/remote-metadata vars: describe the repository hosting the operation.
+pub const REPO_VARS: &[&str] = &[
+    "repo",
+    "repo_path",
+    "owner",
+    "primary_worktree_path",
+    "default_branch",
     "remote",
     "remote_url",
-    "upstream",
-    "hook_type",            // Added by expand_commands / expand_command_template
-    "hook_name", // Added by expand_commands / expand_command_template (named commands only)
-    "target",    // Added by merge/remove hooks via extra_vars
-    "target_worktree_path", // Added by merge/remove hooks via extra_vars
-    "base",      // Added by creation/switch hooks via extra_vars
-    "base_worktree_path", // Added by creation/switch hooks via extra_vars
-    "cwd",       // Execution directory (always exists on disk)
-                 // Note: `vars` is NOT listed here — it's a structured object injected by expand_template,
-                 // not a simple string that --var can override.
 ];
+
+/// Exec-context vars always available outside hook infrastructure.
+///
+/// `cwd` is populated for every template expansion; `hook_type`/`hook_name`
+/// are added by the hook runner itself (`HOOK_INFRASTRUCTURE_VARS`).
+pub const EXEC_BASE_VARS: &[&str] = &["cwd"];
+
+/// Template variables available in every context: the concatenation of
+/// [`ACTIVE_VARS`], [`REPO_VARS`], and [`EXEC_BASE_VARS`].
+///
+/// Populated by `build_hook_context()` in `command_executor.rs`. Operation-
+/// context vars (`base`, `target`, `pr_*`) and infrastructure vars
+/// (`hook_type`, `hook_name`) are not in the base set — they're added per-
+/// scope by `hook_extras` and the hook runner itself.
+pub fn base_vars() -> Vec<&'static str> {
+    let mut v = Vec::with_capacity(ACTIVE_VARS.len() + REPO_VARS.len() + EXEC_BASE_VARS.len());
+    v.extend_from_slice(ACTIVE_VARS);
+    v.extend_from_slice(REPO_VARS);
+    v.extend_from_slice(EXEC_BASE_VARS);
+    v
+}
+
+/// Reserved context key carrying a JSON-encoded `Vec<String>` of positional
+/// CLI args forwarded to an alias. The key flows through
+/// `HashMap<String, String>` — stable for stdin JSON — and
+/// [`expand_template`] rehydrates it as a `ShellArgs` object so bare
+/// `{{ args }}` renders as a space-joined, shell-escaped string while
+/// indexing, iteration, and `length` behave like a sequence.
+pub const ALIAS_ARGS_KEY: &str = "args";
 
 /// Deprecated template variable aliases (still valid for backward compatibility).
 ///
-/// These map to current variables:
+/// These map to current variables and are available in every scope:
 /// - `main_worktree` → `repo`
 /// - `repo_root` → `repo_path`
 /// - `worktree` → `worktree_path`
@@ -66,8 +96,217 @@ pub const DEPRECATED_TEMPLATE_VARS: &[&str] = &[
     "main_worktree_path",
 ];
 
-use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
+/// The context in which a template will be expanded.
+///
+/// Validation uses this to answer "which variables are available here?" —
+/// the single source of truth for hook-type-specific vars, alias-only vars,
+/// and the `--execute` context. Each hook type gets the base set plus its
+/// own extras (e.g., `target` for merge/remove, `base` for create/switch).
+#[derive(Debug, Clone, Copy)]
+pub enum ValidationScope {
+    /// A hook of the given type. Adds hook infrastructure vars (`hook_type`,
+    /// `hook_name`) plus hook-specific vars (`base`, `target`, etc.).
+    Hook(HookType),
+    /// The `--execute` template or trailing args for `wt switch --create`.
+    /// Adds `base` / `base_worktree_path` for the source worktree.
+    SwitchExecute,
+    /// An alias body. Adds `args` for positional CLI forwarding.
+    Alias,
+}
+
+/// Hook-type-specific extras that sit on top of [`base_vars`].
+///
+/// These are the vars injected by callers via `extra_vars` when running a
+/// hook. Keeping the mapping in one place means "which vars work in a
+/// `post-merge` hook?" is answerable without chasing inline comments.
+///
+/// Each arm's order must be a prefix-ordered subset of the operation-context
+/// block in the user-facing help table (`src/cli/mod.rs`, `## Template
+/// variables`): `base, base_worktree_path, target, target_worktree_path,
+/// pr_number, pr_url`.
+fn hook_extras(hook_type: HookType) -> &'static [&'static str] {
+    use HookType::*;
+    match hook_type {
+        // Switch: source branch (`base`) and destination (`target`).
+        // `pr_number`/`pr_url` are populated for `post-switch` when creating
+        // via `pr:N` / `mr:N`; pre-switch fires before the PR/MR API call,
+        // so they're never set there but remain accepted for portability.
+        PreSwitch | PostSwitch => &[
+            "base",
+            "base_worktree_path",
+            "target",
+            "target_worktree_path",
+            "pr_number",
+            "pr_url",
+        ],
+        // Create/start: source worktree (`base`) and newly-created destination
+        // (`target`). On create, the destination branch equals the bare `branch`
+        // var — `target` is accepted for template portability with switch hooks.
+        // `pr_number`/`pr_url` are populated when creating via `pr:N` / `mr:N`
+        // (GitLab MRs reuse the same `pr_*` names).
+        PreStart | PostStart => &[
+            "base",
+            "base_worktree_path",
+            "target",
+            "target_worktree_path",
+            "pr_number",
+            "pr_url",
+        ],
+        // Commit: integration target for the pre-commit squash.
+        PreCommit | PostCommit => &["target"],
+        // Merge: where the feature is being merged into.
+        PreMerge | PostMerge => &["target", "target_worktree_path"],
+        // Remove: where the user ends up after removal.
+        PreRemove | PostRemove => &["target", "target_worktree_path"],
+    }
+}
+
+/// Vars added by the hook execution infrastructure itself (`expand_commands`
+/// / `expand_command_template`), regardless of hook type.
+const HOOK_INFRASTRUCTURE_VARS: &[&str] = &["hook_type", "hook_name"];
+
+/// All template variables available in a given scope.
+///
+/// The returned list is [`base_vars`] + scope-specific extras + deprecated
+/// aliases. Used by [`validate_template`] to build the placeholder context
+/// and by error messages to list what the user could have typed.
+pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
+    let mut vars: Vec<&'static str> = base_vars();
+    match scope {
+        ValidationScope::Hook(hook_type) => {
+            vars.extend(HOOK_INFRASTRUCTURE_VARS);
+            vars.extend(hook_extras(hook_type));
+            vars.push(ALIAS_ARGS_KEY);
+        }
+        ValidationScope::SwitchExecute => {
+            vars.extend(["base", "base_worktree_path"]);
+        }
+        ValidationScope::Alias => {
+            vars.push(ALIAS_ARGS_KEY);
+        }
+    }
+    vars.extend(DEPRECATED_TEMPLATE_VARS);
+    vars
+}
+
+/// Shared formatter for [`format_hook_variables`] and [`format_alias_variables`].
+///
+/// Renders `vars` as an aligned `name = value` block — no heading, no indent,
+/// caller wraps. Values come from `ctx`; vars absent from `ctx` render as
+/// `(unset)`, surfacing operation-specific gaps (e.g., `target_worktree_path`
+/// during `wt switch -`, `upstream` when the branch doesn't track a remote).
+///
+/// `(unset)` relies on an invariant in `build_hook_context`: optional vars
+/// are omitted from the map rather than inserted as empty strings. If a
+/// future caller starts inserting `""`, revisit the empty-vs-absent
+/// distinction here.
+fn format_variables_table(vars: &[&'static str], ctx: &HashMap<String, String>) -> String {
+    let max_name = vars.iter().map(|v| v.len()).max().unwrap_or(0);
+    vars.iter()
+        .map(|var| {
+            let value = match ctx.get(*var) {
+                Some(v) => v.as_str(),
+                None => "(unset)",
+            };
+            format!("{var:<max_name$} = {value}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Format the resolved template variables for a hook invocation.
+///
+/// Ordered per the `## Template variables` help table in `src/cli/mod.rs`:
+/// active, operation, repo, exec, infrastructure.
+///
+/// Deprecated aliases and `vars.*` (user state) are intentionally omitted.
+pub fn format_hook_variables(hook_type: HookType, ctx: &HashMap<String, String>) -> String {
+    let vars: Vec<&'static str> = ACTIVE_VARS
+        .iter()
+        .chain(hook_extras(hook_type))
+        .chain(REPO_VARS)
+        .chain(EXEC_BASE_VARS)
+        .chain(HOOK_INFRASTRUCTURE_VARS)
+        .copied()
+        .collect();
+    format_variables_table(&vars, ctx)
+}
+
+/// Format the resolved template variables for an alias invocation.
+///
+/// Ordering mirrors [`format_hook_variables`]; alias scope has no operation
+/// or infrastructure vars, and `args` lives in the exec group per the help
+/// table in `src/cli/mod.rs` (alongside `cwd`).
+///
+/// `args` is stored as a JSON-encoded `Vec<String>` per the [`ALIAS_ARGS_KEY`]
+/// contract; the table displays it space-joined and shell-escaped so it
+/// matches what `{{ args }}` substitutes in templates.
+pub fn format_alias_variables(ctx: &HashMap<String, String>) -> String {
+    let vars: Vec<&'static str> = ACTIVE_VARS
+        .iter()
+        .copied()
+        .chain(REPO_VARS.iter().copied())
+        .chain(EXEC_BASE_VARS.iter().copied())
+        .chain(std::iter::once(ALIAS_ARGS_KEY))
+        .collect();
+    let mut display_ctx = ctx.clone();
+    if let Some(json) = ctx.get(ALIAS_ARGS_KEY) {
+        let args: Vec<String> = serde_json::from_str(json)
+            .expect("ALIAS_ARGS_KEY is always serialized from a Vec<String>");
+        display_ctx.insert(ALIAS_ARGS_KEY.into(), shell_join(&args));
+    }
+    format_variables_table(&vars, &display_ctx)
+}
+
+/// Positional CLI args forwarded from `wt <alias> a b c` into the alias's
+/// template context. Bare `{{ args }}` renders as a space-joined,
+/// shell-escaped string ready to append to a command line; `{{ args[0] }}`
+/// and `{% for a in args %}…{% endfor %}` and `{{ args | length }}` all
+/// behave as expected because the object reports as an
+/// [`ObjectRepr::Seq`].
+///
+/// Shell escaping happens at render time via `shell_escape::unix::escape`
+/// rather than through the template environment's formatter — the formatter
+/// would otherwise quote the already-escaped joined string as a whole. The
+/// formatter installed by `expand_template` detects `ShellArgs` and writes
+/// it through unmodified.
+#[derive(Debug)]
+struct ShellArgs(Vec<String>);
+
+impl ShellArgs {
+    fn new(args: Vec<String>) -> Self {
+        Self(args)
+    }
+}
+
+impl Object for ShellArgs {
+    fn repr(self: &Arc<Self>) -> ObjectRepr {
+        ObjectRepr::Seq
+    }
+
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        let idx = key.as_usize()?;
+        self.0.get(idx).cloned().map(Value::from)
+    }
+
+    fn enumerate(self: &Arc<Self>) -> Enumerator {
+        Enumerator::Seq(self.0.len())
+    }
+
+    fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&shell_join(&self.0))
+    }
+}
+
+/// Space-join shell-escaped args — the canonical rendering of `{{ args }}`
+/// used by both `ShellArgs::render` (template expansion) and the alias
+/// `-v` variable table.
+fn shell_join(args: &[String]) -> String {
+    args.iter()
+        .map(|a| escape(Cow::Borrowed(a)).into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 /// Hash a string to a port in range 10000-19999.
 fn string_to_port(s: &str) -> u16 {
@@ -237,10 +476,15 @@ impl std::fmt::Display for TemplateExpandError {
             parts.push(format_with_gutter(line, None));
         }
         if !self.available_vars.is_empty() {
+            let underlined_vars: Vec<String> = self
+                .available_vars
+                .iter()
+                .map(|v| cformat!("<underline>{}</>", v))
+                .collect();
             parts.push(
                 hint_message(cformat!(
-                    "Available variables: <underline>{}</>",
-                    self.available_vars.join(", ")
+                    "Available variables: {}",
+                    underlined_vars.join(", ")
                 ))
                 .to_string(),
             );
@@ -319,6 +563,9 @@ fn setup_template_env(repo: &Repository) -> Environment<'static> {
     env.add_filter("sanitize_db", |value: Value| -> String {
         sanitize_db(value.as_str().unwrap_or_default())
     });
+    env.add_filter("sanitize_hash", |value: Value| -> String {
+        crate::path::sanitize_for_filename(value.as_str().unwrap_or_default())
+    });
     env.add_filter("hash_port", |value: String| string_to_port(&value));
 
     // Register worktree_path_of_branch function for looking up branch worktree paths.
@@ -336,39 +583,80 @@ fn setup_template_env(repo: &Repository) -> Environment<'static> {
     env
 }
 
-/// Check if a template references a specific top-level variable.
+/// Top-level variables referenced by a single template.
 ///
 /// Uses minijinja's AST analysis rather than string matching, avoiding false
-/// positives from literal text like `template_vars.txt`.
-pub fn template_references_var(template: &str, var: &str) -> bool {
-    let env = minijinja::Environment::new();
-    let Ok(tmpl) = env.template_from_str(template) else {
-        return false;
-    };
-    tmpl.undeclared_variables(false).contains(var)
+/// positives from literal text like `template_vars.txt`. Templates that fail
+/// to parse contribute nothing — a syntax error surfaces later at expansion
+/// time with a richer message.
+fn referenced_vars(template: &str) -> std::collections::HashSet<String> {
+    minijinja::Environment::new()
+        .template_from_str(template)
+        .map(|tmpl| tmpl.undeclared_variables(false))
+        .unwrap_or_default()
 }
 
-/// Validate that a template can be expanded without errors.
+/// Check if a template references a specific top-level variable.
+pub fn template_references_var(template: &str, var: &str) -> bool {
+    referenced_vars(template).contains(var)
+}
+
+/// Union of top-level variables referenced across every command in `cfg`.
 ///
-/// Performs a trial expansion with placeholder values for all known template variables
-/// ([`TEMPLATE_VARS`] + [`DEPRECATED_TEMPLATE_VARS`]). Catches syntax errors and
-/// undefined variable references *before* irreversible operations like worktree creation.
+/// Drives alias-arg routing in `AliasOptions::parse`: a `--KEY=VALUE` token
+/// binds to `{{ KEY }}` only when KEY appears in this set; otherwise it
+/// forwards as a positional. A var referenced in any step of a pipeline is
+/// a binding candidate for the whole invocation. A syntax error in any
+/// template fails here so the user sees it before flags are routed — a
+/// silent skip could mask a typo and change how subsequent CLI args bind.
+pub fn referenced_vars_for_config(cfg: &super::CommandConfig) -> anyhow::Result<BTreeSet<String>> {
+    let env = minijinja::Environment::new();
+    let mut out = BTreeSet::new();
+    for cmd in cfg.commands() {
+        let tmpl = env
+            .template_from_str(&cmd.template)
+            .with_context(|| format!("Failed to parse template: {:?}", cmd.template))?;
+        out.extend(tmpl.undeclared_variables(false));
+    }
+    Ok(out)
+}
+
+/// Parse-only syntax check for a template.
 ///
-/// This is deliberately more permissive than real expansion: all known variables are
-/// provided, even conditional ones (`upstream`, `commit`, etc.) that may be absent at
-/// expansion time. This means a template like `{{ upstream }}` passes validation but
-/// could fail later if no upstream tracking is configured. This is an acceptable
-/// trade-off — the alternative (predicting which optional variables will be available)
-/// would be fragile and context-dependent.
+/// Used on lazy-expansion paths (hooks + aliases) where rendering would fail
+/// because `vars.*` values are only known at execution time — we still want
+/// to catch typos like `{{ vars..foo }}` upfront.
+pub fn validate_template_syntax(template: &str, name: &str) -> Result<(), minijinja::Error> {
+    minijinja::Environment::new()
+        .template_from_named_str(name, template)
+        .map(|_| ())
+}
+
+/// Validate that a template can be expanded without errors in the given scope.
+///
+/// Performs a trial expansion with placeholder values for exactly the variables
+/// available in `scope` (see [`vars_available_in`]). Catches syntax errors and
+/// undefined variable references *before* irreversible operations like worktree
+/// creation — including context-mismatch typos like `{{ args }}` in a hook or
+/// `{{ target }}` in a `pre-start` hook.
+///
+/// This is deliberately more permissive than real expansion: conditional vars
+/// like `upstream` are provided even when they may be absent at runtime. A
+/// template like `{{ upstream }}` passes validation but could fail later if
+/// tracking isn't configured — the alternative (predicting which optional
+/// variables will be available) would be fragile and context-dependent.
 ///
 /// No verbose logging is performed — this is a pre-flight check, not the real expansion.
 pub fn validate_template(
     template: &str,
+    scope: ValidationScope,
     repo: &Repository,
     name: &str,
 ) -> Result<(), TemplateExpandError> {
-    let all_vars = TEMPLATE_VARS.iter().chain(DEPRECATED_TEMPLATE_VARS.iter());
-    let mut context: HashMap<String, minijinja::Value> = all_vars
+    let available = vars_available_in(scope);
+    let mut context: HashMap<String, minijinja::Value> = available
+        .iter()
+        .filter(|&&k| k != ALIAS_ARGS_KEY)
         .map(|&k| (k.to_string(), minijinja::Value::from("PLACEHOLDER")))
         .collect();
     // Inject vars as empty map so {{ vars.key | default(...) }} doesn't error
@@ -376,6 +664,15 @@ pub fn validate_template(
         "vars".to_string(),
         minijinja::Value::from_serialize(std::collections::BTreeMap::<String, String>::new()),
     );
+    // In alias and hook scopes, inject `args` as an empty sequence so
+    // `{{ args }}`, `{{ args[0] | default(...) }}`, `{{ args | length }}`,
+    // and `{% for a in args %}…{% endfor %}` all validate.
+    if matches!(scope, ValidationScope::Alias | ValidationScope::Hook(_)) {
+        context.insert(
+            ALIAS_ARGS_KEY.to_string(),
+            Value::from_object(ShellArgs::new(Vec::new())),
+        );
+    }
 
     let env = setup_template_env(repo);
 
@@ -385,11 +682,7 @@ pub fn validate_template(
 
     tmpl.render(minijinja::Value::from_object(context))
         .map_err(|e| {
-            let mut keys: Vec<String> = TEMPLATE_VARS
-                .iter()
-                .chain(DEPRECATED_TEMPLATE_VARS.iter())
-                .map(|k| k.to_string())
-                .collect();
+            let mut keys: Vec<String> = available.iter().map(|k| k.to_string()).collect();
             keys.sort();
             build_template_error(&e, template, name, keys)
         })?;
@@ -409,6 +702,7 @@ pub fn validate_template(
 /// # Filters
 /// - `sanitize` — Replace `/` and `\` with `-` for filesystem-safe paths
 /// - `sanitize_db` — Transform to database-safe identifier (`[a-z0-9_]`, max 63 chars)
+/// - `sanitize_hash` — Filesystem-safe name with hash suffix so distinct inputs never collide
 /// - `hash_port` — Hash to deterministic port number (10000-19999)
 ///
 /// # Functions
@@ -423,13 +717,20 @@ pub fn expand_template(
     repo: &Repository,
     name: &str,
 ) -> Result<String, TemplateExpandError> {
-    // Build context map with raw values (shell escaping is applied at output time via formatter)
+    // Build context map with raw values (shell escaping is applied at output time via formatter).
+    // The `args` key is reserved: run_alias encodes positional CLI args as a JSON list string,
+    // and we rehydrate it here as a `ShellArgs` object so `{{ args }}` behaves sequence-like.
     let mut context = HashMap::new();
     for (key, value) in vars {
-        context.insert(
-            key.to_string(),
-            minijinja::Value::from((*value).to_string()),
-        );
+        if *key == ALIAS_ARGS_KEY {
+            let parsed: Vec<String> = serde_json::from_str(value).unwrap_or_default();
+            context.insert(key.to_string(), Value::from_object(ShellArgs::new(parsed)));
+        } else {
+            context.insert(
+                key.to_string(),
+                minijinja::Value::from((*value).to_string()),
+            );
+        }
     }
 
     // Inject vars data as a nested object: {{ vars.env }}, {{ vars.config.port }}
@@ -469,6 +770,15 @@ pub fn expand_template(
         // when filters modify already-escaped strings.
         env.set_formatter(|out, _state, value| {
             if value.is_none() {
+                return Ok(());
+            }
+            // ShellArgs renders each element pre-escaped and space-joined
+            // (see [`ShellArgs::render`]); passing through its Display
+            // output avoids re-escaping the whole joined string as one
+            // opaque token. Iteration and indexing yield plain string
+            // values that still flow through the generic escape branch.
+            if value.downcast_object_ref::<ShellArgs>().is_some() {
+                write!(out, "{value}")?;
                 return Ok(());
             }
             let s = value.to_string();
@@ -538,25 +848,7 @@ mod tests {
 
     use super::*;
     use crate::shell_exec::Cmd;
-
-    /// Test fixture that creates a real temporary git repository.
-    struct TestRepo {
-        _dir: tempfile::TempDir,
-        repo: Repository,
-    }
-
-    impl TestRepo {
-        fn new() -> Self {
-            let dir = tempfile::tempdir().unwrap();
-            Cmd::new("git")
-                .args(["init"])
-                .current_dir(dir.path())
-                .run()
-                .unwrap();
-            let repo = Repository::at(dir.path()).unwrap();
-            Self { _dir: dir, repo }
-        }
-    }
+    use crate::testing::TestRepo;
 
     fn test_repo() -> TestRepo {
         TestRepo::new()
@@ -566,9 +858,9 @@ mod tests {
     fn test_sanitize_branch_name() {
         let cases = [
             ("feature/foo", "feature-foo"),
-            ("user\\task", "user-task"),
+            (r"user\task", "user-task"),
             ("feature/user/task", "feature-user-task"),
-            ("feature/user\\task", "feature-user-task"),
+            (r"feature/user\task", "feature-user-task"),
             ("simple-branch", "simple-branch"),
             ("", ""),
             ("///", "---"),
@@ -736,7 +1028,7 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("path", "my path");
         let expanded = expand_template("cd {{ path }}", &vars, true, &test.repo, "test").unwrap();
-        assert!(expanded.contains("'my path'") || expanded.contains("my\\ path"));
+        assert!(expanded.contains("'my path'") || expanded.contains(r"my\ path"));
 
         // Command injection prevention
         vars.insert("arg", "test;rm -rf");
@@ -788,7 +1080,7 @@ mod tests {
         assert_snapshot!(err, @"
         [31m✗[39m [31mFailed to expand test: undefined value @ line 1[39m
         [107m [0m echo {{ target }}
-        [2m↳[22m [2mAvailable variables: [4mbranch, remote[24m[22m
+        [2m↳[22m [2mAvailable variables: [4mbranch[24m, [4mremote[24m[22m
         ");
     }
 
@@ -934,7 +1226,7 @@ mod tests {
         );
 
         // Backslashes are also sanitized
-        vars.insert("branch", "feature\\bar");
+        vars.insert("branch", r"feature\bar");
         assert_eq!(
             expand_template("{{ branch | sanitize }}", &vars, false, &test.repo, "test").unwrap(),
             "feature-bar"
@@ -962,7 +1254,7 @@ mod tests {
             expand_template("{{ branch | sanitize }}", &vars, true, &test.repo, "test").unwrap();
         // sanitize replaces / with -, producing "user's-feature"
         // shell_escape wraps it: 'user'\''s-feature' (valid shell for user's-feature)
-        assert_eq!(result, "'user'\\''s-feature'", "sanitize + shell escape");
+        assert_eq!(result, r"'user'\''s-feature'", "sanitize + shell escape");
 
         // Without the fix, pre-escaping would produce corrupted output because
         // sanitize would replace the / and \ in the already-escaped value.
@@ -971,7 +1263,7 @@ mod tests {
         let result = expand_template("{{ branch }}", &vars, true, &test.repo, "test").unwrap();
         // shell_escape wraps: 'user'\''s/feature' (valid shell for user's/feature)
         assert_eq!(
-            result, "'user'\\''s/feature'",
+            result, r"'user'\''s/feature'",
             "shell escape without filter"
         );
 
@@ -1160,15 +1452,15 @@ mod tests {
         let test = test_repo();
 
         // Set vars data via git config
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args(["config", "worktrunk.state.main.vars.env", "staging"])
-            .current_dir(test._dir.path())
-            .status()
+            .current_dir(test.path())
+            .run()
             .unwrap();
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args(["config", "worktrunk.state.main.vars.port", "3000"])
-            .current_dir(test._dir.path())
-            .status()
+            .current_dir(test.path())
+            .run()
             .unwrap();
 
         let mut vars = HashMap::new();
@@ -1216,32 +1508,32 @@ mod tests {
         let test = test_repo();
 
         // Store a JSON object as a vars value
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args([
                 "config",
                 "worktrunk.state.main.vars.config",
                 r#"{"port": 3000, "debug": true}"#,
             ])
-            .current_dir(test._dir.path())
-            .status()
+            .current_dir(test.path())
+            .run()
             .unwrap();
 
         // Store a JSON array
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args([
                 "config",
                 "worktrunk.state.main.vars.tags",
                 r#"["alpha", "beta"]"#,
             ])
-            .current_dir(test._dir.path())
-            .status()
+            .current_dir(test.path())
+            .run()
             .unwrap();
 
         // Store a plain string (not JSON)
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args(["config", "worktrunk.state.main.vars.env", "staging"])
-            .current_dir(test._dir.path())
-            .status()
+            .current_dir(test.path())
+            .run()
             .unwrap();
 
         let mut vars = HashMap::new();
@@ -1287,14 +1579,14 @@ mod tests {
     fn test_expand_template_vars_json_shell_escape() {
         let test = test_repo();
 
-        std::process::Command::new("git")
+        Cmd::new("git")
             .args([
                 "config",
                 "worktrunk.state.main.vars.config",
                 r#"{"name": "my project", "cmd": "echo hello"}"#,
             ])
-            .current_dir(test._dir.path())
-            .status()
+            .current_dir(test.path())
+            .run()
             .unwrap();
 
         let mut vars = HashMap::new();
@@ -1350,48 +1642,271 @@ mod tests {
     }
 
     #[test]
+    fn test_expand_template_args_sequence() {
+        let test = test_repo();
+        let args_json = serde_json::to_string(&["foo", "bar baz", "qux"]).unwrap();
+        let mut vars = HashMap::new();
+        vars.insert("args", args_json.as_str());
+
+        // Bare {{ args }} with shell escaping: space-joined, per-element escaped,
+        // NOT wrapped in outer quotes as a single token.
+        assert_eq!(
+            expand_template("wt switch {{ args }}", &vars, true, &test.repo, "test").unwrap(),
+            "wt switch foo 'bar baz' qux"
+        );
+
+        // Indexing returns a plain string — flows through the shell-escape formatter.
+        assert_eq!(
+            expand_template("{{ args[0] }}", &vars, true, &test.repo, "test").unwrap(),
+            "foo"
+        );
+        assert_eq!(
+            expand_template("{{ args[1] }}", &vars, true, &test.repo, "test").unwrap(),
+            "'bar baz'"
+        );
+
+        // Length works like any sequence.
+        assert_eq!(
+            expand_template("{{ args | length }}", &vars, false, &test.repo, "test").unwrap(),
+            "3"
+        );
+
+        // Iteration yields per-element string values; each escaped by the formatter.
+        assert_eq!(
+            expand_template(
+                "{% for a in args %}[{{ a }}]{% endfor %}",
+                &vars,
+                true,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "[foo]['bar baz'][qux]"
+        );
+    }
+
+    #[test]
+    fn test_expand_template_args_empty() {
+        let test = test_repo();
+        let args_json = serde_json::to_string(&Vec::<String>::new()).unwrap();
+        let mut vars = HashMap::new();
+        vars.insert("args", args_json.as_str());
+
+        // Empty args renders empty. No stray whitespace, no error.
+        assert_eq!(
+            expand_template("wt switch{{ args }}", &vars, true, &test.repo, "test").unwrap(),
+            "wt switch"
+        );
+
+        // Length still defined for empty.
+        assert_eq!(
+            expand_template("{{ args | length }}", &vars, false, &test.repo, "test").unwrap(),
+            "0"
+        );
+
+        // Iteration yields nothing.
+        assert_eq!(
+            expand_template(
+                "{% for a in args %}X{% endfor %}",
+                &vars,
+                true,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_expand_template_args_shell_metachar_safety() {
+        // The point of ShellArgs is that bare {{ args }} is safe to splice into
+        // a command line even when args contain shell metacharacters — each
+        // element is individually single-quoted by `shell_escape::unix::escape`,
+        // and the outer formatter doesn't re-quote the joined result.
+        let test = test_repo();
+        let args_json = serde_json::to_string(&["; rm -rf /", "$(whoami)", "a'b"]).unwrap();
+        let mut vars = HashMap::new();
+        vars.insert("args", args_json.as_str());
+
+        let rendered = expand_template("echo {{ args }}", &vars, true, &test.repo, "test").unwrap();
+        assert_eq!(rendered, r#"echo '; rm -rf /' '$(whoami)' 'a'\''b'"#);
+    }
+
+    #[test]
     fn test_validate_template_valid() {
         let test = test_repo();
+        let hook = ValidationScope::Hook(HookType::PostStart);
 
         // Static text
-        assert!(validate_template("echo hello", &test.repo, "test").is_ok());
+        assert!(validate_template("echo hello", hook, &test.repo, "test").is_ok());
 
-        // Known variables
-        assert!(validate_template("{{ branch }}", &test.repo, "test").is_ok());
-        assert!(validate_template("{{ repo }}/{{ branch }}", &test.repo, "test").is_ok());
+        // Base variables are available in every scope
+        assert!(validate_template("{{ branch }}", hook, &test.repo, "test").is_ok());
+        assert!(validate_template("{{ repo }}/{{ branch }}", hook, &test.repo, "test").is_ok());
 
         // Filters
-        assert!(validate_template("{{ branch | sanitize }}", &test.repo, "test").is_ok());
-        assert!(validate_template("{{ branch | sanitize_db }}", &test.repo, "test").is_ok());
-        assert!(validate_template("{{ branch | hash_port }}", &test.repo, "test").is_ok());
+        assert!(validate_template("{{ branch | sanitize }}", hook, &test.repo, "test").is_ok());
+        assert!(validate_template("{{ branch | sanitize_db }}", hook, &test.repo, "test").is_ok());
+        assert!(
+            validate_template("{{ branch | sanitize_hash }}", hook, &test.repo, "test").is_ok()
+        );
+        assert!(validate_template("{{ branch | hash_port }}", hook, &test.repo, "test").is_ok());
 
         // Conditionals with optional vars
         assert!(
             validate_template(
                 "{% if upstream %}{{ upstream }}{% endif %}",
+                hook,
                 &test.repo,
                 "test"
             )
             .is_ok()
         );
 
-        // Deprecated vars still valid
-        assert!(validate_template("{{ main_worktree }}", &test.repo, "test").is_ok());
+        // Deprecated vars still valid in every scope
+        assert!(validate_template("{{ main_worktree }}", hook, &test.repo, "test").is_ok());
+
+        // `args` validates in both Hook and Alias scopes.
+        assert!(validate_template("echo {{ args }}", hook, &test.repo, "test").is_ok());
+        let alias = ValidationScope::Alias;
+        assert!(validate_template("wt switch {{ args }}", alias, &test.repo, "test").is_ok());
+        assert!(validate_template("{{ args | length }}", alias, &test.repo, "test").is_ok());
+        assert!(
+            validate_template(
+                "{% for a in args %}{{ a }}{% endfor %}",
+                alias,
+                &test.repo,
+                "test"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_validate_template_scope_rejects_out_of_scope_vars() {
+        let test = test_repo();
+
+        // `base` is unavailable in pre-merge — catch the typo at validation time.
+        let err = validate_template(
+            "{{ base }}",
+            ValidationScope::Hook(HookType::PreMerge),
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("undefined value"),
+            "got: {}",
+            err.message
+        );
+
+        // `base` is available in pre-start.
+        assert!(
+            validate_template(
+                "{{ base }}",
+                ValidationScope::Hook(HookType::PreStart),
+                &test.repo,
+                "test"
+            )
+            .is_ok()
+        );
+
+        // `target` is available in pre-merge.
+        assert!(
+            validate_template(
+                "{{ target }}",
+                ValidationScope::Hook(HookType::PreMerge),
+                &test.repo,
+                "test"
+            )
+            .is_ok()
+        );
+
+        // `pr_number`/`pr_url` are available in pre-start (populated when
+        // creating via `pr:N` / `mr:N`).
+        for var in ["pr_number", "pr_url"] {
+            assert!(
+                validate_template(
+                    &format!("{{{{ {var} }}}}"),
+                    ValidationScope::Hook(HookType::PreStart),
+                    &test.repo,
+                    "test"
+                )
+                .is_ok(),
+                "{var} should validate in pre-start scope"
+            );
+        }
+
+        // `pr_number` is not available in pre-merge (different hook type).
+        let err = validate_template(
+            "{{ pr_number }}",
+            ValidationScope::Hook(HookType::PreMerge),
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("undefined value"),
+            "got: {}",
+            err.message
+        );
+
+        // `args` is available in hook scope (forwarded via smart routing).
+        assert!(
+            validate_template(
+                "{{ args }}",
+                ValidationScope::Hook(HookType::PreStart),
+                &test.repo,
+                "test",
+            )
+            .is_ok()
+        );
+
+        // `args` is not available in SwitchExecute.
+        let err = validate_template(
+            "{{ args }}",
+            ValidationScope::SwitchExecute,
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("undefined value"),
+            "got: {}",
+            err.message
+        );
     }
 
     #[test]
     fn test_validate_template_syntax_error() {
         let test = test_repo();
 
-        let err = validate_template("{{ unclosed", &test.repo, "test").unwrap_err();
+        let err = validate_template("{{ unclosed", ValidationScope::Alias, &test.repo, "test")
+            .unwrap_err();
         assert!(err.message.contains("syntax error"), "got: {}", err.message);
+    }
+
+    #[test]
+    fn test_referenced_vars_for_config_syntax_error_propagates() {
+        let cfg = super::super::CommandConfig::single("echo {{ unclosed");
+        let err = referenced_vars_for_config(&cfg).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("Failed to parse template"), "got: {msg}");
+        assert!(msg.contains("syntax error"), "got: {msg}");
     }
 
     #[test]
     fn test_validate_template_undefined_var() {
         let test = test_repo();
 
-        let err = validate_template("{{ nonexistent_var }}", &test.repo, "test").unwrap_err();
+        let err = validate_template(
+            "{{ nonexistent_var }}",
+            ValidationScope::Hook(HookType::PostStart),
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
         assert!(
             err.message.contains("undefined value"),
             "got: {}",
@@ -1400,5 +1915,99 @@ mod tests {
         // Should list available vars in hint
         assert!(!err.available_vars.is_empty(), "should list available vars");
         assert!(err.available_vars.contains(&"branch".to_string()));
+    }
+
+    #[test]
+    fn test_format_hook_variables_groups_and_unset() {
+        let mut ctx: HashMap<String, String> = HashMap::new();
+        ctx.insert("branch".into(), "feature".into());
+        ctx.insert("worktree_path".into(), "/tmp/feature".into());
+        ctx.insert("worktree_name".into(), "feature".into());
+        ctx.insert("base".into(), "main".into());
+        ctx.insert("base_worktree_path".into(), "/tmp/main".into());
+        ctx.insert("target".into(), "-".into());
+        // target_worktree_path deliberately absent — mimics `wt switch -`
+        ctx.insert("repo".into(), "demo".into());
+        ctx.insert("repo_path".into(), "/tmp/demo".into());
+        ctx.insert("cwd".into(), "/tmp/feature".into());
+        ctx.insert("hook_type".into(), "pre-switch".into());
+        ctx.insert("hook_name".into(), "show-variables".into());
+
+        assert_snapshot!(format_hook_variables(HookType::PreSwitch, &ctx), @r"
+        branch                = feature
+        worktree_path         = /tmp/feature
+        worktree_name         = feature
+        commit                = (unset)
+        short_commit          = (unset)
+        upstream              = (unset)
+        base                  = main
+        base_worktree_path    = /tmp/main
+        target                = -
+        target_worktree_path  = (unset)
+        pr_number             = (unset)
+        pr_url                = (unset)
+        repo                  = demo
+        repo_path             = /tmp/demo
+        owner                 = (unset)
+        primary_worktree_path = (unset)
+        default_branch        = (unset)
+        remote                = (unset)
+        remote_url            = (unset)
+        cwd                   = /tmp/feature
+        hook_type             = pre-switch
+        hook_name             = show-variables
+        ");
+    }
+
+    #[test]
+    fn test_format_hook_variables_filters_operation() {
+        // pre-commit only has `target` in operation scope — no base*, pr_*, etc.
+        let mut ctx: HashMap<String, String> = HashMap::new();
+        ctx.insert("target".into(), "main".into());
+        let out = format_hook_variables(HookType::PreCommit, &ctx);
+        assert!(out.contains("target                = main"), "got: {out}");
+        assert!(
+            !out.contains("base "),
+            "pre-commit has no `base`; got: {out}"
+        );
+        assert!(
+            !out.contains("pr_number"),
+            "pre-commit has no `pr_number`; got: {out}"
+        );
+    }
+
+    #[test]
+    fn test_format_alias_variables_includes_args_no_hook_keys() {
+        let mut ctx: HashMap<String, String> = HashMap::new();
+        ctx.insert("branch".into(), "feature".into());
+        ctx.insert("worktree_path".into(), "/tmp/feature".into());
+        ctx.insert("worktree_name".into(), "feature".into());
+        ctx.insert("repo".into(), "demo".into());
+        ctx.insert("repo_path".into(), "/tmp/demo".into());
+        ctx.insert("cwd".into(), "/tmp/feature".into());
+        // args is JSON-encoded per `ALIAS_ARGS_KEY` contract; the table
+        // decodes and shell-renders it to match `{{ args }}` substitution.
+        ctx.insert(ALIAS_ARGS_KEY.into(), r#"["a","b c"]"#.into());
+
+        let out = format_alias_variables(&ctx);
+        assert!(
+            out.contains("args                  = a 'b c'"),
+            "got: {out}"
+        );
+        // No hook-only keys appear in alias scope.
+        assert!(!out.contains("hook_type"), "got: {out}");
+        assert!(!out.contains("target"), "got: {out}");
+        assert!(!out.contains("base "), "got: {out}");
+    }
+
+    #[test]
+    fn test_format_alias_variables_args_empty() {
+        let mut ctx: HashMap<String, String> = HashMap::new();
+        ctx.insert(ALIAS_ARGS_KEY.into(), "[]".into());
+        let out = format_alias_variables(&ctx);
+        // Empty args render as an empty string after the `=` — distinct from
+        // `(unset)`, which means the key was absent entirely. `args` sits last
+        // in alias ordering, so the output ends with it.
+        assert!(out.ends_with("args                  = "), "got: {out:?}");
     }
 }

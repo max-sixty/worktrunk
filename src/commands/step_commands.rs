@@ -15,17 +15,18 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::Context;
 use color_print::cformat;
+use crossbeam_channel as chan;
 use ignore::gitignore::GitignoreBuilder;
+use path_slash::PathExt as _;
 use rayon::prelude::*;
 use worktrunk::HookType;
 use worktrunk::config::{CopyIgnoredConfig, UserConfig};
-use worktrunk::copy::{copy_dir_recursive, create_symlink, remove_if_exists};
-use worktrunk::git::Repository;
+use worktrunk::copy::{copy_dir_recursive, copy_leaf};
+use worktrunk::git::{Repository, WorktreeInfo};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
@@ -34,15 +35,13 @@ use worktrunk::styling::{
 };
 
 use super::command_approval::approve_hooks;
+use super::command_executor::FailureStrategy;
 use super::commit::{CommitGenerator, CommitOptions, StageMode};
 use super::context::CommandEnv;
-use super::hooks::{
-    HookCommandSpec, HookFailureStrategy, prepare_background_hooks, run_hook_with_filter,
-    spawn_prepared_hooks,
-};
+use super::hooks::{HookCommandSpec, run_hook_with_filter, spawn_background_hooks};
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
-use super::worktree::BranchDeletionMode;
 use crate::output::handle_remove_output;
+use worktrunk::git::BranchDeletionMode;
 
 /// Handle `wt step commit` command
 ///
@@ -71,15 +70,15 @@ pub fn step_commit(
     let _ = crate::output::prompt_commit_generation(&mut config);
 
     let env = match branch {
-        Some(ref b) => CommandEnv::for_branch("commit", config, b)?,
-        None => CommandEnv::for_action("commit", config)?,
+        Some(ref b) => CommandEnv::for_branch(config, b)?,
+        None => CommandEnv::for_action(config)?,
     };
     let ctx = env.context(yes);
 
     // CLI flag overrides config value
     let stage_mode = stage.unwrap_or(env.resolved().commit.stage());
 
-    // "Approve at the Gate": approve commit hooks upfront (unless --no-verify)
+    // "Approve at the Gate": approve commit hooks upfront (unless --no-hooks)
     // Shadow verify: if user declines approval, skip hooks but continue commit
     let verify = if verify {
         let approved = approve_hooks(&ctx, &[HookType::PreCommit, HookType::PostCommit])?;
@@ -93,7 +92,7 @@ pub fn step_commit(
             true
         }
     } else {
-        false // --no-verify was passed
+        false // --no-hooks was passed
     };
 
     let mut options = CommitOptions::new(&ctx);
@@ -122,7 +121,7 @@ pub enum SquashResult {
 /// Handle shared squash workflow (used by `wt step squash` and `wt merge`)
 ///
 /// # Arguments
-/// * `verify` - If true, run pre-commit hooks (false when --no-verify flag is passed)
+/// * `verify` - If true, run pre-commit hooks (false when --no-hooks flag is passed)
 /// * `stage` - CLI-provided stage mode. If None, uses the effective config default.
 pub fn handle_squash(
     target: Option<&str>,
@@ -135,7 +134,7 @@ pub fn handle_squash(
     // One-time LLM setup prompt (errors logged internally; don't block commit)
     let _ = crate::output::prompt_commit_generation(&mut config);
 
-    let env = CommandEnv::for_action("squash", config)?;
+    let env = CommandEnv::for_action(config)?;
     let repo = &env.repo;
     // Squash requires being on a branch (can't squash in detached HEAD)
     let current_branch = env.require_branch("squash")?.to_string();
@@ -156,7 +155,7 @@ pub fn handle_squash(
     );
     let any_hooks_exist = user_cfg.is_some() || proj_cfg.is_some();
 
-    // "Approve at the Gate": approve commit hooks upfront (unless --no-verify)
+    // "Approve at the Gate": approve commit hooks upfront (unless --no-hooks)
     // Shadow verify: if user declines approval, skip hooks but continue squash
     let verify = if verify {
         let approved = approve_hooks(&ctx, &[HookType::PreCommit, HookType::PostCommit])?;
@@ -170,14 +169,11 @@ pub fn handle_squash(
             true
         }
     } else {
-        // Show skip message when --no-verify was passed and hooks exist
+        // Show skip message when --no-hooks was passed and hooks exist
         if any_hooks_exist {
-            eprintln!(
-                "{}",
-                info_message("Skipping pre-commit hooks (--no-verify)")
-            );
+            eprintln!("{}", info_message("Skipping pre-commit hooks (--no-hooks)"));
         }
-        false // --no-verify was passed
+        false // --no-hooks was passed
     };
 
     // Get and validate target ref (any commit-ish for merge-base calculation)
@@ -209,10 +205,10 @@ pub fn handle_squash(
                 project_config: proj_cfg,
                 hook_type: HookType::PreCommit,
                 extra_vars: &extra_vars,
-                name_filter: None,
+                name_filters: &[],
                 display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
             },
-            HookFailureStrategy::FailFast,
+            FailureStrategy::FailFast,
         )
         .map_err(worktrunk::git::add_hook_skip_hint)?;
     }
@@ -362,11 +358,10 @@ pub fn handle_squash(
         success_message(cformat!("Squashed @ <dim>{commit_hash}</>"))
     );
 
-    // Spawn post-commit hooks in background (respects --no-verify)
+    // Spawn post-commit hooks in background (respects --no-hooks)
     if verify {
         let extra_vars: Vec<(&str, &str)> = vec![("target", integration_target.as_str())];
-        let hooks = prepare_background_hooks(&ctx, HookType::PostCommit, &extra_vars, None)?;
-        spawn_prepared_hooks(&ctx, hooks)?;
+        spawn_background_hooks(&ctx, HookType::PostCommit, &extra_vars, None)?;
     }
 
     Ok(SquashResult::Squashed)
@@ -626,8 +621,10 @@ fn list_and_filter_ignored_entries(
         let include_matcher = {
             let mut builder = GitignoreBuilder::new(worktree_path);
             if let Some(err) = builder.add(&include_path) {
+                // The `ignore` crate formats the path with OS-native separators;
+                // normalize to forward slashes for consistent display.
                 return Err(worktrunk::git::GitError::WorktreeIncludeParseError {
-                    error: err.to_string(),
+                    error: err.to_string().replace('\\', "/"),
                 }
                 .into());
             }
@@ -707,6 +704,14 @@ pub fn step_copy_ignored(
     dry_run: bool,
     force: bool,
 ) -> anyhow::Result<()> {
+    // Self-lower only when we're running inside a background hook pipeline
+    // (parent `wt` sets `WORKTRUNK_FOREGROUND=-1` on the detached runner).
+    // Foreground callers — interactive `wt step copy-ignored` and synchronous
+    // `pre-*` hook pipelines — are the UI the user is waiting on and must not
+    // be I/O-throttled by `taskpolicy -b` on macOS.
+    if worktrunk::priority::in_background_hook() {
+        worktrunk::priority::lower_current_process();
+    }
     let repo = Repository::current()?;
     let copy_ignored_config = resolve_copy_ignored_config(&repo)?;
 
@@ -771,7 +776,6 @@ pub fn step_copy_ignored(
     }
 
     let verbose = verbosity();
-    let copied_count = AtomicUsize::new(0);
 
     // Show entries in verbose or dry-run mode
     if verbose >= 1 || dry_run {
@@ -801,78 +805,38 @@ pub fn step_copy_ignored(
         }
     }
 
-    entries_to_copy
-        .par_iter()
-        .try_for_each(|(src_entry, is_dir)| -> anyhow::Result<()> {
-            // Paths from git ls-files are always under source_path
-            let relative = src_entry
-                .strip_prefix(&source_path)
-                .expect("git ls-files path under worktree");
-            let dest_entry = dest_path.join(relative);
+    let mut copied_count = 0usize;
+    for (src_entry, is_dir) in &entries_to_copy {
+        let relative = src_entry
+            .strip_prefix(&source_path)
+            .expect("git ls-files path under worktree");
+        let dest_entry = dest_path.join(relative);
 
-            if *is_dir {
+        if *is_dir {
+            copied_count +=
                 copy_dir_recursive(src_entry, &dest_entry, force).with_context(|| {
                     format!("copying directory {}", format_path_for_display(relative))
                 })?;
-                copied_count.fetch_add(1, Ordering::Relaxed);
-            } else {
-                if let Some(parent) = dest_entry.parent() {
-                    fs::create_dir_all(parent).with_context(|| {
-                        format!(
-                            "creating directory for {}",
-                            format_path_for_display(relative)
-                        )
-                    })?;
-                }
-                if force {
-                    remove_if_exists(&dest_entry)?;
-                }
-                // Check if source is a symlink — preserve it instead of following it
-                let display_path = format_path_for_display(relative);
-                let source_is_symlink = fs::symlink_metadata(src_entry)
-                    .context(format!("reading metadata for {display_path}"))?
-                    .file_type()
-                    .is_symlink();
-                if source_is_symlink {
-                    // Skip existing symlinks for idempotent hook usage
-                    if dest_entry.symlink_metadata().is_err() {
-                        let target = fs::read_link(src_entry)
-                            .context(format!("reading symlink {display_path}"))?;
-                        create_symlink(&target, src_entry, &dest_entry)?;
-                        copied_count.fetch_add(1, Ordering::Relaxed);
-                    }
-                } else {
-                    // Skip existing entries (files or symlinks) for idempotent hook usage.
-                    // Check symlink_metadata (not exists()) because exists() follows symlinks
-                    // and returns false for broken ones, which would cause reflink_or_copy to
-                    // fail with ENOENT on some platforms when copying through the broken symlink.
-                    if dest_entry.symlink_metadata().is_err() {
-                        match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
-                            Ok(_) => {
-                                copied_count.fetch_add(1, Ordering::Relaxed);
-                            }
-                            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-                            Err(e) => {
-                                return Err(anyhow::Error::from(e)
-                                    .context(format!("copying {display_path}")));
-                            }
-                        }
-                    }
-                }
+        } else {
+            if let Some(parent) = dest_entry.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!(
+                        "creating directory for {}",
+                        format_path_for_display(relative)
+                    )
+                })?;
             }
-            Ok(())
-        })?;
+            if copy_leaf(src_entry, &dest_entry, force)? {
+                copied_count += 1;
+            }
+        }
+    }
 
     // Show summary
-    let copied_count = copied_count.load(Ordering::Relaxed);
-    let entry_word = if copied_count == 1 {
-        "entry"
-    } else {
-        "entries"
-    };
+    let file_word = if copied_count == 1 { "file" } else { "files" };
     eprintln!(
         "{}",
-        success_message(format!("Copied {copied_count} {entry_word}"))
+        success_message(format!("Copied {copied_count} {file_word}"))
     );
 
     Ok(())
@@ -943,11 +907,8 @@ fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> 
         copy_dir_recursive(src, dest, true)?;
         fs::remove_dir_all(src).context(format!("removing source directory {}", src.display()))?;
     } else {
-        reflink_copy::reflink_or_copy(src, dest).context(format!(
-            "copying {} to {}",
-            src.display(),
-            dest.display()
-        ))?;
+        copy_leaf(src, dest, true)?;
+
         fs::remove_file(src).context(format!("removing source file {}", src.display()))?;
     }
     Ok(())
@@ -1178,11 +1139,10 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     // Check BEFORE ensure_clean so users see the recovery path first.
     let staging_path = repo.wt_dir().join(PROMOTE_STAGING_DIR);
     if staging_path.exists() {
+        let display = staging_path.to_slash_lossy();
         return Err(anyhow::anyhow!(
-            "Files may need manual recovery from: {}\n\
-             Remove it to retry: rm -rf \"{}\"",
-            staging_path.display(),
-            staging_path.display()
+            "Files may need manual recovery from: {display}\n\
+             Remove it to retry: rm -rf \"{display}\""
         )
         .context("Found leftover staging directory from an interrupted promote"));
     }
@@ -1241,7 +1201,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         )
         .context(format!(
             "Failed to stage ignored files. Already-staged files may be recoverable from: {}",
-            staging_path.display()
+            staging_path.to_slash_lossy()
         ))?;
         if count > 0 { Some((dir, count)) } else { None }
     } else {
@@ -1301,7 +1261,13 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
 /// entries (pruned + branch deleted), and orphan branches without worktrees (deleted).
 /// Skips the main/primary worktree, locked worktrees, and worktrees younger than
 /// `min_age`. Removes the current worktree last to trigger cd to primary.
-pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> anyhow::Result<()> {
+pub fn step_prune(
+    dry_run: bool,
+    yes: bool,
+    min_age: &str,
+    foreground: bool,
+    format: crate::cli::SwitchFormat,
+) -> anyhow::Result<()> {
     let min_age_duration =
         humantime::parse_duration(min_age).context("Invalid --min-age duration")?;
 
@@ -1324,6 +1290,8 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
 
     // Gather candidates: integrated worktrees + integrated branch-only refs
     struct Candidate {
+        /// Original index in check_items (for deterministic output ordering)
+        check_idx: usize,
         /// Branch name (None for detached HEAD worktrees)
         branch: Option<String>,
         /// Display label: branch name or abbreviated commit SHA
@@ -1337,6 +1305,16 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         Current,
         Other,
         BranchOnly,
+    }
+
+    impl CandidateKind {
+        fn as_str(&self) -> &'static str {
+            match self {
+                CandidateKind::Current => "current",
+                CandidateKind::Other => "worktree",
+                CandidateKind::BranchOnly => "branch_only",
+            }
+        }
     }
 
     /// Build a human-readable count like "3 worktrees & branches".
@@ -1406,9 +1384,8 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         approved
     };
 
-    let mut candidates: Vec<Candidate> = Vec::new(); // dry-run collects here
-    let mut removed: Vec<Candidate> = Vec::new(); // non-dry-run tracks removals
-    let mut deferred_current: Option<Candidate> = None; // current worktree removed last
+    let mut removed: Vec<Candidate> = Vec::new();
+    let mut deferred_current: Option<Candidate> = None;
     let mut skipped_young: Vec<String> = Vec::new();
     // Track branches seen via worktree entries so we don't double-count
     // in the orphan branch scan below.
@@ -1422,6 +1399,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         config: &UserConfig,
         foreground: bool,
         run_hooks: bool,
+        worktrees: &[WorktreeInfo],
     ) -> anyhow::Result<bool> {
         let target = match candidate.kind {
             CandidateKind::Current => RemoveTarget::Current,
@@ -1447,6 +1425,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
             false,
             config,
             None,
+            Some(worktrees),
         ) {
             Ok(plan) => plan,
             Err(_) => {
@@ -1455,7 +1434,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
                 return Ok(false);
             }
         };
-        handle_remove_output(&plan, foreground, run_hooks, true)?;
+        handle_remove_output(&plan, foreground, run_hooks, true, true)?;
         Ok(true)
     }
 
@@ -1533,21 +1512,52 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         });
     }
 
-    let integration_results: Vec<anyhow::Result<_>> = check_items
-        .par_iter()
-        .map(|item| {
-            let (effective_target, reason) =
-                repo.integration_reason(&item.integration_ref, &integration_target)?;
-            Ok((effective_target, reason))
-        })
+    // Parallel integration checks with inline removals.
+    //
+    // Spawn integration checks on a background thread via rayon par_iter,
+    // sending each result through a channel as it completes. The main thread
+    // processes results as they arrive: age-filtering, printing "Skipped"
+    // messages, and removing candidates immediately. This overlaps integration
+    // checking with removal — output appears as soon as the first check
+    // completes instead of waiting for all checks to finish.
+    let (tx, rx) = chan::unbounded();
+    let integration_refs: Vec<String> = check_items
+        .iter()
+        .map(|item| item.integration_ref.clone())
         .collect();
 
-    // Process results sequentially (removals must be serial)
-    for (item, result) in check_items.iter().zip(integration_results) {
+    // Intentionally detached: if the main thread returns early (error in
+    // the recv loop), remaining rayon tasks silently fail to send on the
+    // closed channel and the thread cleans up on its own. Empty
+    // integration_refs produces an empty par_iter that completes immediately.
+    let repo_clone = repo.clone();
+    let target = integration_target.clone();
+    std::thread::spawn(move || {
+        integration_refs
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(idx, ref_name)| {
+                let result = repo_clone.integration_reason(&ref_name, &target);
+                let _ = tx.send((idx, result));
+            });
+    });
+
+    // Collect integration context alongside candidates for dry-run display.
+    struct DryRunInfo {
+        reason_desc: String,
+        effective_target: String,
+        suffix: &'static str,
+    }
+    let mut dry_run_info: Vec<(Candidate, DryRunInfo)> = Vec::new();
+
+    // Process results as they arrive from the channel.
+    for (idx, result) in rx {
         let (effective_target, reason) = result?;
         let Some(reason) = reason else {
             continue;
         };
+
+        let item = &check_items[idx];
 
         // Linked worktrees need special handling: age check via filesystem
         // metadata, current-worktree deferral, and path-based candidates.
@@ -1572,6 +1582,12 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
                 {
                     let age = Duration::from_secs(now_secs.saturating_sub(created_epoch.as_secs()));
                     if age < min_age_duration {
+                        if !dry_run {
+                            eprintln!(
+                                "{}",
+                                info_message(format!("Skipped {label} (younger than {min_age})"))
+                            );
+                        }
                         skipped_young.push(label);
                         continue;
                     }
@@ -1581,6 +1597,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
             let wt_path = dunce::canonicalize(&wt.path).unwrap_or(wt.path.clone());
             let is_current = wt_path == current_root;
             let candidate = Candidate {
+                check_idx: idx,
                 branch: if wt.detached { None } else { wt.branch.clone() },
                 label,
                 path: Some(wt.path.clone()),
@@ -1591,19 +1608,17 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
                 },
             };
             if dry_run {
-                eprintln!(
-                    "{}",
-                    info_message(cformat!(
-                        "<bold>{}</> — {} {}",
-                        candidate.label,
-                        reason.description(),
-                        effective_target
-                    ))
-                );
-                candidates.push(candidate);
+                let info = DryRunInfo {
+                    reason_desc: reason.description().to_string(),
+                    effective_target,
+                    suffix: "",
+                };
+                dry_run_info.push((candidate, info));
             } else if is_current {
                 deferred_current = Some(candidate);
-            } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
+            } else if try_remove(
+                &candidate, &repo, &config, foreground, run_hooks, &worktrees,
+            )? {
                 removed.push(candidate);
             }
             continue;
@@ -1628,6 +1643,12 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
             {
                 let age = Duration::from_secs(now_secs.saturating_sub(created_epoch));
                 if age < min_age_duration {
+                    if !dry_run {
+                        eprintln!(
+                            "{}",
+                            info_message(format!("Skipped {branch} (younger than {min_age})"))
+                        );
+                    }
                     skipped_young.push(branch.clone());
                     continue;
                 }
@@ -1635,39 +1656,75 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
         }
 
         let candidate = Candidate {
+            check_idx: idx,
             label: branch.clone(),
             branch: Some(branch.clone()),
             path: None,
             kind: CandidateKind::BranchOnly,
         };
         if dry_run {
-            eprintln!(
-                "{}",
-                info_message(cformat!(
-                    "<bold>{}</>{} — {} {}",
-                    branch,
-                    suffix,
-                    reason.description(),
-                    effective_target
-                ))
-            );
-            candidates.push(candidate);
-        } else if try_remove(&candidate, &repo, &config, foreground, run_hooks)? {
+            let info = DryRunInfo {
+                reason_desc: reason.description().to_string(),
+                effective_target,
+                suffix,
+            };
+            dry_run_info.push((candidate, info));
+        } else if try_remove(
+            &candidate, &repo, &config, foreground, run_hooks, &worktrees,
+        )? {
             removed.push(candidate);
         }
     }
 
-    // Report skipped worktrees
-    if !skipped_young.is_empty() {
-        let names = skipped_young.join(", ");
-        eprintln!(
-            "{}",
-            info_message(format!("Skipped {names} (younger than {min_age})"))
-        );
-    }
-
     if dry_run {
-        if candidates.is_empty() {
+        // Sort by original check order for deterministic output regardless of
+        // channel completion order.
+        dry_run_info.sort_by_key(|(c, _)| c.check_idx);
+
+        if format == crate::cli::SwitchFormat::Json {
+            let items: Vec<serde_json::Value> = dry_run_info
+                .iter()
+                .map(|(c, info)| {
+                    serde_json::json!({
+                        "branch": c.branch,
+                        "path": c.path,
+                        "kind": c.kind.as_str(),
+                        "reason": info.reason_desc,
+                        "target": info.effective_target,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&items)?);
+            return Ok(());
+        }
+
+        let mut dry_candidates = Vec::new();
+        for (candidate, info) in dry_run_info {
+            eprintln!(
+                "{}",
+                info_message(cformat!(
+                    "<bold>{}</>{} — {} {}",
+                    candidate.label,
+                    info.suffix,
+                    info.reason_desc,
+                    info.effective_target
+                ))
+            );
+            dry_candidates.push(candidate);
+        }
+
+        // Report skipped worktrees (after candidates, before summary).
+        // Sort for deterministic output regardless of channel completion order.
+        skipped_young.sort();
+        if !skipped_young.is_empty() {
+            let names = skipped_young.join(", ");
+            eprintln!(
+                "{}",
+                info_message(format!("Skipped {names} (younger than {min_age})"))
+            );
+        }
+
+        if dry_candidates.is_empty() {
             if skipped_young.is_empty() {
                 eprintln!("{}", info_message("No merged worktrees to remove"));
             }
@@ -1677,7 +1734,7 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
             "{}",
             hint_message(format!(
                 "{} would be removed (dry run)",
-                prune_summary(&candidates)
+                prune_summary(&dry_candidates)
             ))
         );
         return Ok(());
@@ -1685,12 +1742,24 @@ pub fn step_prune(dry_run: bool, yes: bool, min_age: &str, foreground: bool) -> 
 
     // Remove deferred current worktree last (cd-to-primary happens here)
     if let Some(current) = deferred_current
-        && try_remove(&current, &repo, &config, foreground, run_hooks)?
+        && try_remove(&current, &repo, &config, foreground, run_hooks, &worktrees)?
     {
         removed.push(current);
     }
 
-    if removed.is_empty() {
+    if format == crate::cli::SwitchFormat::Json {
+        let items: Vec<serde_json::Value> = removed
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "branch": c.branch,
+                    "path": c.path,
+                    "kind": c.kind.as_str(),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&items)?);
+    } else if removed.is_empty() {
         if skipped_young.is_empty() {
             eprintln!("{}", info_message("No merged worktrees to remove"));
         }
@@ -1768,7 +1837,7 @@ pub fn step_relocate(
     // Phase 3 & 4: Create executor (classifies targets) and execute relocations
     let mut executor = RelocationExecutor::new(&repo, validated, clobber)?;
     let cwd = std::env::current_dir().ok();
-    executor.execute(&repo_path, &default_branch, cwd.as_deref())?;
+    executor.execute(&default_branch, cwd.as_deref())?;
 
     // Show summary
     let total_skipped = skipped + executor.skipped;
@@ -1780,19 +1849,6 @@ pub fn step_relocate(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_remove_if_exists_nonexistent() {
-        // NotFound is silently ignored
-        assert!(remove_if_exists(Path::new("/nonexistent/file")).is_ok());
-    }
-
-    #[test]
-    fn test_remove_if_exists_not_a_file() {
-        // Trying to remove a directory with remove_file produces a non-NotFound error
-        let dir = std::env::temp_dir();
-        assert!(remove_if_exists(&dir).is_err());
-    }
 
     #[test]
     fn test_move_entry_file() {

@@ -73,10 +73,11 @@ Location:
 
 Controls where new worktrees are created.
 
-**Variables:**
+**Available template variables:**
 
 - `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)
 - `{{ repo }}` — repository directory name (e.g., `myproject`)
+- `{{ owner }}` — primary remote owner path (may include subgroups like `group/subgroup`)
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
 - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
@@ -99,6 +100,12 @@ Centralized worktrees directory (`~/worktrees/myproject/feature-auth`):
 
 ```toml
 worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"
+```
+
+By remote owner path (`~/development/max-sixty/myproject/feature/auth`):
+
+```toml
+worktree-path = "~/development/{{ owner }}/{{ repo }}/{{ branch }}"
 ```
 
 Bare repository (`~/code/myproject/feature-auth`):
@@ -127,7 +134,7 @@ command = "CLAUDECODE= MAX_THINKING_TOKENS=0 claude -p --no-session-persistence 
 command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"
 ```
 
-### opencode
+### OpenCode
 
 ```toml
 [commit.generation]
@@ -187,7 +194,7 @@ squash = true      # Squash commits into one (--no-squash to preserve history)
 commit = true      # Commit uncommitted changes first (--no-commit to skip)
 rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 remove = true      # Remove worktree after merge (--no-remove to keep)
-verify = true      # Run project hooks (--no-verify to skip)
+verify = true      # Run project hooks (--no-hooks to skip)
 ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 ```
 
@@ -199,7 +206,6 @@ cd = true          # Change directory after switching (--no-cd to skip)
 
 [switch.picker]
 pager = "delta --paging=never"   # Example: override git's core.pager for diff preview
-timeout-ms = 500   # Wall-clock budget (ms) for picker data collection; 0 disables
 ```
 
 ### Step
@@ -213,7 +219,7 @@ Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/
 
 ### Aliases
 
-Command templates that run with `wt step <name>`. See [`wt step` aliases](@/step.md#aliases) for usage and flags.
+Command templates that run as `wt <name>`. See the [Extending Worktrunk guide](@/extending.md#aliases) for usage and flags.
 
 ```toml
 [aliases]
@@ -340,36 +346,13 @@ squash-template = """
 ## Hooks
 
 See [`wt hook`](@/hook.md) for hook types, execution order, template variables, and examples. User hooks apply to all projects; [project hooks](@/config.md#project-configuration) apply only to that repository.
-
-Single command:
-
-```toml
-pre-start = "npm ci"
-```
-
-Multiple named commands (concurrent for post-*, sequential for pre-*):
-
-```toml
-[pre-merge]
-test = "npm test"
-build = "npm run build"
-```
-
-Pipeline — list of maps, run in order (each map concurrent):
-
-```toml
-post-start = [
-    { install = "npm ci" },
-    { build = "npm run build", server = "npm run dev" }
-]
-```
 <!-- USER_CONFIG_END -->
 <!-- PROJECT_CONFIG_START -->
 # Project Configuration
 
-Create with `wt config create --project`. Examples shown — uncomment and customize for your project.
+Project configuration lets teams share repository-specific settings — hooks, dev server URLs, and other defaults. The file lives in `.config/wt.toml` and is typically checked into version control.
 
-Location: `.config/wt.toml` (checked into version control and shared with the team).
+To create a starter file with commented-out examples, run `wt config create --project`.
 
 ## Hooks
 
@@ -413,7 +396,7 @@ Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/
 
 ## Aliases
 
-Command templates that run with `wt step <name>`. See [`wt step` aliases](@/step.md#aliases) for usage and flags.
+Command templates that run as `wt <name>`. See the [Extending Worktrunk guide](@/extending.md#aliases) for usage and flags.
 
 ```toml
 [aliases]
@@ -471,8 +454,10 @@ Override the LLM command in CI to use a mock:
 | `WORKTRUNK_BIN` | Override binary path for shell wrappers; useful for testing dev builds |
 | `WORKTRUNK_CONFIG_PATH` | Override user config file location |
 | `WORKTRUNK_SYSTEM_CONFIG_PATH` | Override system config file location |
+| `WORKTRUNK_PROJECT_CONFIG_PATH` | Override project config file location (defaults to `.config/wt.toml`) |
 | `XDG_CONFIG_DIRS` | Colon-separated system config directories (default: `/etc/xdg`) |
-| `WORKTRUNK_DIRECTIVE_FILE` | Internal: set by shell wrappers to enable directory changes |
+| `WORKTRUNK_DIRECTIVE_CD_FILE` | Internal: set by shell wrappers. wt writes a raw path; the wrapper `cd`s to it |
+| `WORKTRUNK_DIRECTIVE_EXEC_FILE` | Internal: set by shell wrappers. wt writes shell commands; the wrapper sources the file |
 | `WORKTRUNK_SHELL` | Internal: set by shell wrappers to indicate shell type (e.g., `powershell`) |
 | `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting file descriptor limits. |
 | `NO_COLOR` | Disable colored output ([standard](https://no-color.org/)) |
@@ -488,12 +473,14 @@ Includes shell integration, hooks, and saved state.
 Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>shell</span></b>    Shell integration setup
-  <b><span class=c>create</span></b>   Create configuration file
-  <b><span class=c>show</span></b>     Show configuration files &amp; locations
-  <b><span class=c>update</span></b>   Update deprecated config settings
-  <b><span class=c>plugins</span></b>  Plugin management
-  <b><span class=c>state</span></b>    Manage internal data and cache
+  <b><span class=c>shell</span></b>      Shell integration setup
+  <b><span class=c>create</span></b>     Create configuration file
+  <b><span class=c>show</span></b>       Show configuration files &amp; locations
+  <b><span class=c>update</span></b>     Update deprecated config settings
+  <b><span class=c>approvals</span></b>  Manage command approvals
+  <b><span class=c>alias</span></b>      Inspect and preview aliases
+  <b><span class=c>plugins</span></b>    Plugin management
+  <b><span class=c>state</span></b>      Manage internal data and cache
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
@@ -507,7 +494,11 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 {% end %}
 
 # Subcommands
@@ -546,6 +537,16 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 
+<b><span class=g>Output:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format (text, json)
+
+          Possible values:
+          - <b><span class=c>text</span></b>: Human-readable text output
+          - <b><span class=c>json</span></b>: JSON output
+
+          [default: text]
+
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
           Working directory for this command
@@ -554,7 +555,106 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+{% end %}
+
+## wt config approvals
+
+Manage command approvals.
+
+Project hooks and project aliases prompt for approval on first run to prevent untrusted projects from running arbitrary commands. Approvals from both flows are stored together.
+
+### Examples
+
+Pre-approve all hook and alias commands for current project:
+{{ terminal(cmd="wt config approvals add") }}
+
+Clear approvals for current project:
+{{ terminal(cmd="wt config approvals clear") }}
+
+Clear global approvals:
+{{ terminal(cmd="wt config approvals clear --global") }}
+
+### How approvals work
+
+Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval is required when the command template changes or the project moves. Use `--yes` to bypass prompts in CI.
+
+### Command reference
+
+{% terminal() %}
+wt config approvals - Manage command approvals
+
+Usage: <b><span class=c>wt config approvals</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
+
+<b><span class=g>Commands:</span></b>
+  <b><span class=c>add</span></b>    Store approvals in approvals.toml
+  <b><span class=c>clear</span></b>  Clear approved commands from approvals.toml
+
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+{% end %}
+
+## wt config alias
+
+Inspect and preview aliases.
+
+Aliases are command templates configured in user (`~/.config/worktrunk/config.toml`) or project (`.config/wt.toml`) config and run as `wt <name>`. See the [Extending Worktrunk guide](@/extending.md#aliases) for the configuration format.
+
+### Examples
+
+Show the template for `deploy`:
+{{ terminal(cmd="wt config alias show deploy") }}
+
+Preview an invocation without running it:
+{{ terminal(cmd="wt config alias dry-run deploy|||wt config alias dry-run deploy -- --env=staging") }}
+
+### Command reference
+
+{% terminal() %}
+wt config alias - Inspect and preview aliases
+
+Usage: <b><span class=c>wt config alias</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
+
+<b><span class=g>Commands:</span></b>
+  <b><span class=c>show</span></b>     Show an alias&#39;s template as configured
+  <b><span class=c>dry-run</span></b>  Preview an alias invocation with template expansion
+
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 {% end %}
 
 ## wt config state
@@ -562,16 +662,15 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
 Manage internal data and cache.
 
 State is stored in `.git/` (config entries and log files), separate from configuration files.
-Use `wt config show` to view file-based configuration.
 
 ### Keys
 
-- **default-branch**: The repository's default branch (`main`, `master`, etc.)
+- **default-branch**: [The repository's default branch (`main`, `master`, etc.)](@/config.md#wt-config-state-default-branch)
 - **previous-branch**: Previous branch for `wt switch -`
-- **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
-- **marker**: Custom status marker for a branch (shown in `wt list`)
-- **vars**: <span class="badge-experimental"></span> Custom variables per branch
-- **logs**: Background operation logs
+- **logs**: [Operation and debug logs](@/config.md#wt-config-state-logs)
+- **ci-status**: [CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)](@/config.md#wt-config-state-ci-status)
+- **marker**: [Custom status marker for a branch (shown in `wt list`)](@/config.md#wt-config-state-marker)
+- **vars**: <span class="badge-experimental"></span> [Custom variables per branch](@/config.md#wt-config-state-vars)
 
 ### Examples
 
@@ -582,7 +681,7 @@ Set the default branch manually:
 {{ terminal(cmd="wt config state default-branch set main") }}
 
 Set a marker for current branch:
-{{ terminal(cmd="wt config state marker set __WT_QUOT__🚧 WIP__WT_QUOT__") }}
+{{ terminal(cmd="wt config state marker set 🚧") }}
 
 Store arbitrary data:
 {{ terminal(cmd="wt config state vars set env=staging") }}
@@ -604,15 +703,15 @@ wt config state - Manage internal data and cache
 Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>default-branch</span></b>   Default branch detection and override
-  <b><span class=c>previous-branch</span></b>  Previous branch (for <b>wt switch -</b>)
-  <b><span class=c>ci-status</span></b>        CI status cache
-  <b><span class=c>marker</span></b>           Branch markers
-  <b><span class=c>logs</span></b>             Background operation logs
-  <b><span class=c>hints</span></b>            One-time hints shown in this repo
-  <b><span class=c>vars</span></b>             [experimental] Custom variables per branch
   <b><span class=c>get</span></b>              Get all stored state
   <b><span class=c>clear</span></b>            Clear all stored state
+  <b><span class=c>default-branch</span></b>   Default branch detection and override
+  <b><span class=c>previous-branch</span></b>  Previous branch (for <b>wt switch -</b>)
+  <b><span class=c>logs</span></b>             Operation and debug logs
+  <b><span class=c>hints</span></b>            One-time hints shown in this repo
+  <b><span class=c>ci-status</span></b>        CI status cache
+  <b><span class=c>marker</span></b>           Branch markers
+  <b><span class=c>vars</span></b>             [experimental] Custom variables per branch
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
@@ -626,7 +725,11 @@ Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 {% end %}
 
 ## wt config state default-branch
@@ -643,9 +746,9 @@ Without a subcommand, runs `get`. Use `set` to override, or `clear` then `get` t
 
 Worktrunk detects the default branch automatically:
 
-1. **Worktrunk cache** — Checks `git config worktrunk.default-branch` (single command)
+1. **Worktrunk cache** — Checks `git config worktrunk.default-branch`
 2. **Git cache** — Detects primary remote and checks its HEAD (e.g., `origin/HEAD`)
-3. **Remote query** — If not cached, queries `git ls-remote` (100ms–2s)
+3. **Remote query** — If not cached, queries `git ls-remote` — typically 100ms–2s
 4. **Local inference** — If no remote, infers from local branches
 
 Once detected, the result is cached in `worktrunk.default-branch` for fast access.
@@ -680,7 +783,116 @@ Usage: <b><span class=c>wt config state default-branch</span></b> <span class=c>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+{% end %}
+
+## wt config state logs
+
+Operation and debug logs.
+
+View and manage log files — hook output, command audit trail, and debug diagnostics.
+
+### What's logged
+
+Three kinds of logs live in `.git/wt/logs/`:
+
+#### Command log (`commands.jsonl`)
+
+All hook executions and LLM commands are recorded automatically — one JSON object per line. Rotates to `commands.jsonl.old` at 1MB (~2MB total). Fields:
+
+| Field | Description |
+|-------|-------------|
+| `ts` | ISO 8601 timestamp |
+| `wt` | The `wt` command that triggered this (e.g., `wt hook pre-merge --yes`) |
+| `label` | What ran (e.g., `pre-merge user:lint`, `commit.generation`) |
+| `cmd` | Shell command executed |
+| `exit` | Exit code (`null` for background commands) |
+| `dur_ms` | Duration in milliseconds (`null` for background commands) |
+
+The command log appends entries and is not branch-specific — it records all activity across all worktrees.
+
+#### Hook output logs
+
+Hook output lives in per-branch subtrees under `.git/wt/logs/{branch}/`:
+
+| Operation | Log path |
+|-----------|----------|
+| Background hooks | `{branch}/{source}/{hook-type}/{name}.log` |
+| Background removal | `{branch}/internal/remove.log` |
+
+All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is `user` or `project`. Branch and hook names are sanitized for filesystem safety (invalid characters → `-`; short collision-avoidance hash appended). Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with `wt config state logs clear`.
+
+#### Diagnostic files
+
+| File | Created when |
+|------|-------------|
+| `trace.log` | Running with `-vv` |
+| `output.log` | Running with `-vv` |
+| `diagnostic.md` | Running with `-vv` when warnings occur |
+
+`trace.log` mirrors stderr (commands, `[wt-trace]` records, bounded subprocess previews). `output.log` holds the raw uncapped subprocess stdout/stderr bodies. Both are overwritten on each `-vv` run. `diagnostic.md` is a markdown report for pasting into GitHub issues — written only when warnings occur, and inlines `trace.log` (never `output.log`, which can be multi-MB).
+
+### Location
+
+All logs are stored in `.git/wt/logs/` (in the main worktree's git directory). All worktrees write to the same directory. Top-level files are shared logs (command audit + diagnostics); top-level directories are per-branch log trees.
+
+### Structured output
+
+`wt config state logs --format=json` emits three arrays — `command_log`, `hook_output`, `diagnostic`. Each entry carries a `file` (relative), `path` (absolute), `size`, and `modified_at` (unix seconds). Hook-output entries additionally expose `branch`, `source` (`user` / `project` / `internal`), `hook_type` (the `post-*` kind, or `null` for internal ops), and `name`. Filter with `jq` to pick out a specific entry.
+
+### Examples
+
+List all log files:
+{{ terminal(cmd="wt config state logs") }}
+
+Query the command log:
+{{ terminal(cmd="tail -5 .git/wt/logs/commands.jsonl | jq .") }}
+
+Path to one hook log (e.g. the `post-start` `server` hook for the current branch):
+{{ terminal(cmd="wt config state logs --format=json | jq -r '.hook_output[] | select(.source == __WT_QUOT__user__WT_QUOT__ and .hook_type == __WT_QUOT__post-start__WT_QUOT__ and (.name | startswith(__WT_QUOT__server__WT_QUOT__))) | .path'") }}
+
+Logs for a specific branch:
+{{ terminal(cmd="wt config state logs --format=json | jq '.hook_output[] | select(.branch | startswith(__WT_QUOT__feature__WT_QUOT__))'") }}
+
+Clear all logs:
+{{ terminal(cmd="wt config state logs clear") }}
+
+### Command reference
+
+{% terminal() %}
+wt config state logs - Operation and debug logs
+
+Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
+
+<b><span class=g>Commands:</span></b>
+  <b><span class=c>get</span></b>    List all log file paths
+  <b><span class=c>clear</span></b>  Clear all log files
+
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Output:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format (text, json) [default: text]
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 {% end %}
 
 ## wt config state ci-status
@@ -725,6 +937,10 @@ Usage: <b><span class=c>wt config state ci-status</span></b> <span class=c>[OPTI
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 
+<b><span class=g>Output:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format (text, json) [default: text]
+
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
           Working directory for this command
@@ -733,7 +949,11 @@ Usage: <b><span class=c>wt config state ci-status</span></b> <span class=c>[OPTI
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 {% end %}
 
 ## wt config state marker
@@ -744,19 +964,26 @@ Custom status text or emoji shown in the `wt list` Status column.
 
 ### Display
 
-Markers appear at the start of the Status column:
+Markers appear at the end of the Status column, after git symbols:
 
-```
-Branch    Status   Path
-main      ^        ~/code/myproject
-feature   🚧↑      ~/code/myproject.feature
-bugfix    🤖!↑⇡    ~/code/myproject.bugfix
-```
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__readme_example_list_marker.snap — edit source to update -->
+
+{% terminal(cmd="wt list") %}
+&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
+@ main             <span class=d>^</span><span class=d>⇡</span>                         <span class=g>⇡1</span>      <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
++ feature-api      <span class=d>↑</span> 🤖              <span class=g>↑1</span>               <span class=d>70343f03</span>  <span class=d>1d</span>    <span class=d>Add REST API endpoints</span>
++ review-ui      <span class=c>?</span> <span class=d>↑</span> 💬              <span class=g>↑1</span>               <span class=d>a585d6ed</span>  <span class=d>1d</span>    <span class=d>Add dashboard component</span>
++ wip-docs       <span class=c>?</span> <span class=d>–</span>                                  <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
+
+<span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead, 1 column hidden</span>
+{% end %}
+
+<!-- END AUTO-GENERATED -->
 
 ### Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Claude Code plugin](@/claude-code.md) sets markers automatically
+- **Agent tracking** — The [Claude Code](@/claude-code.md) plugin sets markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ### Storage
@@ -783,6 +1010,10 @@ Usage: <b><span class=c>wt config state marker</span></b> <span class=c>[OPTIONS
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 
+<b><span class=g>Output:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format (text, json) [default: text]
+
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
           Working directory for this command
@@ -791,7 +1022,11 @@ Usage: <b><span class=c>wt config state marker</span></b> <span class=c>[OPTIONS
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 {% end %}
 
 ## wt config state vars
@@ -818,7 +1053,7 @@ Operate on a different branch:
 
 ### Template access
 
-Variables are available in hook templates as `{{ vars.<key> }}`. Use the `default` filter for keys that may not be set:
+Variables are available in [hook templates](@/hook.md#template-variables) as `{{ vars.<key> }}`. Use the `default` filter for keys that may not be set:
 
 ```toml
 [post-start]
@@ -835,7 +1070,7 @@ dev = "npm start -- --port {{ vars.config.port }}"
 
 ### Storage format
 
-Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain only letters, digits, hyphens, and underscores — dots conflict with git config's section separator.
+Stored in git config as `worktrunk.state.<branch>.vars.<key>`. Keys must contain only letters, digits and hyphens — dots conflict with git config's section separator, underscores with its variable name format.
 
 ### Command reference
 
@@ -846,8 +1081,8 @@ Usage: <b><span class=c>wt config state vars</span></b> <span class=c>[OPTIONS]<
 
 <b><span class=g>Commands:</span></b>
   <b><span class=c>get</span></b>    Get a value
-  <b><span class=c>set</span></b>    Set a value
   <b><span class=c>list</span></b>   List all keys
+  <b><span class=c>set</span></b>    Set a value
   <b><span class=c>clear</span></b>  Clear a key or all keys
 
 <b><span class=g>Options:</span></b>
@@ -862,80 +1097,11 @@ Usage: <b><span class=c>wt config state vars</span></b> <span class=c>[OPTIONS]<
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
-{% end %}
+          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
 
-## wt config state logs
-
-Background operation logs.
-
-View and manage logs from background operations.
-
-### What's logged
-
-Two kinds of logs live in `.git/wt/logs/`:
-
-#### Command log (`commands.jsonl`)
-
-All hook executions and LLM commands are recorded automatically — one JSON object per line with timestamp, command, exit code, and duration. Rotates to `commands.jsonl.old` at 1MB (~2MB total).
-
-#### Hook output logs
-
-| Operation | Log file |
-|-----------|----------|
-| post-start hooks | `{branch}-{source}-post-start-{name}.log` |
-| Background removal | `{branch}-remove.log` |
-
-Source is `user` or `project` depending on where the hook is defined.
-
-### Location
-
-All logs are stored in `.git/wt/logs/` (in the main worktree's git directory).
-
-### Behavior
-
-- **Overwrites** — Same operation on same branch overwrites previous log
-- **Persists** — Logs from deleted branches remain until manually cleared
-- **Shared** — All worktrees write to the same log directory
-
-### Examples
-
-List all log files:
-{{ terminal(cmd="wt config state logs get") }}
-
-Query the command log:
-{{ terminal(cmd="tail -5 .git/wt/logs/commands.jsonl | jq .") }}
-
-View a specific hook log:
-{{ terminal(cmd="cat __WT_QUOT__$(git rev-parse --git-dir)/wt/logs/feature-project-post-start-build.log__WT_QUOT__") }}
-
-Clear all logs:
-{{ terminal(cmd="wt config state logs clear") }}
-
-### Command reference
-
-{% terminal() %}
-wt config state logs - Background operation logs
-
-Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]</span> <span class=c>[COMMAND]</span>
-
-<b><span class=g>Commands:</span></b>
-  <b><span class=c>get</span></b>    Get log file paths
-  <b><span class=c>clear</span></b>  Clear background operation logs
-
-<b><span class=g>Options:</span></b>
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
-
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
-          Working directory for this command
-
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
-          User config file path
-
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 {% end %}
 
 <!-- END AUTO-GENERATED from `wt config --help-page` -->

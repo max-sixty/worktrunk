@@ -8,8 +8,7 @@
 //   - many_branches: 100 branches (warm + cold)
 //   - divergent_branches: 200 branches × 20 commits on synthetic repo (warm + cold)
 //   - real_repo_many_branches: 50 branches at different history depths / GH #461
-//       - warm: baseline (~15-18s)
-//       - warm_optimized: with skip_expensive_for_stale (~2-3s)
+//       - warm: all branches (first run expensive; subsequent runs hit persistent cache)
 //       - warm_worktrees_only: no branch enumeration (~600ms)
 //   - timeout_effect: Compare with/without 500ms command timeout on rust repo / GH #461 fix
 //
@@ -290,9 +289,8 @@ fn setup_rust_workspace_with_branches(temp: &tempfile::TempDir, num_branches: us
 /// This reproduces the `wt switch` interactive picker delay reported in #461. The key factor
 /// is NOT commits per branch, but rather how far back in history branches diverge from each other.
 ///
-/// Benchmarks three modes:
-/// - `warm`: baseline with all branches, no optimization (~15-18s)
-/// - `warm_optimized`: with skip_expensive_for_stale (what `wt switch` picker uses, ~2-3s)
+/// Benchmarks two modes:
+/// - `warm`: with all branches (first run expensive, subsequent runs hit the persistent cache)
 /// - `warm_worktrees_only`: no branch enumeration (~600ms)
 ///
 /// Key insight: `git for-each-ref %(ahead-behind:BASE)` is O(commits), not O(refs).
@@ -328,7 +326,7 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
         (temp, workspace_main)
     };
 
-    // Baseline: all branches, no optimization
+    // Baseline: all branches
     group.bench_function("warm", |b| {
         let (_temp, workspace_main) = setup_workspace();
         b.iter(|| {
@@ -336,19 +334,6 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
             cmd.args(["list", "--branches"])
                 .current_dir(&workspace_main);
             isolate_cmd(&mut cmd, None);
-            cmd.output().unwrap();
-        });
-    });
-
-    // With skip_expensive_for_stale optimization (simulates wt switch picker behavior)
-    group.bench_function("warm_optimized", |b| {
-        let (_temp, workspace_main) = setup_workspace();
-        b.iter(|| {
-            let mut cmd = Command::new(binary);
-            cmd.args(["list", "--branches"])
-                .current_dir(&workspace_main);
-            isolate_cmd(&mut cmd, None);
-            cmd.env("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD", "1");
             cmd.output().unwrap();
         });
     });

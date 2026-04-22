@@ -384,8 +384,7 @@ fn repo_path_error_when_is_bare_fails() {
     use std::sync::Arc;
 
     // Create a Repository with a non-existent git_common_dir.
-    // This makes --show-toplevel fail (reaching the is_bare branch),
-    // and then is_bare() also fails because git can't run in a missing dir.
+    // is_bare() fails because the bulk config read can't run in a missing dir.
     let repo = super::Repository {
         discovery_path: PathBuf::from("/nonexistent/repo"),
         git_common_dir: PathBuf::from("/nonexistent/.git"),
@@ -397,9 +396,143 @@ fn repo_path_error_when_is_bare_fails() {
     // The OS error text is platform-specific (e.g., "No such file or directory" on Unix,
     // "The directory name is invalid." on Windows), so only assert the stable prefix.
     assert!(
-        msg.starts_with("failed to check if repository is bare: "),
+        msg.starts_with("failed to read git config: "),
         "unexpected error message: {msg}"
     );
+}
+
+#[test]
+fn repo_path_ignores_non_local_core_worktree() {
+    use super::RepoCache;
+    use indexmap::IndexMap;
+    use std::sync::{Arc, RwLock};
+
+    // Regression test: `git config --list -z` merges system + global + local
+    // scope, but git only honors `core.worktree` from local config. A user
+    // with a stray global `core.worktree` in a normal repo should still see
+    // `parent(.git)` as the repo root — `rev-parse --show-toplevel` fails
+    // from inside `.git` in that case and we fall through.
+    let tmp = tempfile::tempdir().unwrap();
+    let git_dir = tmp.path().join(".git");
+    std::fs::create_dir(&git_dir).unwrap();
+
+    let cache = RepoCache::default();
+    let mut map: IndexMap<String, Vec<String>> = IndexMap::new();
+    map.insert("core.bare".to_string(), vec!["false".to_string()]);
+    // Simulate a `core.worktree` picked up from global config. The path
+    // doesn't have to exist — it only has to be present in the bulk map.
+    map.insert(
+        "core.worktree".to_string(),
+        vec!["/nonexistent/global/worktree".to_string()],
+    );
+    cache.all_config.set(RwLock::new(map)).unwrap();
+
+    let repo = super::Repository {
+        discovery_path: tmp.path().to_path_buf(),
+        git_common_dir: git_dir.clone(),
+        cache: Arc::new(cache),
+    };
+
+    // Should fall through to parent(git_common_dir), ignoring the bulk value.
+    assert_eq!(repo.repo_path().unwrap(), tmp.path());
+}
+
+#[test]
+fn parse_config_list_z_basic() {
+    let input = b"core.bare\nfalse\0remote.origin.url\nhttps://example.com/a.git\0";
+    let map = super::parse_config_list_z(input);
+    assert_eq!(map["core.bare"], vec!["false"]);
+    assert_eq!(map["remote.origin.url"], vec!["https://example.com/a.git"]);
+}
+
+#[test]
+fn parse_config_list_z_multivar() {
+    let input =
+        b"remote.origin.fetch\n+refs/heads/*:refs/remotes/origin/*\0remote.origin.fetch\n+refs/tags/*:refs/tags/*\0";
+    let map = super::parse_config_list_z(input);
+    assert_eq!(
+        map["remote.origin.fetch"],
+        vec![
+            "+refs/heads/*:refs/remotes/origin/*",
+            "+refs/tags/*:refs/tags/*"
+        ]
+    );
+}
+
+#[test]
+fn parse_config_list_z_newline_in_value() {
+    // A value with embedded newlines is preserved verbatim because -z uses
+    // NUL as the record separator. The split_once('\n') only splits on the
+    // first newline (which separates key from value).
+    let input = b"commit.template\nline1\nline2\0core.bare\nfalse\0";
+    let map = super::parse_config_list_z(input);
+    assert_eq!(map["commit.template"], vec!["line1\nline2"]);
+    assert_eq!(map["core.bare"], vec!["false"]);
+}
+
+#[test]
+fn parse_config_list_z_equals_in_value() {
+    // Values containing `=` are preserved — no splitting on `=` because
+    // the key/value separator under `-z` is `\n`.
+    let input = b"user.email\nme=you@example.com\0";
+    let map = super::parse_config_list_z(input);
+    assert_eq!(map["user.email"], vec!["me=you@example.com"]);
+}
+
+#[test]
+fn parse_config_list_z_empty() {
+    let map = super::parse_config_list_z(b"");
+    assert!(map.is_empty());
+}
+
+#[test]
+fn parse_config_list_z_entry_without_newline_tolerates_key_only() {
+    // `git config --list -z` always emits `key\nvalue\0`, but the parser
+    // tolerates bare `key\0` by mapping it to `key -> ""` rather than
+    // dropping the entry. Lets a future git oddity be diagnosed at the
+    // use-site instead of silently missing.
+    let input = b"core.bare\0other.key\nfalse\0";
+    let map = super::parse_config_list_z(input);
+    assert_eq!(map["core.bare"], vec![""]);
+    assert_eq!(map["other.key"], vec!["false"]);
+}
+
+#[test]
+fn canonical_config_key_cases() {
+    // section + variable: both lowercased
+    assert_eq!(
+        super::canonical_config_key("init.defaultBranch"),
+        "init.defaultbranch"
+    );
+    assert_eq!(
+        super::canonical_config_key("checkout.defaultRemote"),
+        "checkout.defaultremote"
+    );
+    assert_eq!(super::canonical_config_key("core.Bare"), "core.bare");
+    // 3+ parts: section + variable lowercased, subsection preserved
+    assert_eq!(
+        super::canonical_config_key("remote.MyFork.url"),
+        "remote.MyFork.url"
+    );
+    assert_eq!(
+        super::canonical_config_key("branch.MyBranch.pushRemote"),
+        "branch.MyBranch.pushremote"
+    );
+    // 4+ parts: subsection is the middle (spanning dots); only first and last lowercase
+    assert_eq!(
+        super::canonical_config_key("worktrunk.state.MyBranch.marker"),
+        "worktrunk.state.MyBranch.marker"
+    );
+}
+
+#[test]
+fn parse_git_bool_variants() {
+    for truthy in ["true", "TRUE", "True", "1", "yes", "YES", "on", "ON"] {
+        assert!(super::parse_git_bool(truthy), "{truthy} should be true");
+    }
+    for falsy in ["false", "0", "no", "off", "", "anything-else"] {
+        assert!(!super::parse_git_bool(falsy), "{falsy} should be false");
+    }
 }
 
 #[test]
@@ -427,4 +560,49 @@ fn extract_failed_command_from_other_error() {
     let (output, cmd) = super::Repository::extract_failed_command(&err);
     assert_eq!(output, "some other error");
     assert!(cmd.is_none());
+}
+
+#[test]
+fn is_builtin_fsmonitor_enabled_variants() {
+    use super::RepoCache;
+    use indexmap::IndexMap;
+    use std::sync::{Arc, RwLock};
+
+    fn repo_with_fsmonitor(value: Option<&str>) -> super::Repository {
+        let cache = RepoCache::default();
+        let mut map: IndexMap<String, Vec<String>> = IndexMap::new();
+        if let Some(v) = value {
+            map.insert("core.fsmonitor".to_string(), vec![v.to_string()]);
+        }
+        cache.all_config.set(RwLock::new(map)).unwrap();
+        super::Repository {
+            discovery_path: PathBuf::from("/nonexistent/repo"),
+            git_common_dir: PathBuf::from("/nonexistent/.git"),
+            cache: Arc::new(cache),
+        }
+    }
+
+    // Builtin daemon: any git-bool truthy value enables it.
+    for truthy in ["true", "1", "yes", "on", "TRUE"] {
+        assert!(
+            repo_with_fsmonitor(Some(truthy)).is_builtin_fsmonitor_enabled(),
+            "{truthy} should enable builtin fsmonitor"
+        );
+    }
+
+    // Watchman hook path is NOT the builtin daemon — must return false even
+    // though the value is non-empty and truthy in the colloquial sense.
+    assert!(
+        !repo_with_fsmonitor(Some("/usr/local/bin/git-fsmonitor-watchman.sh"))
+            .is_builtin_fsmonitor_enabled()
+    );
+
+    // Explicitly disabled and unset both report false.
+    for falsy in ["false", "0", "no", "off"] {
+        assert!(
+            !repo_with_fsmonitor(Some(falsy)).is_builtin_fsmonitor_enabled(),
+            "{falsy} should disable builtin fsmonitor"
+        );
+    }
+    assert!(!repo_with_fsmonitor(None).is_builtin_fsmonitor_enabled());
 }

@@ -22,14 +22,13 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt - Git worktree management for parallel AI agent workflows
 
 Usage: [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND][0m
@@ -58,7 +57,10 @@ Usage: [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND][0m
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  [1m[36m-y[0m, [1m[36m--yes[0m
+          Skip approval prompts
 
 Getting started
 
@@ -72,3 +74,5 @@ Run [2mwt config create[0m to customize worktree locations.
 
 Docs: https://worktrunk.dev
 GitHub: https://github.com/max-sixty/worktrunk
+
+----- stderr -----

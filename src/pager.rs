@@ -9,7 +9,8 @@ pub(crate) fn parse_pager_value(value: &str) -> Option<String> {
 /// Read `core.pager` from git config, returning None if unset or invalid.
 pub(crate) fn git_config_pager() -> Option<String> {
     let repo = Repository::current().ok()?;
-    repo.run_command(&["config", "--get", "core.pager"])
+    repo.config_value("core.pager")
         .ok()
+        .flatten()
         .and_then(|output| parse_pager_value(&output))
 }

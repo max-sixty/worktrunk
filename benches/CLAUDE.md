@@ -47,6 +47,44 @@ startup latency without output rendering or post-output work (mismatch warnings,
 
 Supported commands: `switch`, `remove`, `list`.
 
+## Cache Handling
+
+Worktrunk maintains a persistent SHA-keyed cache at `.git/wt/cache/` plus a git-config
+cache of the default branch at `worktrunk.default-branch`. Both survive process exits,
+so bench iterations read from prior iterations unless invalidated.
+
+**Rule:** if a benchmark runs a `wt` subcommand that populates these caches, every
+iteration must start cold — otherwise iter 1 measures the real cost and iter 2+ measure
+a cache hit. Invalidate via `criterion::Bencher::iter_batched` with
+`wt_perf::invalidate_caches_auto` as the setup closure (see the cold-cache variants in
+`benches/list.rs` and `benches/remove.rs` for the pattern).
+
+`invalidate_caches_auto` clears:
+
+- `.git/index` (main and linked worktrees)
+- `.git/objects/info/commit-graph*`
+- `.git/packed-refs`
+- `.git/wt/cache/` (all sha_cache kinds + ci-status + summaries)
+- `worktrunk.default-branch` (git config)
+
+User state — `worktrunk.history`, `worktrunk.hints.*`, `worktrunk.state.<branch>.*`,
+`.git/wt/logs/`, `.git/wt/trash/` — is intentionally preserved. It doesn't affect
+read-path performance and benches may depend on it (e.g., branch markers set during
+setup).
+
+**Which commands populate `.git/wt/cache/`:**
+
+| Command | Populates? | Notes |
+|---------|------------|-------|
+| `wt list` | Yes | Post-skeleton tasks. Exits early under `WORKTRUNK_SKELETON_ONLY=1` / `WORKTRUNK_FIRST_OUTPUT=1` — those skip the writing phase. |
+| `wt remove` | Yes | `prepare_worktree_removal` → `compute_integration_lazy` writes `is-ancestor` / `has-added-changes` / `merge-add-probe` whenever `BranchDeletionMode` is not `ForceDelete` (CLI `--force` is `force_worktree`, not `--force-delete`). |
+| `wt switch` | No | No sha_cache writers on the switch path. |
+| `wt` (completion via `COMPLETE=$SHELL`) | No | Only `for-each-ref` + worktree list. |
+
+Default-branch cache contribution is ~17ms per iteration on a typical-8 synthetic repo
+(measured: 166ms with default-branch cached → 183ms fully cold). Small enough that
+always clearing it is simpler than introducing a "warm default-branch" bench mode.
+
 ## Expected Performance
 
 **Modest repos** (500 commits, 100 files):
@@ -87,9 +125,11 @@ cargo run -p wt-perf -- invalidate /tmp/wt-perf-typical-8/main
 ### Generating traces
 
 ```bash
-# Generate trace.json for Perfetto/Chrome
-RUST_LOG=debug wt list --branches 2>&1 | grep '\[wt-trace\]' | \
-  cargo run -p wt-perf -- trace > trace.json
+# Generate trace.json for Perfetto/Chrome. `--progressive` forces TTY-gated
+# events (Skeleton rendered, First result received) to fire even when stdout
+# is piped.
+RUST_LOG=debug wt list --progressive --branches 2>&1 \
+  | cargo run -p wt-perf -- trace > trace.json
 
 # Open in https://ui.perfetto.dev or chrome://tracing
 ```
@@ -128,6 +168,7 @@ SELECT
        WHEN name LIKE '%is-ancestor%' THEN 'is_ancestor'
        WHEN name LIKE '%diff --name%' THEN 'file_changes'
        WHEN name LIKE '%diff --numstat%' THEN 'diff_numstat'
+       WHEN name LIKE '%diff --shortstat%' THEN 'diff_shortstat'
        WHEN name LIKE '%diff --cached%' THEN 'diff_cached'
        WHEN name LIKE '% diff main...%' THEN 'diff_3dot'
        WHEN name LIKE '% diff HEAD%' THEN 'diff_wt'
@@ -195,8 +236,8 @@ trace_processor trace.json -q /tmp/q.sql
 
 ```bash
 # Trace on rust-lang/rust (must run benchmark first to clone)
-RUST_LOG=debug cargo run --release -q -- -C target/bench-repos/rust list --branches 2>&1 | \
-  grep '\[wt-trace\]' | cargo run -p wt-perf -- trace > rust-trace.json
+RUST_LOG=debug cargo run --release -q -- -C target/bench-repos/rust list --progressive --branches 2>&1 \
+  | cargo run -p wt-perf -- trace > rust-trace.json
 ```
 
 ## Key Performance Insights
@@ -208,6 +249,10 @@ This command walks the commit graph to compute divergence. On rust-lang/rust:
 - Only way to avoid it is to not enumerate branches at all
 
 **Branch enumeration costs** (rust-lang/rust with 50 branches):
-- No optimization: ~15-18s (expensive merge-base/merge-tree per branch)
-- With skip_expensive_for_stale: ~2-3s (skips expensive ops for stale branches)
+- First run (cold persistent cache): ~15-18s (expensive merge-base/merge-tree per branch)
+- Subsequent runs (warm persistent cache): ~2-3s (cache hits on merge-tree / integration probes / diff stats / ancestry)
 - Worktrees only: ~600ms (no branch enumeration)
+
+The persistent SHA-keyed cache (`.git/wt/cache/`) amortizes the first-run cost across
+subsequent invocations. Cache entries are eternally valid since they're keyed on commit
+SHAs.

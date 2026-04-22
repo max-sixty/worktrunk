@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
+use dashmap::mapref::entry::Entry;
 
 use crate::shell_exec::Cmd;
 use dunce::canonicalize;
@@ -71,7 +72,11 @@ impl<'a> WorkingTree<'a> {
 
     /// Get the path this WorkingTree was created with.
     ///
-    /// This is the path passed to `worktree_at()` or `base_path()` for `current_worktree()`.
+    /// Returns the canonicalized form when the input passed to `worktree_at()` /
+    /// `base_path()` for `current_worktree()` exists on disk; otherwise returns
+    /// the raw input. So on macOS, a temp path like `/tmp/foo` may surface here
+    /// (and to hook template variables) as `/private/tmp/foo`.
+    ///
     /// For the canonical git-determined root, use [`root()`](Self::root) instead.
     pub fn path(&self) -> &Path {
         &self.path
@@ -114,35 +119,123 @@ impl<'a> WorkingTree<'a> {
     // Worktree-specific methods
     // =========================================================================
 
+    /// Populate the `root`/`git_dir`/`branch` caches with a single batched
+    /// `git rev-parse` invocation and return whether this path is inside a
+    /// work tree.
+    ///
+    /// Folds four rev-parse selectors that would otherwise fire as separate
+    /// forks during alias/hook dispatch (`--is-inside-work-tree` from
+    /// [`Repository::project_config_path`], plus one each for [`Self::root`],
+    /// [`Self::git_dir`], and [`Self::branch`]) into one. `HEAD` is last in
+    /// the argument list because `rev-parse` aborts processing once it hits
+    /// an unresolvable ref — on an unborn branch the preceding selectors'
+    /// stdout still lands, so we can cache `root`/`git_dir` even though the
+    /// command exits non-zero. The `branch` cache is only populated when
+    /// the whole batch succeeded so [`Self::branch`]'s `symbolic-ref`
+    /// fallback still runs for genuine unborn-HEAD paths.
+    pub fn prewarm_info(&self) -> anyhow::Result<bool> {
+        let output = self.run_command_output(&[
+            "rev-parse",
+            "--is-inside-work-tree",
+            "--show-toplevel",
+            "--git-dir",
+            "--symbolic-full-name",
+            "HEAD",
+        ])?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut lines = stdout.lines();
+
+        let is_inside = lines.next().is_some_and(|s| s.trim() == "true");
+
+        // `root` and `git_dir` are safe to cache whenever their lines landed,
+        // because any failure in the batch is from `HEAD` — which is last.
+        if is_inside && let Some(root_raw) = lines.next() {
+            let root = PathBuf::from(root_raw.trim());
+            let root = canonicalize(&root).unwrap_or_else(|_| self.path.clone());
+            self.repo
+                .cache
+                .worktree_roots
+                .entry(self.path.clone())
+                .or_insert(root);
+
+            if let Some(git_dir_raw) = lines.next() {
+                let path = PathBuf::from(git_dir_raw.trim());
+                let absolute = if path.is_relative() {
+                    self.path.join(&path)
+                } else {
+                    path
+                };
+                if let Ok(resolved) = canonicalize(&absolute) {
+                    self.repo
+                        .cache
+                        .git_dirs
+                        .entry(self.path.clone())
+                        .or_insert(resolved);
+                }
+
+                // Only trust the `HEAD` line when the batch as a whole
+                // succeeded. On unborn branches it reads "HEAD" as a fallback
+                // literal, which would be indistinguishable from detached
+                // HEAD without the exit status.
+                if output.status.success()
+                    && let Some(head_raw) = lines.next()
+                {
+                    let branch = head_raw
+                        .trim()
+                        .strip_prefix("refs/heads/")
+                        .map(str::to_owned);
+                    self.repo
+                        .cache
+                        .current_branches
+                        .entry(self.path.clone())
+                        .or_insert(branch);
+                }
+            }
+        }
+
+        Ok(is_inside)
+    }
+
     /// Get the branch checked out in this worktree, or None if in detached HEAD state.
     ///
     /// Result is cached in the repository's shared cache (keyed by worktree path).
     /// Errors (e.g., permission denied, corrupted `.git`) are propagated, not swallowed.
     pub fn branch(&self) -> anyhow::Result<Option<String>> {
-        // Check cache first
-        if let Some(cached) = self.repo.cache.current_branches.get(&self.path) {
-            return Ok(cached.clone());
+        match self.repo.cache.current_branches.entry(self.path.clone()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                // rev-parse --symbolic-full-name returns "refs/heads/<branch>" on a branch,
+                // or "HEAD" when detached. Fails on unborn branches (no commits yet),
+                // so fall back to symbolic-ref which works in all cases except detached HEAD.
+                let result = match self.run_command(&["rev-parse", "--symbolic-full-name", "HEAD"])
+                {
+                    Ok(stdout) => stdout.trim().strip_prefix("refs/heads/").map(str::to_owned),
+                    Err(_) => self
+                        .run_command(&["symbolic-ref", "--short", "HEAD"])
+                        .ok()
+                        .map(|s| s.trim().to_owned()),
+                };
+
+                Ok(e.insert(result).clone())
+            }
         }
+    }
 
-        // Not cached - use plumbing command to get current branch.
-        // rev-parse --symbolic-full-name returns "refs/heads/<branch>" on a branch,
-        // or "HEAD" when detached. Fails on unborn branches (no commits yet),
-        // so fall back to symbolic-ref which works in all cases except detached HEAD.
-        let result = match self.run_command(&["rev-parse", "--symbolic-full-name", "HEAD"]) {
-            Ok(stdout) => stdout.trim().strip_prefix("refs/heads/").map(str::to_owned),
-            Err(_) => self
-                .run_command(&["symbolic-ref", "--short", "HEAD"])
-                .ok()
-                .map(|s| s.trim().to_owned()),
-        };
-
-        // Cache the successful result
-        self.repo
-            .cache
-            .current_branches
-            .insert(self.path.clone(), result.clone());
-
-        Ok(result)
+    /// Return cached `git status --porcelain` output for this worktree.
+    ///
+    /// Keyed by worktree path in the shared `RepoCache`, so parallel tasks that
+    /// each want porcelain (e.g., working-tree diff + conflict detection during
+    /// `wt list`) share a single subprocess. Uses `--no-optional-locks` to avoid
+    /// index-lock contention with the `git write-tree` run by
+    /// `WorkingTreeConflictsTask` in parallel.
+    pub fn status_porcelain_cached(&self) -> anyhow::Result<String> {
+        match self.repo.cache.status_porcelain.entry(self.path.clone()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let stdout = self.run_command(&["--no-optional-locks", "status", "--porcelain"])?;
+                Ok(e.insert(stdout).clone())
+            }
+        }
     }
 
     /// Check if the working tree has uncommitted changes.
@@ -164,36 +257,45 @@ impl<'a> WorkingTree<'a> {
     /// This could be the main worktree or a linked worktree.
     /// Result is cached in the repository's shared cache (keyed by worktree path).
     pub fn root(&self) -> anyhow::Result<PathBuf> {
-        Ok(self
-            .repo
-            .cache
-            .worktree_roots
-            .entry(self.path.clone())
-            .or_insert_with(|| {
-                self.run_command(&["rev-parse", "--show-toplevel"])
+        match self.repo.cache.worktree_roots.entry(self.path.clone()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let root = self
+                    .run_command(&["rev-parse", "--show-toplevel"])
                     .ok()
                     .map(|s| PathBuf::from(s.trim()))
                     .and_then(|p| canonicalize(&p).ok())
-                    .unwrap_or_else(|| self.path.clone())
-            })
-            .clone())
+                    .unwrap_or_else(|| self.path.clone());
+
+                Ok(e.insert(root).clone())
+            }
+        }
     }
 
     /// Get the git directory (may be different from common-dir in worktrees).
     ///
     /// Always returns a canonicalized absolute path, resolving symlinks.
     /// This ensures consistent comparison with `git_common_dir()`.
+    /// Result is cached in the repository's shared cache (keyed by worktree path).
     pub fn git_dir(&self) -> anyhow::Result<PathBuf> {
-        let stdout = self.run_command(&["rev-parse", "--git-dir"])?;
-        let path = PathBuf::from(stdout.trim());
+        match self.repo.cache.git_dirs.entry(self.path.clone()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let stdout = self.run_command(&["rev-parse", "--git-dir"])?;
+                let path = PathBuf::from(stdout.trim());
 
-        // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
-        let absolute_path = if path.is_relative() {
-            self.path.join(&path)
-        } else {
-            path
-        };
-        canonicalize(&absolute_path).context("Failed to resolve git directory")
+                // Always canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
+                let absolute_path = if path.is_relative() {
+                    self.path.join(&path)
+                } else {
+                    path
+                };
+                let resolved =
+                    canonicalize(&absolute_path).context("Failed to resolve git directory")?;
+
+                Ok(e.insert(resolved).clone())
+            }
+        }
     }
 
     /// Check if a rebase is in progress.
@@ -250,8 +352,8 @@ impl<'a> WorkingTree<'a> {
 
     /// Get line diff statistics for working tree changes (unstaged + staged).
     pub fn working_tree_diff_stats(&self) -> anyhow::Result<LineDiff> {
-        let stdout = self.run_command(&["diff", "--numstat", "HEAD"])?;
-        LineDiff::from_numstat(&stdout)
+        let stdout = self.run_command(&["diff", "--shortstat", "HEAD"])?;
+        Ok(LineDiff::from_shortstat(&stdout))
     }
 
     /// Determine whether there are staged changes in the index.

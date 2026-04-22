@@ -260,22 +260,7 @@ fn resolve_same_repo_ref(
     repo: &Repository,
     info: &RemoteRefInfo,
 ) -> anyhow::Result<ResolvedTarget> {
-    // Find the remote for the same-repo PR/MR and fetch the branch with an
-    // explicit refspec. This ensures the remote tracking branch is created even
-    // in repos with limited fetch refspecs (single-branch clones, bare repos).
-    let remote = remote_ref::find_remote(repo, info)?;
-
-    let branch = &info.source_branch;
-    eprintln!(
-        "{}",
-        progress_message(cformat!("Fetching <bold>{branch}</> from {remote}..."))
-    );
-    // Explicit refspec creates/updates the remote-tracking ref even when it's outside
-    // the configured fetch refspec (e.g., single-branch clones, bare repos).
-    let refspec = format!("+refs/heads/{branch}:refs/remotes/{remote}/{branch}");
-    // Use -- to prevent branch names starting with - from being interpreted as flags
-    repo.run_command(&["fetch", "--", &remote, &refspec])
-        .with_context(|| cformat!("Failed to fetch branch <bold>{}</> from {}", branch, remote))?;
+    fetch_same_repo_branch(repo, info)?;
 
     Ok(ResolvedTarget {
         branch: info.source_branch.clone(),
@@ -284,6 +269,79 @@ fn resolve_same_repo_ref(
             base_branch: None,
         },
     })
+}
+
+/// Fetch a same-repo PR/MR's source branch with an explicit refspec so the
+/// remote-tracking ref exists locally even in repos with limited fetch
+/// refspecs (single-branch clones, bare repos).
+fn fetch_same_repo_branch(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Result<()> {
+    let remote = remote_ref::find_remote(repo, info)?;
+    let branch = &info.source_branch;
+    eprintln!(
+        "{}",
+        progress_message(cformat!("Fetching <bold>{branch}</> from {remote}..."))
+    );
+    let refspec = format!("+refs/heads/{branch}:refs/remotes/{remote}/{branch}");
+    // Use -- to prevent branch names starting with - from being interpreted as flags
+    repo.run_command(&["fetch", "--", &remote, &refspec])
+        .with_context(|| cformat!("Failed to fetch branch <bold>{}</> from {}", branch, remote))?;
+    Ok(())
+}
+
+/// Resolve a `--base` value, expanding `pr:`/`mr:` shortcuts. Non-shortcut
+/// inputs go through [`Repository::resolve_worktree_name`] (handles `@`/`-`/`^`).
+fn resolve_base_ref(repo: &Repository, base: &str) -> anyhow::Result<String> {
+    if let Some(suffix) = base.strip_prefix("pr:")
+        && let Ok(number) = suffix.parse::<u32>()
+    {
+        return resolve_remote_ref_as_base(repo, &GitHubProvider, number);
+    }
+
+    if let Some(suffix) = base.strip_prefix("mr:")
+        && let Ok(number) = suffix.parse::<u32>()
+    {
+        return resolve_remote_ref_as_base(repo, &GitLabProvider, number);
+    }
+
+    repo.resolve_worktree_name(base)
+}
+
+/// Resolve `pr:{N}` / `mr:{N}` for `--base`. Same-repo returns the source
+/// branch name; fork returns the PR head SHA so we don't create a tracking
+/// branch for a ref the user hasn't asked to check out.
+fn resolve_remote_ref_as_base(
+    repo: &Repository,
+    provider: &dyn RemoteRefProvider,
+    number: u32,
+) -> anyhow::Result<String> {
+    let ref_type = provider.ref_type();
+    let symbol = ref_type.symbol();
+
+    eprintln!(
+        "{}",
+        progress_message(cformat!(
+            "Fetching base {} {symbol}{number}...",
+            ref_type.name()
+        ))
+    );
+
+    let info = provider.fetch_info(number, repo)?;
+    eprintln!("{}", format_with_gutter(&format_ref_context(&info), None));
+
+    if !info.is_cross_repo {
+        fetch_same_repo_branch(repo, &info)?;
+        return Ok(info.source_branch.clone());
+    }
+
+    let remote = remote_ref::find_remote(repo, &info)?;
+    let display = ref_type.display(number);
+    repo.run_command(&["fetch", "--", &remote, &provider.tracking_ref(number)])
+        .with_context(|| cformat!("Failed to fetch <bold>{display}</> from {remote}"))?;
+    Ok(repo
+        .run_command(&["rev-parse", "FETCH_HEAD"])
+        .context("Failed to resolve FETCH_HEAD to a commit SHA")?
+        .trim()
+        .to_string())
 }
 
 /// Resolve the switch target, handling pr:/mr: syntax and --create/--base flags.
@@ -330,7 +388,7 @@ fn resolve_switch_target(
             );
             None
         } else {
-            let resolved = repo.resolve_worktree_name(base_str)?;
+            let resolved = resolve_base_ref(repo, base_str)?;
             if !repo.ref_exists(&resolved)? {
                 return Err(GitError::ReferenceNotFound {
                     reference: resolved,
@@ -363,7 +421,10 @@ fn resolve_switch_target(
                     "Branch <bold>{resolved_branch}</> exists on remote ({remote_ref}); creating new branch from base instead"
                 ))
             );
-            let remove_cmd = suggest_command("remove", &[&resolved_branch], &[]);
+            // `--foreground` is required: background removal leaves a placeholder
+            // directory at the original path (to keep shell PWD valid), which
+            // would block the subsequent `wt switch` with "Directory already exists".
+            let remove_cmd = suggest_command("remove", &[&resolved_branch], &["--foreground"]);
             let switch_cmd = suggest_command("switch", &[&resolved_branch], &[]);
             eprintln!(
                 "{}",
@@ -374,24 +435,11 @@ fn resolve_switch_target(
         }
     }
 
-    // Compute base branch for creation
+    // Compute base branch for creation. When the cached default branch
+    // no longer resolves locally, return None and let the downstream
+    // StaleDefaultBranch error emerge at the actual use site.
     let base_branch = if create {
         resolved_base.or_else(|| {
-            // Check for invalid configured default branch
-            if let Some(configured) = repo.invalid_default_branch_config() {
-                eprintln!(
-                    "{}",
-                    warning_message(cformat!(
-                        "Configured default branch <bold>{configured}</> does not exist locally"
-                    ))
-                );
-                eprintln!(
-                    "{}",
-                    hint_message(cformat!(
-                        "To reset, run <underline>wt config state default-branch clear</>"
-                    ))
-                );
-            }
             repo.resolve_target_branch(None)
                 .ok()
                 .filter(|b| repo.branch(b).exists_locally().unwrap_or(false))
@@ -504,15 +552,15 @@ fn setup_fork_branch(
     let branch_merge_key = format!("branch.{}.merge", branch);
     let merge_ref = format!("refs/{}", remote_ref);
 
-    repo.run_command(&["config", &branch_remote_key, remote])
+    repo.set_config(&branch_remote_key, remote)
         .with_context(|| format!("Failed to configure branch.{}.remote", branch))?;
-    repo.run_command(&["config", &branch_merge_key, &merge_ref])
+    repo.set_config(&branch_merge_key, &merge_ref)
         .with_context(|| format!("Failed to configure branch.{}.merge", branch))?;
 
     // Only configure pushRemote if we have a fork URL (not using prefixed branch)
     if let Some(url) = fork_push_url {
         let branch_push_remote_key = format!("branch.{}.pushRemote", branch);
-        repo.run_command(&["config", &branch_push_remote_key, url])
+        repo.set_config(&branch_push_remote_key, url)
             .with_context(|| format!("Failed to configure branch.{}.pushRemote", branch))?;
     }
 
@@ -772,7 +820,7 @@ pub fn execute_switch(
 
                     // Report tracking info when the branch was auto-created from a remote
                     let from_remote = if !create_branch && !local_branch_existed {
-                        branch_handle.upstream()?
+                        branch_handle.upstream_single()?
                     } else {
                         None
                     };
@@ -844,9 +892,21 @@ pub fn execute_switch(
                 .and_then(|b| repo.worktree_for_branch(b).ok().flatten())
                 .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
+            // PR/MR identity travels into both the pre-start hook below and the
+            // SwitchResult — switch_extra_vars then forwards it to background
+            // post-switch / post-start hooks.
+            let (pr_number, pr_url) = match &method {
+                CreationMethod::ForkRef {
+                    number, ref_url, ..
+                } => (Some(*number), Some(ref_url.clone())),
+                CreationMethod::Regular { .. } => (None, None),
+            };
+
             // Execute post-create commands
             if run_hooks {
                 let ctx = CommandContext::new(repo, config, Some(&branch), &worktree_path, force);
+                let target_wt_posix =
+                    worktrunk::path::to_posix_path(&worktree_path.to_string_lossy());
 
                 match &method {
                     CreationMethod::Regular { base_branch, .. } => {
@@ -855,6 +915,8 @@ pub fn execute_switch(
                             base_worktree_path
                                 .as_ref()
                                 .map(|p| ("base_worktree_path", p.as_str())),
+                            Some(("target", branch.as_str())),
+                            Some(("target_worktree_path", target_wt_posix.as_str())),
                         ]
                         .into_iter()
                         .flatten()
@@ -862,18 +924,15 @@ pub fn execute_switch(
                         ctx.execute_pre_start_commands(&extra_vars)?;
                     }
                     CreationMethod::ForkRef {
-                        ref_type,
-                        number,
-                        ref_url,
-                        ..
+                        number, ref_url, ..
                     } => {
                         let num_str = number.to_string();
-                        let (num_key, url_key) = match ref_type {
-                            RefType::Pr => ("pr_number", "pr_url"),
-                            RefType::Mr => ("mr_number", "mr_url"),
-                        };
-                        let extra_vars: Vec<(&str, &str)> =
-                            vec![(num_key, &num_str), (url_key, ref_url)];
+                        let extra_vars: Vec<(&str, &str)> = vec![
+                            ("pr_number", &num_str),
+                            ("pr_url", ref_url),
+                            ("target", &branch),
+                            ("target_worktree_path", &target_wt_posix),
+                        ];
                         ctx.execute_pre_start_commands(&extra_vars)?;
                     }
                 }
@@ -889,6 +948,8 @@ pub fn execute_switch(
                     base_branch,
                     base_worktree_path,
                     from_remote,
+                    pr_number,
+                    pr_url,
                 },
                 SwitchBranchInfo {
                     branch: Some(branch),

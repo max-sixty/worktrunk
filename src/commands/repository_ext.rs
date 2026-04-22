@@ -2,12 +2,13 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::worktree::{BranchDeletionMode, RemoveResult, path_mismatch};
+use super::worktree::{RemoveResult, path_mismatch};
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{
-    GitError, IntegrationReason, Repository, parse_porcelain_z, parse_untracked_files,
+    BranchDeletionMode, GitError, IntegrationReason, Repository, WorktreeInfo, parse_porcelain_z,
+    parse_untracked_files,
 };
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{eprintln, format_with_gutter, progress_message, warning_message};
@@ -38,6 +39,9 @@ pub trait RepositoryCliExt {
     /// worktree is "current". Pass `None` for normal CLI usage (discovers from
     /// CWD). Pass `Some` when calling from a context where CWD may have changed
     /// (e.g., background threads in the picker).
+    ///
+    /// `worktrees` provides a pre-fetched worktree list to avoid redundant
+    /// `git worktree list` calls. Pass `None` to fetch on demand.
     fn prepare_worktree_removal(
         &self,
         target: RemoveTarget,
@@ -45,6 +49,7 @@ pub trait RepositoryCliExt {
         force_worktree: bool,
         config: &UserConfig,
         current_path: Option<PathBuf>,
+        worktrees: Option<&[WorktreeInfo]>,
     ) -> anyhow::Result<RemoveResult>;
 
     /// Prepare the target worktree for push by auto-stashing non-overlapping changes when safe.
@@ -81,9 +86,17 @@ impl RepositoryCliExt for Repository {
         force_worktree: bool,
         config: &UserConfig,
         current_path: Option<PathBuf>,
+        worktrees: Option<&[WorktreeInfo]>,
     ) -> anyhow::Result<RemoveResult> {
         let current_path = current_path.map_or_else(|| self.current_worktree().root(), Ok)?;
-        let worktrees = self.list_worktrees()?;
+        let owned_worktrees;
+        let worktrees = match worktrees {
+            Some(wts) => wts,
+            None => {
+                owned_worktrees = self.list_worktrees()?;
+                &owned_worktrees
+            }
+        };
         // Primary worktree path: prefer default branch's worktree, fall back to first
         // worktree, then repo base for bare repos with no worktrees.
         let primary_path = self.home_path()?;
@@ -208,13 +221,20 @@ impl RepositoryCliExt for Repository {
         }
 
         // Phase 4: Return BranchOnly early (after validation), or continue to
-        // worktree-level checks.
+        // worktree-level checks. Compute integration here (same as Phase 5 does
+        // for RemovedWorktree) so the output handler doesn't re-derive it.
         let (worktree_path, branch_name, is_current) = match resolved {
             Resolved::BranchOnly { branch, pruned } => {
+                let default_branch = self.default_branch();
+                let target = default_branch.as_deref().or(Some("HEAD"));
+                let (integration_reason, target_branch) =
+                    compute_integration_reason(self, Some(&branch), target, deletion_mode);
                 return Ok(RemoveResult::BranchOnly {
                     branch_name: branch,
                     deletion_mode,
                     pruned,
+                    target_branch,
+                    integration_reason,
                 });
             }
             Resolved::Worktree {
@@ -252,13 +272,15 @@ impl RepositoryCliExt for Repository {
         };
 
         // Pre-compute integration reason to avoid race conditions when removing
-        // multiple worktrees in background mode.
-        let integration_reason = compute_integration_reason(
+        // multiple worktrees in background mode. Use the effective target for
+        // display (e.g., origin/main when upstream is ahead).
+        let (integration_reason, effective_target) = compute_integration_reason(
             self,
             branch_name.as_deref(),
             target_branch.as_deref(),
             deletion_mode,
         );
+        let target_branch = effective_target.or(target_branch);
 
         // Compute expected_path for path mismatch detection
         // Only set if actual path differs from expected (path mismatch)
@@ -412,13 +434,15 @@ pub(crate) fn is_primary_worktree(repo: &Repository) -> anyhow::Result<bool> {
     Ok(primary.as_deref() == Some(current_root.as_path()))
 }
 
-/// Compute integration reason for branch deletion.
+/// Compute integration reason and effective target for branch deletion.
 ///
-/// Returns `None` if:
+/// Returns `(None, None)` if:
 /// - `deletion_mode` is `ForceDelete` (skip integration check)
 /// - `branch_name` is `None` (detached HEAD)
 /// - `target_branch` is `None` (no target to check against)
-/// - Branch is not integrated into target (safe deletion not confirmed)
+///
+/// When `Some`, the effective target may differ from the local default branch
+/// (e.g., `origin/main` when upstream is ahead).
 ///
 /// Note: Integration is computed even for `Keep` mode so we can inform the user
 /// if the flag had an effect (branch was integrated) or not (branch was unmerged).
@@ -427,16 +451,21 @@ pub(crate) fn compute_integration_reason(
     branch_name: Option<&str>,
     target_branch: Option<&str>,
     deletion_mode: BranchDeletionMode,
-) -> Option<IntegrationReason> {
+) -> (Option<IntegrationReason>, Option<String>) {
     // Skip for force delete (we'll delete regardless of integration status)
     // But compute for keep mode so we can inform user if the flag had no effect
     if deletion_mode.is_force() {
-        return None;
+        return (None, None);
     }
-    let (branch, target) = branch_name.zip(target_branch)?;
+    let (branch, target) = match branch_name.zip(target_branch) {
+        Some(pair) => pair,
+        None => return (None, None),
+    };
     // On error, return None (informational only)
-    let (_, reason) = repo.integration_reason(branch, target).ok()?;
-    reason
+    match repo.integration_reason(branch, target) {
+        Ok((effective_target, reason)) => (reason, Some(effective_target)),
+        Err(_) => (None, None),
+    }
 }
 
 /// Reject removing the default branch unless force-delete is set.

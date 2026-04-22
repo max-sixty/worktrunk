@@ -1,0 +1,34 @@
+---
+source: tests/integration_tests/config_state.rs
+expression: "String::from_utf8_lossy(&output.stdout)"
+---
+{
+  "command_log": [
+    {
+      "file": "commands.jsonl",
+      "modified_at": "<TIMESTAMP>",
+      "path": "_REPO_/.git/wt/logs/commands.jsonl",
+      "size": "<SIZE>"
+    }
+  ],
+  "diagnostic": [
+    {
+      "file": "diagnostic.md",
+      "modified_at": "<TIMESTAMP>",
+      "path": "_REPO_/.git/wt/logs/diagnostic.md",
+      "size": "<SIZE>"
+    }
+  ],
+  "hook_output": [
+    {
+      "branch": "main",
+      "file": "main/user/post-start/server.log",
+      "hook_type": "post-start",
+      "modified_at": "<TIMESTAMP>",
+      "name": "server",
+      "path": "_REPO_/.git/wt/logs/main/user/post-start/server.log",
+      "size": "<SIZE>",
+      "source": "user"
+    }
+  ]
+}

@@ -2,6 +2,8 @@
 //!
 //! Implements `RemoteRefProvider` for GitHub Pull Requests using the `gh` CLI.
 
+use std::path::Path;
+
 use anyhow::{Context, bail};
 use serde::Deserialize;
 
@@ -10,6 +12,7 @@ use super::{
     run_cli_api,
 };
 use crate::git::{self, RefType, Repository};
+use crate::shell_exec::Cmd;
 
 /// GitHub Pull Request provider.
 #[derive(Debug, Clone, Copy)]
@@ -74,26 +77,51 @@ struct GhOwner {
     login: String,
 }
 
+/// Query the default repo configured via `gh repo set-default`.
+///
+/// Returns `Some((owner, repo))` if a default is configured and parseable.
+/// Returns `None` if `gh` is not installed, not configured, or no default is set.
+fn gh_default_repo(repo_root: &Path) -> Option<(String, String)> {
+    let output = Cmd::new("gh")
+        .args(["repo", "set-default", "--view"])
+        .current_dir(repo_root)
+        .env("GH_PROMPT_DISABLED", "1")
+        .run()
+        .ok()
+        .filter(|o| o.status.success())?;
+
+    let slug = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let (owner, repo) = slug.split_once('/')?;
+    Some((owner.to_string(), repo.to_string()))
+}
+
 /// Fetch PR information from GitHub using the `gh` CLI.
 fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
     let repo_root = repo.repo_path()?;
 
-    // Extract owner/repo from primary remote URL. Uses raw URL (not
-    // effective) because insteadOf may rewrite to a non-parseable path.
-    // SSH aliases only affect the host, not the path — owner/repo is always real.
-    let remote = repo.primary_remote()?;
-    let url = repo
-        .remote_url(&remote)
-        .ok_or_else(|| anyhow::anyhow!("Remote '{}' has no URL", remote))?;
-    let parsed = git::GitRemoteUrl::parse(&url)
-        .ok_or_else(|| anyhow::anyhow!("Cannot parse remote URL: {}", url))?;
+    // Determine which owner/repo to query. Prefer gh's default repo
+    // (set via `gh repo set-default`) so fork workflows can target the
+    // parent repo without reconfiguring git remotes.
+    let (owner, repo_name, source) = if let Some((owner, name)) = gh_default_repo(repo_root) {
+        (owner, name, "gh default".to_string())
+    } else {
+        // Extract owner/repo from primary remote URL. Uses raw URL (not
+        // effective) because insteadOf may rewrite to a non-parseable path.
+        // SSH aliases only affect the host, not the path — owner/repo is always real.
+        let remote = repo.primary_remote()?;
+        let url = repo
+            .remote_url(&remote)
+            .ok_or_else(|| anyhow::anyhow!("Remote '{}' has no URL", remote))?;
+        let parsed = git::GitRemoteUrl::parse(&url)
+            .ok_or_else(|| anyhow::anyhow!("Cannot parse remote URL: {}", url))?;
+        (
+            parsed.owner().to_string(),
+            parsed.repo().to_string(),
+            remote,
+        )
+    };
 
-    let api_path = format!(
-        "repos/{}/{}/pulls/{}",
-        parsed.owner(),
-        parsed.repo(),
-        pr_number
-    );
+    let api_path = format!("repos/{}/{}/pulls/{}", owner, repo_name, pr_number);
 
     // Only pass --hostname when explicitly configured (for GHE / self-hosted).
     let hostname = repo
@@ -118,7 +146,19 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
     if !output.status.success() {
         if let Ok(error_response) = serde_json::from_slice::<GhApiErrorResponse>(&output.stdout) {
             match error_response.status.as_str() {
-                "404" => bail!("PR #{} not found", pr_number),
+                "404" => {
+                    let hint = if source == "gh default" {
+                        "Check that `gh repo set-default` points to the correct repository."
+                    } else {
+                        "If the PR is on a different repository, \
+                         run `gh repo set-default` to set the default \
+                         or configure a different primary remote."
+                    };
+                    bail!(
+                        "PR #{pr_number} not found on {owner}/{repo_name} ({source}). \
+                         {hint}",
+                    );
+                }
                 "401" => bail!("GitHub CLI not authenticated; run gh auth login"),
                 "403" => {
                     let message_lower = error_response.message.to_lowercase();

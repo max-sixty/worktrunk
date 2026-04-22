@@ -3,7 +3,7 @@ source: tests/integration_tests/approvals.rs
 info:
   program: wt
   args:
-    - hook
+    - config
     - approvals
     - add
     - "--all"
@@ -30,6 +30,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -42,4 +43,4 @@ exit_code: 1
 ○ pre-start:
   echo 'hello'
 ✗ Cannot prompt for approval in non-interactive environment
-↳ To skip prompts in CI/CD, add --yes; to pre-approve commands, run wt hook approvals add
+↳ To skip prompts in CI/CD, add --yes; to pre-approve commands, run wt config approvals add

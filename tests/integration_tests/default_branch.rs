@@ -1,5 +1,6 @@
 use crate::common::{TestRepo, repo, repo_with_remote};
 use rstest::rstest;
+use std::fs;
 use worktrunk::git::{GitRemoteUrl, Repository};
 
 #[rstest]
@@ -114,6 +115,30 @@ fn test_primary_remote_detects_custom_remote(mut repo: TestRepo) {
 }
 
 #[rstest]
+fn test_primary_remote_skips_includeif_lines(repo: TestRepo) {
+    // `git config --get-regexp remote\..+\.url` uses an unanchored regex, so it matches
+    // any config key containing "remote.<something>.url" — not just actual remote entries.
+    // For example, `includeIf.hasconfig:remote.*.url:...` keys match and can appear before
+    // the first real remote URL. primary_remote() must skip these non-remote lines.
+    //
+    // We prepend an includeIf section to the local .git/config so it appears before the
+    // [remote "origin"] section in git's output (git emits config entries in file order
+    // within each scope, and global config entries appear before local ones).
+    let git_config = repo.root_path().join(".git/config");
+    let original = fs::read_to_string(&git_config).unwrap();
+    let patched = format!(
+        "[includeIf \"hasconfig:remote.*.url:https://github.com/example/other.git\"]\n\
+         \tpath = /dev/null\n{}",
+        original
+    );
+    fs::write(&git_config, patched).unwrap();
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let remote = git_repo.primary_remote().unwrap();
+    assert_eq!(remote, "origin");
+}
+
+#[rstest]
 fn test_branch_exists_with_custom_remote(mut repo: TestRepo) {
     repo.setup_custom_remote("upstream", "main");
 
@@ -203,53 +228,35 @@ fn test_default_branch_no_remote_uses_init_config(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_configured_default_branch_does_not_exist_returns_none(repo: TestRepo) {
-    // Configure a non-existent branch
+fn test_configured_default_branch_is_trusted_without_validation(repo: TestRepo) {
+    // Configure a non-existent branch — `default_branch()` no longer
+    // validates that the branch resolves locally on the fast path. The
+    // persisted value is returned as-is; a stale cache surfaces as a
+    // `StaleDefaultBranch` error downstream (e.g., from `wt merge`) with
+    // cache-reset hints.
     repo.git_command()
         .args(["config", "worktrunk.default-branch", "nonexistent-branch"])
         .run()
         .unwrap();
 
-    // Should return None when configured branch doesn't exist locally
     let result = Repository::at(repo.root_path()).unwrap().default_branch();
-    assert!(
-        result.is_none(),
-        "Expected None when configured branch doesn't exist, got: {:?}",
-        result
-    );
+    assert_eq!(result, Some("nonexistent-branch".to_string()));
 }
 
+/// In-process `set` followed by `get` sees the new value even when the
+/// config key has a mixed-case variable name. Regression: previously
+/// `set_config_value` inserted the literal key (`…pushRemote`) while
+/// `config_last` looked up the canonical key (`…pushremote`) — the map
+/// ended up with two entries, and reads missed the write.
 #[rstest]
-fn test_invalid_default_branch_config_returns_configured_value(repo: TestRepo) {
-    // Configure a non-existent branch
-    repo.git_command()
-        .args(["config", "worktrunk.default-branch", "nonexistent-branch"])
-        .run()
-        .unwrap();
-
-    // Should report the invalid configuration
-    let invalid = Repository::at(repo.root_path())
-        .unwrap()
-        .invalid_default_branch_config();
-    assert_eq!(invalid, Some("nonexistent-branch".to_string()));
-}
-
-#[rstest]
-fn test_invalid_default_branch_config_returns_none_when_valid(repo: TestRepo) {
-    // Configure the existing "main" branch
-    repo.git_command()
-        .args(["config", "worktrunk.default-branch", "main"])
-        .run()
-        .unwrap();
-
-    // Should return None since the configured branch exists
-    let invalid = Repository::at(repo.root_path())
-        .unwrap()
-        .invalid_default_branch_config();
-    assert!(
-        invalid.is_none(),
-        "Expected None when configured branch exists, got: {:?}",
-        invalid
+fn test_set_config_then_get_mixed_case_variable(repo: TestRepo) {
+    let r = Repository::at(repo.root_path()).unwrap();
+    // Trigger bulk config population before the write.
+    let _ = r.is_bare();
+    r.set_config("branch.main.pushRemote", "origin").unwrap();
+    assert_eq!(
+        r.config_value("branch.main.pushRemote").unwrap(),
+        Some("origin".to_string())
     );
 }
 

@@ -4,28 +4,8 @@
 //! edge cases in template variable substitution.
 
 use super::expand_template;
-use crate::git::Repository;
-use crate::shell_exec::Cmd;
+use crate::testing::TestRepo;
 use std::collections::HashMap;
-
-/// Test fixture that creates a real temporary git repository.
-struct TestRepo {
-    _dir: tempfile::TempDir,
-    repo: Repository,
-}
-
-impl TestRepo {
-    fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        Cmd::new("git")
-            .args(["init"])
-            .current_dir(dir.path())
-            .run()
-            .unwrap();
-        let repo = Repository::at(dir.path()).unwrap();
-        Self { _dir: dir, repo }
-    }
-}
 
 fn test_repo() -> TestRepo {
     TestRepo::new()
@@ -69,6 +49,50 @@ fn test_expand_template_branch_with_slashes() {
     )
     .unwrap();
     assert_eq!(result, "echo feature-nested-branch");
+}
+
+#[test]
+fn test_expand_template_sanitize_hash_filter() {
+    let test = test_repo();
+
+    // Already-safe names pass through unchanged (no hash suffix)
+    let vars = vars_with_branch("server");
+    let result = expand_template(
+        "{{ branch | sanitize_hash }}",
+        &vars,
+        false,
+        &test.repo,
+        "test",
+    )
+    .unwrap();
+    assert_eq!(result, "server");
+
+    // Unsafe characters are replaced and a 3-char hash suffix is appended
+    let vars = vars_with_branch("feature/auth");
+    let result = expand_template(
+        "{{ branch | sanitize_hash }}",
+        &vars,
+        false,
+        &test.repo,
+        "test",
+    )
+    .unwrap();
+    assert!(result.starts_with("feature-auth-"), "got: {result}");
+    assert_eq!(result.len(), "feature-auth-".len() + 3, "got: {result}");
+
+    // Empty input becomes "_empty-<hash>"
+    let mut vars = HashMap::new();
+    vars.insert("name", "");
+    let result = expand_template(
+        "{{ name | sanitize_hash }}",
+        &vars,
+        false,
+        &test.repo,
+        "test",
+    )
+    .unwrap();
+    assert!(result.starts_with("_empty-"), "got: {result}");
+    assert_eq!(result.len(), "_empty-".len() + 3, "got: {result}");
 }
 
 #[test]
@@ -200,7 +224,7 @@ fn test_expand_template_backslash_in_branch() {
     let test = test_repo();
     // Use {{ branch | sanitize }} to replace backslashes with dashes
     // Note: shell_escape=false to test sanitize filter in isolation
-    let vars = vars_with_branch("feature\\branch");
+    let vars = vars_with_branch(r"feature\branch");
     let result = expand_template(
         "path/{{ branch | sanitize }}",
         &vars,

@@ -24,14 +24,13 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt config create - Create configuration file
 
 Usage: [1m[36mwt config create[0m [36m[OPTIONS][0m
@@ -51,7 +50,10 @@ Usage: [1m[36mwt config create[0m [36m[OPTIONS][0m
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  [1m[36m-y[0m, [1m[36m--yes[0m
+          Skip approval prompts
 
 [1m[32mUser config[0m
 
@@ -70,10 +72,11 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# Controls where new worktrees are created.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# **Variables:**[0m
+[107m [0m [2m# **Available template variables:**[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# - `{{ repo_path }}` — absolute path to the repository root (e.g., `/Users/me/code/myproject`. Or for bare repos, the bare directory itself)[0m
 [107m [0m [2m# - `{{ repo }}` — repository directory name (e.g., `myproject`)[0m
+[107m [0m [2m# - `{{ owner }}` — primary remote owner path (may include subgroups like `group/subgroup`)[0m
 [107m [0m [2m# - `{{ branch }}` — raw branch name (e.g., `feature/auth`)[0m
 [107m [0m [2m# - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)[0m
 [107m [0m [2m# - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)[0m
@@ -91,6 +94,10 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# Centralized worktrees directory (`~/worktrees/myproject/feature-auth`):[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# worktree-path = "~/worktrees/{{ repo }}/{{ branch | sanitize }}"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# By remote owner path (`~/development/max-sixty/myproject/feature/auth`):[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# worktree-path = "~/development/{{ owner }}/{{ repo }}/{{ branch }}"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Bare repository (`~/code/myproject/feature-auth`):[0m
 [107m [0m [2m#[0m
@@ -112,7 +119,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# [commit.generation][0m
 [107m [0m [2m# command = "codex exec -m gpt-5.1-codex-mini -c model_reasoning_effort='low' -c system_prompt='' --sandbox=read-only --json - | jq -sr '[.[] | select(.item.type? == \"agent_message\")] | last.item.text'"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# ### opencode[0m
+[107m [0m [2m# ### OpenCode[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [commit.generation][0m
 [107m [0m [2m# command = "opencode run -m anthropic/claude-haiku-4.5 --variant fast"[0m
@@ -161,7 +168,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# commit = true      # Commit uncommitted changes first (--no-commit to skip)[0m
 [107m [0m [2m# rebase = true      # Rebase onto target before merge (--no-rebase to skip)[0m
 [107m [0m [2m# remove = true      # Remove worktree after merge (--no-remove to keep)[0m
-[107m [0m [2m# verify = true      # Run project hooks (--no-verify to skip)[0m
+[107m [0m [2m# verify = true      # Run project hooks (--no-hooks to skip)[0m
 [107m [0m [2m# ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Switch[0m
@@ -171,7 +178,6 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# [switch.picker][0m
 [107m [0m [2m# pager = "delta --paging=never"   # Example: override git's core.pager for diff preview[0m
-[107m [0m [2m# timeout-ms = 500   # Wall-clock budget (ms) for picker data collection; 0 disables[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Step[0m
 [107m [0m [2m#[0m
@@ -182,7 +188,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Aliases[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Command templates that run with `wt step <name>`. See `wt step` aliases (https://worktrunk.dev/step/#aliases) for usage and flags.[0m
+[107m [0m [2m# Command templates that run as `wt <name>`. See the Extending Worktrunk guide (https://worktrunk.dev/extending/#aliases) for usage and flags.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [aliases][0m
 [107m [0m [2m# greet = "echo Hello from {{ branch }}"[0m
@@ -301,23 +307,6 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# ## Hooks[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# See `wt hook` (https://worktrunk.dev/hook/) for hook types, execution order, template variables, and examples. User hooks apply to all projects; project hooks (https://worktrunk.dev/config/#project-configuration) apply only to that repository.[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# Single command:[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# pre-start = "npm ci"[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# Multiple named commands (concurrent for post-*, sequential for pre-*):[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# [pre-merge][0m
-[107m [0m [2m# test = "npm test"[0m
-[107m [0m [2m# build = "npm run build"[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# Pipeline — list of maps, run in order (each map concurrent):[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# post-start = [[0m
-[107m [0m [2m#     { install = "npm ci" },[0m
-[107m [0m [2m#     { build = "npm run build", server = "npm run dev" }[0m
-[107m [0m [2m# ][0m
 
 [1m[32mProject config[0m
 
@@ -325,9 +314,9 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 
 [107m [0m [2m# # Project Configuration[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Create with `wt config create --project`. Examples shown — uncomment and customize for your project.[0m
+[107m [0m [2m# Project configuration lets teams share repository-specific settings — hooks, dev server URLs, and other defaults. The file lives in `.config/wt.toml` and is typically checked into version control.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Location: `.config/wt.toml` (checked into version control and shared with the team).[0m
+[107m [0m [2m# To create a starter file with commented-out examples, run `wt config create --project`.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Hooks[0m
 [107m [0m [2m#[0m
@@ -363,10 +352,12 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Aliases[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Command templates that run with `wt step <name>`. See `wt step` aliases (https://worktrunk.dev/step/#aliases) for usage and flags.[0m
+[107m [0m [2m# Command templates that run as `wt <name>`. See the Extending Worktrunk guide (https://worktrunk.dev/extending/#aliases) for usage and flags.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [aliases][0m
 [107m [0m [2m# deploy = "make deploy BRANCH={{ branch }}"[0m
 [107m [0m [2m# url = "echo http://localhost:{{ branch | hash_port }}"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Aliases defined here are shared with teammates. For personal aliases, use the user config (https://worktrunk.dev/config/#aliases) `[aliases]` section instead.[0m
+
+----- stderr -----

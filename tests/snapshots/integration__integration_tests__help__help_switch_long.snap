@@ -23,14 +23,13 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt switch - Switch to a worktree; create if needed
 
 Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--[0m [36m<EXECUTE_ARGS>...[0m[1m[36m][0m
@@ -53,7 +52,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
   [1m[36m-b[0m, [1m[36m--base[0m[36m [0m[36m<BASE>[0m
           Base branch[0m
           
-          Defaults to default branch.[0m
+          Defaults to default branch. Supports the same shortcuts as the branch argument: [1m^[0m, [1m@[0m, [1m-[0m, [1mpr:{N}[0m, [1mmr:{N}[0m.[0m
 
   [1m[36m-x[0m, [1m[36m--execute[0m[36m [0m[36m<EXECUTE>[0m
           Command to run after switch[0m
@@ -92,11 +91,19 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           Include remote branches
 
 [1m[32mAutomation:[0m
-  [1m[36m-y[0m, [1m[36m--yes[0m
-          Skip approval prompts
-
-      [1m[36m--no-verify[0m
+      [1m[36m--no-hooks[0m
           Skip hooks
+
+      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
+          Output format[0m
+          
+          JSON prints structured result to stdout. Designed for tool integration (e.g., Claude Code WorktreeCreate hooks).[0m
+
+          Possible values:
+          - [1m[36mtext[0m: Human-readable text output
+          - [1m[36mjson[0m: JSON output
+          
+          [default: text]
 
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m
@@ -106,17 +113,20 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  [1m[36m-y[0m, [1m[36m--yes[0m
+          Skip approval prompts
 
 Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike [2mgit switch[0m, this navigates between worktrees rather than changing branches in place.
 
 [1m[32mExamples[0m
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch feature-auth           # Switch to worktree[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch [0m[2m[36m-[0m[2m                      # Previous worktree (like cd -)[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch [0m[2m[36m--create[0m[2m new-feature   # Create new branch and worktree[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch [0m[2m[36m--create[0m[2m hotfix [0m[2m[36m--base[0m[2m production[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch pr:123                 # Switch to PR #123's branch[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch feature-auth           # Switch to worktree[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m-[0m[2m                      # Previous worktree (like cd -)[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m new-feature   # Create new branch and worktree[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m hotfix [0m[2m[36m--base[0m[2m production[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:123                 # Switch to PR #123's branch[0m[2m[0m
 
 [1m[32mCreating a branch[0m
 
@@ -132,10 +142,10 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
 4. Runs pre-start hooks, blocking until complete
 5. Spawns post-start and post-switch hooks in the background
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch feature                        # Existing branch → creates worktree[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch [0m[2m[36m--create[0m[2m feature               # New branch and worktree[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base[0m[2m release    # New branch from release[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch [0m[2m[36m--create[0m[2m temp [0m[2m[36m--no-verify[0m[2m      # Skip hooks[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch feature                        # Existing branch → creates worktree[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m feature               # New branch and worktree[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base[0m[2m release    # New branch from release[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m temp [0m[2m[36m--no-hooks[0m[2m       # Skip hooks[0m[2m[0m
 
 [1m[32mShortcuts[0m
 
@@ -147,11 +157,14 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
  [2mpr:{N}[0m   GitHub PR #N's branch         
  [2mmr:{N}[0m   GitLab MR !N's branch         
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch [0m[2m[36m-[0m[2m                      # Back to previous[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch ^                      # Default branch worktree[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base=@[0m[2m  # Branch from current HEAD[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch pr:123                 # PR #123's branch[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch mr:101                 # MR !101's branch[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m-[0m[2m                           # Back to previous[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch ^                           # Default branch worktree[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base=@[0m[2m       # Branch from current HEAD[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m fix [0m[2m[36m--base=pr:123[0m[2m  # Branch from PR #123's head[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:123                      # PR #123's branch[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                      # MR !101's branch[0m[2m[0m
+
+Shortcuts also apply to [2m--base[0m. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
 
 [1m[32mInteractive picker[0m
 
@@ -189,8 +202,8 @@ Available on Unix only (macOS, Linux). On Windows, use [2mwt list[0m or [2mwt
 
 The [2mpr:<number>[0m and [2mmr:<number>[0m shortcuts resolve a GitHub PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref ([2mrefs/pull/N/head[0m or [2mrefs/merge-requests/N/head[0m) and configures [2mpushRemote[0m to the fork URL.
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch pr:101                 # GitHub PR #101[0m[2m[0m
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m switch mr:101                 # GitLab MR !101[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:101                 # GitHub PR #101[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                 # GitLab MR !101[0m[2m[0m
 
 Requires [2mgh[0m (GitHub) or [2mglab[0m (GitLab) CLI to be installed and authenticated. The [2m--create[0m flag cannot be used with [2mpr:[0m/[2mmr:[0m syntax since the branch already exists.
 
@@ -209,3 +222,5 @@ To change which branch a worktree is on, use [2mgit switch[0m inside that work
 - [2mwt list[0m — View all worktrees
 - [2mwt remove[0m — Delete worktrees when done
 - [2mwt merge[0m — Integrate changes back to the default branch
+
+----- stderr -----

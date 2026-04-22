@@ -90,22 +90,54 @@ impl<'a> Branch<'a> {
         Ok(remotes)
     }
 
-    /// Get the upstream tracking branch for this branch.
+    /// Get the upstream tracking branch for this branch. Use this when the
+    /// caller (or its caller) will query many branches; use
+    /// [`upstream_single`] when exactly one branch is looked up.
     ///
-    /// Uses [`@{upstream}` syntax][1] to resolve the tracking branch.
+    /// First call in a process triggers `fetch_all_upstreams` — one
+    /// `git for-each-ref` over every local branch, cached for subsequent
+    /// calls. That bulk scan amortizes well across the per-worktree tasks
+    /// in `wt list`, where every row needs an upstream. On a single-branch
+    /// path (alias/hook template expansion, one-shot lookups during
+    /// switch/merge) the scan is O(branches) overhead with nothing to
+    /// amortize against — reach for [`upstream_single`] instead.
     ///
-    /// [1]: https://git-scm.com/docs/gitrevisions#Documentation/gitrevisions.txt-emltaboranchgtemuaboranchgtupaboranchgtupstream
+    /// [`upstream_single`]: Self::upstream_single
     pub fn upstream(&self) -> anyhow::Result<Option<String>> {
-        let result =
-            self.repo
-                .run_command(&["rev-parse", "--abbrev-ref", &format!("{}@{{u}}", self.name)]);
+        let upstreams = self
+            .repo
+            .cache
+            .upstreams
+            .get_or_try_init(|| self.repo.fetch_all_upstreams())?;
+        Ok(upstreams.get(&self.name).cloned().unwrap_or(None))
+    }
 
-        match result {
-            Ok(upstream) => {
-                let trimmed = upstream.trim();
-                Ok((!trimmed.is_empty()).then(|| trimmed.to_string()))
-            }
-            Err(_) => Ok(None), // No upstream configured
+    /// Get this branch's upstream without the bulk scan used by
+    /// [`upstream`]. Prefer this when exactly one branch is being looked
+    /// up; prefer [`upstream`] when the caller (or its caller) will query
+    /// many branches. Runs one `git for-each-ref` scoped to this branch's
+    /// ref — O(1) in local branch count.
+    ///
+    /// Handles the `[gone]` track state the same way as the bulk path:
+    /// a configured-but-missing upstream reads as `None`.
+    ///
+    /// [`upstream`]: Self::upstream
+    pub fn upstream_single(&self) -> anyhow::Result<Option<String>> {
+        let output = self.repo.run_command(&[
+            "for-each-ref",
+            "--format=%(upstream:short)\t%(upstream:track)",
+            &format!("refs/heads/{}", self.name),
+        ])?;
+        let Some(line) = output.lines().next() else {
+            return Ok(None);
+        };
+        let (upstream, track) = line
+            .split_once('\t')
+            .expect("for-each-ref emits a tab between the two format fields");
+        if upstream.is_empty() || track == "[gone]" {
+            Ok(None)
+        } else {
+            Ok(Some(upstream.to_string()))
         }
     }
 

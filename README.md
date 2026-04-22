@@ -8,8 +8,9 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/max-sixty/worktrunk/ci.yaml?event=push&branch=main&style=for-the-badge&logo=github)](https://github.com/max-sixty/worktrunk/actions?query=branch%3Amain+workflow%3Aci)
 [![Codecov](https://img.shields.io/codecov/c/github/max-sixty/worktrunk?style=for-the-badge&logo=codecov)](https://codecov.io/gh/max-sixty/worktrunk)
 [![Stars](https://img.shields.io/github/stars/max-sixty/worktrunk?style=for-the-badge&logo=github)](https://github.com/max-sixty/worktrunk/stargazers)
+[![maintained with tend](https://img.shields.io/badge/maintained_with-tend-bba580?style=for-the-badge&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAxNiI+PGcgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoMCwxNikgc2NhbGUoMC4wMTI1LC0wLjAxMjUpIiBmaWxsPSIjZmZmIiBzdHJva2U9Im5vbmUiPjxwYXRoIGQ9Ik02ODAgMTEyOCBjNjIgLTk2IDY5IC0xNzggMjAgLTI0MSAtMTcgLTIyIC0yMCAtNDAgLTIwIC0xMzQgbDEgLTEwOCAyMSAyOCBjMTEgMTYgMzAgNDcgNDIgNzAgMTIgMjIgMzIgNDkgNDYgNTkgMzcgMjcgMTE0IDM4IDE4NCAyNyA5MyAtMTUgOTQgLTE4IDQ0IC03OSAtNzIgLTg4IC0xMDkgLTExMyAtMTc2IC0xMTcgLTMxIC0yIC02NCAxIC03MiA2IC0yMyAxNSAyMSA1NiAxMDcgOTggNDAgMjAgNzEgMzggNjkgNDAgLTYgNyAtODggLTE3IC0xMjYgLTM3IC00OSAtMjUgLTEwMCAtNzggLTEyMSAtMTI1IC0xNSAtMzMgLTE5IC02NiAtMTkgLTE4OCAwIC0xNTcgOCAtMTk1IDUwIC0yMzIgMTcgLTE2IDM2IC0yMCA4NSAtMTkgNjIgMSA2MyAxIDczIC0zMiA5IC0zMiA5IC0zMyAtMjIgLTQwIC01MCAtMTIgLTEzMiAtNyAtMTY0IDEwIC00MCAyMSAtNzkgNjkgLTkyIDExNCAtNSAyMCAtMTAgMTAyIC0xMCAxODIgMCA4MCAtNSAxNjIgLTExIDE4NCAtMjIgNzkgLTEzNSAxNjYgLTIzNCAxODEgLTM3IDYgLTM1IDMgMzAgLTI4IDc4IC0zOSAxNDQgLTkxIDEzMiAtMTA0IC01IC00IC0zNyAtOCAtNzEgLTggLTc3IDAgLTExNyAyNCAtMTgyIDEwOSAtNTIgNjggLTUxIDcwIDQyIDg1IDcxIDExIDE0MyAwIDE4MyAtMjkgMTYgLTExIDQwIC00MyA1NCAtNzMgMTMgLTI5IDMyIC01OSA0MSAtNjYgMTQgLTEyIDE2IC03IDE2IDU4IDAgNTkgNCA3NyAyMyAxMDIgMTkgMjYgMjMgNDYgMjUgMTMwIDMgNjcgMCA5OSAtNyA5OSAtNyAwIC0xMSAtMjMgLTEyIC01NyAwIC0zMiAtNiAtNzYgLTEyIC05NyBsLTEyIC00MCAtMjcgMzIgYy0zNCA0MSAtNDMgOTYgLTI0IDE1MSAxNCA0MSA3NSAxNDEgODYgMTQxIDMgMCAyMSAtMjQgNDAgLTUyeiIvPjwvZz48L3N2Zz4K)](https://github.com/max-sixty/tend)
 
-> **March 2026**: Worktrunk was [released](https://x.com/max_sixty/status/2006077845391724739?s=20) at the start of the year, and has quickly become the most popular git worktree manager. It's built with love (there's no slop!). Please let me know any frictions at all; I'm intensely focused on continuing to make Worktrunk excellent, and the biggest help is folks posting problems they perceive.
+> **April 2026**: Worktrunk was [released](https://x.com/max_sixty/status/2006077845391724739?s=20) at the start of the year, and has quickly become the most popular git worktree manager. It's built with love (there's no slop!). Please let me know any frictions at all; I'm intensely focused on continuing to make Worktrunk excellent, and the biggest help is folks posting problems they perceive.
 
 Worktrunk is a CLI for git worktree management, designed for running AI agents in parallel.
 
@@ -86,10 +87,11 @@ git branch -d feat</pre></td>
 - **[LLM commit messages](https://worktrunk.dev/llm-commits/)** — generate commit messages from diffs
 - **[Merge workflow](https://worktrunk.dev/merge/)** — squash, rebase, merge, clean up in one command
 - **[Interactive picker](https://worktrunk.dev/switch/#interactive-picker)** — browse worktrees with live diff and log previews
-- **[Copy build caches](https://worktrunk.dev/step/)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees
+- **[Copy build caches](https://worktrunk.dev/step/#wt-step-copy-ignored)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees
 - **[`wt list --full`](https://worktrunk.dev/list/#full-mode)** — [CI status](https://worktrunk.dev/list/#ci-status) and [AI-generated summaries](https://worktrunk.dev/list/#llm-summaries) per branch
 - **[PR checkout](https://worktrunk.dev/switch/#pull-requests-and-merge-requests)** — `wt switch pr:123` to jump straight to a PR's branch
-- **[Dev server per worktree](https://worktrunk.dev/hook/#dev-servers)** — `hash_port` template filter gives each worktree a unique port
+- **[Dev server per worktree](https://worktrunk.dev/tips-patterns/#dev-server-per-worktree)** — `hash_port` template filter gives each worktree a unique port
+- **[Aliases](https://worktrunk.dev/extending/#aliases) & [per-branch variables](https://worktrunk.dev/config/#wt-config-state-vars)** — custom `wt <name>` commands and branch-scoped state for hook templates
 - ...and **[lots more](#next-steps)**
 
 A demo with some advanced features:
@@ -105,7 +107,7 @@ A demo with some advanced features:
 **Homebrew (macOS & Linux):**
 
 ```bash
-$ brew install worktrunk && wt config shell install
+brew install worktrunk && wt config shell install
 ```
 
 Shell integration allows commands to change directories.
@@ -113,7 +115,7 @@ Shell integration allows commands to change directories.
 **Cargo:**
 
 ```bash
-$ cargo install worktrunk && wt config shell install
+cargo install worktrunk && wt config shell install
 ```
 
 <details>
@@ -122,8 +124,8 @@ $ cargo install worktrunk && wt config shell install
 On Windows, `wt` defaults to Windows Terminal's command. Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
 
 ```bash
-$ winget install max-sixty.worktrunk
-$ git-wt config shell install
+winget install max-sixty.worktrunk
+git-wt config shell install
 ```
 
 Alternatively, disable Windows Terminal's alias (Settings → Privacy & security → For developers → App Execution Aliases → disable "Windows Terminal") to use `wt` directly.
@@ -133,7 +135,7 @@ Alternatively, disable Windows Terminal's alias (Settings → Privacy & security
 **Arch Linux:**
 
 ```bash
-$ sudo pacman -S worktrunk && wt config shell install
+sudo pacman -S worktrunk && wt config shell install
 ```
 
 ## Quick start
@@ -165,9 +167,9 @@ When done, either:
 **PR workflow** — commit, push, open a PR, merge via GitHub/GitLab, then clean up:
 
 ```bash
-$ wt step commit                    # commit staged changes
-$ gh pr create                      # or glab mr create
-$ wt remove                         # after PR is merged
+wt step commit                    # commit staged changes
+gh pr create                      # or glab mr create
+wt remove                         # after PR is merged
 ```
 
 **Local merge** — squash, rebase onto main, fast-forward merge, clean up:
@@ -191,21 +193,22 @@ $ wt merge main
 For parallel agents, create multiple worktrees and launch an agent in each:
 
 ```bash
-$ wt switch -x claude -c feature-a -- 'Add user authentication'
-$ wt switch -x claude -c feature-b -- 'Fix the pagination bug'
-$ wt switch -x claude -c feature-c -- 'Write tests for the API'
+wt switch -x claude -c feature-a -- 'Add user authentication'
+wt switch -x claude -c feature-b -- 'Fix the pagination bug'
+wt switch -x claude -c feature-c -- 'Write tests for the API'
 ```
 
-The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](https://worktrunk.dev/hook/) to automate setup (install deps, start dev servers).
+The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](https://worktrunk.dev/hook/#hook-types) to automate setup (install deps, start dev servers).
 
 ## Next steps
 
 - Learn the core commands: [`wt switch`](https://worktrunk.dev/switch/), [`wt list`](https://worktrunk.dev/list/), [`wt merge`](https://worktrunk.dev/merge/), [`wt remove`](https://worktrunk.dev/remove/)
-- Set up [project hooks](https://worktrunk.dev/hook/) for automated setup
+- Set up [hooks](https://worktrunk.dev/hook/) for automated setup
 - Explore [LLM commit messages](https://worktrunk.dev/llm-commits/), [interactive
   picker](https://worktrunk.dev/switch/#interactive-picker), [Claude Code integration](https://worktrunk.dev/claude-code/), [CI
   status & PR links](https://worktrunk.dev/list/#ci-status)
 - Browse [tips & patterns](https://worktrunk.dev/tips-patterns/) for recipes: aliases, dev servers, databases, agent handoffs, and more
+- [Extending Worktrunk](https://worktrunk.dev/extending/) — customize workflows with hooks & aliases
 - Run `wt --help` or `wt <command> --help` for quick CLI reference
 
 ## Further reading

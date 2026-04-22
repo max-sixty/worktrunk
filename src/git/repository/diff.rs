@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, bail};
+use dashmap::mapref::entry::Entry;
 
 use super::{DiffStats, LineDiff, Repository};
 
@@ -80,25 +81,35 @@ impl Repository {
     }
 
     /// Get commit timestamp and message in a single git command.
+    ///
+    /// Results are cached in the shared repo cache by commit SHA, so multiple
+    /// items pointing at the same commit (e.g., worktrees on main) only run
+    /// `git log -1` once.
     pub fn commit_details(&self, commit: &str) -> anyhow::Result<(i64, String)> {
-        // Use space separator - timestamps don't contain spaces, and %s (subject)
-        // is the first line only (no embedded newlines). Split on first space.
-        // --no-show-signature suppresses GPG verification output that otherwise
-        // contaminates stdout when log.showSignature is set.
-        let stdout = self.run_command(&[
-            "log",
-            "-1",
-            "--no-show-signature",
-            "--format=%ct %s",
-            commit,
-        ])?;
-        // Only strip trailing newline, not spaces (empty subject = "timestamp ")
-        let line = stdout.trim_end_matches('\n');
-        let (timestamp_str, message) = line
-            .split_once(' ')
-            .context("Failed to parse commit details")?;
-        let timestamp = timestamp_str.parse().context("Failed to parse timestamp")?;
-        Ok((timestamp, message.trim().to_owned()))
+        use dashmap::mapref::entry::Entry;
+        match self.cache.commit_details.entry(commit.to_string()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                // Use space separator - timestamps don't contain spaces, and %s (subject)
+                // is the first line only (no embedded newlines). Split on first space.
+                // --no-show-signature suppresses GPG verification output that otherwise
+                // contaminates stdout when log.showSignature is set.
+                let stdout = self.run_command(&[
+                    "log",
+                    "-1",
+                    "--no-show-signature",
+                    "--format=%ct %s",
+                    commit,
+                ])?;
+                // Only strip trailing newline, not spaces (empty subject = "timestamp ")
+                let line = stdout.trim_end_matches('\n');
+                let (timestamp_str, message) = line
+                    .split_once(' ')
+                    .context("Failed to parse commit details")?;
+                let timestamp = timestamp_str.parse().context("Failed to parse timestamp")?;
+                Ok(e.insert((timestamp, message.trim().to_owned())).clone())
+            }
+        }
     }
 
     /// Get commit subjects (first line of commit message) from a range.
@@ -145,37 +156,44 @@ impl Repository {
     ///
     /// Results are cached in the shared repo cache to avoid redundant git commands
     /// when multiple tasks need the same merge-base (e.g., parallel `wt list` tasks).
-    /// The cache key is normalized (sorted) since merge-base(A, B) == merge-base(B, A).
+    /// Inputs are resolved to commit SHAs (via the cached `commit_shas` map) before
+    /// keying the cache, so equivalent forms (e.g., `"main"` vs the SHA `main` points
+    /// to) hit the same entry. The key is also order-normalized since merge-base is
+    /// symmetric: `merge-base(A, B) == merge-base(B, A)`.
     pub fn merge_base(&self, commit1: &str, commit2: &str) -> anyhow::Result<Option<String>> {
-        // Normalize key order since merge-base is symmetric: merge-base(A, B) == merge-base(B, A)
-        let key = if commit1 <= commit2 {
-            (commit1.to_string(), commit2.to_string())
+        // Resolve to SHAs so different forms of the same commit dedupe in the cache.
+        // `resolve_to_commit_sha` is a no-op for inputs that already look like SHAs.
+        let sha1 = self.resolve_to_commit_sha(commit1)?;
+        let sha2 = self.resolve_to_commit_sha(commit2)?;
+
+        // Normalize key order since merge-base is symmetric.
+        let key = if sha1 <= sha2 {
+            (sha1.clone(), sha2.clone())
         } else {
-            (commit2.to_string(), commit1.to_string())
+            (sha2.clone(), sha1.clone())
         };
 
-        // Check cache first
-        if let Some(cached) = self.cache.merge_base.get(&key) {
-            return Ok(cached.clone());
+        match self.cache.merge_base.entry(key) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                // Exit codes: 0 = found, 1 = no common ancestor, 128+ = invalid ref
+                let output = self.run_command_output(&["merge-base", &sha1, &sha2])?;
+
+                let result = if output.status.success() {
+                    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+                } else if output.status.code() == Some(1) {
+                    None
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    bail!(
+                        "git merge-base failed for {commit1} {commit2}: {}",
+                        stderr.trim()
+                    );
+                };
+
+                Ok(e.insert(result).clone())
+            }
         }
-
-        // Exit codes: 0 = found, 1 = no common ancestor, 128+ = invalid ref
-        let output = self.run_command_output(&["merge-base", commit1, commit2])?;
-
-        let result = if output.status.success() {
-            Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        } else if output.status.code() == Some(1) {
-            None
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!(
-                "git merge-base failed for {commit1} {commit2}: {}",
-                stderr.trim()
-            );
-        };
-
-        self.cache.merge_base.insert(key, result.clone());
-        Ok(result)
     }
 
     /// Calculate commits ahead and behind between two refs.
@@ -186,10 +204,22 @@ impl Repository {
     /// For orphan branches with no common ancestor, returns `(0, 0)`.
     /// Caller should check for orphan status separately via `merge_base()`.
     ///
-    /// Uses `merge_base()` internally (which is cached) to compute the common
-    /// ancestor, then counts commits using two-dot syntax. This allows the
-    /// merge-base result to be reused across multiple operations.
+    /// Results are cached in the shared repo cache. `batch_ahead_behind()`
+    /// primes the cache for all local branches at once via a single
+    /// `for-each-ref`; subsequent calls here hit the cache. On a miss, falls
+    /// back to `merge_base()` + `rev-list --count`, also cached on insert.
     pub fn ahead_behind(&self, base: &str, head: &str) -> anyhow::Result<(usize, usize)> {
+        let key = (base.to_string(), head.to_string());
+        match self.cache.ahead_behind.entry(key) {
+            Entry::Occupied(e) => Ok(*e.get()),
+            Entry::Vacant(e) => {
+                let counts = self.compute_ahead_behind(base, head)?;
+                Ok(*e.insert(counts))
+            }
+        }
+    }
+
+    fn compute_ahead_behind(&self, base: &str, head: &str) -> anyhow::Result<(usize, usize)> {
         // Get merge-base (cached in shared repo cache)
         let Some(merge_base) = self.merge_base(base, head)? else {
             // Orphan branch - no common ancestor
@@ -224,16 +254,15 @@ impl Repository {
         Ok((ahead, behind))
     }
 
-    /// Batch-fetch ahead/behind counts for all local branches vs a base ref.
+    /// Prime `cache.ahead_behind` for all local branches vs a base ref.
     ///
-    /// Uses `git for-each-ref --format='%(ahead-behind:BASE)'` (git 2.36+) to get
-    /// all counts in a single command. Returns a map from branch name to (ahead, behind).
+    /// Uses `git for-each-ref --format='%(ahead-behind:BASE)'` (git 2.36+) to
+    /// compute all counts in a single command, so subsequent `ahead_behind()`
+    /// calls hit the cache.
     ///
-    /// Results are cached so subsequent lookups via `cached_ahead_behind()` avoid
-    /// running individual git commands (though cache access still has minor overhead).
-    ///
-    /// On git < 2.36 or if the command fails, returns an empty map.
-    pub fn batch_ahead_behind(&self, base: &str) -> HashMap<String, (usize, usize)> {
+    /// On git < 2.36 or if the command fails, this is a no-op and
+    /// `ahead_behind()` falls back to per-branch computation.
+    pub fn batch_ahead_behind(&self, base: &str) {
         let format = format!("%(refname:lstrip=2) %(ahead-behind:{})", base);
         let output = match self.run_command(&[
             "for-each-ref",
@@ -244,38 +273,25 @@ impl Repository {
             Err(e) => {
                 // Fails on git < 2.36 (no %(ahead-behind:) support), invalid base ref, etc.
                 log::debug!("batch_ahead_behind({base}): git for-each-ref failed: {e}");
-                return HashMap::new();
+                return;
             }
         };
 
-        let results: HashMap<String, (usize, usize)> = output
+        output
             .lines()
             .filter_map(|line| {
                 // Format: "branch-name ahead behind"
                 let mut parts = line.rsplitn(3, ' ');
                 let behind: usize = parts.next()?.parse().ok()?;
                 let ahead: usize = parts.next()?.parse().ok()?;
-                let branch = parts.next()?.to_string();
-                // Cache each result for later lookup
+                let branch = parts.next()?;
+                Some((branch, ahead, behind))
+            })
+            .for_each(|(branch, ahead, behind)| {
                 self.cache
                     .ahead_behind
-                    .insert((base.to_string(), branch.clone()), (ahead, behind));
-                Some((branch, (ahead, behind)))
-            })
-            .collect();
-
-        results
-    }
-
-    /// Get cached ahead/behind counts for a branch.
-    ///
-    /// Returns cached results from a prior `batch_ahead_behind()` call, or None
-    /// if the branch wasn't in the batch or batch wasn't run.
-    pub fn cached_ahead_behind(&self, base: &str, branch: &str) -> Option<(usize, usize)> {
-        self.cache
-            .ahead_behind
-            .get(&(base.to_string(), branch.to_string()))
-            .map(|r| *r)
+                    .insert((base.to_string(), branch.to_string()), (ahead, behind));
+            });
     }
 
     /// Get line diff statistics between two refs.
@@ -286,26 +302,75 @@ impl Repository {
     ///
     /// For orphan branches with no common ancestor, returns zeros.
     pub fn branch_diff_stats(&self, base: &str, head: &str) -> anyhow::Result<LineDiff> {
-        // Limit concurrent diff operations to reduce mmap thrash on pack files
+        use dashmap::mapref::entry::Entry;
+
+        let base_sha = self.rev_parse_commit(base)?;
+        let head_sha = self.rev_parse_commit(head)?;
+
+        // Sparse checkout filters the diff by path, making the result
+        // environment-dependent rather than purely SHA-determined. Skip
+        // caches when sparse checkout is active.
+        let sparse_paths = self.sparse_checkout_paths();
+        let use_cache = sparse_paths.is_empty();
+
+        if use_cache {
+            // In-memory entry lock prevents parallel tasks from racing through
+            // the file-based cache for the same SHA pair.
+            match self
+                .cache
+                .diff_stats
+                .entry((base_sha.clone(), head_sha.clone()))
+            {
+                Entry::Occupied(e) => return Ok(*e.get()),
+                Entry::Vacant(e) => {
+                    let result =
+                        self.compute_branch_diff_stats(&base_sha, &head_sha, sparse_paths)?;
+                    return Ok(*e.insert(result));
+                }
+            }
+        }
+
+        self.compute_branch_diff_stats(&base_sha, &head_sha, sparse_paths)
+    }
+
+    fn compute_branch_diff_stats(
+        &self,
+        base_sha: &str,
+        head_sha: &str,
+        sparse_paths: &[String],
+    ) -> anyhow::Result<LineDiff> {
+        let use_cache = sparse_paths.is_empty();
+
+        if use_cache && let Some(cached) = super::sha_cache::diff_stats(self, base_sha, head_sha) {
+            return Ok(cached);
+        }
+
+        // Limit concurrent diff operations to reduce mmap thrash on pack files.
+        // Acquired after cache check to avoid holding the semaphore on cache hits.
         let _guard = super::super::HEAVY_OPS_SEMAPHORE.acquire();
 
         // Get merge-base (cached in shared repo cache)
-        let Some(merge_base) = self.merge_base(base, head)? else {
+        let Some(merge_base) = self.merge_base(base_sha, head_sha)? else {
+            if use_cache {
+                super::sha_cache::put_diff_stats(self, base_sha, head_sha, LineDiff::default());
+            }
             return Ok(LineDiff::default());
         };
 
-        // Use two-dot syntax with the cached merge-base
-        let range = format!("{}..{}", merge_base, head);
-        let mut args = vec!["diff", "--numstat", &range];
+        let range = format!("{}..{}", merge_base, head_sha);
+        let mut args = vec!["diff", "--shortstat", &range];
 
-        let sparse_paths = self.sparse_checkout_paths();
         if !sparse_paths.is_empty() {
             args.push("--");
             args.extend(sparse_paths.iter().map(|s| s.as_str()));
         }
 
         let stdout = self.run_command(&args)?;
-        LineDiff::from_numstat(&stdout)
+        let result = LineDiff::from_shortstat(&stdout);
+        if use_cache {
+            super::sha_cache::put_diff_stats(self, base_sha, head_sha, result);
+        }
+        Ok(result)
     }
 
     /// Get formatted diff stats summary for display.
@@ -313,24 +378,11 @@ impl Repository {
     /// Returns a vector of formatted strings like ["3 files", "+45", "-12"].
     /// Returns empty vector if diff command fails or produces no output.
     ///
-    /// Callers should pass `--shortstat` in args for compatibility; this method
-    /// internally replaces it with `--numstat` for locale-independent parsing.
+    /// Callers pass args including `--shortstat` which produces a single summary line.
     pub fn diff_stats_summary(&self, args: &[&str]) -> Vec<String> {
-        // Replace --shortstat with --numstat for locale-independent parsing
-        let args: Vec<&str> = args
-            .iter()
-            .map(|&arg| {
-                if arg == "--shortstat" {
-                    "--numstat"
-                } else {
-                    arg
-                }
-            })
-            .collect();
-
-        self.run_command(&args)
+        self.run_command(args)
             .ok()
-            .map(|output| DiffStats::from_numstat(&output).format_summary())
+            .map(|output| DiffStats::from_shortstat(&output).format_summary())
             .unwrap_or_default()
     }
 }

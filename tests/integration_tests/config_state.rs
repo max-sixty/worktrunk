@@ -1,32 +1,53 @@
 use crate::common::{TEST_EPOCH, TestRepo, repo, wt_command};
 use insta::assert_snapshot;
 use rstest::rstest;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use worktrunk::path::sanitize_for_filename;
 
-/// Generate a hook log filename matching the format from `commands::process::HookLog`.
+/// Relative path of a hook log file under the wt logs directory.
 ///
-/// Format: `{branch}-{source}-{hook_type}-{name}.log` where branch and name are sanitized.
-fn hook_log_filename(branch: &str, source: &str, hook_type: &str, name: &str) -> String {
+/// Layout: `{branch}/{source}/{hook_type}/{name}.log` — branch and name are
+/// sanitized to match `commands::process::HookLog::path`.
+fn hook_log_rel_path(branch: &str, source: &str, hook_type: &str, name: &str) -> PathBuf {
     let safe_branch = sanitize_for_filename(branch);
     let safe_name = sanitize_for_filename(name);
-    format!("{safe_branch}-{source}-{hook_type}-{safe_name}.log")
+    PathBuf::from(safe_branch)
+        .join(source)
+        .join(hook_type)
+        .join(format!("{safe_name}.log"))
 }
 
-/// Generate an internal operation log filename.
+/// Relative path of an internal-operation log file under the wt logs directory.
 ///
-/// Format: `{branch}-{op}.log` where branch is sanitized.
-fn internal_log_filename(branch: &str, op: &str) -> String {
+/// Layout: `{branch}/internal/{op}.log` — branch is sanitized.
+fn internal_log_rel_path(branch: &str, op: &str) -> PathBuf {
     let safe_branch = sanitize_for_filename(branch);
-    format!("{safe_branch}-{op}.log")
+    PathBuf::from(safe_branch)
+        .join("internal")
+        .join(format!("{op}.log"))
+}
+
+/// Write a log file at `log_dir / relative`, creating parent directories.
+fn write_log_at(log_dir: &Path, relative: &Path, contents: &str) {
+    let full = log_dir.join(relative);
+    std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+    std::fs::write(&full, contents).unwrap();
+}
+
+/// Display string for a relative log path, forward-slashed for stable snapshots.
+fn rel_display(p: &Path) -> String {
+    use path_slash::PathExt as _;
+    p.to_slash_lossy().into_owned()
 }
 
 /// Settings for `wt config state get` snapshots (normalizes log paths)
 fn state_get_settings() -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
-    // COMMAND LOG / HOOK OUTPUT paths vary per test (temp dir), normalize for stable snapshots
+    // COMMAND LOG / HOOK OUTPUT / DIAGNOSTIC paths vary per test (temp dir), normalize for stable snapshots
     settings.add_filter(r"(COMMAND LOG\x1b\[39m\s+@ )[^\n]+", "${1}<PATH>");
     settings.add_filter(r"(HOOK OUTPUT\x1b\[39m\s+@ )[^\n]+", "${1}<PATH>");
+    settings.add_filter(r"(DIAGNOSTIC\x1b\[39m\s+@ )[^\n]+", "${1}<PATH>");
     settings
 }
 
@@ -36,11 +57,7 @@ fn write_ci_cache(repo: &TestRepo, branch: &str, json: &str) {
     let cache_dir = git_dir.join("wt").join("cache").join("ci-status");
     std::fs::create_dir_all(&cache_dir).unwrap();
 
-    // Sanitize branch name for filename
-    let safe_branch: String = branch
-        .chars()
-        .map(|c| if c == '/' || c == '\\' { '-' } else { c })
-        .collect();
+    let safe_branch = sanitize_for_filename(branch);
     let cache_file = cache_dir.join(format!("{safe_branch}.json"));
     std::fs::write(&cache_file, json).unwrap();
 }
@@ -115,12 +132,7 @@ fn test_state_get_default_branch_fails_when_undetermined(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Cannot determine default branch"),
-        "Expected error message about cannot determine default branch, got: {}",
-        stderr
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[31m✗[39m [31mCannot determine default branch. To configure, run [1mwt config state default-branch set BRANCH[22m[39m");
 }
 
 #[rstest]
@@ -240,6 +252,56 @@ fn test_state_clear_previous_branch_empty(repo: TestRepo) {
 }
 
 // ============================================================================
+// bare subcommand defaults (no action → implicit get)
+// ============================================================================
+
+/// `wt config state ci-status` (no subcommand) defaults to `get`.
+#[rstest]
+fn test_state_bare_ci_status(repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", "ci-status"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "no-ci");
+}
+
+/// `wt config state marker` (no subcommand) defaults to `get`.
+#[rstest]
+fn test_state_bare_marker(repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", "marker"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).trim().is_empty());
+}
+
+/// `wt config state logs` (no subcommand) defaults to `get`.
+#[rstest]
+fn test_state_bare_logs(repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", "logs"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+}
+
+/// `wt config state hints` (no subcommand) defaults to `get`.
+#[rstest]
+fn test_state_bare_hints(repo: TestRepo) {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", "hints"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+}
+
+// ============================================================================
 // ci-status
 // ============================================================================
 
@@ -275,8 +337,10 @@ fn test_state_get_ci_status_nonexistent_branch(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("not found") || stderr.contains("nonexistent"));
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [31m✗[39m [31mNo branch named [1mnonexistent[22m[39m
+    [2m↳[22m [2mTo create a new branch, run [4mwt switch --create nonexistent[24m; to list branches, run [4mwt list --branches --remotes[24m[22m
+    ");
 }
 
 #[rstest]
@@ -468,21 +532,18 @@ fn test_state_clear_marker_all_empty(repo: TestRepo) {
 fn test_state_get_logs_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    // Path is dynamic (temp dir), so check pattern instead of exact snapshot
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("COMMAND LOG"),
-        "Expected COMMAND LOG heading: {stderr}"
-    );
-    assert!(
-        stderr.contains("HOOK OUTPUT"),
-        "Expected HOOK OUTPUT heading: {stderr}"
-    );
-    // Path separator varies by platform, so check for either / or \
-    assert!(
-        stderr.contains(".git/wt/logs") || stderr.contains(".git\\wt\\logs"),
-        "Expected .git/wt/logs or .git\\wt\\logs in output: {stderr}"
-    );
+    state_get_settings().bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
+        [36mCOMMAND LOG[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mHOOK OUTPUT[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mDIAGNOSTIC[39m @ <PATH>
+        [107m [0m (none)
+        ");
+    });
 }
 
 #[rstest]
@@ -491,31 +552,42 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    std::fs::write(
-        log_dir.join("feature-post-start-npm.log"),
+    write_log_at(
+        &log_dir,
+        &hook_log_rel_path("feature", "user", "post-start", "npm"),
         "npm output here",
-    )
-    .unwrap();
-    std::fs::write(log_dir.join("bugfix-remove.log"), "remove output").unwrap();
+    );
+    // >= 1024 bytes to exercise the `{}K` size-formatting branch in
+    // render_log_table (the other test files stay under 1KB to exercise `{}B`).
+    write_log_at(
+        &log_dir,
+        &internal_log_rel_path("bugfix", "remove"),
+        &"remove output\n".repeat(80),
+    );
     std::fs::write(log_dir.join("commands.jsonl"), r#"{"ts":"2026-01-01"}"#).unwrap();
 
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    // Verify both sections are present
-    assert!(
-        stderr.contains("COMMAND LOG"),
-        "Expected COMMAND LOG heading: {stderr}"
-    );
-    assert!(
-        stderr.contains("HOOK OUTPUT"),
-        "Expected HOOK OUTPUT heading: {stderr}"
-    );
-    // Command log section shows jsonl file
-    assert!(stderr.contains("commands.jsonl"));
-    // Hook output section shows .log files
-    assert!(stderr.contains("feature-post-start-npm.log"));
-    assert!(stderr.contains("bugfix-remove.log"));
+    let mut settings = state_get_settings();
+    // File sizes and ages vary across environments
+    settings.add_filter(r"(?m)\d+[BK]\s+\S+[ \t]*$", "<SIZE>  <AGE>");
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
+        [36mCOMMAND LOG[39m @ <PATH>
+              File      Size  Age   
+         ────────────── ──── ────── 
+         commands.jsonl <SIZE>  <AGE>
+
+        [36mHOOK OUTPUT[39m @ <PATH>
+                      File               Size  Age   
+         ─────────────────────────────── ──── ────── 
+         bugfix/internal/remove.log      <SIZE>  <AGE>
+         feature/user/post-start/npm.log <SIZE>  <AGE>
+
+        [36mDIAGNOSTIC[39m @ <PATH>
+        [107m [0m (none)
+        ");
+    });
 }
 
 #[rstest]
@@ -529,19 +601,81 @@ fn test_state_get_logs_dir_exists_no_log_files(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    // Both sections should show "(none)" since no log files exist
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    state_get_settings().bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
+        [36mCOMMAND LOG[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mHOOK OUTPUT[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mDIAGNOSTIC[39m @ <PATH>
+        [107m [0m (none)
+        ");
+    });
+}
+
+#[rstest]
+fn test_state_get_logs_diagnostic_files(repo: TestRepo) {
+    // Create wt/logs directory with diagnostic files
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt/logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("trace.log"), "debug output").unwrap();
+    std::fs::write(log_dir.join("output.log"), "raw subprocess output").unwrap();
+    std::fs::write(log_dir.join("diagnostic.md"), "# Diagnostic Report").unwrap();
+    // Also add a hook output file to verify separation
+    let remove_rel = internal_log_rel_path("feature", "remove");
+    write_log_at(&log_dir, &remove_rel, "remove output");
+
+    let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Diagnostic files appear under DIAGNOSTIC, not HOOK OUTPUT
+    assert!(stdout.contains("DIAGNOSTIC"), "Expected DIAGNOSTIC heading");
+    for name in ["trace.log", "output.log", "diagnostic.md"] {
+        assert!(stdout.contains(name), "Expected {name} in output");
+    }
+
+    // Hook output should have the remove log but not the diagnostic files
+    let hook_section = stdout
+        .split("DIAGNOSTIC")
+        .next()
+        .unwrap()
+        .rsplit("HOOK OUTPUT")
+        .next()
+        .unwrap();
+    let remove_display = rel_display(&remove_rel);
     assert!(
-        stderr.contains("COMMAND LOG"),
-        "Expected COMMAND LOG heading: {stderr}"
+        hook_section.contains(&remove_display),
+        "Expected {remove_display} in HOOK OUTPUT: {hook_section}"
     );
-    assert!(
-        stderr.contains("HOOK OUTPUT"),
-        "Expected HOOK OUTPUT heading: {stderr}"
+    for name in ["trace.log", "output.log"] {
+        assert!(
+            !hook_section.contains(name),
+            "{name} should not be in HOOK OUTPUT: {hook_section}"
+        );
+    }
+}
+
+#[rstest]
+fn test_state_clear_logs_includes_diagnostic_files(repo: TestRepo) {
+    // diagnostic files (.log and .md) should be cleared
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt/logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("trace.log"), "debug output").unwrap();
+    std::fs::write(log_dir.join("output.log"), "raw output").unwrap();
+    std::fs::write(log_dir.join("diagnostic.md"), "# Report").unwrap();
+
+    let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(
+        String::from_utf8_lossy(&output.stderr),
+        @"[32m✓[39m [32mCleared [1m3[22m log files[39m"
     );
-    // Count "(none)" occurrences — should appear twice (once per section)
-    let none_count = stderr.matches("(none)").count();
-    assert_eq!(none_count, 2, "Expected two (none) entries: {stderr}");
+    assert!(!log_dir.exists());
 }
 
 #[rstest]
@@ -557,8 +691,16 @@ fn test_state_clear_logs_with_files(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    std::fs::write(log_dir.join("feature-post-start-npm.log"), "npm output").unwrap();
-    std::fs::write(log_dir.join("bugfix-remove.log"), "remove output").unwrap();
+    write_log_at(
+        &log_dir,
+        &hook_log_rel_path("feature", "user", "post-start", "npm"),
+        "npm output",
+    );
+    write_log_at(
+        &log_dir,
+        &internal_log_rel_path("bugfix", "remove"),
+        "remove output",
+    );
     std::fs::write(log_dir.join("commands.jsonl"), "jsonl data").unwrap();
 
     let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();
@@ -570,12 +712,33 @@ fn test_state_clear_logs_with_files(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_state_clear_logs_sweeps_legacy_flat_files(repo: TestRepo) {
+    // Pre-nested layout left orphan `.log` files directly under wt/logs/.
+    // `clear_logs` self-heals by sweeping them along with everything else.
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt/logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("feature-post-start-npm.log"), "old layout").unwrap();
+    std::fs::write(log_dir.join("bugfix-remove.log"), "old layout").unwrap();
+
+    let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Cleared") && stderr.contains("2") && stderr.contains("log file"));
+    assert!(!log_dir.exists(), "log dir should be removed after sweep");
+}
+
+#[rstest]
 fn test_state_clear_logs_single_file(repo: TestRepo) {
     // Create wt/logs directory with one log file
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    std::fs::write(log_dir.join("feature-remove.log"), "remove output").unwrap();
+    write_log_at(
+        &log_dir,
+        &internal_log_rel_path("feature", "remove"),
+        "remove output",
+    );
 
     let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();
     assert!(output.status.success());
@@ -627,15 +790,31 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
         .run()
         .unwrap();
 
-    // Logs
+    // Git commands cache (SHA-keyed)
     let git_dir = repo.root_path().join(".git");
+    let sha_cache_dir = git_dir.join("wt/cache/merge-tree-conflicts");
+    std::fs::create_dir_all(&sha_cache_dir).unwrap();
+    std::fs::write(sha_cache_dir.join("abc123-def456.json"), "true").unwrap();
+
+    // Logs
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    std::fs::write(log_dir.join("feature-remove.log"), "output").unwrap();
+    write_log_at(
+        &log_dir,
+        &internal_log_rel_path("feature", "remove"),
+        "output",
+    );
 
     let output = wt_state_clear_all_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared all stored state[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+    [32m✓[39m [32mCleared previous branch[39m
+    [32m✓[39m [32mCleared [1m1[22m marker[39m
+    [32m✓[39m [32mCleared [1m1[22m CI cache entry[39m
+    [32m✓[39m [32mCleared [1m1[22m git commands cache entry[39m
+    [32m✓[39m [32mCleared [1m1[22m variable[39m
+    [32m✓[39m [32mCleared [1m1[22m log file[39m
+    ");
 
     // Verify everything was cleared
     assert!(
@@ -676,6 +855,30 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_state_clear_all_cleans_trash(repo: TestRepo) {
+    // Create trash directory with stale entries (simulating failed background rm)
+    let git_dir = repo.root_path().join(".git");
+    let trash_dir = git_dir.join("wt/trash");
+    std::fs::create_dir_all(trash_dir.join("myproject.feature-1234567890/target")).unwrap();
+    std::fs::write(
+        trash_dir.join("myproject.feature-1234567890/target/.rustc_info.json"),
+        "{}",
+    )
+    .unwrap();
+    std::fs::create_dir_all(trash_dir.join("myproject.bugfix-9999999999")).unwrap();
+    // Stray file directly in trash (not inside a subdirectory) — exercises the
+    // non-directory branch in clear_trash's `if path.is_dir()` guard.
+    std::fs::write(trash_dir.join("stray-file.txt"), "stale").unwrap();
+
+    let output = wt_state_clear_all_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m3[22m trash entries[39m");
+
+    // Trash directory itself should be removed (empty after cleanup)
+    assert!(!trash_dir.exists(), "Trash directory should be cleaned up");
+}
+
+#[rstest]
 fn test_state_clear_all_nothing_to_clear(repo: TestRepo) {
     // First clear to ensure nothing exists
     wt_state_clear_all_cmd(&repo).output().unwrap();
@@ -695,7 +898,7 @@ fn test_state_get_empty(repo: TestRepo) {
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
         [36mDEFAULT BRANCH[39m
         [107m [0m main
 
@@ -711,6 +914,9 @@ fn test_state_get_empty(repo: TestRepo) {
         [36mCI STATUS CACHE[39m
         [107m [0m (none)
 
+        [36mGIT COMMANDS CACHE[39m
+        [107m [0m (none)
+
         [36mHINTS[39m
         [107m [0m (none)
 
@@ -718,6 +924,12 @@ fn test_state_get_empty(repo: TestRepo) {
         [107m [0m (none)
 
         [36mHOOK OUTPUT[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mDIAGNOSTIC[39m @ <PATH>
+        [107m [0m (none)
+
+        [36mTRASH[39m @ _REPO_/.git/wt/trash
         [107m [0m (none)
         ");
     });
@@ -753,7 +965,7 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr));
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     });
 }
 
@@ -806,13 +1018,32 @@ fn test_state_get_comprehensive(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    std::fs::write(log_dir.join("feature-post-start-npm.log"), "npm output").unwrap();
-    std::fs::write(log_dir.join("bugfix-remove.log"), "remove output").unwrap();
+    write_log_at(
+        &log_dir,
+        &hook_log_rel_path("feature", "user", "post-start", "npm"),
+        "npm output",
+    );
+    write_log_at(
+        &log_dir,
+        &internal_log_rel_path("bugfix", "remove"),
+        "remove output",
+    );
+
+    // Create trash entries (staged worktree removals)
+    let trash_dir = git_dir.join("wt/trash");
+    std::fs::create_dir_all(trash_dir.join("myproject.feature-1234567890")).unwrap();
+    std::fs::create_dir_all(trash_dir.join("myproject.bugfix-9999999999")).unwrap();
+
+    // Create git commands cache entries (SHA-keyed caches)
+    let sha_cache_dir = git_dir.join("wt/cache/merge-tree-conflicts");
+    std::fs::create_dir_all(&sha_cache_dir).unwrap();
+    std::fs::write(sha_cache_dir.join("aaaa-bbbb.json"), "{}").unwrap();
+    std::fs::write(sha_cache_dir.join("cccc-dddd.json"), "{}").unwrap();
 
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
-        assert_snapshot!(String::from_utf8_lossy(&output.stderr));
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
     });
 }
 
@@ -820,17 +1051,21 @@ fn test_state_get_comprehensive(repo: TestRepo) {
 fn test_state_get_json_empty(repo: TestRepo) {
     let output = wt_state_get_json_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    // JSON output goes to stdout
-    let json_str = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-
-    assert_eq!(json["default_branch"], "main");
-    assert_eq!(json["previous_branch"], serde_json::Value::Null);
-    assert_eq!(json["markers"], serde_json::json!([]));
-    assert_eq!(json["ci_status"], serde_json::json!([]));
-    assert_eq!(json["hints"], serde_json::json!([]));
-    assert_eq!(json["command_log"], serde_json::json!([]));
-    assert_eq!(json["hook_output"], serde_json::json!([]));
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "ci_status": [],
+      "command_log": [],
+      "default_branch": "main",
+      "diagnostic": [],
+      "git_commands_cache": 0,
+      "hints": [],
+      "hook_output": [],
+      "markers": [],
+      "previous_branch": null,
+      "trash": [],
+      "vars": []
+    }
+    "#);
 }
 
 #[rstest]
@@ -866,36 +1101,62 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
         ),
     );
 
+    // Populate trash + git commands cache for parity coverage
+    let git_dir = repo.root_path().join(".git");
+    std::fs::create_dir_all(git_dir.join("wt/trash/myproject.feature-1234567890")).unwrap();
+    let sha_cache_dir = git_dir.join("wt/cache/is-ancestor");
+    std::fs::create_dir_all(&sha_cache_dir).unwrap();
+    std::fs::write(sha_cache_dir.join("aaaa-bbbb.json"), "{}").unwrap();
+
     let output = wt_state_get_json_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    // JSON output goes to stdout
     let json_str = String::from_utf8_lossy(&output.stdout);
     let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-
-    assert_eq!(json["default_branch"], "main");
-    assert_eq!(json["previous_branch"], "feature");
-
-    // Check markers
-    let markers = json["markers"].as_array().unwrap();
-    assert_eq!(markers.len(), 1);
-    assert_eq!(markers[0]["branch"], "feature");
-    assert_eq!(markers[0]["marker"], "🚧 WIP");
-    assert_eq!(markers[0]["set_at"], TEST_EPOCH);
-
-    // Check vars data
-    let vars = json["vars"].as_array().unwrap();
-    assert_eq!(vars.len(), 1);
-    assert_eq!(vars[0]["branch"], "main");
-    assert_eq!(vars[0]["key"], "env");
-    assert_eq!(vars[0]["value"], "staging");
-
-    // Check CI status
-    let ci_status = json["ci_status"].as_array().unwrap();
-    assert_eq!(ci_status.len(), 1);
-    assert_eq!(ci_status[0]["branch"], "feature");
-    assert_eq!(ci_status[0]["status"], "passed");
-    assert_eq!(ci_status[0]["checked_at"], TEST_EPOCH);
-    assert_eq!(ci_status[0]["head"], "abc12345def67890");
+    let normalized = serde_json::to_string_pretty(&json).unwrap();
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""modified_at": \d+"#, r#""modified_at": "<MTIME>""#);
+    settings.bind(|| {
+        assert_snapshot!(normalized, @r#"
+        {
+          "ci_status": [
+            {
+              "branch": "feature",
+              "checked_at": 1735776000,
+              "head": "abc12345def67890",
+              "status": "passed"
+            }
+          ],
+          "command_log": [],
+          "default_branch": "main",
+          "diagnostic": [],
+          "git_commands_cache": 1,
+          "hints": [],
+          "hook_output": [],
+          "markers": [
+            {
+              "branch": "feature",
+              "marker": "🚧 WIP",
+              "set_at": 1735776000
+            }
+          ],
+          "previous_branch": "feature",
+          "trash": [
+            {
+              "modified_at": "<MTIME>",
+              "name": "myproject.feature-1234567890",
+              "path": "_REPO_/.git/wt/trash/myproject.feature-1234567890"
+            }
+          ],
+          "vars": [
+            {
+              "branch": "main",
+              "key": "env",
+              "value": "staging"
+            }
+          ]
+        }
+        "#);
+    });
 }
 
 #[rstest]
@@ -904,37 +1165,80 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    std::fs::write(log_dir.join("feature-post-start-npm.log"), "npm output").unwrap();
-    std::fs::write(log_dir.join("bugfix-remove.log"), "remove log output").unwrap();
+    write_log_at(
+        &log_dir,
+        &hook_log_rel_path("feature", "user", "post-start", "npm"),
+        "npm output",
+    );
+    write_log_at(
+        &log_dir,
+        &internal_log_rel_path("bugfix", "remove"),
+        "remove log output",
+    );
     std::fs::write(log_dir.join("commands.jsonl"), r#"{"ts":"2026-01-01"}"#).unwrap();
 
     let output = wt_state_get_json_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    // JSON output goes to stdout
     let json_str = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+    let mut json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
 
-    // Check command_log — should contain the commands.jsonl file
-    let command_log = json["command_log"].as_array().unwrap();
-    assert_eq!(command_log.len(), 1);
-    assert_eq!(command_log[0]["file"], "commands.jsonl");
-
-    // Check hook_output — should contain the .log files
-    let hook_output = json["hook_output"].as_array().unwrap();
-    assert_eq!(hook_output.len(), 2);
-    let log_files: Vec<&str> = hook_output
-        .iter()
-        .map(|l| l["file"].as_str().unwrap())
-        .collect();
-    assert!(log_files.contains(&"feature-post-start-npm.log"));
-    assert!(log_files.contains(&"bugfix-remove.log"));
-
-    // Each entry should have file, size, and modified_at
-    for entry in command_log.iter().chain(hook_output.iter()) {
-        assert!(entry.get("file").is_some());
-        assert!(entry.get("size").is_some());
-        assert!(entry.get("modified_at").is_some());
+    // Sort log arrays by filename (mtime ties produce platform-dependent order)
+    for key in ["command_log", "hook_output"] {
+        if let Some(arr) = json.get_mut(key).and_then(|v| v.as_array_mut()) {
+            arr.sort_by(|a, b| a["file"].as_str().cmp(&b["file"].as_str()));
+        }
     }
+
+    // Normalize dynamic fields before snapshotting
+    let normalized = serde_json::to_string_pretty(&json).unwrap();
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""modified_at": \d+"#, r#""modified_at": "<MTIME>""#);
+    settings.add_filter(r#""size": \d+"#, r#""size": "<SIZE>""#);
+    settings.bind(|| {
+        assert_snapshot!(normalized, @r#"
+        {
+          "ci_status": [],
+          "command_log": [
+            {
+              "file": "commands.jsonl",
+              "modified_at": "<MTIME>",
+              "path": "_REPO_/.git/wt/logs/commands.jsonl",
+              "size": "<SIZE>"
+            }
+          ],
+          "default_branch": "main",
+          "diagnostic": [],
+          "git_commands_cache": 0,
+          "hints": [],
+          "hook_output": [
+            {
+              "branch": "bugfix",
+              "file": "bugfix/internal/remove.log",
+              "hook_type": null,
+              "modified_at": "<MTIME>",
+              "name": "remove",
+              "path": "_REPO_/.git/wt/logs/bugfix/internal/remove.log",
+              "size": "<SIZE>",
+              "source": "internal"
+            },
+            {
+              "branch": "feature",
+              "file": "feature/user/post-start/npm.log",
+              "hook_type": "post-start",
+              "modified_at": "<MTIME>",
+              "name": "npm",
+              "path": "_REPO_/.git/wt/logs/feature/user/post-start/npm.log",
+              "size": "<SIZE>",
+              "source": "user"
+            }
+          ],
+          "markers": [],
+          "previous_branch": null,
+          "trash": [],
+          "vars": []
+        }
+        "#);
+    });
 }
 
 // ============================================================================
@@ -1101,10 +1405,10 @@ fn test_state_hints_get_with_hints(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "hints", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    // Output goes to stdout
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("worktree-path"));
-    assert!(stdout.contains("another-hint"));
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
+    another-hint
+    worktree-path
+    ");
 }
 
 #[rstest]
@@ -1196,244 +1500,6 @@ fn test_state_hints_clear_specific_not_set(repo: TestRepo) {
 }
 
 // ============================================================================
-// logs get --hook
-// ============================================================================
-
-#[rstest]
-fn test_state_logs_get_hook_returns_path(repo: TestRepo) {
-    // Create wt/logs directory with a post-start log file
-    let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt/logs");
-    std::fs::create_dir_all(&log_dir).unwrap();
-    let filename = hook_log_filename("main", "user", "post-start", "server");
-    let log_file = log_dir.join(&filename);
-    std::fs::write(&log_file, "server output here").unwrap();
-
-    // Use explicit format: source:hook-type:name
-    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    // The path should be printed to stdout for piping
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains(&filename),
-        "Expected log path in stdout: {}",
-        stdout
-    );
-}
-
-#[rstest]
-fn test_state_logs_get_hook_project_source(repo: TestRepo) {
-    // Test that project source logs are found with explicit format
-    let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt/logs");
-    std::fs::create_dir_all(&log_dir).unwrap();
-    let filename = hook_log_filename("main", "project", "post-start", "build");
-    let log_file = log_dir.join(&filename);
-    std::fs::write(&log_file, "build output here").unwrap();
-
-    // Use explicit format: source:hook-type:name
-    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=project:post-start:build"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains(&filename),
-        "Expected log path in stdout: {}",
-        stdout
-    );
-}
-
-#[rstest]
-fn test_state_logs_get_hook_internal_op(repo: TestRepo) {
-    // Test finding an internal operation log (e.g., "internal:remove")
-    let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt/logs");
-    std::fs::create_dir_all(&log_dir).unwrap();
-    let filename = internal_log_filename("main", "remove");
-    let log_file = log_dir.join(&filename);
-    std::fs::write(&log_file, "remove output").unwrap();
-
-    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=internal:remove"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains(&filename),
-        "Expected log path in stdout: {}",
-        stdout
-    );
-}
-
-#[rstest]
-fn test_state_logs_get_hook_not_found(repo: TestRepo) {
-    // Create wt/logs directory with some log files but not the requested one
-    let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt/logs");
-    std::fs::create_dir_all(&log_dir).unwrap();
-    let other_filename = hook_log_filename("main", "user", "post-start", "other");
-    std::fs::write(log_dir.join(&other_filename), "other output").unwrap();
-
-    // Use explicit format: source:hook-type:name
-    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    // Check key parts separately (ANSI bold codes may appear around values)
-    assert!(
-        stderr.contains("No log file matches") && stderr.contains("user:post-start:server"),
-        "Expected spec echo in error: {}",
-        stderr
-    );
-    // The expected filename now includes hash suffixes
-    let expected_filename = hook_log_filename("main", "user", "post-start", "server");
-    assert!(
-        stderr.contains(&format!("Expected: {expected_filename}")),
-        "Expected filename in error: {}",
-        stderr
-    );
-    assert!(
-        stderr.contains("Available:"),
-        "Expected list of available logs: {}",
-        stderr
-    );
-}
-
-#[rstest]
-fn test_state_logs_get_hook_no_logs_dir(repo: TestRepo) {
-    // No log directory exists
-    // Use explicit format: source:hook-type:name
-    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("No log directory exists"),
-        "Expected 'No log directory exists' error: {}",
-        stderr
-    );
-}
-
-#[rstest]
-fn test_state_logs_get_hook_no_logs_for_branch(repo: TestRepo) {
-    // Create wt/logs directory with logs for different branch
-    let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt/logs");
-    std::fs::create_dir_all(&log_dir).unwrap();
-    let other_branch_filename = hook_log_filename("other-branch", "user", "post-start", "server");
-    std::fs::write(log_dir.join(&other_branch_filename), "other output").unwrap();
-
-    // Use explicit format: source:hook-type:name
-    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:server"])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("No log files for branch"),
-        "Expected 'No log files for branch' error: {}",
-        stderr
-    );
-}
-
-#[rstest]
-fn test_state_logs_get_hook_with_branch_flag(repo: TestRepo) {
-    // Create log file for a different branch
-    repo.git_command()
-        .args(["branch", "feature"])
-        .run()
-        .unwrap();
-
-    let git_dir = repo.root_path().join(".git");
-    let log_dir = git_dir.join("wt/logs");
-    std::fs::create_dir_all(&log_dir).unwrap();
-    let filename = hook_log_filename("feature", "user", "post-start", "dev");
-    std::fs::write(log_dir.join(&filename), "dev output").unwrap();
-
-    // Use explicit format: source:hook-type:name
-    let output = wt_state_cmd(
-        &repo,
-        "logs",
-        "get",
-        &["--hook=user:post-start:dev", "--branch=feature"],
-    )
-    .output()
-    .unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains(&filename),
-        "Expected log path in stdout: {}",
-        stdout
-    );
-}
-
-#[rstest]
-fn test_state_logs_get_hook_invalid_format(repo: TestRepo) {
-    // Test invalid hook spec format (missing required segments)
-    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user"])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Invalid log spec"),
-        "Expected 'Invalid log spec' error: {}",
-        stderr
-    );
-}
-
-#[rstest]
-fn test_state_logs_get_hook_rejects_colons_in_name(repo: TestRepo) {
-    // Hook names cannot contain colons (makes parsing ambiguous)
-    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:post-start:my:server"])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Invalid log spec"),
-        "Colons in hook names should be rejected: {}",
-        stderr
-    );
-}
-
-#[rstest]
-fn test_state_logs_get_hook_invalid_source(repo: TestRepo) {
-    // Test invalid source
-    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=invalid:post-start:server"])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Unknown source"),
-        "Expected 'Unknown source' error: {}",
-        stderr
-    );
-}
-
-#[rstest]
-fn test_state_logs_get_hook_invalid_hook_type(repo: TestRepo) {
-    // Test invalid hook type
-    let output = wt_state_cmd(&repo, "logs", "get", &["--hook=user:invalid:server"])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Unknown hook type"),
-        "Expected 'Unknown hook type' error: {}",
-        stderr
-    );
-}
-
-// ============================================================================
 // vars
 // ============================================================================
 
@@ -1444,8 +1510,7 @@ fn test_vars_set_and_get(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Set"), "Expected success message: {stderr}");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mSet [1menv[22m for [1mmain[22m[39m");
 
     // Get the value
     let output = wt_state_cmd(&repo, "vars", "get", &["env"])
@@ -1492,23 +1557,17 @@ fn test_vars_list(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "vars", "list", &[]).output().unwrap();
     assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("env\tstaging"),
-        "Expected env key: {stdout}"
-    );
-    assert!(stdout.contains("port\t3000"), "Expected port key: {stdout}");
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"
+    env	staging
+    port	3000
+    ");
 }
 
 #[rstest]
 fn test_vars_list_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "vars", "list", &[]).output().unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("No variables"),
-        "Expected empty message: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No variables for [1mmain[22m");
 }
 
 #[rstest]
@@ -1521,11 +1580,7 @@ fn test_vars_clear_single_key(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Cleared"),
-        "Expected clear message: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1menv[22m for [1mmain[22m[39m");
 
     // Verify it's gone
     let output = wt_state_cmd(&repo, "vars", "get", &["env"])
@@ -1548,16 +1603,11 @@ fn test_vars_clear_all(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Cleared") && stderr.contains("2"),
-        "Expected clear 2 entries: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m2[22m variables for [1mmain[22m[39m");
 
     // Verify all gone
     let output = wt_state_cmd(&repo, "vars", "list", &[]).output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("No variables"));
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No variables for [1mmain[22m");
 }
 
 #[rstest]
@@ -1566,11 +1616,7 @@ fn test_vars_invalid_key(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Invalid key"),
-        "Expected invalid key error: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @r#"[31m✗[39m [31mInvalid key "foo.bar": keys must contain only letters, digits, and hyphens[39m"#);
 }
 
 #[rstest]
@@ -1712,11 +1758,7 @@ fn test_vars_clear_nonexistent_key(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("No variable"),
-        "Expected 'No variable' message: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No variable [1mnonexistent[22m for [1mmain[22m");
 }
 
 #[rstest]
@@ -1726,11 +1768,7 @@ fn test_vars_clear_all_empty(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("No variables"),
-        "Expected 'No variables' message: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No variables for [1mmain[22m");
 }
 
 #[rstest]
@@ -1747,11 +1785,7 @@ fn test_vars_list_with_branch_flag(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("env\tproduction"),
-        "Expected vars entry: {stdout}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"env	production");
 }
 
 #[rstest]
@@ -1768,11 +1802,7 @@ fn test_vars_clear_with_branch_flag(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Cleared"),
-        "Expected clear message: {stderr}"
-    );
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1menv[22m for [1mfeature[22m[39m");
 }
 
 #[rstest]
@@ -1850,4 +1880,290 @@ fn test_vars_json_branch_with_vars_in_name(repo: TestRepo) {
         branch_item["vars"]["port"], "5000",
         "vars key should be 'port', not a mangled key from bad split"
     );
+}
+
+// ============================================================================
+// --format=json on individual subcommands
+// ============================================================================
+
+#[rstest]
+fn test_logs_get_json_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "command_log": [],
+      "diagnostic": [],
+      "hook_output": []
+    }
+    "#);
+}
+
+/// `--format=json` on the bareword subcommand (no `get`) routes to the
+/// same list view. `--format` is `global = true` on the parent, so all three
+/// call shapes — `logs --format=json`, `logs --format=json get`,
+/// `logs get --format=json` — produce JSON.
+#[rstest]
+fn test_logs_bare_format_json(repo: TestRepo) {
+    let mut cmd = repo.wt_command();
+    cmd.args(["config", "state", "logs", "--format=json"]);
+    cmd.current_dir(repo.root_path());
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "command_log": [],
+      "diagnostic": [],
+      "hook_output": []
+    }
+    "#);
+}
+
+#[rstest]
+fn test_logs_get_json_with_files(repo: TestRepo) {
+    let log_dir = repo.root_path().join(".git/wt/logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("commands.jsonl"), "{}").unwrap();
+    std::fs::write(log_dir.join("diagnostic.md"), "# report").unwrap();
+    write_log_at(
+        &log_dir,
+        &hook_log_rel_path("main", "user", "post-start", "server"),
+        "output",
+    );
+
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    // Redact dynamic timestamps and sizes. "main" and "server" are already
+    // filename-safe, so sanitize_for_filename passes them through unchanged —
+    // no hash suffixes appear and no redaction is needed.
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(r#""modified_at": \d+"#, r#""modified_at": "<TIMESTAMP>""#);
+    settings.add_filter(r#""size": \d+"#, r#""size": "<SIZE>""#);
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+/// Internal-op entries get `source: "internal"`, `hook_type: null`, and the
+/// op goes in `name` — so jq filters like `select(.source == "internal")`
+/// work the same as for user/project hooks.
+#[rstest]
+fn test_logs_get_json_internal_op_structure(repo: TestRepo) {
+    let log_dir = repo.root_path().join(".git/wt/logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    write_log_at(
+        &log_dir,
+        &internal_log_rel_path("feature", "remove"),
+        "remove output",
+    );
+
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let hook = &parsed["hook_output"][0];
+    assert_eq!(hook["source"], "internal");
+    assert_eq!(hook["hook_type"], serde_json::Value::Null);
+    assert_eq!(hook["name"], "remove");
+    assert!(hook["branch"].as_str().unwrap().starts_with("feature"));
+}
+
+/// Log files that don't match the expected branch subtree layout (`{branch}/{source}/{hook_type}/{name}.log`
+/// or `{branch}/internal/{op}.log`) still appear in the JSON listing — just
+/// without structured filter fields. Guards the defensive `_ => None` arm in
+/// `parse_hook_structure` against future path-layout regressions.
+#[rstest]
+fn test_logs_get_json_unknown_layout_has_no_structure(repo: TestRepo) {
+    let log_dir = repo.root_path().join(".git/wt/logs");
+    // 2-segment layout: branch/file.log (missing source & hook_type).
+    let relative = PathBuf::from("main").join("stray.log");
+    write_log_at(&log_dir, &relative, "stray output");
+
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let hook = &parsed["hook_output"][0];
+    // Entry appears with `file` and `path`, but structured fields are omitted.
+    assert_eq!(hook["file"], "main/stray.log");
+    assert!(hook["branch"].is_null());
+    assert!(hook["source"].is_null());
+    assert!(hook["hook_type"].is_null());
+    assert!(hook["name"].is_null());
+}
+
+#[rstest]
+fn test_ci_status_get_json(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "ci-status", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"null");
+}
+
+#[rstest]
+fn test_ci_status_get_json_with_cached_data(repo: TestRepo) {
+    repo.commit("initial");
+    let head = repo.head_sha();
+
+    write_ci_cache(
+        &repo,
+        "main",
+        &format!(
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"{head}","branch":"main"}}"#
+        ),
+    );
+
+    let output = wt_state_cmd(&repo, "ci-status", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let mut settings = insta::Settings::clone_current();
+    settings.add_filter(&head, "<SHA>");
+    settings.bind(|| {
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    });
+}
+
+#[rstest]
+fn test_marker_get_json_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "marker", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"null");
+}
+
+#[rstest]
+fn test_marker_get_json_with_value(repo: TestRepo) {
+    repo.run_git(&[
+        "config",
+        "worktrunk.state.main.marker",
+        &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
+    ]);
+
+    let output = wt_state_cmd(&repo, "marker", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "branch": "main",
+      "marker": "🚧 WIP",
+      "set_at": 1735776000
+    }
+    "#);
+}
+
+#[rstest]
+fn test_vars_list_json_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "vars", "list", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"{}");
+}
+
+#[rstest]
+fn test_vars_list_json_with_values(repo: TestRepo) {
+    repo.run_git(&["config", "worktrunk.state.main.vars.env", "staging"]);
+    repo.run_git(&["config", "worktrunk.state.main.vars.port", "3000"]);
+
+    let output = wt_state_cmd(&repo, "vars", "list", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    {
+      "env": "staging",
+      "port": "3000"
+    }
+    "#);
+}
+
+#[rstest]
+fn test_hints_get_json_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "hints", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @"[]");
+}
+
+#[rstest]
+fn test_hints_get_json_with_values(repo: TestRepo) {
+    repo.run_git(&["config", "worktrunk.hints.worktree-path", "true"]);
+
+    let output = wt_state_cmd(&repo, "hints", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stdout), @r#"
+    [
+      "worktree-path"
+    ]
+    "#);
+}
+
+// ============================================================================
+// --format rejected on write actions (set/clear)
+// ============================================================================
+
+/// Build `wt config state <key> [args...]` without injecting an action name.
+/// Unlike `wt_state_cmd`, this lets tests pass `--format=json` *before* the
+/// action to exercise the `global = true` propagation path that silently
+/// accepted the flag prior to gating.
+fn wt_state_raw_cmd(repo: &TestRepo, key: &str, args: &[&str]) -> Command {
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.args(["config", "state", key]);
+    cmd.args(args);
+    cmd.current_dir(repo.root_path());
+    cmd
+}
+
+#[rstest]
+#[case::logs_clear_flag_after("logs", &["clear", "--format=json"], "clear")]
+#[case::logs_clear_flag_before("logs", &["--format=json", "clear"], "clear")]
+#[case::hints_clear_flag_after("hints", &["clear", "--format=json"], "clear")]
+#[case::hints_clear_flag_before("hints", &["--format=json", "clear"], "clear")]
+#[case::marker_set_flag_after("marker", &["set", "foo", "--format=json"], "set")]
+#[case::marker_set_flag_before("marker", &["--format=json", "set", "foo"], "set")]
+#[case::marker_clear_flag_after("marker", &["clear", "--format=json"], "clear")]
+#[case::marker_clear_flag_before("marker", &["--format=json", "clear"], "clear")]
+#[case::ci_status_clear_flag_after("ci-status", &["clear", "--format=json"], "clear")]
+#[case::ci_status_clear_flag_before("ci-status", &["--format=json", "clear"], "clear")]
+fn test_format_rejected_on_write_actions(
+    repo: TestRepo,
+    #[case] key: &str,
+    #[case] args: &[&str],
+    #[case] action: &str,
+) {
+    let output = wt_state_raw_cmd(&repo, key, args).output().unwrap();
+    assert!(
+        !output.status.success(),
+        "expected failure for {key} {args:?}"
+    );
+    assert_eq!(output.status.code(), Some(2));
+    // Tolerate the ANSI `invalid` styling clap wraps around `--format <FORMAT>`
+    // and the action name by checking the fixed substrings between/around them.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for needle in ["--format <FORMAT>", "cannot be used with", action] {
+        assert!(
+            stderr.contains(needle),
+            "stderr missing {needle:?}: {stderr}"
+        );
+    }
 }

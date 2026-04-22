@@ -1,0 +1,24 @@
+[package]
+name = "skim-tuikit"
+version = "0.6.6"
+authors = ["Jinzhou Zhang <lotabout@gmail.com>"]
+description = "Toolkit for writing TUI applications"
+documentation = "https://docs.rs/skim-tuikit"
+homepage = "https://github.com/skim-rs/skim"
+repository = "https://github.com/skim-rs/skim"
+readme  = "README.md"
+keywords = ["tui", "terminal", "tty", "color"]
+license = "MIT"
+edition = "2024"
+
+[dependencies]
+bitflags = { workspace = true }
+skim-common = { path = "../skim-common/", version = "0.2.0" }
+lazy_static = { workspace = true }
+log = { workspace = true }
+nix = { workspace = true, default-features = false, features = ["fs", "poll", "signal", "term"] }
+term = { workspace = true }
+unicode-width = { workspace = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }

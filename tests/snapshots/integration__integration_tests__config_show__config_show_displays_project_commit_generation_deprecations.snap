@@ -20,6 +20,7 @@ info:
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     NO_COLOR: ""
+    OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -33,6 +34,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -40,27 +42,20 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 [36mUSER CONFIG[39m @ ~/.config/worktrunk/config.toml
-[33m▲[39m [33mUser config uses deprecated config sections: [projects."github.com/example/repo".commit-generation] → [projects."github.com/example/repo".commit.generation][39m
-[2m↳[22m [2mTo apply:[22m
-[107m [0m [2m[0m[2m[34mwt[0m[2m config update
-[107m [0m [1mdiff --git a[TEMP_HOME]/.config/worktrunk/config.toml b[TEMP_HOME]/.config/worktrunk/config.toml.new
+[33m▲[39m [33mUser config: [1m[projects."github.com/example/repo".commit-generation][22m is deprecated in favor of [1m[projects."github.com/example/repo".commit.generation][22m[39m
+[2m↳[22m [2mTo apply: [4mwt config update[24m[22m
+[2m○[22m Proposed diff:
+[107m [0m [1mdiff --git a/config.toml/current b/config.toml/migrated[m
 [107m [0m [1mindex de80729..131a2fd 100644[m
-[107m [0m [1m--- a[TEMP_HOME]/.config/worktrunk/config.toml
-[107m [0m [1m+++ b[TEMP_HOME]/.config/worktrunk/config.toml.new
+[107m [0m [1m--- a/config.toml/current[m
+[107m [0m [1m+++ b/config.toml/migrated[m
 [107m [0m [36m@@ -1,4 +1,4 @@[m
 [107m [0m  worktree-path = "../{{ repo }}.{{ branch }}"[m
 [107m [0m  [m
 [107m [0m [31m-[projects."github.com/example/repo".commit-generation][m
 [107m [0m [32m+[m[32m[projects."github.com/example/repo".commit.generation][m
 [107m [0m  command = "llm -m gpt-4"[m
-[2m○[22m Current config:
-[107m [0m [2mworktree-path = [0m[2m[32m"../{{ repo }}.{{ branch }}"
-[107m [0m 
-[107m [0m [2m[36m[projects."github.com/example/repo".commit-generation]
-[107m [0m [2mcommand = [0m[2m[32m"llm -m gpt-4"
 [2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
 
 [36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
@@ -79,3 +74,5 @@ exit_code: 0
 [2m○[22m wt: [1m[VERSION][22m
 [2m○[22m git: [1m[VERSION][22m
 [2m○[22m Hyperlinks: [1minactive[22m
+
+----- stderr -----

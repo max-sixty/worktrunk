@@ -62,7 +62,7 @@ $ wt merge
 Stages and commits with LLM-generated message:
 
 ```bash
-$ wt step commit
+wt step commit
 ```
 
 ### wt step squash
@@ -70,7 +70,7 @@ $ wt step commit
 Squashes branch commits into one with LLM-generated message:
 
 ```bash
-$ wt step squash
+wt step squash
 ```
 
 See [`wt merge`](https://worktrunk.dev/merge/) and [`wt step`](https://worktrunk.dev/step/) for full documentation.

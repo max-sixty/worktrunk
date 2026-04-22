@@ -16,7 +16,9 @@ use dunce::canonicalize;
 use ansi_str::AnsiStr;
 use anyhow::{Context, Result};
 use worktrunk::git::Repository;
-use worktrunk::styling::{fix_dim_after_color_reset, terminal_width, truncate_visible};
+use worktrunk::styling::{
+    fix_dim_after_color_reset, terminal_width_for_statusline, truncate_visible,
+};
 
 use super::list::{self, CollectOptions, StatuslineSegment, json_output};
 use crate::cli::OutputFormat;
@@ -155,6 +157,10 @@ fn format_context_gauge(percentage: f64) -> String {
 /// Output uses `println!` for raw stdout (bypasses anstream color detection).
 /// Shell prompts (PS1) and Claude Code always expect ANSI codes.
 pub fn run(format: OutputFormat) -> Result<()> {
+    // Statusline runs on every prompt redraw — deprecation warnings on stderr
+    // would appear above each prompt.
+    worktrunk::config::suppress_warnings();
+
     // JSON format: output current worktree as JSON
     if matches!(format, OutputFormat::Json) {
         return run_json();
@@ -233,7 +239,7 @@ pub fn run(format: OutputFormat) -> Result<()> {
     }
 
     // Fit segments to terminal width using priority-based dropping
-    let max_width = terminal_width();
+    let max_width = terminal_width_for_statusline();
     // Reserve 1 char for leading space (ellipsis handled by truncate_visible fallback)
     let content_budget = max_width.saturating_sub(1);
     let fitted_segments = StatuslineSegment::fit_to_width(segments, content_budget);

@@ -8,6 +8,7 @@ mod error;
 mod parse;
 pub mod recover;
 pub mod remote_ref;
+pub mod remove;
 mod repository;
 mod url;
 
@@ -25,7 +26,7 @@ mod test;
 //
 // Heavy operations protected:
 // - git rev-list --count (accesses commit-graph via mmap)
-// - git diff --numstat (accesses pack files and indexes via mmap)
+// - git diff --shortstat (accesses pack files and indexes via mmap)
 use crate::sync::Semaphore;
 use std::sync::LazyLock;
 static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(4));
@@ -52,9 +53,14 @@ pub use error::{
     // Error inspection functions
     add_hook_skip_hint,
     exit_code,
+    interrupt_exit_code,
 };
 pub use parse::{parse_porcelain_z, parse_untracked_files};
 pub use recover::{current_or_recover, cwd_removed_hint};
+pub use remove::{
+    BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemovalOutput, RemoveOptions,
+    delete_branch_if_safe, remove_worktree_with_cleanup, stage_worktree_removal,
+};
 pub use repository::{Branch, Repository, ResolvedWorktree, WorkingTree, set_base_path};
 pub use url::GitRemoteUrl;
 pub use url::parse_owner_repo;
@@ -368,11 +374,14 @@ pub fn branch_tracks_ref(
     Copy,
     PartialEq,
     Eq,
-    clap::ValueEnum,
+    serde::Serialize,
+    serde::Deserialize,
     strum::Display,
     strum::EnumString,
     strum::EnumIter,
 )]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+#[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum HookType {
     PreSwitch,
@@ -458,6 +467,29 @@ impl BranchRef {
     /// Returns true if this branch has a worktree.
     pub fn has_worktree(&self) -> bool {
         self.worktree_path.is_some()
+    }
+
+    /// Git ref string suitable for passing to integration helpers.
+    ///
+    /// Remote branches are stored as short names like `origin/foo` (from
+    /// `%(refname:lstrip=2)` in `list_remote_branches`). Git allows local
+    /// branches literally named `origin/foo`, so passing the short form to
+    /// `git rev-parse` resolves to `refs/heads/origin/foo` — the local — and
+    /// the remote row silently computes stats against the wrong ref.
+    ///
+    /// Qualifying the remote case to `refs/remotes/<name>` makes the ref
+    /// unambiguous; local branches keep the short form so
+    /// `resolve_preferring_branch` can still promote them over same-named
+    /// tags.
+    ///
+    /// Returns `None` for detached HEAD (no branch name).
+    pub fn integration_ref(&self) -> Option<String> {
+        let name = self.branch.as_deref()?;
+        Some(if self.is_remote {
+            format!("refs/remotes/{name}")
+        } else {
+            name.to_string()
+        })
     }
 }
 
@@ -794,144 +826,140 @@ mod tests {
         assert!(branch_ref.is_remote);
     }
 
-    /// Create a git repo with one commit and return the TempDir + repo path.
-    fn init_test_repo() -> (tempfile::TempDir, PathBuf) {
-        use crate::shell_exec::Cmd;
-
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("repo");
-        Cmd::new("git")
-            .args(["init", "--initial-branch=main", repo.to_str().unwrap()])
-            .run()
-            .unwrap();
-        Cmd::new("git")
-            .args(["config", "user.email", "test@test.com"])
-            .current_dir(&repo)
-            .run()
-            .unwrap();
-        Cmd::new("git")
-            .args(["config", "user.name", "Test"])
-            .current_dir(&repo)
-            .run()
-            .unwrap();
-        std::fs::write(repo.join("file.txt"), "hello").unwrap();
-        Cmd::new("git")
-            .args(["add", "."])
-            .current_dir(&repo)
-            .run()
-            .unwrap();
-        Cmd::new("git")
-            .args(["commit", "-m", "init"])
-            .current_dir(&repo)
-            .run()
-            .unwrap();
-        (tmp, repo)
+    #[test]
+    fn test_branch_ref_integration_ref() {
+        // Remote branches qualify to refs/remotes/ so they don't get shadowed
+        // by a same-named local branch (git allows local branches literally
+        // named `origin/foo`).
+        assert_eq!(
+            BranchRef::remote_branch("origin/foo", "abc").integration_ref(),
+            Some("refs/remotes/origin/foo".to_string())
+        );
+        // Local branches keep the short form so `resolve_preferring_branch`
+        // can still promote them over same-named tags.
+        assert_eq!(
+            BranchRef::local_branch("feature", "abc").integration_ref(),
+            Some("feature".to_string())
+        );
+        // Detached HEAD has no branch name — caller falls back to commit_sha.
+        let detached = BranchRef {
+            branch: None,
+            commit_sha: "abc".into(),
+            worktree_path: None,
+            is_remote: false,
+        };
+        assert_eq!(detached.integration_ref(), None);
     }
 
     #[test]
     fn test_branch_tracks_ref_matching() {
-        let (_tmp, repo) = init_test_repo();
+        let test = crate::testing::TestRepo::with_initial_commit();
+        let repo = test.path();
 
         // Create a branch and set its merge config to a PR ref
         crate::shell_exec::Cmd::new("git")
             .args(["branch", "pr-branch"])
-            .current_dir(&repo)
+            .current_dir(repo)
             .run()
             .unwrap();
         crate::shell_exec::Cmd::new("git")
             .args(["config", "branch.pr-branch.merge", "refs/pull/101/head"])
-            .current_dir(&repo)
+            .current_dir(repo)
             .run()
             .unwrap();
         crate::shell_exec::Cmd::new("git")
             .args(["config", "branch.pr-branch.remote", "origin"])
-            .current_dir(&repo)
+            .current_dir(repo)
             .run()
             .unwrap();
 
         assert_eq!(
-            branch_tracks_ref(&repo, "pr-branch", "refs/pull/101/head", None),
+            branch_tracks_ref(repo, "pr-branch", "refs/pull/101/head", None),
             Some(true),
         );
         assert_eq!(
-            branch_tracks_ref(&repo, "pr-branch", "refs/pull/101/head", Some("origin")),
+            branch_tracks_ref(repo, "pr-branch", "refs/pull/101/head", Some("origin")),
             Some(true),
         );
     }
 
     #[test]
     fn test_branch_tracks_ref_different_ref() {
-        let (_tmp, repo) = init_test_repo();
+        let test = crate::testing::TestRepo::with_initial_commit();
+        let repo = test.path();
 
         crate::shell_exec::Cmd::new("git")
             .args(["branch", "pr-branch"])
-            .current_dir(&repo)
+            .current_dir(repo)
             .run()
             .unwrap();
         crate::shell_exec::Cmd::new("git")
             .args(["config", "branch.pr-branch.merge", "refs/pull/101/head"])
-            .current_dir(&repo)
+            .current_dir(repo)
             .run()
             .unwrap();
 
         // Ask about a different ref — should return Some(false)
         assert_eq!(
-            branch_tracks_ref(&repo, "pr-branch", "refs/pull/999/head", None),
+            branch_tracks_ref(repo, "pr-branch", "refs/pull/999/head", None),
             Some(false),
         );
     }
 
     #[test]
     fn test_branch_tracks_ref_wrong_remote() {
-        let (_tmp, repo) = init_test_repo();
+        let test = crate::testing::TestRepo::with_initial_commit();
+        let repo = test.path();
 
         crate::shell_exec::Cmd::new("git")
             .args(["branch", "pr-branch"])
-            .current_dir(&repo)
+            .current_dir(repo)
             .run()
             .unwrap();
         crate::shell_exec::Cmd::new("git")
             .args(["config", "branch.pr-branch.merge", "refs/pull/101/head"])
-            .current_dir(&repo)
+            .current_dir(repo)
             .run()
             .unwrap();
         crate::shell_exec::Cmd::new("git")
             .args(["config", "branch.pr-branch.remote", "fork"])
-            .current_dir(&repo)
+            .current_dir(repo)
             .run()
             .unwrap();
 
         assert_eq!(
-            branch_tracks_ref(&repo, "pr-branch", "refs/pull/101/head", Some("origin")),
+            branch_tracks_ref(repo, "pr-branch", "refs/pull/101/head", Some("origin")),
             Some(false),
         );
     }
 
     #[test]
     fn test_branch_tracks_ref_no_tracking_config() {
-        let (_tmp, repo) = init_test_repo();
+        let test = crate::testing::TestRepo::with_initial_commit();
+        let repo = test.path();
 
         // Create a branch with no tracking config
         crate::shell_exec::Cmd::new("git")
             .args(["branch", "local-only"])
-            .current_dir(&repo)
+            .current_dir(repo)
             .run()
             .unwrap();
 
         // Branch exists but has no merge config — Some(false)
         assert_eq!(
-            branch_tracks_ref(&repo, "local-only", "refs/pull/1/head", None),
+            branch_tracks_ref(repo, "local-only", "refs/pull/1/head", None),
             Some(false),
         );
     }
 
     #[test]
     fn test_branch_tracks_ref_nonexistent_branch() {
-        let (_tmp, repo) = init_test_repo();
+        let test = crate::testing::TestRepo::with_initial_commit();
+        let repo = test.path();
 
         // Branch doesn't exist at all — None
         assert_eq!(
-            branch_tracks_ref(&repo, "no-such-branch", "refs/pull/1/head", None),
+            branch_tracks_ref(repo, "no-such-branch", "refs/pull/1/head", None),
             None,
         );
     }
@@ -948,12 +976,13 @@ mod tests {
 
     #[test]
     fn test_branch_tracks_ref_mr_ref() {
-        let (_tmp, repo) = init_test_repo();
+        let test = crate::testing::TestRepo::with_initial_commit();
+        let repo = test.path();
 
         // Test with GitLab-style MR ref
         crate::shell_exec::Cmd::new("git")
             .args(["branch", "mr-branch"])
-            .current_dir(&repo)
+            .current_dir(repo)
             .run()
             .unwrap();
         crate::shell_exec::Cmd::new("git")
@@ -962,18 +991,18 @@ mod tests {
                 "branch.mr-branch.merge",
                 "refs/merge-requests/42/head",
             ])
-            .current_dir(&repo)
+            .current_dir(repo)
             .run()
             .unwrap();
         crate::shell_exec::Cmd::new("git")
             .args(["config", "branch.mr-branch.remote", "origin"])
-            .current_dir(&repo)
+            .current_dir(repo)
             .run()
             .unwrap();
 
         assert_eq!(
             branch_tracks_ref(
-                &repo,
+                repo,
                 "mr-branch",
                 "refs/merge-requests/42/head",
                 Some("origin"),
@@ -981,7 +1010,7 @@ mod tests {
             Some(true),
         );
         assert_eq!(
-            branch_tracks_ref(&repo, "mr-branch", "refs/pull/42/head", Some("origin")),
+            branch_tracks_ref(repo, "mr-branch", "refs/pull/42/head", Some("origin")),
             Some(false),
         );
     }

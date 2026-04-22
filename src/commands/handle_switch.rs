@@ -1,17 +1,23 @@
 //! Switch command handler.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
+use serde::Serialize;
 use worktrunk::HookType;
-use worktrunk::config::{UserConfig, expand_template, template_references_var, validate_template};
+use worktrunk::config::{
+    UserConfig, ValidationScope, expand_template, template_references_var, validate_template,
+};
 use worktrunk::git::{GitError, Repository, SwitchSuggestionCtx, current_or_recover};
 use worktrunk::styling::{eprintln, info_message};
 
+use crate::cli::SwitchFormat;
+
 use super::command_approval::approve_hooks;
+use super::command_executor::FailureStrategy;
 use super::command_executor::{CommandContext, build_hook_context};
-use super::hooks::{HookFailureStrategy, execute_hook};
+use super::hooks::execute_hook;
 use super::worktree::{
     SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, offer_bare_repo_worktree_path_fix,
     path_mismatch, plan_switch,
@@ -20,6 +26,56 @@ use crate::output::{
     execute_user_command, handle_switch_output, is_shell_integration_active,
     prompt_shell_integration,
 };
+
+/// Structured output for `wt switch --format=json`.
+#[derive(Serialize)]
+struct SwitchJsonOutput {
+    action: &'static str,
+    /// Branch name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    branch: Option<String>,
+    /// Absolute worktree path
+    path: PathBuf,
+    /// True if branch was created (--create flag)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created_branch: Option<bool>,
+    /// Base branch when creating (e.g., "main")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base_branch: Option<String>,
+    /// Remote tracking branch if auto-created
+    #[serde(skip_serializing_if = "Option::is_none")]
+    from_remote: Option<String>,
+}
+
+impl SwitchJsonOutput {
+    fn from_result(result: &SwitchResult, branch_info: &SwitchBranchInfo) -> Self {
+        let (action, path, created_branch, base_branch, from_remote) = match result {
+            SwitchResult::AlreadyAt(path) => ("already_at", path, None, None, None),
+            SwitchResult::Existing { path } => ("existing", path, None, None, None),
+            SwitchResult::Created {
+                path,
+                created_branch,
+                base_branch,
+                from_remote,
+                ..
+            } => (
+                "created",
+                path,
+                Some(*created_branch),
+                base_branch.clone(),
+                from_remote.clone(),
+            ),
+        };
+        Self {
+            action,
+            branch: branch_info.branch.clone(),
+            path: path.clone(),
+            created_branch,
+            base_branch,
+            from_remote,
+        }
+    }
+}
 
 /// Options for the switch command
 pub struct SwitchOptions<'a> {
@@ -33,12 +89,16 @@ pub struct SwitchOptions<'a> {
     /// Resolved from --cd/--no-cd flags: Some(true) = cd, Some(false) = no cd, None = use config
     pub change_dir: Option<bool>,
     pub verify: bool,
+    pub format: crate::cli::SwitchFormat,
 }
 
 /// Run pre-switch hooks before branch resolution or worktree creation.
 ///
-/// The hook context uses the **destination** branch argument as `{{ branch }}`,
-/// so hooks receive the user's raw input before resolution.
+/// Symbolic arguments (`-`, `@`, `^`) are resolved to concrete branch names
+/// before building the hook context so `{{ target }}`, `{{ target_worktree_path }}`,
+/// and the Active overrides point at the real destination. When resolution
+/// fails (e.g., no previous branch for `-`), the raw argument is used — the
+/// same error surfaces later from `plan_switch` with the canonical message.
 ///
 /// Directional vars:
 /// - `base` / `base_worktree_path`: current (source) branch and worktree
@@ -51,7 +111,10 @@ pub(crate) fn run_pre_switch_hooks(
 ) -> anyhow::Result<()> {
     let current_wt = repo.current_worktree();
     let current_path = current_wt.path().to_path_buf();
-    let pre_ctx = CommandContext::new(repo, config, Some(target_branch), &current_path, yes);
+    let resolved_target = repo
+        .resolve_worktree_name(target_branch)
+        .unwrap_or_else(|_| target_branch.to_string());
+    let pre_ctx = CommandContext::new(repo, config, Some(&resolved_target), &current_path, yes);
 
     let pre_switch_approved = approve_hooks(&pre_ctx, &[HookType::PreSwitch])?;
     if pre_switch_approved {
@@ -67,7 +130,7 @@ pub(crate) fn run_pre_switch_hooks(
         // Target vars and Active overrides: destination worktree.
         // For existing worktrees: override bare vars (worktree_path, worktree_name,
         // worktree) to point to the destination (Active), not the source.
-        let dest_path = repo.worktree_for_branch(target_branch).ok().flatten();
+        let dest_path = repo.worktree_for_branch(&resolved_target).ok().flatten();
         let dest_name = dest_path
             .as_ref()
             .and_then(|p| p.file_name())
@@ -75,7 +138,7 @@ pub(crate) fn run_pre_switch_hooks(
             .map(|s| s.to_string());
         let dest_path_str = dest_path.map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
-        extra_vars.push(("target", target_branch));
+        extra_vars.push(("target", &resolved_target));
         if let Some(ref p) = dest_path_str {
             // Existing destination: override bare vars to Active (destination)
             extra_vars.push(("target_worktree_path", p));
@@ -93,8 +156,8 @@ pub(crate) fn run_pre_switch_hooks(
             &pre_ctx,
             HookType::PreSwitch,
             &extra_vars,
-            HookFailureStrategy::FailFast,
-            None,
+            FailureStrategy::FailFast,
+            &[],
             crate::output::pre_hook_display_path(pre_ctx.worktree_path),
         )?;
     }
@@ -151,22 +214,37 @@ pub(crate) fn approve_switch_hooks(
 
 /// Compute extra template variables from a switch result.
 ///
-/// Returns base branch context (`base`, `base_worktree_path`) for hooks and template expansion.
-pub(crate) fn switch_extra_vars(result: &SwitchResult) -> Vec<(&str, &str)> {
+/// Returns base branch context (`base`, `base_worktree_path`) and, for
+/// `pr:N` / `mr:N` creations, `pr_number` and `pr_url` for hooks and template
+/// expansion. The caller owns the `pr_number` string buffer because the
+/// returned slice borrows from it.
+pub(crate) fn switch_extra_vars<'a>(
+    result: &'a SwitchResult,
+    pr_number_buf: &'a mut String,
+) -> Vec<(&'a str, &'a str)> {
     match result {
         SwitchResult::Created {
             base_branch,
             base_worktree_path,
+            pr_number,
+            pr_url,
             ..
-        } => [
-            base_branch.as_deref().map(|b| ("base", b)),
-            base_worktree_path
-                .as_deref()
-                .map(|p| ("base_worktree_path", p)),
-        ]
-        .into_iter()
-        .flatten()
-        .collect(),
+        } => {
+            if let Some(n) = pr_number {
+                *pr_number_buf = n.to_string();
+            }
+            [
+                base_branch.as_deref().map(|b| ("base", b)),
+                base_worktree_path
+                    .as_deref()
+                    .map(|p| ("base_worktree_path", p)),
+                pr_number.map(|_| ("pr_number", pr_number_buf.as_str())),
+                pr_url.as_deref().map(|u| ("pr_url", u)),
+            ]
+            .into_iter()
+            .flatten()
+            .collect()
+        }
         SwitchResult::Existing { .. } | SwitchResult::AlreadyAt(_) => Vec::new(),
     }
 }
@@ -183,40 +261,32 @@ pub(crate) fn spawn_switch_background_hooks(
 ) -> anyhow::Result<()> {
     let ctx = CommandContext::new(repo, config, branch, result.path(), yes);
 
-    let mut flat_hooks = Vec::new();
-
-    // Spawn each hook type's pipeline independently — pipelines carry a single
-    // hook_type/source/context, so mixing types in one runner would give later
-    // steps the wrong template variables (e.g., {{ hook_type }}).
-    // Flat hooks are spawned as independent processes, so accumulating them
-    // across hook types for a combined display message is fine.
-    match super::hooks::prepare_background_hooks(
-        &ctx,
-        HookType::PostSwitch,
-        extra_vars,
-        hooks_display_path,
-    )? {
-        super::hooks::PreparedHooks::Flat(cmds) => flat_hooks.extend(cmds),
-        super::hooks::PreparedHooks::Pipeline(steps) => {
-            super::hooks::spawn_hook_pipeline(&ctx, steps)?;
-        }
-    }
-
-    if matches!(result, SwitchResult::Created { .. }) {
-        match super::hooks::prepare_background_hooks(
+    let mut pipelines = Vec::new();
+    pipelines.extend(
+        super::hooks::prepare_background_hooks(
             &ctx,
-            HookType::PostStart,
+            HookType::PostSwitch,
             extra_vars,
             hooks_display_path,
-        )? {
-            super::hooks::PreparedHooks::Flat(cmds) => flat_hooks.extend(cmds),
-            super::hooks::PreparedHooks::Pipeline(steps) => {
-                super::hooks::spawn_hook_pipeline(&ctx, steps)?;
-            }
-        }
+        )?
+        .into_iter()
+        .map(|g| (ctx, g)),
+    );
+
+    if matches!(result, SwitchResult::Created { .. }) {
+        pipelines.extend(
+            super::hooks::prepare_background_hooks(
+                &ctx,
+                HookType::PostStart,
+                extra_vars,
+                hooks_display_path,
+            )?
+            .into_iter()
+            .map(|g| (ctx, g)),
+        );
     }
 
-    super::hooks::spawn_background_hooks(&ctx, flat_hooks)
+    super::hooks::announce_and_spawn_background_hooks(pipelines, false)
 }
 
 /// Handle the switch command.
@@ -235,6 +305,7 @@ pub fn handle_switch(
         clobber,
         change_dir: change_dir_flag,
         verify,
+        format,
     } = opts;
 
     let (repo, is_recovered) = current_or_recover().context("Failed to switch worktree")?;
@@ -310,6 +381,14 @@ pub fn handle_switch(
     // Execute the validated plan
     let (result, branch_info) = execute_switch(&repo, plan, config, yes, hooks_approved)?;
 
+    // --format=json: write structured result to stdout. All behavior (hooks,
+    // --execute, shell integration) proceeds normally — format only affects output.
+    if format == SwitchFormat::Json {
+        let json = SwitchJsonOutput::from_result(&result, &branch_info);
+        let json = serde_json::to_string(&json).context("Failed to serialize to JSON")?;
+        println!("{json}");
+    }
+
     // Early exit for benchmarking time-to-first-output
     if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
         return Ok(());
@@ -356,7 +435,16 @@ pub fn handle_switch(
     // Build extra vars for base/target context (used by both hooks and --execute).
     // "base" is the source worktree the user switched from (all switches),
     // or the branch they branched from (creates).
-    let mut extra_vars = switch_extra_vars(&result);
+    // "target" matches the bare vars (the destination) — documented as
+    // "target = bare vars" for switch/create and kept symmetric with pre-switch.
+    let target_path_str = worktrunk::path::to_posix_path(&result.path().to_string_lossy());
+
+    let mut pr_number_buf = String::new();
+    let mut extra_vars = switch_extra_vars(&result, &mut pr_number_buf);
+    if let Some(target_branch) = branch_info.branch.as_deref() {
+        extra_vars.push(("target", target_branch));
+    }
+    extra_vars.push(("target_worktree_path", &target_path_str));
     // For existing switches, add source worktree as base
     if matches!(
         result,
@@ -466,9 +554,19 @@ fn validate_switch_templates(
 ) -> anyhow::Result<()> {
     // Validate --execute template and trailing args
     if let Some(cmd) = execute {
-        validate_template(cmd, repo, "--execute command")?;
+        validate_template(
+            cmd,
+            ValidationScope::SwitchExecute,
+            repo,
+            "--execute command",
+        )?;
         for arg in execute_args {
-            validate_template(arg, repo, "--execute argument")?;
+            validate_template(
+                arg,
+                ValidationScope::SwitchExecute,
+                repo,
+                "--execute argument",
+            )?;
         }
     }
 
@@ -496,7 +594,12 @@ fn validate_switch_templates(
                         Some(n) => format!("{source} {hook_type}:{n}"),
                         None => format!("{source} {hook_type} hook"),
                     };
-                    validate_template(&cmd.template, repo, &name)?;
+                    validate_template(
+                        &cmd.template,
+                        ValidationScope::Hook(hook_type),
+                        repo,
+                        &name,
+                    )?;
                 }
             }
         }

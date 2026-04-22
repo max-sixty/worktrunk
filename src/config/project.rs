@@ -4,11 +4,12 @@
 
 use std::collections::BTreeMap;
 
-use config::ConfigError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::ConfigError;
 use super::commands::CommandConfig;
+use super::is_default;
 use super::{CopyIgnoredConfig, HooksConfig, StepConfig};
 
 /// Project-level configuration for `wt list` output.
@@ -97,27 +98,25 @@ impl ProjectConfig {
     ///
     /// Deprecated: use [`forge_platform()`](Self::forge_platform) instead.
     pub fn ci_platform(&self) -> Option<&str> {
-        self.ci.as_ref().and_then(|ci| ci.platform.as_deref())
+        self.ci.platform.as_deref()
     }
 
     /// Get the forge platform override, checking `[forge]` first then `[ci]`.
     pub fn forge_platform(&self) -> Option<&str> {
         self.forge
-            .as_ref()
-            .and_then(|f| f.platform.as_deref())
+            .platform
+            .as_deref()
             .or_else(|| self.ci_platform())
     }
 
     /// Get the forge API hostname if configured.
     pub fn forge_hostname(&self) -> Option<&str> {
-        self.forge.as_ref().and_then(|f| f.hostname.as_deref())
+        self.forge.hostname.as_deref()
     }
 
     /// Get `wt step copy-ignored` configuration if configured.
     pub fn copy_ignored(&self) -> Option<&CopyIgnoredConfig> {
-        self.step
-            .as_ref()
-            .and_then(|step| step.copy_ignored.as_ref())
+        self.step.copy_ignored.as_ref()
     }
 }
 
@@ -156,37 +155,36 @@ pub struct ProjectConfig {
     pub hooks: HooksConfig,
 
     /// Configuration for `wt list` output
-    #[serde(default)]
-    pub list: Option<ProjectListConfig>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub list: ProjectListConfig,
 
     /// CI configuration (platform override). Deprecated: use `[forge]` instead.
-    #[serde(default)]
-    pub ci: Option<ProjectCiConfig>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub ci: ProjectCiConfig,
 
     /// Forge configuration (platform detection override, API hostname)
-    #[serde(default)]
-    pub forge: Option<ProjectForgeConfig>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub forge: ProjectForgeConfig,
 
     /// Configuration for `wt step` subcommands.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step: Option<StepConfig>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub step: StepConfig,
 
-    /// \[experimental\] Command aliases for `wt step <name>`.
+    /// Command aliases for `wt <name>`.
     ///
-    /// Each alias maps a name to one or more command templates. All hook
-    /// template variables are available (e.g., `{{ branch }}`, `{{ worktree_path }}`).
-    ///
-    /// Uses `CommandConfig` for consistency with hooks. This means the
-    /// named-table format (`[aliases.deploy] build = "..." run = "..."`)
-    /// technically works, but the single-string format is the expected usage.
+    /// Each alias maps a name to a [`CommandConfig`] — a string for a single
+    /// command, a named table (`[aliases.NAME]`) for concurrent commands, or
+    /// `[[aliases.NAME]]` blocks for sequential pipeline steps. All hook
+    /// template variables are available (e.g., `{{ branch }}`,
+    /// `{{ worktree_path }}`).
     ///
     /// ```toml
     /// [aliases]
     /// deploy = "cd {{ worktree_path }} && make deploy"
     /// lint = "npm run lint"
     /// ```
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub aliases: Option<BTreeMap<String, CommandConfig>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub aliases: BTreeMap<String, CommandConfig>,
 }
 
 impl ProjectConfig {
@@ -200,7 +198,7 @@ impl ProjectConfig {
     ) -> Result<Option<Self>, ConfigError> {
         let config_path = match repo
             .project_config_path()
-            .map_err(|e| ConfigError::Message(format!("Failed to get config path: {}", e)))?
+            .map_err(|e| ConfigError(format!("Failed to get config path: {}", e)))?
         {
             Some(path) if path.exists() => path,
             _ => return Ok(None),
@@ -208,33 +206,38 @@ impl ProjectConfig {
 
         // Load directly with toml crate to preserve insertion order (with preserve_order feature)
         let contents = std::fs::read_to_string(&config_path)
-            .map_err(|e| ConfigError::Message(format!("Failed to read config file: {}", e)))?;
+            .map_err(|e| ConfigError(format!("Failed to read config file: {}", e)))?;
 
         // Check for deprecated template variables and create migration file if needed
         // Only write migration file in main worktree, not linked worktrees
-        // Use show_brief_warning=true to emit a brief pointer to `wt config show`
+        // emit_inline_warnings=true: print per-kind warnings inline during config load
         let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
         let repo_for_hints = if write_hints { Some(repo) } else { None };
-        let _ = super::deprecation::check_and_migrate(
+        super::deprecation::check_and_migrate(
             &config_path,
             &contents,
             is_main_worktree,
             "Project config",
             repo_for_hints,
-            true, // show_brief_warning
-        );
+            true, // emit_inline_warnings
+        )
+        .map_err(|e| ConfigError(e.to_string()))?;
 
-        // Warn about unknown fields (only in main worktree where it's actionable)
+        // Warn about unknown fields (only in main worktree where it's actionable).
         if is_main_worktree {
             super::deprecation::warn_unknown_fields::<ProjectConfig>(
+                &contents,
                 &config_path,
-                &find_unknown_keys(&contents),
                 "Project config",
             );
         }
 
-        let config: ProjectConfig = toml::from_str(&contents)
-            .map_err(|e| ConfigError::Message(format!("Failed to parse TOML: {}", e)))?;
+        let config: ProjectConfig = toml::from_str(&contents).map_err(|e| {
+            ConfigError(format!(
+                "Project config at {} failed to parse:\n{e}",
+                crate::path::format_path_for_display(&config_path),
+            ))
+        })?;
 
         Ok(Some(config))
     }
@@ -255,24 +258,6 @@ pub fn valid_project_config_keys() -> Vec<String> {
         .and_then(|p| p.as_object())
         .map(|props| props.keys().cloned().collect())
         .unwrap_or_default()
-}
-
-/// Find unknown keys in project config TOML content
-///
-/// Returns a map of unrecognized top-level keys (with their values) that will be ignored.
-/// Compares against the known valid keys derived from the JsonSchema.
-/// The values are included to allow checking if keys belong in the other config type.
-pub fn find_unknown_keys(contents: &str) -> std::collections::HashMap<String, toml::Value> {
-    let Ok(table) = contents.parse::<toml::Table>() else {
-        return std::collections::HashMap::new();
-    };
-
-    let valid_keys = valid_project_config_keys();
-
-    table
-        .into_iter()
-        .filter(|(key, _)| !valid_keys.contains(key))
-        .collect()
 }
 
 #[cfg(test)]
@@ -311,13 +296,11 @@ pre-remove = "echo bye"
 url = "http://localhost:{{ branch | hash_port }}"
 "#;
         let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.list.is_some());
-        let list = config.list.unwrap();
         assert_eq!(
-            list.url.as_deref(),
+            config.list.url.as_deref(),
             Some("http://localhost:{{ branch | hash_port }}")
         );
-        assert!(list.is_configured());
+        assert!(config.list.is_configured());
     }
 
     #[test]
@@ -326,10 +309,8 @@ url = "http://localhost:{{ branch | hash_port }}"
 [list]
 "#;
         let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.list.is_some());
-        let list = config.list.unwrap();
-        assert!(list.url.is_none());
-        assert!(!list.is_configured());
+        assert!(config.list.url.is_none());
+        assert!(!config.list.is_configured());
     }
 
     #[test]
@@ -356,9 +337,7 @@ exclude = [".conductor/", ".entire/"]
 platform = "github"
 "#;
         let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.ci.is_some());
-        let ci = config.ci.unwrap();
-        assert_eq!(ci.platform.as_deref(), Some("github"));
+        assert_eq!(config.ci.platform.as_deref(), Some("github"));
     }
 
     #[test]
@@ -368,9 +347,7 @@ platform = "github"
 platform = "gitlab"
 "#;
         let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.ci.is_some());
-        let ci = config.ci.unwrap();
-        assert_eq!(ci.platform.as_deref(), Some("gitlab"));
+        assert_eq!(config.ci.platform.as_deref(), Some("gitlab"));
     }
 
     #[test]
@@ -379,9 +356,7 @@ platform = "gitlab"
 [ci]
 "#;
         let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.ci.is_some());
-        let ci = config.ci.unwrap();
-        assert!(ci.platform.is_none());
+        assert!(config.ci.platform.is_none());
     }
 
     #[test]
@@ -449,54 +424,6 @@ platform = "github"
         let config = ProjectForgeConfig::default();
         assert!(config.platform.is_none());
         assert!(config.hostname.is_none());
-    }
-
-    // ============================================================================
-    // find_unknown_keys Tests
-    // ============================================================================
-
-    #[test]
-    fn test_find_unknown_keys_empty() {
-        let contents = "";
-        let keys = find_unknown_keys(contents);
-        assert!(keys.is_empty());
-    }
-
-    #[test]
-    fn test_find_unknown_keys_all_known() {
-        let contents = r#"
-post-create = "npm install"
-pre-merge = "cargo test"
-
-[step.copy-ignored]
-exclude = [".conductor/"]
-"#;
-        let keys = find_unknown_keys(contents);
-        assert!(keys.is_empty());
-    }
-
-    #[test]
-    fn test_find_unknown_keys_unknown_key() {
-        let contents = r#"
-post-create = "npm install"
-unknown-key = "value"
-"#;
-        let keys = find_unknown_keys(contents);
-        assert_eq!(keys.len(), 1);
-        assert!(keys.contains_key("unknown-key"));
-    }
-
-    #[test]
-    fn test_find_unknown_keys_multiple_unknown() {
-        let contents = r#"
-foo = "bar"
-baz = "qux"
-post-create = "npm install"
-"#;
-        let keys = find_unknown_keys(contents);
-        assert_eq!(keys.len(), 2);
-        assert!(keys.contains_key("foo"));
-        assert!(keys.contains_key("baz"));
     }
 
     // ============================================================================

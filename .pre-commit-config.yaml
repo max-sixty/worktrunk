@@ -3,15 +3,16 @@ repos:
     rev: v6.0.0
     hooks:
       - id: end-of-file-fixer
-        exclude: '.*\.snap$'
+        exclude: '.*\.snap$|^vendor/'
       - id: check-yaml
       - id: mixed-line-ending
+        exclude: '^vendor/'
       - id: trailing-whitespace
         # rustfmt handles rust files, and in snapshots we expect trailing spaces.
-        exclude: '.*\.(rs|snap)$'
+        exclude: '.*\.(rs|snap)$|^vendor/'
   # pre-commit autoupdate reverts to mutable v1 tag; update manually
   - repo: https://github.com/crate-ci/typos
-    rev: v1.41.0
+    rev: v1.45.1
     hooks:
       - id: typos
         # https://github.com/crate-ci/typos/issues/347
@@ -20,13 +21,14 @@ repos:
     rev: v1.0.1
     hooks:
       - id: fmt
+        exclude: '^vendor/'
   - repo: https://github.com/r0x0d/pre-commit-rust
     rev: v1.0.1
     hooks:
       - id: clippy
         args: ["--all-targets", "--all-features", "--", "-D", "warnings"]
   - repo: https://github.com/lycheeverse/lychee
-    rev: lychee-v0.22.0
+    rev: lychee-v0.23.0
     hooks:
       # Check links using .config/lychee.toml exclusions
       # Uses lychee-system (requires `cargo install lychee`) to avoid /bin/bash dependency on Windows
@@ -57,7 +59,8 @@ repos:
         entry: '\\x1b\['
         # format.rs strips ANSI codes injected by wrap_ansi crate
         # picker tests verify ANSI dimming behavior
-        exclude: '^(tests/|.*_test\.rs$|src/styling/(mod|format)\.rs$|src/commands/picker/)'
+        # src/testing: validate_ansi_codes tests raw escape sequences
+        exclude: '^(tests/|.*_test\.rs$|src/styling/(mod|format)\.rs$|src/commands/picker/|src/testing/|vendor/)'
       - id: no-std-canonicalize-in-tests
         name: no-std-canonicalize-in-tests
         description: Use dunce::canonicalize in tests to avoid Windows \\?\ prefix issues
@@ -76,7 +79,7 @@ repos:
         # src/config/{test,expansion,mod}.rs: TestRepo test fixtures use git init directly
         # src/config/user/tests.rs: TestRepo test fixtures use git init directly
         # src/styling/mod.rs: terminal width detection probes should be silent/quick
-        exclude: '^(src/shell_exec\.rs|src/commands/picker/|src/config/(test|expansion|mod)\.rs|src/config/user/tests\.rs|src/styling/mod\.rs|tests/|benches/)'
+        exclude: '^(src/shell_exec\.rs|src/commands/picker/|src/config/(test|expansion|mod)\.rs|src/config/user/tests\.rs|src/styling/mod\.rs|src/testing/|tests/|benches/)'
 
 ci:
   # pre-commit.ci doesn't have Rust toolchain, so skip Rust-specific hooks.

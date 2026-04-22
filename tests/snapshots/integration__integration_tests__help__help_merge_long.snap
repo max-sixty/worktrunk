@@ -23,14 +23,13 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
 wt merge - Merge current branch into the target branch[0m
 
 Squash & rebase, fast-forward the target branch, remove the worktree.[0m
@@ -71,11 +70,19 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
           Print help (see a summary with '-h')
 
 [1m[32mAutomation:[0m
-  [1m[36m-y[0m, [1m[36m--yes[0m
-          Skip approval prompts
-
-      [1m[36m--no-verify[0m
+      [1m[36m--no-hooks[0m
           Skip hooks
+
+      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
+          Output format[0m
+          
+          JSON prints structured result to stdout after merge completes.[0m
+
+          Possible values:
+          - [1m[36mtext[0m: Human-readable text output
+          - [1m[36mjson[0m: JSON output
+          
+          [default: text]
 
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m
@@ -85,7 +92,10 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  [1m[36m-y[0m, [1m[36m--yes[0m
+          Skip approval prompts
 
 Unlike [2mgit merge[0m, this merges the current branch into the target branch — not the target into current. Similar to clicking "Merge pull request" on GitHub, but locally. The target defaults to the default branch.
 
@@ -93,27 +103,27 @@ Unlike [2mgit merge[0m, this merges the current branch into the target branch 
 
 Merge to the default branch:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m merge[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge[0m
 
 Merge to a different branch:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m merge develop[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge develop[0m
 
 Keep the worktree after merging:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m merge [0m[2m[36m--no-remove[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-remove[0m[2m[0m
 
 Preserve commit history (no squash):
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m merge [0m[2m[36m--no-squash[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-squash[0m[2m[0m
 
 Create a merge commit — semi-linear history:
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m merge [0m[2m[36m--no-ff[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-ff[0m[2m[0m
 
 Skip committing/squashing (rebase still runs unless --no-rebase):
 
-[107m [0m [2m[0m[2m[36m$[0m[2m wt[0m[2m merge [0m[2m[36m--no-commit[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m merge [0m[2m[36m--no-commit[0m[2m[0m
 
 [1m[32mPipeline[0m
 
@@ -138,7 +148,7 @@ Historically, ensuring tests ran before merging was difficult to enforce locally
 
 The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run [2mwt merge[0m, move on. Pre-merge hooks validate before merging — if they pass, the branch goes to the default branch and the worktree cleans up.
 
-[107m [0m [2m[36m[pre-merge][0m
+[107m [0m [2m[36m[[pre-merge]][0m
 [107m [0m [2mtest = [0m[2m[32m"cargo test"[0m
 [107m [0m [2mlint = [0m[2m[32m"cargo clippy"[0m
 
@@ -147,3 +157,5 @@ The full workflow: start an agent (one of many) on a task, work elsewhere, retur
 - [2mwt step[0m — Run individual operations (commit, squash, rebase, push)
 - [2mwt remove[0m — Remove worktrees without merging
 - [2mwt switch[0m — Navigate to other worktrees
+
+----- stderr -----

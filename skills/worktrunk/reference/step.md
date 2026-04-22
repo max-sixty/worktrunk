@@ -32,7 +32,7 @@ $ wt step push
 - [`promote`](#wt-step-promote) — [experimental] Swap a branch into the main worktree
 - [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
 - [`relocate`](#wt-step-relocate) — [experimental] Move worktrees to expected paths
-- [`<alias>`](#aliases) — [experimental] Run a configured command alias
+- [`<alias>`](https://worktrunk.dev/extending/#aliases) — Run a configured command alias
 
 ## Command reference
 
@@ -46,8 +46,8 @@ Usage: wt step [OPTIONS] <COMMAND>
 Commands:
   commit        Stage and commit with LLM-generated message
   squash        Squash commits since branching
-  push          Fast-forward target to current branch
   rebase        Rebase onto target
+  push          Fast-forward target to current branch
   diff          Show all changes since branching
   copy-ignored  Copy gitignored files to another worktree
   eval          [experimental] Evaluate a template expression
@@ -68,7 +68,11 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 # Subcommands
@@ -125,6 +129,9 @@ Options:
   -b, --branch <BRANCH>
           Branch to operate on (defaults to current worktree)
 
+      --no-hooks
+          Skip hooks
+
       --stage <STAGE>
           What to stage before committing [default: all]
 
@@ -141,13 +148,6 @@ Options:
   -h, --help
           Print help (see a summary with '-h')
 
-Automation:
-  -y, --yes
-          Skip approval prompts
-
-      --no-verify
-          Skip hooks
-
 Global Options:
   -C <path>
           Working directory for this command
@@ -156,7 +156,11 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt step squash
@@ -212,6 +216,9 @@ Arguments:
           Defaults to default branch.
 
 Options:
+      --no-hooks
+          Skip hooks
+
       --stage <STAGE>
           What to stage before committing [default: all]
 
@@ -228,13 +235,6 @@ Options:
   -h, --help
           Print help (see a summary with '-h')
 
-Automation:
-  -y, --yes
-          Skip approval prompts
-
-      --no-verify
-          Skip hooks
-
 Global Options:
   -C <path>
           Working directory for this command
@@ -243,7 +243,11 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt step diff
@@ -310,7 +314,11 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt step copy-ignored
@@ -377,6 +385,12 @@ Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
 
 Use the `post-start` hook so the copy runs in the background. Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
+### Background-hook priority (experimental)
+
+When invoked from a background hook pipeline (`post-*` hooks), `wt step copy-ignored` self-lowers its CPU and I/O priority — `taskpolicy -b` on macOS, `nice -n 19` plus `ionice -c 3` on Linux — so it yields to interactive work. Foreground callers (`pre-*` hooks, direct interactive use) run at normal priority so the user isn't waiting on a throttled copy.
+
+wt signals background-hook context by exporting `WORKTRUNK_FOREGROUND=-1` into every detached hook pipeline; `copy-ignored` inspects that variable on entry. The variable name is experimental and may change.
+
 ### Language-specific notes
 
 #### Rust
@@ -441,7 +455,11 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt step eval
@@ -521,7 +539,11 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt step for-each
@@ -578,6 +600,15 @@ Arguments:
           Command template (see --help for all variables)
 
 Options:
+      --format <FORMAT>
+          Output format (text, json)
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -589,7 +620,11 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt step promote
@@ -665,7 +700,11 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt step prune
@@ -722,12 +761,17 @@ Options:
       --foreground
           Run removal in foreground (block until complete)
 
+      --format <FORMAT>
+          Output format (text, json)
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
+
   -h, --help
           Print help (see a summary with '-h')
-
-Automation:
-  -y, --yes
-          Skip approval prompts
 
 Global Options:
   -C <path>
@@ -737,7 +781,11 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
 
 ## wt step relocate
@@ -834,27 +882,9 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: hooks, templates; -vv: debug report)
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
 ```
-
-## Aliases [experimental]
-
-Custom command templates configured in user config (`~/.config/worktrunk/config.toml`) or project config (`.config/wt.toml`). Aliases support the same [template variables](https://worktrunk.dev/hook/#template-variables) as hooks.
-
-```toml
-# .config/wt.toml
-[aliases]
-deploy = "make deploy BRANCH={{ branch }}"
-port = "echo http://localhost:{{ branch | hash_port }}"
-```
-
-```bash
-$ wt step deploy                            # run the alias
-$ wt step deploy --dry-run                  # show expanded command
-$ wt step deploy --var env=staging          # pass extra template variables
-$ wt step deploy --yes                      # skip approval prompt
-```
-
-When defined in both user and project config, both run — user first, then project. Project-config aliases require [command approval](https://worktrunk.dev/hook/#wt-hook-approvals) on first run, same as project hooks. User-config aliases are trusted.
-
-Alias names that match a built-in step command (`commit`, `squash`, etc.) are shadowed by the built-in and will never run.

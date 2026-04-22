@@ -1,5 +1,62 @@
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 
+#[derive(Args)]
+pub struct CommitArgs {
+    /// Branch to operate on (defaults to current worktree)
+    #[arg(short, long, add = crate::completion::worktree_only_completer())]
+    pub(crate) branch: Option<String>,
+
+    /// Skip hooks
+    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true)]
+    pub(crate) verify: bool,
+
+    /// Skip hooks (deprecated alias for --no-hooks)
+    #[arg(long = "no-verify", hide = true)]
+    pub(crate) no_verify_deprecated: bool,
+
+    /// What to stage before committing [default: all]
+    #[arg(long)]
+    pub(crate) stage: Option<crate::commands::commit::StageMode>,
+
+    /// Show prompt without running LLM
+    ///
+    /// Outputs the rendered prompt to stdout for debugging or manual piping.
+    #[arg(long)]
+    pub(crate) show_prompt: bool,
+}
+
+#[derive(Args)]
+pub struct SquashArgs {
+    /// Target branch
+    ///
+    /// Defaults to default branch.
+    #[arg(add = crate::completion::branch_value_completer())]
+    pub(crate) target: Option<String>,
+
+    /// Skip hooks
+    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true)]
+    pub(crate) verify: bool,
+
+    /// Skip hooks (deprecated alias for --no-hooks)
+    #[arg(long = "no-verify", hide = true)]
+    pub(crate) no_verify_deprecated: bool,
+
+    /// What to stage before committing [default: all]
+    #[arg(long)]
+    pub(crate) stage: Option<crate::commands::commit::StageMode>,
+
+    /// Show prompt without running LLM
+    ///
+    /// Outputs the rendered prompt to stdout for debugging or manual piping.
+    #[arg(long)]
+    pub(crate) show_prompt: bool,
+}
+
+// Ordering: `wt merge` pipeline steps first (commit → squash → rebase → push),
+// then standalone utilities (diff, copy-ignored), then experimentals
+// (alphabetical: eval, for-each, promote, prune, relocate). Keep this enum,
+// the `## Operations` bullet list in `src/cli/mod.rs`, and the
+// `<!-- subdoc: -->` markers in the same relative order.
 /// Run individual operations
 #[derive(Subcommand)]
 #[command(allow_external_subcommands = true)]
@@ -44,29 +101,7 @@ $ wt step commit --show-prompt | llm -m gpt-5-nano
 ```
 "#
     )]
-    Commit {
-        /// Branch to operate on (defaults to current worktree)
-        #[arg(short, long, add = crate::completion::worktree_only_completer())]
-        branch: Option<String>,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
-        /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
-        verify: bool,
-
-        /// What to stage before committing [default: all]
-        #[arg(long)]
-        stage: Option<crate::commands::commit::StageMode>,
-
-        /// Show prompt without running LLM
-        ///
-        /// Outputs the rendered prompt to stdout for debugging or manual piping.
-        #[arg(long)]
-        show_prompt: bool,
-    },
+    Commit(CommitArgs),
 
     /// Squash commits since branching
     ///
@@ -106,30 +141,26 @@ $ wt step squash --show-prompt | less
 ```
 "#
     )]
-    Squash {
+    Squash(SquashArgs),
+
+    /// Rebase onto target
+    #[command(
+        after_long_help = r#"Rebases the current branch onto the target branch. Conflicts abort immediately; use `git rebase --abort` to recover.
+
+## Examples
+
+```console
+$ wt step rebase            # Rebase onto default branch
+$ wt step rebase develop    # Rebase onto develop
+```
+"#
+    )]
+    Rebase {
         /// Target branch
         ///
         /// Defaults to default branch.
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
-
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
-        /// Skip hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
-        verify: bool,
-
-        /// What to stage before committing [default: all]
-        #[arg(long)]
-        stage: Option<crate::commands::commit::StageMode>,
-
-        /// Show prompt without running LLM
-        ///
-        /// Outputs the rendered prompt to stdout for debugging or manual piping.
-        #[arg(long)]
-        show_prompt: bool,
     },
 
     /// Fast-forward target to current branch
@@ -160,26 +191,6 @@ Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updat
         /// Allow fast-forward (default)
         #[arg(long, overrides_with = "no_ff", hide = true)]
         ff: bool,
-    },
-
-    /// Rebase onto target
-    #[command(
-        after_long_help = r#"Rebases the current branch onto the target branch. Conflicts abort immediately; use `git rebase --abort` to recover.
-
-## Examples
-
-```console
-$ wt step rebase            # Rebase onto default branch
-$ wt step rebase develop    # Rebase onto develop
-```
-"#
-    )]
-    Rebase {
-        /// Target branch
-        ///
-        /// Defaults to default branch.
-        #[arg(add = crate::completion::branch_value_completer())]
-        target: Option<String>,
     },
 
     /// Show all changes since branching
@@ -291,6 +302,12 @@ Reflink copies share disk blocks until modified — no data is actually copied. 
 Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
 
 Use the `post-start` hook so the copy runs in the background. Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
+
+## Background-hook priority (experimental)
+
+When invoked from a background hook pipeline (`post-*` hooks), `wt step copy-ignored` self-lowers its CPU and I/O priority — `taskpolicy -b` on macOS, `nice -n 19` plus `ionice -c 3` on Linux — so it yields to interactive work. Foreground callers (`pre-*` hooks, direct interactive use) run at normal priority so the user isn't waiting on a throttled copy.
+
+wt signals background-hook context by exporting `WORKTRUNK_FOREGROUND=-1` into every detached hook pipeline; `copy-ignored` inspects that variable on entry. The variable name is experimental and may change.
 
 ## Language-specific notes
 
@@ -438,6 +455,10 @@ Note: This command is experimental and may change in future versions.
 "#
     )]
     ForEach {
+        /// Output format (text, json)
+        #[arg(long, default_value = "text")]
+        format: crate::cli::SwitchFormat,
+
         /// Command template (see --help for all variables)
         #[arg(required = true, last = true, num_args = 1..)]
         args: Vec<String>,
@@ -533,10 +554,6 @@ $ wt step prune
         #[arg(long)]
         dry_run: bool,
 
-        /// Skip approval prompts
-        #[arg(short, long, help_heading = "Automation")]
-        yes: bool,
-
         /// Skip worktrees younger than this
         #[arg(long, default_value = "1h")]
         min_age: String,
@@ -544,6 +561,10 @@ $ wt step prune
         /// Run removal in foreground (block until complete)
         #[arg(long)]
         foreground: bool,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// \[experimental\] Move worktrees to expected paths

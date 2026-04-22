@@ -6,6 +6,7 @@
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
+use anyhow::Context;
 use worktrunk::git::{LineDiff, Repository};
 
 use super::super::ci_status::{CiBranchName, PrStatus};
@@ -41,6 +42,18 @@ pub struct TaskContext {
     pub item_url: Option<String>,
     /// LLM command for summary generation (from commit.generation config).
     pub llm_command: Option<String>,
+    /// Default branch resolved for this list invocation. Populated from
+    /// the collect-phase check that verifies the persisted value still
+    /// resolves locally; `None` when unset or stale. Tasks read this
+    /// instead of `repo.default_branch()` so a stale persisted value
+    /// degrades silently (empty cells) here rather than emitting a cascade
+    /// of "ambiguous argument" errors.
+    pub default_branch: Option<String>,
+    /// Integration target (`default_branch`, or its upstream when ahead).
+    /// `None` when the default branch is unset or stale — keeps the same
+    /// silent-skip contract as `default_branch` for tasks that compare
+    /// against the integration target.
+    pub integration_target: Option<String>,
 }
 
 impl TaskContext {
@@ -64,20 +77,21 @@ impl TaskContext {
         TaskError::new(self.item_idx, kind, err.to_string(), cause)
     }
 
-    /// Get the default branch (cached in Repository).
+    /// Get the default branch resolved for this list invocation.
     ///
-    /// Used for informational stats (ahead/behind, branch diff).
-    /// Returns None if default branch cannot be determined.
+    /// Used for informational stats (ahead/behind, branch diff). Returns
+    /// `None` if default branch cannot be determined, or if the persisted
+    /// value is stale (see `TaskContext::default_branch` docs).
     pub(super) fn default_branch(&self) -> Option<String> {
-        self.repo.default_branch()
+        self.default_branch.clone()
     }
 
-    /// Get the integration target (cached in Repository).
+    /// Get the integration target resolved for this list invocation.
     ///
     /// Used for integration checks (status symbols, safe deletion).
-    /// Returns None if default branch cannot be determined.
+    /// Returns `None` if default branch cannot be determined or is stale.
     pub(super) fn integration_target(&self) -> Option<String> {
-        self.repo.integration_target()
+        self.integration_target.clone()
     }
 }
 
@@ -159,20 +173,19 @@ impl Task for AheadBehindTask {
             });
         }
 
-        // Check cache first (populated by batch_ahead_behind if it ran).
-        // Cache lookup has minor overhead (rev-parse for cache key + allocations),
-        // but saves the expensive ahead_behind computation on cache hit.
-        let (ahead, behind) = if let Some(branch) = ctx.branch_ref.branch.as_deref() {
-            if let Some(counts) = repo.cached_ahead_behind(&base, branch) {
-                counts
-            } else {
-                repo.ahead_behind(&base, &ctx.branch_ref.commit_sha)
-                    .map_err(|e| ctx.error(Self::KIND, &e))?
-            }
-        } else {
-            repo.ahead_behind(&base, &ctx.branch_ref.commit_sha)
-                .map_err(|e| ctx.error(Self::KIND, &e))?
-        };
+        // When the ref has a branch name, compute counts against the branch — not
+        // the worktree's current HEAD sha. During rebase/merge conflicts, HEAD is
+        // transiently at a different commit than the branch tip, so using the sha
+        // would report misleading counts (e.g., `0/0 same_commit` when the branch
+        // is actually diverged). The batch path already uses branch names, so this
+        // keeps both paths consistent.
+        let head = ctx
+            .branch_ref
+            .integration_ref()
+            .unwrap_or_else(|| ctx.branch_ref.commit_sha.clone());
+        let (ahead, behind) = repo
+            .ahead_behind(&base, &head)
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::AheadBehind {
             item_idx: ctx.item_idx,
@@ -199,10 +212,16 @@ impl Task for CommittedTreesMatchTask {
             });
         };
         let repo = &ctx.repo;
-        // Use the item's commit instead of HEAD, since for branches without
-        // worktrees, HEAD is the main worktree's HEAD.
+        // Prefer the branch name when present: during a rebase-in-progress, the
+        // worktree's HEAD is at a transient replayed commit, so using commit_sha
+        // would compare the wrong tree. For branch-only items the two are
+        // equivalent; for detached HEAD, commit_sha is the only option.
+        let ref_to_check = ctx
+            .branch_ref
+            .integration_ref()
+            .unwrap_or_else(|| ctx.branch_ref.commit_sha.clone());
         let committed_trees_match = repo
-            .trees_match(&ctx.branch_ref.commit_sha, &base)
+            .trees_match(&ref_to_check, &base)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::CommittedTreesMatch {
             item_idx: ctx.item_idx,
@@ -229,7 +248,7 @@ impl Task for HasFileChangesTask {
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         // No branch name (detached HEAD) - return conservative default (assume has changes)
-        let Some(branch) = ctx.branch_ref.branch.as_deref() else {
+        let Some(branch) = ctx.branch_ref.integration_ref() else {
             return Ok(TaskResult::HasFileChanges {
                 item_idx: ctx.item_idx,
                 has_file_changes: true,
@@ -244,7 +263,7 @@ impl Task for HasFileChangesTask {
         };
         let repo = &ctx.repo;
         let has_file_changes = repo
-            .has_added_changes(branch, &target)
+            .has_added_changes(&branch, &target)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::HasFileChanges {
@@ -276,7 +295,7 @@ impl Task for WouldMergeAddTask {
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         // No branch name (detached HEAD) - return conservative default (assume would add)
-        let Some(branch) = ctx.branch_ref.branch.as_deref() else {
+        let Some(branch) = ctx.branch_ref.integration_ref() else {
             return Ok(TaskResult::WouldMergeAdd {
                 item_idx: ctx.item_idx,
                 would_merge_add: true,
@@ -293,7 +312,7 @@ impl Task for WouldMergeAddTask {
         };
         let probe = ctx
             .repo
-            .merge_integration_probe(branch, &base)
+            .merge_integration_probe(&branch, &base)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::WouldMergeAdd {
             item_idx: ctx.item_idx,
@@ -325,8 +344,14 @@ impl Task for IsAncestorTask {
             });
         };
         let repo = &ctx.repo;
+        // Prefer the branch name when present — see `CommittedTreesMatchTask`
+        // for rationale (rebase-in-progress transient HEAD).
+        let ref_to_check = ctx
+            .branch_ref
+            .integration_ref()
+            .unwrap_or_else(|| ctx.branch_ref.commit_sha.clone());
         let is_ancestor = repo
-            .is_ancestor(&ctx.branch_ref.commit_sha, &base)
+            .is_ancestor(&ref_to_check, &base)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::IsAncestor {
@@ -351,8 +376,14 @@ impl Task for BranchDiffTask {
             });
         };
         let repo = &ctx.repo;
+        // Prefer the branch name when present — see `CommittedTreesMatchTask`
+        // for rationale (rebase-in-progress transient HEAD).
+        let ref_to_check = ctx
+            .branch_ref
+            .integration_ref()
+            .unwrap_or_else(|| ctx.branch_ref.commit_sha.clone());
         let diff = repo
-            .branch_diff_stats(&base, &ctx.branch_ref.commit_sha)
+            .branch_diff_stats(&base, &ref_to_check)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::BranchDiff {
@@ -377,10 +408,11 @@ impl Task for WorkingTreeDiffTask {
             .working_tree(&ctx.repo)
             .ok_or_else(|| ctx.error(Self::KIND, &anyhow::anyhow!("requires a worktree")))?;
 
-        // Use --no-optional-locks to avoid index lock contention with WorkingTreeConflictsTask's
-        // `git stash create` which needs the index lock.
+        // Shared cache: WorkingTreeConflictsTask also needs porcelain. First
+        // accessor spawns the subprocess; second hits the cache. Uses
+        // --no-optional-locks to avoid index lock contention with `git write-tree`.
         let status_output = wt
-            .run_command(&["--no-optional-locks", "status", "--porcelain"])
+            .status_porcelain_cached()
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         let (working_tree_status, is_dirty, has_conflicts) =
@@ -420,8 +452,14 @@ impl Task for MergeTreeConflictsTask {
             });
         };
         let repo = &ctx.repo;
+        // Prefer the branch name when present — see `CommittedTreesMatchTask`
+        // for rationale (rebase-in-progress transient HEAD).
+        let ref_to_check = ctx
+            .branch_ref
+            .integration_ref()
+            .unwrap_or_else(|| ctx.branch_ref.commit_sha.clone());
         let has_merge_tree_conflicts = repo
-            .has_merge_conflicts(&base, &ctx.branch_ref.commit_sha)
+            .has_merge_conflicts(&base, &ref_to_check)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::MergeTreeConflicts {
             item_idx: ctx.item_idx,
@@ -430,11 +468,16 @@ impl Task for MergeTreeConflictsTask {
     }
 }
 
-/// Task 6b (worktree only, --full only): Working tree conflict check
+/// Task 6b (worktree only): Working tree conflict check
 ///
-/// For dirty worktrees, uses `git stash create` to get a tree object that
-/// includes uncommitted changes, then runs merge-tree against that.
-/// Returns None if working tree is clean (caller should fall back to MergeTreeConflicts).
+/// For dirty worktrees, builds a tree SHA from the index (plus untracked
+/// files if present) via `git write-tree`, then checks for merge conflicts
+/// against the default branch. Much cheaper than `git stash create` (~15ms
+/// vs ~50-265ms) because it reads the index directly instead of creating a
+/// full stash commit with working-tree diffing.
+///
+/// Returns None if working tree is clean (caller should fall back to
+/// MergeTreeConflicts).
 pub struct WorkingTreeConflictsTask;
 
 impl Task for WorkingTreeConflictsTask {
@@ -454,10 +497,9 @@ impl Task for WorkingTreeConflictsTask {
             .working_tree(&ctx.repo)
             .ok_or_else(|| ctx.error(Self::KIND, &anyhow::anyhow!("requires a worktree")))?;
 
-        // Use --no-optional-locks to avoid index lock contention with WorkingTreeDiffTask.
-        // Both tasks run in parallel, and `git stash create` below needs the index lock.
+        // Shared cache with WorkingTreeDiffTask — single subprocess per worktree.
         let status_output = wt
-            .run_command(&["--no-optional-locks", "status", "--porcelain"])
+            .status_porcelain_cached()
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         let is_dirty = !status_output.trim().is_empty();
@@ -470,39 +512,38 @@ impl Task for WorkingTreeConflictsTask {
             });
         }
 
-        // Dirty working tree - create a temporary tree object via stash create
-        // `git stash create` returns a commit SHA without modifying refs
-        //
-        // Note: stash create fails when there are unmerged files (merge conflict in progress).
-        // In that case, fall back to the commit-based check.
-        let stash_result = wt.run_command(&["stash", "create"]);
-
-        let stash_sha = match stash_result {
-            Ok(sha) => sha,
-            Err(_) => {
-                // Stash create failed (likely unmerged files during rebase/merge)
-                // Fall back to commit-based check
-                return Ok(TaskResult::WorkingTreeConflicts {
-                    item_idx: ctx.item_idx,
-                    has_working_tree_conflicts: None,
-                });
-            }
-        };
-
-        let stash_sha = stash_sha.trim();
-
-        // If stash create returns empty, working tree is clean (shouldn't happen but handle it)
-        if stash_sha.is_empty() {
+        // Unmerged entries (UU, AU, UA, DU, UD, DD, AA) mean a merge/rebase
+        // conflict is in progress. Fall back to the commit-based check to
+        // preserve prior behavior — write-tree on unmerged entries would
+        // produce a tree with conflict markers as content.
+        let has_unmerged = has_unmerged_entries(&status_output);
+        if has_unmerged {
             return Ok(TaskResult::WorkingTreeConflicts {
                 item_idx: ctx.item_idx,
                 has_working_tree_conflicts: None,
             });
         }
 
-        // Run merge-tree with the stash commit (repo-wide operation, doesn't need worktree)
+        // Porcelain format: XY where X=index, Y=working-tree.
+        // Fast path when all changes are staged (Y is space for every line):
+        // write-tree on the real index is sufficient.
+        // Slow path when there are unstaged modifications (Y != ' ') or
+        // untracked files ('??'): copy index, `git add -A`, write-tree.
+        let needs_working_tree = status_output
+            .lines()
+            .any(|l| l.starts_with("??") || l.as_bytes().get(1) != Some(&b' '));
+
+        let tree_sha = if needs_working_tree {
+            write_tree_with_working_tree(&wt).map_err(|e| ctx.error(Self::KIND, &e))?
+        } else {
+            wt.run_command(&["write-tree"])
+                .map(|s| s.trim().to_string())
+                .map_err(|e| ctx.error(Self::KIND, &e))?
+        };
+
         let has_conflicts = ctx
             .repo
-            .has_merge_conflicts(&base, stash_sha)
+            .has_merge_conflicts_by_tree(&base, &ctx.branch_ref.commit_sha, &tree_sha)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::WorkingTreeConflicts {
@@ -510,6 +551,52 @@ impl Task for WorkingTreeConflictsTask {
             has_working_tree_conflicts: Some(has_conflicts),
         })
     }
+}
+
+/// Build a tree SHA representing the full working tree state (staged +
+/// unstaged + untracked) by staging everything into a temporary index.
+///
+/// Copies the real index (preserving git's stat cache for unchanged files),
+/// then `git add -A` to stage all modifications and untracked files, then
+/// `git write-tree` to produce the tree SHA. The real index is untouched.
+fn write_tree_with_working_tree(wt: &worktrunk::git::WorkingTree) -> anyhow::Result<String> {
+    use worktrunk::shell_exec::Cmd;
+
+    let git_dir = wt.git_dir()?;
+    let worktree_root = wt.root()?;
+    let real_index = git_dir.join("index");
+    let log_ctx = wt
+        .path()
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(".")
+        .to_string();
+
+    let temp_index = tempfile::NamedTempFile::new().context("Failed to create temporary index")?;
+    std::fs::copy(&real_index, temp_index.path()).context("Failed to copy index file")?;
+    let temp_index_path = temp_index
+        .path()
+        .to_str()
+        .context("Temporary index path is not valid UTF-8")?;
+
+    // Stage all changes (unstaged modifications + untracked files)
+    Cmd::new("git")
+        .args(["add", "-A"])
+        .current_dir(&worktree_root)
+        .context(&log_ctx)
+        .env("GIT_INDEX_FILE", temp_index_path)
+        .run()
+        .context("Failed to stage working tree changes")?;
+
+    let output = Cmd::new("git")
+        .args(["write-tree"])
+        .current_dir(&worktree_root)
+        .context(&log_ctx)
+        .env("GIT_INDEX_FILE", temp_index_path)
+        .run()
+        .context("Failed to write tree from temporary index")?;
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 /// Task 7 (worktree only): Git operation state detection (rebase/merge)
@@ -681,9 +768,6 @@ impl Task for SummaryGenerateTask {
         let branch = ctx.branch_ref.branch.as_deref().unwrap_or("(detached)");
         let worktree_path = ctx.branch_ref.worktree_path.as_deref();
 
-        // Acquire semaphore before any LLM call (cache hits return before calling LLM)
-        let _permit = crate::summary::LLM_SEMAPHORE.acquire();
-
         let summary = crate::summary::generate_summary_core(
             branch,
             &ctx.branch_ref.commit_sha,
@@ -806,6 +890,19 @@ pub(super) fn parse_working_tree_status(status_output: &str) -> (WorkingTreeStat
     (working_tree_status, is_dirty, has_conflicts)
 }
 
+/// Check if `git status --porcelain` output contains unmerged entries.
+///
+/// All seven unmerged status codes: UU, AU, UA, DU, UD, DD, AA.
+/// Five contain `U`; `DD` and `AA` do not and must be matched explicitly.
+fn has_unmerged_entries(status_output: &str) -> bool {
+    status_output.lines().any(|l| {
+        l.len() >= 2 && {
+            let xy = &l.as_bytes()[0..2];
+            xy.contains(&b'U') || xy == b"AA" || xy == b"DD"
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -828,5 +925,35 @@ mod tests {
     #[test]
     fn test_first_line_empty_string() {
         assert_eq!(first_line(""), "");
+    }
+
+    #[test]
+    fn unmerged_entries_detected_with_u() {
+        assert!(has_unmerged_entries("UU src/main.rs"));
+        assert!(has_unmerged_entries("AU src/main.rs"));
+        assert!(has_unmerged_entries("UA src/main.rs"));
+        assert!(has_unmerged_entries("DU src/main.rs"));
+        assert!(has_unmerged_entries("UD src/main.rs"));
+    }
+
+    #[test]
+    fn unmerged_entries_detected_aa_dd() {
+        assert!(has_unmerged_entries("AA src/main.rs"));
+        assert!(has_unmerged_entries("DD src/main.rs"));
+    }
+
+    #[test]
+    fn unmerged_entries_mixed_status() {
+        assert!(has_unmerged_entries("M  src/lib.rs\nAA src/main.rs"));
+        assert!(has_unmerged_entries("?? untracked.txt\nDD deleted.rs"));
+    }
+
+    #[test]
+    fn unmerged_entries_not_detected_for_normal_status() {
+        assert!(!has_unmerged_entries("M  src/main.rs"));
+        assert!(!has_unmerged_entries("A  src/new.rs"));
+        assert!(!has_unmerged_entries("D  src/old.rs"));
+        assert!(!has_unmerged_entries("?? untracked.txt"));
+        assert!(!has_unmerged_entries(""));
     }
 }

@@ -22,7 +22,6 @@ use super::sections::{
 /// let squash = resolved.merge.squash();                     // bool, default applied
 /// let stage = resolved.commit.stage();                      // StageMode, default applied
 /// let pager = resolved.switch_picker.pager();               // Option<&str>
-/// let timeout = resolved.switch_picker.timeout();               // Option<Duration>
 /// let cd = resolved.switch.cd();                              // bool, default applied
 /// ```
 #[derive(Debug, Clone, PartialEq)]
@@ -44,13 +43,13 @@ impl ResolvedConfig {
     /// Resolve all configuration for a project.
     pub fn for_project(config: &UserConfig, project: Option<&str>) -> Self {
         Self {
-            list: config.list(project).unwrap_or_default(),
-            merge: config.merge(project).unwrap_or_default(),
-            commit: config.commit(project).unwrap_or_default(),
+            list: config.list(project),
+            merge: config.merge(project),
+            commit: config.commit(project),
             commit_generation: config.commit_generation(project),
             switch_picker: config.switch_picker(project),
-            switch: config.switch(project).unwrap_or_default(),
-            step: config.step(project).unwrap_or_default(),
+            switch: config.switch(project),
+            step: config.step(project),
         }
     }
 }

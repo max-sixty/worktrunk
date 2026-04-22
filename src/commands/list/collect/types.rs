@@ -3,51 +3,15 @@
 //! Contains all the type definitions used by the collection system:
 //! - `TaskResult` and `TaskKind` - result variants from task computations
 //! - `TaskError` and `ErrorCause` - error handling for failed tasks
-//! - `StatusContext` - context for status symbol computation
 //! - `DrainOutcome` and `MissingResult` - timeout diagnostic info
 
 use worktrunk::git::LineDiff;
 
 use super::super::ci_status::PrStatus;
 use super::super::model::{
-    ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, ListItem, UpstreamStatus,
+    ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus,
     WorkingTreeStatus,
 };
-
-/// Context for status symbol computation during result processing
-#[derive(Clone, Default)]
-pub(super) struct StatusContext {
-    pub has_merge_tree_conflicts: bool,
-    /// Working tree conflict check result (--full only, worktrees only).
-    /// None = use commit check (task didn't run or working tree clean)
-    /// Some(b) = dirty working tree, b is conflict result
-    // TODO: If we need to distinguish "task didn't run" from "clean working tree",
-    // expand to an enum. Currently both cases fall back to commit-based check.
-    pub has_working_tree_conflicts: Option<bool>,
-    pub user_marker: Option<String>,
-    pub working_tree_status: Option<WorkingTreeStatus>,
-    pub has_conflicts: bool,
-}
-
-impl StatusContext {
-    pub fn apply_to(&self, item: &mut ListItem, target: Option<&str>) {
-        // Main worktree case is handled inside check_integration_state()
-        //
-        // Prefer working tree conflicts (--full) when available.
-        // None means task didn't run or working tree was clean - use commit check.
-        let has_conflicts = self
-            .has_working_tree_conflicts
-            .unwrap_or(self.has_merge_tree_conflicts);
-
-        item.compute_status_symbols(
-            target,
-            has_conflicts,
-            self.user_marker.clone(),
-            self.working_tree_status,
-            self.has_conflicts,
-        );
-    }
-}
 
 /// Task results sent as each git operation completes.
 /// These enable progressive rendering - update UI as data arrives.
@@ -115,7 +79,7 @@ pub(crate) enum TaskResult {
         item_idx: usize,
         has_merge_tree_conflicts: bool,
     },
-    /// Potential merge conflicts including working tree changes (--full only)
+    /// Potential merge conflicts including working tree changes
     ///
     /// For dirty worktrees, uses `git stash create` to get a tree object that
     /// includes uncommitted changes, then runs merge-tree against that.
@@ -233,7 +197,8 @@ pub enum ErrorCause {
 /// Error during task execution.
 ///
 /// Tasks return this instead of swallowing errors. The drain layer
-/// applies defaults and collects errors for display after rendering.
+/// collects errors for display after rendering; errored fields stay
+/// `None` so `compute_status_symbols` naturally skips the item.
 #[derive(Debug, Clone)]
 pub struct TaskError {
     pub item_idx: usize,

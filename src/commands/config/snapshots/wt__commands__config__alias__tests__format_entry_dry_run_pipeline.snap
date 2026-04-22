@@ -1,0 +1,11 @@
+---
+source: src/commands/config/alias.rs
+expression: out.ansi_strip()
+---
+○ Alias deploy (project) would run:
+  # install
+  npm install
+  # build
+  npm run build
+  # lint
+  npm run lint

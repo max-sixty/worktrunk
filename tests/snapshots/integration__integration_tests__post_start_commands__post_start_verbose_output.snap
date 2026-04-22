@@ -22,6 +22,7 @@ info:
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     NO_COLOR: ""
+    OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -35,6 +36,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -56,5 +58,27 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'verbose test'[0m[2m [0m[2m[36m>[0m[2m verbose.txt
 [107m [0m [2m→[22m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'verbose test'[0m[2m [0m[2m[36m>[0m[2m verbose.txt
-[36m◎[39m [36mRunning post-start [1mproject:setup[22m @ [1m_REPO_.feature[22m[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'verbose test'[0m[2m [0m[2m[36m>[0m[2m verbose.txt
+[2m○[22m template variables:
+[107m [0m branch                = feature
+[107m [0m worktree_path         = _REPO_.feature
+[107m [0m worktree_name         = repo.feature
+[107m [0m commit                = d545a78b148af245c616612b474fd2049705c00c
+[107m [0m short_commit          = d545a78
+[107m [0m upstream              = (unset)
+[107m [0m base                  = main
+[107m [0m base_worktree_path    = _REPO_
+[107m [0m target                = feature
+[107m [0m target_worktree_path  = _REPO_.feature
+[107m [0m pr_number             = (unset)
+[107m [0m pr_url                = (unset)
+[107m [0m repo                  = repo
+[107m [0m repo_path             = _REPO_
+[107m [0m owner                 = (unset)
+[107m [0m primary_worktree_path = _REPO_
+[107m [0m default_branch        = main
+[107m [0m remote                = origin
+[107m [0m remote_url            = ../origin.git
+[107m [0m cwd                   = _REPO_.feature
+[107m [0m hook_type             = post-start
+[107m [0m hook_name             = setup
+[36m◎[39m [36mRunning post-start: [1mproject:setup[22m @ [1m_REPO_.feature[22m[39m

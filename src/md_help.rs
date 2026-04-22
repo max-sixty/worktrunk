@@ -75,7 +75,17 @@ pub(crate) fn render_markdown_in_help_with_width(help: &str, width: Option<usize
                 let content = code_block_lines.join("\n");
                 let formatted = match code_block_lang.as_str() {
                     "toml" => format_toml(&content),
-                    "console" | "bash" | "sh" => format_bash_with_gutter(&content),
+                    "console" => {
+                        // Strip `$ ` prompt from console blocks for copy-paste.
+                        // The prefix is preserved in source for web docs.
+                        let stripped = content
+                            .lines()
+                            .map(|l| l.strip_prefix("$ ").unwrap_or(l))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        format_bash_with_gutter(&stripped)
+                    }
+                    "bash" | "sh" => format_bash_with_gutter(&content),
                     _ => {
                         // Dim the content before adding gutter (format_with_gutter
                         // doesn't style text; bash/toml formatters handle their own)
@@ -574,6 +584,19 @@ mod tests {
 
         [1m[32mSection[0m
         ");
+    }
+
+    #[test]
+    fn test_render_markdown_in_help_console_strips_dollar() {
+        // Console blocks strip `$ ` for copy-paste; web docs keep it
+        let result = render_markdown_in_help("```console\n$ wt step deploy\n$ wt list\n```");
+        let stripped = ansi_str::AnsiStr::ansi_strip(&result);
+        assert!(
+            !stripped.contains("$ "),
+            "terminal output should not contain '$ ' prompt: {stripped}"
+        );
+        assert!(stripped.contains("wt step deploy"));
+        assert!(stripped.contains("wt list"));
     }
 
     #[test]

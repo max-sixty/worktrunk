@@ -73,7 +73,7 @@ impl CiPlatform {
         match self {
             Self::GitHub => github::detect_github_commit_checks(repo, branch, local_head),
             // GitLab pipeline uses the bare branch name (not "origin/feature")
-            Self::GitLab => gitlab::detect_gitlab_pipeline(&branch.name, local_head),
+            Self::GitLab => gitlab::detect_gitlab_pipeline(repo, &branch.name, local_head),
         }
     }
 

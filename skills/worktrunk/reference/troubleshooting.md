@@ -74,6 +74,49 @@ pre-start = "npm install"
 post-start = "npm run build"
 ```
 
+## List
+
+### `wt list` times out after 120s
+
+The timeout warning names the tasks that didn't finish:
+
+```
+wt list timed out after 120s (170 results received); blocked tasks:
+  <branch>: working-tree-diff, working-tree-conflicts
+```
+
+Both tasks run `git status --porcelain` first. When the named worktree has `core.fsmonitor=true` and its `git fsmonitor--daemon` is wedged, `git status` blocks until the IPC attempt fails (several minutes), and the 120s drain deadline fires first.
+
+Confirm by running `git status` in the affected worktree:
+
+```bash
+cd <worktree>
+time git --no-optional-locks status --porcelain
+# error: could not read IPC response   → hung daemon
+```
+
+List running daemons with their IPC socket (identifies which worktree each serves):
+
+```bash
+for pid in $(pgrep -f 'git fsmonitor--daemon'); do
+  sock=$(lsof -p $pid 2>/dev/null | grep 'fsmonitor--daemon.ipc' | awk '{print $NF}' | head -1)
+  printf "%6d  %s\n" "$pid" "$sock"
+done
+```
+
+Sockets listed as bare `fsmonitor--daemon.ipc` (no resolved path) belong to deleted worktrees — safe to kill:
+
+```bash
+for pid in $(pgrep -f 'git fsmonitor--daemon'); do
+  sock=$(lsof -p $pid 2>/dev/null | grep 'fsmonitor--daemon.ipc' | awk '{print $NF}' | head -1)
+  [ "$sock" = "fsmonitor--daemon.ipc" ] && kill -9 $pid
+done
+```
+
+For a specific hung worktree, kill the daemon whose socket path matches it, or just `pkill -9 -f 'git fsmonitor--daemon'` and let the next `wt list` respawn the live ones. Disabling fsmonitor globally (`git config --global core.fsmonitor false`) avoids the class of problem entirely at the cost of some `git status` speed on large repos.
+
+Daemons leak when a worktree is removed while its daemon is already unresponsive — `wt remove` calls `git fsmonitor--daemon stop`, but a daemon that can't answer its IPC can't be stopped through it.
+
 ## PowerShell on Windows
 
 ### PowerShell profiles not created
@@ -104,7 +147,7 @@ session:
 
 2. `(Get-Command git-wt -CommandType Function).ScriptBlock | Select-String
    WORKTRUNK` — verifies the wrapper function body sets
-   `WORKTRUNK_DIRECTIVE_FILE`. If this doesn't appear, the function is
+   `WORKTRUNK_DIRECTIVE_CD_FILE`. If this doesn't appear, the function is
    incomplete or corrupted.
 
 3. `Get-Command git-wt -CommandType Application | Select-Object Source` — shows

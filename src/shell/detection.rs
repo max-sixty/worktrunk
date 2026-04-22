@@ -73,7 +73,7 @@ use super::paths::{home_dir_required, powershell_profile_paths};
 ///
 /// Detection is ONLY used when shell integration is NOT active (i.e., user ran
 /// the binary directly without the shell wrapper). Once the shell wrapper is
-/// active (after shell restart), `WORKTRUNK_DIRECTIVE_FILE` is set and no
+/// active (after shell restart), `WORKTRUNK_DIRECTIVE_CD_FILE` is set and no
 /// detection is needed.
 ///
 /// **When binary is run directly (wrapper not active):**

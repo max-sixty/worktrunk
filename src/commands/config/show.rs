@@ -3,15 +3,14 @@
 //! Functions for displaying user config, project config, shell status,
 //! diagnostics, and runtime info.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    ProjectConfig, UserConfig, default_system_config_path, find_unknown_project_keys,
-    find_unknown_user_keys, system_config_path,
+    ProjectConfig, UserConfig, default_system_config_path, system_config_path,
 };
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
@@ -23,7 +22,7 @@ use worktrunk::styling::{
 };
 
 use super::state::require_user_config_path;
-use crate::cli::version_str;
+use crate::cli::{SwitchFormat, version_str};
 use crate::commands::configure_shell::{ConfigAction, scan_shell_configs};
 use crate::commands::list::ci_status::{CiPlatform, CiToolsStatus, platform_for_repo};
 use crate::help_pager::show_help_in_pager;
@@ -31,7 +30,10 @@ use crate::llm::test_commit_generation;
 use crate::output;
 
 /// Handle the config show command
-pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
+pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()> {
+    if format == SwitchFormat::Json {
+        return handle_config_show_json();
+    }
     // Build the complete output as a string
     let mut show_output = String::new();
 
@@ -58,6 +60,12 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
         render_claude_code_status(&mut show_output)?;
     }
 
+    // Render OpenCode status (only when opencode CLI is available)
+    if is_opencode_available() {
+        show_output.push('\n');
+        render_opencode_status(&mut show_output)?;
+    }
+
     // Run full diagnostic checks if requested (includes slow network calls)
     if full {
         show_output.push('\n');
@@ -71,10 +79,50 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
     // Display through pager (config show is always long-form output)
     if let Err(e) = show_help_in_pager(&show_output, true) {
         log::debug!("Pager invocation failed: {}", e);
-        // Fall back to direct output via eprintln (matches help behavior)
-        worktrunk::styling::eprintln!("{}", show_output);
+        worktrunk::styling::println!("{}", show_output);
     }
 
+    Ok(())
+}
+
+/// JSON output for config show: paths, existence, and parsed config contents.
+fn handle_config_show_json() -> anyhow::Result<()> {
+    let user_path = require_user_config_path()?;
+    let user_exists = user_path.exists();
+    let user_config = if user_exists {
+        Some(serde_json::to_value(&UserConfig::load()?)?)
+    } else {
+        None
+    };
+
+    let (project_path, project_config) = if let Ok(repo) = Repository::current() {
+        let path = repo.project_config_path()?;
+        let config = repo.load_project_config()?;
+        (path, config.map(|c| serde_json::to_value(&c)).transpose()?)
+    } else {
+        (None, None)
+    };
+
+    let system_path = system_config_path().or_else(default_system_config_path);
+    let system_exists = system_path.as_ref().is_some_and(|p| p.exists());
+
+    let output = serde_json::json!({
+        "user": {
+            "path": user_path,
+            "exists": user_exists,
+            "config": user_config,
+        },
+        "project": {
+            "path": project_path,
+            "exists": project_path.as_ref().is_some_and(|p| p.exists()),
+            "config": project_config,
+        },
+        "system": {
+            "path": system_path,
+            "exists": system_exists,
+        },
+    });
+    worktrunk::styling::println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
 
@@ -220,6 +268,46 @@ fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
             "{}",
             hint_message(cformat!(
                 "Statusline not configured. To configure, run <underline>wt config plugins claude install-statusline</>"
+            ))
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Check if OpenCode CLI is available
+fn is_opencode_available() -> bool {
+    // Allow tests to override detection
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_OPENCODE_INSTALLED") {
+        return val == "1";
+    }
+    which::which("opencode").is_ok()
+}
+
+/// Render OPENCODE section (plugin status).
+/// Caller must check `is_opencode_available()` first.
+fn render_opencode_status(out: &mut String) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("OPENCODE", None))?;
+
+    // Plugin status
+    let plugin_installed = super::opencode::is_plugin_installed();
+    let plugin_exists = super::opencode::plugin_file_exists();
+    if plugin_installed {
+        writeln!(out, "{}", success_message("Plugin installed"))?;
+    } else if plugin_exists {
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "Plugin outdated. To update, run <underline>wt config plugins opencode install</>"
+            ))
+        )?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "Plugin not installed. To install, run <underline>wt config plugins opencode install</>"
             ))
         )?;
     }
@@ -374,9 +462,7 @@ fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
-        out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
-            &contents,
-        )));
+        out.push_str(&warn_unknown_keys::<UserConfig>(&contents));
     }
 
     // Display TOML with syntax highlighting
@@ -417,9 +503,9 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
         return Ok(());
     }
 
-    // Check for deprecations with show_brief_warning=false (silent mode)
+    // Check for deprecations with emit_inline_warnings=false (silent mode)
     // User config is global, not tied to any repository
-    let has_deprecations = if let Ok(result) = worktrunk::config::check_and_migrate(
+    let has_deprecations = match worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
         true,
@@ -427,15 +513,20 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
         None,
         false, // silent mode - we'll format the output ourselves
     ) {
-        if let Some(info) = result.info {
-            // Add deprecation details to the output buffer
-            out.push_str(&worktrunk::config::format_deprecation_details(&info));
-            true
-        } else {
+        Ok(result) => {
+            if let Some(info) = result.info {
+                out.push_str(&worktrunk::config::format_deprecation_details(
+                    &info, &contents,
+                ));
+                true
+            } else {
+                false
+            }
+        }
+        Err(err) => {
+            writeln!(out, "{}", error_message(err.to_string()))?;
             false
         }
-    } else {
-        false
     };
 
     // Validate config (syntax + schema) and warn if invalid
@@ -444,21 +535,14 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
-        // Only check for unknown keys if config is valid.
-        // Filter deprecated section keys to avoid duplicate warnings
-        // (deprecation system already warns about these).
-        out.push_str(&warn_unknown_keys::<UserConfig>(&find_unknown_user_keys(
-            &contents,
-        )));
+        out.push_str(&warn_unknown_keys::<UserConfig>(&contents));
     }
 
-    // Add "Current config" label when deprecations shown (to separate from diff)
-    if has_deprecations {
-        writeln!(out, "{}", info_message("Current config:"))?;
+    // Display TOML with syntax highlighting (gutter at column 0).
+    // Skip when deprecations were shown — the proposed diff already covers it.
+    if !has_deprecations {
+        writeln!(out, "{}", format_toml(&contents))?;
     }
-
-    // Display TOML with syntax highlighting (gutter at column 0)
-    writeln!(out, "{}", format_toml(&contents))?;
 
     if !has_system_config {
         render_system_config_hint(out)?;
@@ -481,37 +565,41 @@ fn render_system_config_hint(out: &mut String) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Format warnings for any unknown config keys.
+/// Format warnings for unknown config keys in `raw_contents`.
 ///
-/// Generic over `C`, the config type where the keys were found. When an unknown
-/// key belongs in `C::Other`, the warning includes a hint about where to move it.
+/// Generic over `C`, the config type. Classification is shared with the
+/// load-time warning path via
+/// [`collect_unknown_warnings`](worktrunk::config::collect_unknown_warnings);
+/// only the message wording differs.
 pub(super) fn warn_unknown_keys<C: worktrunk::config::WorktrunkConfig>(
-    unknown_keys: &HashMap<String, toml::Value>,
+    raw_contents: &str,
 ) -> String {
     let mut out = String::new();
-
-    let mut keys: Vec<_> = unknown_keys.keys().collect();
-    keys.sort();
-
-    for key in keys {
-        let msg = match worktrunk::config::classify_unknown_key::<C>(key) {
-            worktrunk::config::UnknownKeyKind::DeprecatedHandled => continue,
-            worktrunk::config::UnknownKeyKind::DeprecatedWrongConfig {
-                other_description,
-                canonical_display,
-            } => {
-                cformat!("Key <bold>{key}</> belongs in {other_description} as {canonical_display}")
-            }
-            worktrunk::config::UnknownKeyKind::WrongConfig { other_description } => {
-                cformat!("Key <bold>{key}</> belongs in {other_description} (will be ignored)")
-            }
-            worktrunk::config::UnknownKeyKind::Unknown => {
-                cformat!("Unknown key <bold>{key}</> will be ignored")
-            }
-        };
-        let _ = writeln!(out, "{}", warning_message(msg));
+    for warning in worktrunk::config::collect_unknown_warnings::<C>(raw_contents) {
+        let _ = writeln!(out, "{}", warning_message(format_show_warning(&warning)));
     }
     out
+}
+
+fn format_show_warning(warning: &worktrunk::config::UnknownWarning) -> String {
+    use worktrunk::config::UnknownWarning;
+    match warning {
+        UnknownWarning::TopLevelUnknown { key } => {
+            cformat!("Unknown key <bold>{key}</> will be ignored")
+        }
+        UnknownWarning::TopLevelWrongConfig {
+            key,
+            other_description,
+        } => cformat!("Key <bold>{key}</> belongs in {other_description} (will be ignored)"),
+        UnknownWarning::TopLevelDeprecatedWrongConfig {
+            key,
+            other_description,
+            canonical_display,
+        } => cformat!("Key <bold>{key}</> belongs in {other_description} as {canonical_display}"),
+        UnknownWarning::NestedUnknown { path } => {
+            cformat!("Unknown key <bold>{path}</> will be ignored")
+        }
+    }
 }
 
 fn render_project_config(out: &mut String) -> anyhow::Result<()> {
@@ -568,10 +656,10 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Check for deprecations with show_brief_warning=false (silent mode)
+    // Check for deprecations with emit_inline_warnings=false (silent mode)
     // Only write migration file in main worktree, not linked worktrees
     let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
-    let has_deprecations = if let Ok(result) = worktrunk::config::check_and_migrate(
+    let has_deprecations = match worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
         is_main_worktree,
@@ -579,15 +667,20 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         Some(&repo),
         false, // silent mode - we'll format the output ourselves
     ) {
-        if let Some(info) = result.info {
-            // Add deprecation details to the output buffer
-            out.push_str(&worktrunk::config::format_deprecation_details(&info));
-            true
-        } else {
+        Ok(result) => {
+            if let Some(info) = result.info {
+                out.push_str(&worktrunk::config::format_deprecation_details(
+                    &info, &contents,
+                ));
+                true
+            } else {
+                false
+            }
+        }
+        Err(err) => {
+            writeln!(out, "{}", error_message(err.to_string()))?;
             false
         }
-    } else {
-        false
     };
 
     // Validate config (syntax + schema) and warn if invalid
@@ -596,19 +689,14 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         writeln!(out, "{}", error_message("Invalid config"))?;
         writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
     } else {
-        // Only check for unknown keys if config is valid
-        out.push_str(&warn_unknown_keys::<ProjectConfig>(
-            &find_unknown_project_keys(&contents),
-        ));
+        out.push_str(&warn_unknown_keys::<ProjectConfig>(&contents));
     }
 
-    // Add "Current config" label when deprecations shown (to separate from diff)
-    if has_deprecations {
-        writeln!(out, "{}", info_message("Current config:"))?;
+    // Display TOML with syntax highlighting (gutter at column 0).
+    // Skip when deprecations were shown — the proposed diff already covers it.
+    if !has_deprecations {
+        writeln!(out, "{}", format_toml(&contents))?;
     }
-
-    // Display TOML with syntax highlighting (gutter at column 0)
-    writeln!(out, "{}", format_toml(&contents))?;
 
     Ok(())
 }
@@ -772,12 +860,16 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                             ))
                         )?;
                     } else {
-                        any_not_configured = true;
-                        writeln!(
-                            out,
-                            "{}",
-                            hint_message(format!("{shell}: Not configured completions"))
-                        )?;
+                        // Missing completions are a fish-specific problem with a specific
+                        // remediation. Don't flip `any_not_configured` — the generic
+                        // "To configure" summary is for shells with no integration at all.
+                        let warning = warning_message(cformat!(
+                            "<bold>{shell}</>: Completions not configured @ {completion_display}"
+                        ));
+                        let hint = hint_message(cformat!(
+                            "To configure completions, run <underline>{cmd} config shell install {shell}</>"
+                        ));
+                        writeln!(out, "{warning}\n{hint}")?;
                     }
                 }
 
@@ -825,8 +917,10 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                 } else if shell.is_wrapper_based()
                     && matches!(result.action, ConfigAction::WouldAdd)
                 {
-                    // File exists but has different content (e.g. outdated version)
-                    any_not_configured = true;
+                    // File exists but has different content (e.g. outdated version).
+                    // The per-shell "To update" hint below covers this case, so we
+                    // don't flip `any_not_configured` — the generic "To configure"
+                    // summary would be misleading when the integration is installed.
                     let warning = warning_message(cformat!(
                         "<bold>{shell}</>: Outdated shell extension @ {path}"
                     ));
@@ -834,6 +928,17 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                         "To update, run <underline>{cmd} config shell install {shell}</>"
                     ));
                     writeln!(out, "{warning}\n{hint}")?;
+                } else if shell_active && Some(shell) == worktrunk::shell::current_shell() {
+                    // Shell integration is active at runtime even though we can't
+                    // find the init line in config files — likely sourced from
+                    // another file (common with dotfile managers like stow/chezmoi).
+                    writeln!(
+                        out,
+                        "{}",
+                        info_message(cformat!(
+                            "<bold>{shell}</>: Configured {what} (not found in {path})"
+                        ))
+                    )?;
                 } else {
                     any_not_configured = true;
                     writeln!(
@@ -981,15 +1086,12 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         }
     }
 
-    // Check if any shell has config already (eval line present)
-    let has_any_configured = scan_result
-        .configured
-        .iter()
-        .any(|r| matches!(r.action, ConfigAction::AlreadyExists));
-
-    // If we have unmatched candidates but no configured shells, suggest raising an issue
-    // Apply the same confirmed_paths filter used above to avoid including wrapper files
-    if has_any_unmatched && !has_any_configured {
+    // Whenever there are unmatched candidates, offer the false-negative report link.
+    // A real detector miss in one config file is worth reporting even if another shell
+    // is correctly detected — the `confirmed_paths` filter already excludes wrapper files,
+    // and the narrow phrasing ("meant to load") steers non-integration lines (plain aliases)
+    // away from reporting themselves as bugs.
+    if has_any_unmatched {
         let unmatched_summary: Vec<_> = detection_results
             .iter()
             .filter(|r| {
@@ -1029,7 +1131,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
             out,
             "{}",
             hint_message(format!(
-                "If {quoted} is shell integration, report a false negative: {issue_url}"
+                "If {quoted} is meant to load Worktrunk shell integration, report a false negative: {issue_url}"
             ))
         )?;
     }

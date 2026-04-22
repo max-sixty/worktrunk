@@ -174,30 +174,23 @@ fn test_parse_local_default_branch_empty_remote() {
     assert_eq!(result.unwrap(), "weird/branch");
 }
 
-// Tests for LineDiff::from_numstat
+// Tests for LineDiff::from_shortstat
 
 #[rstest]
-#[case::normal("10\t5\tfile1.rs\n3\t2\tfile2.rs\n", 13, 7)]
+#[case::all_parts(" 23 files changed, 624 insertions(+), 160 deletions(-)", 624, 160)]
+#[case::insertions_only(" 1 file changed, 6 insertions(+)", 6, 0)]
+#[case::deletions_only(" 2 files changed, 10 deletions(-)", 0, 10)]
 #[case::empty("", 0, 0)]
-#[case::binary_files("10\t5\tfile1.rs\n-\t-\timage.png\n3\t2\tfile2.rs\n", 13, 7)]
-#[case::mixed_binary("10\t-\tfile1.rs\n-\t5\tfile2.rs\n", 0, 0)]
-#[case::empty_lines("10\t5\tfile1.rs\n\n3\t2\tfile2.rs\n\n", 13, 7)]
-#[case::missing_deleted("10\tfile.rs\n", 0, 0)]
-#[case::no_tabs("file.rs\n", 0, 0)]
-#[case::non_numeric_added("abc\t5\tfile.rs\n", 0, 0)]
-#[case::non_numeric_deleted("5\txyz\tfile.rs\n", 0, 0)]
-#[case::zero_values("0\t0\tfile.rs\n", 0, 0)]
-fn test_line_diff_from_numstat(
+#[case::whitespace("  \n  ", 0, 0)]
+#[case::singular(" 1 file changed, 1 insertion(+), 1 deletion(-)", 1, 1)]
+fn test_line_diff_from_shortstat(
     #[case] input: &str,
     #[case] expected_added: usize,
     #[case] expected_deleted: usize,
 ) {
-    let result = LineDiff::from_numstat(input);
-
-    assert!(result.is_ok());
-    let (added, deleted): (usize, usize) = result.unwrap().into();
-    assert_eq!(added, expected_added);
-    assert_eq!(deleted, expected_deleted);
+    let diff = LineDiff::from_shortstat(input);
+    assert_eq!(diff.added, expected_added);
+    assert_eq!(diff.deleted, expected_deleted);
 }
 
 #[test]

@@ -21,6 +21,7 @@
 #![cfg(not(windows))]
 
 use crate::common::wt_command;
+use ansi_str::AnsiStr;
 use ansi_to_html::convert as ansi_to_html;
 use regex::Regex;
 use std::fs;
@@ -105,8 +106,19 @@ static RUST_RAW_STRING_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Regex to convert Zola internal links to full URLs
 /// Matches: [text](@/page.md) or [text](@/page.md#anchor)
+///
+/// Link text tolerates `]` characters when they appear inside a backticked
+/// code span (e.g. `[[block]]`), alternating "a `...` code span" with "any
+/// non-`]`-non-backtick char". Bare backticks are forbidden so the regex
+/// can't bridge across two unrelated code spans on the same line.
 static ZOLA_LINK_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\(@/([^)#]+)\.md(#[^)]*)?\)").unwrap());
+    LazyLock::new(|| Regex::new(r"\[((?:`[^`]*`|[^\]`])+)\]\(@/([^)#]+)\.md(#[^)]*)?\)").unwrap());
+
+/// Regex guardrail: any leftover `](@/...md...)` link that the transform
+/// above failed to rewrite. Used by the sync test to fail loudly on stray
+/// Zola internal links in generated skill content.
+static UNTRANSFORMED_ZOLA_LINK_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\]\(@/[^)]+\.md").unwrap());
 
 /// Regex to convert Zola rawcode shortcode to HTML pre tags
 /// Matches: {% rawcode() %}...{% end %}
@@ -371,12 +383,21 @@ fn update_section(
 // End Unified Infrastructure
 // =============================================================================
 
-/// Regex to find command placeholder comments in help pages
-/// Matches: <!-- wt <args> -->\n```bash\nwt <args>\n```
-/// The HTML comment triggers expansion, the code block shows in terminal help
-/// Note: Pattern expects ```bash``` because --help-page converts ```console``` first
-static COMMAND_PLACEHOLDER_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"<!-- (wt [^>]+) -->\n```bash\nwt [^\n]+\n```").unwrap());
+/// Regex to find command placeholder comments in help pages.
+/// Matches: `<!-- wt <id> -->\n```bash\n[$ ]wt <cmd>\n```` — the `$ ` prompt is
+/// optional. Group 1 captures the placeholder id (used for snapshot lookup,
+/// e.g. `wt list (markers)`); group 2 captures the actual command to display
+/// (e.g. `wt list`).
+///
+/// Pattern expects ```bash``` because --help-page converts ```console``` first.
+/// In HTML mode the `$ ` alternative is a no-op today because
+/// `convert_dollar_console_to_terminal` has already rewritten `$ `‐prefixed
+/// console blocks into `{{ terminal }}` shortcodes upstream, and no raw
+/// ```bash``` blocks with a `$ ` prompt exist in CLI `after_long_help` source;
+/// plain mode skips that conversion, so both forms reach this regex.
+static COMMAND_PLACEHOLDER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"<!-- (wt [^>]+) -->\n```bash\n(?:\$ )?(wt [^\n]+)\n```").unwrap()
+});
 
 /// Map commands to their snapshot files for help page expansion
 fn command_to_snapshot(command: &str) -> Option<&'static str> {
@@ -388,28 +409,46 @@ fn command_to_snapshot(command: &str) -> Option<&'static str> {
         "wt list --branches --full" => {
             Some("integration__integration_tests__list__readme_example_list_branches.snap")
         }
+        "wt list (markers)" => {
+            Some("integration__integration_tests__list__readme_example_list_marker.snap")
+        }
         _ => None,
     }
 }
 
-/// Expand command placeholders in help page content to terminal shortcodes
+/// Rendering mode for [`expand_command_placeholders`].
+enum ExpandMode {
+    /// HTML docs (`docs/content/*.md`): emit a `{% terminal(cmd="...") %}`
+    /// shortcode with an ANSI→HTML body, wrapped in AUTO-GENERATED markers.
+    Html,
+    /// Skill reference (`skills/worktrunk/reference/*.md`): emit a fenced code
+    /// block with a `$ <cmd>` prompt and a plain-text body.
+    Plain,
+}
+
+/// Expand command placeholders in help page content into rendered snapshot blocks.
 ///
-/// Finds ```bash\nwt <cmd>\n``` blocks (```console``` is already converted
-/// to ```bash``` by --help-page) and replaces them with {% terminal() %}
-/// shortcodes containing snapshot output.
+/// Finds `<!-- wt <id> -->` + ```bash\n[$ ]wt <cmd>\n``` blocks, looks up the
+/// snapshot for the placeholder id (e.g. `wt list (markers)`), and replaces
+/// the block with a mode-appropriate rendering (see [`ExpandMode`]).
 ///
-/// Commands without a snapshot mapping are left as plain code blocks.
-fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<String, String> {
+/// The placeholder id drives snapshot lookup so disambiguation suffixes like
+/// `(markers)` don't have to appear in the displayed command. Commands without
+/// a snapshot mapping are left unchanged.
+fn expand_command_placeholders(
+    content: &str,
+    snapshots_dir: &Path,
+    mode: ExpandMode,
+) -> Result<String, String> {
     let mut result = content.to_string();
     let mut errors = Vec::new();
 
-    // Find all placeholder blocks
     for cap in COMMAND_PLACEHOLDER_PATTERN.captures_iter(content) {
         let full_match = cap.get(0).unwrap().as_str();
-        let command = cap.get(1).unwrap().as_str();
+        let placeholder_id = cap.get(1).unwrap().as_str();
+        let display_cmd = cap.get(2).unwrap().as_str();
 
-        // Skip commands without snapshot mappings - leave as plain code blocks
-        let Some(snapshot_name) = command_to_snapshot(command) else {
+        let Some(snapshot_name) = command_to_snapshot(placeholder_id) else {
             continue;
         };
 
@@ -418,7 +457,7 @@ fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<St
             errors.push(format!(
                 "Snapshot file not found: {} (for command '{}')",
                 snapshot_path.display(),
-                command
+                placeholder_id
             ));
             continue;
         }
@@ -426,20 +465,28 @@ fn expand_command_placeholders(content: &str, snapshots_dir: &Path) -> Result<St
         let snapshot_content = fs::read_to_string(&snapshot_path)
             .map_err(|e| format!("Failed to read {}: {}", snapshot_path.display(), e))?;
 
-        let html = parse_snapshot_content_for_docs(&snapshot_content)?;
-        let normalized = encode_leading_spaces(&trim_lines(&html));
-
-        // Build the terminal shortcode with standard template markers
-        // cmd= parameter enables giallo syntax highlighting on the command line
-        // Prompt ($) is added via CSS ::before, so not included in HTML
-        let replacement = format!(
-            "<!-- ⚠️ AUTO-GENERATED from tests/snapshots/{} — edit source to update -->\n\n\
-             {{% terminal(cmd=\"{}\") %}}\n\
-             {}\n\
-             {{% end %}}\n\n\
-             <!-- END AUTO-GENERATED -->",
-            snapshot_name, command, normalized
-        );
+        let replacement = match mode {
+            ExpandMode::Html => {
+                let html = parse_snapshot_content_for_docs(&snapshot_content)?;
+                let normalized = encode_leading_spaces(&trim_lines(&html));
+                // cmd= parameter uses the displayed command (enables giallo
+                // syntax highlighting on the command line) rather than the
+                // placeholder id, so disambiguation suffixes like `(markers)`
+                // don't leak into the rendered prompt. Prompt ($) is added
+                // via CSS ::before, so not included in HTML.
+                format!(
+                    "<!-- ⚠️ AUTO-GENERATED from tests/snapshots/{snapshot_name} — edit source to update -->\n\n\
+                     {{% terminal(cmd=\"{display_cmd}\") %}}\n\
+                     {normalized}\n\
+                     {{% end %}}\n\n\
+                     <!-- END AUTO-GENERATED -->",
+                )
+            }
+            ExpandMode::Plain => {
+                let plain = trim_lines(&parse_snapshot_content_for_skill(&snapshot_content));
+                format!("```\n$ {display_cmd}\n{plain}\n```")
+            }
+        };
 
         result = result.replace(full_match, &replacement);
     }
@@ -496,6 +543,14 @@ fn parse_snapshot_content_for_docs(content: &str) -> Result<String, String> {
     let content = ensure_line_resets(&content);
     let html = ansi_to_html(&content).map_err(|e| format!("ANSI conversion failed: {e}"))?;
     Ok(clean_ansi_html(&html))
+}
+
+/// Parse snapshot content for skill reference files (plain text, ANSI stripped)
+fn parse_snapshot_content_for_skill(content: &str) -> String {
+    let content = parse_snapshot_raw(content);
+    let content = replace_placeholders(&content);
+    let content = literal_to_escape(&content);
+    content.ansi_strip().into_owned()
 }
 
 /// Ensure each line ends with a reset code so ansi-to-html produces clean per-line HTML
@@ -873,7 +928,7 @@ fn transform_zola_to_github(content: &str) -> String {
     // These are `{{ terminal(cmd="...") }}` shortcodes without body content
     let content = ZOLA_TERMINAL_SELF_CLOSING_PATTERN
         .replace_all(&content, |caps: &regex::Captures| {
-            cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "")
+            cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "", false)
         })
         .into_owned();
 
@@ -1154,7 +1209,7 @@ fn test_config_docs_include_all_sections() {
 
     let all_keys = valid_user_config_keys();
 
-    // Hook keys from HookType enum + deprecated post-create (not in enum)
+    // Hook keys from HookType enum + removed post-create (kept in schema but rejected at load)
     let hook_keys: HashSet<String> = HookType::iter()
         .map(|h| h.to_string())
         .chain(std::iter::once("post-create".to_string()))
@@ -1218,7 +1273,7 @@ fn test_project_config_docs_include_all_sections() {
 
     let all_keys = valid_project_config_keys();
 
-    // Hook keys from HookType enum + deprecated post-create (not in enum)
+    // Hook keys from HookType enum + removed post-create (kept in schema but rejected at load)
     let hook_keys: HashSet<String> = HookType::iter()
         .map(|h| h.to_string())
         .chain(std::iter::once("post-create".to_string()))
@@ -1651,7 +1706,7 @@ fn sync_frontmatter_description(content: &str, description: &str) -> String {
     static DESC_PATTERN: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r#"(?m)^description\s*=\s*"[^"]*""#).unwrap());
 
-    let new_field = format!("description = \"{}\"", description.replace('"', "\\\""));
+    let new_field = format!(r#"description = "{}""#, description.replace('"', r#"\""#));
 
     // Check if we're in a TOML frontmatter block
     if !content.starts_with("+++\n") {
@@ -1730,16 +1785,17 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
 
         // Expand command placeholders (wt list -> terminal shortcode with snapshot output)
         let snapshots_dir = project_root.join("tests/snapshots");
-        let generated = match expand_command_placeholders(&generated, &snapshots_dir) {
-            Ok(expanded) => expanded,
-            Err(e) => {
-                errors.push(format!(
-                    "Failed to expand placeholders for '{}': {}",
-                    cmd, e
-                ));
-                continue;
-            }
-        };
+        let generated =
+            match expand_command_placeholders(&generated, &snapshots_dir, ExpandMode::Html) {
+                Ok(expanded) => expanded,
+                Err(e) => {
+                    errors.push(format!(
+                        "Failed to expand placeholders for '{}': {}",
+                        cmd, e
+                    ));
+                    continue;
+                }
+            };
 
         // Convert command reference code blocks to terminal shortcodes with HTML
         let generated = match convert_command_reference_to_html(&generated) {
@@ -1850,8 +1906,11 @@ static SPAN_CMD_TO_DOLLAR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"<span class="cmd">([^<]*)</span>"#).unwrap());
 
 /// Convert a `|||`-delimited cmd string (and optional body) into a ```bash block.
-/// Each cmd line gets `$ ` prefix; comment lines (`#`) and blank lines pass through.
-fn cmd_to_bash_block(cmd: &str, body: &str) -> String {
+/// When `with_prompt` is false, command lines pass through verbatim so the block
+/// is directly copy-pasteable. When true, command lines get a `$ ` prefix to
+/// distinguish them from interleaved output. Comment-only lines (`#`) and blank
+/// lines never get the prefix.
+fn cmd_to_bash_block(cmd: &str, body: &str, with_prompt: bool) -> String {
     let mut result = String::from("```bash\n");
     for line in cmd.split("|||") {
         if line.is_empty() {
@@ -1860,7 +1919,9 @@ fn cmd_to_bash_block(cmd: &str, body: &str) -> String {
             result.push_str(line);
             result.push('\n');
         } else {
-            result.push_str("$ ");
+            if with_prompt {
+                result.push_str("$ ");
+            }
             result.push_str(line);
             result.push('\n');
         }
@@ -1899,12 +1960,15 @@ fn transform_docs_for_skill(content: &str) -> String {
     // Strip frontmatter
     let content = ZOLA_FRONTMATTER_PATTERN.replace(content, "");
 
-    // Strip terminal shortcodes, converting cmd parameters back to `$ command` blocks.
-    // Commands joined by `|||` are split into separate lines.
+    // Strip terminal shortcodes, converting cmd parameters back to bash blocks.
+    // Commands joined by `|||` are split into separate lines. Block-form shortcodes
+    // with a body interleave command + output, so we keep the `$ ` prompt prefix
+    // there to distinguish the two; self-closing shortcodes are pure commands and
+    // get no prefix so the block stays copy-pasteable.
     let content = ZOLA_TERMINAL_BODY_PATTERN.replace_all(&content, |caps: &regex::Captures| {
         let body = caps.get(2).map_or("", |m| m.as_str());
         match caps.get(1) {
-            Some(cmd) => cmd_to_bash_block(cmd.as_str(), body),
+            Some(cmd) => cmd_to_bash_block(cmd.as_str(), body, !body.trim().is_empty()),
             None if body.contains(r#"<span class="cmd">"#) => {
                 // Old-style body shortcode with <span class="cmd"> — convert to $ lines
                 let converted = SPAN_CMD_TO_DOLLAR.replace_all(body, "$$ $1");
@@ -1915,9 +1979,9 @@ fn transform_docs_for_skill(content: &str) -> String {
             None => strip_html(body),
         }
     });
-    let content = ZOLA_TERMINAL_SELF_CLOSING_PATTERN
-        .replace_all(&content, |caps: &regex::Captures| {
-            cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "")
+    let content =
+        ZOLA_TERMINAL_SELF_CLOSING_PATTERN.replace_all(&content, |caps: &regex::Captures| {
+            cmd_to_bash_block(caps.get(1).map_or("", |m| m.as_str()), "", false)
         });
 
     // Strip rawcode shortcodes (keep content)
@@ -2107,6 +2171,10 @@ fn generate_skill_from_help(cmd: &str, project_root: &Path) -> Result<String, St
         ));
     }
 
+    // Expand command placeholders (e.g., <!-- wt list --> → plain text snapshot output)
+    let snapshots_dir = project_root.join("tests/snapshots");
+    let content = expand_command_placeholders(&content, &snapshots_dir, ExpandMode::Plain)?;
+
     Ok(finalize_skill_content(&content))
 }
 
@@ -2122,6 +2190,22 @@ fn finalize_skill_content(content: &str) -> String {
             format!("[{text}](https://worktrunk.dev/{page}/{anchor})")
         })
         .into_owned();
+
+    // Guardrail: ZOLA_LINK_PATTERN must catch every Zola internal link before
+    // we ship skill content. A stray `](@/...md...)` means the regex failed to
+    // match — usually because of unexpected chars in the link text — and the
+    // skill file would ship a dead link. Fail loudly instead.
+    if let Some(m) = UNTRANSFORMED_ZOLA_LINK_PATTERN.find(&content) {
+        let snippet_start = content[..m.start()].rfind('\n').map_or(0, |i| i + 1);
+        let snippet_end = content[m.end()..]
+            .find('\n')
+            .map_or(content.len(), |i| m.end() + i);
+        panic!(
+            "ZOLA_LINK_PATTERN failed to transform a Zola internal link in skill content — \
+             likely an unsupported character in the link text. Offending line:\n{}",
+            &content[snippet_start..snippet_end]
+        );
+    }
 
     // Remove "See also" section (just contains links to other pages)
     let content = remove_section(&content, "## See also");
@@ -2259,6 +2343,116 @@ fn test_command_pages_and_skill_files_are_in_sync() {
             all_files.join("\n  ")
         );
     }
+}
+
+/// The hand-authored `## Template variables` table in `src/cli/mod.rs` must
+/// match the variable constants in `src/config/expansion.rs`. Drift means the
+/// help docs lie about which vars hooks and aliases can reference.
+///
+/// Checks presence and group placement; descriptions stay free-form prose.
+#[test]
+fn test_template_variables_table_matches_constants() {
+    use std::collections::{BTreeMap, BTreeSet};
+    use strum::IntoEnumIterator;
+    use worktrunk::config::{
+        ACTIVE_VARS, ALIAS_ARGS_KEY, DEPRECATED_TEMPLATE_VARS, EXEC_BASE_VARS, REPO_VARS,
+        ValidationScope, vars_available_in,
+    };
+    use worktrunk::git::HookType;
+
+    let cli_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli/mod.rs");
+    let content = fs::read_to_string(&cli_path).unwrap();
+
+    // Carve out the `## Template variables` section: from its heading to the
+    // next `\n## ` (next level-2 heading). Anchored on the exact heading so an
+    // unrelated `## Template …` elsewhere can't be mistaken for it.
+    let heading = "\n## Template variables\n";
+    let start = content
+        .find(heading)
+        .expect("`## Template variables` heading missing in src/cli/mod.rs");
+    let rest = &content[start + heading.len()..];
+    let end = rest.find("\n## ").unwrap_or(rest.len());
+    let section = &rest[..end];
+
+    // Parse table rows: `| kind | `{{ name }}` | description |`. The kind
+    // column only appears on the first row of each group — subsequent rows
+    // leave it blank, inheriting the last-seen value.
+    let var_re = Regex::new(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_.<>]*)\s*\}\}").unwrap();
+    let mut actual: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut current_kind: Option<String> = None;
+    for line in section.lines() {
+        if !line.starts_with("| ") || line.starts_with("|---") {
+            continue;
+        }
+        let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+        // cells[0] and cells[last] are empty (leading/trailing `|`).
+        if cells.len() < 4 {
+            continue;
+        }
+        let kind_cell = cells[1];
+        let var_cell = cells[2];
+        // Skip the header row.
+        if kind_cell == "Kind" {
+            continue;
+        }
+        if !kind_cell.is_empty() {
+            current_kind = Some(kind_cell.to_string());
+        }
+        let Some(kind) = current_kind.as_ref() else {
+            continue;
+        };
+        if let Some(cap) = var_re.captures(var_cell) {
+            let name = cap[1].to_string();
+            actual.entry(kind.clone()).or_default().insert(name);
+        }
+    }
+
+    // Build expected groups from constants.
+    let mut expected: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    expected.insert(
+        "active".into(),
+        ACTIVE_VARS.iter().map(|s| s.to_string()).collect(),
+    );
+    expected.insert(
+        "repo".into(),
+        REPO_VARS.iter().map(|s| s.to_string()).collect(),
+    );
+    // `exec` in the docs = runtime infra vars plus `args` (hook+alias body
+    // forwarding). The `hook_type`/`hook_name` names aren't exported as a
+    // constant, so they're inlined here — anchoring them to the table row
+    // they appear in.
+    let mut exec: BTreeSet<String> = EXEC_BASE_VARS.iter().map(|s| s.to_string()).collect();
+    exec.insert("hook_type".into());
+    exec.insert("hook_name".into());
+    exec.insert(ALIAS_ARGS_KEY.to_string());
+    expected.insert("exec".into(), exec);
+    // `user` row has a single entry — the `{{ vars.<key> }}` placeholder.
+    expected.insert("user".into(), BTreeSet::from(["vars.<key>".to_string()]));
+    // `operation` = union of hook-type-specific extras. Derived through the
+    // public `vars_available_in` so this test doesn't depend on the private
+    // `hook_extras` helper.
+    let base: BTreeSet<&&str> = ACTIVE_VARS
+        .iter()
+        .chain(REPO_VARS.iter())
+        .chain(EXEC_BASE_VARS.iter())
+        .chain(DEPRECATED_TEMPLATE_VARS.iter())
+        .collect();
+    let infra_and_args: BTreeSet<&str> = ["hook_type", "hook_name", ALIAS_ARGS_KEY].into();
+    let mut operation: BTreeSet<String> = BTreeSet::new();
+    for ht in HookType::iter() {
+        for v in vars_available_in(ValidationScope::Hook(ht)) {
+            if !base.contains(&v) && !infra_and_args.contains(v) {
+                operation.insert(v.to_string());
+            }
+        }
+    }
+    expected.insert("operation".into(), operation);
+
+    assert_eq!(
+        actual, expected,
+        "`## Template variables` table in src/cli/mod.rs drifted from \
+         constants in src/config/expansion.rs. Update the table or the constants."
+    );
 }
 
 /// Verify that post_process_for_html() transforms the approval prompt code block

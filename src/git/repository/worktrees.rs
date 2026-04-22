@@ -35,8 +35,7 @@ impl Repository {
         // We detect this by checking whether the first worktree's path equals
         // git_common_dir (which never holds for normal repos, where git_common_dir
         // is `.git` inside the worktree). When matched, we correct it using
-        // repo_path(), which resolves the actual working directory via
-        // `git rev-parse --show-toplevel` (which does read core.worktree).
+        // repo_path(), which reads `core.worktree` from the bulk config map.
         //
         // We fix this here rather than at each call site because list_worktrees()
         // is the single point where worktree paths enter the system — all consumers

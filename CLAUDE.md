@@ -16,22 +16,13 @@ We are in **maturing** mode:
 - Breaking changes to external interfaces require justification (significant improvement, not just cleanup)
 - Prefer deprecation warnings over silent breaks
 - No Rust library compatibility concerns (this is a CLI tool only)
+- **MSRV policy: latest stable − 1** — bumped during weekly tend maintenance (see `running-tend` skill)
 
 **External interfaces to protect:**
 - **Config file format** (`wt.toml`, user config) — avoid breaking changes; provide migration guidance when necessary
-- **CLI flags and arguments** — use deprecation warnings; retain old flags for at least one release cycle
+- **CLI flags and arguments** — use deprecation warnings
 
-**Internal changes remain flexible:**
-- Codebase structure, dependencies, internal APIs
-- Human-readable output formatting and messages
-- Log file locations and formats
-
-When making decisions, prioritize:
-1. **Best technical solution** over backward compatibility
-2. **Clean design** over maintaining old patterns
-3. **Modern conventions** over legacy approaches
-
-Use deprecation warnings to get there smoothly when external interfaces must change.
+Everything else (internal APIs, output formatting, log locations) is flexible. Prefer the best technical solution; use deprecation warnings when external interfaces must change.
 
 ## Terminology
 
@@ -153,6 +144,8 @@ Help text renders in three contexts — check all three when editing:
 
 Because web docs concatenate everything, the `after_long_help` opener must not restate the `about`/`subtitle`. Start with new information — examples, context, or details not already in the definition. See `docs/CLAUDE.md` → "Command documentation structure" for detailed content principles and good/bad opener patterns.
 
+Link text must stand alone when the URL is stripped (terminal help drops the URL and keeps only the text). Use `` [`wt foo`](...) `` for commands — the backticks signal a `--help` lookup — or a descriptive phrase (`[hook template variables]`, `[Extending Worktrunk guide]`) for doc sections. Avoid bare labels that match the destination's heading (e.g., `See [Aliases](@/extending.md#aliases)` reads as a self-reference in terminal).
+
 After any doc changes, run tests to sync:
 
 ```bash
@@ -201,7 +194,7 @@ let output = Cmd::new("gh")
     .run()?;  // no context for standalone tools
 ```
 
-Never use `cmd.output()` directly. `Cmd` provides debug logging (`$ git status [worktree-name]`) and timing traces (`[wt-trace] cmd="..." dur_us=12300 ok=true`).
+Never use `cmd.output()` directly. `Cmd` provides debug logging (`$ git status [worktree-name]`) and timing traces (`[wt-trace] cmd="..." dur_us=12300 ok=true`). The `[wt-trace]` grammar is owned by `src/trace/emit.rs` — emit new trace records via that module rather than ad-hoc `log::debug!("[wt-trace] ...")` format strings.
 
 For git commands, prefer `Repository::run_command()` which wraps `Cmd` with worktree context.
 
@@ -215,17 +208,7 @@ let output = Cmd::new("git")
 
 ### Real-time Output Streaming
 
-Stream command output in real-time — never buffer:
-
-```rust
-// ✅ GOOD - streaming
-for line in reader.lines() {
-    println!("{}", line);
-    stdout().flush();
-}
-// ❌ BAD - buffering
-let lines: Vec<_> = reader.lines().collect();
-```
+Responsiveness is a priority — stream command output line-by-line rather than buffering.
 
 ### Structured Output Over Error Message Parsing
 
@@ -250,28 +233,36 @@ if msg.contains("no merge base") { return Ok(true); }
 
 | Tool | Fragile | Structured |
 |------|---------|------------|
-| `git diff` | `--shortstat` (localized) | `--numstat` |
+| `git diff` | `--stat` (localized) | `--numstat`, `--shortstat` (markers `(+)`/`(-)` are hardcoded) |
 | `git status` | default | `--porcelain=v2` |
 | `git merge-base` | error messages | exit codes |
 | `gh` / `glab` | default | `--json` |
 
 When no structured alternative exists, document the fragility inline.
 
-## Background Operation Logs
+### Signal Handling: Ctrl-C Cancels the Current Command
 
-All background logs are centralized in `.git/wt/logs/` (main worktree's git directory):
+**Policy:** when a child process exits from a signal (SIGINT, SIGTERM), every loop in the foreground execution path MUST abort rather than continue to the next iteration. This applies to worktree loops (`wt step for-each`), hook pipelines, alias steps, concurrent groups, and any future code that runs multiple child processes in sequence.
 
-- **Post-start commands**: `{branch}-{source}-post-start-{command}.log` (source: `user` or `project`)
-- **Background removal**: `{branch}-remove.log`
+**Why:** wt installs a `signal_hook` SIGINT/SIGTERM handler so it can forward signals to child process groups before exiting cleanly. As a side effect, wt itself does not die from the user's Ctrl-C — only the current child does. Without this policy, a single Ctrl-C against `wt merge` (or any multi-step command) would let wt charge through the remaining hook steps, with `FailureStrategy::Warn` silently swallowing each interrupt. Users expect Ctrl-C to stop the command; treating signal-derived exits as ordinary per-iteration failures violates that.
 
-Examples: `feature-user-post-start-npm.log`, `feature-project-post-start-build.log`, `bugfix-remove.log`
+**Implementation:**
 
-### Log Behavior
+- Signal-derived child exits surface as `WorktrunkError::ChildProcessExited { signal: Some(sig), .. }`. The `signal` field is the structured channel — never sniff `code >= 128` or parse error messages.
+- Use `worktrunk::git::interrupt_exit_code(&err)` to detect them. When it returns `Some(exit_code)`, propagate via `WorktrunkError::AlreadyDisplayed { exit_code }` (`128 + sig` by convention — 130 for SIGINT, 143 for SIGTERM) and break the loop.
+- The check happens **before** any `FailureStrategy` branch — Warn must NOT swallow signal-derived errors.
+- `handle_command_error` in `src/commands/command_executor.rs` enforces the policy for hook and alias pipelines (foreground and concurrent groups). `for_each.rs` enforces it directly for the worktree loop.
 
-- **Centralized**: All logs go to main worktree's `.git/wt/logs/`, shared across all worktrees
-- **Overwrites**: Same operation on same branch overwrites previous log (prevents accumulation)
-- **Not tracked**: Logs are in `.git/` directory, which git doesn't track
-- **Manual cleanup**: Stale logs from deleted branches persist but are bounded by branch count
+When adding a new code path that loops over child processes, run `interrupt_exit_code` on per-iteration errors and break.
+
+## Hook Output Logs
+
+Hook output logs are centralized in `.git/wt/logs/` (main worktree's git directory). Per-branch logs live in subtrees; same operation on same branch overwrites the previous log.
+
+- **Background hooks**: `{branch}/{source}/{hook-type}/{name}.log` (source: `user` or `project`)
+- **Background removal**: `{branch}/internal/remove.log`
+
+Top-level *files* are shared logs (`commands.jsonl*`, `trace.log`, `output.log`, `diagnostic.md`); top-level *directories* are per-branch log trees. Branch and hook names are sanitized via `sanitize_for_filename`: already-safe names pass through unchanged; names with invalid characters have them replaced with `-` and a short collision-avoidance hash appended.
 
 ## Coverage
 
@@ -281,6 +272,8 @@ Examples: `feature-user-post-start-npm.log`, `feature-project-post-start-build.l
 2. If you believe the failure is a false positive, ask the user before merging
 
 The `codecov/patch` CI check enforces coverage on changed lines — respond to failures by writing tests, not by ignoring them. If code is unused, remove it. This includes specialized error handlers for rare cases when falling through to a more general handler is sufficient.
+
+**Coverage includes all feature flags.** Both CI (`code-coverage` job) and local (`task coverage`) coverage runs pass `--features shell-integration-tests`. Code behind this feature flag is compiled and measured — do not dismiss codecov failures by claiming the feature is not enabled during coverage.
 
 ### Investigating codecov/patch Failures
 
@@ -294,6 +287,10 @@ cargo llvm-cov report --show-missing-lines | grep <file>   # find uncovered line
 For each uncovered function/method, either write a test or document why it's intentionally untested. Integration tests (via `assert_cmd_snapshot!`) do capture subprocess coverage.
 
 **Renames and moves:** File renames (`git mv`) can trigger codecov/patch failures on pre-existing uncovered lines — codecov treats changed lines in renamed files as part of the patch. If the uncovered lines are unchanged and existed before the rename, this is a false positive. Verify by checking coverage on `main` for the same lines under the old path.
+
+### "N functions have mismatched data" Warning
+
+`cargo llvm-cov` emits this warning (typically 5–20 functions) because it merges profiles from multiple compilation targets with minor codegen differences. Expected, harmless, no suppression flag exists. See [LLVM #97574](https://github.com/llvm/llvm-project/issues/97574).
 
 ## Benchmarks
 
@@ -340,11 +337,26 @@ fn validate_config() { ... }
 
 ### System Docstrings
 
-Complex systems (multi-step workflows, state machines, coordination logic) should have a module-level docstring that serves as a spec — purpose, key decisions, behavioral contracts, and invariants. Keep the docstring current as the module evolves.
+Complex systems (multi-step workflows, state machines, coordination logic) should have a module-level docstring that serves as a spec — purpose, key decisions, behavioral contracts, and invariants. Keep the docstring current as the module evolves. Modules with cached state, cross-module coordination, or non-obvious lifetime/invalidation rules qualify. See `commands/list/collect/mod.rs` for an exemplar.
 
 ### No Test Code in Library Code
 
 Never use `#[cfg(test)]` to add test-only convenience methods to library code. Tests should call the real API directly. If tests need helpers, define them in the test module.
+
+### Multiline String Literals
+
+Use plain multiline string literals with real embedded newlines — what you see in the source is exactly what ends up in the string.
+
+```rust
+// ✅ Literal multiline string
+const EXPECTING: &str = r#"a command in one of these forms:
+- a string: "cargo build"
+- a named table: { build = "cargo build" }
+- a pipeline list: ["cargo build", "cargo test"]
+run `wt hook --help` for details"#;
+```
+
+**Don't** use `\` line continuation — it strips following whitespace silently, so diffs show phantom indented blocks. **Don't** use `concat!()` — it splits the string across literals for no benefit. Use raw strings (`r#"..."#`) to avoid escaping embedded `"`, and place long constants at module level so continuation lines start at column 0.
 
 ## Error Handling
 
@@ -367,9 +379,7 @@ if worktree.is_dirty() {
 
 - **Use `bail!`** for business logic errors (dirty worktree, missing branch, invalid state)
 - **Use `.context()`** for wrapping I/O and external command failures
-- **Never `.expect()` or `.unwrap()` in functions returning `Result`** — use `?`, `bail!`, or return an error. Panics in fallible code bypass error handling.
-- **Don't `logger.error` before raising** — include context in the error message itself
-- **Let errors propagate** — don't catch and re-raise without adding information
+- **Never `.expect()` or `.unwrap()` in functions returning `Result`** — use `?`, `bail!`, or return an error
 
 ## Config Deprecation
 
@@ -428,20 +438,7 @@ Function prefixes signal return behavior and side effects.
 | `fetch_*` | `Result<T>` | Network I/O | Errors on failure | `fetch_pr_info()`, `fetch_mr_info()` |
 | `load_*` | `Result<T>` | File I/O | Errors on failure | `load_project_config()`, `load_template()` |
 
-**When to use each:**
-
-- **Bare nouns** — Value may not exist and that's fine (Rust stdlib convention)
-- **`set_*`** — Write state to storage
-- **`require_*`** — Value must exist for operation to proceed
-- **`fetch_*`** — Retrieve from external service (network)
-- **`load_*`** — Read from filesystem
-
-**Anti-patterns:**
-
-- Don't use bare nouns if the function makes network calls (use `fetch_*`)
-- Don't use bare nouns if absence is an error (use `require_*`)
-- Don't use `load_*` for computed values (use bare nouns)
-- Don't use `get_*` prefix — use bare nouns instead (Rust convention)
+Don't use `get_*` — bare nouns follow Rust stdlib convention.
 
 ## Repository Caching
 

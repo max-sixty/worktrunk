@@ -20,6 +20,7 @@ info:
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     NO_COLOR: ""
+    OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -33,6 +34,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -42,9 +44,9 @@ exit_code: 0
 ----- stdout -----
   [1mBranch[0m     [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m     [1mmain…±[0m  [1mRemote⇅[0m  [1mCI[0m  [1mPath[0m               [1mCommit[0m    [1mAge[0m   [1mMessage
 @ main          [31m⚑[39m[2m^[22m[2m|[22m                                      [2m|[0m         .                  [2m05a4a45d[0m  [2m16h[0m   [2mInitial commit
-+ feature-a                                                        ../repo.feature-a  [2m1b87d473[0m  [2m16h[0m   [2mAdd feature-a file
-+ feature-b                                                        ../repo.feature-b  [2mf62940fc[0m  [2m16h[0m   [2mAdd feature-b file
-+ feature-c                                                        ../repo.feature-c  [2m345c7c93[0m  [2m16h[0m   [2mAdd feature-c file
++ [2mfeature-a[0m      [2m_[22m                                                 [2m../repo.feature-a[0m  [2m1b87d473[0m  [2m16h[0m   [2mAdd feature-a file
++ [2mfeature-b[0m      [2m_[22m                                                 [2m../repo.feature-b[0m  [2mf62940fc[0m  [2m16h[0m   [2mAdd feature-b file
++ [2mfeature-c[0m      [2m_[22m                                                 [2m../repo.feature-c[0m  [2m345c7c93[0m  [2m16h[0m   [2mAdd feature-c file
 
 [2m○[22m [2mShowing 4 worktrees
 

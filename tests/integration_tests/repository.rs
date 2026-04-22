@@ -3,9 +3,44 @@
 use std::fs;
 
 use worktrunk::git::Repository;
-use worktrunk::shell_exec::Cmd;
 
-use crate::common::TestRepo;
+use crate::common::{BareRepoTest, TestRepo};
+
+// =============================================================================
+// is_bare() tests
+// =============================================================================
+
+/// When `core.bare` is unset (e.g., repos cloned by Eclipse/EGit), `is_bare()`
+/// must return `false`. Before the fix for #1939, `git rev-parse
+/// --is-bare-repository` was used, which infers `true` from inside `.git/`
+/// when `core.bare` is absent.
+#[test]
+fn test_is_bare_returns_false_when_core_bare_unset() {
+    let repo = TestRepo::new();
+
+    // Simulate a repo where core.bare was never written (e.g., Eclipse/EGit)
+    repo.run_git(&["config", "--unset", "core.bare"]);
+
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert!(
+        !repository.is_bare().unwrap(),
+        "repo with unset core.bare should not be detected as bare"
+    );
+}
+
+#[test]
+fn test_is_bare_returns_false_for_normal_repo() {
+    let repo = TestRepo::new();
+    let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert!(!repository.is_bare().unwrap());
+}
+
+#[test]
+fn test_is_bare_returns_true_for_bare_repo() {
+    let test = BareRepoTest::new();
+    let repository = Repository::at(test.bare_repo_path().to_path_buf()).unwrap();
+    assert!(repository.is_bare().unwrap());
+}
 
 // =============================================================================
 // worktree_state() tests - simulate various git operation states
@@ -140,7 +175,7 @@ fn test_available_branches_all_have_worktrees() {
 
 #[test]
 fn test_available_branches_some_without_worktrees() {
-    let repo = TestRepo::new();
+    let repo = TestRepo::with_initial_commit();
     // Create a branch without a worktree
     repo.git_command()
         .args(["branch", "orphan-branch"])
@@ -162,7 +197,7 @@ fn test_available_branches_some_without_worktrees() {
 
 #[test]
 fn test_all_branches() {
-    let repo = TestRepo::new();
+    let repo = TestRepo::with_initial_commit();
     // Create some branches
     repo.git_command().args(["branch", "alpha"]).run().unwrap();
     repo.git_command().args(["branch", "beta"]).run().unwrap();
@@ -181,7 +216,7 @@ fn test_all_branches() {
 
 #[test]
 fn test_project_identifier_https() {
-    let mut repo = TestRepo::new();
+    let mut repo = TestRepo::with_initial_commit();
     repo.setup_remote("main");
     // Override the remote URL to https format
     repo.git_command()
@@ -201,7 +236,7 @@ fn test_project_identifier_https() {
 
 #[test]
 fn test_project_identifier_http() {
-    let mut repo = TestRepo::new();
+    let mut repo = TestRepo::with_initial_commit();
     repo.setup_remote("main");
     // Override the remote URL to http format (no SSL)
     repo.git_command()
@@ -221,7 +256,7 @@ fn test_project_identifier_http() {
 
 #[test]
 fn test_project_identifier_ssh_colon() {
-    let mut repo = TestRepo::new();
+    let mut repo = TestRepo::with_initial_commit();
     repo.setup_remote("main");
     // Override the remote URL to SSH format with colon
     repo.git_command()
@@ -241,7 +276,7 @@ fn test_project_identifier_ssh_colon() {
 
 #[test]
 fn test_project_identifier_ssh_protocol() {
-    let mut repo = TestRepo::new();
+    let mut repo = TestRepo::with_initial_commit();
     repo.setup_remote("main");
     // Override the remote URL to ssh:// format
     repo.git_command()
@@ -262,7 +297,7 @@ fn test_project_identifier_ssh_protocol() {
 
 #[test]
 fn test_project_identifier_ssh_protocol_with_port() {
-    let mut repo = TestRepo::new();
+    let mut repo = TestRepo::with_initial_commit();
     repo.setup_remote("main");
     // Override the remote URL to ssh:// format with port
     repo.git_command()
@@ -283,9 +318,7 @@ fn test_project_identifier_ssh_protocol_with_port() {
 
 #[test]
 fn test_project_identifier_no_remote_fallback() {
-    let repo = TestRepo::new();
-    // Remove origin (fixture has it) for this no-remote test
-    repo.run_git(&["remote", "remove", "origin"]);
+    let repo = TestRepo::with_initial_commit();
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
     let id = repository.project_identifier().unwrap();
@@ -380,6 +413,252 @@ fn test_clear_hint_propagates_error_on_corrupt_config() {
 }
 
 // =============================================================================
+// Bulk config cache coverage
+// =============================================================================
+
+/// `mark_hint_shown` → `has_shown_hint` → `list_shown_hints` → `clear_hint`
+/// exercises the full write-then-read round trip through the bulk config
+/// cache, including coherent in-memory updates.
+#[test]
+fn test_hint_roundtrip_through_bulk_cache() {
+    let repo = TestRepo::new();
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+
+    // Populate bulk cache before the write so set/unset hit the in-memory
+    // update paths.
+    assert!(!r.is_bare().unwrap());
+
+    r.mark_hint_shown("zebra").unwrap();
+    r.mark_hint_shown("alpha").unwrap();
+    assert!(r.has_shown_hint("zebra"));
+    assert!(r.has_shown_hint("alpha"));
+    assert!(!r.has_shown_hint("unknown"));
+
+    // Deterministic alphabetical ordering (bulk cache is a HashMap — order
+    // must be explicitly sorted for display).
+    let hints = r.list_shown_hints();
+    assert_eq!(hints, vec!["alpha".to_string(), "zebra".to_string()]);
+
+    // Clear one → coherent in-memory removal.
+    assert!(r.clear_hint("alpha").unwrap());
+    assert!(!r.has_shown_hint("alpha"));
+    assert!(r.has_shown_hint("zebra"));
+    assert_eq!(r.list_shown_hints(), vec!["zebra".to_string()]);
+
+    // Clear missing → Ok(false).
+    assert!(!r.clear_hint("never-set").unwrap());
+}
+
+/// `primary_remote()` honours `checkout.defaultRemote` when it points at
+/// a configured remote — covers the early-return branch in the new bulk
+/// lookup.
+#[test]
+fn test_primary_remote_honours_checkout_default_remote() {
+    let repo = TestRepo::new();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/max-sixty/worktrunk.git",
+    ]);
+    repo.run_git(&[
+        "remote",
+        "add",
+        "upstream",
+        "https://github.com/max-sixty/worktrunk.git",
+    ]);
+    repo.run_git(&["config", "checkout.defaultRemote", "upstream"]);
+
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert_eq!(r.primary_remote().unwrap(), "upstream");
+    // With no `checkout.defaultRemote`, falls back to the first remote
+    // with a URL (the filter-out-phantom-entries path).
+    repo.run_git(&["config", "--unset", "checkout.defaultRemote"]);
+    let r2 = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert_eq!(r2.primary_remote().unwrap(), "origin");
+}
+
+/// `all_remote_urls()` enumerates every configured remote via the bulk
+/// map, filtering out phantom entries (keys with `remote.X.*` that have
+/// no `.url`).
+#[test]
+fn test_all_remote_urls_filters_phantom_remotes() {
+    let repo = TestRepo::new();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/max-sixty/worktrunk.git",
+    ]);
+    // A phantom entry: remote.X.prunetags set but no URL → should not appear.
+    repo.run_git(&["config", "remote.phantom.prunetags", "true"]);
+
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let urls = r.all_remote_urls();
+    assert_eq!(urls.len(), 1, "expected only origin, got {urls:?}");
+    assert_eq!(urls[0].0, "origin");
+}
+
+/// `unset_config_value` cleanly removes in-memory state after the bulk
+/// cache is populated. Guards against a regression where the in-memory
+/// remove used the literal key instead of the canonical form.
+#[test]
+fn test_unset_config_removes_from_bulk_cache() {
+    let repo = TestRepo::new();
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+
+    // Populate cache, then write a mixed-case variable key (canonical
+    // variable name is lowercased by git).
+    let _ = r.is_bare();
+    r.set_config("branch.main.pushRemote", "origin").unwrap();
+    assert_eq!(
+        r.config_value("branch.main.pushRemote").unwrap(),
+        Some("origin".to_string())
+    );
+
+    // Unset removes it — subsequent reads return None.
+    assert!(r.unset_config("branch.main.pushRemote").unwrap());
+    assert_eq!(r.config_value("branch.main.pushRemote").unwrap(), None);
+
+    // Unsetting again → Ok(false).
+    assert!(!r.unset_config("branch.main.pushRemote").unwrap());
+}
+
+/// `set_default_branch` → `clear_default_branch_cache` round trip,
+/// covering the specialized default-branch writers that route through
+/// `set_config_value` / `unset_config_value`.
+#[test]
+fn test_set_and_clear_default_branch() {
+    let repo = TestRepo::new();
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    r.set_default_branch("main").unwrap();
+    assert_eq!(r.default_branch(), Some("main".to_string()));
+
+    // Clearing an existing cache returns true; a second clear returns false.
+    let r2 = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert!(r2.clear_default_branch_cache().unwrap());
+    assert!(!r2.clear_default_branch_cache().unwrap());
+}
+
+/// `switch_previous` / `set_switch_previous` round trip. Exercises
+/// `worktrunk.history` read + write through the bulk-config helpers.
+#[test]
+fn test_switch_previous_roundtrip() {
+    let repo = TestRepo::new();
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    // Populate the cache first to hit the in-memory update branch.
+    let _ = r.is_bare();
+    assert_eq!(r.switch_previous(), None);
+    r.set_switch_previous(Some("feature-a")).unwrap();
+    assert_eq!(r.switch_previous(), Some("feature-a".to_string()));
+    // `None` is a no-op — doesn't clear.
+    r.set_switch_previous(None).unwrap();
+    assert_eq!(r.switch_previous(), Some("feature-a".to_string()));
+}
+
+/// `primary_remote_url` composes `primary_remote` + `remote_url`,
+/// returning the raw URL for the primary remote. `primary_remote_parsed_url`
+/// threads that through `GitRemoteUrl::parse`.
+#[test]
+fn test_primary_remote_url_composition() {
+    let repo = TestRepo::new();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/max-sixty/worktrunk.git",
+    ]);
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert_eq!(
+        r.primary_remote_url(),
+        Some("https://github.com/max-sixty/worktrunk.git".to_string())
+    );
+    let parsed = r.primary_remote_parsed_url().expect("parses");
+    assert_eq!(parsed.owner(), "max-sixty");
+    assert_eq!(parsed.repo(), "worktrunk");
+
+    // Without a remote, both return None.
+    let bare = TestRepo::new();
+    let r2 = Repository::at(bare.root_path().to_path_buf()).unwrap();
+    assert_eq!(r2.primary_remote_url(), None);
+    assert!(r2.primary_remote_parsed_url().is_none());
+}
+
+/// `remote_url` for a configured remote round-trips; unknown remotes
+/// return `None`. Covers the `.filter(|url| !url.is_empty())` branch
+/// via the happy-path URL read.
+#[test]
+fn test_remote_url_known_and_unknown() {
+    let repo = TestRepo::new();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "git@github.com:max-sixty/worktrunk.git",
+    ]);
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert_eq!(
+        r.remote_url("origin"),
+        Some("git@github.com:max-sixty/worktrunk.git".to_string())
+    );
+    assert_eq!(r.remote_url("nonexistent"), None);
+}
+
+/// `primary_remote()` errors when no remotes are configured — covers
+/// the `ok_or_else(|| anyhow!("No remotes configured"))` final arm.
+#[test]
+fn test_primary_remote_errors_with_no_remotes() {
+    let repo = TestRepo::new(); // TestRepo::new() ships without a remote.
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let err = r.primary_remote().unwrap_err();
+    assert!(
+        err.to_string().contains("No remotes configured"),
+        "unexpected error: {err}"
+    );
+}
+
+/// `require_target_ref(None)` surfaces `StaleDefaultBranch` when the
+/// persisted default branch no longer resolves locally. Covers the
+/// `target.is_none()` arm added alongside `require_target_branch` for
+/// commands like `wt step commit` that accept any commit-ish target.
+#[test]
+fn test_require_target_ref_surfaces_stale_default_branch() {
+    use worktrunk::git::GitError;
+    let repo = TestRepo::new();
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    r.set_config("worktrunk.default-branch", "nonexistent-branch")
+        .unwrap();
+
+    // Fresh Repository so the OnceCell re-reads the stale value.
+    let r2 = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    let err = r2.require_target_ref(None).unwrap_err();
+    let gerr = err.downcast_ref::<GitError>().expect("GitError");
+    assert!(
+        matches!(gerr, GitError::StaleDefaultBranch { branch } if branch == "nonexistent-branch"),
+        "expected StaleDefaultBranch, got {gerr:?}"
+    );
+}
+
+/// `unset_config_value` propagates errors from corrupt git config
+/// rather than returning `Ok(false)` (the exit-code-5 "key absent" case).
+#[test]
+fn test_unset_config_propagates_error_on_corrupt_config() {
+    let repo = TestRepo::new();
+    let root = repo.root_path().to_path_buf();
+    let r = Repository::at(root.clone()).unwrap();
+    r.set_default_branch("main").unwrap();
+
+    // Corrupt the git config so subsequent writes fail with a real error
+    // (not the benign exit-code-5 that maps to Ok(false)).
+    fs::write(root.join(".git/config"), "[invalid section\n").unwrap();
+    let err = r.unset_config("worktrunk.default-branch");
+    assert!(
+        err.is_err(),
+        "unset_config should propagate corrupt-config errors: {err:?}"
+    );
+}
+
+// =============================================================================
 // Bug #1: Tag/branch name collision tests
 // =============================================================================
 
@@ -391,9 +670,9 @@ fn test_clear_hint_propagates_error_on_corrupt_config() {
 /// to avoid this ambiguity.
 #[test]
 fn test_tag_branch_name_collision_is_ancestor() {
-    let repo = TestRepo::new();
+    let repo = TestRepo::with_initial_commit();
 
-    // Create initial commit on main (already exists from TestRepo::new())
+    // Initial commit already exists from with_initial_commit()
     let main_sha = repo.git_output(&["rev-parse", "HEAD"]);
 
     // Create feature branch with additional commits
@@ -428,7 +707,7 @@ fn test_tag_branch_name_collision_is_ancestor() {
 /// when they share the same name but point to different commits.
 #[test]
 fn test_tag_branch_name_collision_same_commit() {
-    let repo = TestRepo::new();
+    let repo = TestRepo::with_initial_commit();
 
     // Get main's SHA
     let main_sha = repo.git_output(&["rev-parse", "HEAD"]);
@@ -459,7 +738,7 @@ fn test_tag_branch_name_collision_same_commit() {
 /// when they share the same name but point to commits with different trees.
 #[test]
 fn test_tag_branch_name_collision_trees_match() {
-    let repo = TestRepo::new();
+    let repo = TestRepo::with_initial_commit();
 
     // Get main's SHA
     let main_sha = repo.git_output(&["rev-parse", "HEAD"]);
@@ -508,7 +787,7 @@ fn test_integration_functions_handle_head() {
 /// Test that integration functions correctly handle commit SHAs.
 #[test]
 fn test_integration_functions_handle_shas() {
-    let repo = TestRepo::new();
+    let repo = TestRepo::with_initial_commit();
 
     let main_sha = repo.git_output(&["rev-parse", "HEAD"]);
 
@@ -532,7 +811,7 @@ fn test_integration_functions_handle_shas() {
 /// Test that integration functions correctly handle remote refs.
 #[test]
 fn test_integration_functions_handle_remote_refs() {
-    let mut repo = TestRepo::new();
+    let mut repo = TestRepo::with_initial_commit();
     repo.setup_remote("main");
 
     let repository = Repository::at(repo.root_path().to_path_buf()).unwrap();
@@ -591,7 +870,7 @@ fn test_has_merge_conflicts_clean_vs_conflicting() {
 /// since unrelated histories can't be cleanly merged.
 #[test]
 fn test_has_merge_conflicts_orphan_branch() {
-    let repo = TestRepo::new();
+    let repo = TestRepo::with_initial_commit();
 
     repo.run_git(&["checkout", "--orphan", "orphan"]);
     repo.run_git(&["rm", "-rf", "."]);
@@ -610,7 +889,7 @@ fn test_has_merge_conflicts_orphan_branch() {
 /// would_merge_add=true, is_patch_id_match=false.
 #[test]
 fn test_merge_integration_probe_orphan_branch() {
-    let repo = TestRepo::new();
+    let repo = TestRepo::with_initial_commit();
 
     repo.run_git(&["checkout", "--orphan", "orphan"]);
     repo.run_git(&["rm", "-rf", "."]);
@@ -635,7 +914,7 @@ fn test_merge_integration_probe_orphan_branch() {
 /// (clean merge that doesn't change target tree).
 #[test]
 fn test_merge_integration_probe_already_integrated() {
-    let repo = TestRepo::new();
+    let repo = TestRepo::with_initial_commit();
 
     // Create feature, then merge it into main via fast-forward
     repo.run_git(&["checkout", "-b", "feature"]);
@@ -666,86 +945,33 @@ fn test_merge_integration_probe_already_integrated() {
 /// falling back to parent of git_common_dir for normal repos.
 #[test]
 fn test_repo_path_in_submodule() {
-    use tempfile::TempDir;
+    // Create parent and submodule-origin repos
+    let parent = TestRepo::new();
+    fs::write(parent.path().join("README.md"), "# Parent").unwrap();
+    parent.run_git(&["add", "."]);
+    parent.run_git(&["commit", "-m", "Initial commit"]);
 
-    // Create parent repository
-    let parent_temp = TempDir::new().unwrap();
-    let parent_path = parent_temp.path().join("parent");
-    fs::create_dir(&parent_path).unwrap();
-
-    // Initialize parent repo with git config
-    Cmd::new("git")
-        .args(["init", "-q"])
-        .current_dir(&parent_path)
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .run()
-        .unwrap();
-
-    // Configure git user for commits
-    let parent_repo = Repository::at(&parent_path).unwrap();
-    parent_repo
-        .run_command(&["config", "user.email", "test@example.com"])
-        .unwrap();
-    parent_repo
-        .run_command(&["config", "user.name", "Test User"])
-        .unwrap();
-
-    // Create initial commit in parent
-    fs::write(parent_path.join("README.md"), "# Parent").unwrap();
-    parent_repo.run_command(&["add", "."]).unwrap();
-    parent_repo
-        .run_command(&["commit", "-m", "Initial commit"])
-        .unwrap();
-
-    // Create submodule repository (as a separate repo first)
-    let sub_temp = TempDir::new().unwrap();
-    let sub_origin_path = sub_temp.path().join("submodule-origin");
-    fs::create_dir(&sub_origin_path).unwrap();
-
-    Cmd::new("git")
-        .args(["init", "-q"])
-        .current_dir(&sub_origin_path)
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .run()
-        .unwrap();
-
-    // Configure git user for submodule
-    let sub_repo = Repository::at(&sub_origin_path).unwrap();
-    sub_repo
-        .run_command(&["config", "user.email", "test@example.com"])
-        .unwrap();
-    sub_repo
-        .run_command(&["config", "user.name", "Test User"])
-        .unwrap();
-
-    // Create initial commit in submodule origin
-    fs::write(sub_origin_path.join("README.md"), "# Submodule").unwrap();
-    sub_repo.run_command(&["add", "."]).unwrap();
-    sub_repo
-        .run_command(&["commit", "-m", "Submodule initial commit"])
-        .unwrap();
+    let sub_origin = TestRepo::new();
+    fs::write(sub_origin.path().join("README.md"), "# Submodule").unwrap();
+    sub_origin.run_git(&["add", "."]);
+    sub_origin.run_git(&["commit", "-m", "Submodule initial commit"]);
 
     // Add submodule to parent (using local path directly, with file transport allowed)
-    parent_repo
+    parent
+        .repo
         .run_command(&[
             "-c",
             "protocol.file.allow=always",
             "submodule",
             "add",
-            sub_origin_path.to_str().unwrap(),
+            sub_origin.path().to_str().unwrap(),
             "sub",
         ])
         .unwrap();
-
-    // Commit the submodule addition
-    parent_repo
-        .run_command(&["commit", "-m", "Add submodule"])
-        .unwrap();
+    parent.run_git(&["commit", "-m", "Add submodule"]);
 
     // Now test: create Repository from inside the submodule
-    let submodule_path = parent_path.join("sub");
+    let submodule_path = parent.path().join("sub");
     assert!(
         submodule_path.exists(),
         "Submodule path should exist: {:?}",
@@ -820,7 +1046,7 @@ fn test_repo_path_in_submodule() {
 
 #[test]
 fn test_branch_returns_none_for_detached_head() {
-    let repo = TestRepo::new();
+    let repo = TestRepo::with_initial_commit();
     let root = repo.root_path().to_path_buf();
 
     // Detach HEAD by checking out a specific commit

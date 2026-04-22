@@ -26,12 +26,13 @@ user-lint = "pre-commit run --all-files"
 
     // Create project config with hooks
     repo.write_project_config(
-        r#"[post-start]
-deps = "npm install"
+        r#"pre-merge = [
+    {build = "cargo build"},
+    {test = "cargo test"},
+]
 
-[pre-merge]
-build = "cargo build"
-test = "cargo test"
+[post-start]
+deps = "npm install"
 "#,
     );
     repo.commit("Add project config");
@@ -82,12 +83,13 @@ fn setup_all_hook_types(repo: &TestRepo, temp_home: &TempDir) {
     .unwrap();
 
     repo.write_project_config(
-        r#"[post-start]
-deps = "npm install"
+        r#"pre-merge = [
+    {build = "cargo build"},
+    {test = "cargo test"},
+]
 
-[pre-merge]
-build = "cargo build"
-test = "cargo test"
+[post-start]
+deps = "npm install"
 
 [post-merge]
 deploy = "scripts/deploy.sh"
@@ -208,9 +210,10 @@ approved-commands = ["cargo build"]
 
     // Create project config with approved and unapproved hooks
     repo.write_project_config(
-        r#"[pre-merge]
-build = "cargo build"
-test = "cargo test"
+        r#"pre-merge = [
+    {build = "cargo build"},
+    {test = "cargo test"},
+]
 "#,
     );
     repo.commit("Add project config");
@@ -310,73 +313,6 @@ lint = "pre-commit run"
     });
 }
 
-/// Test `wt hook clear` when no approvals exist for the project.
-#[rstest]
-fn test_hook_clear_no_approvals(repo: TestRepo, temp_home: TempDir) {
-    // Remove origin so project_identifier uses full canonical path
-    repo.run_git(&["remote", "remove", "origin"]);
-
-    // Create user config without any project approvals
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    let config_path = global_config_dir.join("config.toml");
-    fs::write(
-        &config_path,
-        r#"worktree-path = "../{{ repo }}.{{ branch }}"
-"#,
-    )
-    .unwrap();
-
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
-        cmd.args(["hook", "approvals", "clear"])
-            .current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-/// Test `wt hook clear` when project has approvals to clear.
-#[rstest]
-fn test_hook_clear_with_approvals(repo: TestRepo, temp_home: TempDir) {
-    // Remove origin so project_identifier uses full canonical path
-    repo.run_git(&["remote", "remove", "origin"]);
-
-    // Get the canonical path for the project identifier (escaped for TOML)
-    let project_id_str = repo.project_id();
-
-    // Write approved commands as a sibling config.toml of the test approvals path.
-    // The fallback reads config.toml from the same directory as approvals.toml.
-    let config_path = repo.test_approvals_path().with_file_name("config.toml");
-    fs::write(
-        &config_path,
-        format!(
-            r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
-
-[projects.'{project_id_str}']
-approved-commands = ["cargo build", "cargo test", "npm install"]
-"#
-        ),
-    )
-    .unwrap();
-
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
-        cmd.args(["hook", "approvals", "clear"])
-            .current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
 /// Test that syntax errors in templates are shown (not swallowed) with --expanded.
 #[rstest]
 fn test_hook_show_expanded_syntax_error(repo: TestRepo, temp_home: TempDir) {
@@ -414,7 +350,7 @@ broken = "echo {{ branch"
 }
 
 /// Test that undefined variable errors show both template and error with --expanded.
-/// The `base` variable is only defined for post-create hooks, so using it in pre-commit
+/// The `base` variable is only defined for pre-start hooks, so using it in pre-commit
 /// will trigger an undefined variable error that shows both the error and raw template.
 #[rstest]
 fn test_hook_show_expanded_undefined_var(repo: TestRepo, temp_home: TempDir) {
@@ -428,7 +364,7 @@ fn test_hook_show_expanded_undefined_var(repo: TestRepo, temp_home: TempDir) {
     )
     .unwrap();
 
-    // Create project config with `base` variable (only defined for post-create hooks)
+    // Create project config with `base` variable (only defined for pre-start hooks)
     // In pre-commit context, this will be undefined and should show error + template
     repo.write_project_config(
         r#"[pre-commit]
