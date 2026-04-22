@@ -34,8 +34,11 @@
 //! doesn't strictly need — only timestamps are required for sort order. It
 //! rides along for free: git has to resolve each commit object anyway, and
 //! the subject bytes add no measurable latency to the round trip. The
-//! subjects populate `cache.commit_details` so the post-skeleton
-//! `CommitDetailsTask` is a pure cache hit instead of N `git log -1` forks.
+//! full `(timestamp, subject)` map is handed to the post-skeleton loop that
+//! populates `ListItem.commit` directly — no per-SHA `git log -1` fork path.
+//! When the batch fails (e.g., a listed SHA was deleted mid-run), the
+//! failure is surfaced once and Age/Message cells render placeholders for
+//! that run.
 //!
 //! **Non-git operations (negligible latency):**
 //! - Path canonicalization — detect current worktree
@@ -65,6 +68,7 @@
 //! │    ├─ integration_target()                  (10ms)
 //! │    ├─ start_fsmonitor_daemon × N worktrees  (6ms each, all parallel)
 //! │  )                                          // ~10ms total (max of all spawns)
+//! ├─ populate ListItem.commit from cache        (cache-hit lookups, sub-ms)
 //! Worker thread spawns
 //! ```
 //!
@@ -231,7 +235,7 @@ use worktrunk::styling::{
 
 use crate::commands::is_worktree_at_expected_path;
 
-use super::model::{DisplayFields, ItemKind, ListItem, StatusSymbols, WorktreeData};
+use super::model::{CommitDetails, DisplayFields, ItemKind, ListItem, StatusSymbols, WorktreeData};
 use super::progressive_table::ProgressiveTable;
 
 // Re-exports for sibling modules (columns.rs, render.rs, layout.rs)
@@ -738,9 +742,11 @@ pub fn collect(
     // (skeleton shows placeholder gutter, actual symbols appear when data loads)
 
     // Phase 3: Batch fetch commit details (timestamp + subject) for all SHAs
-    // from worktrees + branches. Populates `repo.cache.commit_details` so
-    // post-skeleton `CommitDetailsTask` hits the cache instead of spawning
-    // `git log -1` per row.
+    // from worktrees + branches. The returned map is the single canonical
+    // source of commit details — sorting below and post-skeleton item
+    // population both read from it. A batch failure is surfaced as a
+    // warning and degrades to empty-cell placeholders (no hidden per-SHA
+    // recovery forks).
     //
     // Filter out null OIDs from unborn branches — a single null OID would cause
     // `git log --no-walk` to fail for ALL shas in the batch.
@@ -755,28 +761,35 @@ pub fn collect(
         .chain(remote_branches.iter().map(|(_, sha)| sha.as_str()))
         .filter(|sha| *sha != worktrunk::git::NULL_OID)
         .collect();
-    let timestamps: std::collections::HashMap<String, i64> = repo
-        .commit_details_many(&all_shas)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(sha, (ts, _))| (sha, ts))
-        .collect();
+    let commit_details_map = match repo.commit_details_many(&all_shas) {
+        Ok(map) => map,
+        Err(err) => {
+            eprintln!(
+                "{}",
+                warning_message(cformat!("Failed to batch-fetch commit details: {err}"))
+            );
+            std::collections::HashMap::new()
+        }
+    };
 
     // Sort worktrees: current first, main second, then by timestamp descending
     let sorted_worktrees = sort_worktrees_with_cache(
         worktrees.clone(),
         &main_worktree,
         current_worktree_path.as_ref(),
-        &timestamps,
+        &commit_details_map,
     );
 
     // Sort branches by timestamp (most recent first)
-    let branches_without_worktrees =
-        sort_by_timestamp_desc_with_cache(branches_without_worktrees, &timestamps, |(_, sha)| {
+    let branches_without_worktrees = sort_by_timestamp_desc_with_cache(
+        branches_without_worktrees,
+        &commit_details_map,
+        |(_, sha)| sha.as_str(),
+    );
+    let remote_branches =
+        sort_by_timestamp_desc_with_cache(remote_branches, &commit_details_map, |(_, sha)| {
             sha.as_str()
         });
-    let remote_branches =
-        sort_by_timestamp_desc_with_cache(remote_branches, &timestamps, |(_, sha)| sha.as_str());
 
     // Pre-canonicalize main_worktree.path for is_main comparison
     // (paths from git worktree list may differ based on symlinks or working directory)
@@ -1065,6 +1078,24 @@ pub fn collect(
             {
                 wt_data.is_previous = true;
             }
+        }
+    }
+
+    // Populate commit details (timestamp + subject) on every item directly
+    // from the pre-skeleton batch map. No per-SHA recovery — if the batch
+    // failed, the warning printed above is the user-visible signal and
+    // Age/Message cells render their placeholder. Prunable worktrees are
+    // skipped because their directory is missing from disk; leaving these
+    // rows at the placeholder matches the old task-queue UX.
+    for item in &mut all_items {
+        if item.worktree_data().is_some_and(|d| d.is_prunable()) {
+            continue;
+        }
+        if let Some((timestamp, commit_message)) = commit_details_map.get(&item.head) {
+            item.commit = Some(CommitDetails {
+                timestamp: *timestamp,
+                commit_message: commit_message.clone(),
+            });
         }
     }
 
@@ -1466,10 +1497,10 @@ pub fn collect(
 // Sorting Helpers
 // ============================================================================
 
-/// Sort items by timestamp descending using pre-fetched timestamps.
+/// Sort items by timestamp descending using the pre-fetched commit-details map.
 fn sort_by_timestamp_desc_with_cache<T, F>(
     items: Vec<T>,
-    timestamps: &std::collections::HashMap<String, i64>,
+    commit_details: &std::collections::HashMap<String, (i64, String)>,
     get_sha: F,
 ) -> Vec<T>
 where
@@ -1479,7 +1510,7 @@ where
     let mut with_ts: Vec<_> = items
         .into_iter()
         .map(|item| {
-            let ts = *timestamps.get(get_sha(&item)).unwrap_or(&0);
+            let ts = commit_details.get(get_sha(&item)).map_or(0, |(ts, _)| *ts);
             (item, ts)
         })
         .collect();
@@ -1488,12 +1519,12 @@ where
 }
 
 /// Sort worktrees: current first, main second, then by timestamp descending.
-/// Uses pre-fetched timestamps for efficiency.
+/// Uses the pre-fetched commit-details map for efficiency.
 fn sort_worktrees_with_cache(
     worktrees: Vec<WorktreeInfo>,
     main_worktree: &WorktreeInfo,
     current_path: Option<&std::path::PathBuf>,
-    timestamps: &std::collections::HashMap<String, i64>,
+    commit_details: &std::collections::HashMap<String, (i64, String)>,
 ) -> Vec<WorktreeInfo> {
     // Embed timestamp and priority in tuple to avoid parallel Vec and index lookups
     let mut with_sort_key: Vec<_> = worktrees
@@ -1506,7 +1537,7 @@ fn sort_worktrees_with_cache(
             } else {
                 2 // Rest by timestamp
             };
-            let ts = *timestamps.get(&wt.head).unwrap_or(&0);
+            let ts = commit_details.get(&wt.head).map_or(0, |(ts, _)| *ts);
             (wt, priority, ts)
         })
         .collect();

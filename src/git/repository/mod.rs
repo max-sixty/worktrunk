@@ -290,10 +290,6 @@ pub(super) struct RepoCache {
     /// `collect::collect` pass hits memory instead of respawning the
     /// subprocess on the critical path to skeleton.
     pub(super) worktrees: OnceCell<Vec<WorktreeInfo>>,
-    /// Commit details cache: commit SHA -> (timestamp, subject).
-    /// Multiple items sharing the same HEAD commit (e.g., worktrees on main)
-    /// would otherwise each spawn a `git log -1` for the same SHA.
-    pub(super) commit_details: DashMap<String, (i64, String)>,
     /// In-memory branch diff stats cache: (base_sha, head_sha) -> LineDiff.
     /// Sits in front of the persistent `sha_cache` to prevent parallel tasks
     /// from racing through the file-based cache for the same SHA pair.
