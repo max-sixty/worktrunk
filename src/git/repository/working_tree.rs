@@ -22,6 +22,40 @@ fn has_initialized_submodules_from_status(status: &str) -> bool {
     })
 }
 
+/// Typed snapshot returned by [`WorkingTree::prewarm_info`].
+///
+/// Mirrors what the batched `git rev-parse` actually resolved so callers can
+/// read the data directly instead of round-tripping through the per-field
+/// cache accessors. `prewarm_info` still primes [`RepoCache`] so later calls
+/// to [`WorkingTree::branch`], [`WorkingTree::root`], [`WorkingTree::git_dir`]
+/// and [`WorkingTree::head_sha`] remain single cache hits.
+///
+/// When `is_inside` is false every other field is `None` — nothing else ran.
+/// When `is_inside` is true, `root` lands unconditionally and `git_dir` lands
+/// unless canonicalization failed. HEAD-derived fields (`current_branch`,
+/// `head_sha`) are only populated when the whole batch succeeded; on unborn
+/// HEAD they stay `None` and the per-accessor fallback paths handle the
+/// symbolic-ref lookup.
+///
+/// [`RepoCache`]: super::RepoCache
+#[derive(Debug, Clone, Default)]
+#[must_use]
+pub struct WorkingTreeGitInfo {
+    /// Whether this path sits inside a git work tree (false for bare repo roots).
+    pub is_inside: bool,
+    /// Canonicalized top-level directory. Always `Some` when `is_inside`.
+    pub root: Option<PathBuf>,
+    /// Canonicalized git directory (may differ from common dir in linked
+    /// worktrees). `Some` when `is_inside` and canonicalization succeeded.
+    pub git_dir: Option<PathBuf>,
+    /// Current branch: outer `Some(Some(name))` on a branch, `Some(None)`
+    /// detached. `None` when HEAD was unresolvable (unborn branch) or outside
+    /// a work tree.
+    pub current_branch: Option<Option<String>>,
+    /// HEAD commit SHA. `None` on unborn branches or outside a work tree.
+    pub head_sha: Option<String>,
+}
+
 /// Get a short display name for a path, used in logging context.
 pub fn path_to_logging_context(path: &Path) -> String {
     if path.to_str() == Some(".") {
@@ -119,26 +153,35 @@ impl<'a> WorkingTree<'a> {
     // Worktree-specific methods
     // =========================================================================
 
-    /// Populate the `root`/`git_dir`/`branch` caches with a single batched
-    /// `git rev-parse` invocation and return whether this path is inside a
-    /// work tree.
+    /// Pre-warm the worktree caches with a single batched `git rev-parse` and
+    /// return a snapshot of what it resolved.
     ///
-    /// Folds four rev-parse selectors that would otherwise fire as separate
+    /// Folds five rev-parse selectors that would otherwise fire as separate
     /// forks during alias/hook dispatch (`--is-inside-work-tree` from
-    /// [`Repository::project_config_path`], plus one each for [`Self::root`],
-    /// [`Self::git_dir`], and [`Self::branch`]) into one. `HEAD` is last in
-    /// the argument list because `rev-parse` aborts processing once it hits
-    /// an unresolvable ref — on an unborn branch the preceding selectors'
-    /// stdout still lands, so we can cache `root`/`git_dir` even though the
-    /// command exits non-zero. The `branch` cache is only populated when
-    /// the whole batch succeeded so [`Self::branch`]'s `symbolic-ref`
-    /// fallback still runs for genuine unborn-HEAD paths.
-    pub fn prewarm_info(&self) -> anyhow::Result<bool> {
+    /// [`Repository::project_config_path`], plus [`Self::root`], [`Self::git_dir`],
+    /// [`Self::head_sha`], and [`Self::branch`]) into one. Bare `HEAD` sits
+    /// before `--symbolic-full-name HEAD` because `--symbolic-full-name` is a
+    /// sticky mode flag — emitting the unqualified `HEAD` first gives us a
+    /// commit SHA, then the mode switch makes the second `HEAD` resolve as a
+    /// ref name.
+    ///
+    /// `--show-toplevel` and `--git-dir` succeed even on unborn branches —
+    /// rev-parse prints them before HEAD errors — so `root`/`git_dir` are
+    /// cached whenever we're inside a work tree. `head_sha` and
+    /// `current_branch` are only populated when the whole batch succeeded,
+    /// so [`Self::branch`]'s `symbolic-ref` fallback still handles genuine
+    /// unborn HEADs. On unborn the symbolic-full-name line lands as a
+    /// fallback literal "HEAD", which would be indistinguishable from
+    /// detached HEAD without the exit status.
+    ///
+    /// [`Repository::project_config_path`]: super::Repository::project_config_path
+    pub fn prewarm_info(&self) -> anyhow::Result<WorkingTreeGitInfo> {
         let output = self.run_command_output(&[
             "rev-parse",
             "--is-inside-work-tree",
             "--show-toplevel",
             "--git-dir",
+            "HEAD",
             "--symbolic-full-name",
             "HEAD",
         ])?;
@@ -146,54 +189,75 @@ impl<'a> WorkingTree<'a> {
         let mut lines = stdout.lines();
 
         let is_inside = lines.next().is_some_and(|s| s.trim() == "true");
+        if !is_inside {
+            return Ok(WorkingTreeGitInfo::default());
+        }
 
         // `root` and `git_dir` are safe to cache whenever their lines landed,
-        // because any failure in the batch is from `HEAD` — which is last.
-        if is_inside && let Some(root_raw) = lines.next() {
-            let root = PathBuf::from(root_raw.trim());
+        // because any failure in the batch is from HEAD — which comes after.
+        let root = lines.next().map(|raw| {
+            let root = PathBuf::from(raw.trim());
             let root = canonicalize(&root).unwrap_or_else(|_| self.path.clone());
             self.repo
                 .cache
                 .worktree_roots
                 .entry(self.path.clone())
-                .or_insert(root);
+                .or_insert_with(|| root.clone());
+            root
+        });
 
-            if let Some(git_dir_raw) = lines.next() {
-                let path = PathBuf::from(git_dir_raw.trim());
-                let absolute = if path.is_relative() {
-                    self.path.join(&path)
-                } else {
-                    path
-                };
-                if let Ok(resolved) = canonicalize(&absolute) {
-                    self.repo
-                        .cache
-                        .git_dirs
-                        .entry(self.path.clone())
-                        .or_insert(resolved);
-                }
+        let git_dir = lines.next().and_then(|raw| {
+            let path = PathBuf::from(raw.trim());
+            let absolute = if path.is_relative() {
+                self.path.join(&path)
+            } else {
+                path
+            };
+            let resolved = canonicalize(&absolute).ok()?;
+            self.repo
+                .cache
+                .git_dirs
+                .entry(self.path.clone())
+                .or_insert_with(|| resolved.clone());
+            Some(resolved)
+        });
 
-                // Only trust the `HEAD` line when the batch as a whole
-                // succeeded. On unborn branches it reads "HEAD" as a fallback
-                // literal, which would be indistinguishable from detached
-                // HEAD without the exit status.
-                if output.status.success()
-                    && let Some(head_raw) = lines.next()
-                {
-                    let branch = head_raw
-                        .trim()
-                        .strip_prefix("refs/heads/")
-                        .map(str::to_owned);
-                    self.repo
-                        .cache
-                        .current_branches
-                        .entry(self.path.clone())
-                        .or_insert(branch);
-                }
-            }
-        }
+        // HEAD-derived lines (SHA, symbolic-full-name) are only trustworthy
+        // when the batch succeeded. On unborn HEAD the SHA line is absent
+        // (rev-parse errored on it) and the symbolic-full-name line still
+        // lands but is the literal "HEAD" fallback — we can't tell that from
+        // detached HEAD without the exit status.
+        let (head_sha, current_branch) = if output.status.success() {
+            let sha = lines.next().and_then(|raw| {
+                let sha = (!raw.trim().is_empty()).then(|| raw.trim().to_owned());
+                self.repo
+                    .cache
+                    .head_shas
+                    .entry(self.path.clone())
+                    .or_insert_with(|| sha.clone());
+                sha
+            });
+            let branch = lines.next().map(|raw| {
+                let branch = raw.trim().strip_prefix("refs/heads/").map(str::to_owned);
+                self.repo
+                    .cache
+                    .current_branches
+                    .entry(self.path.clone())
+                    .or_insert_with(|| branch.clone());
+                branch
+            });
+            (sha, branch)
+        } else {
+            (None, None)
+        };
 
-        Ok(is_inside)
+        Ok(WorkingTreeGitInfo {
+            is_inside: true,
+            root,
+            git_dir,
+            current_branch,
+            head_sha,
+        })
     }
 
     /// Get the branch checked out in this worktree, or None if in detached HEAD state.
@@ -217,6 +281,26 @@ impl<'a> WorkingTree<'a> {
                 };
 
                 Ok(e.insert(result).clone())
+            }
+        }
+    }
+
+    /// Get the HEAD commit SHA for this worktree, or `None` on an unborn branch.
+    ///
+    /// Result is cached in the repository's shared cache (keyed by worktree path).
+    /// Populated in bulk by [`Self::prewarm_info`]; resolved lazily here on miss
+    /// via `git rev-parse HEAD`, which errors on unborn branches — treated as
+    /// `None` rather than an error so detached and unborn callers look the same.
+    pub fn head_sha(&self) -> anyhow::Result<Option<String>> {
+        match self.repo.cache.head_shas.entry(self.path.clone()) {
+            Entry::Occupied(e) => Ok(e.get().clone()),
+            Entry::Vacant(e) => {
+                let sha = self
+                    .run_command(&["rev-parse", "HEAD"])
+                    .ok()
+                    .map(|s| s.trim().to_owned())
+                    .filter(|s| !s.is_empty());
+                Ok(e.insert(sha).clone())
             }
         }
     }
@@ -447,6 +531,8 @@ impl<'a> WorkingTree<'a> {
 #[cfg(test)]
 mod tests {
     use super::has_initialized_submodules_from_status;
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
 
     #[test]
     fn submodule_status_empty_is_not_initialized() {
@@ -472,5 +558,51 @@ mod tests {
         assert!(has_initialized_submodules_from_status(
             "+9c8b8ff2fe89b8f1c5b8e17cb60f0d0df47f71e0 submod (heads/main)"
         ));
+    }
+
+    #[test]
+    fn prewarm_info_populates_every_field_on_a_branch() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let wt = repo.worktree_at(test.root_path());
+
+        let info = wt.prewarm_info().unwrap();
+        let head_sha = wt.head_sha().unwrap().expect("HEAD resolved after commit");
+
+        assert!(info.is_inside);
+        assert_eq!(info.root.as_deref(), Some(wt.root().unwrap().as_path()));
+        assert_eq!(
+            info.git_dir.as_deref(),
+            Some(wt.git_dir().unwrap().as_path())
+        );
+        assert_eq!(info.current_branch, Some(Some("main".to_string())));
+        assert_eq!(info.head_sha.as_deref(), Some(head_sha.as_str()));
+        // Second call hits the shared cache (same values, no fresh subprocess semantics).
+        assert_eq!(wt.head_sha().unwrap().as_deref(), Some(head_sha.as_str()));
+    }
+
+    #[test]
+    fn prewarm_info_leaves_head_fields_unresolved_on_unborn_branch() {
+        // TestRepo::new() runs `git init -b main` but makes no commits, so HEAD is unborn.
+        let test = TestRepo::new();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let wt = repo.worktree_at(test.root_path());
+
+        let info = wt.prewarm_info().unwrap();
+
+        assert!(info.is_inside);
+        assert!(info.root.is_some(), "toplevel lands even on unborn HEAD");
+        assert!(info.git_dir.is_some(), "git-dir lands even on unborn HEAD");
+        assert!(
+            info.current_branch.is_none(),
+            "batch failed, branch cache left to `symbolic-ref` fallback"
+        );
+        assert!(info.head_sha.is_none(), "no commits yet => no SHA");
+
+        // `branch()` fallback still resolves the unborn branch name through
+        // `symbolic-ref --short HEAD`, independently of the batch.
+        assert_eq!(wt.branch().unwrap().as_deref(), Some("main"));
+        // `head_sha()` fallback returns None — `rev-parse HEAD` errors on unborn.
+        assert!(wt.head_sha().unwrap().is_none());
     }
 }

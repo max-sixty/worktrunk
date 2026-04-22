@@ -284,6 +284,11 @@ pub(super) struct RepoCache {
     pub(super) worktree_roots: DashMap<PathBuf, PathBuf>,
     /// Current branch per worktree: worktree_path -> branch name (None = detached HEAD)
     pub(super) current_branches: DashMap<PathBuf, Option<String>>,
+    /// HEAD commit SHA per worktree: worktree_path -> SHA (None = unborn, HEAD unresolvable).
+    /// Primed in bulk by `WorkingTree::prewarm_info()`; lazily resolved on miss via
+    /// `WorkingTree::head_sha()`. Lets alias-context expansion consult the cache
+    /// instead of spawning a fresh `git rev-parse HEAD`.
+    pub(super) head_shas: DashMap<PathBuf, Option<String>>,
     /// Cached `git status --porcelain` output per worktree: worktree_path -> raw porcelain.
     /// Populated by `WorkingTree::status_porcelain_cached()` so parallel tasks
     /// (working-tree diff + conflict detection) share one subprocess per worktree
