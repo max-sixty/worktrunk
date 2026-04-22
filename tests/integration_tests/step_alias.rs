@@ -766,6 +766,62 @@ new-branch = "'{wt_toml}' switch --create alias-created"
     );
 }
 
+/// Alias subprocesses inherit the parent's stdin so interactive children
+/// (e.g. `wt switch`'s picker) keep the controlling terminal.
+///
+/// Regression test for #406: alias execution used to pipe the template
+/// context JSON into each child's stdin, which displaced the tty and broke
+/// `stdin().is_terminal()` guards in interactive commands. Only hooks have a
+/// documented JSON-on-stdin contract; aliases must leave stdin alone.
+#[rstest]
+fn test_alias_inherits_stdin(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+echo-stdin = "cat"
+"#,
+    );
+    repo.commit("initial");
+
+    let sentinel = "INHERITED_STDIN_TOKEN";
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "echo-stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().unwrap();
+    {
+        // Drop closes the pipe so `cat` sees EOF and exits.
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(sentinel.as_bytes()).unwrap();
+    }
+    let output = child.wait_with_output().unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "wt step echo-stdin failed: stdout={stdout}\nstderr={stderr}",
+    );
+
+    // stderr carries the "Running alias" banner; the alias body's stdout is
+    // redirected to stderr for deterministic ordering (see
+    // `execute_shell_command`). Check the combined output.
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        combined.contains(sentinel),
+        "alias body should read the parent's stdin ({sentinel} expected), \
+         got stdout={stdout:?} stderr={stderr:?}",
+    );
+    // The pre-fix behavior piped the context JSON (which always includes a
+    // "branch" key) to stdin, so `cat` would have echoed that instead.
+    assert!(
+        !combined.contains("\"branch\""),
+        "alias stdin should not receive the hook JSON context, \
+         got stdout={stdout:?} stderr={stderr:?}",
+    );
+}
+
 /// Pipeline aliases announce their structure: named serial and concurrent
 /// steps appear in the "Running alias" line, joined by `;` and `,`.
 ///

@@ -760,8 +760,8 @@ pub fn step_copy_ignored(
 
     let worktree_paths: Vec<PathBuf> = repo
         .list_worktrees()?
-        .into_iter()
-        .map(|wt| wt.path)
+        .iter()
+        .map(|wt| wt.path.clone())
         .collect();
     let entries_to_copy = list_and_filter_ignored_entries(
         &source_path,
@@ -1616,9 +1616,7 @@ pub fn step_prune(
                 dry_run_info.push((candidate, info));
             } else if is_current {
                 deferred_current = Some(candidate);
-            } else if try_remove(
-                &candidate, &repo, &config, foreground, run_hooks, &worktrees,
-            )? {
+            } else if try_remove(&candidate, &repo, &config, foreground, run_hooks, worktrees)? {
                 removed.push(candidate);
             }
             continue;
@@ -1669,9 +1667,7 @@ pub fn step_prune(
                 suffix,
             };
             dry_run_info.push((candidate, info));
-        } else if try_remove(
-            &candidate, &repo, &config, foreground, run_hooks, &worktrees,
-        )? {
+        } else if try_remove(&candidate, &repo, &config, foreground, run_hooks, worktrees)? {
             removed.push(candidate);
         }
     }
@@ -1742,7 +1738,7 @@ pub fn step_prune(
 
     // Remove deferred current worktree last (cd-to-primary happens here)
     if let Some(current) = deferred_current
-        && try_remove(&current, &repo, &config, foreground, run_hooks, &worktrees)?
+        && try_remove(&current, &repo, &config, foreground, run_hooks, worktrees)?
     {
         removed.push(current);
     }

@@ -55,18 +55,16 @@ impl Repository {
 
     /// Get commit timestamp and subject for multiple commits in a single git command.
     ///
-    /// Returns a map from commit SHA to `(timestamp, subject)` and primes
-    /// `cache.commit_details` with the same entries, so subsequent per-SHA
-    /// `commit_details()` calls hit the cache and skip their `git log -1` fork.
-    ///
-    /// Uses NUL separators between fields so subjects containing spaces or other
+    /// Returns a map from commit SHA to `(timestamp, subject)`. Uses NUL
+    /// separators between fields so subjects containing spaces or other
     /// whitespace parse unambiguously. `%s` is the subject line only, so no
     /// multi-line handling is needed.
     ///
-    /// Fails if any SHA is invalid (`git log --no-walk` refuses the whole
-    /// batch). Callers that want a best-effort fallback should use
-    /// `unwrap_or_default()` — individual `commit_details()` lookups will then
-    /// fetch on demand.
+    /// Fails if any SHA is invalid — `git log --no-walk` refuses the whole
+    /// batch on a single bad ref. Callers should surface the error rather
+    /// than fall back to per-SHA fetches: the batch is the only commit-detail
+    /// fetch path left, and quietly swallowing the failure produces empty
+    /// cells without telling the user why.
     pub fn commit_details_many(
         &self,
         commits: &[&str],
@@ -101,45 +99,10 @@ impl Repository {
             let timestamp: i64 = timestamp_str
                 .parse()
                 .with_context(|| format!("Failed to parse timestamp {timestamp_str:?}"))?;
-            let entry = (timestamp, subject.to_owned());
-            self.cache
-                .commit_details
-                .insert(sha.to_string(), entry.clone());
-            result.insert(sha.to_string(), entry);
+            result.insert(sha.to_string(), (timestamp, subject.to_owned()));
         }
 
         Ok(result)
-    }
-
-    /// Get commit timestamp and message in a single git command.
-    ///
-    /// Results are cached in the shared repo cache by commit SHA, so multiple
-    /// items pointing at the same commit (e.g., worktrees on main) only run
-    /// `git log -1` once. `commit_details_many()` primes the same cache in
-    /// bulk when a set of SHAs is known up front.
-    pub fn commit_details(&self, commit: &str) -> anyhow::Result<(i64, String)> {
-        match self.cache.commit_details.entry(commit.to_string()) {
-            Entry::Occupied(e) => Ok(e.get().clone()),
-            Entry::Vacant(e) => {
-                // Matches the batch path's format (NUL separators) so both populate
-                // the cache with byte-identical values. --no-show-signature suppresses
-                // GPG verification output that otherwise contaminates stdout when
-                // log.showSignature is set.
-                let stdout = self.run_command(&[
-                    "log",
-                    "-1",
-                    "--no-show-signature",
-                    "--format=%ct%x00%s",
-                    commit,
-                ])?;
-                let line = stdout.trim_end_matches('\n');
-                let (timestamp_str, subject) = line
-                    .split_once('\0')
-                    .context("Failed to parse commit details")?;
-                let timestamp = timestamp_str.parse().context("Failed to parse timestamp")?;
-                Ok(e.insert((timestamp, subject.to_owned())).clone())
-            }
-        }
     }
 
     /// Get commit subjects (first line of commit message) from a range.

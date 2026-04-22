@@ -11,8 +11,7 @@ use worktrunk::git::{LineDiff, Repository};
 
 use super::super::ci_status::{CiBranchName, PrStatus};
 use super::super::model::{
-    ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus,
-    WorkingTreeStatus,
+    ActiveGitOperation, AheadBehind, BranchDiffTotals, UpstreamStatus, WorkingTreeStatus,
 };
 use super::types::{ErrorCause, TaskError, TaskKind, TaskResult};
 
@@ -120,28 +119,7 @@ pub trait Task: Send + Sync + 'static {
 // Task Implementations
 // ============================================================================
 
-/// Task 1: Commit details (timestamp, message)
-pub struct CommitDetailsTask;
-
-impl Task for CommitDetailsTask {
-    const KIND: TaskKind = TaskKind::CommitDetails;
-
-    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        let repo = &ctx.repo;
-        let (timestamp, commit_message) = repo
-            .commit_details(&ctx.branch_ref.commit_sha)
-            .map_err(|e| ctx.error(Self::KIND, &e))?;
-        Ok(TaskResult::CommitDetails {
-            item_idx: ctx.item_idx,
-            commit: CommitDetails {
-                timestamp,
-                commit_message,
-            },
-        })
-    }
-}
-
-/// Task 2: Ahead/behind counts vs local default branch (informational stats)
+/// Task: Ahead/behind counts vs local default branch (informational stats)
 pub struct AheadBehindTask;
 
 impl Task for AheadBehindTask {

@@ -2981,6 +2981,34 @@ fn test_list_shows_warning_on_git_error(mut repo: TestRepo) {
 }
 
 ///
+/// Corrupts a detached worktree's HEAD file to a non-null but unresolvable
+/// SHA. The `collect()` batch filters out `NULL_OID`, so a non-null invalid
+/// SHA reaches `commit_details_many` and fails the whole batch — exercising
+/// the `unwrap_or_else` warning path that reports "Failed to batch-fetch
+/// commit details" on stderr.
+#[rstest]
+fn test_list_warns_when_commit_details_batch_fails(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature");
+
+    // Detach the worktree's HEAD and rewrite its HEAD file to a non-null but
+    // unresolvable SHA. `git worktree list --porcelain` happily reports the
+    // invalid SHA, which flows into the commit-details batch. Delete the
+    // branch ref so `for-each-ref refs/heads/` (branch inventory scan) doesn't
+    // choke on the now-dangling branch.
+    repo.run_git_in(&worktree_path, &["checkout", "--detach"]);
+    repo.run_git(&["branch", "-D", "feature"]);
+    let worktree_dir_name = worktree_path.file_name().unwrap().to_str().unwrap();
+    let head_path = repo
+        .root_path()
+        .join(".git/worktrees")
+        .join(worktree_dir_name)
+        .join("HEAD");
+    std::fs::write(&head_path, "0000000000000000000000000000000000000001\n").unwrap();
+
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
+}
+
+///
 /// Creates a true orphan branch using `git checkout --orphan` which has no merge base
 /// with main. Verifies no error warning appears and the branch shows as unmerged.
 #[rstest]

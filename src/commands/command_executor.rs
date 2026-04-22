@@ -189,18 +189,25 @@ pub fn build_hook_context(
     // When `ctx.branch` matches the running worktree's current branch — the
     // alias / hook hot path — reuse the HEAD SHA already cached by
     // `WorkingTree::prewarm_info` instead of firing a fresh `rev-parse`.
-    // The same cache read covers detached HEAD (`ctx.branch == None` and the
-    // running worktree is also detached). Cross-worktree contexts, where
-    // `ctx.branch` names a different branch than the running worktree, fall
-    // through to `rev-parse <branch>` in the discovery path.
-    let wt = ctx.repo.current_worktree();
+    // Detached HEAD (`ctx.branch == None`) must read HEAD from
+    // `ctx.worktree_path`, not the running worktree: `wt step for-each`
+    // iterates over sibling worktrees, and a sibling on detached HEAD has a
+    // different HEAD than the worktree `wt` runs in. Cross-worktree contexts
+    // on a branch fall through to `rev-parse <branch>`, which is repo-wide.
+    let running_wt = ctx.repo.current_worktree();
     let commit = match ctx.branch {
-        Some(branch) if wt.branch().ok().flatten().as_deref() != Some(branch) => ctx
+        Some(branch) if running_wt.branch().ok().flatten().as_deref() != Some(branch) => ctx
             .repo
             .run_command(&["rev-parse", branch])
             .ok()
             .map(|s| s.trim().to_owned()),
-        _ => wt.head_sha().ok().flatten(),
+        Some(_) => running_wt.head_sha().ok().flatten(),
+        None => ctx
+            .repo
+            .worktree_at(ctx.worktree_path)
+            .head_sha()
+            .ok()
+            .flatten(),
     };
     if let Some(commit) = commit {
         if commit.len() >= 7 {
@@ -461,10 +468,17 @@ fn run_one_command(
     };
 
     let log_label = command_log_label(cmd, origin);
+    // Hooks get a documented JSON context on stdin; aliases inherit stdin so
+    // interactive children (e.g. `wt switch`'s picker) keep their controlling
+    // terminal. Piping JSON into an interactive alias body steals the tty.
+    let stdin_json = match origin {
+        CommandOrigin::Hook { .. } => Some(cmd.context_json.as_str()),
+        CommandOrigin::Alias { .. } => None,
+    };
     let result = execute_shell_command(
         wt_path,
         command_str,
-        Some(&cmd.context_json),
+        stdin_json,
         log_label.as_deref(),
         directives.clone(),
     );

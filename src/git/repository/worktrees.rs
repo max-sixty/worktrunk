@@ -18,12 +18,12 @@ impl Repository {
     /// the main worktree. For bare repos, the bare entry is filtered out, so `[0]`
     /// is the first linked worktree (no semantic "main" exists).
     ///
-    /// Returns an empty vec for bare repos with no linked worktrees.
+    /// Returns an empty slice for bare repos with no linked worktrees.
     ///
-    /// Cached on `RepoCache` after the first successful call; subsequent
-    /// calls clone from the cache. See the module-level `# Caching` docs for
-    /// the "no post-mutation reads through the cache" invariant.
-    pub fn list_worktrees(&self) -> anyhow::Result<Vec<WorktreeInfo>> {
+    /// Cached on `RepoCache` after the first successful call; subsequent calls
+    /// return a reference into the cache. See the module-level `# Caching` docs
+    /// for the "no post-mutation reads through the cache" invariant.
+    pub fn list_worktrees(&self) -> anyhow::Result<&[WorktreeInfo]> {
         self.cache
             .worktrees
             .get_or_try_init(|| {
@@ -47,9 +47,9 @@ impl Repository {
                 //
                 // We fix this here rather than at each call site because list_worktrees()
                 // is the single point where worktree paths enter the system — all consumers
-                // (worktree_for_branch, current_worktree_info, resolve_worktree, etc.)
-                // depend on paths being working directories. If git fixes this upstream,
-                // the condition stops triggering.
+                // (worktree_for_branch, resolve_worktree, etc.) depend on paths being
+                // working directories. If git fixes this upstream, the condition stops
+                // triggering.
                 if let Some(first) = worktrees.first_mut()
                     && canonicalize(&first.path).ok().as_deref() == Some(self.git_common_dir())
                 {
@@ -58,28 +58,7 @@ impl Repository {
 
                 Ok(worktrees)
             })
-            .cloned()
-    }
-
-    /// Get the WorktreeInfo struct for the current worktree, if we're inside one.
-    ///
-    /// Returns `None` if not in a worktree (e.g., in bare repo directory).
-    ///
-    /// Note: For worktree-specific operations, use [`current_worktree()`](Self::current_worktree)
-    /// to get a [`WorkingTree`](super::WorkingTree) instead.
-    pub fn current_worktree_info(&self) -> anyhow::Result<Option<WorktreeInfo>> {
-        // root() returns canonicalized path, so canonicalize worktree paths for comparison
-        // to handle symlinks (e.g., macOS /var -> /private/var)
-        let current_path = match self.current_worktree().root() {
-            Ok(p) => p,
-            Err(_) => return Ok(None),
-        };
-        let worktrees = self.list_worktrees()?;
-        Ok(worktrees.into_iter().find(|wt| {
-            canonicalize(&wt.path)
-                .map(|p| p == current_path)
-                .unwrap_or(false)
-        }))
+            .map(Vec::as_slice)
     }
 
     /// Find the worktree path for a given branch, if one exists.
