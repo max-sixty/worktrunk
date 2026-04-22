@@ -674,12 +674,8 @@ impl Task for CiStatusTask {
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         let repo = &ctx.repo;
-        let pr_status = ctx.branch_ref.short_name().and_then(|branch| {
-            // Use from_branch_ref with the authoritative is_remote flag
-            // rather than guessing from the branch name
-            let ci_branch = CiBranchName::from_branch_ref(branch, ctx.branch_ref.is_remote());
-            PrStatus::detect(repo, &ci_branch, &ctx.branch_ref.commit_sha)
-        });
+        let pr_status = CiBranchName::from_branch_ref(&ctx.branch_ref)
+            .and_then(|ci_branch| PrStatus::detect(repo, &ci_branch, &ctx.branch_ref.commit_sha));
 
         Ok(TaskResult::CiStatus {
             item_idx: ctx.item_idx,

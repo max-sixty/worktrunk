@@ -699,11 +699,8 @@ pub fn handle_state_get(
                 }
             };
 
-            let short_name = branch_ref
-                .short_name()
-                .expect("local/remote BranchRef always has short_name");
-            let ci_branch = CiBranchName::from_branch_ref(short_name, branch_ref.is_remote());
-            let pr_status = PrStatus::detect(&repo, &ci_branch, &branch_ref.commit_sha);
+            let pr_status = CiBranchName::from_branch_ref(&branch_ref)
+                .and_then(|ci_branch| PrStatus::detect(&repo, &ci_branch, &branch_ref.commit_sha));
 
             if format == SwitchFormat::Json {
                 let output = pr_status
