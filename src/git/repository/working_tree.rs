@@ -174,35 +174,32 @@ impl<'a> WorkingTree<'a> {
     /// fallback literal "HEAD", which would be indistinguishable from
     /// detached HEAD without the exit status.
     ///
-    /// Idempotent within a single command: once it runs for a given path, the
-    /// `prewarm_is_inside` sentinel is set, and subsequent calls reconstruct the
-    /// snapshot from the primed caches without spawning a subprocess.
+    /// Idempotent within a single command (for paths inside a work tree):
+    /// once `worktree_roots` is primed — by this method or by [`Self::root`]
+    /// — subsequent calls reconstruct the snapshot from the primed caches
+    /// without spawning a subprocess. Bare-repo roots and paths outside any
+    /// work tree intentionally aren't memoized; repeat calls there re-run the
+    /// batch, but such callers typically invoke `prewarm_info` only once.
     ///
     /// [`Repository::project_config_path`]: super::Repository::project_config_path
     pub fn prewarm_info(&self) -> anyhow::Result<WorkingTreeGitInfo> {
-        // Fast path: sentinel says we've already resolved this path's work-tree
-        // status in a prior call — reconstruct the snapshot from the caches
-        // instead of spawning another `git rev-parse`. Fields with no cache
-        // entry stay `None`, matching the semantics of a freshly-run batch on
-        // unborn HEAD (where HEAD-derived entries never land).
-        if let Some(is_inside) = self
+        // Fast path: `worktree_roots` only lands on confirmed toplevels (both
+        // `root()` and this method skip the cache on failure), so its presence
+        // means we've already resolved this path as inside a work tree —
+        // reconstruct the snapshot from the caches instead of spawning another
+        // `git rev-parse`. Fields with no cache entry stay `None`, matching
+        // the semantics of a freshly-run batch on unborn HEAD (where
+        // HEAD-derived entries never land).
+        if let Some(root) = self
             .repo
             .cache
-            .prewarm_is_inside
+            .worktree_roots
             .get(&self.path)
-            .map(|e| *e)
+            .map(|e| e.clone())
         {
-            if !is_inside {
-                return Ok(WorkingTreeGitInfo::default());
-            }
             return Ok(WorkingTreeGitInfo {
                 is_inside: true,
-                root: self
-                    .repo
-                    .cache
-                    .worktree_roots
-                    .get(&self.path)
-                    .map(|e| e.clone()),
+                root: Some(root),
                 git_dir: self.repo.cache.git_dirs.get(&self.path).map(|e| e.clone()),
                 current_branch: self
                     .repo
@@ -233,27 +230,22 @@ impl<'a> WorkingTree<'a> {
 
         let is_inside = lines.next().is_some_and(|s| s.trim() == "true");
         if !is_inside {
-            // Set the sentinel so future `prewarm_info` calls on this path
-            // short-circuit to `is_inside: false` without respawning.
-            self.repo
-                .cache
-                .prewarm_is_inside
-                .entry(self.path.clone())
-                .or_insert(false);
             return Ok(WorkingTreeGitInfo::default());
         }
 
-        // `root` and `git_dir` are safe to cache whenever their lines landed,
-        // because any failure in the batch is from HEAD — which comes after.
-        let root = lines.next().map(|raw| {
-            let root = PathBuf::from(raw.trim());
-            let root = canonicalize(&root).unwrap_or_else(|_| self.path.clone());
+        // `root` and `git_dir` are safe to cache whenever their lines landed
+        // AND canonicalize succeeds, because any failure in the batch is from
+        // HEAD — which comes after. Skipping the cache on canonicalize failure
+        // preserves the invariant that `worktree_roots` / `git_dirs` contain
+        // only confirmed paths; a later bare accessor call will retry.
+        let root = lines.next().and_then(|raw| {
+            let canonical = canonicalize(PathBuf::from(raw.trim())).ok()?;
             self.repo
                 .cache
                 .worktree_roots
                 .entry(self.path.clone())
-                .or_insert_with(|| root.clone());
-            root
+                .or_insert_with(|| canonical.clone());
+            Some(canonical)
         });
 
         let git_dir = lines.next().and_then(|raw| {
@@ -300,15 +292,6 @@ impl<'a> WorkingTree<'a> {
         } else {
             (None, None)
         };
-
-        // Publish the sentinel only after the per-field caches have landed,
-        // so a concurrent short-circuit reader never sees `is_inside: true`
-        // with partially-populated reconstruction inputs.
-        self.repo
-            .cache
-            .prewarm_is_inside
-            .entry(self.path.clone())
-            .or_insert(true);
 
         Ok(WorkingTreeGitInfo {
             is_inside: true,
@@ -397,19 +380,25 @@ impl<'a> WorkingTree<'a> {
     /// Get the root directory of this worktree (top-level of the working tree).
     ///
     /// Returns the canonicalized absolute path to the top-level directory.
-    /// This could be the main worktree or a linked worktree.
-    /// Result is cached in the repository's shared cache (keyed by worktree path).
+    /// This could be the main worktree or a linked worktree. When the path is
+    /// outside any work tree (bare repo root, non-repo directory, deleted
+    /// CWD), falls back to `self.path` so callers (alias template expansion,
+    /// hook context building) can degrade gracefully rather than aborting.
+    ///
+    /// Only confirmed toplevels are cached — the fallback path is returned
+    /// but not persisted. This keeps `worktree_roots.contains_key(path)` as a
+    /// reliable "is inside a work tree" signal for [`Self::prewarm_info`]'s
+    /// short-circuit.
     pub fn root(&self) -> anyhow::Result<PathBuf> {
         match self.repo.cache.worktree_roots.entry(self.path.clone()) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
-                let root = self
-                    .run_command(&["rev-parse", "--show-toplevel"])
-                    .ok()
-                    .map(|s| PathBuf::from(s.trim()))
-                    .and_then(|p| canonicalize(&p).ok())
-                    .unwrap_or_else(|| self.path.clone());
-
+                let Ok(stdout) = self.run_command(&["rev-parse", "--show-toplevel"]) else {
+                    return Ok(self.path.clone());
+                };
+                let Ok(root) = canonicalize(PathBuf::from(stdout.trim())) else {
+                    return Ok(self.path.clone());
+                };
                 Ok(e.insert(root).clone())
             }
         }
@@ -642,12 +631,12 @@ mod tests {
 
     #[test]
     fn prewarm_info_second_call_returns_cached_snapshot() {
-        // Once `prewarm_is_inside` is primed, subsequent `prewarm_info` calls
+        // Once `worktree_roots` is primed, subsequent `prewarm_info` calls
         // must reconstruct from the caches rather than spawning a second
-        // `git rev-parse`. We verify by mutating `worktree_roots` after the
-        // first call — a subprocess run would overwrite with real data via
-        // `or_insert_with` (no-op on occupied), but the short-circuit returns
-        // whatever the cache holds, preserving our sentinel.
+        // `git rev-parse`. We verify by mutating the cache after the first
+        // call — a subprocess run would overwrite via `or_insert_with`
+        // (no-op on occupied), but the short-circuit just reads the cache,
+        // so our sentinel value survives.
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
         let wt = repo.worktree_at(test.root_path());
@@ -666,28 +655,26 @@ mod tests {
     }
 
     #[test]
-    fn prewarm_info_short_circuit_ignores_stale_root_cache_outside_work_tree() {
-        // Regression guard: `root()` caches a fallback path when
-        // `rev-parse --show-toplevel` fails (e.g., bare repo root, dir outside
-        // a repo). That cache entry must not trick `prewarm_info` into
-        // claiming `is_inside: true`. The `prewarm_is_inside` sentinel is
-        // authoritative.
+    fn root_fallback_outside_work_tree_does_not_pollute_cache() {
+        // Invariant: `worktree_roots.contains_key(path)` ⇔ `path` is inside a
+        // work tree. `root()` still returns `self.path` as a fallback for
+        // graceful degradation (bare-repo aliases, deleted-CWD recovery), but
+        // that fallback must never be cached — otherwise `prewarm_info`'s
+        // short-circuit would misreport `is_inside: true` on the next call.
         let tmp = tempfile::tempdir().unwrap();
-        let outside = tmp.path().to_path_buf();
-        // Initialize a sibling repo so `Repository::at` resolves; we'll then
-        // ask about a path that is not inside any work tree.
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
-        repo.cache
-            .worktree_roots
-            .insert(outside.clone(), outside.clone());
-        let wt = repo.worktree_at(&outside);
+        let wt = repo.worktree_at(tmp.path());
+
+        let fallback = wt.root().expect("root() returns fallback, never errors");
+        assert_eq!(fallback, wt.path());
+        assert!(
+            !repo.cache.worktree_roots.contains_key(wt.path()),
+            "fallback must not populate the cache"
+        );
 
         let info = wt.prewarm_info().unwrap();
-        assert!(
-            !info.is_inside,
-            "batch must run and set is_inside=false regardless of stale root cache"
-        );
+        assert!(!info.is_inside);
         assert!(info.root.is_none());
     }
 
