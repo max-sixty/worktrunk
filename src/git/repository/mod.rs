@@ -33,7 +33,13 @@
 //! **What is NOT cached.** Values that change during command execution are intentionally
 //! excluded:
 //! - `WorkingTree::is_dirty()` — changes as we stage and commit
-//! - `Repository::list_worktrees()` — changes as we create and remove worktrees
+//!
+//! [`Repository::list_worktrees`] is cached despite mutating commands adding or
+//! removing worktrees. The cache is safe because no caller reads the list
+//! through the same `Repository` after its own mutation — mutating paths
+//! either read once up front and thread the slice through, or rebuild a
+//! fresh `Repository::at(...)` before any post-mutation probe. This mirrors
+//! the invariant the branch inventories already rely on.
 //!
 //! **Access patterns.** See the [`RepoCache`] doc comment for the two storage patterns
 //! (repo-wide `OnceCell` vs per-key `DashMap`) and their infallible/fallible variants.
@@ -62,7 +68,6 @@
 //! The picker also maintains a `PreviewCache` (`Arc<DashMap>` in `commands/picker/items.rs`)
 //! for rendered preview output, scoped to a single picker session.
 
-use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -87,7 +92,9 @@ use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 use super::{DefaultBranchName, GitError, IntegrationReason, LineDiff, WorktreeInfo};
 
 // Re-export types needed by submodules
-pub(super) use super::{BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl};
+pub(super) use super::{
+    BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl, LocalBranch, RemoteBranch,
+};
 
 // Submodules with impl blocks
 mod branch;
@@ -263,10 +270,26 @@ pub(super) struct RepoCache {
     /// Used by `rev_parse_commit()` to key the persistent `sha_cache` by SHA.
     pub(super) commit_shas: DashMap<String, String>,
 
-    /// Upstream tracking branch cache: local branch -> upstream (e.g., "origin/main").
-    /// None means "no upstream configured". Lazily loaded on first access via
-    /// `Branch::upstream()` → `fetch_all_upstreams()`.
-    pub(super) upstreams: OnceCell<HashMap<String, Option<String>>>,
+    /// Local branch inventory: one `git for-each-ref refs/heads/` scan, cached
+    /// for the lifetime of the repository. Entries are sorted by most recent
+    /// commit first; the inventory also holds a name → index map for O(1)
+    /// single-branch lookups. Populated lazily via
+    /// [`Repository::local_branches`] — the first call runs the scan and
+    /// primes `resolved_refs`/`commit_shas` so subsequent ref resolution and
+    /// SHA lookups hit memory.
+    pub(super) local_branches: OnceCell<branches::LocalBranchInventory>,
+    /// Remote-tracking branch inventory: one `git for-each-ref refs/remotes/`
+    /// scan, cached for the lifetime of the repository. Sorted by most recent
+    /// commit first. Populated lazily via [`Repository::remote_branches`].
+    /// Excludes `<remote>/HEAD` symrefs.
+    pub(super) remote_branches: OnceCell<Vec<RemoteBranch>>,
+    /// Worktree inventory: one `git worktree list --porcelain` scan, cached
+    /// for the lifetime of the repository. Populated lazily via
+    /// [`Repository::list_worktrees`]. The picker warms this on the main
+    /// thread (for its preview-window sizing estimate) so the background
+    /// `collect::collect` pass hits memory instead of respawning the
+    /// subprocess on the critical path to skeleton.
+    pub(super) worktrees: OnceCell<Vec<WorktreeInfo>>,
     /// Commit details cache: commit SHA -> (timestamp, subject).
     /// Multiple items sharing the same HEAD commit (e.g., worktrees on main)
     /// would otherwise each spawn a `git log -1` for the same SHA.
@@ -284,6 +307,11 @@ pub(super) struct RepoCache {
     pub(super) worktree_roots: DashMap<PathBuf, PathBuf>,
     /// Current branch per worktree: worktree_path -> branch name (None = detached HEAD)
     pub(super) current_branches: DashMap<PathBuf, Option<String>>,
+    /// HEAD commit SHA per worktree: worktree_path -> SHA (None = unborn, HEAD unresolvable).
+    /// Primed in bulk by `WorkingTree::prewarm_info()`; lazily resolved on miss via
+    /// `WorkingTree::head_sha()`. Lets alias-context expansion consult the cache
+    /// instead of spawning a fresh `git rev-parse HEAD`.
+    pub(super) head_shas: DashMap<PathBuf, Option<String>>,
     /// Cached `git status --porcelain` output per worktree: worktree_path -> raw porcelain.
     /// Populated by `WorkingTree::status_porcelain_cached()` so parallel tasks
     /// (working-tree diff + conflict detection) share one subprocess per worktree

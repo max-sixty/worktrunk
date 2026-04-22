@@ -495,18 +495,15 @@ impl Repository {
         }
 
         // Batched rev-parse: asks `--is-inside-work-tree` and also pre-warms
-        // the worktree root / git-dir / branch caches, sparing three later
-        // forks on the typical alias path.
-        let in_worktree = self.current_worktree().prewarm_info().unwrap_or(false);
+        // the worktree root / git-dir / branch / HEAD-SHA caches, sparing
+        // four later forks on the typical alias path.
+        let info = self.current_worktree().prewarm_info().unwrap_or_default();
 
-        if in_worktree {
-            // Inside a worktree — use it (normal repo or linked worktree in bare repo)
-            return Ok(Some(
-                self.current_worktree()
-                    .root()?
-                    .join(".config")
-                    .join("wt.toml"),
-            ));
+        if let Some(root) = info.root {
+            // Inside a worktree — use it (normal repo or linked worktree in
+            // bare repo). `root` is `Some` iff the batch saw us inside a work
+            // tree, so no separate `is_inside` check.
+            return Ok(Some(root.join(".config").join("wt.toml")));
         }
 
         if self.is_bare().unwrap_or(false) {

@@ -606,3 +606,126 @@ fn is_builtin_fsmonitor_enabled_variants() {
     }
     assert!(!repo_with_fsmonitor(None).is_builtin_fsmonitor_enabled());
 }
+
+#[test]
+fn commit_details_many_returns_subject_with_spaces_and_primes_cache() {
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::new();
+    // Commit with a multi-word subject — regression against parsers that split
+    // on the first space and treat "word1" as the timestamp.
+    test.commit_with_message("first commit with spaces");
+    let sha1 = test.repo.run_command(&["rev-parse", "HEAD"]).unwrap();
+    let sha1 = sha1.trim().to_string();
+
+    test.commit_with_message("second commit");
+    let sha2 = test.repo.run_command(&["rev-parse", "HEAD"]).unwrap();
+    let sha2 = sha2.trim().to_string();
+
+    let result = test
+        .repo
+        .commit_details_many(&[sha1.as_str(), sha2.as_str()])
+        .unwrap();
+
+    assert_eq!(result.len(), 2);
+    assert_eq!(result[&sha1].1, "first commit with spaces");
+    assert_eq!(result[&sha2].1, "second commit");
+    assert!(result[&sha1].0 > 0);
+    assert!(result[&sha2].0 > 0);
+
+    // Cache is primed — a subsequent `commit_details()` call must hit the cache
+    // rather than run `git log -1`. We observe this indirectly: the cached
+    // entry is present for both SHAs.
+    assert_eq!(
+        test.repo.cache.commit_details.get(&sha1).map(|v| v.clone()),
+        Some((result[&sha1].0, "first commit with spaces".to_string())),
+    );
+    assert_eq!(
+        test.repo.cache.commit_details.get(&sha2).map(|v| v.clone()),
+        Some((result[&sha2].0, "second commit".to_string())),
+    );
+}
+
+#[test]
+fn commit_details_many_empty_input_is_noop() {
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    let result = test.repo.commit_details_many(&[]).unwrap();
+    assert!(result.is_empty());
+    assert!(test.repo.cache.commit_details.is_empty());
+}
+
+#[test]
+fn commit_details_many_preserves_multibyte_utf8_subject() {
+    // Pin that multibyte UTF-8 round-trips through the NUL-delimited parser —
+    // `splitn(3, '\0')` works on byte positions, so char boundaries inside the
+    // subject must be preserved intact.
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::new();
+    let subject = "Add support for 日本語 and émoji 🎉";
+    test.commit_with_message(subject);
+    let sha = test
+        .repo
+        .run_command(&["rev-parse", "HEAD"])
+        .unwrap()
+        .trim()
+        .to_string();
+
+    let result = test.repo.commit_details_many(&[sha.as_str()]).unwrap();
+
+    assert_eq!(result[&sha].1, subject);
+}
+
+#[test]
+fn commit_details_many_deduplicates_repeated_sha() {
+    // `git log --no-walk SHA SHA` emits each commit once; pin that the batch
+    // code returns a single cache entry for a duplicated input SHA.
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::new();
+    test.commit_with_message("only commit");
+    let sha = test
+        .repo
+        .run_command(&["rev-parse", "HEAD"])
+        .unwrap()
+        .trim()
+        .to_string();
+
+    let result = test
+        .repo
+        .commit_details_many(&[sha.as_str(), sha.as_str(), sha.as_str()])
+        .unwrap();
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[&sha].1, "only commit");
+    assert_eq!(test.repo.cache.commit_details.len(), 1);
+}
+
+#[test]
+fn commit_details_and_many_store_identical_cache_entries() {
+    // The two code paths must produce byte-identical cache entries — otherwise
+    // a SHA's cached value depends on which path populated it first.
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::new();
+    test.commit_with_message("  subject with leading spaces");
+    let sha = test
+        .repo
+        .run_command(&["rev-parse", "HEAD"])
+        .unwrap()
+        .trim()
+        .to_string();
+
+    let via_single = test.repo.commit_details(&sha).unwrap();
+    test.repo.cache.commit_details.clear();
+    let via_batch = test
+        .repo
+        .commit_details_many(&[sha.as_str()])
+        .unwrap()
+        .remove(&sha)
+        .unwrap();
+
+    assert_eq!(via_single, via_batch);
+}

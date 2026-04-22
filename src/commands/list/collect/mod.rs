@@ -28,7 +28,14 @@
 //! | `git config remote.*.url` (1-3 calls) | Project identifier (for config + path check) | ✓ |
 //! | `git for-each-ref refs/heads` | Only with `--branches` flag | ✓ |
 //! | `git for-each-ref refs/remotes` | Only with `--remotes` flag | ✓ |
-//! | `git log --no-walk --format='%H %ct' SHA1 SHA2 ...` | **Batched** timestamps | Sequential (needs SHAs) |
+//! | `git log --no-walk --format='%H\0%ct\0%s' SHA1 SHA2 ...` | **Batched** commit details (timestamp + subject) | Sequential (needs SHAs) |
+//!
+//! The batched `git log` fetches subjects too, which the skeleton itself
+//! doesn't strictly need — only timestamps are required for sort order. It
+//! rides along for free: git has to resolve each commit object anyway, and
+//! the subject bytes add no measurable latency to the round trip. The
+//! subjects populate `cache.commit_details` so the post-skeleton
+//! `CommitDetailsTask` is a pure cache hit instead of N `git log -1` forks.
 //!
 //! **Non-git operations (negligible latency):**
 //! - Path canonicalization — detect current worktree
@@ -217,7 +224,7 @@ use crossbeam_channel as chan;
 use dunce::canonicalize;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use worktrunk::git::{Repository, WorktreeInfo};
+use worktrunk::git::{LocalBranch, Repository, WorktreeInfo};
 use worktrunk::styling::{
     INFO_SYMBOL, eprintln, format_with_gutter, hint_message, warning_message,
 };
@@ -505,15 +512,15 @@ pub fn collect(
     // - url_template: independent (loads project config via show-toplevel)
     // - project_identifier: independent (git config for remote URL; warms cache
     //   for is_worktree_at_expected_path and config resolution)
-    // - local_branches: independent (for-each-ref, but filtering needs worktrees)
-    // - remote_branches: independent (for-each-ref)
+    // - local_branches: independent (one `for-each-ref refs/heads/`; cached on
+    //   `RepoCache` so later consumers read it without re-scanning)
+    // - remote_branches: independent (one `for-each-ref refs/remotes/`; cached
+    //   on `RepoCache`)
     //
     // After this scope completes, we have all raw data and can do CPU-only work.
     let worktrees_cell: OnceCell<anyhow::Result<Vec<WorktreeInfo>>> = OnceCell::new();
     let default_branch_cell: OnceCell<Option<String>> = OnceCell::new();
     let url_template_cell: OnceCell<Option<String>> = OnceCell::new();
-    let local_branches_cell: OnceCell<anyhow::Result<Vec<(String, String)>>> = OnceCell::new();
-    let remote_branches_cell: OnceCell<anyhow::Result<Vec<(String, String)>>> = OnceCell::new();
 
     rayon::scope(|s| {
         s.spawn(|_| {
@@ -537,12 +544,15 @@ pub fn collect(
         });
         s.spawn(|_| {
             if fetch_branches {
-                let _ = local_branches_cell.set(repo.list_local_branches());
+                // Prime the local-branch inventory on `RepoCache`; consumers
+                // below read it through `repo.local_branches()`.
+                let _ = repo.local_branches();
             }
         });
         s.spawn(|_| {
             if fetch_remotes {
-                let _ = remote_branches_cell.set(repo.list_untracked_remote_branches());
+                // Prime the remote-branch inventory on `RepoCache`.
+                let _ = repo.remote_branches();
             }
         });
     });
@@ -629,37 +639,33 @@ pub fn collect(
     // the persisted value, now trusted without validation on the hot path.
     // Cross-check against the enumerated branch set and surface a warning
     // if it's been deleted externally. When `show_branches` is off but a
-    // persisted default is set and isn't a worktree branch, fetch the
-    // local branch list anyway (one `for-each-ref` fork) so the warning
-    // fires on plain `wt list` too — otherwise downstream tasks resolve
-    // against the stale ref and emit a cascade of "ambiguous argument"
-    // noise instead of one clean warning.
+    // persisted default is set and isn't a worktree branch, scan the local
+    // branch inventory anyway (one `for-each-ref` fork, cached afterwards)
+    // so the warning fires on plain `wt list` too — otherwise downstream
+    // tasks resolve against the stale ref and emit a cascade of "ambiguous
+    // argument" noise instead of one clean warning.
     let worktree_branches = worktree_branch_set(&worktrees);
     let needs_stale_check = default_branch
         .as_deref()
         .is_some_and(|b| !worktree_branches.contains(b));
-    let fetched_local: Option<Vec<(String, String)>> = if show_branches {
-        Some(match local_branches_cell.into_inner() {
-            Some(result) => result?,
-            None => repo.list_local_branches()?,
-        })
-    } else if needs_stale_check {
-        Some(repo.list_local_branches()?)
+    let fetched_local: Option<&[LocalBranch]> = if show_branches || needs_stale_check {
+        Some(repo.local_branches()?)
     } else {
         None
     };
     let warn_stale_default = needs_stale_check
-        && fetched_local.as_ref().is_some_and(|all| {
+        && fetched_local.is_some_and(|all| {
             !all.iter()
-                .any(|(n, _)| Some(n.as_str()) == default_branch.as_deref())
+                .any(|b| Some(b.name.as_str()) == default_branch.as_deref())
         });
 
     // Filter local branches to those without worktrees (CPU-only, no git commands)
     let branches_without_worktrees: Vec<(String, String)> = if show_branches {
-        let all_local = fetched_local.unwrap_or_default();
-        all_local
-            .into_iter()
-            .filter(|(name, _)| !worktree_branches.contains(name.as_str()))
+        fetched_local
+            .unwrap_or(&[])
+            .iter()
+            .filter(|b| !worktree_branches.contains(b.name.as_str()))
+            .map(|b| (b.name.clone(), b.commit_sha.clone()))
             .collect()
     } else {
         Vec::new()
@@ -690,13 +696,19 @@ pub fn collect(
     } else {
         default_branch
     };
-    let remote_branches = if show_remotes {
-        if let Some(result) = remote_branches_cell.into_inner() {
-            result?
-        } else {
-            // Config-triggered (not fetched speculatively) — fetch now
-            repo.list_untracked_remote_branches()?
-        }
+    // Remote branches that aren't tracked by any local branch. Filtering
+    // happens over the cached inventories — no extra subprocess.
+    let remote_branches: Vec<(String, String)> = if show_remotes {
+        let tracked: HashSet<&str> = repo
+            .local_branches()?
+            .iter()
+            .filter_map(|b| b.upstream_short.as_deref())
+            .collect();
+        repo.remote_branches()?
+            .iter()
+            .filter(|r| !tracked.contains(r.short_name.as_str()))
+            .map(|r| (r.short_name.clone(), r.commit_sha.clone()))
+            .collect()
     } else {
         Vec::new()
     };
@@ -725,7 +737,11 @@ pub fn collect(
     // Defer previous_branch lookup until after skeleton - set is_previous later
     // (skeleton shows placeholder gutter, actual symbols appear when data loads)
 
-    // Phase 3: Batch fetch timestamps (needs all SHAs from worktrees + branches)
+    // Phase 3: Batch fetch commit details (timestamp + subject) for all SHAs
+    // from worktrees + branches. Populates `repo.cache.commit_details` so
+    // post-skeleton `CommitDetailsTask` hits the cache instead of spawning
+    // `git log -1` per row.
+    //
     // Filter out null OIDs from unborn branches — a single null OID would cause
     // `git log --no-walk` to fail for ALL shas in the batch.
     let all_shas: Vec<&str> = worktrees
@@ -739,7 +755,12 @@ pub fn collect(
         .chain(remote_branches.iter().map(|(_, sha)| sha.as_str()))
         .filter(|sha| *sha != worktrunk::git::NULL_OID)
         .collect();
-    let timestamps = repo.commit_timestamps(&all_shas).unwrap_or_default();
+    let timestamps: std::collections::HashMap<String, i64> = repo
+        .commit_details_many(&all_shas)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(sha, (ts, _))| (sha, ts))
+        .collect();
 
     // Sort worktrees: current first, main second, then by timestamp descending
     let sorted_worktrees = sort_worktrees_with_cache(
@@ -1052,10 +1073,9 @@ pub fn collect(
     // `AheadBehindTask` hits the cache instead of spawning its own
     // `git rev-list --count`. One git call replaces N.
     //
-    // Note: `resolved_refs` and `commit_shas` are already primed by
-    // `list_local_branches()` (called during pre-skeleton phase).
-    // Upstream tracking branches are lazily loaded on first `Branch::upstream()`
-    // call via `OnceCell`.
+    // Note: `resolved_refs`, `commit_shas`, and upstream tracking info are
+    // already primed by `local_branches()` (called during pre-skeleton
+    // phase), so `Branch::upstream()` is an in-memory lookup from here on.
     //
     // On git < 2.36 (no `%(ahead-behind:)` support) or if default_branch is
     // unknown, skip the batch — individual tasks fall back to direct calls.

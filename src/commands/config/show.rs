@@ -505,7 +505,7 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
 
     // Check for deprecations with emit_inline_warnings=false (silent mode)
     // User config is global, not tied to any repository
-    let has_deprecations = if let Ok(result) = worktrunk::config::check_and_migrate(
+    let has_deprecations = match worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
         true,
@@ -513,16 +513,20 @@ fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Resu
         None,
         false, // silent mode - we'll format the output ourselves
     ) {
-        if let Some(info) = result.info {
-            out.push_str(&worktrunk::config::format_deprecation_details(
-                &info, &contents,
-            ));
-            true
-        } else {
+        Ok(result) => {
+            if let Some(info) = result.info {
+                out.push_str(&worktrunk::config::format_deprecation_details(
+                    &info, &contents,
+                ));
+                true
+            } else {
+                false
+            }
+        }
+        Err(err) => {
+            writeln!(out, "{}", error_message(err.to_string()))?;
             false
         }
-    } else {
-        false
     };
 
     // Validate config (syntax + schema) and warn if invalid
@@ -655,7 +659,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     // Check for deprecations with emit_inline_warnings=false (silent mode)
     // Only write migration file in main worktree, not linked worktrees
     let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
-    let has_deprecations = if let Ok(result) = worktrunk::config::check_and_migrate(
+    let has_deprecations = match worktrunk::config::check_and_migrate(
         &config_path,
         &contents,
         is_main_worktree,
@@ -663,16 +667,20 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         Some(&repo),
         false, // silent mode - we'll format the output ourselves
     ) {
-        if let Some(info) = result.info {
-            out.push_str(&worktrunk::config::format_deprecation_details(
-                &info, &contents,
-            ));
-            true
-        } else {
+        Ok(result) => {
+            if let Some(info) = result.info {
+                out.push_str(&worktrunk::config::format_deprecation_details(
+                    &info, &contents,
+                ));
+                true
+            } else {
+                false
+            }
+        }
+        Err(err) => {
+            writeln!(out, "{}", error_message(err.to_string()))?;
             false
         }
-    } else {
-        false
     };
 
     // Validate config (syntax + schema) and warn if invalid

@@ -289,6 +289,43 @@ pub struct CompletionBranch {
     pub category: BranchCategory,
 }
 
+/// A single local branch entry from the branch inventory.
+///
+/// Populated by one `git for-each-ref refs/heads/` scan per Repository lifetime
+/// (see [`Repository::local_branches`]). Sorted by most recent commit first.
+#[derive(Debug, Clone)]
+pub struct LocalBranch {
+    /// Short branch name, e.g., "feature" (not "refs/heads/feature").
+    pub name: String,
+    /// Commit SHA this branch points at.
+    pub commit_sha: String,
+    /// Unix timestamp of the commit.
+    pub committer_ts: i64,
+    /// Upstream tracking ref (e.g., "origin/main"), if configured and present.
+    /// `None` when no upstream is set, or when the configured upstream is gone
+    /// (git reports `[gone]` via `%(upstream:track)`).
+    pub upstream_short: Option<String>,
+}
+
+/// A single remote-tracking branch entry from the branch inventory.
+///
+/// Populated by one `git for-each-ref refs/remotes/` scan per Repository
+/// lifetime (see [`Repository::remote_branches`]). `<remote>/HEAD` symrefs are
+/// excluded. Sorted by most recent commit first.
+#[derive(Debug, Clone)]
+pub struct RemoteBranch {
+    /// Remote-qualified name, e.g., "origin/feature".
+    pub short_name: String,
+    /// Commit SHA this remote ref points at.
+    pub commit_sha: String,
+    /// Unix timestamp of the commit.
+    pub committer_ts: i64,
+    /// Remote name, e.g., "origin".
+    pub remote_name: String,
+    /// Branch name without the remote prefix, e.g., "feature".
+    pub local_name: String,
+}
+
 // Re-export parsing helpers for internal use
 pub(crate) use parse::DefaultBranchName;
 

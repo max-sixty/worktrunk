@@ -45,8 +45,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mProject config: [1mpost-create[22m hook is deprecated in favor of [1mpre-start[22m[39m
-[2m↳[22m [2mTo see details, run [4mwt config show[24m; to apply updates, run [4mwt config update[24m[22m
 [36m◎[39m [36mRunning pre-start project hook @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[35mif[0m[2m [ ! -f test.txt ]; [0m[2m[35mthen[0m[2m
 [107m [0m [2m  [0m[2m[34mecho[0m[2m [0m[2m[32m'File does not exist'[0m[2m [0m[2m[36m>[0m[2m result.txt

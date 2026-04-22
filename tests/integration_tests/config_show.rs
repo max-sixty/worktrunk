@@ -34,7 +34,7 @@ approved-commands = ["npm install"]
     fs::create_dir_all(&config_dir).unwrap();
     fs::write(
         config_dir.join("wt.toml"),
-        r#"post-create = "npm install"
+        r#"pre-start = "npm install"
 
 [post-start]
 server = "npm run dev"
@@ -1565,7 +1565,7 @@ fn test_deprecated_template_variables_show_warning(repo: TestRepo, temp_home: Te
         // Use all deprecated variables: repo_root, worktree, main_worktree
         // Note: hooks are at top-level in user config, not in a [hooks] section
         r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
+pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
 "#,
     )
     .unwrap();
@@ -1611,7 +1611,7 @@ fn test_deprecated_template_variables_verbose_shows_content(repo: TestRepo, temp
     fs::write(
         config_path,
         r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
+pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
 "#,
     )
     .unwrap();
@@ -1683,7 +1683,7 @@ fn test_fixing_deprecated_config_then_reintroducing_still_warns(
 
     fs::write(
         &project_config_path,
-        r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
+        r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
 "#,
     )
     .unwrap();
@@ -1715,7 +1715,7 @@ fn test_fixing_deprecated_config_then_reintroducing_still_warns(
 
     fs::write(
         &project_config_path,
-        r#"post-create = "cd {{ worktree }} && npm install"
+        r#"pre-start = "cd {{ worktree }} && npm install"
 "#,
     )
     .unwrap();
@@ -2462,7 +2462,7 @@ fn test_config_show_displays_deprecation_details(mut repo: TestRepo, temp_home: 
     fs::write(
         &config_path,
         r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-post-create = "ln -sf {{ repo_root }}/node_modules"
+pre-start = "ln -sf {{ repo_root }}/node_modules"
 "#,
     )
     .unwrap();
@@ -2503,7 +2503,7 @@ fn test_config_show_from_linked_worktree_shows_main_worktree_hint(
     fs::create_dir_all(&project_config_dir).unwrap();
     fs::write(
         project_config_dir.join("wt.toml"),
-        r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
+        r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
 "#,
     )
     .unwrap();
@@ -2648,7 +2648,7 @@ approved-commands = ["npm install", "npm test"]
 #[rstest]
 fn test_config_update_applies_project_config_migration(repo: TestRepo) {
     repo.write_project_config(
-        r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
+        r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
 "#,
     );
     repo.commit("Add deprecated project config");
@@ -2668,7 +2668,7 @@ fn test_config_update_applies_project_config_migration(repo: TestRepo) {
     let updated = fs::read_to_string(&project_config_path).unwrap();
     assert!(updated.contains("pre-start"));
     assert!(updated.contains("{{ repo }}"));
-    assert!(!updated.contains("post-create"));
+    assert!(!updated.contains("main_worktree"));
 }
 
 /// `wt config update` with a clean project config (no deprecations) treats
@@ -2701,7 +2701,7 @@ fn test_config_update_clean_project_config_is_noop(repo: TestRepo) {
 #[rstest]
 fn test_config_update_project_config_from_linked_worktree_shows_hint(repo: TestRepo) {
     repo.write_project_config(
-        r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
+        r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
 "#,
     );
     repo.commit("Add deprecated project config");
@@ -2748,7 +2748,7 @@ fn test_config_update_print_emits_both_configs(repo: TestRepo) {
     )
     .unwrap();
     repo.write_project_config(
-        r#"post-create = "ln -sf {{ main_worktree }}/node_modules"
+        r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
 "#,
     );
     repo.commit("Add deprecated project config");
@@ -2852,7 +2852,7 @@ fn test_config_update_applies_template_var_migration(repo: TestRepo) {
     fs::write(
         config_path,
         r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
+pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
 "#,
     )
     .unwrap();
@@ -3772,12 +3772,12 @@ fn test_project_config_path_env_var_override(repo: TestRepo, temp_home: TempDir)
     // override points elsewhere.
     let in_repo_config = repo.root_path().join(".config").join("wt.toml");
     fs::create_dir_all(in_repo_config.parent().unwrap()).unwrap();
-    fs::write(&in_repo_config, "post-create = \"in-repo-hook\"\n").unwrap();
+    fs::write(&in_repo_config, "pre-start = \"in-repo-hook\"\n").unwrap();
 
     // Write the override project config at an arbitrary path.
     let override_dir = tempfile::tempdir().unwrap();
     let override_path = override_dir.path().join("override.toml");
-    fs::write(&override_path, "post-create = \"override-hook\"\n").unwrap();
+    fs::write(&override_path, "pre-start = \"override-hook\"\n").unwrap();
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
@@ -3796,7 +3796,7 @@ fn test_project_config_path_env_var_override(repo: TestRepo, temp_home: TempDir)
     let json: serde_json::Value =
         serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
     assert_eq!(
-        json["project"]["config"]["post-create"], "override-hook",
+        json["project"]["config"]["pre-start"], "override-hook",
         "expected override config to be loaded, got: {}",
         json["project"]
     );
@@ -3827,5 +3827,126 @@ fn test_project_config_path_env_var_override(repo: TestRepo, temp_home: TempDir)
         json["project"]["config"].is_null(),
         "missing override path should resolve to no project config, got: {}",
         json["project"]["config"]
+    );
+}
+
+/// `post-create` was renamed to `pre-start` in v0.32.0. Project configs that
+/// still carry the removed key fail to load with a fatal error naming the
+/// replacement. Verify via `wt switch --create`, which propagates project
+/// config load failures as a non-zero exit.
+#[rstest]
+fn test_post_create_in_project_config_is_fatal(repo: TestRepo, temp_home: TempDir) {
+    let project_config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&project_config_dir).unwrap();
+    fs::write(
+        project_config_dir.join("wt.toml"),
+        "post-create = \"npm install\"\n",
+    )
+    .unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--create", "new-branch"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "project config with post-create must fail to load, stdout: {}, stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("post-create"),
+        "error should name the offending key, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("pre-start"),
+        "error should point at the replacement key, got: {stderr}"
+    );
+}
+
+/// User config is loaded on a best-effort basis: a fatal deprecation surfaces
+/// as a `LoadError::Validation` warning, wt continues without it, and the user
+/// still gets the fatal message telling them to rename the key.
+#[rstest]
+fn test_post_create_in_user_config_warns_and_skips(repo: TestRepo, temp_home: TempDir) {
+    let config_path = repo.test_config_path();
+    fs::write(config_path, "post-create = \"npm install\"\n").unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.arg("list").current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", config_path);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt list should still succeed when user config fails validation, stderr: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("post-create") && stderr.contains("pre-start"),
+        "warning should describe the rename, got: {stderr}"
+    );
+}
+
+/// `wt config show` renders the fatal post-create error inline for both user
+/// and project configs, continuing the show flow so the user can still see
+/// their file and other sections.
+#[rstest]
+fn test_config_show_renders_post_create_error(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // User config at XDG path.
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "post-create = \"npm install\"\n",
+    )
+    .unwrap();
+
+    // Project config in the repo.
+    let project_config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&project_config_dir).unwrap();
+    fs::write(
+        project_config_dir.join("wt.toml"),
+        "post-create = \"bundle install\"\n",
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    repo.configure_mock_commands(&mut cmd);
+    cmd.args(["config", "show"]).current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    set_xdg_config_path(&mut cmd, temp_home.path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt config show should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Both sections should render the rename guidance.
+    assert!(
+        combined.matches("post-create").count() >= 2,
+        "expected post-create message in both user and project sections, got: {combined}"
+    );
+    assert!(
+        combined.contains("User config: `post-create`"),
+        "user section should name the removed key, got: {combined}"
+    );
+    assert!(
+        combined.contains("Project config: `post-create`"),
+        "project section should name the removed key, got: {combined}"
     );
 }

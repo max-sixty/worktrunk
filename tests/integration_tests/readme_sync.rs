@@ -1209,7 +1209,7 @@ fn test_config_docs_include_all_sections() {
 
     let all_keys = valid_user_config_keys();
 
-    // Hook keys from HookType enum + deprecated post-create (not in enum)
+    // Hook keys from HookType enum + removed post-create (kept in schema but rejected at load)
     let hook_keys: HashSet<String> = HookType::iter()
         .map(|h| h.to_string())
         .chain(std::iter::once("post-create".to_string()))
@@ -1273,7 +1273,7 @@ fn test_project_config_docs_include_all_sections() {
 
     let all_keys = valid_project_config_keys();
 
-    // Hook keys from HookType enum + deprecated post-create (not in enum)
+    // Hook keys from HookType enum + removed post-create (kept in schema but rejected at load)
     let hook_keys: HashSet<String> = HookType::iter()
         .map(|h| h.to_string())
         .chain(std::iter::once("post-create".to_string()))

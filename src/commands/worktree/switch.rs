@@ -820,7 +820,7 @@ pub fn execute_switch(
 
                     // Report tracking info when the branch was auto-created from a remote
                     let from_remote = if !create_branch && !local_branch_existed {
-                        branch_handle.upstream_single()?
+                        branch_handle.upstream()?
                     } else {
                         None
                     };

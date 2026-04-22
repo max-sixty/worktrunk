@@ -26,7 +26,7 @@
 //!    `git diff HEAD` for the current worktree on the preview pool. That bg
 //!    work overlaps with everything below.
 //! 4. Computes `num_items_estimate` — `list_worktrees` plus (conditionally)
-//!    `list_local_branches` / `list_remote_branches`, capped at
+//!    `local_branches` / `remote_branches`, capped at
 //!    `MAX_VISIBLE_ITEMS`. Only used to size skim's `preview_window`.
 //! 5. Builds `SkimOptions` (immutable after this — which is why steps 1-4 have
 //!    to run first).
@@ -80,9 +80,12 @@
 //!
 //! # TODO(picker-perf): dedupe git calls
 //!
-//! `num_items_estimate` and `collect::collect` each call `list_worktrees` and
-//! `list_local_branches`. Pre-seed collect's OnceCells from the main-thread
-//! fetch to save one of each on the bg thread's critical path toward skeleton.
+//! `num_items_estimate` and `collect::collect` each call `list_worktrees`.
+//! Pre-seed collect's OnceCells from the main-thread fetch to save one
+//! `git worktree list` on the bg thread's critical path toward skeleton.
+//! (The branch inventory is already shared via `Repository::cache`, so
+//! calling `local_branches()` / `remote_branches()` from both the main
+//! and bg threads runs the scan at most once.)
 
 mod items;
 mod log_formatter;
@@ -452,11 +455,11 @@ pub fn handle_picker(
             // Local branches are a superset of worktree branches (each
             // linked worktree normally has one), so take the max rather
             // than summing.
-            let local = repo.list_local_branches().map(|b| b.len()).unwrap_or(cap);
+            let local = repo.local_branches().map(|b| b.len()).unwrap_or(cap);
             estimate = estimate.max(local);
         }
         if estimate < cap && show_remotes {
-            let remotes = repo.list_remote_branches().map(|b| b.len()).unwrap_or(0);
+            let remotes = repo.remote_branches().map(|b| b.len()).unwrap_or(0);
             estimate = estimate.saturating_add(remotes);
         }
         estimate
