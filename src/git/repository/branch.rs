@@ -66,28 +66,20 @@ impl<'a> Branch<'a> {
     ///
     /// Returns a list of remote names that have this branch (e.g., `["origin"]`).
     /// Returns an empty list if no remotes have this branch.
+    ///
+    /// Filters the repository's remote-branch inventory (see
+    /// [`Repository::remote_branches`]); the first call within a command
+    /// triggers the `refs/remotes/` scan that populates the inventory.
+    ///
+    /// [`Repository::remote_branches`]: super::Repository::remote_branches
     pub fn remotes(&self) -> anyhow::Result<Vec<String>> {
-        // Get all remote tracking branches matching this name
-        // Format: refs/remotes/<remote>/<branch>
-        let output = self.repo.run_command(&[
-            "for-each-ref",
-            "--format=%(refname:strip=2)",
-            &format!("refs/remotes/*/{}", self.name),
-        ])?;
-
-        // Parse output: each line is "<remote>/<branch>"
-        // Extract the remote name (everything before the last /<branch>)
-        let suffix = format!("/{}", self.name);
-        let remotes: Vec<String> = output
-            .lines()
-            .filter_map(|line| {
-                let line = line.trim();
-                // Strip the branch suffix to get the remote name
-                line.strip_suffix(&suffix).map(String::from)
-            })
-            .collect();
-
-        Ok(remotes)
+        Ok(self
+            .repo
+            .remote_branches()?
+            .iter()
+            .filter(|r| r.local_name == self.name)
+            .map(|r| r.remote_name.clone())
+            .collect())
     }
 
     /// Get the upstream tracking branch for this branch.
