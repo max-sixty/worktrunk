@@ -23,7 +23,7 @@
 
 use color_print::cformat;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{Repository, WorktrunkError, interrupt_exit_code};
+use worktrunk::git::{Repository, WorktreeInfo, WorktrunkError, interrupt_exit_code};
 use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, progress_message, success_message, warning_message,
 };
@@ -44,11 +44,10 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
     let json_mode = format == crate::cli::SwitchFormat::Json;
     let repo = Repository::current()?;
     // Filter out prunable worktrees (directory deleted) - can't run commands there
-    let worktrees: Vec<_> = repo
+    let worktrees: Vec<&WorktreeInfo> = repo
         .list_worktrees()?
         .iter()
         .filter(|wt| !wt.is_prunable())
-        .cloned()
         .collect();
     let config = UserConfig::load()?;
 
@@ -63,7 +62,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
     // Join args into a template string (will be expanded per-worktree)
     let command_template = args.join(" ");
 
-    for wt in &worktrees {
+    for &wt in &worktrees {
         let display_name = worktree_display_name(wt, &repo, &config);
         eprintln!(
             "{}",
