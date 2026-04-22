@@ -186,16 +186,21 @@ pub fn build_hook_context(
     // Resolve commit from the Active branch, not HEAD at discovery path.
     // This ensures {{ commit }} follows the Active branch even when the
     // CommandContext points to a different worktree than where we're running.
-    // When there is no Active branch (detached HEAD), read the current
-    // worktree's HEAD SHA via the cache primed by `WorkingTree::prewarm_info`
-    // on the alias hot path.
+    // When `ctx.branch` matches the running worktree's current branch — the
+    // alias / hook hot path — reuse the HEAD SHA already cached by
+    // `WorkingTree::prewarm_info` instead of firing a fresh `rev-parse`.
+    // The same cache read covers detached HEAD (`ctx.branch == None` and the
+    // running worktree is also detached). Cross-worktree contexts, where
+    // `ctx.branch` names a different branch than the running worktree, fall
+    // through to `rev-parse <branch>` in the discovery path.
+    let wt = ctx.repo.current_worktree();
     let commit = match ctx.branch {
-        Some(branch) => ctx
+        Some(branch) if wt.branch().ok().flatten().as_deref() != Some(branch) => ctx
             .repo
             .run_command(&["rev-parse", branch])
             .ok()
             .map(|s| s.trim().to_owned()),
-        None => ctx.repo.current_worktree().head_sha().ok().flatten(),
+        _ => wt.head_sha().ok().flatten(),
     };
     if let Some(commit) = commit {
         if commit.len() >= 7 {
