@@ -433,10 +433,11 @@ impl Repository {
             .effective_integration_targets
             .entry(local_target.to_string())
             .or_insert_with(|| {
-                // Get the upstream ref for the local target (e.g., origin/main for main).
-                // Single-branch lookup — cached per-target in `effective_integration_targets`,
-                // so the bulk scan `upstream()` would run is pure overhead here.
-                let upstream = match self.branch(local_target).upstream_single() {
+                // Resolve the upstream via the cached branch inventory
+                // (`Repository::local_branches`). On the first call the
+                // inventory scan primes this and every subsequent upstream
+                // lookup; on repeat calls it's a map lookup.
+                let upstream = match self.branch(local_target).upstream() {
                     Ok(Some(upstream)) => upstream,
                     _ => return local_target.to_string(),
                 };

@@ -217,7 +217,7 @@ use crossbeam_channel as chan;
 use dunce::canonicalize;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use worktrunk::git::{Repository, WorktreeInfo};
+use worktrunk::git::{LocalBranch, Repository, WorktreeInfo};
 use worktrunk::styling::{
     INFO_SYMBOL, eprintln, format_with_gutter, hint_message, warning_message,
 };
@@ -505,15 +505,15 @@ pub fn collect(
     // - url_template: independent (loads project config via show-toplevel)
     // - project_identifier: independent (git config for remote URL; warms cache
     //   for is_worktree_at_expected_path and config resolution)
-    // - local_branches: independent (for-each-ref, but filtering needs worktrees)
-    // - remote_branches: independent (for-each-ref)
+    // - local_branches: independent (one `for-each-ref refs/heads/`; cached on
+    //   `RepoCache` so later consumers read it without re-scanning)
+    // - remote_branches: independent (one `for-each-ref refs/remotes/`; cached
+    //   on `RepoCache`)
     //
     // After this scope completes, we have all raw data and can do CPU-only work.
     let worktrees_cell: OnceCell<anyhow::Result<Vec<WorktreeInfo>>> = OnceCell::new();
     let default_branch_cell: OnceCell<Option<String>> = OnceCell::new();
     let url_template_cell: OnceCell<Option<String>> = OnceCell::new();
-    let local_branches_cell: OnceCell<anyhow::Result<Vec<(String, String)>>> = OnceCell::new();
-    let remote_branches_cell: OnceCell<anyhow::Result<Vec<(String, String)>>> = OnceCell::new();
 
     rayon::scope(|s| {
         s.spawn(|_| {
@@ -537,12 +537,15 @@ pub fn collect(
         });
         s.spawn(|_| {
             if fetch_branches {
-                let _ = local_branches_cell.set(repo.list_local_branches());
+                // Prime the local-branch inventory on `RepoCache`; consumers
+                // below read it through `repo.local_branches()`.
+                let _ = repo.local_branches();
             }
         });
         s.spawn(|_| {
             if fetch_remotes {
-                let _ = remote_branches_cell.set(repo.list_untracked_remote_branches());
+                // Prime the remote-branch inventory on `RepoCache`.
+                let _ = repo.remote_branches();
             }
         });
     });
@@ -629,37 +632,33 @@ pub fn collect(
     // the persisted value, now trusted without validation on the hot path.
     // Cross-check against the enumerated branch set and surface a warning
     // if it's been deleted externally. When `show_branches` is off but a
-    // persisted default is set and isn't a worktree branch, fetch the
-    // local branch list anyway (one `for-each-ref` fork) so the warning
-    // fires on plain `wt list` too — otherwise downstream tasks resolve
-    // against the stale ref and emit a cascade of "ambiguous argument"
-    // noise instead of one clean warning.
+    // persisted default is set and isn't a worktree branch, scan the local
+    // branch inventory anyway (one `for-each-ref` fork, cached afterwards)
+    // so the warning fires on plain `wt list` too — otherwise downstream
+    // tasks resolve against the stale ref and emit a cascade of "ambiguous
+    // argument" noise instead of one clean warning.
     let worktree_branches = worktree_branch_set(&worktrees);
     let needs_stale_check = default_branch
         .as_deref()
         .is_some_and(|b| !worktree_branches.contains(b));
-    let fetched_local: Option<Vec<(String, String)>> = if show_branches {
-        Some(match local_branches_cell.into_inner() {
-            Some(result) => result?,
-            None => repo.list_local_branches()?,
-        })
-    } else if needs_stale_check {
-        Some(repo.list_local_branches()?)
+    let fetched_local: Option<&[LocalBranch]> = if show_branches || needs_stale_check {
+        Some(repo.local_branches()?)
     } else {
         None
     };
     let warn_stale_default = needs_stale_check
-        && fetched_local.as_ref().is_some_and(|all| {
+        && fetched_local.is_some_and(|all| {
             !all.iter()
-                .any(|(n, _)| Some(n.as_str()) == default_branch.as_deref())
+                .any(|b| Some(b.name.as_str()) == default_branch.as_deref())
         });
 
     // Filter local branches to those without worktrees (CPU-only, no git commands)
     let branches_without_worktrees: Vec<(String, String)> = if show_branches {
-        let all_local = fetched_local.unwrap_or_default();
-        all_local
-            .into_iter()
-            .filter(|(name, _)| !worktree_branches.contains(name.as_str()))
+        fetched_local
+            .unwrap_or(&[])
+            .iter()
+            .filter(|b| !worktree_branches.contains(b.name.as_str()))
+            .map(|b| (b.name.clone(), b.commit_sha.clone()))
             .collect()
     } else {
         Vec::new()
@@ -690,13 +689,19 @@ pub fn collect(
     } else {
         default_branch
     };
-    let remote_branches = if show_remotes {
-        if let Some(result) = remote_branches_cell.into_inner() {
-            result?
-        } else {
-            // Config-triggered (not fetched speculatively) — fetch now
-            repo.list_untracked_remote_branches()?
-        }
+    // Remote branches that aren't tracked by any local branch. Filtering
+    // happens over the cached inventories — no extra subprocess.
+    let remote_branches: Vec<(String, String)> = if show_remotes {
+        let tracked: HashSet<&str> = repo
+            .local_branches()?
+            .iter()
+            .filter_map(|b| b.upstream_short.as_deref())
+            .collect();
+        repo.remote_branches()?
+            .iter()
+            .filter(|r| !tracked.contains(r.short_name.as_str()))
+            .map(|r| (r.short_name.clone(), r.commit_sha.clone()))
+            .collect()
     } else {
         Vec::new()
     };
@@ -1052,10 +1057,9 @@ pub fn collect(
     // `AheadBehindTask` hits the cache instead of spawning its own
     // `git rev-list --count`. One git call replaces N.
     //
-    // Note: `resolved_refs` and `commit_shas` are already primed by
-    // `list_local_branches()` (called during pre-skeleton phase).
-    // Upstream tracking branches are lazily loaded on first `Branch::upstream()`
-    // call via `OnceCell`.
+    // Note: `resolved_refs`, `commit_shas`, and upstream tracking info are
+    // already primed by `local_branches()` (called during pre-skeleton
+    // phase), so `Branch::upstream()` is an in-memory lookup from here on.
     //
     // On git < 2.36 (no `%(ahead-behind:)` support) or if default_branch is
     // unknown, skip the batch — individual tasks fall back to direct calls.

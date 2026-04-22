@@ -90,55 +90,22 @@ impl<'a> Branch<'a> {
         Ok(remotes)
     }
 
-    /// Get the upstream tracking branch for this branch. Use this when the
-    /// caller (or its caller) will query many branches; use
-    /// [`upstream_single`] when exactly one branch is looked up.
+    /// Get the upstream tracking branch for this branch.
     ///
-    /// First call in a process triggers `fetch_all_upstreams` — one
-    /// `git for-each-ref` over every local branch, cached for subsequent
-    /// calls. That bulk scan amortizes well across the per-worktree tasks
-    /// in `wt list`, where every row needs an upstream. On a single-branch
-    /// path (alias/hook template expansion, one-shot lookups during
-    /// switch/merge) the scan is O(branches) overhead with nothing to
-    /// amortize against — reach for [`upstream_single`] instead.
+    /// Reads from the repository's local-branch inventory (see
+    /// [`Repository::local_branches`]). The first call within a command
+    /// triggers the `refs/heads/` scan that populates the inventory;
+    /// subsequent lookups are O(1). Returns `None` when no upstream is
+    /// configured, when no local branch by this name exists, or when the
+    /// configured upstream is gone from its remote (git's `[gone]` track
+    /// state).
     ///
-    /// [`upstream_single`]: Self::upstream_single
+    /// [`Repository::local_branches`]: super::Repository::local_branches
     pub fn upstream(&self) -> anyhow::Result<Option<String>> {
-        let upstreams = self
+        Ok(self
             .repo
-            .cache
-            .upstreams
-            .get_or_try_init(|| self.repo.fetch_all_upstreams())?;
-        Ok(upstreams.get(&self.name).cloned().unwrap_or(None))
-    }
-
-    /// Get this branch's upstream without the bulk scan used by
-    /// [`upstream`]. Prefer this when exactly one branch is being looked
-    /// up; prefer [`upstream`] when the caller (or its caller) will query
-    /// many branches. Runs one `git for-each-ref` scoped to this branch's
-    /// ref — O(1) in local branch count.
-    ///
-    /// Handles the `[gone]` track state the same way as the bulk path:
-    /// a configured-but-missing upstream reads as `None`.
-    ///
-    /// [`upstream`]: Self::upstream
-    pub fn upstream_single(&self) -> anyhow::Result<Option<String>> {
-        let output = self.repo.run_command(&[
-            "for-each-ref",
-            "--format=%(upstream:short)\t%(upstream:track)",
-            &format!("refs/heads/{}", self.name),
-        ])?;
-        let Some(line) = output.lines().next() else {
-            return Ok(None);
-        };
-        let (upstream, track) = line
-            .split_once('\t')
-            .expect("for-each-ref emits a tab between the two format fields");
-        if upstream.is_empty() || track == "[gone]" {
-            Ok(None)
-        } else {
-            Ok(Some(upstream.to_string()))
-        }
+            .local_branch(&self.name)?
+            .and_then(|b| b.upstream_short.clone()))
     }
 
     /// Unset the upstream tracking branch for this branch.

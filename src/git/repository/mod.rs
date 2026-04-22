@@ -62,7 +62,6 @@
 //! The picker also maintains a `PreviewCache` (`Arc<DashMap>` in `commands/picker/items.rs`)
 //! for rendered preview output, scoped to a single picker session.
 
-use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -87,7 +86,9 @@ use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 use super::{DefaultBranchName, GitError, IntegrationReason, LineDiff, WorktreeInfo};
 
 // Re-export types needed by submodules
-pub(super) use super::{BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl};
+pub(super) use super::{
+    BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl, LocalBranch, RemoteBranch,
+};
 
 // Submodules with impl blocks
 mod branch;
@@ -263,10 +264,19 @@ pub(super) struct RepoCache {
     /// Used by `rev_parse_commit()` to key the persistent `sha_cache` by SHA.
     pub(super) commit_shas: DashMap<String, String>,
 
-    /// Upstream tracking branch cache: local branch -> upstream (e.g., "origin/main").
-    /// None means "no upstream configured". Lazily loaded on first access via
-    /// `Branch::upstream()` → `fetch_all_upstreams()`.
-    pub(super) upstreams: OnceCell<HashMap<String, Option<String>>>,
+    /// Local branch inventory: one `git for-each-ref refs/heads/` scan, cached
+    /// for the lifetime of the repository. Entries are sorted by most recent
+    /// commit first; the inventory also holds a name → index map for O(1)
+    /// single-branch lookups. Populated lazily via
+    /// [`Repository::local_branches`] — the first call runs the scan and
+    /// primes `resolved_refs`/`commit_shas` so subsequent ref resolution and
+    /// SHA lookups hit memory.
+    pub(super) local_branches: OnceCell<branches::LocalBranchInventory>,
+    /// Remote-tracking branch inventory: one `git for-each-ref refs/remotes/`
+    /// scan, cached for the lifetime of the repository. Sorted by most recent
+    /// commit first. Populated lazily via [`Repository::remote_branches`].
+    /// Excludes `<remote>/HEAD` symrefs.
+    pub(super) remote_branches: OnceCell<Vec<RemoteBranch>>,
     /// Commit details cache: commit SHA -> (timestamp, subject).
     /// Multiple items sharing the same HEAD commit (e.g., worktrees on main)
     /// would otherwise each spawn a `git log -1` for the same SHA.
