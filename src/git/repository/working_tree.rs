@@ -238,15 +238,16 @@ impl<'a> WorkingTree<'a> {
         // HEAD — which comes after. Skipping the cache on canonicalize failure
         // preserves the invariant that `worktree_roots` / `git_dirs` contain
         // only confirmed paths; a later bare accessor call will retry.
-        let root = lines.next().and_then(|raw| {
-            let canonical = canonicalize(PathBuf::from(raw.trim())).ok()?;
+        let root = lines
+            .next()
+            .and_then(|raw| canonicalize(PathBuf::from(raw.trim())).ok());
+        if let Some(canonical) = &root {
             self.repo
                 .cache
                 .worktree_roots
                 .entry(self.path.clone())
                 .or_insert_with(|| canonical.clone());
-            Some(canonical)
-        });
+        }
 
         let git_dir = lines.next().and_then(|raw| {
             let path = PathBuf::from(raw.trim());
@@ -392,15 +393,15 @@ impl<'a> WorkingTree<'a> {
     pub fn root(&self) -> anyhow::Result<PathBuf> {
         match self.repo.cache.worktree_roots.entry(self.path.clone()) {
             Entry::Occupied(e) => Ok(e.get().clone()),
-            Entry::Vacant(e) => {
-                let Ok(stdout) = self.run_command(&["rev-parse", "--show-toplevel"]) else {
-                    return Ok(self.path.clone());
-                };
-                let Ok(root) = canonicalize(PathBuf::from(stdout.trim())) else {
-                    return Ok(self.path.clone());
-                };
-                Ok(e.insert(root).clone())
-            }
+            Entry::Vacant(e) => match self
+                .run_command(&["rev-parse", "--show-toplevel"])
+                .ok()
+                .map(|s| PathBuf::from(s.trim()))
+                .and_then(|p| canonicalize(&p).ok())
+            {
+                Some(root) => Ok(e.insert(root).clone()),
+                None => Ok(self.path.clone()),
+            },
         }
     }
 
