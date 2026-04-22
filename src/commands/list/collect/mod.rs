@@ -28,7 +28,14 @@
 //! | `git config remote.*.url` (1-3 calls) | Project identifier (for config + path check) | ✓ |
 //! | `git for-each-ref refs/heads` | Only with `--branches` flag | ✓ |
 //! | `git for-each-ref refs/remotes` | Only with `--remotes` flag | ✓ |
-//! | `git log --no-walk --format='%H %ct' SHA1 SHA2 ...` | **Batched** timestamps | Sequential (needs SHAs) |
+//! | `git log --no-walk --format='%H\0%ct\0%s' SHA1 SHA2 ...` | **Batched** commit details (timestamp + subject) | Sequential (needs SHAs) |
+//!
+//! The batched `git log` fetches subjects too, which the skeleton itself
+//! doesn't strictly need — only timestamps are required for sort order. It
+//! rides along for free: git has to resolve each commit object anyway, and
+//! the subject bytes add no measurable latency to the round trip. The
+//! subjects populate `cache.commit_details` so the post-skeleton
+//! `CommitDetailsTask` is a pure cache hit instead of N `git log -1` forks.
 //!
 //! **Non-git operations (negligible latency):**
 //! - Path canonicalization — detect current worktree
@@ -725,7 +732,11 @@ pub fn collect(
     // Defer previous_branch lookup until after skeleton - set is_previous later
     // (skeleton shows placeholder gutter, actual symbols appear when data loads)
 
-    // Phase 3: Batch fetch timestamps (needs all SHAs from worktrees + branches)
+    // Phase 3: Batch fetch commit details (timestamp + subject) for all SHAs
+    // from worktrees + branches. Populates `repo.cache.commit_details` so
+    // post-skeleton `CommitDetailsTask` hits the cache instead of spawning
+    // `git log -1` per row.
+    //
     // Filter out null OIDs from unborn branches — a single null OID would cause
     // `git log --no-walk` to fail for ALL shas in the batch.
     let all_shas: Vec<&str> = worktrees
@@ -739,7 +750,12 @@ pub fn collect(
         .chain(remote_branches.iter().map(|(_, sha)| sha.as_str()))
         .filter(|sha| *sha != worktrunk::git::NULL_OID)
         .collect();
-    let timestamps = repo.commit_timestamps(&all_shas).unwrap_or_default();
+    let timestamps: std::collections::HashMap<String, i64> = repo
+        .commit_details_many(&all_shas)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(sha, (ts, _))| (sha, ts))
+        .collect();
 
     // Sort worktrees: current first, main second, then by timestamp descending
     let sorted_worktrees = sort_worktrees_with_cache(

@@ -53,28 +53,59 @@ impl Repository {
         Ok(files)
     }
 
-    /// Get commit timestamps for multiple commits in a single git command.
+    /// Get commit timestamp and subject for multiple commits in a single git command.
     ///
-    /// Returns a map from commit SHA to timestamp.
-    pub fn commit_timestamps(&self, commits: &[&str]) -> anyhow::Result<HashMap<String, i64>> {
+    /// Returns a map from commit SHA to `(timestamp, subject)` and primes
+    /// `cache.commit_details` with the same entries, so subsequent per-SHA
+    /// `commit_details()` calls hit the cache and skip their `git log -1` fork.
+    ///
+    /// Uses NUL separators between fields so subjects containing spaces or other
+    /// whitespace parse unambiguously. `%s` is the subject line only, so no
+    /// multi-line handling is needed.
+    ///
+    /// Fails if any SHA is invalid (`git log --no-walk` refuses the whole
+    /// batch). Callers that want a best-effort fallback should use
+    /// `unwrap_or_default()` — individual `commit_details()` lookups will then
+    /// fetch on demand.
+    pub fn commit_details_many(
+        &self,
+        commits: &[&str],
+    ) -> anyhow::Result<HashMap<String, (i64, String)>> {
         if commits.is_empty() {
             return Ok(HashMap::new());
         }
 
-        // Build command: git log --no-walk --format='%H %ct' sha1 sha2 sha3 ...
-        // --no-walk shows exactly the named commits without DAG walking
-        let mut args = vec!["log", "--no-walk", "--no-show-signature", "--format=%H %ct"];
+        // --no-walk shows exactly the named commits without DAG walking.
+        // --no-show-signature suppresses GPG verification output that otherwise
+        // contaminates stdout when log.showSignature is set.
+        let mut args = vec![
+            "log",
+            "--no-walk",
+            "--no-show-signature",
+            "--format=%H%x00%ct%x00%s",
+        ];
         args.extend(commits);
 
         let stdout = self.run_command(&args)?;
 
         let mut result = HashMap::with_capacity(commits.len());
         for line in stdout.lines() {
-            if let Some((sha, timestamp_str)) = line.split_once(' ')
-                && let Ok(timestamp) = timestamp_str.parse::<i64>()
-            {
-                result.insert(sha.to_string(), timestamp);
-            }
+            let mut parts = line.splitn(3, '\0');
+            let (Some(sha), Some(timestamp_str), Some(subject)) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                bail!(
+                    "Malformed git log output: expected '<sha>\\0<ts>\\0<subject>', got {line:?}"
+                );
+            };
+            let timestamp: i64 = timestamp_str
+                .parse()
+                .with_context(|| format!("Failed to parse timestamp {timestamp_str:?}"))?;
+            let entry = (timestamp, subject.to_owned());
+            self.cache
+                .commit_details
+                .insert(sha.to_string(), entry.clone());
+            result.insert(sha.to_string(), entry);
         }
 
         Ok(result)
@@ -84,30 +115,29 @@ impl Repository {
     ///
     /// Results are cached in the shared repo cache by commit SHA, so multiple
     /// items pointing at the same commit (e.g., worktrees on main) only run
-    /// `git log -1` once.
+    /// `git log -1` once. `commit_details_many()` primes the same cache in
+    /// bulk when a set of SHAs is known up front.
     pub fn commit_details(&self, commit: &str) -> anyhow::Result<(i64, String)> {
-        use dashmap::mapref::entry::Entry;
         match self.cache.commit_details.entry(commit.to_string()) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
-                // Use space separator - timestamps don't contain spaces, and %s (subject)
-                // is the first line only (no embedded newlines). Split on first space.
-                // --no-show-signature suppresses GPG verification output that otherwise
-                // contaminates stdout when log.showSignature is set.
+                // Matches the batch path's format (NUL separators) so both populate
+                // the cache with byte-identical values. --no-show-signature suppresses
+                // GPG verification output that otherwise contaminates stdout when
+                // log.showSignature is set.
                 let stdout = self.run_command(&[
                     "log",
                     "-1",
                     "--no-show-signature",
-                    "--format=%ct %s",
+                    "--format=%ct%x00%s",
                     commit,
                 ])?;
-                // Only strip trailing newline, not spaces (empty subject = "timestamp ")
                 let line = stdout.trim_end_matches('\n');
-                let (timestamp_str, message) = line
-                    .split_once(' ')
+                let (timestamp_str, subject) = line
+                    .split_once('\0')
                     .context("Failed to parse commit details")?;
                 let timestamp = timestamp_str.parse().context("Failed to parse timestamp")?;
-                Ok(e.insert((timestamp, message.trim().to_owned())).clone())
+                Ok(e.insert((timestamp, subject.to_owned())).clone())
             }
         }
     }
