@@ -181,11 +181,10 @@ impl Task for AheadBehindTask {
         // keeps both paths consistent.
         let head = ctx
             .branch_ref
-            .branch
-            .as_deref()
-            .unwrap_or(&ctx.branch_ref.commit_sha);
+            .integration_ref()
+            .unwrap_or_else(|| ctx.branch_ref.commit_sha.clone());
         let (ahead, behind) = repo
-            .ahead_behind(&base, head)
+            .ahead_behind(&base, &head)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::AheadBehind {
@@ -219,11 +218,10 @@ impl Task for CommittedTreesMatchTask {
         // equivalent; for detached HEAD, commit_sha is the only option.
         let ref_to_check = ctx
             .branch_ref
-            .branch
-            .as_deref()
-            .unwrap_or(&ctx.branch_ref.commit_sha);
+            .integration_ref()
+            .unwrap_or_else(|| ctx.branch_ref.commit_sha.clone());
         let committed_trees_match = repo
-            .trees_match(ref_to_check, &base)
+            .trees_match(&ref_to_check, &base)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::CommittedTreesMatch {
             item_idx: ctx.item_idx,
@@ -250,7 +248,7 @@ impl Task for HasFileChangesTask {
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         // No branch name (detached HEAD) - return conservative default (assume has changes)
-        let Some(branch) = ctx.branch_ref.branch.as_deref() else {
+        let Some(branch) = ctx.branch_ref.integration_ref() else {
             return Ok(TaskResult::HasFileChanges {
                 item_idx: ctx.item_idx,
                 has_file_changes: true,
@@ -265,7 +263,7 @@ impl Task for HasFileChangesTask {
         };
         let repo = &ctx.repo;
         let has_file_changes = repo
-            .has_added_changes(branch, &target)
+            .has_added_changes(&branch, &target)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::HasFileChanges {
@@ -297,7 +295,7 @@ impl Task for WouldMergeAddTask {
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         // No branch name (detached HEAD) - return conservative default (assume would add)
-        let Some(branch) = ctx.branch_ref.branch.as_deref() else {
+        let Some(branch) = ctx.branch_ref.integration_ref() else {
             return Ok(TaskResult::WouldMergeAdd {
                 item_idx: ctx.item_idx,
                 would_merge_add: true,
@@ -314,7 +312,7 @@ impl Task for WouldMergeAddTask {
         };
         let probe = ctx
             .repo
-            .merge_integration_probe(branch, &base)
+            .merge_integration_probe(&branch, &base)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::WouldMergeAdd {
             item_idx: ctx.item_idx,
@@ -350,11 +348,10 @@ impl Task for IsAncestorTask {
         // for rationale (rebase-in-progress transient HEAD).
         let ref_to_check = ctx
             .branch_ref
-            .branch
-            .as_deref()
-            .unwrap_or(&ctx.branch_ref.commit_sha);
+            .integration_ref()
+            .unwrap_or_else(|| ctx.branch_ref.commit_sha.clone());
         let is_ancestor = repo
-            .is_ancestor(ref_to_check, &base)
+            .is_ancestor(&ref_to_check, &base)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::IsAncestor {
@@ -383,11 +380,10 @@ impl Task for BranchDiffTask {
         // for rationale (rebase-in-progress transient HEAD).
         let ref_to_check = ctx
             .branch_ref
-            .branch
-            .as_deref()
-            .unwrap_or(&ctx.branch_ref.commit_sha);
+            .integration_ref()
+            .unwrap_or_else(|| ctx.branch_ref.commit_sha.clone());
         let diff = repo
-            .branch_diff_stats(&base, ref_to_check)
+            .branch_diff_stats(&base, &ref_to_check)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::BranchDiff {
@@ -460,11 +456,10 @@ impl Task for MergeTreeConflictsTask {
         // for rationale (rebase-in-progress transient HEAD).
         let ref_to_check = ctx
             .branch_ref
-            .branch
-            .as_deref()
-            .unwrap_or(&ctx.branch_ref.commit_sha);
+            .integration_ref()
+            .unwrap_or_else(|| ctx.branch_ref.commit_sha.clone());
         let has_merge_tree_conflicts = repo
-            .has_merge_conflicts(&base, ref_to_check)
+            .has_merge_conflicts(&base, &ref_to_check)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::MergeTreeConflicts {
             item_idx: ctx.item_idx,

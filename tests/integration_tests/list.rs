@@ -469,6 +469,58 @@ fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) 
     );
 }
 
+/// A remote-row must resolve to `refs/remotes/<name>` even when a local branch
+/// with the literal same short name exists. Git allows local branches like
+/// `origin/foo`; without qualifying the ref, `git rev-parse origin/foo` picks
+/// `refs/heads/origin/foo` and the remote row silently reports stats against
+/// the local branch.
+#[rstest]
+fn test_list_remote_row_not_shadowed_by_same_named_local_branch(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    // Remote `foo` = one commit ahead of main.
+    repo.create_branch("foo");
+    repo.run_git(&["checkout", "foo"]);
+    std::fs::write(repo.root_path().join("remote.txt"), "remote").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "Remote foo commit"]);
+    repo.push_branch("foo");
+
+    // Drop local `foo` so only `refs/remotes/origin/foo` remains.
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["branch", "-D", "foo"]);
+
+    // Local branch literally named `origin/foo`, two commits ahead of main on a
+    // different history from the remote.
+    repo.run_git(&["checkout", "-b", "origin/foo"]);
+    std::fs::write(repo.root_path().join("local1.txt"), "local1").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "Local origin/foo 1"]);
+    std::fs::write(repo.root_path().join("local2.txt"), "local2").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "Local origin/foo 2"]);
+    repo.run_git(&["checkout", "main"]);
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--remotes", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let remote_row = json
+        .iter()
+        .find(|w| w["branch"] == "origin/foo" && w["kind"] == "branch")
+        .expect("remote row origin/foo should be present in --remotes output");
+
+    assert_eq!(
+        remote_row["main"]["ahead"].as_u64(),
+        Some(1),
+        "remote row must report remote-branch ahead count (1), not local (2): {remote_row:#?}"
+    );
+}
+
 #[rstest]
 fn test_list_json_with_display_fields(mut repo: TestRepo) {
     repo.commit("Initial commit on main");
