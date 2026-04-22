@@ -68,7 +68,7 @@ impl TaskContext {
             let kind_str: &'static str = kind.into();
             let sha = &self.branch_ref.commit_sha;
             let short_sha = &sha[..sha.len().min(8)];
-            let branch = self.branch_ref.branch.as_deref().unwrap_or(short_sha);
+            let branch = self.branch_ref.short_name().unwrap_or(short_sha);
             log::debug!("Task {} timed out for {}", kind_str, branch);
             ErrorCause::Timeout
         } else {
@@ -181,10 +181,10 @@ impl Task for AheadBehindTask {
         // keeps both paths consistent.
         let head = ctx
             .branch_ref
-            .integration_ref()
-            .unwrap_or_else(|| ctx.branch_ref.commit_sha.clone());
+            .full_ref()
+            .unwrap_or(&ctx.branch_ref.commit_sha);
         let (ahead, behind) = repo
-            .ahead_behind(&base, &head)
+            .ahead_behind(&base, head)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::AheadBehind {
@@ -218,10 +218,10 @@ impl Task for CommittedTreesMatchTask {
         // equivalent; for detached HEAD, commit_sha is the only option.
         let ref_to_check = ctx
             .branch_ref
-            .integration_ref()
-            .unwrap_or_else(|| ctx.branch_ref.commit_sha.clone());
+            .full_ref()
+            .unwrap_or(&ctx.branch_ref.commit_sha);
         let committed_trees_match = repo
-            .trees_match(&ref_to_check, &base)
+            .trees_match(ref_to_check, &base)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::CommittedTreesMatch {
             item_idx: ctx.item_idx,
@@ -248,7 +248,7 @@ impl Task for HasFileChangesTask {
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         // No branch name (detached HEAD) - return conservative default (assume has changes)
-        let Some(branch) = ctx.branch_ref.integration_ref() else {
+        let Some(branch) = ctx.branch_ref.full_ref() else {
             return Ok(TaskResult::HasFileChanges {
                 item_idx: ctx.item_idx,
                 has_file_changes: true,
@@ -263,7 +263,7 @@ impl Task for HasFileChangesTask {
         };
         let repo = &ctx.repo;
         let has_file_changes = repo
-            .has_added_changes(&branch, &target)
+            .has_added_changes(branch, &target)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::HasFileChanges {
@@ -295,7 +295,7 @@ impl Task for WouldMergeAddTask {
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         // No branch name (detached HEAD) - return conservative default (assume would add)
-        let Some(branch) = ctx.branch_ref.integration_ref() else {
+        let Some(branch) = ctx.branch_ref.full_ref() else {
             return Ok(TaskResult::WouldMergeAdd {
                 item_idx: ctx.item_idx,
                 would_merge_add: true,
@@ -312,7 +312,7 @@ impl Task for WouldMergeAddTask {
         };
         let probe = ctx
             .repo
-            .merge_integration_probe(&branch, &base)
+            .merge_integration_probe(branch, &base)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::WouldMergeAdd {
             item_idx: ctx.item_idx,
@@ -348,10 +348,10 @@ impl Task for IsAncestorTask {
         // for rationale (rebase-in-progress transient HEAD).
         let ref_to_check = ctx
             .branch_ref
-            .integration_ref()
-            .unwrap_or_else(|| ctx.branch_ref.commit_sha.clone());
+            .full_ref()
+            .unwrap_or(&ctx.branch_ref.commit_sha);
         let is_ancestor = repo
-            .is_ancestor(&ref_to_check, &base)
+            .is_ancestor(ref_to_check, &base)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::IsAncestor {
@@ -380,10 +380,10 @@ impl Task for BranchDiffTask {
         // for rationale (rebase-in-progress transient HEAD).
         let ref_to_check = ctx
             .branch_ref
-            .integration_ref()
-            .unwrap_or_else(|| ctx.branch_ref.commit_sha.clone());
+            .full_ref()
+            .unwrap_or(&ctx.branch_ref.commit_sha);
         let diff = repo
-            .branch_diff_stats(&base, &ref_to_check)
+            .branch_diff_stats(&base, ref_to_check)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::BranchDiff {
@@ -456,10 +456,10 @@ impl Task for MergeTreeConflictsTask {
         // for rationale (rebase-in-progress transient HEAD).
         let ref_to_check = ctx
             .branch_ref
-            .integration_ref()
-            .unwrap_or_else(|| ctx.branch_ref.commit_sha.clone());
+            .full_ref()
+            .unwrap_or(&ctx.branch_ref.commit_sha);
         let has_merge_tree_conflicts = repo
-            .has_merge_conflicts(&base, &ref_to_check)
+            .has_merge_conflicts(&base, ref_to_check)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::MergeTreeConflicts {
             item_idx: ctx.item_idx,
@@ -627,7 +627,7 @@ impl Task for UserMarkerTask {
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         let repo = &ctx.repo;
-        let user_marker = repo.user_marker(ctx.branch_ref.branch.as_deref());
+        let user_marker = repo.user_marker(ctx.branch_ref.short_name());
         Ok(TaskResult::UserMarker {
             item_idx: ctx.item_idx,
             user_marker,
@@ -645,7 +645,7 @@ impl Task for UpstreamTask {
         let repo = &ctx.repo;
 
         // No branch means no upstream
-        let Some(branch) = ctx.branch_ref.branch.as_deref() else {
+        let Some(branch) = ctx.branch_ref.short_name() else {
             return Ok(TaskResult::Upstream {
                 item_idx: ctx.item_idx,
                 upstream: UpstreamStatus::default(),
@@ -696,10 +696,10 @@ impl Task for CiStatusTask {
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         let repo = &ctx.repo;
-        let pr_status = ctx.branch_ref.branch.as_deref().and_then(|branch| {
+        let pr_status = ctx.branch_ref.short_name().and_then(|branch| {
             // Use from_branch_ref with the authoritative is_remote flag
             // rather than guessing from the branch name
-            let ci_branch = CiBranchName::from_branch_ref(branch, ctx.branch_ref.is_remote);
+            let ci_branch = CiBranchName::from_branch_ref(branch, ctx.branch_ref.is_remote());
             PrStatus::detect(repo, &ci_branch, &ctx.branch_ref.commit_sha)
         });
 
@@ -765,7 +765,7 @@ impl Task for SummaryGenerateTask {
             ));
         };
 
-        let branch = ctx.branch_ref.branch.as_deref().unwrap_or("(detached)");
+        let branch = ctx.branch_ref.short_name().unwrap_or("(detached)");
         let worktree_path = ctx.branch_ref.worktree_path.as_deref();
 
         let summary = crate::summary::generate_summary_core(

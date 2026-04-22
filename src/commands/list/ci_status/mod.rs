@@ -41,7 +41,7 @@ impl CiBranchName {
     /// For local branches, the name is already bare.
     ///
     /// The `is_remote` flag should come from an authoritative source:
-    /// - `BranchRef::is_remote` (from collection phase)
+    /// - `BranchRef::is_remote()` (from collection phase)
     /// - `git show-ref --verify refs/remotes/<branch>` (for CLI input)
     pub fn from_branch_ref(branch: &str, is_remote: bool) -> Self {
         if is_remote {

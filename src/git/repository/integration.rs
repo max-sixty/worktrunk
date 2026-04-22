@@ -50,14 +50,34 @@ impl Repository {
             .clone()
     }
 
+    /// Resolve a ref for integration helpers — passthrough for already-qualified
+    /// refs, branch-preferring resolution for short names.
+    ///
+    /// Inputs starting with `refs/` (e.g., from `BranchRef::full_ref()`) are
+    /// returned unchanged: they're already unambiguous, and re-qualifying would
+    /// either (a) waste a `rev-parse` in the common case, or (b) pick the wrong
+    /// ref when a branch literally named e.g. `refs/heads/foo` exists — the
+    /// caller gave us `refs/heads/foo` meaning the branch `foo`, not the
+    /// pathological branch at `refs/heads/refs/heads/foo`.
+    ///
+    /// Short names go through `resolve_preferring_branch` so its
+    /// branch-over-tag disambiguation still applies to user/CLI input.
+    fn resolve_ref(&self, r: &str) -> String {
+        if r.starts_with("refs/") {
+            r.to_string()
+        } else {
+            self.resolve_preferring_branch(r)
+        }
+    }
+
     /// Check if base is an ancestor of head (i.e., would be a fast-forward).
     ///
     /// See [`--is-ancestor`][1] for details.
     ///
     /// [1]: https://git-scm.com/docs/git-merge-base#Documentation/git-merge-base.txt---is-ancestor
     pub fn is_ancestor(&self, base: &str, head: &str) -> anyhow::Result<bool> {
-        let base = self.resolve_preferring_branch(base);
-        let head = self.resolve_preferring_branch(head);
+        let base = self.resolve_ref(base);
+        let head = self.resolve_ref(head);
 
         let base_sha = self.rev_parse_commit(&base)?;
         let head_sha = self.rev_parse_commit(&head)?;
@@ -74,8 +94,8 @@ impl Repository {
 
     /// Check if two refs point to the same commit.
     pub fn same_commit(&self, ref1: &str, ref2: &str) -> anyhow::Result<bool> {
-        let ref1 = self.resolve_preferring_branch(ref1);
-        let ref2 = self.resolve_preferring_branch(ref2);
+        let ref1 = self.resolve_ref(ref1);
+        let ref2 = self.resolve_ref(ref2);
         // Parse both refs in a single git command
         let output = self.run_command(&["rev-parse", &ref1, &ref2])?;
         let mut lines = output.lines();
@@ -95,8 +115,8 @@ impl Repository {
     /// For orphan branches (no common ancestor with target), returns true since all
     /// their changes are unique.
     pub fn has_added_changes(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
-        let branch = self.resolve_preferring_branch(branch);
-        let target = self.resolve_preferring_branch(target);
+        let branch = self.resolve_ref(branch);
+        let target = self.resolve_ref(target);
 
         let branch_sha = self.rev_parse_commit(&branch)?;
         let target_sha = self.rev_parse_commit(&target)?;
@@ -124,8 +144,8 @@ impl Repository {
     /// Useful for detecting squash merges or rebases where the content has been
     /// integrated but commit ancestry doesn't show the relationship.
     pub fn trees_match(&self, ref1: &str, ref2: &str) -> anyhow::Result<bool> {
-        let ref1 = self.resolve_preferring_branch(ref1);
-        let ref2 = self.resolve_preferring_branch(ref2);
+        let ref1 = self.resolve_ref(ref1);
+        let ref2 = self.resolve_ref(ref2);
         // Parse both tree refs in a single git command
         let output = self.run_command(&[
             "rev-parse",
@@ -161,8 +181,8 @@ impl Repository {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn has_merge_conflicts(&self, base: &str, head: &str) -> anyhow::Result<bool> {
-        let base = self.resolve_preferring_branch(base);
-        let head = self.resolve_preferring_branch(head);
+        let base = self.resolve_ref(base);
+        let head = self.resolve_ref(head);
 
         let base_sha = self.rev_parse_commit(&base)?;
         let head_sha = self.rev_parse_commit(&head)?;
@@ -192,7 +212,7 @@ impl Repository {
         branch_head_sha: &str,
         tree_sha: &str,
     ) -> anyhow::Result<bool> {
-        let base = self.resolve_preferring_branch(base);
+        let base = self.resolve_ref(base);
         let base_sha = self.rev_parse_commit(&base)?;
 
         let cache_head = format!("{branch_head_sha}+{tree_sha}");
@@ -248,7 +268,7 @@ impl Repository {
 
     /// Check if merging a branch into target would add anything (not already integrated).
     ///
-    /// Caller must pass resolved refs (via `resolve_preferring_branch`).
+    /// Caller must pass resolved refs (via `resolve_ref`).
     ///
     /// Returns:
     /// - `Ok(Some(true))` if merging would change the target
@@ -364,8 +384,8 @@ impl Repository {
         branch: &str,
         target: &str,
     ) -> anyhow::Result<MergeProbeResult> {
-        let branch = self.resolve_preferring_branch(branch);
-        let target = self.resolve_preferring_branch(target);
+        let branch = self.resolve_ref(branch);
+        let target = self.resolve_ref(target);
 
         // Resolve refs to commit SHAs for the persistent cache key.
         // The probe result depends only on the two committed trees (the

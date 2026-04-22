@@ -263,7 +263,12 @@ impl Repository {
     /// On git < 2.36 or if the command fails, this is a no-op and
     /// `ahead_behind()` falls back to per-branch computation.
     pub fn batch_ahead_behind(&self, base: &str) {
-        let format = format!("%(refname:lstrip=2) %(ahead-behind:{})", base);
+        // Uses `%(refname)` (full ref) rather than `%(refname:lstrip=2)` so the
+        // cache key matches what `AheadBehindTask` queries — that task passes
+        // `BranchRef::full_ref()` (e.g., `refs/heads/feature`). Keying by short
+        // names would force every row to miss the batch cache and fall back to
+        // per-branch `rev-list --count`.
+        let format = format!("%(refname) %(ahead-behind:{})", base);
         let output = match self.run_command(&[
             "for-each-ref",
             &format!("--format={}", format),
@@ -280,17 +285,17 @@ impl Repository {
         output
             .lines()
             .filter_map(|line| {
-                // Format: "branch-name ahead behind"
+                // Format: "refs/heads/branch-name ahead behind"
                 let mut parts = line.rsplitn(3, ' ');
                 let behind: usize = parts.next()?.parse().ok()?;
                 let ahead: usize = parts.next()?.parse().ok()?;
-                let branch = parts.next()?;
-                Some((branch, ahead, behind))
+                let full_ref = parts.next()?;
+                Some((full_ref, ahead, behind))
             })
-            .for_each(|(branch, ahead, behind)| {
+            .for_each(|(full_ref, ahead, behind)| {
                 self.cache
                     .ahead_behind
-                    .insert((base.to_string(), branch.to_string()), (ahead, behind));
+                    .insert((base.to_string(), full_ref.to_string()), (ahead, behind));
             });
     }
 
@@ -384,5 +389,46 @@ impl Repository {
             .ok()
             .map(|output| DiffStats::from_shortstat(&output).format_summary())
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+
+    #[test]
+    fn batch_ahead_behind_keys_cache_by_full_ref() {
+        // Callers in `wt list` pass `BranchRef::full_ref()` (`refs/heads/<name>`)
+        // into `ahead_behind`. This test pins the batch cache to the same key
+        // shape — short-name keys would force every row to miss the batch and
+        // fall back to per-branch `rev-list --count`.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.path()).unwrap();
+
+        test.create_branch("feature");
+        test.run_git(&["checkout", "feature"]);
+        std::fs::write(test.path().join("f.txt"), "x").unwrap();
+        test.run_git(&["add", "."]);
+        test.run_git(&["commit", "-m", "feature"]);
+        test.run_git(&["checkout", "main"]);
+
+        repo.batch_ahead_behind("main");
+
+        assert_eq!(
+            repo.cache
+                .ahead_behind
+                .get(&("main".to_string(), "refs/heads/feature".to_string()))
+                .map(|v| *v),
+            Some((1, 0)),
+            "batch must prime cache under the full ref key"
+        );
+        assert!(
+            repo.cache
+                .ahead_behind
+                .get(&("main".to_string(), "feature".to_string()))
+                .is_none(),
+            "short-name key must not be used",
+        );
     }
 }
