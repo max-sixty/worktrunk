@@ -662,14 +662,7 @@ pub fn handle_state_get(
 
             // Determine if this is a remote ref by checking git refs directly.
             // This is authoritative - we check actual refs, not guessing from name.
-            let is_remote = repo
-                .run_command(&[
-                    "show-ref",
-                    "--verify",
-                    "--quiet",
-                    &format!("refs/remotes/{}", branch_name),
-                ])
-                .is_ok();
+            let is_remote = repo.is_remote_tracking_branch(&branch_name);
 
             // Get the HEAD commit for this branch
             let head = repo
