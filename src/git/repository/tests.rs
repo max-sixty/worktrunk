@@ -657,6 +657,53 @@ fn commit_details_many_empty_input_is_noop() {
 }
 
 #[test]
+fn commit_details_many_preserves_multibyte_utf8_subject() {
+    // Pin that multibyte UTF-8 round-trips through the NUL-delimited parser —
+    // `splitn(3, '\0')` works on byte positions, so char boundaries inside the
+    // subject must be preserved intact.
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::new();
+    let subject = "Add support for 日本語 and émoji 🎉";
+    test.commit_with_message(subject);
+    let sha = test
+        .repo
+        .run_command(&["rev-parse", "HEAD"])
+        .unwrap()
+        .trim()
+        .to_string();
+
+    let result = test.repo.commit_details_many(&[sha.as_str()]).unwrap();
+
+    assert_eq!(result[&sha].1, subject);
+}
+
+#[test]
+fn commit_details_many_deduplicates_repeated_sha() {
+    // `git log --no-walk SHA SHA` emits each commit once; pin that the batch
+    // code returns a single cache entry for a duplicated input SHA.
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::new();
+    test.commit_with_message("only commit");
+    let sha = test
+        .repo
+        .run_command(&["rev-parse", "HEAD"])
+        .unwrap()
+        .trim()
+        .to_string();
+
+    let result = test
+        .repo
+        .commit_details_many(&[sha.as_str(), sha.as_str(), sha.as_str()])
+        .unwrap();
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[&sha].1, "only commit");
+    assert_eq!(test.repo.cache.commit_details.len(), 1);
+}
+
+#[test]
 fn commit_details_and_many_store_identical_cache_entries() {
     // The two code paths must produce byte-identical cache entries — otherwise
     // a SHA's cached value depends on which path populated it first.
