@@ -937,7 +937,7 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
     }
 
     // Clear git commands cache (merge-tree, ancestry, diff results)
-    let sha_cleared = repo.clear_git_commands_cache();
+    let sha_cleared = repo.clear_git_commands_cache()?;
     if sha_cleared > 0 {
         eprintln!(
             "{}",
@@ -1425,14 +1425,12 @@ pub fn handle_vars_clear(
 /// Clear all branch markers. Used by `state clear marker --all` and
 /// `state clear --all`.
 ///
-/// `git config --get-regexp` exits 1 when no keys match, which `run_command`
-/// surfaces as an error; `.unwrap_or_default()` absorbs that as the "nothing
-/// to clear" path. Errors from individual `unset_config` calls during the
-/// iteration (corrupt config, permission denied) propagate.
+/// `get_config_regexp` returns an empty string when no keys match (git exit 1)
+/// and `Err` for real config errors — both the listing step and each
+/// `unset_config` call propagate errors so user-initiated clears never lie
+/// about success.
 fn clear_all_markers(repo: &Repository) -> anyhow::Result<usize> {
-    let output = repo
-        .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
-        .unwrap_or_default();
+    let output = repo.get_config_regexp(r"^worktrunk\.state\..+\.marker$")?;
     let mut cleared = 0;
     for line in output.lines() {
         if let Some(config_key) = line.split_whitespace().next() {
@@ -1444,13 +1442,16 @@ fn clear_all_markers(repo: &Repository) -> anyhow::Result<usize> {
 }
 
 /// Clear all vars entries across all branches (used by handle_state_clear_all).
+///
+/// Enumerates keys via `get_config_regexp` (not `all_vars_entries`) so a
+/// config read failure surfaces as an error — the display-path helper
+/// absorbs errors as empty, which would silently report "cleared 0" here.
 fn clear_all_vars(repo: &Repository) -> anyhow::Result<usize> {
-    let all_vars = repo.all_vars_entries();
+    let output = repo.get_config_regexp(r"^worktrunk\.state\..+\.vars\.")?;
     let mut cleared = 0;
-    for (branch, entries) in &all_vars {
-        for key in entries.keys() {
-            let config_key = format!("worktrunk.state.{branch}.vars.{key}");
-            repo.unset_config(&config_key)?;
+    for line in output.lines() {
+        if let Some(config_key) = line.split_whitespace().next() {
+            repo.unset_config(config_key)?;
             cleared += 1;
         }
     }
@@ -1469,7 +1470,7 @@ pub(super) struct MarkerEntry {
 /// Get all branch markers from git config with timestamps
 pub(super) fn all_markers(repo: &Repository) -> Vec<MarkerEntry> {
     let output = repo
-        .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
+        .get_config_regexp(r"^worktrunk\.state\..+\.marker$")
         .unwrap_or_default();
 
     let mut markers = Vec::new();

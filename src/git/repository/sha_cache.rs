@@ -33,9 +33,15 @@
 //!
 //! # Failure handling
 //!
-//! All cache failures (corrupt JSON, I/O errors, permission denied) are
-//! logged at `debug` level and degrade silently: reads return `None`,
-//! writes are no-ops. Callers must never observe cache failures.
+//! Read and write paths degrade silently — corrupt JSON, I/O errors, and
+//! permission denied are logged at `debug` level; reads return `None`,
+//! writes are no-ops. Callers must never observe cache failures there
+//! because the cache is always an optimization over re-running git.
+//!
+//! The user-initiated clear path ([`clear_all`], reached via
+//! `wt config state clear`) propagates I/O errors instead. A failed clear
+//! that reports "cleared N entries" would be a lie to the user, mirroring
+//! the same bug the ci-status file cache has already fixed.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -45,6 +51,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use super::Repository;
 use super::integration::MergeProbeResult;
+use crate::cache_dir::clear_json_files_in;
 use crate::git::LineDiff;
 
 /// Maximum cached entries per task kind before the LRU sweep removes the
@@ -299,22 +306,16 @@ pub(super) fn put_diff_stats(repo: &Repository, base_sha: &str, head_sha: &str, 
 
 /// Clear all cached SHA-keyed entries, returning the count removed.
 ///
-/// Called by `wt config state clear` to give users a clean slate.
-pub(crate) fn clear_all(repo: &Repository) -> usize {
+/// Called by `wt config state clear`. Delegates the per-kind-directory
+/// work to [`clear_json_files_in`], which documents the
+/// missing-dir / concurrent-removal / error-propagation semantics that
+/// the module-level "Failure handling" section enshrines.
+pub(crate) fn clear_all(repo: &Repository) -> anyhow::Result<usize> {
     let mut cleared = 0;
     for kind in ALL_KINDS {
-        let dir = cache_dir(repo, kind);
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "json") && fs::remove_file(&path).is_ok() {
-                cleared += 1;
-            }
-        }
+        cleared += clear_json_files_in(&cache_dir(repo, kind))?;
     }
-    cleared
+    Ok(cleared)
 }
 
 /// Count all cached SHA-keyed entries across every kind.
@@ -827,7 +828,7 @@ mod tests {
             },
         );
 
-        let cleared = clear_all(&repo);
+        let cleared = clear_all(&repo).unwrap();
         assert_eq!(cleared, 5, "should clear one entry per kind");
 
         // All kinds should be empty

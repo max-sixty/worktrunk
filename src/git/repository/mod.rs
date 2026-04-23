@@ -653,7 +653,10 @@ impl Repository {
     }
 
     /// Clear all cached git command results, returning the count removed.
-    pub fn clear_git_commands_cache(&self) -> usize {
+    ///
+    /// Propagates I/O errors so the user-initiated clear path cannot lie
+    /// about success; see `sha_cache`'s module docs.
+    pub fn clear_git_commands_cache(&self) -> anyhow::Result<usize> {
         sha_cache::clear_all(self)
     }
 

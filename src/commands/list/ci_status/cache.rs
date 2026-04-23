@@ -9,6 +9,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use worktrunk::cache_dir::clear_json_files_in;
 use worktrunk::git::Repository;
 use worktrunk::path::sanitize_for_filename;
 
@@ -150,6 +151,22 @@ impl CachedCiStatus {
             .collect()
     }
 
+    /// Remove a cache file at `path`.
+    ///
+    /// Returns `Ok(true)` if the file existed and was removed, `Ok(false)`
+    /// if it was already gone (either never existed, or another process
+    /// deleted it concurrently). Propagates other I/O errors with the
+    /// path in context. Shared by `clear_one` and `clear_all`.
+    fn remove_cache_file(path: &Path) -> anyhow::Result<bool> {
+        match fs::remove_file(path) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => {
+                Err(anyhow::Error::new(e).context(format!("failed to remove {}", path.display())))
+            }
+        }
+    }
+
     /// Clear the cached CI status for a single branch.
     ///
     /// Returns `Ok(true)` if a cache file was removed, `Ok(false)` if none
@@ -159,50 +176,15 @@ impl CachedCiStatus {
     /// caller reports "Cleared"/"No cache" directly to the user, a silent
     /// swallow would lie when the file exists but we can't delete it.
     pub(crate) fn clear_one(repo: &Repository, branch: &str) -> anyhow::Result<bool> {
-        let path = Self::cache_file(repo, branch);
-        match fs::remove_file(&path) {
-            Ok(()) => Ok(true),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(e) => {
-                Err(anyhow::Error::new(e).context(format!("failed to remove {}", path.display())))
-            }
-        }
+        Self::remove_cache_file(&Self::cache_file(repo, branch))
     }
 
     /// Clear all cached CI statuses, returns count cleared.
     ///
-    /// Missing cache dir is `Ok(0)` (nothing to clear). A file that vanishes
-    /// between listing and removal — another process cleared concurrently —
-    /// is counted as not-removed and skipped. Other I/O errors propagate.
+    /// Delegates to [`clear_json_files_in`], which documents the
+    /// missing-dir / concurrent-removal / error-propagation semantics.
     pub(crate) fn clear_all(repo: &Repository) -> anyhow::Result<usize> {
-        let cache_dir = Self::cache_dir(repo);
-
-        let entries = match fs::read_dir(&cache_dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-            Err(e) => {
-                return Err(anyhow::Error::new(e)
-                    .context(format!("failed to read {}", cache_dir.display())));
-            }
-        };
-
-        let mut cleared = 0;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            // Only remove .json files
-            if path.extension().is_none_or(|ext| ext != "json") {
-                continue;
-            }
-            match fs::remove_file(&path) {
-                Ok(()) => cleared += 1,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(e) => {
-                    return Err(anyhow::Error::new(e)
-                        .context(format!("failed to remove {}", path.display())));
-                }
-            }
-        }
-        Ok(cleared)
+        clear_json_files_in(&Self::cache_dir(repo))
     }
 }
 
@@ -210,6 +192,18 @@ impl CachedCiStatus {
 mod tests {
     use super::*;
     use worktrunk::testing::TestRepo;
+
+    #[test]
+    fn test_remove_cache_file_returns_false_when_missing() {
+        // The concurrent-removal path for clear_all (another process deletes
+        // a cache file between listing and remove_file) routes through this
+        // helper, which reports the missing file as Ok(false) rather than
+        // erroring.
+        let test = TestRepo::with_initial_commit();
+        let missing = test.root_path().join("never-existed.json");
+
+        assert!(!CachedCiStatus::remove_cache_file(&missing).unwrap());
+    }
 
     #[test]
     fn test_clear_one_propagates_non_not_found_error() {
@@ -222,61 +216,6 @@ mod tests {
         fs::create_dir_all(&path).unwrap();
 
         let err = CachedCiStatus::clear_one(&repo, "feature").unwrap_err();
-        assert!(
-            err.to_string().contains("failed to remove"),
-            "expected remove-failure context, got: {err}"
-        );
-    }
-
-    #[test]
-    fn test_clear_all_propagates_non_not_found_read_dir_error() {
-        let test = TestRepo::with_initial_commit();
-        let repo = Repository::at(test.root_path()).unwrap();
-
-        // Put a regular file where the cache *directory* should be so
-        // read_dir returns NotADirectory (non-NotFound).
-        let cache_dir = CachedCiStatus::cache_dir(&repo);
-        fs::create_dir_all(cache_dir.parent().unwrap()).unwrap();
-        fs::write(&cache_dir, "not a dir").unwrap();
-
-        let err = CachedCiStatus::clear_all(&repo).unwrap_err();
-        assert!(
-            err.to_string().contains("failed to read"),
-            "expected read-failure context, got: {err}"
-        );
-    }
-
-    #[test]
-    fn test_clear_all_skips_non_json_extensions() {
-        let test = TestRepo::with_initial_commit();
-        let repo = Repository::at(test.root_path()).unwrap();
-
-        let cache_dir = CachedCiStatus::cache_dir(&repo);
-        fs::create_dir_all(&cache_dir).unwrap();
-        fs::write(cache_dir.join("a.json"), "{}").unwrap();
-        // Non-.json siblings must be skipped without being counted.
-        fs::write(cache_dir.join("a.json.tmp"), "leftover").unwrap();
-        fs::write(cache_dir.join("README"), "stray").unwrap();
-
-        let count = CachedCiStatus::clear_all(&repo).unwrap();
-        assert_eq!(count, 1, "only the .json file should be counted");
-        assert!(!cache_dir.join("a.json").exists());
-        assert!(cache_dir.join("a.json.tmp").exists());
-        assert!(cache_dir.join("README").exists());
-    }
-
-    #[test]
-    fn test_clear_all_propagates_per_file_remove_error() {
-        let test = TestRepo::with_initial_commit();
-        let repo = Repository::at(test.root_path()).unwrap();
-
-        let cache_dir = CachedCiStatus::cache_dir(&repo);
-        fs::create_dir_all(&cache_dir).unwrap();
-        // A directory named `*.json` makes remove_file return a non-NotFound
-        // error (EISDIR / similar).
-        fs::create_dir(cache_dir.join("bad.json")).unwrap();
-
-        let err = CachedCiStatus::clear_all(&repo).unwrap_err();
         assert!(
             err.to_string().contains("failed to remove"),
             "expected remove-failure context, got: {err}"

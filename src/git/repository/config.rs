@@ -87,6 +87,25 @@ impl Repository {
         Ok(existed)
     }
 
+    /// Run `git config --get-regexp <pattern>` and return stdout.
+    ///
+    /// Distinguishes exit 1 (no matching keys — expected, returns empty
+    /// string) from real config errors (corrupt config, permission denied —
+    /// surfaced as `Err`). Use this instead of `run_command` + `.unwrap_or_default()`,
+    /// which conflates the two.
+    pub fn get_config_regexp(&self, pattern: &str) -> anyhow::Result<String> {
+        let output = self.run_command_output(&["config", "--get-regexp", pattern])?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        } else if output.status.code() == Some(1) {
+            // Exit 1 = no keys matched the pattern
+            Ok(String::new())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git config --get-regexp {}: {}", pattern, stderr.trim());
+        }
+    }
+
     /// Read a user-defined marker from `worktrunk.state.<branch>.marker` in git config.
     ///
     /// Markers are stored as JSON: `{"marker": "text", "set_at": unix_timestamp}`.
@@ -123,9 +142,7 @@ impl Repository {
     pub fn vars_entries(&self, branch: &str) -> std::collections::BTreeMap<String, String> {
         let escaped = regex::escape(branch);
         let pattern = format!(r"^worktrunk\.state\.{escaped}\.vars\.");
-        let output = self
-            .run_command(&["config", "--get-regexp", &pattern])
-            .unwrap_or_default();
+        let output = self.get_config_regexp(&pattern).unwrap_or_default();
 
         let prefix = format!("worktrunk.state.{branch}.vars.");
         output
@@ -147,7 +164,7 @@ impl Repository {
         &self,
     ) -> std::collections::HashMap<String, std::collections::BTreeMap<String, String>> {
         let output = self
-            .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.vars\."])
+            .get_config_regexp(r"^worktrunk\.state\..+\.vars\.")
             .unwrap_or_default();
 
         let mut result: std::collections::HashMap<
@@ -532,5 +549,42 @@ impl Repository {
                 }
             })
             .cloned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::TestRepo;
+
+    #[test]
+    fn test_get_config_regexp_no_match_returns_empty() {
+        // Exit 1 from git config --get-regexp means "no keys matched" — must
+        // surface as Ok("") rather than an error so callers don't conflate
+        // no-matches with real config failures.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let output = repo
+            .get_config_regexp(r"^worktrunk\.state\..+\.marker$")
+            .unwrap();
+        assert_eq!(output, "");
+    }
+
+    #[test]
+    fn test_get_config_regexp_returns_matches() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        repo.set_config("worktrunk.state.feature.marker", r#"{"marker":"wip"}"#)
+            .unwrap();
+        repo.set_config("worktrunk.state.bugfix.marker", r#"{"marker":"fix"}"#)
+            .unwrap();
+
+        let output = repo
+            .get_config_regexp(r"^worktrunk\.state\..+\.marker$")
+            .unwrap();
+        assert!(output.contains("worktrunk.state.feature.marker"));
+        assert!(output.contains("worktrunk.state.bugfix.marker"));
     }
 }
