@@ -1045,7 +1045,7 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
         ),
     );
 
@@ -1113,7 +1113,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
         ),
     );
 
@@ -1200,7 +1200,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
         ),
     );
 
@@ -1355,7 +1355,7 @@ fn test_state_clear_ci_status_all_with_entries(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345","branch":"feature"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345","branch":"feature"}}"#
         ),
     );
     write_ci_cache(
@@ -1380,7 +1380,7 @@ fn test_state_clear_ci_status_all_single_entry(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345","branch":"feature"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345","branch":"feature"}}"#
         ),
     );
 
@@ -2133,7 +2133,7 @@ fn test_ci_status_get_json_with_cached_data(repo: TestRepo) {
         &repo,
         "main",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"{head}","branch":"main"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"{head}","branch":"main"}}"#
         ),
     );
 

@@ -1832,15 +1832,15 @@ TODO: Add request/response examples for each endpoint
     // The worktree is still around and can be removed. Shows dimmed in list output.
     let fix_typos = repo.add_worktree("fix-typos");
     repo.run_git_in(&fix_typos, &["push", "-u", "origin", "fix-typos"]);
-    mock_ci_status(repo, "fix-typos", "passed", "pull-request", false);
+    mock_ci_status(repo, "fix-typos", "passed", "pr", false);
 
     // === Mock CI status ===
     // CI requires --full flag, but we mock it so examples show realistic output
     // Note: main's CI is mocked AFTER the merge commit so the hash matches
-    mock_ci_status(repo, "main", "passed", "pull-request", false);
-    mock_ci_status(repo, "fix-auth", "passed", "pull-request", false);
+    mock_ci_status(repo, "main", "passed", "pr", false);
+    mock_ci_status(repo, "fix-auth", "passed", "pr", false);
     // feature-api has unpushed commits, so CI is stale (shows dimmed)
-    mock_ci_status(repo, "feature-api", "running", "pull-request", true);
+    mock_ci_status(repo, "feature-api", "running", "pr", true);
 
     // === Mock LLM summaries ===
     // Summary requires --full + [list] summary = true + [commit.generation] command

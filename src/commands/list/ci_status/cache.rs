@@ -152,33 +152,57 @@ impl CachedCiStatus {
 
     /// Clear the cached CI status for a single branch.
     ///
-    /// Returns `true` if a cache file was removed, `false` otherwise (no file
-    /// existed, or the removal failed). Mirrors `clear_all`'s best-effort
-    /// swallowing so the caller's success vs info message stays a simple
-    /// boolean.
-    pub(crate) fn clear_one(repo: &Repository, branch: &str) -> bool {
+    /// Returns `Ok(true)` if a cache file was removed, `Ok(false)` if none
+    /// existed (including the concurrent-removal case — another process
+    /// deleted the file between the caller deciding to clear and this call).
+    /// Propagates other I/O errors (permission denied, etc.) — since the
+    /// caller reports "Cleared"/"No cache" directly to the user, a silent
+    /// swallow would lie when the file exists but we can't delete it.
+    pub(crate) fn clear_one(repo: &Repository, branch: &str) -> anyhow::Result<bool> {
         let path = Self::cache_file(repo, branch);
-        fs::remove_file(&path).is_ok()
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => {
+                Err(anyhow::Error::new(e).context(format!("failed to remove {}", path.display())))
+            }
+        }
     }
 
     /// Clear all cached CI statuses, returns count cleared.
-    pub(crate) fn clear_all(repo: &Repository) -> usize {
+    ///
+    /// Missing cache dir is `Ok(0)` (nothing to clear). A file that vanishes
+    /// between listing and removal — another process cleared concurrently —
+    /// is counted as not-removed and skipped. Other I/O errors propagate.
+    pub(crate) fn clear_all(repo: &Repository) -> anyhow::Result<usize> {
         let cache_dir = Self::cache_dir(repo);
 
         let entries = match fs::read_dir(&cache_dir) {
             Ok(entries) => entries,
-            Err(_) => return 0,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(e) => {
+                return Err(anyhow::Error::new(e)
+                    .context(format!("failed to read {}", cache_dir.display())));
+            }
         };
 
         let mut cleared = 0;
         for entry in entries.flatten() {
             let path = entry.path();
             // Only remove .json files
-            if path.extension().is_some_and(|ext| ext == "json") && fs::remove_file(&path).is_ok() {
-                cleared += 1;
+            if path.extension().is_none_or(|ext| ext != "json") {
+                continue;
+            }
+            match fs::remove_file(&path) {
+                Ok(()) => cleared += 1,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => {
+                    return Err(anyhow::Error::new(e)
+                        .context(format!("failed to remove {}", path.display())));
+                }
             }
         }
-        cleared
+        Ok(cleared)
     }
 }
 
