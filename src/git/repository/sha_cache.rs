@@ -14,7 +14,7 @@
 //! where `kind` identifies the operation (`merge-tree-conflicts`,
 //! `merge-add-probe`, `is-ancestor`, `has-added-changes`, `diff-stats`)
 //! and `key` is the SHA-pair filename. The sibling `ci-status/` and
-//! `summaries/` caches use different key schemes; see
+//! `summary/` caches use different key schemes; see
 //! `commands::list::collect` for the cross-cutting design across all
 //! `.git/wt/cache/` kinds. All three share the [`crate::cache`] module
 //! for read/write/clear mechanics.
@@ -43,10 +43,6 @@
 //! The user-initiated clear path ([`clear_all`], reached via
 //! `wt config state clear`) propagates I/O errors instead. A failed clear
 //! that reports "cleared N entries" would be a lie to the user.
-
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use super::Repository;
 use super::integration::MergeProbeResult;
@@ -87,51 +83,6 @@ fn asymmetric_key(first: &str, second: &str) -> String {
     format!("{first}-{second}.json")
 }
 
-/// Enforce a size bound on `dir`. If it holds more than `max` JSON
-/// entries, delete the oldest-mtime files until the count is back at
-/// `max`.
-///
-/// Runs after every `put`. The cheap path (`count <= max`) avoids any
-/// per-file stat and is a single directory listing.
-///
-/// `max` is a parameter rather than hard-coded to `MAX_ENTRIES_PER_KIND`
-/// so tests can exercise the trim logic without creating thousands of
-/// files.
-fn sweep_lru(dir: &Path, max: usize) {
-    // Fast path: count-only before doing any allocation or stat.
-    if cache::count_json_files(dir) <= max {
-        return;
-    }
-
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    let json_entries: Vec<_> = entries
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_str().is_some_and(|s| s.ends_with(".json")))
-        .collect();
-    if json_entries.len() <= max {
-        return;
-    }
-
-    // Over the bound — stat each entry to sort by mtime and trim the
-    // oldest.
-    let mut with_mtime: Vec<(PathBuf, SystemTime)> = json_entries
-        .into_iter()
-        .filter_map(|e| {
-            let mtime = e.metadata().ok()?.modified().ok()?;
-            Some((e.path(), mtime))
-        })
-        .collect();
-    with_mtime.sort_by_key(|(_, mtime)| *mtime);
-
-    let excess = with_mtime.len().saturating_sub(max);
-    for (path, _) in with_mtime.iter().take(excess) {
-        let _ = fs::remove_file(path);
-    }
-    log::debug!("sha_cache: swept {} entries from {}", excess, dir.display());
-}
-
 // ============================================================================
 // Public API — merge-tree conflicts (symmetric)
 // ============================================================================
@@ -140,17 +91,19 @@ fn sweep_lru(dir: &Path, max: usize) {
 ///
 /// The key is order-independent: `(A, B)` and `(B, A)` hit the same entry.
 pub(super) fn merge_conflicts(repo: &Repository, sha1: &str, sha2: &str) -> Option<bool> {
-    let path = cache::cache_dir(repo, KIND_MERGE_TREE_CONFLICTS).join(symmetric_key(sha1, sha2));
-    cache::read_json::<bool>(&path)
+    cache::read(repo, KIND_MERGE_TREE_CONFLICTS, &symmetric_key(sha1, sha2))
 }
 
 /// Store a `has_merge_conflicts(sha1, sha2)` result, triggering an LRU
 /// sweep if the per-kind entry bound is exceeded.
 pub(super) fn put_merge_conflicts(repo: &Repository, sha1: &str, sha2: &str, value: bool) {
-    let dir = cache::cache_dir(repo, KIND_MERGE_TREE_CONFLICTS);
-    let path = dir.join(symmetric_key(sha1, sha2));
-    cache::write_json(&path, &value);
-    sweep_lru(&dir, MAX_ENTRIES_PER_KIND);
+    cache::write_with_lru(
+        repo,
+        KIND_MERGE_TREE_CONFLICTS,
+        &symmetric_key(sha1, sha2),
+        &value,
+        MAX_ENTRIES_PER_KIND,
+    );
 }
 
 // ============================================================================
@@ -166,9 +119,11 @@ pub(super) fn merge_add_probe(
     branch_sha: &str,
     target_sha: &str,
 ) -> Option<MergeProbeResult> {
-    let path =
-        cache::cache_dir(repo, KIND_MERGE_ADD_PROBE).join(asymmetric_key(branch_sha, target_sha));
-    cache::read_json::<MergeProbeResult>(&path)
+    cache::read(
+        repo,
+        KIND_MERGE_ADD_PROBE,
+        &asymmetric_key(branch_sha, target_sha),
+    )
 }
 
 /// Store a `merge_integration_probe(branch, target)` result, triggering
@@ -179,10 +134,13 @@ pub(super) fn put_merge_add_probe(
     target_sha: &str,
     value: MergeProbeResult,
 ) {
-    let dir = cache::cache_dir(repo, KIND_MERGE_ADD_PROBE);
-    let path = dir.join(asymmetric_key(branch_sha, target_sha));
-    cache::write_json(&path, &value);
-    sweep_lru(&dir, MAX_ENTRIES_PER_KIND);
+    cache::write_with_lru(
+        repo,
+        KIND_MERGE_ADD_PROBE,
+        &asymmetric_key(branch_sha, target_sha),
+        &value,
+        MAX_ENTRIES_PER_KIND,
+    );
 }
 
 // ============================================================================
@@ -193,16 +151,18 @@ pub(super) fn put_merge_add_probe(
 ///
 /// Asymmetric: "is base ancestor of head?" differs from "is head ancestor of base?".
 pub(super) fn is_ancestor(repo: &Repository, base_sha: &str, head_sha: &str) -> Option<bool> {
-    let path = cache::cache_dir(repo, KIND_IS_ANCESTOR).join(asymmetric_key(base_sha, head_sha));
-    cache::read_json::<bool>(&path)
+    cache::read(repo, KIND_IS_ANCESTOR, &asymmetric_key(base_sha, head_sha))
 }
 
 /// Store an `is_ancestor(base_sha, head_sha)` result.
 pub(super) fn put_is_ancestor(repo: &Repository, base_sha: &str, head_sha: &str, value: bool) {
-    let dir = cache::cache_dir(repo, KIND_IS_ANCESTOR);
-    let path = dir.join(asymmetric_key(base_sha, head_sha));
-    cache::write_json(&path, &value);
-    sweep_lru(&dir, MAX_ENTRIES_PER_KIND);
+    cache::write_with_lru(
+        repo,
+        KIND_IS_ANCESTOR,
+        &asymmetric_key(base_sha, head_sha),
+        &value,
+        MAX_ENTRIES_PER_KIND,
+    );
 }
 
 // ============================================================================
@@ -217,9 +177,11 @@ pub(super) fn has_added_changes(
     branch_sha: &str,
     target_sha: &str,
 ) -> Option<bool> {
-    let path =
-        cache::cache_dir(repo, KIND_HAS_ADDED_CHANGES).join(asymmetric_key(branch_sha, target_sha));
-    cache::read_json::<bool>(&path)
+    cache::read(
+        repo,
+        KIND_HAS_ADDED_CHANGES,
+        &asymmetric_key(branch_sha, target_sha),
+    )
 }
 
 /// Store a `has_added_changes(branch_sha, target_sha)` result.
@@ -229,10 +191,13 @@ pub(super) fn put_has_added_changes(
     target_sha: &str,
     value: bool,
 ) {
-    let dir = cache::cache_dir(repo, KIND_HAS_ADDED_CHANGES);
-    let path = dir.join(asymmetric_key(branch_sha, target_sha));
-    cache::write_json(&path, &value);
-    sweep_lru(&dir, MAX_ENTRIES_PER_KIND);
+    cache::write_with_lru(
+        repo,
+        KIND_HAS_ADDED_CHANGES,
+        &asymmetric_key(branch_sha, target_sha),
+        &value,
+        MAX_ENTRIES_PER_KIND,
+    );
 }
 
 // ============================================================================
@@ -243,16 +208,18 @@ pub(super) fn put_has_added_changes(
 ///
 /// Asymmetric: diff from merge-base(base,head)..head is directional.
 pub(super) fn diff_stats(repo: &Repository, base_sha: &str, head_sha: &str) -> Option<LineDiff> {
-    let path = cache::cache_dir(repo, KIND_DIFF_STATS).join(asymmetric_key(base_sha, head_sha));
-    cache::read_json::<LineDiff>(&path)
+    cache::read(repo, KIND_DIFF_STATS, &asymmetric_key(base_sha, head_sha))
 }
 
 /// Store a `branch_diff_stats(base_sha, head_sha)` result.
 pub(super) fn put_diff_stats(repo: &Repository, base_sha: &str, head_sha: &str, value: LineDiff) {
-    let dir = cache::cache_dir(repo, KIND_DIFF_STATS);
-    let path = dir.join(asymmetric_key(base_sha, head_sha));
-    cache::write_json(&path, &value);
-    sweep_lru(&dir, MAX_ENTRIES_PER_KIND);
+    cache::write_with_lru(
+        repo,
+        KIND_DIFF_STATS,
+        &asymmetric_key(base_sha, head_sha),
+        &value,
+        MAX_ENTRIES_PER_KIND,
+    );
 }
 
 // ============================================================================
@@ -286,6 +253,8 @@ pub(crate) fn count_all(repo: &Repository) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::testing::TestRepo;
 
@@ -367,52 +336,6 @@ mod tests {
         fs::write(&path, "not valid json {{{").unwrap();
 
         assert_eq!(merge_conflicts(&repo, "aaaa", "bbbb"), None);
-    }
-
-    // LRU sweep
-
-    #[test]
-    fn test_sweep_lru_trims_oldest_entries() {
-        let test = TestRepo::with_initial_commit();
-        let repo = Repository::at(test.root_path()).unwrap();
-        let dir = cache::cache_dir(&repo, KIND_MERGE_TREE_CONFLICTS);
-        fs::create_dir_all(&dir).unwrap();
-
-        // Create 5 entries with monotonically increasing mtimes
-        for i in 0..5 {
-            let path = dir.join(format!("entry{i}.json"));
-            fs::write(&path, "true").unwrap();
-            // Brief sleep to ensure distinct mtimes
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-
-        sweep_lru(&dir, 3);
-
-        let mut remaining: Vec<_> = fs::read_dir(&dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .collect();
-        remaining.sort();
-        // The 2 oldest (entry0, entry1) should have been deleted
-        assert_eq!(remaining, ["entry2.json", "entry3.json", "entry4.json"]);
-    }
-
-    #[test]
-    fn test_sweep_lru_no_op_under_bound() {
-        let test = TestRepo::with_initial_commit();
-        let repo = Repository::at(test.root_path()).unwrap();
-        let dir = cache::cache_dir(&repo, KIND_MERGE_TREE_CONFLICTS);
-        fs::create_dir_all(&dir).unwrap();
-
-        for i in 0..3 {
-            fs::write(dir.join(format!("entry{i}.json")), "true").unwrap();
-        }
-
-        sweep_lru(&dir, 5);
-
-        let count = fs::read_dir(&dir).unwrap().count();
-        assert_eq!(count, 3, "should not delete anything when under bound");
     }
 
     // Cache consultation by has_merge_conflicts

@@ -31,6 +31,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -40,7 +41,7 @@ use crate::git::Repository;
 ///
 /// Returns `<git-common-dir>/wt/cache/<kind>/`. All worktrunk caches live
 /// here; the `kind` is the subdirectory name (e.g. `"ci-status"`,
-/// `"summaries"`, `"is-ancestor"`).
+/// `"summary"`, `"is-ancestor"`).
 pub fn cache_dir(repo: &Repository, kind: &str) -> PathBuf {
     repo.wt_dir().join("cache").join(kind)
 }
@@ -82,6 +83,76 @@ pub fn write_json<T: Serialize>(path: &Path, value: &T) {
     if let Err(e) = fs::write(path, &json) {
         log::debug!("cache: failed to write {}: {}", path.display(), e);
     }
+}
+
+/// Read a JSON entry at `<wt-cache>/<kind>/<key>`.
+///
+/// Thin sugar over [`read_json`] + [`cache_dir`] for the common "kind + key
+/// filename" layout used by `sha_cache`. Returns `None` on any failure
+/// (missing file, I/O error, corrupt JSON).
+pub fn read<T: DeserializeOwned>(repo: &Repository, kind: &str, key: &str) -> Option<T> {
+    read_json(&cache_dir(repo, kind).join(key))
+}
+
+/// Write a JSON entry at `<wt-cache>/<kind>/<key>`, then sweep the kind
+/// directory so it holds at most `max_entries` top-level `.json` files.
+///
+/// Combines [`write_json`] with [`sweep_lru`] — the "write + bound" pattern
+/// every `sha_cache` `put_*` function repeats. Degrades silently on write
+/// failure; the sweep runs regardless so a torn write still triggers the
+/// size bound check.
+pub fn write_with_lru<T: Serialize>(
+    repo: &Repository,
+    kind: &str,
+    key: &str,
+    value: &T,
+    max_entries: usize,
+) {
+    let dir = cache_dir(repo, kind);
+    write_json(&dir.join(key), value);
+    sweep_lru(&dir, max_entries);
+}
+
+/// Enforce a size bound on `dir`. If it holds more than `max` top-level
+/// `.json` entries, delete the oldest-mtime files until the count is back
+/// at `max`.
+///
+/// The fast path is a single directory listing and `count_json_files` — no
+/// per-file `stat` when the cache is under the bound. Only falls through
+/// to stat+sort when trimming is actually needed.
+///
+/// Best-effort: I/O errors during the sweep are logged at debug and ignored
+/// because the cache is always an optimization over re-computation.
+pub fn sweep_lru(dir: &Path, max: usize) {
+    if count_json_files(dir) <= max {
+        return;
+    }
+
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let json_entries: Vec<_> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_str().is_some_and(|s| s.ends_with(".json")))
+        .collect();
+    if json_entries.len() <= max {
+        return;
+    }
+
+    let mut with_mtime: Vec<(PathBuf, SystemTime)> = json_entries
+        .into_iter()
+        .filter_map(|e| {
+            let mtime = e.metadata().ok()?.modified().ok()?;
+            Some((e.path(), mtime))
+        })
+        .collect();
+    with_mtime.sort_by_key(|(_, mtime)| *mtime);
+
+    let excess = with_mtime.len().saturating_sub(max);
+    for (path, _) in with_mtime.iter().take(excess) {
+        let _ = fs::remove_file(path);
+    }
+    log::debug!("cache: swept {} entries from {}", excess, dir.display());
 }
 
 /// Remove a single cache entry.
@@ -237,5 +308,43 @@ mod tests {
 
         assert_eq!(count_json_files(&dir), 1);
         assert_eq!(count_json_files(&tmp.path().join("nope")), 0);
+    }
+
+    #[test]
+    fn test_sweep_lru_trims_oldest_entries() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("c");
+        fs::create_dir_all(&dir).unwrap();
+
+        for i in 0..5 {
+            fs::write(dir.join(format!("entry{i}.json")), "true").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        sweep_lru(&dir, 3);
+
+        let mut remaining: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        remaining.sort();
+        assert_eq!(remaining, ["entry2.json", "entry3.json", "entry4.json"]);
+    }
+
+    #[test]
+    fn test_sweep_lru_no_op_under_bound() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("c");
+        fs::create_dir_all(&dir).unwrap();
+
+        for i in 0..3 {
+            fs::write(dir.join(format!("entry{i}.json")), "true").unwrap();
+        }
+
+        sweep_lru(&dir, 5);
+
+        let count = fs::read_dir(&dir).unwrap().count();
+        assert_eq!(count, 3, "should not delete anything when under bound");
     }
 }

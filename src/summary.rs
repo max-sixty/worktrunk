@@ -1,7 +1,7 @@
 //! Shared LLM summary generation for branches.
 //!
 //! Generates branch summaries using the configured LLM command, with caching
-//! in `.git/wt/cache/summaries/{sanitized_branch}/{diff_hash}.json`. The
+//! in `.git/wt/cache/summary/{sanitized_branch}/{diff_hash}.json`. The
 //! combined diff (branch diff + working tree diff) is hashed with SHA-256
 //! and the hex-truncated digest becomes the filename — so a cache hit is
 //! just "does the file exist?" rather than parsing JSON to compare a field.
@@ -49,7 +49,10 @@ use crate::llm::{execute_llm_command, prepare_diff};
 /// `HEAVY_OPS_SEMAPHORE` (4) but still bounded.
 static LLM_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(8));
 
-/// Cached summary stored in `.git/wt/cache/summaries/{branch}/{hash}.json`.
+/// Subdirectory of `.git/wt/cache/` holding cached summaries.
+const KIND: &str = "summary";
+
+/// Cached summary stored in `.git/wt/cache/summary/{branch}/{hash}.json`.
 ///
 /// The diff hash lives in the filename; the branch lives in the directory
 /// name. The `branch` field holds the original (un-sanitized) branch name
@@ -94,9 +97,9 @@ const SUMMARY_TEMPLATE: &str = r#"<task>Write a summary of this branch's changes
 "#;
 
 impl CachedSummary {
-    /// Root of all summary cache entries: `.git/wt/cache/summaries/`.
+    /// Root of all summary cache entries: `.git/wt/cache/summary/`.
     pub(crate) fn cache_root(repo: &Repository) -> PathBuf {
-        cache::cache_dir(repo, "summaries")
+        cache::cache_dir(repo, KIND)
     }
 
     /// Per-branch directory holding one file per cached diff hash.
@@ -148,7 +151,7 @@ impl CachedSummary {
 
     /// Clear all cached summaries, returning the count of `.json` entries removed.
     ///
-    /// Summaries are two levels deep (`summaries/{branch}/{hash}.json`), so
+    /// Summaries are two levels deep (`summary/{branch}/{hash}.json`), so
     /// iterate branch subdirs and delegate per-directory cleanup to
     /// [`cache::clear_json_files`]. Non-directory entries at the root are
     /// skipped. Empty branch dirs get best-effort rmdir so the tree stays

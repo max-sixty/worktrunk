@@ -66,7 +66,7 @@ fn write_ci_cache(repo: &TestRepo, branch: &str, json: &str) {
     std::fs::write(&cache_file, json).unwrap();
 }
 
-/// Write a summary cache entry at `.git/wt/cache/summaries/{branch}/{hash}.json`.
+/// Write a summary cache entry at `.git/wt/cache/summary/{branch}/{hash}.json`.
 ///
 /// The hash is opaque to callers — they just need a consistent key per entry —
 /// so we accept an arbitrary hex-like string rather than recomputing SHA-256.
@@ -80,7 +80,7 @@ fn write_summary_cache(
     let safe_branch = worktrunk::path::sanitize_for_filename(branch);
     let dir = repo
         .root_path()
-        .join(".git/wt/cache/summaries")
+        .join(".git/wt/cache/summary")
         .join(&safe_branch);
     std::fs::create_dir_all(&dir).unwrap();
     let body =
@@ -981,7 +981,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
         "CI cache file should be cleared"
     );
     // Summary cache is file-based too, verify the per-branch dir is gone
-    let summary_feature_dir = git_dir.join("wt/cache/summaries/feature");
+    let summary_feature_dir = git_dir.join("wt/cache/summary/feature");
     assert!(
         !summary_feature_dir.exists(),
         "Summary cache dir for feature should be cleared"
@@ -1049,7 +1049,7 @@ fn test_state_get_empty(repo: TestRepo) {
         [36mCI STATUS CACHE[39m
         [107m [0m (none)
 
-        [36mSUMMARIES CACHE[39m
+        [36mSUMMARY CACHE[39m
         [107m [0m (none)
 
         [36mGIT COMMANDS CACHE[39m

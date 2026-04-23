@@ -15,6 +15,9 @@ use worktrunk::path::sanitize_for_filename;
 
 use super::PrStatus;
 
+/// Subdirectory of `.git/wt/cache/` holding cached CI statuses.
+const KIND: &str = "ci-status";
+
 /// Cached CI status stored in `.git/wt/cache/ci-status/<branch>.json`.
 ///
 /// Uses file-based caching instead of git config to avoid file locking
@@ -69,7 +72,7 @@ impl CachedCiStatus {
 
     /// Get the cache directory path: `.git/wt/cache/ci-status/`
     fn cache_dir(repo: &Repository) -> PathBuf {
-        cache::cache_dir(repo, "ci-status")
+        cache::cache_dir(repo, KIND)
     }
 
     /// Get the cache file path for a branch.
@@ -93,8 +96,9 @@ impl CachedCiStatus {
         cache::write_json(&Self::cache_file(repo, branch), self);
     }
 
-    /// List all cached CI statuses as (branch_name, cached_status) pairs.
-    pub(crate) fn list_all(repo: &Repository) -> Vec<(String, Self)> {
+    /// List all cached CI statuses. The branch name lives in each entry's
+    /// `branch` field, matching `CachedSummary::list_all`.
+    pub(crate) fn list_all(repo: &Repository) -> Vec<Self> {
         let dir = Self::cache_dir(repo);
         let Ok(entries) = std::fs::read_dir(&dir) else {
             return Vec::new();
@@ -106,8 +110,7 @@ impl CachedCiStatus {
                 if path.extension()?.to_str()? != "json" {
                     return None;
                 }
-                let cached: Self = cache::read_json(&path)?;
-                Some((cached.branch.clone(), cached))
+                cache::read_json(&path)
             })
             .collect()
     }

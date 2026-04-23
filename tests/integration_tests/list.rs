@@ -1925,7 +1925,7 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
 ///
 /// Mirrors `summary::generate_summary_core` — computes the combined diff
 /// (branch + working tree), SHA-256-hashes it, and writes
-/// `summaries/{branch}/{hash}.json` with a CachedSummary body.
+/// `summary/{branch}/{hash}.json` with a CachedSummary body.
 fn mock_summary_cache(
     repo: &TestRepo,
     branch: &str,
@@ -2000,7 +2000,7 @@ fn mock_summary_cache(
     let branch_dir = git_path
         .join("wt")
         .join("cache")
-        .join("summaries")
+        .join("summary")
         .join(&safe_branch);
     std::fs::create_dir_all(&branch_dir).unwrap();
     let cache_file = branch_dir.join(format!("{diff_hash}.json"));

@@ -17,7 +17,7 @@
 //! - Branch markers (git config `worktrunk.state.<branch>.marker`)
 //! - Vars (git config `worktrunk.state.<branch>.vars.*`)
 //! - CI status cache (`.git/wt/cache/ci-status/`)
-//! - Summary cache (`.git/wt/cache/summaries/`)
+//! - Summary cache (`.git/wt/cache/summary/`)
 //! - Git commands cache (`.git/wt/cache/{merge-tree-conflicts,is-ancestor,…}/`)
 //! - Hints (git config `worktrunk.hints.*`)
 //! - Logs (`.git/wt/logs/`)
@@ -1072,19 +1072,19 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
     // Get CI status cache
     let mut ci_entries = CachedCiStatus::list_all(repo);
     ci_entries.sort_by(|a, b| {
-        b.1.checked_at
-            .cmp(&a.1.checked_at)
-            .then_with(|| a.0.cmp(&b.0))
+        b.checked_at
+            .cmp(&a.checked_at)
+            .then_with(|| a.branch.cmp(&b.branch))
     });
     let ci_status: Vec<serde_json::Value> = ci_entries
         .into_iter()
-        .map(|(branch, cached)| {
+        .map(|cached| {
             let status = cached
                 .status
                 .as_ref()
                 .map(|s| -> &'static str { s.ci_status.into() });
             serde_json::json!({
-                "branch": branch,
+                "branch": cached.branch,
                 "status": status,
                 "checked_at": cached.checked_at,
                 "head": cached.head
@@ -1234,16 +1234,16 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     let mut entries = CachedCiStatus::list_all(repo);
     // Sort by age (most recent first), then by branch name for ties
     entries.sort_by(|a, b| {
-        b.1.checked_at
-            .cmp(&a.1.checked_at)
-            .then_with(|| a.0.cmp(&b.0))
+        b.checked_at
+            .cmp(&a.checked_at)
+            .then_with(|| a.branch.cmp(&b.branch))
     });
     if entries.is_empty() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {
         let rows: Vec<Vec<String>> = entries
             .iter()
-            .map(|(branch, cached)| {
+            .map(|cached| {
                 let status = match &cached.status {
                     Some(pr_status) => {
                         let s: &'static str = pr_status.ci_status.into();
@@ -1253,7 +1253,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
                 };
                 let age = format_relative_time_short(cached.checked_at as i64);
                 let head: String = cached.head.chars().take(8).collect();
-                vec![branch.clone(), status, age, head]
+                vec![cached.branch.clone(), status, age, head]
             })
             .collect();
         let rendered =
@@ -1263,7 +1263,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     writeln!(out)?;
 
     // Show summary cache (LLM summaries keyed by branch + diff hash)
-    writeln!(out, "{}", format_heading("SUMMARIES CACHE", None))?;
+    writeln!(out, "{}", format_heading("SUMMARY CACHE", None))?;
     let mut summary_entries = CachedSummary::list_all(repo);
     summary_entries.sort_by(|a, b| {
         b.generated_at

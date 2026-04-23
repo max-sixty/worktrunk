@@ -136,7 +136,7 @@ fs2 = "0.4.3"
 sanitize-filename = "0.6.0"
 schemars = { version = "1.2.1", features = ["derive"] }
 # SHA-256 is used for persistent cache keys (e.g., summary diff hashes in
-# `.git/wt/cache/summaries/`). stdlib's `DefaultHasher` is not guaranteed
+# `.git/wt/cache/summary/`). stdlib's `DefaultHasher` is not guaranteed
 # stable across Rust versions, so we need a deterministic algorithm on disk.
 sha2 = "0.11"
 

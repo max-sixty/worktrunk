@@ -241,7 +241,7 @@ mod tests {
         let (_t, repo) = temp_repo();
         let dir = CachedSummary::cache_root(&repo);
         assert!(dir.to_str().unwrap().contains("wt"));
-        assert!(dir.to_str().unwrap().contains("summaries"));
+        assert!(dir.to_str().unwrap().contains("summary"));
     }
 
     #[test]

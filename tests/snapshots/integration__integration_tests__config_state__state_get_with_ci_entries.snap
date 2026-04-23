@@ -21,7 +21,7 @@ expression: "String::from_utf8_lossy(&output.stdout)"
  feature passed now abc12345 
  main    none   now deadbeef
 
-[36mSUMMARIES CACHE[39m
+[36mSUMMARY CACHE[39m
 [107m [0m (none)
 
 [36mGIT COMMANDS CACHE[39m
