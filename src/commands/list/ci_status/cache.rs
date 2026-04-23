@@ -209,6 +209,79 @@ impl CachedCiStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use worktrunk::testing::TestRepo;
+
+    #[test]
+    fn test_clear_one_propagates_non_not_found_error() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Place a directory where the .json cache file should live so
+        // remove_file returns a non-NotFound error (EISDIR / similar).
+        let path = CachedCiStatus::cache_file(&repo, "feature");
+        fs::create_dir_all(&path).unwrap();
+
+        let err = CachedCiStatus::clear_one(&repo, "feature").unwrap_err();
+        assert!(
+            err.to_string().contains("failed to remove"),
+            "expected remove-failure context, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_clear_all_propagates_non_not_found_read_dir_error() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Put a regular file where the cache *directory* should be so
+        // read_dir returns NotADirectory (non-NotFound).
+        let cache_dir = CachedCiStatus::cache_dir(&repo);
+        fs::create_dir_all(cache_dir.parent().unwrap()).unwrap();
+        fs::write(&cache_dir, "not a dir").unwrap();
+
+        let err = CachedCiStatus::clear_all(&repo).unwrap_err();
+        assert!(
+            err.to_string().contains("failed to read"),
+            "expected read-failure context, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_clear_all_skips_non_json_extensions() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let cache_dir = CachedCiStatus::cache_dir(&repo);
+        fs::create_dir_all(&cache_dir).unwrap();
+        fs::write(cache_dir.join("a.json"), "{}").unwrap();
+        // Non-.json siblings must be skipped without being counted.
+        fs::write(cache_dir.join("a.json.tmp"), "leftover").unwrap();
+        fs::write(cache_dir.join("README"), "stray").unwrap();
+
+        let count = CachedCiStatus::clear_all(&repo).unwrap();
+        assert_eq!(count, 1, "only the .json file should be counted");
+        assert!(!cache_dir.join("a.json").exists());
+        assert!(cache_dir.join("a.json.tmp").exists());
+        assert!(cache_dir.join("README").exists());
+    }
+
+    #[test]
+    fn test_clear_all_propagates_per_file_remove_error() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let cache_dir = CachedCiStatus::cache_dir(&repo);
+        fs::create_dir_all(&cache_dir).unwrap();
+        // A directory named `*.json` makes remove_file return a non-NotFound
+        // error (EISDIR / similar).
+        fs::create_dir(cache_dir.join("bad.json")).unwrap();
+
+        let err = CachedCiStatus::clear_all(&repo).unwrap_err();
+        assert!(
+            err.to_string().contains("failed to remove"),
+            "expected remove-failure context, got: {err}"
+        );
+    }
 
     #[test]
     fn test_ttl_jitter_range_and_determinism() {
