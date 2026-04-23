@@ -17,6 +17,7 @@
 //! - Branch markers (git config `worktrunk.state.<branch>.marker`)
 //! - Vars (git config `worktrunk.state.<branch>.vars.*`)
 //! - CI status cache (`.git/wt/cache/ci-status/`)
+//! - Summary cache (`.git/wt/cache/summaries/`)
 //! - Git commands cache (`.git/wt/cache/{merge-tree-conflicts,is-ancestor,…}/`)
 //! - Hints (git config `worktrunk.hints.*`)
 //! - Logs (`.git/wt/logs/`)
@@ -56,6 +57,7 @@ use worktrunk::utils::epoch_now;
 use super::super::list::ci_status::{CachedCiStatus, CiBranchName};
 use crate::display::format_relative_time_short;
 use crate::help_pager::show_help_in_pager;
+use crate::summary::CachedSummary;
 
 // ==================== Path Helpers ====================
 
@@ -936,8 +938,21 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
         cleared_any = true;
     }
 
+    // Clear all summary cache entries
+    let summary_cleared = CachedSummary::clear_all(&repo)?;
+    if summary_cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{summary_cleared}</> summary cache entr{}",
+                if summary_cleared == 1 { "y" } else { "ies" }
+            ))
+        );
+        cleared_any = true;
+    }
+
     // Clear git commands cache (merge-tree, ancestry, diff results)
-    let sha_cleared = repo.clear_git_commands_cache();
+    let sha_cleared = repo.clear_git_commands_cache()?;
     if sha_cleared > 0 {
         eprintln!(
             "{}",
@@ -1063,6 +1078,24 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         })
         .collect();
 
+    // Get summary cache (freshest entry per branch)
+    let mut summary_entries = CachedSummary::list_all(repo);
+    summary_entries.sort_by(|a, b| {
+        b.generated_at
+            .cmp(&a.generated_at)
+            .then_with(|| a.branch.cmp(&b.branch))
+    });
+    let summaries: Vec<serde_json::Value> = summary_entries
+        .into_iter()
+        .map(|cached| {
+            serde_json::json!({
+                "branch": cached.branch,
+                "summary": cached.summary,
+                "generated_at": cached.generated_at,
+            })
+        })
+        .collect();
+
     let (command_log, hook_output, diagnostic) = partition_log_files_json(repo)?;
 
     // Get vars data (all branches) — collect into BTreeMap for sorted output
@@ -1106,6 +1139,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "previous_branch": previous_branch,
         "markers": markers,
         "ci_status": ci_status,
+        "summaries": summaries,
         "git_commands_cache": repo.git_commands_cache_count(),
         "vars": vars_data,
         "command_log": command_log,
@@ -1212,6 +1246,42 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
             .collect();
         let rendered =
             crate::md_help::render_data_table(&["Branch", "Status", "Age", "Head"], &rows);
+        writeln!(out, "{}", rendered.trim_end())?;
+    }
+    writeln!(out)?;
+
+    // Show summary cache (LLM summaries keyed by branch + diff hash)
+    writeln!(out, "{}", format_heading("SUMMARIES CACHE", None))?;
+    let mut summary_entries = CachedSummary::list_all(repo);
+    summary_entries.sort_by(|a, b| {
+        b.generated_at
+            .cmp(&a.generated_at)
+            .then_with(|| a.branch.cmp(&b.branch))
+    });
+    if summary_entries.is_empty() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else {
+        let rows: Vec<Vec<String>> = summary_entries
+            .iter()
+            .map(|cached| {
+                let subject = cached
+                    .summary
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let subject = if subject.chars().count() > 40 {
+                    let truncated: String = subject.chars().take(37).collect();
+                    format!("{truncated}...")
+                } else {
+                    subject
+                };
+                let age = format_relative_time_short(cached.generated_at as i64);
+                vec![cached.branch.clone(), subject, age]
+            })
+            .collect();
+        let rendered = crate::md_help::render_data_table(&["Branch", "Summary", "Age"], &rows);
         writeln!(out, "{}", rendered.trim_end())?;
     }
     writeln!(out)?;

@@ -653,7 +653,10 @@ impl Repository {
     }
 
     /// Clear all cached git command results, returning the count removed.
-    pub fn clear_git_commands_cache(&self) -> usize {
+    ///
+    /// Propagates non-`NotFound` I/O errors so `wt config state clear`
+    /// reports truthfully when a file can't be deleted.
+    pub fn clear_git_commands_cache(&self) -> anyhow::Result<usize> {
         sha_cache::clear_all(self)
     }
 

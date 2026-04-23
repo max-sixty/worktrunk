@@ -139,7 +139,10 @@
 //! ## Caching
 //!
 //! Sibling caches live under `.git/wt/cache/`. Each uses a different key scheme because
-//! the underlying operations differ in what their output depends on.
+//! the underlying operations differ in what their output depends on. All three share
+//! [`worktrunk::cache`] for the filesystem mechanics (read, write, clear, count) so
+//! there's one implementation of the torn-write semantics and error policy across
+//! every kind.
 //!
 //! | Directory | Module | Key | Staleness |
 //! |-----------|--------|-----|-----------|
@@ -149,7 +152,7 @@
 //! | `has-added-changes/` | `git::repository::sha_cache` | `{branch_sha}-{target_sha}.json` | Never — content-addressed |
 //! | `diff-stats/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
 //! | `ci-status/` | `commands::list::ci_status::cache` | `{branch}.json` | TTL 30–60s + HEAD SHA check |
-//! | `summaries/` | `summary` | `{branch}.json` | `diff_hash` mismatch |
+//! | `summaries/{branch}/` | `summary` | `{diff_hash}.json` | Miss if no file exists for the current hash; siblings pruned on write |
 //!
 //! ### Key schemes
 //!
@@ -158,8 +161,11 @@
 //!   checks, file-change probes, diff stats).
 //! - **Branch + TTL + HEAD**: external mutable state (CI API, remote refs). TTL bounds
 //!   staleness; the HEAD check invalidates early when the branch moves.
-//! - **Branch + content hash**: deterministic function of a mutable input (e.g. an LLM call
-//!   over a diff). Invalidates on hash mismatch.
+//! - **Branch + content-addressed hash in filename**: content hash (SHA-256
+//!   prefix of the combined diff) lives in the filename, so a cache hit is
+//!   "file exists for this hash". Prune-on-write removes stale sibling hashes
+//!   for the branch, keeping the cache bounded at ~1 entry per branch without
+//!   needing an LRU sweep.
 //!
 //! ### Which tasks hit which cache
 //!

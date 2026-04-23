@@ -1,27 +1,28 @@
 //! CI status caching.
 //!
 //! Caches CI status in `.git/wt/cache/ci-status/<branch>.json` to avoid
-//! hitting API rate limits.
+//! hitting API rate limits. Built on the shared `worktrunk::cache`
+//! primitives for read/write/clear mechanics.
 
 use std::collections::hash_map::DefaultHasher;
-use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use worktrunk::cache;
 use worktrunk::git::Repository;
 use worktrunk::path::sanitize_for_filename;
 
 use super::PrStatus;
 
-/// Cached CI status stored in `.git/wt/cache/ci-status/<branch>.json`
+/// Cached CI status stored in `.git/wt/cache/ci-status/<branch>.json`.
 ///
-/// Uses file-based caching instead of git config to avoid file locking issues.
-/// On Windows, concurrent `git config` writes can temporarily lock `.git/config`,
-/// causing other git operations to fail with "Permission denied".
+/// Uses file-based caching instead of git config to avoid file locking
+/// issues on Windows where concurrent `git config` writes can lock
+/// `.git/config` and cause other git operations to fail.
 ///
-/// Note: Old cache entries without the `branch` field will fail deserialization
-/// and be treated as cache misses — they will be re-fetched with the new format.
+/// Old cache entries without the `branch` field fail deserialization and
+/// are treated as cache misses — they get re-fetched with the new format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CachedCiStatus {
     /// The cached CI status (None means no CI found for this branch)
@@ -47,12 +48,12 @@ impl CachedCiStatus {
     /// Different directories get different TTLs [30, 60) seconds, which spreads
     /// out cache expirations when multiple statuslines run concurrently.
     pub(crate) fn ttl_for_repo(repo_root: &Path) -> u64 {
+        // `DefaultHasher` is fine here — the output is ephemeral (used only
+        // to pick a TTL for this process), never persisted.
         let mut hasher = DefaultHasher::new();
-        // Hash the path bytes directly for consistent TTL across string representations
         repo_root.as_os_str().hash(&mut hasher);
         let hash = hasher.finish();
 
-        // Map hash to jitter range [0, TTL_JITTER_SECS)
         let jitter = hash % Self::TTL_JITTER_SECS;
         Self::TTL_BASE_SECS + jitter
     }
@@ -68,83 +69,44 @@ impl CachedCiStatus {
 
     /// Get the cache directory path: `.git/wt/cache/ci-status/`
     fn cache_dir(repo: &Repository) -> PathBuf {
-        repo.wt_dir().join("cache").join("ci-status")
+        cache::cache_dir(repo, "ci-status")
     }
 
     /// Get the cache file path for a branch.
     fn cache_file(repo: &Repository, branch: &str) -> PathBuf {
-        let dir = Self::cache_dir(repo);
         let safe_branch = sanitize_for_filename(branch);
-        dir.join(format!("{safe_branch}.json"))
+        Self::cache_dir(repo).join(format!("{safe_branch}.json"))
     }
 
     /// Read cached CI status from file.
     pub(super) fn read(repo: &Repository, branch: &str) -> Option<Self> {
-        let path = Self::cache_file(repo, branch);
-        let json = fs::read_to_string(&path).ok()?;
-        serde_json::from_str(&json).ok()
+        cache::read_json(&Self::cache_file(repo, branch))
     }
 
     /// Write CI status to cache file.
     ///
-    /// Uses atomic write (write to temp file, then rename) to avoid corruption
-    /// and minimize lock contention on Windows.
+    /// A torn write under a concurrent reader produces unparsable bytes
+    /// at the expected path, which `read()` treats as a miss — the next
+    /// read just re-fetches. See `worktrunk::cache` for the shared
+    /// torn-write semantics.
     pub(super) fn write(&self, repo: &Repository, branch: &str) {
-        let path = Self::cache_file(repo, branch);
-
-        // Create cache directory if needed
-        if let Some(parent) = path.parent()
-            && let Err(e) = fs::create_dir_all(parent)
-        {
-            log::debug!("Failed to create cache dir for {}: {}", branch, e);
-            return;
-        }
-
-        let Ok(json) = serde_json::to_string(self) else {
-            log::debug!("Failed to serialize CI cache for {}", branch);
-            return;
-        };
-
-        // Write to temp file first, then rename for atomic update
-        let temp_path = path.with_extension("json.tmp");
-        if let Err(e) = fs::write(&temp_path, &json) {
-            log::debug!("Failed to write CI cache temp file for {}: {}", branch, e);
-            return;
-        }
-
-        // On Windows, fs::rename may fail if target exists (depending on Windows version
-        // and filesystem). Remove target first to ensure rename succeeds.
-        #[cfg(windows)]
-        let _ = fs::remove_file(&path);
-
-        if let Err(e) = fs::rename(&temp_path, &path) {
-            log::debug!("Failed to rename CI cache file for {}: {}", branch, e);
-            // Clean up temp file on failure
-            let _ = fs::remove_file(&temp_path);
-        }
+        cache::write_json(&Self::cache_file(repo, branch), self);
     }
 
     /// List all cached CI statuses as (branch_name, cached_status) pairs.
     pub(crate) fn list_all(repo: &Repository) -> Vec<(String, Self)> {
-        let cache_dir = Self::cache_dir(repo);
-
-        let entries = match fs::read_dir(&cache_dir) {
-            Ok(entries) => entries,
-            Err(_) => return Vec::new(),
+        let dir = Self::cache_dir(repo);
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Vec::new();
         };
 
         entries
             .filter_map(|entry| {
-                let entry = entry.ok()?;
-                let path = entry.path();
-
-                // Only process .json files (skip .json.tmp)
+                let path = entry.ok()?.path();
                 if path.extension()?.to_str()? != "json" {
                     return None;
                 }
-
-                let json = fs::read_to_string(&path).ok()?;
-                let cached: Self = serde_json::from_str(&json).ok()?;
+                let cached: Self = cache::read_json(&path)?;
                 Some((cached.branch.clone(), cached))
             })
             .collect()
@@ -152,136 +114,24 @@ impl CachedCiStatus {
 
     /// Clear the cached CI status for a single branch.
     ///
-    /// Returns `Ok(true)` if a cache file was removed, `Ok(false)` if none
-    /// existed (including the concurrent-removal case — another process
-    /// deleted the file between the caller deciding to clear and this call).
-    /// Propagates other I/O errors (permission denied, etc.) — since the
-    /// caller reports "Cleared"/"No cache" directly to the user, a silent
-    /// swallow would lie when the file exists but we can't delete it.
+    /// Returns `Ok(true)` if a cache file was removed, `Ok(false)` if
+    /// none existed. Propagates non-`NotFound` I/O errors so the caller
+    /// can report truthfully to the user.
     pub(crate) fn clear_one(repo: &Repository, branch: &str) -> anyhow::Result<bool> {
-        let path = Self::cache_file(repo, branch);
-        match fs::remove_file(&path) {
-            Ok(()) => Ok(true),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(e) => {
-                Err(anyhow::Error::new(e).context(format!("failed to remove {}", path.display())))
-            }
-        }
+        cache::clear_one(&Self::cache_file(repo, branch))
     }
 
-    /// Clear all cached CI statuses, returns count cleared.
+    /// Clear all cached CI statuses, returning the count cleared.
     ///
-    /// Missing cache dir is `Ok(0)` (nothing to clear). A file that vanishes
-    /// between listing and removal — another process cleared concurrently —
-    /// is counted as not-removed and skipped. Other I/O errors propagate.
+    /// Missing cache dir is `Ok(0)`. Non-`NotFound` I/O errors propagate.
     pub(crate) fn clear_all(repo: &Repository) -> anyhow::Result<usize> {
-        let cache_dir = Self::cache_dir(repo);
-
-        let entries = match fs::read_dir(&cache_dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-            Err(e) => {
-                return Err(anyhow::Error::new(e)
-                    .context(format!("failed to read {}", cache_dir.display())));
-            }
-        };
-
-        let mut cleared = 0;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            // Only remove .json files
-            if path.extension().is_none_or(|ext| ext != "json") {
-                continue;
-            }
-            match fs::remove_file(&path) {
-                Ok(()) => cleared += 1,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(e) => {
-                    return Err(anyhow::Error::new(e)
-                        .context(format!("failed to remove {}", path.display())));
-                }
-            }
-        }
-        Ok(cleared)
+        cache::clear_json_files(&Self::cache_dir(repo))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use worktrunk::testing::TestRepo;
-
-    #[test]
-    fn test_clear_one_propagates_non_not_found_error() {
-        let test = TestRepo::with_initial_commit();
-        let repo = Repository::at(test.root_path()).unwrap();
-
-        // Place a directory where the .json cache file should live so
-        // remove_file returns a non-NotFound error (EISDIR / similar).
-        let path = CachedCiStatus::cache_file(&repo, "feature");
-        fs::create_dir_all(&path).unwrap();
-
-        let err = CachedCiStatus::clear_one(&repo, "feature").unwrap_err();
-        assert!(
-            err.to_string().contains("failed to remove"),
-            "expected remove-failure context, got: {err}"
-        );
-    }
-
-    #[test]
-    fn test_clear_all_propagates_non_not_found_read_dir_error() {
-        let test = TestRepo::with_initial_commit();
-        let repo = Repository::at(test.root_path()).unwrap();
-
-        // Put a regular file where the cache *directory* should be so
-        // read_dir returns NotADirectory (non-NotFound).
-        let cache_dir = CachedCiStatus::cache_dir(&repo);
-        fs::create_dir_all(cache_dir.parent().unwrap()).unwrap();
-        fs::write(&cache_dir, "not a dir").unwrap();
-
-        let err = CachedCiStatus::clear_all(&repo).unwrap_err();
-        assert!(
-            err.to_string().contains("failed to read"),
-            "expected read-failure context, got: {err}"
-        );
-    }
-
-    #[test]
-    fn test_clear_all_skips_non_json_extensions() {
-        let test = TestRepo::with_initial_commit();
-        let repo = Repository::at(test.root_path()).unwrap();
-
-        let cache_dir = CachedCiStatus::cache_dir(&repo);
-        fs::create_dir_all(&cache_dir).unwrap();
-        fs::write(cache_dir.join("a.json"), "{}").unwrap();
-        // Non-.json siblings must be skipped without being counted.
-        fs::write(cache_dir.join("a.json.tmp"), "leftover").unwrap();
-        fs::write(cache_dir.join("README"), "stray").unwrap();
-
-        let count = CachedCiStatus::clear_all(&repo).unwrap();
-        assert_eq!(count, 1, "only the .json file should be counted");
-        assert!(!cache_dir.join("a.json").exists());
-        assert!(cache_dir.join("a.json.tmp").exists());
-        assert!(cache_dir.join("README").exists());
-    }
-
-    #[test]
-    fn test_clear_all_propagates_per_file_remove_error() {
-        let test = TestRepo::with_initial_commit();
-        let repo = Repository::at(test.root_path()).unwrap();
-
-        let cache_dir = CachedCiStatus::cache_dir(&repo);
-        fs::create_dir_all(&cache_dir).unwrap();
-        // A directory named `*.json` makes remove_file return a non-NotFound
-        // error (EISDIR / similar).
-        fs::create_dir(cache_dir.join("bad.json")).unwrap();
-
-        let err = CachedCiStatus::clear_all(&repo).unwrap_err();
-        assert!(
-            err.to_string().contains("failed to remove"),
-            "expected remove-failure context, got: {err}"
-        );
-    }
 
     #[test]
     fn test_ttl_jitter_range_and_determinism() {

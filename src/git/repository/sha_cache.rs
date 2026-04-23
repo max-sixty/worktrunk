@@ -16,7 +16,8 @@
 //! and `key` is the SHA-pair filename. The sibling `ci-status/` and
 //! `summaries/` caches use different key schemes; see
 //! `commands::list::collect` for the cross-cutting design across all
-//! `.git/wt/cache/` kinds.
+//! `.git/wt/cache/` kinds. All three share the [`crate::cache`] module
+//! for read/write/clear mechanics.
 //!
 //! Symmetric kinds (merge-tree-conflicts) sort the SHA pair so
 //! `merge-tree(A, B)` and `merge-tree(B, A)` hit the same entry.
@@ -27,15 +28,10 @@
 //! # Concurrency
 //!
 //! Two concurrent writers racing on the same key produce the same value
-//! (same SHA inputs), so a torn write is benign — `read()` treats corrupt
-//! JSON as a miss. The LRU sweep may also race — `fs::remove_file`
-//! failures are ignored because the goal is best-effort size bounding.
-//!
-//! # Failure handling
-//!
-//! All cache failures (corrupt JSON, I/O errors, permission denied) are
-//! logged at `debug` level and degrade silently: reads return `None`,
-//! writes are no-ops. Callers must never observe cache failures.
+//! (same SHA inputs), so a torn write is benign — see `crate::cache` for
+//! the shared torn-write semantics. The LRU sweep may also race —
+//! `fs::remove_file` failures are ignored because the goal is best-effort
+//! size bounding.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -45,6 +41,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use super::Repository;
 use super::integration::MergeProbeResult;
+use crate::cache;
 use crate::git::LineDiff;
 
 /// Maximum cached entries per task kind before the LRU sweep removes the
@@ -69,10 +66,11 @@ const ALL_KINDS: &[&str] = &[
 
 /// Get the cache directory for a given task kind.
 ///
-/// Each kind is a top-level directory under `.git/wt/cache/`, consistent
-/// with `ci-status/` and `summaries/`.
+/// Thin alias over [`cache::cache_dir`] so the internal call sites stay
+/// readable; the shared module owns the canonical `wt/cache/<kind>/`
+/// path.
 fn cache_dir(repo: &Repository, kind: &str) -> PathBuf {
-    repo.wt_dir().join("cache").join(kind)
+    cache::cache_dir(repo, kind)
 }
 
 /// Build a symmetric filename from a SHA pair (order-independent).
@@ -89,43 +87,16 @@ fn asymmetric_key(first: &str, second: &str) -> String {
     format!("{first}-{second}.json")
 }
 
-/// Read and deserialize a cache entry. Returns `None` on any failure.
+/// Read and deserialize a cache entry. Thin re-export over
+/// [`cache::read_json`] so call sites in this module read naturally.
 fn read<T: DeserializeOwned>(path: &Path) -> Option<T> {
-    let json = fs::read_to_string(path).ok()?;
-    match serde_json::from_str::<T>(&json) {
-        Ok(value) => Some(value),
-        Err(e) => {
-            log::debug!("sha_cache: corrupt entry at {}: {}", path.display(), e);
-            None
-        }
-    }
+    cache::read_json(path)
 }
 
-/// Serialize and write a cache entry. A half-written file is handled by
-/// `read()` (corrupt JSON → `None`), so plain `fs::write` is sufficient.
+/// Serialize and write a cache entry. Thin re-export over
+/// [`cache::write_json`]; see that module for torn-write semantics.
 fn write<T: Serialize>(path: &Path, value: &T) {
-    if let Some(parent) = path.parent()
-        && let Err(e) = fs::create_dir_all(parent)
-    {
-        log::debug!(
-            "sha_cache: failed to create dir {}: {}",
-            parent.display(),
-            e
-        );
-        return;
-    }
-
-    let Ok(json) = serde_json::to_string(value) else {
-        log::debug!(
-            "sha_cache: failed to serialize entry for {}",
-            path.display()
-        );
-        return;
-    };
-
-    if let Err(e) = fs::write(path, &json) {
-        log::debug!("sha_cache: failed to write {}: {}", path.display(), e);
-    }
+    cache::write_json(path, value);
 }
 
 /// Enforce a size bound on `dir`. If it holds more than `max` JSON
@@ -300,21 +271,14 @@ pub(super) fn put_diff_stats(repo: &Repository, base_sha: &str, head_sha: &str, 
 /// Clear all cached SHA-keyed entries, returning the count removed.
 ///
 /// Called by `wt config state clear` to give users a clean slate.
-pub(crate) fn clear_all(repo: &Repository) -> usize {
+/// Propagates non-`NotFound` I/O errors so the caller can report
+/// truthfully when deletion fails.
+pub(crate) fn clear_all(repo: &Repository) -> anyhow::Result<usize> {
     let mut cleared = 0;
     for kind in ALL_KINDS {
-        let dir = cache_dir(repo, kind);
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "json") && fs::remove_file(&path).is_ok() {
-                cleared += 1;
-            }
-        }
+        cleared += cache::clear_json_files(&cache_dir(repo, kind))?;
     }
-    cleared
+    Ok(cleared)
 }
 
 /// Count all cached SHA-keyed entries across every kind.
@@ -322,19 +286,10 @@ pub(crate) fn clear_all(repo: &Repository) -> usize {
 /// Called by `wt config state get` to surface the same state that
 /// `clear_all` would sweep, preserving get ↔ clear parity.
 pub(crate) fn count_all(repo: &Repository) -> usize {
-    let mut count = 0;
-    for kind in ALL_KINDS {
-        let dir = cache_dir(repo, kind);
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            if entry.path().extension().is_some_and(|ext| ext == "json") {
-                count += 1;
-            }
-        }
-    }
-    count
+    ALL_KINDS
+        .iter()
+        .map(|kind| cache::count_json_files(&cache_dir(repo, kind)))
+        .sum()
 }
 
 #[cfg(test)]
@@ -827,7 +782,7 @@ mod tests {
             },
         );
 
-        let cleared = clear_all(&repo);
+        let cleared = clear_all(&repo).unwrap();
         assert_eq!(cleared, 5, "should clear one entry per kind");
 
         // All kinds should be empty
