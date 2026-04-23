@@ -85,7 +85,7 @@ impl CachedCiStatus {
 
     /// Write CI status to cache file.
     ///
-    /// A torn write under a concurrent reader produces unparseable bytes
+    /// A torn write under a concurrent reader produces unparsable bytes
     /// at the expected path, which `read()` treats as a miss — the next
     /// read just re-fetches. See `worktrunk::cache` for the shared
     /// torn-write semantics.

@@ -219,14 +219,12 @@ fn prune_siblings(dir: &Path, keep: &Path) {
 /// stable across Rust versions, which is unsafe for a value persisted
 /// to disk. SHA-256 is deterministic across toolchains and platforms.
 pub(crate) fn hash_diff(diff: &str) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
+    use std::fmt::Write as _;
     let mut hasher = Sha256::new();
     hasher.update(diff.as_bytes());
-    let digest = hasher.finalize();
     let mut out = String::with_capacity(16);
-    for &b in digest.iter().take(8) {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0xf) as usize] as char);
+    for b in hasher.finalize().iter().take(8) {
+        let _ = write!(out, "{b:02x}");
     }
     out
 }

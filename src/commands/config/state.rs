@@ -79,6 +79,20 @@ fn is_diagnostic_file(name: &str) -> bool {
     DIAGNOSTIC_FILES.contains(&name)
 }
 
+/// Truncate a string for a display cell, counting by Unicode scalars.
+///
+/// Returns a shortened copy ending in `"..."` when the input exceeds
+/// `max_chars` scalars, otherwise the input verbatim. Byte-slicing
+/// (`&s[..n]`) panics on a multi-byte boundary — this helper is safe
+/// for any UTF-8 string.
+fn truncate_display(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let truncated: String = s.chars().take(max_chars.saturating_sub(3)).collect();
+    format!("{truncated}...")
+}
+
 /// Check if a top-level file belongs to the command audit log (`.jsonl` / `.jsonl.old`).
 fn is_command_log_file(name: &str) -> bool {
     name.ends_with(".jsonl") || name.ends_with(".jsonl.old")
@@ -1203,13 +1217,11 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
         let mut rows: Vec<Vec<String>> = Vec::new();
         for (branch, entries) in &all_vars {
             for (key, value) in entries {
-                // Truncate long values for display
-                let display_value = if value.len() > 40 {
-                    format!("{}...", &value[..37])
-                } else {
-                    value.to_string()
-                };
-                rows.push(vec![branch.to_string(), key.to_string(), display_value]);
+                rows.push(vec![
+                    branch.to_string(),
+                    key.to_string(),
+                    truncate_display(value, 40),
+                ]);
             }
         }
         let rendered = crate::md_help::render_data_table(headers, &rows);
@@ -1264,21 +1276,9 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
         let rows: Vec<Vec<String>> = summary_entries
             .iter()
             .map(|cached| {
-                let subject = cached
-                    .summary
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-                let subject = if subject.chars().count() > 40 {
-                    let truncated: String = subject.chars().take(37).collect();
-                    format!("{truncated}...")
-                } else {
-                    subject
-                };
+                let subject = cached.summary.lines().next().unwrap_or("").trim();
                 let age = format_relative_time_short(cached.generated_at as i64);
-                vec![cached.branch.clone(), subject, age]
+                vec![cached.branch.clone(), truncate_display(subject, 40), age]
             })
             .collect();
         let rendered = crate::md_help::render_data_table(&["Branch", "Summary", "Age"], &rows);
