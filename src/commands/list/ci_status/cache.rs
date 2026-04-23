@@ -85,7 +85,7 @@ impl CachedCiStatus {
 
     /// Write CI status to cache file.
     ///
-    /// A torn write under a concurrent reader produces unparsable bytes
+    /// A torn write under a concurrent reader produces unparseable bytes
     /// at the expected path, which `read()` treats as a miss — the next
     /// read just re-fetches. See `worktrunk::cache` for the shared
     /// torn-write semantics.
@@ -123,7 +123,8 @@ impl CachedCiStatus {
 
     /// Clear all cached CI statuses, returning the count cleared.
     ///
-    /// Missing cache dir is `Ok(0)`. Non-`NotFound` I/O errors propagate.
+    /// Delegates to [`cache::clear_json_files`], which documents the
+    /// missing-dir / concurrent-removal / error-propagation semantics.
     pub(crate) fn clear_all(repo: &Repository) -> anyhow::Result<usize> {
         cache::clear_json_files(&Self::cache_dir(repo))
     }

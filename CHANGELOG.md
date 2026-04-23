@@ -12,7 +12,7 @@
 
 - **Global-scope `core.worktree` no longer misdetects the repo root in normal non-bare repos**: The 0.43.0 `repo_path()` fast path ([#2350](https://github.com/max-sixty/worktrunk/pull/2350)) read `core.worktree` from the bulk config map, which merges global and system scope — but git itself only honors `core.worktree` from local config for worktree discovery. When the bulk map reports `core.worktree` we now delegate to `git rev-parse --show-toplevel` so git applies its own scope rules. The common case (no `core.worktree` anywhere) still skips the subprocess. ([#2362](https://github.com/max-sixty/worktrunk/pull/2362))
 
-- **`post-create` hook config is now rejected with an explicit error instead of silently migrating to `pre-start`**: Paves the way to reclaim `post-create` as a background-semantics counterpart to `post-start` (see [#1571](https://github.com/max-sixty/worktrunk/issues/1571)). (Breaking: existing configs using `post-create` must be renamed to `pre-start`.) ([#2361](https://github.com/max-sixty/worktrunk/pull/2361))
+- **`post-create` hook config is now rejected with an explicit error instead of silently migrating to `pre-start`**: Clears the silent migration ahead of the planned `*-start` → `*-create` rename (see [#1571](https://github.com/max-sixty/worktrunk/issues/1571)). ([#2361](https://github.com/max-sixty/worktrunk/pull/2361))
 
 ### Internal
 

@@ -32,6 +32,17 @@
 //! the shared torn-write semantics. The LRU sweep may also race —
 //! `fs::remove_file` failures are ignored because the goal is best-effort
 //! size bounding.
+//!
+//! # Failure handling
+//!
+//! Read and write paths degrade silently — corrupt JSON, I/O errors, and
+//! permission denied are logged at `debug` level; reads return `None`,
+//! writes are no-ops. Callers must never observe cache failures there
+//! because the cache is always an optimization over re-running git.
+//!
+//! The user-initiated clear path ([`clear_all`], reached via
+//! `wt config state clear`) propagates I/O errors instead. A failed clear
+//! that reports "cleared N entries" would be a lie to the user.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -270,9 +281,10 @@ pub(super) fn put_diff_stats(repo: &Repository, base_sha: &str, head_sha: &str, 
 
 /// Clear all cached SHA-keyed entries, returning the count removed.
 ///
-/// Called by `wt config state clear` to give users a clean slate.
-/// Propagates non-`NotFound` I/O errors so the caller can report
-/// truthfully when deletion fails.
+/// Called by `wt config state clear`. Delegates per-kind-directory work
+/// to [`cache::clear_json_files`], which documents the missing-dir /
+/// concurrent-removal / error-propagation semantics the module-level
+/// "Failure handling" section enshrines.
 pub(crate) fn clear_all(repo: &Repository) -> anyhow::Result<usize> {
     let mut cleared = 0;
     for kind in ALL_KINDS {
