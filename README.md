@@ -221,6 +221,54 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
 
 <!-- END AUTO-GENERATED -->
 
+## FAQ & Troubleshooting
+
+### General
+
+**Q: How is Worktrunk different from plain `git worktree`?**
+
+Worktrunk wraps git worktrees with a simpler UX: branch-addressed paths, automatic directory switching via shell integration, hooks for automation, and a merge workflow that handles squash/rebase/cleanup in one command. You get all of git worktree's power with less typing.
+
+**Q: Can I use Worktrunk with GitLab / Bitbucket?**
+
+Yes. Worktrunk works with any Git remote. PR/MR checkout (`wt switch pr:123`) supports GitHub, GitLab, and Bitbucket URLs.
+
+**Q: Does Worktrunk work with monorepos?**
+
+Yes. Worktrunk is designed for monorepos — each worktree gets its own working directory, so parallel agents don't conflict. Use [copy build caches](https://worktrunk.dev/step/#wt-step-copy-ignored) to skip cold starts.
+
+### Setup & Configuration
+
+**Q: Shell integration not working — `wt switch` doesn't change directory?**
+
+Run `wt config shell install` to add the shell function to your rc file. Then restart your terminal or source the rc file. Verify with `type wt` — it should show a function, not an alias.
+
+**Q: How do I customize the worktree path template?**
+
+Set `wt config template` to a Go template. Default is `../{{.Repo}}.{{.Branch}}`. Example: `wt config template '../{{.Branch}}'` for shorter paths.
+
+**Q: Can I use Worktrunk without shell integration?**
+
+Yes — all commands work as standalone executables. You just won't get automatic `cd` after `wt switch`. Use `wt switch --print` to get the path and `cd` manually.
+
+### Common Issues
+
+**Q: `wt merge` says "rebase needed" but I want squash only?**
+
+Use `wt merge --squash main` to force squash without rebase. Or `wt merge --no-rebase main` to merge without rebasing.
+
+**Q: Worktree shows stale CI status?**
+
+Run `wt list --refresh` to fetch latest CI status from GitHub/GitLab. Status is cached for 5 minutes by default.
+
+**Q: Hooks not running on worktree creation?**
+
+Verify hooks are enabled: `wt config hooks` should show `true`. Check hook definitions in `.wt/config.yaml` or your global config at `~/.config/worktrunk/config.yaml`.
+
+**Q: `wt remove` fails with "worktree in use"?**
+
+Close any terminal or IDE windows pointing to the worktree directory, then retry. Worktrunk can't remove a worktree that has active processes.
+
 ## Contributing
 
 - ⭐ Star the repo
