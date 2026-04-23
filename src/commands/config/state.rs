@@ -837,18 +837,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
         }
         "marker" => {
             if all {
-                let output = repo
-                    .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
-                    .unwrap_or_default();
-
-                let mut cleared_count = 0;
-                for line in output.lines() {
-                    if let Some(config_key) = line.split_whitespace().next() {
-                        repo.unset_config(config_key)?;
-                        cleared_count += 1;
-                    }
-                }
-
+                let cleared_count = clear_all_markers(&repo)?;
                 if cleared_count == 0 {
                     eprintln!("{}", info_message("No markers to clear"));
                 } else {
@@ -921,18 +910,8 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
         cleared_any = true;
     }
 
-    // Clear all markers. --get-regexp exits 1 when no keys match, which
-    // `run_command` surfaces as an error; treat that as "nothing to clear".
-    let markers_output = repo
-        .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
-        .unwrap_or_default();
-    let mut markers_cleared = 0;
-    for line in markers_output.lines() {
-        if let Some(config_key) = line.split_whitespace().next() {
-            repo.unset_config(config_key)?;
-            markers_cleared += 1;
-        }
-    }
+    // Clear all markers
+    let markers_cleared = clear_all_markers(&repo)?;
     if markers_cleared > 0 {
         eprintln!(
             "{}",
@@ -1441,6 +1420,27 @@ pub fn handle_vars_clear(
         }
     }
     Ok(())
+}
+
+/// Clear all branch markers. Used by `state clear marker --all` and
+/// `state clear --all`.
+///
+/// `git config --get-regexp` exits 1 when no keys match, which `run_command`
+/// surfaces as an error; `.unwrap_or_default()` absorbs that as the "nothing
+/// to clear" path. Errors from individual `unset_config` calls during the
+/// iteration (corrupt config, permission denied) propagate.
+fn clear_all_markers(repo: &Repository) -> anyhow::Result<usize> {
+    let output = repo
+        .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
+        .unwrap_or_default();
+    let mut cleared = 0;
+    for line in output.lines() {
+        if let Some(config_key) = line.split_whitespace().next() {
+            repo.unset_config(config_key)?;
+            cleared += 1;
+        }
+    }
+    Ok(cleared)
 }
 
 /// Clear all vars entries across all branches (used by handle_state_clear_all).
