@@ -910,6 +910,11 @@ Remove current worktree:
 
 ```console
 $ wt remove
+◎ Running pre-remove project:cleanup
+  flyctl scale count 0
+Scaling app to 0 machines
+◎ Removing api worktree & branch in background (same commit as main, _)
+○ Switched to worktree for main @ repo
 ```
 
 Remove specific worktrees / branches:
@@ -999,6 +1004,13 @@ Merge to the default branch:
 
 ```console
 $ wt merge
+◎ Running pre-merge project:test
+  cargo nextest run
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Summary [   0.002s] 2 tests run: 2 passed, 0 skipped
+◎ Merging 1 commit to main @ a5a2f9d5 (no rebase needed)
+✓ Merged to main (1 commit, 1 file, +25)
+◎ Removing hooks worktree & branch in background (same commit as main, _)
 ```
 
 Merge to a different branch:
@@ -1094,6 +1106,9 @@ Commit with LLM-generated message:
 
 ```console
 $ wt step commit
+◎ Generating commit message and committing changes... (2 files, +25)
+  feat(validation): add input validation utilities
+✓ Committed changes @ 08d6aa2
 ```
 
 Manual merge workflow with review between steps:
@@ -1392,6 +1407,19 @@ $ wt hook pre-merge -- --extra args     # Forward tokens into {{ args }}
 ```
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
+
+Each hook execution prints a `◎ Running <type> <name>` header and streams the command's output inline; background (`post-*`) hooks log to `.git/wt/logs/` instead. Example running a configured `pre-merge` pipeline:
+
+```console
+$ wt hook pre-merge
+◎ Running pre-merge project:test
+  cargo test
+    Finished test [unoptimized + debuginfo] target(s) in 0.12s
+test result: ok. 18 passed; 0 failed; 0 ignored
+◎ Running pre-merge project:lint
+  cargo clippy
+    Finished dev [unoptimized + debuginfo] target(s) in 1.23s
+```
 
 ## Passing values
 

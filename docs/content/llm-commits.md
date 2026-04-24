@@ -74,13 +74,28 @@ Squashes all changes (uncommitted + existing commits) into one commit with an LL
 
 Stages and commits with LLM-generated message:
 
-{{ terminal(cmd="wt step commit") }}
+{% terminal(cmd="wt step commit") %}
+<span class=c>◎</span> <span class=c>Generating commit message and committing changes... <span style='color:var(--bright-black,#555)'>(2 files, <span class=g>+25</span></span></span><span style='color:var(--bright-black,#555)'>)</span>
+<span style='background:var(--bright-white,#fff)'> </span> <b>feat(validation): add input validation utilities</b>
+<span style='background:var(--bright-white,#fff)'> </span>
+<span style='background:var(--bright-white,#fff)'> </span> Add validation module with is_positive and is_non_empty helpers
+<span style='background:var(--bright-white,#fff)'> </span> for validating user input. Includes comprehensive test coverage.
+<span class=g>✓</span> <span class=g>Committed changes @ <span class=d>08d6aa2</span></span>
+{% end %}
 
 ### wt step squash
 
 Squashes branch commits into one with LLM-generated message:
 
-{{ terminal(cmd="wt step squash") }}
+{% terminal(cmd="wt step squash") %}
+<span class=c>◎</span> <span class=c>Squashing 3 commits into a single commit <span style='color:var(--bright-black,#555)'>(5 files, <span class=g>+48</span></span></span><span style='color:var(--bright-black,#555)'>)</span>...
+<span class=c>◎</span> <span class=c>Generating squash commit message...</span>
+<span style='background:var(--bright-white,#fff)'> </span> <b>feat(auth): Implement JWT authentication system</b>
+<span style='background:var(--bright-white,#fff)'> </span>
+<span style='background:var(--bright-white,#fff)'> </span> Add comprehensive JWT token handling including validation, refresh
+<span style='background:var(--bright-white,#fff)'> </span> logic, and authentication tests.
+<span class=g>✓</span> <span class=g>Squashed @ <span class=d>a1b2c3d</span></span>
+{% end %}
 
 See [`wt merge`](@/merge.md) and [`wt step`](@/step.md) for full documentation.
 

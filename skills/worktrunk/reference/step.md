@@ -8,6 +8,9 @@ Commit with LLM-generated message:
 
 ```bash
 $ wt step commit
+◎ Generating commit message and committing changes... (2 files, +25)
+  feat(validation): add input validation utilities
+✓ Committed changes @ 08d6aa2
 ```
 
 Manual merge workflow with review between steps:

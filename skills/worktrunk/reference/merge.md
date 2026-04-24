@@ -10,6 +10,13 @@ Merge to the default branch:
 
 ```bash
 $ wt merge
+◎ Running pre-merge project:test
+  cargo nextest run
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Summary [   0.002s] 2 tests run: 2 passed, 0 skipped
+◎ Merging 1 commit to main @ a5a2f9d5 (no rebase needed)
+✓ Merged to main (1 commit, 1 file, +25)
+◎ Removing hooks worktree & branch in background (same commit as main, _)
 ```
 
 Merge to a different branch:

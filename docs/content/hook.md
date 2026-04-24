@@ -251,6 +251,18 @@ copy = "wt step copy-ignored"
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
+Each hook execution prints a `◎ Running <type> <name>` header and streams the command's output inline; background (`post-*`) hooks log to `.git/wt/logs/` instead. Example running a configured `pre-merge` pipeline:
+
+{% terminal(cmd="wt hook pre-merge") %}
+◎ Running pre-merge project:test
+  cargo test
+    Finished test [unoptimized + debuginfo] target(s) in 0.12s
+test result: ok. 18 passed; 0 failed; 0 ignored
+◎ Running pre-merge project:lint
+  cargo clippy
+    Finished dev [unoptimized + debuginfo] target(s) in 1.23s
+{% end %}
+
 ## Passing values
 
 `--KEY=VALUE` binds `KEY` whenever `{{ KEY }}` appears in any command of the hook — the same smart-routing rule `wt <alias>` uses. Built-in variables can be overridden: `--branch=foo` sets `{{ branch }}` inside hook templates (the worktree's actual branch doesn't move). Hyphens in keys become underscores: `--my-var=x` sets `{{ my_var }}`.
