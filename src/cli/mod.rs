@@ -938,7 +938,7 @@ $ wt remove
   flyctl scale count 0
 Scaling app to 0 machines
 ◎ Removing api worktree & branch in background (same commit as main, _)
-○ Switched to worktree for main @ repo
+○ Switched to worktree for main @ ~/repo
 ```
 
 Remove specific worktrees / branches:
@@ -1039,7 +1039,7 @@ $ wt merge
    1 file changed, 31 insertions(+)
 ✓ Merged to main (1 commit, 1 file, +31)
 ◎ Removing hooks worktree & branch in background (same commit as main, _)
-○ Switched to worktree for main @ repo
+○ Switched to worktree for main @ ~/repo
 ```
 
 Merge to a different branch:

@@ -22,7 +22,7 @@ Remove current worktree:
 <span style='background:var(--bright-white,#fff)'> </span> <span class=d><span style='color:var(--blue,#00a)'>flyctl</span></span><span class=d> scale count 0</span>
 Scaling app to 0 machines
 <span class=c>◎</span> <span class=c>Removing <b>api</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
-<span class=d>○</span> Switched to worktree for <b>main</b> @ <b>repo</b>
+<span class=d>○</span> Switched to worktree for <b>main</b> @ <b>~/repo</b>
 {% end %}
 
 <!-- END AUTO-GENERATED -->

@@ -283,20 +283,20 @@ fn extract_command_from_snapshot(content: &str) -> Option<String> {
 /// - `[TMPDIR]/repo.branch` → `../repo.branch`
 /// - `[TMPDIR]/repo` → `../repo`
 /// - `[REPO]` → `../repo`
-/// - `_REPO_` → `repo` (just the repo name, no path)
-/// - `_REPO_.branch` → `repo.branch`
+/// - `_REPO_` → `~/repo` (worktree path; tilde so it reads as a path, not a project name)
+/// - `_REPO_.branch` → `~/repo.branch`
 fn replace_placeholders(content: &str) -> String {
     let content = HASH_REGEX.replace_all(content, "a1b2c3d");
     let content = TMPDIR_BRANCH_REGEX.replace_all(&content, "../repo.$1");
     let content = TMPDIR_MAIN_REGEX.replace_all(&content, "../repo$1");
     let content = REPO_REGEX.replace_all(&content, "../repo");
-    // Handle _REPO_.branch -> repo.branch and _REPO_ -> repo
+    // Handle _REPO_.branch -> ~/repo.branch and _REPO_ -> ~/repo
     REPO_UNDERSCORE_REGEX
         .replace_all(&content, |caps: &regex::Captures| {
             if let Some(branch) = caps.get(2) {
-                format!("repo.{}", branch.as_str())
+                format!("~/repo.{}", branch.as_str())
             } else {
-                "repo".to_string()
+                "~/repo".to_string()
             }
         })
         .into_owned()

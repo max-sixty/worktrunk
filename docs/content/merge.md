@@ -37,7 +37,7 @@ Merge to the default branch:
 <span style='background:var(--bright-white,#fff)'> </span>  1 file changed, 31 insertions(+)
 <span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 1 file, +31</span></span><span style='color:var(--bright-black,#555)'>)</span>
 <span class=c>◎</span> <span class=c>Removing <b>hooks</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
-<span class=d>○</span> Switched to worktree for <b>main</b> @ <b>repo</b>
+<span class=d>○</span> Switched to worktree for <b>main</b> @ <b>~/repo</b>
 {% end %}
 
 <!-- END AUTO-GENERATED -->

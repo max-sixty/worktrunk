@@ -20,7 +20,7 @@ $ wt merge
    1 file changed, 31 insertions(+)
 ✓ Merged to main (1 commit, 1 file, +31)
 ◎ Removing hooks worktree & branch in background (same commit as main, _)
-○ Switched to worktree for main @ repo
+○ Switched to worktree for main @ ~/repo
 ```
 
 Merge to a different branch:
