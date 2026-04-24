@@ -290,6 +290,13 @@ fn fetch_same_repo_branch(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Re
 
 /// Resolve a `--base` value, expanding `pr:`/`mr:` shortcuts. Non-shortcut
 /// inputs go through [`Repository::resolve_worktree_name`] (handles `@`/`-`/`^`).
+///
+/// When the bare name doesn't exist locally but a single remote has it,
+/// returns the remote-qualified form so the validation in
+/// [`resolve_switch_target`] doesn't reject `wt switch -c new --base
+/// remote-only-branch`. Git's rev-parse doesn't auto-expand `foo` to
+/// `refs/remotes/origin/foo`. The new branch's upstream is unset downstream
+/// to keep `git push` from targeting the base.
 fn resolve_base_ref(repo: &Repository, base: &str) -> anyhow::Result<String> {
     if let Some(suffix) = base.strip_prefix("pr:")
         && let Ok(number) = suffix.parse::<u32>()
@@ -303,7 +310,16 @@ fn resolve_base_ref(repo: &Repository, base: &str) -> anyhow::Result<String> {
         return resolve_remote_ref_as_base(repo, &GitLabProvider, number);
     }
 
-    repo.resolve_worktree_name(base)
+    let resolved = repo.resolve_worktree_name(base)?;
+
+    if !repo.ref_exists(&resolved)? {
+        let remotes = repo.branch(&resolved).remotes()?;
+        if remotes.len() == 1 {
+            return Ok(format!("{}/{}", remotes[0], resolved));
+        }
+    }
+
+    Ok(resolved)
 }
 
 /// Resolve `pr:{N}` / `mr:{N}` for `--base`. Same-repo returns the source
