@@ -11,6 +11,7 @@ pub mod cache;
 pub mod command_log;
 pub mod config;
 pub mod copy;
+pub mod copy_progress;
 pub mod docs;
 pub mod git;
 pub mod path;

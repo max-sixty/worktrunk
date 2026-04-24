@@ -11,6 +11,10 @@
 //!
 //! Callers that want low-priority I/O (e.g. `step_copy_ignored`) should call
 //! [`crate::priority::lower_current_process`] before starting work.
+//!
+//! Callers that want a TTY progress spinner pass a [`CopyProgress`] — every
+//! successful leaf copy calls `progress.file_copied(bytes)`. Non-interactive
+//! callers pass [`CopyProgress::disabled`] for a zero-overhead no-op.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -20,6 +24,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Context;
 use rayon::prelude::*;
+
+use crate::copy_progress::CopyProgress;
 
 /// Capped at 4 threads to avoid saturating the CPU — the global rayon pool is
 /// much larger (2× CPU cores, tuned for network I/O in `wt list`).
@@ -32,24 +38,25 @@ static COPY_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
 
 /// Copy a single file or symlink, using reflink (COW) when possible.
 ///
-/// Detects symlinks via `symlink_metadata` on the source. Returns `true` if
-/// the entry was copied, `false` if skipped (destination already exists).
-/// When `force` is true, existing entries are removed before copying.
-pub fn copy_leaf(src: &Path, dest: &Path, force: bool) -> anyhow::Result<bool> {
+/// Detects symlinks via `symlink_metadata` on the source. Returns `Some(bytes)`
+/// when the entry was copied (reporting the source's logical byte size), or
+/// `None` if skipped because the destination already exists. When `force` is
+/// true, existing entries are removed before copying.
+pub fn copy_leaf(src: &Path, dest: &Path, force: bool) -> anyhow::Result<Option<u64>> {
     if force {
         remove_if_exists(dest)?;
     }
     // Use symlink_metadata (not exists()) because exists() follows symlinks
     // and returns false for broken ones.
     if dest.symlink_metadata().is_ok() {
-        return Ok(false);
+        return Ok(None);
     }
 
-    let is_symlink = src
+    let src_meta = src
         .symlink_metadata()
-        .with_context(|| format!("reading metadata for {}", src.display()))?
-        .file_type()
-        .is_symlink();
+        .with_context(|| format!("reading metadata for {}", src.display()))?;
+    let is_symlink = src_meta.file_type().is_symlink();
+    let bytes = src_meta.len();
 
     if is_symlink {
         let target =
@@ -68,20 +75,17 @@ pub fn copy_leaf(src: &Path, dest: &Path, force: bool) -> anyhow::Result<bool> {
                 // Refs: ioctl_ficlonerange(2), LWN Articles/331808
                 #[cfg(unix)]
                 {
-                    let perms = fs::metadata(src)
-                        .context("reading source file permissions")?
-                        .permissions();
-                    fs::set_permissions(dest, perms)
+                    fs::set_permissions(dest, src_meta.permissions())
                         .context("setting destination file permissions")?;
                 }
             }
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => return Ok(false),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => return Ok(None),
             Err(e) => {
                 return Err(anyhow::Error::from(e).context(format!("copying {}", src.display())));
             }
         }
     }
-    Ok(true)
+    Ok(Some(bytes))
 }
 
 /// A leaf item (file or symlink) collected during the directory walk.
@@ -98,10 +102,16 @@ struct CopyLeaf {
 /// are skipped for idempotent usage.
 ///
 /// When `force` is true, existing files and symlinks at the destination are
-/// removed before copying.
+/// removed before copying. `progress` receives per-file callbacks; pass
+/// [`CopyProgress::disabled`] for a zero-overhead no-op.
 ///
 /// Returns the number of files actually copied (excludes skipped entries).
-pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Result<usize> {
+pub fn copy_dir_recursive(
+    src: &Path,
+    dest: &Path,
+    force: bool,
+    progress: &CopyProgress,
+) -> anyhow::Result<usize> {
     // Phase 1: Walk directories iteratively, creating dest dirs and collecting leaves.
     let mut leaves = Vec::new();
     let mut dir_stack = vec![(src.to_path_buf(), dest.to_path_buf())];
@@ -139,8 +149,9 @@ pub fn copy_dir_recursive(src: &Path, dest: &Path, force: bool) -> anyhow::Resul
         leaves
             .par_iter()
             .try_for_each(|leaf| -> anyhow::Result<()> {
-                if copy_leaf(&leaf.src, &leaf.dest, force)? {
+                if let Some(bytes) = copy_leaf(&leaf.src, &leaf.dest, force)? {
                     copied.fetch_add(1, Ordering::Relaxed);
+                    progress.file_copied(bytes);
                 }
                 Ok(())
             })

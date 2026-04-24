@@ -26,6 +26,7 @@ use rayon::prelude::*;
 use worktrunk::HookType;
 use worktrunk::config::{CopyIgnoredConfig, UserConfig};
 use worktrunk::copy::{copy_dir_recursive, copy_leaf};
+use worktrunk::copy_progress::CopyProgress;
 use worktrunk::git::{Repository, WorktreeInfo};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
@@ -805,6 +806,16 @@ pub fn step_copy_ignored(
         }
     }
 
+    // Spinner is only useful when stderr is a TTY and we aren't already
+    // printing a full entry list (`-v`) or just dry-running. `CopyProgress::start`
+    // auto-detects the TTY; this gate skips it for verbose/dry-run modes where
+    // the existing output already conveys progress.
+    let progress = if verbose >= 1 || dry_run {
+        CopyProgress::disabled()
+    } else {
+        CopyProgress::start()
+    };
+
     let mut copied_count = 0usize;
     for (src_entry, is_dir) in &entries_to_copy {
         let relative = src_entry
@@ -813,8 +824,8 @@ pub fn step_copy_ignored(
         let dest_entry = dest_path.join(relative);
 
         if *is_dir {
-            copied_count +=
-                copy_dir_recursive(src_entry, &dest_entry, force).with_context(|| {
+            copied_count += copy_dir_recursive(src_entry, &dest_entry, force, &progress)
+                .with_context(|| {
                     format!("copying directory {}", format_path_for_display(relative))
                 })?;
         } else {
@@ -826,11 +837,13 @@ pub fn step_copy_ignored(
                     )
                 })?;
             }
-            if copy_leaf(src_entry, &dest_entry, force)? {
+            if let Some(bytes) = copy_leaf(src_entry, &dest_entry, force)? {
                 copied_count += 1;
+                progress.file_copied(bytes);
             }
         }
     }
+    progress.finish();
 
     // Show summary
     let file_word = if copied_count == 1 { "file" } else { "files" };
@@ -904,7 +917,7 @@ fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
 /// Copy then delete — fallback when `rename` fails with EXDEV (cross-device).
 fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
     if is_dir {
-        copy_dir_recursive(src, dest, true)?;
+        copy_dir_recursive(src, dest, true, &CopyProgress::disabled())?;
         fs::remove_dir_all(src).context(format!("removing source directory {}", src.display()))?;
     } else {
         copy_leaf(src, dest, true)?;

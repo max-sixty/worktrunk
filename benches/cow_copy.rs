@@ -16,6 +16,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::path::Path;
 use tempfile::TempDir;
 use worktrunk::copy::copy_dir_recursive;
+use worktrunk::copy_progress::CopyProgress;
 
 /// Create a narrow directory structure mimicking a Rust target/ directory.
 ///
@@ -147,7 +148,7 @@ fn bench_helper(
             b.iter(|| {
                 let dest = temp.path().join(format!("copy_p_{}", iter));
                 iter += 1;
-                copy_dir_recursive(src, &dest, false).unwrap();
+                copy_dir_recursive(src, &dest, false, &CopyProgress::disabled()).unwrap();
                 std::fs::remove_dir_all(&dest).ok();
             });
         },
