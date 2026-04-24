@@ -15,13 +15,17 @@ Remove worktree; delete branch if merged. Defaults to the current worktree.
 
 Remove current worktree:
 
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__remove__docs_remove_pre_remove_hook.snap — edit source to update -->
+
 {% terminal(cmd="wt remove") %}
-◎ Running pre-remove project:cleanup
-  flyctl scale count 0
+<span class=c>◎</span> <span class=c>Running pre-remove <b>project:cleanup</b></span>
+<span style='background:var(--bright-white,#fff)'> </span> <span class=d><span style='color:var(--blue,#00a)'>flyctl</span></span><span class=d> scale count 0</span>
 Scaling app to 0 machines
-◎ Removing api worktree & branch in background (same commit as main, _)
-○ Switched to worktree for main @ acme
+<span class=c>◎</span> <span class=c>Removing <b>api</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
+<span class=d>○</span> Switched to worktree for <b>main</b> @ <b>repo</b>
 {% end %}
+
+<!-- END AUTO-GENERATED -->
 
 Remove specific worktrees / branches:
 

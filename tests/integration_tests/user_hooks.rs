@@ -3510,3 +3510,49 @@ approved-commands = ["echo project-hook"]
         assert_cmd_snapshot!("hook_verbose_background_dedup", cmd);
     });
 }
+
+// ============================================================================
+// Docs-page example snapshot
+//
+// See tests/integration_tests/merge.rs header comment for the docs-example
+// convention — `<!-- wt hook pre-merge (docs-example) -->` in `src/cli/mod.rs`.
+// ============================================================================
+
+/// `wt hook pre-merge` example for `docs/content/hook.md` — two named
+/// pre-merge hooks (test, lint) running mocked `cargo` commands.
+#[rstest]
+fn test_docs_hook_pre_merge(repo: TestRepo) {
+    repo.run_git(&["config", "worktrunk.hints.worktree-path", "true"]);
+
+    let bin_dir = repo.root_path().join(".bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    crate::common::mock_commands::create_mock_cargo(&bin_dir);
+
+    repo.write_project_config(
+        r#"[[pre-merge]]
+test = "cargo test"
+
+[[pre-merge]]
+lint = "cargo clippy"
+"#,
+    );
+    repo.run_git(&["add", ".config", ".bin"]);
+    repo.run_git(&["commit", "-m", "Add project config"]);
+
+    let mut paths: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    paths.insert(0, bin_dir.clone());
+    let new_path = std::env::join_paths(&paths).unwrap();
+    let bin_dir_str = bin_dir.to_string_lossy().into_owned();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        assert_cmd_snapshot!("docs_hook_pre_merge", {
+            let mut cmd = make_snapshot_cmd(&repo, "hook", &["pre-merge", "--yes"], None);
+            cmd.env("PATH", &new_path);
+            cmd.env("MOCK_CONFIG_DIR", &bin_dir_str);
+            cmd
+        });
+    });
+}

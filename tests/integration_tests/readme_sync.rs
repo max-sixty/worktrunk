@@ -384,19 +384,30 @@ fn update_section(
 // =============================================================================
 
 /// Regex to find command placeholder comments in help pages.
-/// Matches: `<!-- wt <id> -->\n```bash\n[$ ]wt <cmd>\n```` — the `$ ` prompt is
-/// optional. Group 1 captures the placeholder id (used for snapshot lookup,
-/// e.g. `wt list (markers)`); group 2 captures the actual command to display
-/// (e.g. `wt list`).
 ///
-/// Pattern expects ```bash``` because --help-page converts ```console``` first.
-/// In HTML mode the `$ ` alternative is a no-op today because
-/// `convert_dollar_console_to_terminal` has already rewritten `$ `‐prefixed
-/// console blocks into `{{ terminal }}` shortcodes upstream, and no raw
-/// ```bash``` blocks with a `$ ` prompt exist in CLI `after_long_help` source;
-/// plain mode skips that conversion, so both forms reach this regex.
+/// A placeholder is an HTML comment `<!-- wt <id> -->` followed by one of three
+/// code-block forms (the form depends on which stage of `--help-page` has run):
+///
+/// - ````bash``` with an optional `$ ` prompt, optionally followed by multi-line
+///   output — this is what plain (`--help-page --plain`) output contains, and
+///   also what `cli/mod.rs` source contains before `convert_dollar_console_to_terminal`.
+/// - `{{ terminal(cmd="...") }}` self-closing Zola shortcode — produced by
+///   `convert_dollar_console_to_terminal` when the source block has only a command.
+/// - `{% terminal(cmd="...") %}…{% end %}` Zola shortcode — produced by
+///   `convert_dollar_console_to_terminal` when the source block has output too.
+///
+/// Capture groups:
+/// 1. placeholder id (e.g. `wt list (markers)`) — drives snapshot lookup
+/// 2. display command when matched in the ```bash form
+/// 3. display command when matched as `{{ terminal() }}`
+/// 4. display command when matched as `{% terminal() %}…{% end %}`
+///
+/// Exactly one of groups 2–4 is non-None per match.
 static COMMAND_PLACEHOLDER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"<!-- (wt [^>]+) -->\n```bash\n(?:\$ )?(wt [^\n]+)\n```").unwrap()
+    Regex::new(
+        r#"(?s)<!-- (wt [^>\n]+) -->\n(?:```bash\n(?:\$ )?(wt [^\n]+).*?\n```|\{\{ terminal\(cmd="(wt [^"]+)"\) \}\}|\{% terminal\(cmd="(wt [^"]+)"\) %\}.*?\{% end %\})"#,
+    )
+    .unwrap()
 });
 
 /// Map commands to their snapshot files for help page expansion
@@ -411,6 +422,21 @@ fn command_to_snapshot(command: &str) -> Option<&'static str> {
         }
         "wt list (markers)" => {
             Some("integration__integration_tests__list__readme_example_list_marker.snap")
+        }
+        // Docs-page example snapshots — drive the static command-output blocks
+        // on pages otherwise dominated by GIFs. See comment in merge.rs test
+        // section for the convention.
+        "wt merge (docs-example)" => {
+            Some("integration__integration_tests__merge__docs_merge_pre_merge_hook.snap")
+        }
+        "wt step commit (docs-example)" => {
+            Some("integration__integration_tests__merge__docs_step_commit_llm.snap")
+        }
+        "wt remove (docs-example)" => {
+            Some("integration__integration_tests__remove__docs_remove_pre_remove_hook.snap")
+        }
+        "wt hook pre-merge (docs-example)" => {
+            Some("integration__integration_tests__user_hooks__docs_hook_pre_merge.snap")
         }
         _ => None,
     }
@@ -446,7 +472,19 @@ fn expand_command_placeholders(
     for cap in COMMAND_PLACEHOLDER_PATTERN.captures_iter(content) {
         let full_match = cap.get(0).unwrap().as_str();
         let placeholder_id = cap.get(1).unwrap().as_str();
-        let display_cmd = cap.get(2).unwrap().as_str();
+        // Exactly one of groups 2–4 matched — pick whichever.
+        let raw_display_cmd = cap
+            .get(2)
+            .or_else(|| cap.get(3))
+            .or_else(|| cap.get(4))
+            .unwrap()
+            .as_str();
+        // Strip trailing `|||` delimiters: `convert_dollar_console_to_terminal`
+        // treats blank lines in a ```console``` body as extra empty commands and
+        // appends them to the `cmd=` parameter with `|||` separators. Those
+        // empties would render as a stray `$ ` prompt in the Zola terminal
+        // template.
+        let display_cmd = raw_display_cmd.trim_end_matches('|').trim_end();
 
         let Some(snapshot_name) = command_to_snapshot(placeholder_id) else {
             continue;
@@ -1667,6 +1705,7 @@ fn test_docs_quickstart_examples_are_in_sync() {
         "docs/content/worktrunk.md",
         "docs/content/claude-code.md",
         "docs/content/tips-patterns.md",
+        "docs/content/llm-commits.md",
     ];
 
     let mut all_errors = Vec::new();
@@ -2302,12 +2341,115 @@ fn sync_well_known_skills(project_root: &Path) -> Vec<String> {
     updated_files
 }
 
+/// Regex for `<!-- wt <id> -->\n```console\n$ <cmd>\n[body]\n``` ` blocks in
+/// `src/cli/mod.rs`. The body is anything between the command line and the
+/// closing fence, captured non-greedily so adjacent blocks don't overlap.
+///
+/// Capture groups:
+/// 1. placeholder id
+/// 2. display command (the `$ ...` line)
+/// 3. body — multiline output lines (may be empty when the placeholder is a
+///    freshly added stub with no snapshot filled in yet).
+static CLI_MOD_EXAMPLE_BODY_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)<!-- (wt [^>\n]+) -->\n```console\n\$ (wt [^\n]+)\n(.*?)```").unwrap()
+});
+
+/// Fill the body of each `<!-- wt <id> -->`-tagged ```console``` block in
+/// `src/cli/mod.rs` with the plain-text output of the snapshot registered for
+/// that id. This is the write-back half of the docs-example pipeline: it keeps
+/// the terminal `--help` output (which is served verbatim from the source)
+/// faithful to real command output without requiring hand maintenance.
+///
+/// Runs before `sync_command_pages` so `--help-page` sees the fresh bodies.
+fn sync_cli_mod_example_bodies(project_root: &Path) -> (Vec<String>, Vec<String>) {
+    let mut errors = Vec::new();
+    let mut updated_files = Vec::new();
+
+    let cli_mod_path = project_root.join("src/cli/mod.rs");
+    let content = match fs::read_to_string(&cli_mod_path) {
+        Ok(c) => c,
+        Err(e) => {
+            errors.push(format!("Failed to read {}: {}", cli_mod_path.display(), e));
+            return (errors, updated_files);
+        }
+    };
+    let snapshots_dir = project_root.join("tests/snapshots");
+
+    // Collect matches first to replace in reverse (preserves byte offsets).
+    let matches: Vec<_> = CLI_MOD_EXAMPLE_BODY_PATTERN
+        .captures_iter(&content)
+        .map(|cap| {
+            let m = cap.get(0).unwrap();
+            (
+                m.start(),
+                m.end(),
+                cap.get(1).unwrap().as_str().to_string(),
+                cap.get(2).unwrap().as_str().to_string(),
+                cap.get(3).unwrap().as_str().to_string(),
+            )
+        })
+        .collect();
+
+    let mut new_content = content.clone();
+    for (start, end, placeholder_id, display_cmd, current_body) in matches.into_iter().rev() {
+        let Some(snapshot_name) = command_to_snapshot(&placeholder_id) else {
+            continue;
+        };
+
+        let snapshot_path = snapshots_dir.join(snapshot_name);
+        let snapshot_content = match fs::read_to_string(&snapshot_path) {
+            Ok(c) => c,
+            Err(e) => {
+                errors.push(format!(
+                    "Failed to read {}: {} (for placeholder '{}')",
+                    snapshot_path.display(),
+                    e,
+                    placeholder_id
+                ));
+                continue;
+            }
+        };
+
+        let plain = trim_lines(&parse_snapshot_content_for_skill(&snapshot_content));
+        // Body ends with a newline before the closing fence; match the source
+        // convention so we don't churn whitespace on subsequent runs.
+        let new_body = if plain.is_empty() {
+            String::new()
+        } else {
+            format!("{plain}\n")
+        };
+        let replacement =
+            format!("<!-- {placeholder_id} -->\n```console\n$ {display_cmd}\n{new_body}```",);
+
+        // Compare normalized bodies (trim each line of trailing whitespace) so
+        // pre-commit's trailing-whitespace trimmer doesn't create infinite loops.
+        if trim_lines(&current_body) != trim_lines(&new_body) {
+            new_content.replace_range(start..end, &replacement);
+        }
+    }
+
+    if new_content != content {
+        if let Err(e) = fs::write(&cli_mod_path, &new_content) {
+            errors.push(format!("Failed to write {}: {}", cli_mod_path.display(), e));
+        } else {
+            updated_files.push("src/cli/mod.rs".to_string());
+        }
+    }
+
+    (errors, updated_files)
+}
+
 /// Combined test: sync command pages (mod.rs → docs) then skill files (docs → skills)
 /// then .well-known/agent-skills/ (skills → docs/static).
 /// This ensures a single test run handles the full chain when mod.rs changes.
 #[test]
 fn test_command_pages_and_skill_files_are_in_sync() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // Step 0: Fill docs-example bodies in src/cli/mod.rs from snapshots. Runs
+    // before --help-page reads the file so command pages and skill files see
+    // the up-to-date content.
+    let (mod_errors, mod_files) = sync_cli_mod_example_bodies(project_root);
 
     // Step 1: Sync command pages (mod.rs → docs/content/*.md)
     let (cmd_errors, cmd_files) = sync_command_pages(project_root);
@@ -2325,9 +2467,14 @@ fn test_command_pages_and_skill_files_are_in_sync() {
     let well_known_files = sync_well_known_skills(project_root);
 
     // Aggregate results
-    let all_errors: Vec<_> = cmd_errors.into_iter().chain(skill_errors).collect();
-    let all_files: Vec<_> = cmd_files
+    let all_errors: Vec<_> = mod_errors
         .into_iter()
+        .chain(cmd_errors)
+        .chain(skill_errors)
+        .collect();
+    let all_files: Vec<_> = mod_files
+        .into_iter()
+        .chain(cmd_files)
         .chain(console_files)
         .chain(skill_files)
         .chain(well_known_files)
