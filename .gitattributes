@@ -3,6 +3,12 @@
 # tests/integration_tests/readme_sync.rs — edits belong in the primary source
 # (src/cli/mod.rs for command pages, docs/content/*.md for everything else).
 skills/worktrunk/reference/*.md linguist-generated=true
+# Skill-only files and the top-level README symlink are primary sources — edited
+# directly, not regenerated from docs/content/. Exempt them so real edits stay
+# visible in PR diffs.
+skills/worktrunk/reference/README.md linguist-generated=false
+skills/worktrunk/reference/shell-integration.md linguist-generated=false
+skills/worktrunk/reference/troubleshooting.md linguist-generated=false
 docs/static/*.md linguist-generated=true
 docs/static/llms.txt linguist-generated=true
 docs/static/.well-known/agent-skills/index.json linguist-generated=true
