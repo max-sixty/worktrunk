@@ -103,7 +103,7 @@ mod config;
 mod diff;
 mod integration;
 mod remotes;
-mod sha_cache;
+pub mod sha_cache;
 mod working_tree;
 mod worktrees;
 
@@ -650,22 +650,6 @@ impl Repository {
     /// All worktrunk-managed state lives under this single directory.
     pub fn wt_dir(&self) -> PathBuf {
         self.git_common_dir().join("wt")
-    }
-
-    /// Clear all cached git command results, returning the count removed.
-    ///
-    /// Propagates I/O errors so the user-initiated clear path cannot lie
-    /// about success; see `sha_cache`'s module docs.
-    pub fn clear_git_commands_cache(&self) -> anyhow::Result<usize> {
-        sha_cache::clear_all(self)
-    }
-
-    /// Count all cached git command results without clearing.
-    ///
-    /// Surfaces the same state that `clear_git_commands_cache` would sweep,
-    /// for the `wt config state get` parity view.
-    pub fn git_commands_cache_count(&self) -> usize {
-        sha_cache::count_all(self)
     }
 
     /// Get the directory where worktrunk background logs are stored.

@@ -1,14 +1,31 @@
 //! Shared LLM summary generation for branches.
 //!
 //! Generates branch summaries using the configured LLM command, with caching
-//! in `.git/wt/cache/summaries/`. Summaries are invalidated when the combined
-//! diff (branch diff + working tree diff) changes.
+//! in `.git/wt/cache/summary/{sanitized_branch}/{diff_hash}.json`. The
+//! combined diff (branch diff + working tree diff) is hashed with SHA-256
+//! and the hex-truncated digest becomes the filename — so a cache hit is
+//! just "does the file exist?" rather than parsing JSON to compare a field.
 //!
 //! Used by both `wt list --full` (Summary column) and `wt switch` (preview tab).
+//!
+//! # Layout and invalidation
+//!
+//! Content-addressed filename: a successful write to `{hash}.json` means that
+//! file holds the summary for that exact diff. No TTL, no separate staleness
+//! check — see [`worktrunk::cache`] for the shared torn-write semantics.
+//!
+//! # Prune on write
+//!
+//! After a successful write, the branch directory is trimmed to one entry
+//! via [`cache::sweep_lru`] with a cap of 1 — same mechanism `sha_cache`
+//! uses, just at a per-branch directory with a size of one. The newest-mtime
+//! file (the one we just wrote) survives; older hashes are dead weight.
+//!
+//! Best-effort: two concurrent writers for the same branch can briefly
+//! leave two entries, and a sweep racing a just-written sibling can delete
+//! it. Worst case is one extra LLM call on the next invocation.
 
-use std::collections::hash_map::DefaultHasher;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -16,10 +33,13 @@ use anstyle::Reset;
 use color_print::cformat;
 use minijinja::Environment;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use worktrunk::cache;
 use worktrunk::git::Repository;
 use worktrunk::path::sanitize_for_filename;
 use worktrunk::styling::INFO_SYMBOL;
 use worktrunk::sync::Semaphore;
+use worktrunk::utils::epoch_now;
 
 use crate::llm::{execute_llm_command, prepare_diff};
 
@@ -29,13 +49,24 @@ use crate::llm::{execute_llm_command, prepare_diff};
 /// `HEAVY_OPS_SEMAPHORE` (4) but still bounded.
 static LLM_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(8));
 
-/// Cached summary stored in `.git/wt/cache/summaries/<branch>.json`
-#[derive(Serialize, Deserialize)]
+/// Subdirectory of `.git/wt/cache/` holding cached summaries.
+const KIND: &str = "summary";
+
+/// Cached summary stored in `.git/wt/cache/summary/{branch}/{hash}.json`.
+///
+/// The diff hash lives in the filename; the branch lives in the directory
+/// name. The `branch` field holds the original (un-sanitized) branch name
+/// so `list_all` can surface it for display without needing to reverse
+/// `sanitize_for_filename`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CachedSummary {
     pub summary: String,
-    pub diff_hash: u64,
-    /// Original branch name (useful for humans inspecting cache files)
+    /// Original branch name (for display in `wt config state get`).
     pub branch: String,
+    /// Unix timestamp when the summary was generated. Used for the "Age"
+    /// column in `wt config state get`. Mirrors `CachedCiStatus::checked_at`.
+    #[serde(default)]
+    pub generated_at: u64,
 }
 
 /// Combined diff output for a branch (branch diff + working tree diff)
@@ -65,64 +96,124 @@ const SUMMARY_TEMPLATE: &str = r#"<task>Write a summary of this branch's changes
 </diff>
 "#;
 
-/// Get the cache directory for summaries
-pub(crate) fn cache_dir(repo: &Repository) -> PathBuf {
-    repo.wt_dir().join("cache").join("summaries")
-}
-
-/// Get the cache file path for a branch
-pub(crate) fn cache_file(repo: &Repository, branch: &str) -> PathBuf {
-    let safe_branch = sanitize_for_filename(branch);
-    cache_dir(repo).join(format!("{safe_branch}.json"))
-}
-
-/// Read cached summary from file
-pub(crate) fn read_cache(repo: &Repository, branch: &str) -> Option<CachedSummary> {
-    let path = cache_file(repo, branch);
-    let json = fs::read_to_string(&path).ok()?;
-    serde_json::from_str(&json).ok()
-}
-
-/// Write summary to cache file (atomic write via temp file + rename)
-pub(crate) fn write_cache(repo: &Repository, branch: &str, cached: &CachedSummary) {
-    let path = cache_file(repo, branch);
-
-    if let Some(parent) = path.parent()
-        && let Err(e) = fs::create_dir_all(parent)
-    {
-        log::debug!("Failed to create summary cache dir for {}: {}", branch, e);
-        return;
+impl CachedSummary {
+    /// Root of all summary cache entries: `.git/wt/cache/summary/`.
+    pub(crate) fn cache_root(repo: &Repository) -> PathBuf {
+        cache::cache_dir(repo, KIND)
     }
 
-    let Ok(json) = serde_json::to_string(cached) else {
-        log::debug!("Failed to serialize summary cache for {}", branch);
-        return;
-    };
-
-    let temp_path = path.with_extension("json.tmp");
-    if let Err(e) = fs::write(&temp_path, &json) {
-        log::debug!(
-            "Failed to write summary cache temp file for {}: {}",
-            branch,
-            e
-        );
-        return;
+    /// Per-branch directory holding one file per cached diff hash.
+    fn branch_dir(repo: &Repository, branch: &str) -> PathBuf {
+        Self::cache_root(repo).join(sanitize_for_filename(branch))
     }
 
-    #[cfg(windows)]
-    let _ = fs::remove_file(&path);
+    /// Full path for a specific (branch, hash) pair.
+    pub(crate) fn cache_file(repo: &Repository, branch: &str, hash: &str) -> PathBuf {
+        Self::branch_dir(repo, branch).join(format!("{hash}.json"))
+    }
 
-    if let Err(e) = fs::rename(&temp_path, &path) {
-        log::debug!("Failed to rename summary cache file for {}: {}", branch, e);
-        let _ = fs::remove_file(&temp_path);
+    /// Read the cached summary for a branch at a specific diff hash.
+    /// See [`worktrunk::cache::read_json`] for the miss semantics.
+    pub(crate) fn read(repo: &Repository, branch: &str, hash: &str) -> Option<Self> {
+        cache::read_json(&Self::cache_file(repo, branch, hash))
+    }
+
+    /// Write the summary at `{branch}/{hash}.json` and prune sibling hashes
+    /// for the same branch. `hash` is the SHA-256 digest of the combined
+    /// diff that produced this summary.
+    pub(crate) fn write(&self, repo: &Repository, hash: &str) {
+        cache::write_json(&Self::cache_file(repo, &self.branch, hash), self);
+        cache::sweep_lru(&Self::branch_dir(repo, &self.branch), 1);
+    }
+
+    /// List one cached summary per branch — the freshest by `generated_at`
+    /// when multiple entries coexist transiently from concurrent writers.
+    /// Returns newest-first with branch-name tiebreak.
+    pub(crate) fn list_all(repo: &Repository) -> Vec<Self> {
+        let root = Self::cache_root(repo);
+        let Ok(branch_dirs) = fs::read_dir(&root) else {
+            return Vec::new();
+        };
+
+        let mut out: Vec<Self> = branch_dirs
+            .filter_map(|e| e.ok())
+            .filter_map(|entry| {
+                if !entry.file_type().ok()?.is_dir() {
+                    return None;
+                }
+                freshest_entry(&entry.path())
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            b.generated_at
+                .cmp(&a.generated_at)
+                .then_with(|| a.branch.cmp(&b.branch))
+        });
+        out
+    }
+
+    /// Clear all cached summaries, returning the count of `.json` entries removed.
+    ///
+    /// Summaries are two levels deep (`summary/{branch}/{hash}.json`), so
+    /// iterate branch subdirs and delegate per-directory cleanup to
+    /// [`cache::clear_json_files`]. Non-directory entries at the root are
+    /// skipped. Empty branch dirs get best-effort rmdir so the tree stays
+    /// tidy.
+    pub(crate) fn clear_all(repo: &Repository) -> anyhow::Result<usize> {
+        let root = Self::cache_root(repo);
+        let branch_dirs = match fs::read_dir(&root) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(e) => {
+                return Err(
+                    anyhow::Error::new(e).context(format!("failed to read {}", root.display()))
+                );
+            }
+        };
+
+        let mut cleared = 0;
+        for entry in branch_dirs.flatten() {
+            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let dir = entry.path();
+            cleared += cache::clear_json_files(&dir)?;
+            let _ = fs::remove_dir(&dir);
+        }
+        Ok(cleared)
     }
 }
 
-/// Hash a string to produce a cache invalidation key
-pub(crate) fn hash_diff(diff: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    diff.hash(&mut hasher);
-    hasher.finish()
+/// Load every `.json` cache entry in a branch directory and return the one
+/// with the newest `generated_at`. Corrupt entries are skipped.
+fn freshest_entry(dir: &Path) -> Option<CachedSummary> {
+    fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_str().is_some_and(|s| s.ends_with(".json")))
+        .filter_map(|e| cache::read_json::<CachedSummary>(&e.path()))
+        .max_by_key(|s| s.generated_at)
+}
+
+/// Hash a string with SHA-256 and return the first 16 hex chars (64 bits).
+///
+/// 64 bits is more than enough entropy to make collisions astronomically
+/// unlikely at realistic cache sizes. We truncate for shorter, friendlier
+/// filenames — the full 256-bit digest would produce 64-char filenames
+/// with no practical benefit.
+///
+/// `DefaultHasher` (previously used) is explicitly undocumented as
+/// stable across Rust versions, which is unsafe for a value persisted
+/// to disk. SHA-256 is deterministic across toolchains and platforms.
+pub(crate) fn hash_diff(diff: &str) -> String {
+    use std::fmt::Write as _;
+    let mut hasher = Sha256::new();
+    hasher.update(diff.as_bytes());
+    let mut out = String::with_capacity(16);
+    for b in hasher.finalize().iter().take(8) {
+        let _ = write!(out, "{b:02x}");
+    }
+    out
 }
 
 /// Compute the combined diff for a branch (branch diff + working tree diff).
@@ -208,10 +299,9 @@ pub(crate) fn generate_summary_core(
 
     let diff_hash = hash_diff(&combined.diff);
 
-    // Check cache
-    if let Some(cached) = read_cache(repo, branch)
-        && cached.diff_hash == diff_hash
-    {
+    // Cache hit is "does the file exist?" — no JSON parse needed for the
+    // staleness check because the hash lives in the filename.
+    if let Some(cached) = CachedSummary::read(repo, branch, &diff_hash) {
         return Ok(Some(cached.summary));
     }
 
@@ -226,16 +316,12 @@ pub(crate) fn generate_summary_core(
     let _permit = LLM_SEMAPHORE.acquire();
     let summary = execute_llm_command(llm_command, &prompt)?;
 
-    // Write cache
-    write_cache(
-        repo,
-        branch,
-        &CachedSummary {
-            summary: summary.clone(),
-            diff_hash,
-            branch: branch.to_string(),
-        },
-    );
+    let cached = CachedSummary {
+        summary: summary.clone(),
+        branch: branch.to_string(),
+        generated_at: epoch_now(),
+    };
+    cached.write(repo, &diff_hash);
 
     Ok(Some(summary))
 }
@@ -289,16 +375,12 @@ mod tests {
     }
 
     #[test]
-    fn test_hash_diff_deterministic() {
-        let h1 = hash_diff("hello world");
-        let h2 = hash_diff("hello world");
-        assert_eq!(h1, h2);
-    }
-
-    #[test]
-    fn test_hash_diff_different_inputs() {
-        let h1 = hash_diff("hello");
-        let h2 = hash_diff("world");
-        assert_ne!(h1, h2);
+    fn test_hash_diff_is_sha256_prefix() {
+        // SHA-256("hello world") hex prefix is "b94d27b9934d3e08".
+        assert_eq!(hash_diff("hello world"), "b94d27b9934d3e08");
+        // Deterministic.
+        assert_eq!(hash_diff("hello world"), hash_diff("hello world"));
+        // Different inputs → different hashes.
+        assert_ne!(hash_diff("hello"), hash_diff("world"));
     }
 }
