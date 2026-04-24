@@ -1738,6 +1738,28 @@ const COMMAND_PAGES: &[&str] = &[
     "switch", "list", "merge", "remove", "config", "step", "hook",
 ];
 
+/// Write `expected` to `path` and record `rel_path` in `updated`. Creates
+/// parent directories as needed. Panics on I/O failure — these are test-time
+/// syncs, so any write error should abort the run.
+///
+/// Callers are responsible for the "is it different?" check. This lets each
+/// site apply its own normalization (e.g., `trim_lines`) before comparing
+/// without forcing it into the helper.
+fn write_tracked(
+    path: &Path,
+    expected: &str,
+    rel_path: impl Into<String>,
+    updated: &mut Vec<String>,
+) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .unwrap_or_else(|e| panic!("Failed to create {}: {}", parent.display(), e));
+    }
+    fs::write(path, expected)
+        .unwrap_or_else(|e| panic!("Failed to write {}: {}", path.display(), e));
+    updated.push(rel_path.into());
+}
+
 /// Sync command pages from --help-page output to docs/content/*.md
 /// Returns (errors, updated_files)
 fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
@@ -1851,9 +1873,12 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
         };
 
         if current != new_content {
-            fs::write(&doc_path, &new_content)
-                .unwrap_or_else(|e| panic!("Failed to write {}: {}", doc_path.display(), e));
-            updated_files.push(format!("docs/content/{}.md", cmd));
+            write_tracked(
+                &doc_path,
+                &new_content,
+                format!("docs/content/{}.md", cmd),
+                &mut updated_files,
+            );
         }
     }
 
@@ -2058,9 +2083,13 @@ fn convert_console_blocks_in_docs(project_root: &Path) -> Vec<String> {
             let content = fs::read_to_string(&path).unwrap();
             let converted = worktrunk::docs::convert_dollar_console_to_terminal(&content);
             if converted != content {
-                fs::write(&path, &converted).unwrap();
                 let rel = path.strip_prefix(project_root).unwrap_or(&path);
-                updated_files.push(rel.display().to_string());
+                write_tracked(
+                    &path,
+                    &converted,
+                    rel.display().to_string(),
+                    &mut updated_files,
+                );
             }
         }
     }
@@ -2126,15 +2155,12 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
         let current = trim_lines(&current);
 
         if current != expected {
-            // Ensure parent directory exists
-            if let Some(parent) = skill_file.parent() {
-                fs::create_dir_all(parent).unwrap_or_else(|e| {
-                    panic!("Failed to create directory {}: {}", parent.display(), e)
-                });
-            }
-            fs::write(&skill_file, format!("{}\n", expected))
-                .unwrap_or_else(|e| panic!("Failed to write {}: {}", skill_file.display(), e));
-            updated_files.push(format!("skills/worktrunk/reference/{name}"));
+            write_tracked(
+                &skill_file,
+                &format!("{expected}\n"),
+                format!("skills/worktrunk/reference/{name}"),
+                &mut updated_files,
+            );
         }
     }
 
@@ -2293,9 +2319,12 @@ fn sync_well_known_skills(project_root: &Path) -> Vec<String> {
     let index_dst = well_known_dir.join("index.json");
     let current_index = fs::read_to_string(&index_dst).unwrap_or_default();
     if current_index != index_json {
-        fs::write(&index_dst, &index_json)
-            .unwrap_or_else(|e| panic!("Failed to write {}: {}", index_dst.display(), e));
-        updated_files.push("docs/static/.well-known/agent-skills/index.json".to_string());
+        write_tracked(
+            &index_dst,
+            &index_json,
+            "docs/static/.well-known/agent-skills/index.json",
+            &mut updated_files,
+        );
     }
 
     updated_files
@@ -2349,7 +2378,10 @@ fn sync_llms_txt(project_root: &Path) -> Vec<String> {
         .trim_end_matches('/');
 
     let mut home_intro = String::new();
-    let mut pages: Vec<(String, Frontmatter)> = Vec::new();
+    // Group pages by `extra.group`; order groups by their minimum weight so
+    // `## Commands` (weights 10–17) precedes `## Reference` (21–25) without
+    // hard-coding group names.
+    let mut groups: BTreeMap<String, Vec<(String, Frontmatter)>> = BTreeMap::new();
 
     for name in docs_content_page_names(&docs_dir) {
         let path = docs_dir.join(&name);
@@ -2366,26 +2398,14 @@ fn sync_llms_txt(project_root: &Path) -> Vec<String> {
             .unwrap_or_else(|e| panic!("Failed to parse frontmatter of {}: {}", path.display(), e));
 
         // Ungrouped pages supply the document's intro prose instead of becoming bullets.
-        if fm.extra.as_ref().and_then(|e| e.group.as_deref()).is_none() {
+        let Some(group) = fm.extra.as_ref().and_then(|e| e.group.clone()) else {
             home_intro = extract_intro_prose(body);
             continue;
-        }
+        };
 
-        pages.push((slug, fm));
-    }
-
-    // Group pages by `extra.group`; order groups by their minimum weight so
-    // `## Commands` (weights 10–17) precedes `## Reference` (21–25) without
-    // hard-coding group names.
-    let mut groups: BTreeMap<String, Vec<(String, Frontmatter)>> = BTreeMap::new();
-    for (slug, fm) in pages {
-        let group = fm
-            .extra
-            .as_ref()
-            .and_then(|e| e.group.clone())
-            .expect("non-home pages must declare [extra] group");
         groups.entry(group).or_default().push((slug, fm));
     }
+
     for pages in groups.values_mut() {
         pages.sort_by_key(|(_, fm)| fm.weight);
     }
@@ -2420,11 +2440,11 @@ fn sync_llms_txt(project_root: &Path) -> Vec<String> {
 
     let dst = project_root.join("docs/static/llms.txt");
     let current = fs::read_to_string(&dst).unwrap_or_default();
-    if current == out {
-        return vec![];
+    let mut updated = Vec::new();
+    if current != out {
+        write_tracked(&dst, &out, "docs/static/llms.txt", &mut updated);
     }
-    fs::write(&dst, &out).unwrap_or_else(|e| panic!("Failed to write {}: {}", dst.display(), e));
-    vec!["docs/static/llms.txt".to_string()]
+    updated
 }
 
 /// Take the leading prose paragraphs of a page body, stopping at the first
