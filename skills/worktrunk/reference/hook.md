@@ -252,8 +252,6 @@ $ wt hook pre-merge -- --extra args     # Forward tokens into {{ args }}
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
-Each hook execution prints a `◎ Running <type> <name>` header and streams the command's output inline; background (`post-*`) hooks log to `.git/wt/logs/` instead. Example running a configured `pre-merge` pipeline:
-
 ```bash
 $ wt hook pre-merge
 ◎ Running pre-merge project:test
@@ -263,6 +261,11 @@ test result: ok. 18 passed; 0 failed; 0 ignored
 ◎ Running pre-merge project:lint
   cargo clippy
     Finished dev [unoptimized + debuginfo] target(s) in 1.23s
+```
+
+```bash
+$ wt hook post-start
+◎ Running post-start: project @ ~/acme
 ```
 
 ## Passing values
