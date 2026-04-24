@@ -134,6 +134,8 @@ Documentation has three categories:
 3. **Skill-only files** (shell-integration.md, troubleshooting.md):
    Edit `skills/worktrunk/reference/` directly — no docs equivalent.
 
+   When adding a skill-only file, also add a `linguist-generated=false` exemption to `.gitattributes`. The broad `skills/worktrunk/reference/*.md linguist-generated=true` rule marks every skill file as generated, which collapses real edits in GitHub PR diffs — a source of surprise during review (see #2409).
+
 ### Help text authoring
 
 Help text renders in three contexts — check all three when editing:
