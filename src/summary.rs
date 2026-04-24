@@ -16,14 +16,14 @@
 //!
 //! # Prune on write
 //!
-//! After a successful write, sibling entries in the branch directory that
-//! don't match the new hash are deleted. For a given branch there is only
-//! one "current" diff — old hashes are dead weight. This keeps the cache
-//! bounded at ~1 entry per branch without an LRU sweep.
+//! After a successful write, the branch directory is trimmed to one entry
+//! via [`cache::sweep_lru`] with a cap of 1 — same mechanism `sha_cache`
+//! uses, just at a per-branch directory with a size of one. The newest-mtime
+//! file (the one we just wrote) survives; older hashes are dead weight.
 //!
-//! Prune is best-effort: two concurrent writers for the same branch can
-//! briefly leave two entries, and a sweep racing a just-written sibling
-//! can delete it. Worst case is one extra LLM call on the next invocation.
+//! Best-effort: two concurrent writers for the same branch can briefly
+//! leave two entries, and a sweep racing a just-written sibling can delete
+//! it. Worst case is one extra LLM call on the next invocation.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -122,23 +122,20 @@ impl CachedSummary {
     /// for the same branch. `hash` is the SHA-256 digest of the combined
     /// diff that produced this summary.
     pub(crate) fn write(&self, repo: &Repository, hash: &str) {
-        let path = Self::cache_file(repo, &self.branch, hash);
-        cache::write_json(&path, self);
-        prune_siblings(&Self::branch_dir(repo, &self.branch), &path);
+        cache::write_json(&Self::cache_file(repo, &self.branch, hash), self);
+        cache::sweep_lru(&Self::branch_dir(repo, &self.branch), 1);
     }
 
     /// List one cached summary per branch — the freshest by `generated_at`
     /// when multiple entries coexist transiently from concurrent writers.
-    ///
-    /// Used by `wt config state get` to render the SUMMARIES CACHE table.
-    /// Missing cache root returns an empty list, matching `CachedCiStatus::list_all`.
+    /// Returns newest-first with branch-name tiebreak.
     pub(crate) fn list_all(repo: &Repository) -> Vec<Self> {
         let root = Self::cache_root(repo);
         let Ok(branch_dirs) = fs::read_dir(&root) else {
             return Vec::new();
         };
 
-        branch_dirs
+        let mut out: Vec<Self> = branch_dirs
             .filter_map(|e| e.ok())
             .filter_map(|entry| {
                 if !entry.file_type().ok()?.is_dir() {
@@ -146,7 +143,13 @@ impl CachedSummary {
                 }
                 freshest_entry(&entry.path())
             })
-            .collect()
+            .collect();
+        out.sort_by(|a, b| {
+            b.generated_at
+                .cmp(&a.generated_at)
+                .then_with(|| a.branch.cmp(&b.branch))
+        });
+        out
     }
 
     /// Clear all cached summaries, returning the count of `.json` entries removed.
@@ -190,25 +193,6 @@ fn freshest_entry(dir: &Path) -> Option<CachedSummary> {
         .filter(|e| e.file_name().to_str().is_some_and(|s| s.ends_with(".json")))
         .filter_map(|e| cache::read_json::<CachedSummary>(&e.path()))
         .max_by_key(|s| s.generated_at)
-}
-
-/// Delete sibling `.json` entries in `dir` that aren't `keep`. Errors are
-/// swallowed — prune is best-effort and the cache stays correct even if
-/// stale entries linger.
-fn prune_siblings(dir: &Path, keep: &Path) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path == keep {
-            continue;
-        }
-        if path.extension().is_none_or(|ext| ext != "json") {
-            continue;
-        }
-        let _ = fs::remove_file(&path);
-    }
 }
 
 /// Hash a string with SHA-256 and return the first 16 hex chars (64 bits).

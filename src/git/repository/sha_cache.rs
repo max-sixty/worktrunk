@@ -1,48 +1,18 @@
 //! Persistent cache for SHA-keyed git command results.
 //!
 //! Caches the results of expensive git operations keyed on pairs of
-//! content-addressed SHAs. Most entries use commit SHA pairs — the result
-//! of diffing commit A against commit B is the same today as last week.
-//! One variant (working-tree conflict checks) uses a composite key that
-//! includes a tree SHA; see [`Repository::has_merge_conflicts_by_tree`].
-//! No TTL, no invalidation logic, only a size bound to prevent unbounded
-//! growth.
+//! content-addressed SHAs — diffing commit A against commit B is the same
+//! today as last week. One variant (working-tree conflict checks) uses a
+//! composite key that includes a tree SHA; see
+//! [`Repository::has_merge_conflicts_by_tree`]. No TTL, no invalidation
+//! logic, only a per-kind LRU size bound to prevent unbounded growth.
 //!
-//! # Layout
-//!
-//! One file per cached entry under `.git/wt/cache/{kind}/{key}.json`,
-//! where `kind` identifies the operation (`merge-tree-conflicts`,
-//! `merge-add-probe`, `is-ancestor`, `has-added-changes`, `diff-stats`)
-//! and `key` is the SHA-pair filename. The sibling `ci-status/` and
-//! `summary/` caches use different key schemes; see
-//! `commands::list::collect` for the cross-cutting design across all
-//! `.git/wt/cache/` kinds. All three share the [`crate::cache`] module
-//! for read/write/clear mechanics.
-//!
-//! Symmetric kinds (merge-tree-conflicts) sort the SHA pair so
-//! `merge-tree(A, B)` and `merge-tree(B, A)` hit the same entry.
-//! Asymmetric kinds (merge-add-probe) preserve ordering because the
-//! merge-tree result is compared against `target`'s tree, so swapping
-//! arguments changes the answer.
-//!
-//! # Concurrency
-//!
-//! Two concurrent writers racing on the same key produce the same value
-//! (same SHA inputs), so a torn write is benign — see `crate::cache` for
-//! the shared torn-write semantics. The LRU sweep may also race —
-//! `fs::remove_file` failures are ignored because the goal is best-effort
-//! size bounding.
-//!
-//! # Failure handling
-//!
-//! Read and write paths degrade silently — corrupt JSON, I/O errors, and
-//! permission denied are logged at `debug` level; reads return `None`,
-//! writes are no-ops. Callers must never observe cache failures there
-//! because the cache is always an optimization over re-running git.
-//!
-//! The user-initiated clear path ([`clear_all`], reached via
-//! `wt config state clear`) propagates I/O errors instead. A failed clear
-//! that reports "cleared N entries" would be a lie to the user.
+//! Layout: `.git/wt/cache/{kind}/{key}.json` where `kind` is one of
+//! `merge-tree-conflicts`, `merge-add-probe`, `is-ancestor`,
+//! `has-added-changes`, or `diff-stats`. Symmetric kinds sort the SHA pair
+//! so `(A, B)` and `(B, A)` hit the same entry; asymmetric kinds preserve
+//! ordering. See [`crate::cache`] for read/write/clear mechanics,
+//! torn-write semantics, and the user-initiated clear error policy.
 
 use super::Repository;
 use super::integration::MergeProbeResult;
@@ -83,9 +53,7 @@ fn asymmetric_key(first: &str, second: &str) -> String {
     format!("{first}-{second}.json")
 }
 
-// ============================================================================
-// Public API — merge-tree conflicts (symmetric)
-// ============================================================================
+// merge-tree conflicts (symmetric)
 
 /// Look up a cached `has_merge_conflicts(sha1, sha2)` result.
 ///
@@ -106,9 +74,7 @@ pub(super) fn put_merge_conflicts(repo: &Repository, sha1: &str, sha2: &str, val
     );
 }
 
-// ============================================================================
-// Public API — merge-add probe (asymmetric)
-// ============================================================================
+// merge-add probe (asymmetric)
 
 /// Look up a cached `merge_integration_probe(branch, target)` result.
 ///
@@ -143,9 +109,7 @@ pub(super) fn put_merge_add_probe(
     );
 }
 
-// ============================================================================
-// Public API — is-ancestor (asymmetric)
-// ============================================================================
+// is-ancestor (asymmetric)
 
 /// Look up a cached `is_ancestor(base_sha, head_sha)` result.
 ///
@@ -165,9 +129,7 @@ pub(super) fn put_is_ancestor(repo: &Repository, base_sha: &str, head_sha: &str,
     );
 }
 
-// ============================================================================
-// Public API — has-added-changes (asymmetric)
-// ============================================================================
+// has-added-changes (asymmetric)
 
 /// Look up a cached `has_added_changes(branch_sha, target_sha)` result.
 ///
@@ -200,9 +162,7 @@ pub(super) fn put_has_added_changes(
     );
 }
 
-// ============================================================================
-// Public API — diff-stats (asymmetric)
-// ============================================================================
+// diff-stats (asymmetric)
 
 /// Look up cached `branch_diff_stats(base_sha, head_sha)` result.
 ///
@@ -222,17 +182,12 @@ pub(super) fn put_diff_stats(repo: &Repository, base_sha: &str, head_sha: &str, 
     );
 }
 
-// ============================================================================
 // Maintenance
-// ============================================================================
 
-/// Clear all cached SHA-keyed entries, returning the count removed.
-///
-/// Called by `wt config state clear`. Delegates per-kind-directory work
-/// to [`cache::clear_json_files`], which documents the missing-dir /
-/// concurrent-removal / error-propagation semantics the module-level
-/// "Failure handling" section enshrines.
-pub(crate) fn clear_all(repo: &Repository) -> anyhow::Result<usize> {
+/// Clear all cached SHA-keyed entries, returning the count removed. Called
+/// by `wt config state clear`; see [`cache::clear_json_files`] for the
+/// missing-dir / concurrent-removal / error-propagation semantics.
+pub fn clear_all(repo: &Repository) -> anyhow::Result<usize> {
     let mut cleared = 0;
     for kind in ALL_KINDS {
         cleared += cache::clear_json_files(&cache::cache_dir(repo, kind))?;
@@ -244,7 +199,7 @@ pub(crate) fn clear_all(repo: &Repository) -> anyhow::Result<usize> {
 ///
 /// Called by `wt config state get` to surface the same state that
 /// `clear_all` would sweep, preserving get ↔ clear parity.
-pub(crate) fn count_all(repo: &Repository) -> usize {
+pub fn count_all(repo: &Repository) -> usize {
     ALL_KINDS
         .iter()
         .map(|kind| cache::count_json_files(&cache::cache_dir(repo, kind)))

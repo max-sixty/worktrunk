@@ -87,9 +87,9 @@ pub fn write_json<T: Serialize>(path: &Path, value: &T) {
 
 /// Read a JSON entry at `<wt-cache>/<kind>/<key>`.
 ///
-/// Thin sugar over [`read_json`] + [`cache_dir`] for the common "kind + key
-/// filename" layout used by `sha_cache`. Returns `None` on any failure
-/// (missing file, I/O error, corrupt JSON).
+/// Paired with [`write_with_lru`] for the flat-dir "kind + key filename"
+/// layout. Returns `None` on any failure (missing file, I/O error, corrupt
+/// JSON).
 pub fn read<T: DeserializeOwned>(repo: &Repository, kind: &str, key: &str) -> Option<T> {
     read_json(&cache_dir(repo, kind).join(key))
 }

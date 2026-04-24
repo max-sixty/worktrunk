@@ -44,7 +44,7 @@ use anyhow::Context;
 use color_print::cformat;
 use path_slash::PathExt as _;
 use worktrunk::config::config_path;
-use worktrunk::git::{BranchRef, Repository};
+use worktrunk::git::{BranchRef, Repository, sha_cache};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     eprintln, format_heading, format_with_gutter, info_message, println, success_message,
@@ -966,7 +966,7 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
     }
 
     // Clear git commands cache (merge-tree, ancestry, diff results)
-    let sha_cleared = repo.clear_git_commands_cache()?;
+    let sha_cleared = sha_cache::clear_all(&repo)?;
     if sha_cleared > 0 {
         eprintln!(
             "{}",
@@ -1069,14 +1069,8 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         })
         .collect();
 
-    // Get CI status cache
-    let mut ci_entries = CachedCiStatus::list_all(repo);
-    ci_entries.sort_by(|a, b| {
-        b.checked_at
-            .cmp(&a.checked_at)
-            .then_with(|| a.branch.cmp(&b.branch))
-    });
-    let ci_status: Vec<serde_json::Value> = ci_entries
+    // Get CI status cache (pre-sorted newest-first)
+    let ci_status: Vec<serde_json::Value> = CachedCiStatus::list_all(repo)
         .into_iter()
         .map(|cached| {
             let status = cached
@@ -1092,14 +1086,8 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         })
         .collect();
 
-    // Get summary cache (freshest entry per branch)
-    let mut summary_entries = CachedSummary::list_all(repo);
-    summary_entries.sort_by(|a, b| {
-        b.generated_at
-            .cmp(&a.generated_at)
-            .then_with(|| a.branch.cmp(&b.branch))
-    });
-    let summaries: Vec<serde_json::Value> = summary_entries
+    // Get summary cache (freshest entry per branch, pre-sorted newest-first)
+    let summaries: Vec<serde_json::Value> = CachedSummary::list_all(repo)
         .into_iter()
         .map(|cached| {
             serde_json::json!({
@@ -1154,7 +1142,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "markers": markers,
         "ci_status": ci_status,
         "summaries": summaries,
-        "git_commands_cache": repo.git_commands_cache_count(),
+        "git_commands_cache": sha_cache::count_all(repo),
         "vars": vars_data,
         "command_log": command_log,
         "hook_output": hook_output,
@@ -1229,15 +1217,9 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     }
     writeln!(out)?;
 
-    // Show CI status cache
+    // Show CI status cache (pre-sorted newest-first)
     writeln!(out, "{}", format_heading("CI STATUS CACHE", None))?;
-    let mut entries = CachedCiStatus::list_all(repo);
-    // Sort by age (most recent first), then by branch name for ties
-    entries.sort_by(|a, b| {
-        b.checked_at
-            .cmp(&a.checked_at)
-            .then_with(|| a.branch.cmp(&b.branch))
-    });
+    let entries = CachedCiStatus::list_all(repo);
     if entries.is_empty() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {
@@ -1262,14 +1244,9 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     }
     writeln!(out)?;
 
-    // Show summary cache (LLM summaries keyed by branch + diff hash)
+    // Show summary cache (LLM summaries keyed by branch + diff hash, pre-sorted newest-first)
     writeln!(out, "{}", format_heading("SUMMARY CACHE", None))?;
-    let mut summary_entries = CachedSummary::list_all(repo);
-    summary_entries.sort_by(|a, b| {
-        b.generated_at
-            .cmp(&a.generated_at)
-            .then_with(|| a.branch.cmp(&b.branch))
-    });
+    let summary_entries = CachedSummary::list_all(repo);
     if summary_entries.is_empty() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {
@@ -1288,7 +1265,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
 
     // Show git commands cache summary
     writeln!(out, "{}", format_heading("GIT COMMANDS CACHE", None))?;
-    let sha_count = repo.git_commands_cache_count();
+    let sha_count = sha_cache::count_all(repo);
     if sha_count == 0 {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {

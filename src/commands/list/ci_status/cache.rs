@@ -96,15 +96,14 @@ impl CachedCiStatus {
         cache::write_json(&Self::cache_file(repo, branch), self);
     }
 
-    /// List all cached CI statuses. The branch name lives in each entry's
-    /// `branch` field, matching `CachedSummary::list_all`.
+    /// List all cached CI statuses, newest first with branch-name tiebreak.
     pub(crate) fn list_all(repo: &Repository) -> Vec<Self> {
         let dir = Self::cache_dir(repo);
         let Ok(entries) = std::fs::read_dir(&dir) else {
             return Vec::new();
         };
 
-        entries
+        let mut out: Vec<Self> = entries
             .filter_map(|entry| {
                 let path = entry.ok()?.path();
                 if path.extension()?.to_str()? != "json" {
@@ -112,7 +111,13 @@ impl CachedCiStatus {
                 }
                 cache::read_json(&path)
             })
-            .collect()
+            .collect();
+        out.sort_by(|a, b| {
+            b.checked_at
+                .cmp(&a.checked_at)
+                .then_with(|| a.branch.cmp(&b.branch))
+        });
+        out
     }
 
     /// Clear the cached CI status for a single branch.
