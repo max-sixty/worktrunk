@@ -2068,9 +2068,6 @@ fn convert_console_blocks_in_docs(project_root: &Path) -> Vec<String> {
     updated_files
 }
 
-/// Sync all docs/content/*.md files to skills/worktrunk/reference/*.md
-/// (excluding _index.md which is a Zola template)
-/// Returns (errors, updated_files)
 /// Sorted `.md` page filenames in `docs/content/` (excluding `_index.md`
 /// and similar underscore-prefixed Zola section markers).
 fn docs_content_page_names(docs_dir: &Path) -> Vec<String> {
