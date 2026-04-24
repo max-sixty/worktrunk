@@ -1,6 +1,6 @@
 //! TTY spinner for long-running copy operations.
 //!
-//! Shows a single-line stderr spinner (`⠋ Copying 1,234 files · 312 MB`) that
+//! Shows a single-line stderr spinner (`⠋ Copying 1,234 files · 312 MiB`) that
 //! updates in place while files are copied. Copy workers bump atomic counters
 //! via [`CopyProgress::file_copied`]; a background thread renders at ~10Hz
 //! using crossterm cursor control.
@@ -57,6 +57,12 @@ impl CopyProgress {
         if !std::io::stderr().is_terminal() {
             return Self::disabled();
         }
+        Self::spawn_enabled()
+    }
+
+    /// Spawn an enabled reporter regardless of TTY state. Exposed for tests —
+    /// production callers always go through [`CopyProgress::start`].
+    fn spawn_enabled() -> Self {
         let shared = Arc::new(Shared {
             files: AtomicUsize::new(0),
             bytes: AtomicU64::new(0),
@@ -104,7 +110,7 @@ impl CopyProgress {
             // Wake the ticker if it's mid-sleep so `join` returns promptly.
             ticker.thread().unpark();
             let _ = ticker.join();
-            clear_line();
+            let _ = clear_line(&mut std::io::stderr().lock());
         }
     }
 }
@@ -130,15 +136,16 @@ fn ticker_loop(shared: &Shared) {
     while !shared.done.load(Ordering::Relaxed) {
         let frame_idx = (start.elapsed().as_millis() / TICK_INTERVAL.as_millis()) as usize
             % SPINNER_FRAMES.len();
-        render(shared, SPINNER_FRAMES[frame_idx]);
+        let files = shared.files.load(Ordering::Relaxed);
+        let bytes = shared.bytes.load(Ordering::Relaxed);
+        let line = format_line(files, bytes, SPINNER_FRAMES[frame_idx]);
+        let _ = render_line(&mut std::io::stderr().lock(), &line);
         thread::park_timeout(TICK_INTERVAL);
     }
 }
 
-fn render(shared: &Shared, spinner: char) {
-    let files = shared.files.load(Ordering::Relaxed);
-    let bytes = shared.bytes.load(Ordering::Relaxed);
-    let line = if files == 0 {
+fn format_line(files: usize, bytes: u64, spinner: char) -> String {
+    if files == 0 {
         cformat!("<cyan>{spinner}</> Copying...")
     } else {
         let word = if files == 1 { "file" } else { "files" };
@@ -148,20 +155,20 @@ fn render(shared: &Shared, spinner: char) {
             word,
             format_bytes(bytes),
         )
-    };
-
-    let mut err = std::io::stderr().lock();
-    let _ = err.queue(MoveToColumn(0));
-    let _ = err.queue(Clear(ClearType::CurrentLine));
-    let _ = write!(err, "{line}");
-    let _ = err.flush();
+    }
 }
 
-fn clear_line() {
-    let mut err = std::io::stderr().lock();
-    let _ = err.queue(MoveToColumn(0));
-    let _ = err.queue(Clear(ClearType::CurrentLine));
-    let _ = err.flush();
+fn render_line<W: Write>(w: &mut W, line: &str) -> std::io::Result<()> {
+    w.queue(MoveToColumn(0))?;
+    w.queue(Clear(ClearType::CurrentLine))?;
+    write!(w, "{line}")?;
+    w.flush()
+}
+
+fn clear_line<W: Write>(w: &mut W) -> std::io::Result<()> {
+    w.queue(MoveToColumn(0))?;
+    w.queue(Clear(ClearType::CurrentLine))?;
+    w.flush()
 }
 
 fn format_count(n: usize) -> String {
@@ -219,6 +226,45 @@ mod tests {
     }
 
     #[test]
+    fn test_format_line_empty() {
+        let line = format_line(0, 0, '⠋');
+        assert!(line.contains("Copying..."));
+        assert!(line.contains('⠋'));
+    }
+
+    #[test]
+    fn test_format_line_singular() {
+        let line = format_line(1, 42, '⠙');
+        assert!(line.contains("1 file "));
+        assert!(line.contains("42 B"));
+    }
+
+    #[test]
+    fn test_format_line_plural() {
+        let line = format_line(2_500, 5 * 1024 * 1024, '⠹');
+        assert!(line.contains("2,500 files"));
+        assert!(line.contains("5.0 MiB"));
+    }
+
+    #[test]
+    fn test_render_line_writes_text_with_prefix_control_bytes() {
+        // Verify render_line emits cursor-control bytes before the content —
+        // without asserting the exact escape sequence, which pre-commit's
+        // no-manual-ansi rule disallows in library tests.
+        let mut buf = Vec::new();
+        render_line(&mut buf, "hello").unwrap();
+        assert!(buf.ends_with(b"hello"));
+        assert!(buf.len() > b"hello".len());
+    }
+
+    #[test]
+    fn test_clear_line_writes_control_bytes() {
+        let mut buf = Vec::new();
+        clear_line(&mut buf).unwrap();
+        assert!(!buf.is_empty());
+    }
+
+    #[test]
     fn test_disabled_is_noop() {
         let p = CopyProgress::disabled();
         p.file_copied(1_000_000);
@@ -235,5 +281,31 @@ mod tests {
         // to the disabled path and not spawn a ticker thread.
         let p = CopyProgress::start();
         assert!(p.ticker.is_none());
+    }
+
+    #[test]
+    fn test_enabled_ticker_lifecycle() {
+        // Bypass the TTY check to exercise the full ticker/stop path without a
+        // real terminal. The ticker writes ANSI sequences to stderr; cargo test
+        // captures that output, so it's harmless.
+        let p = CopyProgress::spawn_enabled();
+        assert!(p.ticker.is_some());
+        p.file_copied(1024);
+        p.file_copied(2048);
+        assert_eq!(p.shared.files.load(Ordering::Relaxed), 2);
+        assert_eq!(p.shared.bytes.load(Ordering::Relaxed), 3072);
+        // finish() sets done, unparks the ticker, joins it, and clears the line.
+        // Returns promptly — no need to wait out STARTUP_DELAY or TICK_INTERVAL.
+        p.finish();
+    }
+
+    #[test]
+    fn test_enabled_ticker_renders_after_startup_delay() {
+        // Wait out the startup delay + one tick so the ticker actually renders.
+        // This exercises the render branch of ticker_loop end-to-end.
+        let p = CopyProgress::spawn_enabled();
+        p.file_copied(100);
+        std::thread::sleep(STARTUP_DELAY + TICK_INTERVAL + Duration::from_millis(50));
+        p.finish();
     }
 }
