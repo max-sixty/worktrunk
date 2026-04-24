@@ -1,0 +1,28 @@
+# Worktrunk
+
+> CLI for Git worktree management, designed for parallel AI agent workflows.
+
+Worktrunk is a CLI for git worktree management, designed for running AI agents
+in parallel.
+
+Worktrunk's three core commands make worktrees as easy as branches.
+Plus, Worktrunk has a bunch of quality-of-life features to simplify working
+with many parallel changes, including hooks to automate local workflows.
+
+## Commands
+
+- [wt switch](https://worktrunk.dev/switch.md): Switch to a worktree; create if needed.
+- [wt list](https://worktrunk.dev/list.md): List worktrees and their status.
+- [wt remove](https://worktrunk.dev/remove.md): Remove worktree; delete branch if merged. Defaults to the current worktree.
+- [wt merge](https://worktrunk.dev/merge.md): Merge current branch into the target branch. Squash & rebase, fast-forward the target branch, remove the worktree.
+- [wt config](https://worktrunk.dev/config.md): Manage user & project configs. Includes shell integration, hooks, and saved state.
+- [wt step](https://worktrunk.dev/step.md): Run individual operations. The building blocks of wt merge — commit, squash, rebase, push — plus standalone utilities.
+- [wt hook](https://worktrunk.dev/hook.md): Run configured hooks.
+
+## Reference
+
+- [Extending Worktrunk](https://worktrunk.dev/extending.md): Three ways to add custom behavior: hooks for lifecycle automation, aliases for reusable commands, and custom subcommands for standalone tools.
+- [LLM Commit Messages](https://worktrunk.dev/llm-commits.md): Generate commit messages from diffs using any LLM. Integrates with wt merge, wt step commit, and wt step squash.
+- [Claude Code Integration](https://worktrunk.dev/claude-code.md): Worktrunk plugin for Claude Code: configuration skill, worktree isolation for agents, and activity tracking for wt list.
+- [Tips & Patterns](https://worktrunk.dev/tips-patterns.md): Practical recipes for Worktrunk workflows: aliases, shell integration, Zellij layouts, and parallel agent patterns.
+- [FAQ](https://worktrunk.dev/faq.md): Common questions about Worktrunk: comparison to git worktree and branch switching, bare repos, TUI support, and more.

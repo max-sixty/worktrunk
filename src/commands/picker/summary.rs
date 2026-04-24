@@ -119,28 +119,58 @@ mod tests {
     }
 
     #[test]
-    fn test_cache_roundtrip() {
-        use crate::summary::{CachedSummary, read_cache, write_cache};
+    fn test_cache_roundtrip_and_prune_on_write() {
+        use crate::summary::CachedSummary;
         let (_t, repo) = temp_repo();
         let branch = "feature/test-branch";
-        let cached = CachedSummary {
+
+        // Empty cache → read misses.
+        assert!(CachedSummary::read(&repo, branch, "deadbeef").is_none());
+
+        let first = CachedSummary {
             summary: "Add tests\n\nThis adds unit tests for cache.".to_string(),
-            diff_hash: 12345,
             branch: branch.to_string(),
+            generated_at: 100,
         };
+        first.write(&repo, "deadbeef");
 
-        assert!(read_cache(&repo, branch).is_none());
+        let loaded = CachedSummary::read(&repo, branch, "deadbeef").unwrap();
+        assert_eq!(loaded.summary, first.summary);
+        assert_eq!(loaded.branch, first.branch);
+        assert_eq!(loaded.generated_at, first.generated_at);
 
-        write_cache(&repo, branch, &cached);
-        let loaded = read_cache(&repo, branch).unwrap();
-        assert_eq!(loaded.summary, cached.summary);
-        assert_eq!(loaded.diff_hash, cached.diff_hash);
-        assert_eq!(loaded.branch, cached.branch);
+        // Different hash for the same branch is a miss (content-addressed).
+        assert!(CachedSummary::read(&repo, branch, "cafebabe").is_none());
+
+        // Writing a second hash for the same branch prunes the old one.
+        let second = CachedSummary {
+            summary: "Refactor tests".to_string(),
+            branch: branch.to_string(),
+            generated_at: 200,
+        };
+        second.write(&repo, "cafebabe");
+
+        assert!(CachedSummary::read(&repo, branch, "deadbeef").is_none());
+        assert_eq!(
+            CachedSummary::read(&repo, branch, "cafebabe")
+                .unwrap()
+                .summary,
+            "Refactor tests"
+        );
+
+        let dir =
+            CachedSummary::cache_root(&repo).join(worktrunk::path::sanitize_for_filename(branch));
+        let remaining: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(remaining, vec!["cafebabe.json"]);
     }
 
     #[test]
-    fn test_write_cache_handles_unwritable_path() {
-        use crate::summary::{CachedSummary, read_cache, write_cache};
+    fn test_write_handles_unwritable_path() {
+        use crate::summary::CachedSummary;
         let (_t, repo) = temp_repo();
         // Block cache directory creation by placing a file where the directory should be
         let wt_dir = repo.wt_dir();
@@ -150,12 +180,12 @@ mod tests {
 
         let cached = CachedSummary {
             summary: "test".to_string(),
-            diff_hash: 1,
             branch: "main".to_string(),
+            generated_at: 0,
         };
         // Should not panic — just logs and returns
-        write_cache(&repo, "main", &cached);
-        assert!(read_cache(&repo, "main").is_none());
+        cached.write(&repo, "deadbeef");
+        assert!(CachedSummary::read(&repo, "main", "deadbeef").is_none());
 
         // Cleanup: remove the blocker file so TempDir cleanup works
         fs::remove_file(&cache_parent).unwrap();
@@ -163,78 +193,175 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn test_write_cache_handles_write_failure() {
-        use crate::summary::{CachedSummary, cache_dir, read_cache, write_cache};
+    fn test_write_handles_write_failure() {
+        use crate::summary::CachedSummary;
         use std::os::unix::fs::PermissionsExt;
 
         let (_t, repo) = temp_repo();
-        let cache_path = cache_dir(&repo);
-        fs::create_dir_all(&cache_path).unwrap();
-        // Make directory read-only so file writes fail
-        fs::set_permissions(&cache_path, fs::Permissions::from_mode(0o444)).unwrap();
+        // Pre-create the branch dir (which write() would otherwise create)
+        // and make it read-only so the json write fails.
+        let branch_dir = CachedSummary::cache_root(&repo).join("main");
+        fs::create_dir_all(&branch_dir).unwrap();
+        fs::set_permissions(&branch_dir, fs::Permissions::from_mode(0o444)).unwrap();
 
         let cached = CachedSummary {
             summary: "test".to_string(),
-            diff_hash: 1,
             branch: "main".to_string(),
+            generated_at: 0,
         };
         // Should not panic — just logs and returns
-        write_cache(&repo, "main", &cached);
-        assert!(read_cache(&repo, "main").is_none());
+        cached.write(&repo, "deadbeef");
+        assert!(CachedSummary::read(&repo, "main", "deadbeef").is_none());
 
         // Restore permissions so TempDir cleanup works
-        fs::set_permissions(&cache_path, fs::Permissions::from_mode(0o755)).unwrap();
-    }
-
-    #[test]
-    fn test_cache_invalidation_by_hash() {
-        use crate::summary::{CachedSummary, read_cache, write_cache};
-        let (_t, repo) = temp_repo();
-        let branch = "main";
-        let cached = CachedSummary {
-            summary: "Old summary".to_string(),
-            diff_hash: 111,
-            branch: branch.to_string(),
-        };
-        write_cache(&repo, branch, &cached);
-
-        let loaded = read_cache(&repo, branch).unwrap();
-        assert_ne!(loaded.diff_hash, 222);
+        fs::set_permissions(&branch_dir, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     #[test]
     fn test_cache_file_uses_sanitized_branch() {
-        use crate::summary::cache_file;
+        use crate::summary::CachedSummary;
         let (_t, repo) = temp_repo();
-        let path = cache_file(&repo, "feature/my-branch");
-        let filename = path.file_name().unwrap().to_str().unwrap();
-        assert!(filename.starts_with("feature-my-branch-"));
-        assert!(filename.ends_with(".json"));
+        let path = CachedSummary::cache_file(&repo, "feature/my-branch", "abc123");
+        // Branch dir is sanitized.
+        let parent = path
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(parent.starts_with("feature-my-branch-"));
+        // Filename is the raw hash.
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "abc123.json");
     }
 
     #[test]
-    fn test_cache_dir_under_git() {
-        use crate::summary::cache_dir;
+    fn test_cache_root_under_git() {
+        use crate::summary::CachedSummary;
         let (_t, repo) = temp_repo();
-        let dir = cache_dir(&repo);
+        let dir = CachedSummary::cache_root(&repo);
         assert!(dir.to_str().unwrap().contains("wt"));
-        assert!(dir.to_str().unwrap().contains("summaries"));
+        assert!(dir.to_str().unwrap().contains("summary"));
     }
 
     #[test]
-    fn test_hash_diff_deterministic() {
-        use crate::summary::hash_diff;
-        let hash1 = hash_diff("some diff content");
-        let hash2 = hash_diff("some diff content");
-        assert_eq!(hash1, hash2);
+    fn test_list_all_returns_freshest_per_branch() {
+        use crate::summary::CachedSummary;
+        let (_t, repo) = temp_repo();
+
+        CachedSummary {
+            summary: "a".to_string(),
+            branch: "feature-a".to_string(),
+            generated_at: 100,
+        }
+        .write(&repo, "aaaa");
+        CachedSummary {
+            summary: "b".to_string(),
+            branch: "feature-b".to_string(),
+            generated_at: 200,
+        }
+        .write(&repo, "bbbb");
+
+        let entries = CachedSummary::list_all(&repo);
+        assert_eq!(entries.len(), 2);
+        let mut branches: Vec<_> = entries.iter().map(|e| e.branch.clone()).collect();
+        branches.sort();
+        assert_eq!(branches, vec!["feature-a", "feature-b"]);
     }
 
     #[test]
-    fn test_hash_diff_different_inputs() {
-        use crate::summary::hash_diff;
-        let hash1 = hash_diff("diff A");
-        let hash2 = hash_diff("diff B");
-        assert_ne!(hash1, hash2);
+    fn test_clear_all() {
+        use crate::summary::CachedSummary;
+        let (_t, repo) = temp_repo();
+
+        // Empty cache: zero cleared, no error.
+        assert_eq!(CachedSummary::clear_all(&repo).unwrap(), 0);
+
+        CachedSummary {
+            summary: "a".to_string(),
+            branch: "feature-a".to_string(),
+            generated_at: 0,
+        }
+        .write(&repo, "aaaa");
+        CachedSummary {
+            summary: "b".to_string(),
+            branch: "feature-b".to_string(),
+            generated_at: 0,
+        }
+        .write(&repo, "bbbb");
+
+        assert_eq!(CachedSummary::clear_all(&repo).unwrap(), 2);
+        assert!(CachedSummary::read(&repo, "feature-a", "aaaa").is_none());
+        assert!(CachedSummary::read(&repo, "feature-b", "bbbb").is_none());
+    }
+
+    #[test]
+    fn test_clear_all_propagates_non_not_found_read_dir_error() {
+        use crate::summary::CachedSummary;
+        let (_t, repo) = temp_repo();
+
+        // Put a regular file where the summaries root is expected so
+        // read_dir returns NotADirectory (non-NotFound).
+        let root = CachedSummary::cache_root(&repo);
+        fs::create_dir_all(root.parent().unwrap()).unwrap();
+        fs::write(&root, "not a dir").unwrap();
+
+        let err = CachedSummary::clear_all(&repo).unwrap_err();
+        assert!(
+            err.to_string().contains("failed to read"),
+            "expected read-failure context, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_clear_all_propagates_per_file_remove_error() {
+        use crate::summary::CachedSummary;
+        let (_t, repo) = temp_repo();
+
+        // Real entry to make the branch dir exist.
+        CachedSummary {
+            summary: "a".to_string(),
+            branch: "feature".to_string(),
+            generated_at: 0,
+        }
+        .write(&repo, "aaaa");
+
+        // Replace the json file with a directory named `bad.json` so
+        // remove_file returns a non-NotFound error (EISDIR / similar).
+        let branch_dir = CachedSummary::cache_root(&repo).join("feature");
+        for entry in fs::read_dir(&branch_dir).unwrap().flatten() {
+            fs::remove_file(entry.path()).unwrap();
+        }
+        fs::create_dir(branch_dir.join("bad.json")).unwrap();
+
+        let err = CachedSummary::clear_all(&repo).unwrap_err();
+        assert!(
+            err.to_string().contains("failed to remove"),
+            "expected remove-failure context, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_clear_all_skips_non_json_and_non_dir_entries() {
+        use crate::summary::CachedSummary;
+        let (_t, repo) = temp_repo();
+
+        let root = CachedSummary::cache_root(&repo);
+        fs::create_dir_all(&root).unwrap();
+        // Real branch dir with one entry that should be counted.
+        let branch_dir = root.join("feature");
+        fs::create_dir_all(&branch_dir).unwrap();
+        fs::write(branch_dir.join("aaaa.json"), "{}").unwrap();
+        // Non-.json siblings inside the branch dir must be skipped.
+        fs::write(branch_dir.join("README"), "stray").unwrap();
+        // Stray file at the root (not a branch dir) must be skipped.
+        fs::write(root.join("stray.txt"), "noise").unwrap();
+
+        let count = CachedSummary::clear_all(&repo).unwrap();
+        assert_eq!(count, 1, "only the .json inside a branch dir should count");
+        assert!(!branch_dir.join("aaaa.json").exists());
+        assert!(branch_dir.join("README").exists());
+        assert!(root.join("stray.txt").exists());
     }
 
     #[test]

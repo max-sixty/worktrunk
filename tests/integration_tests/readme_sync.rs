@@ -1777,6 +1777,28 @@ const COMMAND_PAGES: &[&str] = &[
     "switch", "list", "merge", "remove", "config", "step", "hook",
 ];
 
+/// Write `expected` to `path` and record `rel_path` in `updated`. Creates
+/// parent directories as needed. Panics on I/O failure — these are test-time
+/// syncs, so any write error should abort the run.
+///
+/// Callers are responsible for the "is it different?" check. This lets each
+/// site apply its own normalization (e.g., `trim_lines`) before comparing
+/// without forcing it into the helper.
+fn write_tracked(
+    path: &Path,
+    expected: &str,
+    rel_path: impl Into<String>,
+    updated: &mut Vec<String>,
+) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .unwrap_or_else(|e| panic!("Failed to create {}: {}", parent.display(), e));
+    }
+    fs::write(path, expected)
+        .unwrap_or_else(|e| panic!("Failed to write {}: {}", path.display(), e));
+    updated.push(rel_path.into());
+}
+
 /// Sync command pages from --help-page output to docs/content/*.md
 /// Returns (errors, updated_files)
 fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
@@ -1890,9 +1912,12 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
         };
 
         if current != new_content {
-            fs::write(&doc_path, &new_content)
-                .unwrap_or_else(|e| panic!("Failed to write {}: {}", doc_path.display(), e));
-            updated_files.push(format!("docs/content/{}.md", cmd));
+            write_tracked(
+                &doc_path,
+                &new_content,
+                format!("docs/content/{}.md", cmd),
+                &mut updated_files,
+            );
         }
     }
 
@@ -2097,9 +2122,13 @@ fn convert_console_blocks_in_docs(project_root: &Path) -> Vec<String> {
             let content = fs::read_to_string(&path).unwrap();
             let converted = worktrunk::docs::convert_dollar_console_to_terminal(&content);
             if converted != content {
-                fs::write(&path, &converted).unwrap();
                 let rel = path.strip_prefix(project_root).unwrap_or(&path);
-                updated_files.push(rel.display().to_string());
+                write_tracked(
+                    &path,
+                    &converted,
+                    rel.display().to_string(),
+                    &mut updated_files,
+                );
             }
         }
     }
@@ -2107,9 +2136,20 @@ fn convert_console_blocks_in_docs(project_root: &Path) -> Vec<String> {
     updated_files
 }
 
-/// Sync all docs/content/*.md files to skills/worktrunk/reference/*.md
-/// (excluding _index.md which is a Zola template)
-/// Returns (errors, updated_files)
+/// Sorted `.md` page filenames in `docs/content/` (excluding `_index.md`
+/// and similar underscore-prefixed Zola section markers).
+fn docs_content_page_names(docs_dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(docs_dir)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", docs_dir.display(), e))
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().to_string_lossy().into_owned();
+            (name.ends_with(".md") && !name.starts_with('_')).then_some(name)
+        })
+        .collect();
+    names.sort();
+    names
+}
+
 fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
     let mut errors = Vec::new();
     let mut updated_files = Vec::new();
@@ -2117,19 +2157,7 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
     let docs_dir = project_root.join("docs/content");
     let skill_dir = project_root.join("skills/worktrunk/reference");
 
-    let mut entries: Vec<_> = fs::read_dir(&docs_dir)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", docs_dir.display(), e))
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".md") && !name.starts_with('_') {
-                Some(name)
-            } else {
-                None
-            }
-        })
-        .collect();
-    entries.sort();
+    let entries = docs_content_page_names(&docs_dir);
 
     for name in &entries {
         let skill_file = skill_dir.join(name);
@@ -2166,15 +2194,12 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
         let current = trim_lines(&current);
 
         if current != expected {
-            // Ensure parent directory exists
-            if let Some(parent) = skill_file.parent() {
-                fs::create_dir_all(parent).unwrap_or_else(|e| {
-                    panic!("Failed to create directory {}: {}", parent.display(), e)
-                });
-            }
-            fs::write(&skill_file, format!("{}\n", expected))
-                .unwrap_or_else(|e| panic!("Failed to write {}: {}", skill_file.display(), e));
-            updated_files.push(format!("skills/worktrunk/reference/{name}"));
+            write_tracked(
+                &skill_file,
+                &format!("{expected}\n"),
+                format!("skills/worktrunk/reference/{name}"),
+                &mut updated_files,
+            );
         }
     }
 
@@ -2333,9 +2358,12 @@ fn sync_well_known_skills(project_root: &Path) -> Vec<String> {
     let index_dst = well_known_dir.join("index.json");
     let current_index = fs::read_to_string(&index_dst).unwrap_or_default();
     if current_index != index_json {
-        fs::write(&index_dst, &index_json)
-            .unwrap_or_else(|e| panic!("Failed to write {}: {}", index_dst.display(), e));
-        updated_files.push("docs/static/.well-known/agent-skills/index.json".to_string());
+        write_tracked(
+            &index_dst,
+            &index_json,
+            "docs/static/.well-known/agent-skills/index.json",
+            &mut updated_files,
+        );
     }
 
     updated_files
@@ -2439,8 +2467,149 @@ fn sync_cli_mod_example_bodies(project_root: &Path) -> (Vec<String>, Vec<String>
     (errors, updated_files)
 }
 
+/// Generate `docs/static/llms.txt` from `docs/content/*.md` front-matter,
+/// following the llms.txt spec (https://llmstxt.org/): H1, blockquote summary,
+/// optional intro prose, H2 section headings with bulleted link lists.
+///
+/// Link targets use the `.md` companion URLs (served via symlinks in
+/// `docs/static/*.md` → `skills/worktrunk/reference/*.md`).
+fn sync_llms_txt(project_root: &Path) -> Vec<String> {
+    use serde::Deserialize;
+    use std::collections::BTreeMap;
+
+    #[derive(Deserialize)]
+    struct ExtraFm {
+        group: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct Frontmatter {
+        title: String,
+        #[serde(default)]
+        description: Option<String>,
+        weight: i64,
+        #[serde(default)]
+        extra: Option<ExtraFm>,
+    }
+
+    let docs_dir = project_root.join("docs/content");
+    let config_path = project_root.join("docs/config.toml");
+
+    let config_content = fs::read_to_string(&config_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", config_path.display(), e));
+    let site_config: toml::Value = toml::from_str(&config_content)
+        .unwrap_or_else(|e| panic!("Failed to parse {}: {}", config_path.display(), e));
+    let site_title = site_config
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Worktrunk");
+    let site_description = site_config
+        .get("extra")
+        .and_then(|e| e.get("site_description"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let base_url = site_config
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("https://worktrunk.dev/")
+        .trim_end_matches('/');
+
+    let mut home_intro = String::new();
+    // Group pages by `extra.group`; order groups by their minimum weight so
+    // `## Commands` (weights 10–17) precedes `## Reference` (21–25) without
+    // hard-coding group names.
+    let mut groups: BTreeMap<String, Vec<(String, Frontmatter)>> = BTreeMap::new();
+
+    for name in docs_content_page_names(&docs_dir) {
+        let path = docs_dir.join(&name);
+        let slug = name.trim_end_matches(".md").to_string();
+        let content = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        let Some(rest) = content.strip_prefix("+++\n") else {
+            continue;
+        };
+        let Some((fm_text, body)) = rest.split_once("\n+++\n") else {
+            continue;
+        };
+        let fm: Frontmatter = toml::from_str(fm_text)
+            .unwrap_or_else(|e| panic!("Failed to parse frontmatter of {}: {}", path.display(), e));
+
+        // Ungrouped pages supply the document's intro prose instead of becoming bullets.
+        let Some(group) = fm.extra.as_ref().and_then(|e| e.group.clone()) else {
+            home_intro = extract_intro_prose(body);
+            continue;
+        };
+
+        groups.entry(group).or_default().push((slug, fm));
+    }
+
+    for pages in groups.values_mut() {
+        pages.sort_by_key(|(_, fm)| fm.weight);
+    }
+    let mut ordered: Vec<(String, Vec<(String, Frontmatter)>)> = groups.into_iter().collect();
+    ordered.sort_by_key(|(_, pages)| pages.first().map(|(_, fm)| fm.weight).unwrap_or(i64::MAX));
+
+    use std::fmt::Write;
+    let mut out = String::new();
+    writeln!(out, "# {site_title}\n").unwrap();
+    if !site_description.is_empty() {
+        writeln!(out, "> {site_description}\n").unwrap();
+    }
+    if !home_intro.is_empty() {
+        writeln!(out, "{home_intro}\n").unwrap();
+    }
+    for (group, pages) in ordered {
+        writeln!(out, "## {group}\n").unwrap();
+        for (slug, fm) in pages {
+            let desc = fm
+                .description
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|d| format!(": {d}"))
+                .unwrap_or_default();
+            writeln!(out, "- [{}]({base_url}/{slug}.md){desc}", fm.title).unwrap();
+        }
+        writeln!(out).unwrap();
+    }
+
+    let out = format!("{}\n", out.trim_end());
+
+    let dst = project_root.join("docs/static/llms.txt");
+    let current = fs::read_to_string(&dst).unwrap_or_default();
+    let mut updated = Vec::new();
+    if current != out {
+        write_tracked(&dst, &out, "docs/static/llms.txt", &mut updated);
+    }
+    updated
+}
+
+/// Take the leading prose paragraphs of a page body, stopping at the first
+/// section heading or HTML block (figure, comment, etc.). The homepage uses
+/// this for the llms.txt intro.
+///
+/// Trims trailing lines ending with `:` — those typically introduce the
+/// content we just cut (a figure, code block, etc.) and dangle without it.
+fn extract_intro_prose(body: &str) -> String {
+    let mut lines: Vec<&str> = Vec::new();
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("##") || trimmed.starts_with('<') || trimmed.starts_with("<!--") {
+            break;
+        }
+        lines.push(line);
+    }
+    while lines
+        .last()
+        .is_some_and(|l| l.trim_end().ends_with(':') || l.trim().is_empty())
+    {
+        lines.pop();
+    }
+    lines.join("\n").trim().to_string()
+}
+
 /// Combined test: sync command pages (mod.rs → docs) then skill files (docs → skills)
-/// then .well-known/agent-skills/ (skills → docs/static).
+/// then .well-known/agent-skills/ (skills → docs/static) then llms.txt.
 /// This ensures a single test run handles the full chain when mod.rs changes.
 #[test]
 fn test_command_pages_and_skill_files_are_in_sync() {
@@ -2466,6 +2635,9 @@ fn test_command_pages_and_skill_files_are_in_sync() {
     // This reads the freshly-written skills from step 2
     let well_known_files = sync_well_known_skills(project_root);
 
+    // Step 4: Generate docs/static/llms.txt from docs/content front-matter
+    let llms_files = sync_llms_txt(project_root);
+
     // Aggregate results
     let all_errors: Vec<_> = mod_errors
         .into_iter()
@@ -2478,6 +2650,7 @@ fn test_command_pages_and_skill_files_are_in_sync() {
         .chain(console_files)
         .chain(skill_files)
         .chain(well_known_files)
+        .chain(llms_files)
         .collect();
 
     if !all_errors.is_empty() {

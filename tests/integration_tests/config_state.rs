@@ -66,6 +66,28 @@ fn write_ci_cache(repo: &TestRepo, branch: &str, json: &str) {
     std::fs::write(&cache_file, json).unwrap();
 }
 
+/// Write a summary cache entry at `.git/wt/cache/summary/{branch}/{hash}.json`.
+///
+/// The hash is opaque to callers — they just need a consistent key per entry —
+/// so we accept an arbitrary hex-like string rather than recomputing SHA-256.
+fn write_summary_cache(
+    repo: &TestRepo,
+    branch: &str,
+    hash: &str,
+    summary: &str,
+    generated_at: u64,
+) {
+    let safe_branch = worktrunk::path::sanitize_for_filename(branch);
+    let dir = repo
+        .root_path()
+        .join(".git/wt/cache/summary")
+        .join(&safe_branch);
+    std::fs::create_dir_all(&dir).unwrap();
+    let body =
+        format!(r#"{{"summary":"{summary}","branch":"{branch}","generated_at":{generated_at}}}"#);
+    std::fs::write(dir.join(format!("{hash}.json")), body).unwrap();
+}
+
 /// Create a command for `wt config state <key> <action> [args...]`
 fn wt_state_cmd(repo: &TestRepo, key: &str, action: &str, args: &[&str]) -> Command {
     let mut cmd = wt_command();
@@ -899,6 +921,9 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     std::fs::create_dir_all(&sha_cache_dir).unwrap();
     std::fs::write(sha_cache_dir.join("abc123-def456.json"), "true").unwrap();
 
+    // Summary cache (content-addressed filename)
+    write_summary_cache(&repo, "feature", "aaaaaaaaaaaaaaaa", "Short summary", 0);
+
     // Logs
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
@@ -914,6 +939,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     [32m✓[39m [32mCleared previous branch[39m
     [32m✓[39m [32mCleared [1m1[22m marker[39m
     [32m✓[39m [32mCleared [1m1[22m CI cache entry[39m
+    [32m✓[39m [32mCleared [1m1[22m summary cache entry[39m
     [32m✓[39m [32mCleared [1m1[22m git commands cache entry[39m
     [32m✓[39m [32mCleared [1m1[22m variable[39m
     [32m✓[39m [32mCleared [1m1[22m log file[39m
@@ -953,6 +979,12 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     assert!(
         !ci_cache_dir.join("feature.json").exists(),
         "CI cache file should be cleared"
+    );
+    // Summary cache is file-based too, verify the per-branch dir is gone
+    let summary_feature_dir = git_dir.join("wt/cache/summary/feature");
+    assert!(
+        !summary_feature_dir.exists(),
+        "Summary cache dir for feature should be cleared"
     );
     assert!(!log_dir.exists());
 }
@@ -1015,6 +1047,9 @@ fn test_state_get_empty(repo: TestRepo) {
         [107m [0m (none)
 
         [36mCI STATUS CACHE[39m
+        [107m [0m (none)
+
+        [36mSUMMARY CACHE[39m
         [107m [0m (none)
 
         [36mGIT COMMANDS CACHE[39m
@@ -1143,6 +1178,15 @@ fn test_state_get_comprehensive(repo: TestRepo) {
     std::fs::write(sha_cache_dir.join("aaaa-bbbb.json"), "{}").unwrap();
     std::fs::write(sha_cache_dir.join("cccc-dddd.json"), "{}").unwrap();
 
+    // Populate summary cache so the SUMMARIES CACHE section renders rows.
+    write_summary_cache(
+        &repo,
+        "feature",
+        "aaaaaaaaaaaaaaaa",
+        "Add constant-time token validation",
+        TEST_EPOCH,
+    );
+
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
@@ -1165,6 +1209,7 @@ fn test_state_get_json_empty(repo: TestRepo) {
       "hook_output": [],
       "markers": [],
       "previous_branch": null,
+      "summaries": [],
       "trash": [],
       "vars": []
     }
@@ -1211,6 +1256,15 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
     std::fs::create_dir_all(&sha_cache_dir).unwrap();
     std::fs::write(sha_cache_dir.join("aaaa-bbbb.json"), "{}").unwrap();
 
+    // Populate summary cache
+    write_summary_cache(
+        &repo,
+        "feature",
+        "aaaaaaaaaaaaaaaa",
+        "Add constant-time token validation",
+        TEST_EPOCH,
+    );
+
     let output = wt_state_get_json_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     let json_str = String::from_utf8_lossy(&output.stdout);
@@ -1243,6 +1297,13 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
             }
           ],
           "previous_branch": "feature",
+          "summaries": [
+            {
+              "branch": "feature",
+              "generated_at": 1735776000,
+              "summary": "Add constant-time token validation"
+            }
+          ],
           "trash": [
             {
               "modified_at": "<MTIME>",
@@ -1337,6 +1398,7 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
           ],
           "markers": [],
           "previous_branch": null,
+          "summaries": [],
           "trash": [],
           "vars": []
         }
