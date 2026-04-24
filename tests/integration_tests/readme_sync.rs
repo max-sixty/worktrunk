@@ -2063,12 +2063,12 @@ fn transform_docs_for_skill(content: &str) -> String {
     // Strip HTML figure elements (demo GIFs)
     let content = HTML_FIGURE_PATTERN.replace_all(&content, "");
 
-    // Replace experimental markers (shortcode and HTML badge) with plain text
+    // Replace experimental markers (shortcode and HTML badge) with plain text.
+    // Sourcing the badge HTML from `worktrunk::docs` keeps producer (help.rs)
+    // and consumer (this strip) in lockstep: a format change there breaks
+    // here at compile time rather than silently leaking HTML into skills.
     let content = ZOLA_EXPERIMENTAL_SHORTCODE.replace_all(&content, "[experimental]");
-    let content = content.replace(
-        "<span class=\"badge-experimental\"></span>",
-        "[experimental]",
-    );
+    let content = content.replace(worktrunk::docs::BADGE_EXPERIMENTAL_HTML, "[experimental]");
 
     // Prepend title as H1 if extracted
     let content = if let Some(title) = title {
