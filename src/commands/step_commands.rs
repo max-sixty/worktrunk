@@ -806,10 +806,7 @@ pub fn step_copy_ignored(
         }
     }
 
-    // Spinner is only useful when stderr is a TTY and we aren't already
-    // printing a full entry list (`-v`) or just dry-running. `CopyProgress::start`
-    // auto-detects the TTY; this gate skips it for verbose/dry-run modes where
-    // the existing output already conveys progress.
+    // `start` auto-detects the TTY; verbose/dry-run already print enough.
     let progress = if verbose >= 1 || dry_run {
         CopyProgress::disabled()
     } else {

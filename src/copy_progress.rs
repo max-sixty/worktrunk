@@ -5,12 +5,8 @@
 //! via [`CopyProgress::file_copied`]; a background thread renders at ~10Hz
 //! using crossterm cursor control.
 //!
-//! Constructed via [`CopyProgress::start`], which auto-detects stderr TTY and
-//! returns a disabled (no-op) instance when not attached to a terminal. Callers
-//! that want to opt out explicitly — benchmarks, tests, and non-interactive
-//! internal moves — should pass [`CopyProgress::disabled`]. `start` is named
-//! deliberately (not `new`) because it spawns a ticker thread as a side effect
-//! — `Default`-style "make me a fresh instance" semantics would be misleading.
+//! `start` is named deliberately (not `new`) because it spawns a ticker thread
+//! as a side effect — `Default`-style semantics would be misleading.
 //!
 //! The progress line is cleared on [`CopyProgress::finish`] or on drop, so the
 //! caller can print a summary message immediately afterward without overlap.
@@ -39,30 +35,25 @@ struct Shared {
     done: AtomicBool,
 }
 
+struct Inner {
+    shared: Arc<Shared>,
+    ticker: JoinHandle<()>,
+}
+
 /// Live spinner displaying files-copied and bytes-copied counters.
 ///
 /// See [module docs](crate::copy_progress) for the output format and lifecycle.
-pub struct CopyProgress {
-    shared: Arc<Shared>,
-    ticker: Option<JoinHandle<()>>,
-}
+pub struct CopyProgress(Option<Inner>);
 
 impl CopyProgress {
     /// Start a progress reporter, enabling the spinner iff stderr is a TTY.
     ///
     /// Spawns a background ticker thread when a TTY is detected. When stderr
-    /// is not a TTY, returns the same shape as [`CopyProgress::disabled`] and
-    /// does no work.
+    /// is not a TTY, returns a disabled reporter and does no work.
     pub fn start() -> Self {
         if !std::io::stderr().is_terminal() {
             return Self::disabled();
         }
-        Self::spawn_enabled()
-    }
-
-    /// Spawn an enabled reporter regardless of TTY state. Exposed for tests —
-    /// production callers always go through [`CopyProgress::start`].
-    fn spawn_enabled() -> Self {
         let shared = Arc::new(Shared {
             files: AtomicUsize::new(0),
             bytes: AtomicU64::new(0),
@@ -72,61 +63,47 @@ impl CopyProgress {
             let shared = Arc::clone(&shared);
             thread::spawn(move || ticker_loop(&shared))
         };
-        Self {
-            shared,
-            ticker: Some(ticker),
-        }
+        Self(Some(Inner { shared, ticker }))
     }
 
-    /// Create a disabled reporter. All methods are no-ops; no thread is spawned.
+    /// A reporter that does nothing — for benchmarks, tests, and internal moves.
     pub fn disabled() -> Self {
-        Self {
-            shared: Arc::new(Shared {
-                files: AtomicUsize::new(0),
-                bytes: AtomicU64::new(0),
-                done: AtomicBool::new(true),
-            }),
-            ticker: None,
-        }
+        Self(None)
     }
 
     /// Record that a file (or symlink) was copied. Safe to call from any thread.
     pub fn file_copied(&self, bytes: u64) {
-        if self.ticker.is_none() {
-            return;
+        if let Some(inner) = &self.0 {
+            inner.shared.files.fetch_add(1, Ordering::Relaxed);
+            inner.shared.bytes.fetch_add(bytes, Ordering::Relaxed);
         }
-        self.shared.files.fetch_add(1, Ordering::Relaxed);
-        self.shared.bytes.fetch_add(bytes, Ordering::Relaxed);
     }
 
     /// Stop the spinner and clear the progress line.
-    pub fn finish(mut self) {
-        self.stop();
-    }
-
-    fn stop(&mut self) {
-        if let Some(ticker) = self.ticker.take() {
-            self.shared.done.store(true, Ordering::Relaxed);
-            // Wake the ticker if it's mid-sleep so `join` returns promptly.
-            ticker.thread().unpark();
-            let _ = ticker.join();
-            let _ = clear_line(&mut std::io::stderr().lock());
-        }
+    pub fn finish(self) {
+        // Drop runs the same shutdown logic — no need to duplicate it here.
+        drop(self);
     }
 }
 
 impl Drop for CopyProgress {
     fn drop(&mut self) {
-        self.stop();
+        // `Inner` is Drop-free, so we can take ownership of its fields and
+        // run shutdown without partial-move conflicts.
+        if let Some(inner) = self.0.take() {
+            inner.shared.done.store(true, Ordering::Relaxed);
+            inner.ticker.thread().unpark();
+            let _ = inner.ticker.join();
+            let _ = clear_line(&mut std::io::stderr().lock());
+        }
     }
 }
 
 fn ticker_loop(shared: &Shared) {
     let start = Instant::now();
-    // Startup delay: wait up to STARTUP_DELAY before the first render. If the
-    // copy finishes in under that window there's no flicker — the line never
-    // gets drawn. park_timeout returns immediately on `unpark` from `stop()`,
-    // so short copies also don't block shutdown.
+    // Sub-300ms copies render nothing — the line never gets drawn. park_timeout
+    // returns immediately on `unpark` from drop, so short copies don't block
+    // shutdown either.
     while start.elapsed() < STARTUP_DELAY {
         if shared.done.load(Ordering::Relaxed) {
             return;
@@ -205,6 +182,22 @@ fn format_bytes(n: u64) -> String {
 mod tests {
     use super::*;
 
+    /// Construct an enabled instance directly, bypassing the TTY check that
+    /// would otherwise force a disabled reporter under cargo test. Lives in
+    /// the test module per the CLAUDE.md rule against test-only library APIs.
+    fn enabled_for_test() -> CopyProgress {
+        let shared = Arc::new(Shared {
+            files: AtomicUsize::new(0),
+            bytes: AtomicU64::new(0),
+            done: AtomicBool::new(false),
+        });
+        let ticker = {
+            let shared = Arc::clone(&shared);
+            thread::spawn(move || ticker_loop(&shared))
+        };
+        CopyProgress(Some(Inner { shared, ticker }))
+    }
+
     #[test]
     fn test_format_count() {
         assert_eq!(format_count(0), "0");
@@ -248,9 +241,6 @@ mod tests {
 
     #[test]
     fn test_render_line_writes_text_with_prefix_control_bytes() {
-        // Verify render_line emits cursor-control bytes before the content —
-        // without asserting the exact escape sequence, which pre-commit's
-        // no-manual-ansi rule disallows in library tests.
         let mut buf = Vec::new();
         render_line(&mut buf, "hello").unwrap();
         assert!(buf.ends_with(b"hello"));
@@ -265,46 +255,37 @@ mod tests {
     }
 
     #[test]
-    fn test_disabled_is_noop() {
+    fn test_disabled_file_copied_is_noop() {
         let p = CopyProgress::disabled();
         p.file_copied(1_000_000);
         p.file_copied(2_000_000);
-        // No thread spawned; counters stay at 0 for disabled instances.
-        assert_eq!(p.shared.files.load(Ordering::Relaxed), 0);
-        assert_eq!(p.shared.bytes.load(Ordering::Relaxed), 0);
+        // No counters to inspect — Disabled has no fields. The assertion is
+        // simply that the call doesn't panic and finish() returns cleanly.
         p.finish();
     }
 
     #[test]
     fn test_start_in_non_tty_is_disabled() {
-        // cargo test runs without a stderr TTY, so `start()` should fall back
-        // to the disabled path and not spawn a ticker thread.
-        let p = CopyProgress::start();
-        assert!(p.ticker.is_none());
+        assert!(CopyProgress::start().0.is_none());
     }
 
     #[test]
-    fn test_enabled_ticker_lifecycle() {
-        // Bypass the TTY check to exercise the full ticker/stop path without a
-        // real terminal. The ticker writes ANSI sequences to stderr; cargo test
-        // captures that output, so it's harmless.
-        let p = CopyProgress::spawn_enabled();
-        assert!(p.ticker.is_some());
+    fn test_enabled_lifecycle_counters_propagate() {
+        let p = enabled_for_test();
         p.file_copied(1024);
         p.file_copied(2048);
-        assert_eq!(p.shared.files.load(Ordering::Relaxed), 2);
-        assert_eq!(p.shared.bytes.load(Ordering::Relaxed), 3072);
-        // finish() sets done, unparks the ticker, joins it, and clears the line.
-        // Returns promptly — no need to wait out STARTUP_DELAY or TICK_INTERVAL.
+        let inner = p.0.as_ref().expect("expected enabled");
+        assert_eq!(inner.shared.files.load(Ordering::Relaxed), 2);
+        assert_eq!(inner.shared.bytes.load(Ordering::Relaxed), 3072);
         p.finish();
     }
 
     #[test]
-    fn test_enabled_ticker_renders_after_startup_delay() {
-        // Wait out the startup delay + one tick so the ticker actually renders.
-        // This exercises the render branch of ticker_loop end-to-end.
-        let p = CopyProgress::spawn_enabled();
+    fn test_enabled_renders_after_startup_delay() {
+        let p = enabled_for_test();
         p.file_copied(100);
+        // Wait past the startup delay + one tick so ticker_loop reaches the
+        // render branch — the part that's hardest to cover otherwise.
         std::thread::sleep(STARTUP_DELAY + TICK_INTERVAL + Duration::from_millis(50));
         p.finish();
     }
