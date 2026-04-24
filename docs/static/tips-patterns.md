@@ -1,0 +1,1 @@
+../../skills/worktrunk/reference/tips-patterns.md
