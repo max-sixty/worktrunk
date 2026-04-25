@@ -17,6 +17,7 @@
 //! - Branch markers (git config `worktrunk.state.<branch>.marker`)
 //! - Vars (git config `worktrunk.state.<branch>.vars.*`)
 //! - CI status cache (`.git/wt/cache/ci-status/`)
+//! - Summary cache (`.git/wt/cache/summary/`)
 //! - Git commands cache (`.git/wt/cache/{merge-tree-conflicts,is-ancestor,…}/`)
 //! - Hints (git config `worktrunk.hints.*`)
 //! - Logs (`.git/wt/logs/`)
@@ -43,7 +44,7 @@ use anyhow::Context;
 use color_print::cformat;
 use path_slash::PathExt as _;
 use worktrunk::config::config_path;
-use worktrunk::git::Repository;
+use worktrunk::git::{BranchRef, Repository, sha_cache};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     eprintln, format_heading, format_with_gutter, info_message, println, success_message,
@@ -56,6 +57,7 @@ use worktrunk::utils::epoch_now;
 use super::super::list::ci_status::{CachedCiStatus, CiBranchName};
 use crate::display::format_relative_time_short;
 use crate::help_pager::show_help_in_pager;
+use crate::summary::CachedSummary;
 
 // ==================== Path Helpers ====================
 
@@ -75,6 +77,20 @@ const DIAGNOSTIC_FILES: &[&str] = &["trace.log", "output.log", "diagnostic.md"];
 
 fn is_diagnostic_file(name: &str) -> bool {
     DIAGNOSTIC_FILES.contains(&name)
+}
+
+/// Truncate a string for a display cell, counting by Unicode scalars.
+///
+/// Returns a shortened copy ending in `"..."` when the input exceeds
+/// `max_chars` scalars, otherwise the input verbatim. Byte-slicing
+/// (`&s[..n]`) panics on a multi-byte boundary — this helper is safe
+/// for any UTF-8 string.
+fn truncate_display(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let truncated: String = s.chars().take(max_chars.saturating_sub(3)).collect();
+    format!("{truncated}...")
 }
 
 /// Check if a top-level file belongs to the command audit log (`.jsonl` / `.jsonl.old`).
@@ -660,34 +676,47 @@ pub fn handle_state_get(
                 None => repo.require_current_branch("get ci-status for current branch")?,
             };
 
-            // Determine if this is a remote ref by checking git refs directly.
-            // This is authoritative - we check actual refs, not guessing from name.
-            let is_remote = repo
+            // Ask git for both qualified forms in one call so the remote/local
+            // determination and the HEAD SHA come from the same ref. A local
+            // branch literally named `origin/foo` can shadow a remote-tracking
+            // ref of the same name — preferring refs/heads/ matches git's
+            // default disambiguation (see `BranchRef::full_ref`).
+            let local_ref = format!("refs/heads/{branch_name}");
+            let remote_ref = format!("refs/remotes/{branch_name}");
+            let output = repo
                 .run_command(&[
-                    "show-ref",
-                    "--verify",
-                    "--quiet",
-                    &format!("refs/remotes/{}", branch_name),
+                    "for-each-ref",
+                    "--format=%(refname)%00%(objectname)",
+                    &local_ref,
+                    &remote_ref,
                 ])
-                .is_ok();
+                .context("list refs for ci-status")?;
 
-            // Get the HEAD commit for this branch
-            let head = repo
-                .run_command(&["rev-parse", &branch_name])
-                .map(|s| s.trim().to_string())
-                .unwrap_or_default();
-
-            if head.is_empty() {
-                return Err(worktrunk::git::GitError::BranchNotFound {
-                    branch: branch_name,
-                    show_create_hint: true,
-                    last_fetch_ago: None,
+            let mut local_sha: Option<&str> = None;
+            let mut remote_sha: Option<&str> = None;
+            for (ref_name, sha) in output.lines().filter_map(|l| l.split_once('\0')) {
+                if ref_name == local_ref {
+                    local_sha = Some(sha);
+                } else if ref_name == remote_ref {
+                    remote_sha = Some(sha);
                 }
-                .into());
             }
 
-            let ci_branch = CiBranchName::from_branch_ref(&branch_name, is_remote);
-            let pr_status = PrStatus::detect(&repo, &ci_branch, &head);
+            let branch_ref = match (local_sha, remote_sha) {
+                (Some(sha), _) => BranchRef::local_branch(&branch_name, sha),
+                (None, Some(sha)) => BranchRef::remote_branch(&branch_name, sha),
+                (None, None) => {
+                    return Err(worktrunk::git::GitError::BranchNotFound {
+                        branch: branch_name,
+                        show_create_hint: true,
+                        last_fetch_ago: None,
+                    }
+                    .into());
+                }
+            };
+
+            let pr_status = CiBranchName::from_branch_ref(&branch_ref)
+                .and_then(|ci_branch| PrStatus::detect(&repo, &ci_branch, &branch_ref.commit_sha));
 
             if format == SwitchFormat::Json {
                 let output = pr_status
@@ -783,7 +812,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
             }
         }
         "previous-branch" => {
-            if repo.unset_config("worktrunk.history").unwrap_or(false) {
+            if repo.unset_config("worktrunk.history")? {
                 eprintln!("{}", success_message("Cleared previous branch"));
             } else {
                 eprintln!("{}", info_message("No previous branch to clear"));
@@ -791,7 +820,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
         }
         "ci-status" => {
             if all {
-                let cleared = CachedCiStatus::clear_all(&repo);
+                let cleared = CachedCiStatus::clear_all(&repo)?;
                 if cleared == 0 {
                     eprintln!("{}", info_message("No CI cache entries to clear"));
                 } else {
@@ -809,8 +838,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                     Some(b) => b,
                     None => repo.require_current_branch("clear ci-status for current branch")?,
                 };
-                let config_key = format!("worktrunk.state.{branch_name}.ci-status");
-                if repo.unset_config(&config_key).unwrap_or(false) {
+                if CachedCiStatus::clear_one(&repo, &branch_name)? {
                     eprintln!(
                         "{}",
                         success_message(cformat!("Cleared CI cache for <bold>{branch_name}</>"))
@@ -825,18 +853,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
         }
         "marker" => {
             if all {
-                let output = repo
-                    .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
-                    .unwrap_or_default();
-
-                let mut cleared_count = 0;
-                for line in output.lines() {
-                    if let Some(config_key) = line.split_whitespace().next() {
-                        repo.unset_config(config_key)?;
-                        cleared_count += 1;
-                    }
-                }
-
+                let cleared_count = clear_all_markers(&repo)?;
                 if cleared_count == 0 {
                     eprintln!("{}", info_message("No markers to clear"));
                 } else {
@@ -855,7 +872,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                 };
 
                 let config_key = format!("worktrunk.state.{branch_name}.marker");
-                if repo.unset_config(&config_key).unwrap_or(false) {
+                if repo.unset_config(&config_key)? {
                     eprintln!(
                         "{}",
                         success_message(cformat!("Cleared marker for <bold>{branch_name}</>"))
@@ -898,28 +915,19 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
     let mut cleared_any = false;
 
     // Clear default branch cache
-    if matches!(repo.clear_default_branch_cache(), Ok(true)) {
+    if repo.clear_default_branch_cache()? {
         eprintln!("{}", success_message("Cleared default branch cache"));
         cleared_any = true;
     }
 
     // Clear previous branch
-    if repo.unset_config("worktrunk.history").unwrap_or(false) {
+    if repo.unset_config("worktrunk.history")? {
         eprintln!("{}", success_message("Cleared previous branch"));
         cleared_any = true;
     }
 
     // Clear all markers
-    let markers_output = repo
-        .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
-        .unwrap_or_default();
-    let mut markers_cleared = 0;
-    for line in markers_output.lines() {
-        if let Some(config_key) = line.split_whitespace().next() {
-            let _ = repo.unset_config(config_key);
-            markers_cleared += 1;
-        }
-    }
+    let markers_cleared = clear_all_markers(&repo)?;
     if markers_cleared > 0 {
         eprintln!(
             "{}",
@@ -932,7 +940,7 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
     }
 
     // Clear all CI status cache
-    let ci_cleared = CachedCiStatus::clear_all(&repo);
+    let ci_cleared = CachedCiStatus::clear_all(&repo)?;
     if ci_cleared > 0 {
         eprintln!(
             "{}",
@@ -944,8 +952,21 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
         cleared_any = true;
     }
 
+    // Clear all summary cache entries
+    let summary_cleared = CachedSummary::clear_all(&repo)?;
+    if summary_cleared > 0 {
+        eprintln!(
+            "{}",
+            success_message(cformat!(
+                "Cleared <bold>{summary_cleared}</> summary cache entr{}",
+                if summary_cleared == 1 { "y" } else { "ies" }
+            ))
+        );
+        cleared_any = true;
+    }
+
     // Clear git commands cache (merge-tree, ancestry, diff results)
-    let sha_cleared = repo.clear_git_commands_cache();
+    let sha_cleared = sha_cache::clear_all(&repo)?;
     if sha_cleared > 0 {
         eprintln!(
             "{}",
@@ -1048,25 +1069,31 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         })
         .collect();
 
-    // Get CI status cache
-    let mut ci_entries = CachedCiStatus::list_all(repo);
-    ci_entries.sort_by(|a, b| {
-        b.1.checked_at
-            .cmp(&a.1.checked_at)
-            .then_with(|| a.0.cmp(&b.0))
-    });
-    let ci_status: Vec<serde_json::Value> = ci_entries
+    // Get CI status cache (pre-sorted newest-first)
+    let ci_status: Vec<serde_json::Value> = CachedCiStatus::list_all(repo)
         .into_iter()
-        .map(|(branch, cached)| {
+        .map(|cached| {
             let status = cached
                 .status
                 .as_ref()
                 .map(|s| -> &'static str { s.ci_status.into() });
             serde_json::json!({
-                "branch": branch,
+                "branch": cached.branch,
                 "status": status,
                 "checked_at": cached.checked_at,
                 "head": cached.head
+            })
+        })
+        .collect();
+
+    // Get summary cache (freshest entry per branch, pre-sorted newest-first)
+    let summaries: Vec<serde_json::Value> = CachedSummary::list_all(repo)
+        .into_iter()
+        .map(|cached| {
+            serde_json::json!({
+                "branch": cached.branch,
+                "summary": cached.summary,
+                "generated_at": cached.generated_at,
             })
         })
         .collect();
@@ -1114,7 +1141,8 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "previous_branch": previous_branch,
         "markers": markers,
         "ci_status": ci_status,
-        "git_commands_cache": repo.git_commands_cache_count(),
+        "summaries": summaries,
+        "git_commands_cache": sha_cache::count_all(repo),
         "vars": vars_data,
         "command_log": command_log,
         "hook_output": hook_output,
@@ -1177,13 +1205,11 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
         let mut rows: Vec<Vec<String>> = Vec::new();
         for (branch, entries) in &all_vars {
             for (key, value) in entries {
-                // Truncate long values for display
-                let display_value = if value.len() > 40 {
-                    format!("{}...", &value[..37])
-                } else {
-                    value.to_string()
-                };
-                rows.push(vec![branch.to_string(), key.to_string(), display_value]);
+                rows.push(vec![
+                    branch.to_string(),
+                    key.to_string(),
+                    truncate_display(value, 40),
+                ]);
             }
         }
         let rendered = crate::md_help::render_data_table(headers, &rows);
@@ -1191,21 +1217,15 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     }
     writeln!(out)?;
 
-    // Show CI status cache
+    // Show CI status cache (pre-sorted newest-first)
     writeln!(out, "{}", format_heading("CI STATUS CACHE", None))?;
-    let mut entries = CachedCiStatus::list_all(repo);
-    // Sort by age (most recent first), then by branch name for ties
-    entries.sort_by(|a, b| {
-        b.1.checked_at
-            .cmp(&a.1.checked_at)
-            .then_with(|| a.0.cmp(&b.0))
-    });
+    let entries = CachedCiStatus::list_all(repo);
     if entries.is_empty() {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {
         let rows: Vec<Vec<String>> = entries
             .iter()
-            .map(|(branch, cached)| {
+            .map(|cached| {
                 let status = match &cached.status {
                     Some(pr_status) => {
                         let s: &'static str = pr_status.ci_status.into();
@@ -1215,7 +1235,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
                 };
                 let age = format_relative_time_short(cached.checked_at as i64);
                 let head: String = cached.head.chars().take(8).collect();
-                vec![branch.clone(), status, age, head]
+                vec![cached.branch.clone(), status, age, head]
             })
             .collect();
         let rendered =
@@ -1224,9 +1244,28 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     }
     writeln!(out)?;
 
+    // Show summary cache (LLM summaries keyed by branch + diff hash, pre-sorted newest-first)
+    writeln!(out, "{}", format_heading("SUMMARY CACHE", None))?;
+    let summary_entries = CachedSummary::list_all(repo);
+    if summary_entries.is_empty() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else {
+        let rows: Vec<Vec<String>> = summary_entries
+            .iter()
+            .map(|cached| {
+                let subject = cached.summary.lines().next().unwrap_or("").trim();
+                let age = format_relative_time_short(cached.generated_at as i64);
+                vec![cached.branch.clone(), truncate_display(subject, 40), age]
+            })
+            .collect();
+        let rendered = crate::md_help::render_data_table(&["Branch", "Summary", "Age"], &rows);
+        writeln!(out, "{}", rendered.trim_end())?;
+    }
+    writeln!(out)?;
+
     // Show git commands cache summary
     writeln!(out, "{}", format_heading("GIT COMMANDS CACHE", None))?;
-    let sha_count = repo.git_commands_cache_count();
+    let sha_count = sha_cache::count_all(repo);
     if sha_count == 0 {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {
@@ -1397,7 +1436,7 @@ pub fn handle_vars_clear(
             let count = entries.len();
             for (key, _) in entries {
                 let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
-                let _ = repo.unset_config(&config_key);
+                repo.unset_config(&config_key)?;
             }
             eprintln!(
                 "{}",
@@ -1411,7 +1450,7 @@ pub fn handle_vars_clear(
         let key = key.expect("key required when --all not set");
         validate_vars_key(key)?;
         let config_key = format!("worktrunk.state.{branch_name}.vars.{key}");
-        if repo.unset_config(&config_key).unwrap_or(false) {
+        if repo.unset_config(&config_key)? {
             eprintln!(
                 "{}",
                 success_message(cformat!(
@@ -1430,14 +1469,36 @@ pub fn handle_vars_clear(
     Ok(())
 }
 
-/// Clear all vars entries across all branches (used by handle_state_clear_all).
-fn clear_all_vars(repo: &Repository) -> anyhow::Result<usize> {
-    let all_vars = repo.all_vars_entries();
+/// Clear all branch markers. Used by `state clear marker --all` and
+/// `state clear --all`.
+///
+/// `get_config_regexp` returns an empty string when no keys match (git exit 1)
+/// and `Err` for real config errors — both the listing step and each
+/// `unset_config` call propagate errors so user-initiated clears never lie
+/// about success.
+fn clear_all_markers(repo: &Repository) -> anyhow::Result<usize> {
+    let output = repo.get_config_regexp(r"^worktrunk\.state\..+\.marker$")?;
     let mut cleared = 0;
-    for (branch, entries) in &all_vars {
-        for key in entries.keys() {
-            let config_key = format!("worktrunk.state.{branch}.vars.{key}");
-            let _ = repo.unset_config(&config_key);
+    for line in output.lines() {
+        if let Some(config_key) = line.split_whitespace().next() {
+            repo.unset_config(config_key)?;
+            cleared += 1;
+        }
+    }
+    Ok(cleared)
+}
+
+/// Clear all vars entries across all branches (used by handle_state_clear_all).
+///
+/// Enumerates keys via `get_config_regexp` (not `all_vars_entries`) so a
+/// config read failure surfaces as an error — the display-path helper
+/// absorbs errors as empty, which would silently report "cleared 0" here.
+fn clear_all_vars(repo: &Repository) -> anyhow::Result<usize> {
+    let output = repo.get_config_regexp(r"^worktrunk\.state\..+\.vars\.")?;
+    let mut cleared = 0;
+    for line in output.lines() {
+        if let Some(config_key) = line.split_whitespace().next() {
+            repo.unset_config(config_key)?;
             cleared += 1;
         }
     }
@@ -1456,7 +1517,7 @@ pub(super) struct MarkerEntry {
 /// Get all branch markers from git config with timestamps
 pub(super) fn all_markers(repo: &Repository) -> Vec<MarkerEntry> {
     let output = repo
-        .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
+        .get_config_regexp(r"^worktrunk\.state\..+\.marker$")
         .unwrap_or_default();
 
     let mut markers = Vec::new();

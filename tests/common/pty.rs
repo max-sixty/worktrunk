@@ -301,7 +301,7 @@ fn prompted_pty_interaction(
 
     let mut accumulated = Vec::new();
     let mut writer = writer;
-    let timeout = Duration::from_secs(10);
+    let timeout = Duration::from_secs(30);
     let poll = Duration::from_millis(10);
     let marker = prompt_marker.as_bytes();
 

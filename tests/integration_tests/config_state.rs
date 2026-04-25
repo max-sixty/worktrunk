@@ -1,4 +1,4 @@
-use crate::common::{TEST_EPOCH, TestRepo, repo, wt_command};
+use crate::common::{TEST_EPOCH, TestRepo, repo, repo_with_remote, wt_command};
 use insta::assert_snapshot;
 use rstest::rstest;
 use std::path::{Path, PathBuf};
@@ -51,15 +51,41 @@ fn state_get_settings() -> insta::Settings {
     settings
 }
 
-/// Write CI status to the file-based cache at .git/wt/cache/ci-status/<branch>.json
-fn write_ci_cache(repo: &TestRepo, branch: &str, json: &str) {
-    let git_dir = repo.root_path().join(".git");
-    let cache_dir = git_dir.join("wt").join("cache").join("ci-status");
-    std::fs::create_dir_all(&cache_dir).unwrap();
-
+/// Path to the file-based CI cache entry at `.git/wt/cache/ci-status/<branch>.json`.
+fn ci_cache_file(repo: &TestRepo, branch: &str) -> PathBuf {
     let safe_branch = sanitize_for_filename(branch);
-    let cache_file = cache_dir.join(format!("{safe_branch}.json"));
+    repo.root_path()
+        .join(".git/wt/cache/ci-status")
+        .join(format!("{safe_branch}.json"))
+}
+
+/// Write CI status to the file-based cache.
+fn write_ci_cache(repo: &TestRepo, branch: &str, json: &str) {
+    let cache_file = ci_cache_file(repo, branch);
+    std::fs::create_dir_all(cache_file.parent().unwrap()).unwrap();
     std::fs::write(&cache_file, json).unwrap();
+}
+
+/// Write a summary cache entry at `.git/wt/cache/summary/{branch}/{hash}.json`.
+///
+/// The hash is opaque to callers — they just need a consistent key per entry —
+/// so we accept an arbitrary hex-like string rather than recomputing SHA-256.
+fn write_summary_cache(
+    repo: &TestRepo,
+    branch: &str,
+    hash: &str,
+    summary: &str,
+    generated_at: u64,
+) {
+    let safe_branch = worktrunk::path::sanitize_for_filename(branch);
+    let dir = repo
+        .root_path()
+        .join(".git/wt/cache/summary")
+        .join(&safe_branch);
+    std::fs::create_dir_all(&dir).unwrap();
+    let body =
+        format!(r#"{{"summary":"{summary}","branch":"{branch}","generated_at":{generated_at}}}"#);
+    std::fs::write(dir.join(format!("{hash}.json")), body).unwrap();
 }
 
 /// Create a command for `wt config state <key> <action> [args...]`
@@ -343,6 +369,95 @@ fn test_state_get_ci_status_nonexistent_branch(repo: TestRepo) {
     ");
 }
 
+/// Resolve a branch that exists only as a remote-tracking ref (no local
+/// counterpart). Exercises the `remote_branch` arm of the BranchRef match.
+#[rstest]
+fn test_state_get_ci_status_remote_only_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.create_branch("foo");
+    repo.run_git(&["checkout", "foo"]);
+    std::fs::write(repo.root_path().join("f.txt"), "f").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "foo commit"]);
+    repo.push_branch("foo");
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["branch", "-D", "foo"]);
+
+    let output = wt_state_cmd(&repo, "ci-status", "get", &["--branch", "origin/foo"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "command should succeed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "no-ci");
+}
+
+/// A fresh cached CI status returns from `get` without re-fetching. Exercises
+/// the cache-hit path where `PrStatus::detect` returns `Some` and the match
+/// arm unwraps `ci_status`.
+#[rstest]
+fn test_state_get_ci_status_returns_cached_status(repo: TestRepo) {
+    let head = repo.head_sha();
+    write_ci_cache(
+        &repo,
+        "main",
+        &format!(
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"{head}","branch":"main"}}"#
+        ),
+    );
+
+    let output = wt_state_cmd(&repo, "ci-status", "get", &["--branch", "main"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "command should succeed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "passed");
+}
+
+/// `wt config state ci-status --branch origin/foo` must resolve cleanly when a
+/// local branch literally named `origin/foo` shadows a remote-tracking ref of
+/// the same name. Smoke test: exercises the shadowing code path. The
+/// visible-to-user consequences of the underlying bug (is_remote flag out of
+/// sync with the HEAD SHA, affecting how `gh`/`glab` get invoked) aren't
+/// observable without mocking those tools, but this guards against
+/// regressions that would make the command error on ambiguity (e.g., naive
+/// use of `rev-parse --symbolic-full-name`, which fails on shadowed refs).
+#[rstest]
+fn test_state_get_ci_status_shadow_origin_prefixed(#[from(repo_with_remote)] repo: TestRepo) {
+    // Remote `foo` pushed to origin.
+    repo.create_branch("foo");
+    repo.run_git(&["checkout", "foo"]);
+    std::fs::write(repo.root_path().join("remote.txt"), "remote").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "Remote foo commit"]);
+    repo.push_branch("foo");
+
+    // Drop local `foo` so only `refs/remotes/origin/foo` remains.
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["branch", "-D", "foo"]);
+
+    // Local branch literally named `origin/foo` with different history.
+    repo.run_git(&["checkout", "-b", "origin/foo"]);
+    std::fs::write(repo.root_path().join("local.txt"), "local").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "Local origin/foo"]);
+    repo.run_git(&["checkout", "main"]);
+
+    let output = wt_state_cmd(&repo, "ci-status", "get", &["--branch", "origin/foo"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "command should succeed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "no-ci");
+}
+
 #[rstest]
 fn test_state_clear_ci_status_all_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "ci-status", "clear", &["--all"])
@@ -354,29 +469,39 @@ fn test_state_clear_ci_status_all_empty(repo: TestRepo) {
 
 #[rstest]
 fn test_state_clear_ci_status_branch(repo: TestRepo) {
-    // Add CI cache entry
-    repo.git_command().args([
-        "config",
-        "worktrunk.state.main.ci-status",
-        &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#),
-    ])
-    .run()
-    .unwrap();
+    let head = repo.head_sha();
+    write_ci_cache(
+        &repo,
+        "main",
+        &format!(
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"{head}","branch":"main"}}"#
+        ),
+    );
+    let cache_file = ci_cache_file(&repo, "main");
+    assert!(cache_file.exists(), "cache file should exist before clear");
 
     let output = wt_state_cmd(&repo, "ci-status", "clear", &[])
         .output()
         .unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared CI cache for [1mmain[22m[39m");
+    assert!(
+        !cache_file.exists(),
+        "cache file should be gone after clear"
+    );
 }
 
 #[rstest]
 fn test_state_clear_ci_status_branch_not_cached(repo: TestRepo) {
+    let cache_file = ci_cache_file(&repo, "main");
+    assert!(!cache_file.exists(), "cache file should not exist");
+
     let output = wt_state_cmd(&repo, "ci-status", "clear", &[])
         .output()
         .unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No CI cache for [1mmain[22m");
+    assert!(!cache_file.exists(), "cache file should still not exist");
 }
 
 // ============================================================================
@@ -796,6 +921,9 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     std::fs::create_dir_all(&sha_cache_dir).unwrap();
     std::fs::write(sha_cache_dir.join("abc123-def456.json"), "true").unwrap();
 
+    // Summary cache (content-addressed filename)
+    write_summary_cache(&repo, "feature", "aaaaaaaaaaaaaaaa", "Short summary", 0);
+
     // Logs
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
@@ -811,6 +939,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     [32m✓[39m [32mCleared previous branch[39m
     [32m✓[39m [32mCleared [1m1[22m marker[39m
     [32m✓[39m [32mCleared [1m1[22m CI cache entry[39m
+    [32m✓[39m [32mCleared [1m1[22m summary cache entry[39m
     [32m✓[39m [32mCleared [1m1[22m git commands cache entry[39m
     [32m✓[39m [32mCleared [1m1[22m variable[39m
     [32m✓[39m [32mCleared [1m1[22m log file[39m
@@ -850,6 +979,12 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     assert!(
         !ci_cache_dir.join("feature.json").exists(),
         "CI cache file should be cleared"
+    );
+    // Summary cache is file-based too, verify the per-branch dir is gone
+    let summary_feature_dir = git_dir.join("wt/cache/summary/feature");
+    assert!(
+        !summary_feature_dir.exists(),
+        "Summary cache dir for feature should be cleared"
     );
     assert!(!log_dir.exists());
 }
@@ -914,6 +1049,9 @@ fn test_state_get_empty(repo: TestRepo) {
         [36mCI STATUS CACHE[39m
         [107m [0m (none)
 
+        [36mSUMMARY CACHE[39m
+        [107m [0m (none)
+
         [36mGIT COMMANDS CACHE[39m
         [107m [0m (none)
 
@@ -942,7 +1080,7 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
         ),
     );
 
@@ -1010,7 +1148,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
         ),
     );
 
@@ -1040,6 +1178,15 @@ fn test_state_get_comprehensive(repo: TestRepo) {
     std::fs::write(sha_cache_dir.join("aaaa-bbbb.json"), "{}").unwrap();
     std::fs::write(sha_cache_dir.join("cccc-dddd.json"), "{}").unwrap();
 
+    // Populate summary cache so the SUMMARIES CACHE section renders rows.
+    write_summary_cache(
+        &repo,
+        "feature",
+        "aaaaaaaaaaaaaaaa",
+        "Add constant-time token validation",
+        TEST_EPOCH,
+    );
+
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     state_get_settings().bind(|| {
@@ -1062,6 +1209,7 @@ fn test_state_get_json_empty(repo: TestRepo) {
       "hook_output": [],
       "markers": [],
       "previous_branch": null,
+      "summaries": [],
       "trash": [],
       "vars": []
     }
@@ -1097,7 +1245,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890","branch":"feature"}}"#
         ),
     );
 
@@ -1107,6 +1255,15 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
     let sha_cache_dir = git_dir.join("wt/cache/is-ancestor");
     std::fs::create_dir_all(&sha_cache_dir).unwrap();
     std::fs::write(sha_cache_dir.join("aaaa-bbbb.json"), "{}").unwrap();
+
+    // Populate summary cache
+    write_summary_cache(
+        &repo,
+        "feature",
+        "aaaaaaaaaaaaaaaa",
+        "Add constant-time token validation",
+        TEST_EPOCH,
+    );
 
     let output = wt_state_get_json_cmd(&repo).output().unwrap();
     assert!(output.status.success());
@@ -1140,6 +1297,13 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
             }
           ],
           "previous_branch": "feature",
+          "summaries": [
+            {
+              "branch": "feature",
+              "generated_at": 1735776000,
+              "summary": "Add constant-time token validation"
+            }
+          ],
           "trash": [
             {
               "modified_at": "<MTIME>",
@@ -1234,6 +1398,7 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
           ],
           "markers": [],
           "previous_branch": null,
+          "summaries": [],
           "trash": [],
           "vars": []
         }
@@ -1252,7 +1417,7 @@ fn test_state_clear_ci_status_all_with_entries(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345","branch":"feature"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345","branch":"feature"}}"#
         ),
     );
     write_ci_cache(
@@ -1277,7 +1442,7 @@ fn test_state_clear_ci_status_all_single_entry(repo: TestRepo) {
         &repo,
         "feature",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345","branch":"feature"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345","branch":"feature"}}"#
         ),
     );
 
@@ -1296,20 +1461,26 @@ fn test_state_clear_ci_status_specific_branch(repo: TestRepo) {
         .run()
         .unwrap();
 
-    // Add CI cache via git config for the specific branch
-    repo.git_command().args([
-        "config",
-        "worktrunk.state.feature.ci-status",
-        &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#),
-    ])
-    .run()
-    .unwrap();
+    let head = repo.head_sha();
+    write_ci_cache(
+        &repo,
+        "feature",
+        &format!(
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"{head}","branch":"feature"}}"#
+        ),
+    );
+    let cache_file = ci_cache_file(&repo, "feature");
+    assert!(cache_file.exists(), "cache file should exist before clear");
 
     let output = wt_state_cmd(&repo, "ci-status", "clear", &["--branch", "feature"])
         .output()
         .unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared CI cache for [1mfeature[22m[39m");
+    assert!(
+        !cache_file.exists(),
+        "cache file should be gone after clear"
+    );
 }
 
 #[rstest]
@@ -1319,12 +1490,15 @@ fn test_state_clear_ci_status_specific_branch_not_cached(repo: TestRepo) {
         .args(["branch", "feature"])
         .run()
         .unwrap();
+    let cache_file = ci_cache_file(&repo, "feature");
+    assert!(!cache_file.exists(), "cache file should not exist");
 
     let output = wt_state_cmd(&repo, "ci-status", "clear", &["--branch", "feature"])
         .output()
         .unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No CI cache for [1mfeature[22m");
+    assert!(!cache_file.exists(), "cache file should still not exist");
 }
 
 #[rstest]
@@ -2021,7 +2195,7 @@ fn test_ci_status_get_json_with_cached_data(repo: TestRepo) {
         &repo,
         "main",
         &format!(
-            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"{head}","branch":"main"}}"#
+            r#"{{"status":{{"ci_status":"passed","source":"pr","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"{head}","branch":"main"}}"#
         ),
     );
 

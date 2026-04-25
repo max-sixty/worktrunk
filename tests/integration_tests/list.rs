@@ -1832,15 +1832,15 @@ TODO: Add request/response examples for each endpoint
     // The worktree is still around and can be removed. Shows dimmed in list output.
     let fix_typos = repo.add_worktree("fix-typos");
     repo.run_git_in(&fix_typos, &["push", "-u", "origin", "fix-typos"]);
-    mock_ci_status(repo, "fix-typos", "passed", "pull-request", false);
+    mock_ci_status(repo, "fix-typos", "passed", "pr", false);
 
     // === Mock CI status ===
     // CI requires --full flag, but we mock it so examples show realistic output
     // Note: main's CI is mocked AFTER the merge commit so the hash matches
-    mock_ci_status(repo, "main", "passed", "pull-request", false);
-    mock_ci_status(repo, "fix-auth", "passed", "pull-request", false);
+    mock_ci_status(repo, "main", "passed", "pr", false);
+    mock_ci_status(repo, "fix-auth", "passed", "pr", false);
     // feature-api has unpushed commits, so CI is stale (shows dimmed)
-    mock_ci_status(repo, "feature-api", "running", "pull-request", true);
+    mock_ci_status(repo, "feature-api", "running", "pr", true);
 
     // === Mock LLM summaries ===
     // Summary requires --full + [list] summary = true + [commit.generation] command
@@ -1924,15 +1924,15 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
 /// Mock summary cache by computing the real diff hash and writing a cache entry.
 ///
 /// Mirrors `summary::generate_summary_core` — computes the combined diff
-/// (branch + working tree), hashes it, and writes a CachedSummary JSON file.
+/// (branch + working tree), SHA-256-hashes it, and writes
+/// `summary/{branch}/{hash}.json` with a CachedSummary body.
 fn mock_summary_cache(
     repo: &TestRepo,
     branch: &str,
     worktree_path: Option<&std::path::Path>,
     summary: &str,
 ) {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
+    use sha2::{Digest, Sha256};
 
     // Compute combined diff (matching compute_combined_diff in summary.rs)
     let mut diff = String::new();
@@ -1967,15 +1967,21 @@ fn mock_summary_cache(
         }
     }
 
-    // Hash the diff (matches summary::hash_diff)
-    let mut hasher = DefaultHasher::new();
-    diff.hash(&mut hasher);
-    let diff_hash = hasher.finish();
+    // SHA-256 prefix (matches summary::hash_diff — first 16 hex chars).
+    let mut hasher = Sha256::new();
+    hasher.update(diff.as_bytes());
+    let digest = hasher.finalize();
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut diff_hash = String::with_capacity(16);
+    for &b in digest.iter().take(8) {
+        diff_hash.push(HEX[(b >> 4) as usize] as char);
+        diff_hash.push(HEX[(b & 0xf) as usize] as char);
+    }
 
     // Write cache file
     let cache_json = format!(
-        r#"{{"summary":"{}","diff_hash":{},"branch":"{}"}}"#,
-        summary, diff_hash, branch
+        r#"{{"summary":"{}","branch":"{}","generated_at":0}}"#,
+        summary, branch
     );
 
     let output = repo
@@ -1990,10 +1996,14 @@ fn mock_summary_cache(
         repo.root_path().join(&git_dir)
     };
 
-    let cache_dir = git_path.join("wt").join("cache").join("summaries");
-    std::fs::create_dir_all(&cache_dir).unwrap();
     let safe_branch = worktrunk::path::sanitize_for_filename(branch);
-    let cache_file = cache_dir.join(format!("{safe_branch}.json"));
+    let branch_dir = git_path
+        .join("wt")
+        .join("cache")
+        .join("summary")
+        .join(&safe_branch);
+    std::fs::create_dir_all(&branch_dir).unwrap();
+    let cache_file = branch_dir.join(format!("{diff_hash}.json"));
     std::fs::write(&cache_file, &cache_json).unwrap();
 }
 
@@ -2976,6 +2986,34 @@ fn test_list_shows_warning_on_git_error(mut repo: TestRepo) {
 
     // Write an invalid SHA that doesn't exist in the repo
     std::fs::write(&ref_path, "0000000000000000000000000000000000000000\n").unwrap();
+
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
+}
+
+///
+/// Corrupts a detached worktree's HEAD file to a non-null but unresolvable
+/// SHA. The `collect()` batch filters out `NULL_OID`, so a non-null invalid
+/// SHA reaches `commit_details_many` and fails the whole batch — exercising
+/// the `unwrap_or_else` warning path that reports "Failed to batch-fetch
+/// commit details" on stderr.
+#[rstest]
+fn test_list_warns_when_commit_details_batch_fails(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature");
+
+    // Detach the worktree's HEAD and rewrite its HEAD file to a non-null but
+    // unresolvable SHA. `git worktree list --porcelain` happily reports the
+    // invalid SHA, which flows into the commit-details batch. Delete the
+    // branch ref so `for-each-ref refs/heads/` (branch inventory scan) doesn't
+    // choke on the now-dangling branch.
+    repo.run_git_in(&worktree_path, &["checkout", "--detach"]);
+    repo.run_git(&["branch", "-D", "feature"]);
+    let worktree_dir_name = worktree_path.file_name().unwrap().to_str().unwrap();
+    let head_path = repo
+        .root_path()
+        .join(".git/worktrees")
+        .join(worktree_dir_name)
+        .join("HEAD");
+    std::fs::write(&head_path, "0000000000000000000000000000000000000001\n").unwrap();
 
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }

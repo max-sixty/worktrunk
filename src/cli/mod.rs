@@ -659,6 +659,13 @@ List all worktrees:
 <!-- wt list -->
 ```console
 $ wt list
+  Branch       Status        HEAD±    main↕  Remote⇅  Commit    Age   Message
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1   ⇡3      6814f02a  30m   Add API tests
+^ main             ^⇅                         ⇡1  ⇣1  41ee0834  4d    Merge fix-auth: hardened to…
++ fix-auth         ↕|                ↑2  ↓1     |     b772e68b  5h    Add secure token storage
++ fix-typos        _|                           |     41ee0834  4d    Merge fix-auth: hardened to…
+
+○ Showing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden
 ```
 
 Include CI status, line diffs, and LLM summaries:
@@ -666,6 +673,13 @@ Include CI status, line diffs, and LLM summaries:
 <!-- wt list --full -->
 ```console
 $ wt list --full
+  Branch       Status        HEAD±    main↕     main…±  Summary                                              Remote⇅  CI  Commit
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware     ⇡3      ●   6814f02a
+^ main             ^⇅                                                                                         ⇡1  ⇣1  ●   41ee0834
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation         |     ●   b772e68b
++ fix-typos        _|                                                                                           |     ●   41ee0834
+
+○ Showing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden
 ```
 
 Include branches that don't have worktrees:
@@ -673,6 +687,15 @@ Include branches that don't have worktrees:
 <!-- wt list --branches --full -->
 ```console
 $ wt list --branches --full
+  Branch       Status        HEAD±    main↕     main…±  Summary                                              Remote⇅  CI  Commit
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware     ⇡3      ●   6814f02a
+^ main             ^⇅                                                                                         ⇡1  ⇣1  ●   41ee0834
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation         |     ●   b772e68b
++ fix-typos        _|                                                                                           |     ●   41ee0834
+  exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                              96379229
+  wip             /↕                 ↑1  ↓1   +33       Start API documentation                                           b40716dc
+
+○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden
 ```
 
 Output as JSON for scripting:
@@ -908,8 +931,14 @@ Missing a field that would be generally useful? Open an issue at https://github.
 
 Remove current worktree:
 
+<!-- wt remove (docs-example) -->
 ```console
 $ wt remove
+◎ Running pre-remove project:cleanup
+  flyctl scale count 0
+Scaling app to 0 machines
+◎ Removing api worktree & branch in background (same commit as main, _)
+○ Switched to worktree for main @ ~/repo
 ```
 
 Remove specific worktrees / branches:
@@ -997,8 +1026,20 @@ Detached worktrees have no branch name. Pass the worktree path instead: `wt remo
 
 Merge to the default branch:
 
+<!-- wt merge (docs-example) -->
 ```console
 $ wt merge
+◎ Running pre-merge project:test
+  cargo nextest run
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Summary [   0.002s] 2 tests run: 2 passed, 0 skipped
+◎ Merging 1 commit to main @ a1b2c3d (no commit/squash/rebase needed)
+  * a1b2c3d feat: add hook registration
+   hook.rs | 31 +++++++++++++++++++++++++++++++
+   1 file changed, 31 insertions(+)
+✓ Merged to main (1 commit, 1 file, +31)
+◎ Removing hooks worktree & branch in background (same commit as main, _)
+○ Switched to worktree for main @ ~/repo
 ```
 
 Merge to a different branch:
@@ -1092,8 +1133,12 @@ lint = "cargo clippy"
 
 Commit with LLM-generated message:
 
+<!-- wt step commit (docs-example) -->
 ```console
 $ wt step commit
+◎ Generating commit message and committing changes... (2 files, +26)
+  feat(validation): add input validation utilities
+✓ Committed changes @ a1b2c3d
 ```
 
 Manual merge workflow with review between steps:
@@ -1392,6 +1437,32 @@ $ wt hook pre-merge -- --extra args     # Forward tokens into {{ args }}
 ```
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
+
+<!-- wt hook pre-merge (docs-example) -->
+```console
+$ wt hook pre-merge
+◎ Running pre-merge project:test
+  cargo test
+    Finished test [unoptimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)
+
+running 18 tests
+test auth::tests::test_jwt_decode ... ok
+test auth::tests::test_jwt_encode ... ok
+test auth::tests::test_token_refresh ... ok
+test auth::tests::test_token_validation ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+◎ Running pre-merge project:lint
+  cargo clippy
+    Checking worktrunk v0.1.0
+    Finished dev [unoptimized + debuginfo] target(s) in 1.23s
+```
+
+```console
+$ wt hook post-start
+◎ Running post-start: project @ ~/acme
+```
 
 ## Passing values
 

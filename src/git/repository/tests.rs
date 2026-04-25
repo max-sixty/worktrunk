@@ -606,3 +606,103 @@ fn is_builtin_fsmonitor_enabled_variants() {
     }
     assert!(!repo_with_fsmonitor(None).is_builtin_fsmonitor_enabled());
 }
+
+#[test]
+fn commit_details_many_returns_subject_with_spaces() {
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::new();
+    // Commit with a multi-word subject — regression against parsers that split
+    // on the first space and treat "word1" as the timestamp.
+    test.commit_with_message("first commit with spaces");
+    let sha1 = test.repo.run_command(&["rev-parse", "HEAD"]).unwrap();
+    let sha1 = sha1.trim().to_string();
+
+    test.commit_with_message("second commit");
+    let sha2 = test.repo.run_command(&["rev-parse", "HEAD"]).unwrap();
+    let sha2 = sha2.trim().to_string();
+
+    let result = test
+        .repo
+        .commit_details_many(&[sha1.as_str(), sha2.as_str()])
+        .unwrap();
+
+    assert_eq!(result.len(), 2);
+    assert_eq!(result[&sha1].1, "first commit with spaces");
+    assert_eq!(result[&sha2].1, "second commit");
+    assert!(result[&sha1].0 > 0);
+    assert!(result[&sha2].0 > 0);
+}
+
+#[test]
+fn commit_details_many_empty_input_is_noop() {
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    let result = test.repo.commit_details_many(&[]).unwrap();
+    assert!(result.is_empty());
+}
+
+#[test]
+fn commit_details_many_fails_loudly_on_unknown_sha() {
+    // `git log --no-walk` refuses the whole batch on a single bad ref. The
+    // error surfaces as an `Err`, which `collect()` turns into a user-facing
+    // warning. Pin this behavior so we don't silently fall back to
+    // empty-map defaults.
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::with_initial_commit();
+    let bogus = "0000000000000000000000000000000000000001";
+    let err = test.repo.commit_details_many(&[bogus]).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("git") || msg.contains("unknown") || msg.contains("bad"),
+        "error message should surface git's complaint about the bogus SHA, got: {msg}"
+    );
+}
+
+#[test]
+fn commit_details_many_preserves_multibyte_utf8_subject() {
+    // Pin that multibyte UTF-8 round-trips through the NUL-delimited parser —
+    // `splitn(3, '\0')` works on byte positions, so char boundaries inside the
+    // subject must be preserved intact.
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::new();
+    let subject = "Add support for 日本語 and émoji 🎉";
+    test.commit_with_message(subject);
+    let sha = test
+        .repo
+        .run_command(&["rev-parse", "HEAD"])
+        .unwrap()
+        .trim()
+        .to_string();
+
+    let result = test.repo.commit_details_many(&[sha.as_str()]).unwrap();
+
+    assert_eq!(result[&sha].1, subject);
+}
+
+#[test]
+fn commit_details_many_deduplicates_repeated_sha() {
+    // `git log --no-walk SHA SHA` emits each commit once; pin that the batch
+    // returns a single entry for a duplicated input SHA.
+    use crate::testing::TestRepo;
+
+    let test = TestRepo::new();
+    test.commit_with_message("only commit");
+    let sha = test
+        .repo
+        .run_command(&["rev-parse", "HEAD"])
+        .unwrap()
+        .trim()
+        .to_string();
+
+    let result = test
+        .repo
+        .commit_details_many(&[sha.as_str(), sha.as_str(), sha.as_str()])
+        .unwrap();
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[&sha].1, "only commit");
+}

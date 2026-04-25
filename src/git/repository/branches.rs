@@ -2,10 +2,87 @@
 //!
 //! For single-branch operations, see [`super::Branch`].
 //! This module contains multi-branch operations (listing, filtering, etc.).
+//!
+//! # Branch inventory
+//!
+//! Every multi-branch operation in this file reads from one of two
+//! inventories — [`Repository::local_branches`] and
+//! [`Repository::remote_branches`]. Each is populated by a single
+//! `git for-each-ref` scan that's cached on `RepoCache` for the lifetime of
+//! this `Repository` instance (shared across clones via `Arc`):
+//!
+//! - `refs/heads/` scan fetches name, SHA, committer timestamp, and upstream
+//!   tracking info — enough to satisfy every local-branch accessor (name
+//!   listing, SHA priming, upstream resolution, completion ordering). The
+//!   inventory also carries a name → index map so single-branch lookups
+//!   (e.g. [`super::Branch::upstream`]) are O(1) without a separate scan.
+//! - `refs/remotes/` scan fetches the same fields for remote-tracking refs.
+//!
+//! Repeated accessors within a single command share the cached data. This
+//! consolidation replaces what used to be five overlapping `for-each-ref`
+//! calls (one per accessor) with at most two.
+//!
+//! Both scans are idempotent: their results depend only on the repository's
+//! ref state at the moment of the first call. Branches created mid-command
+//! by wt itself (e.g., after `git worktree add -b ...`) will not appear —
+//! but no caller needs to observe its own mutations through these accessors.
 
 use std::collections::{HashMap, HashSet};
 
-use super::{BranchCategory, CompletionBranch, Repository};
+use super::{BranchCategory, CompletionBranch, LocalBranch, RemoteBranch, Repository};
+
+/// Local-branch inventory: an ordered `Vec<LocalBranch>` plus a `HashMap`
+/// for O(1) single-branch lookups.
+///
+/// Populated once per `Repository` by [`Repository::scan_local_branches`]
+/// and stored on `RepoCache`. Iteration order is the scan's own sort —
+/// committer timestamp, most recent first.
+#[derive(Debug, Default)]
+pub(in crate::git) struct LocalBranchInventory {
+    entries: Vec<LocalBranch>,
+    by_name: HashMap<String, usize>,
+}
+
+impl LocalBranchInventory {
+    fn new(entries: Vec<LocalBranch>) -> Self {
+        let by_name = entries
+            .iter()
+            .enumerate()
+            .map(|(i, b)| (b.name.clone(), i))
+            .collect();
+        Self { entries, by_name }
+    }
+
+    fn entries(&self) -> &[LocalBranch] {
+        &self.entries
+    }
+
+    fn get(&self, name: &str) -> Option<&LocalBranch> {
+        self.by_name.get(name).map(|&i| &self.entries[i])
+    }
+}
+
+/// Field separator emitted by our `for-each-ref` format strings.
+///
+/// Use `%00` (git's format escape for a NUL byte) rather than a literal NUL
+/// in the Rust string: Rust's `Command::arg` rejects arguments containing
+/// interior NUL bytes (they can't survive the `CString` conversion to
+/// `execve`), so passing `\0` through `args()` would error before git runs.
+const FIELD_SEP: char = '\0';
+
+/// Format string for the local-branch scan.
+///
+/// Fields, in order: short name, object SHA, committer Unix timestamp,
+/// upstream short name (empty if none), upstream track (`[gone]` if the
+/// configured upstream no longer exists on the remote).
+const LOCAL_BRANCH_FORMAT: &str = "--format=%(refname:lstrip=2)%00%(objectname)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track)";
+
+/// Format string for the remote-branch scan.
+///
+/// Fields, in order: remote-qualified short name (e.g. `origin/feature`),
+/// object SHA, committer Unix timestamp.
+const REMOTE_BRANCH_FORMAT: &str =
+    "--format=%(refname:lstrip=2)%00%(objectname)%00%(committerdate:unix)";
 
 impl Repository {
     /// Check if a git reference exists (branch, tag, commit SHA, HEAD, etc.).
@@ -24,160 +101,106 @@ impl Repository {
             .is_ok())
     }
 
+    /// Access the local-branch inventory, scanning on first call.
+    ///
+    /// Returns every local branch (under `refs/heads/`) sorted by committer
+    /// timestamp, most recent first. Result is cached for the lifetime of
+    /// this `Repository` instance (shared across clones via `Arc`).
+    ///
+    /// The initial scan also primes `resolved_refs` (`name` →
+    /// `refs/heads/name`) and `commit_shas` (both keys → commit SHA) so
+    /// later `resolve_preferring_branch()` and `rev_parse_commit()` calls
+    /// hit memory instead of spawning per-branch `git rev-parse`.
+    pub fn local_branches(&self) -> anyhow::Result<&[LocalBranch]> {
+        Ok(self.local_branch_inventory()?.entries())
+    }
+
+    /// O(1) lookup of a single local branch by name.
+    ///
+    /// Returns `None` if no branch with that exact name exists. First call
+    /// triggers the `refs/heads/` scan the same way
+    /// [`local_branches`](Self::local_branches) would.
+    pub(super) fn local_branch(&self, name: &str) -> anyhow::Result<Option<&LocalBranch>> {
+        Ok(self.local_branch_inventory()?.get(name))
+    }
+
+    /// Access the local-branch inventory (entries + name index).
+    fn local_branch_inventory(&self) -> anyhow::Result<&LocalBranchInventory> {
+        self.cache
+            .local_branches
+            .get_or_try_init(|| self.scan_local_branches())
+    }
+
+    /// Access the remote-tracking branch inventory, scanning on first call.
+    ///
+    /// Returns every remote-tracking branch (under `refs/remotes/`) sorted
+    /// by committer timestamp, most recent first. `<remote>/HEAD` symrefs
+    /// are excluded. Result is cached for the lifetime of this `Repository`
+    /// instance.
+    pub fn remote_branches(&self) -> anyhow::Result<&[RemoteBranch]> {
+        self.cache
+            .remote_branches
+            .get_or_try_init(|| self.scan_remote_branches())
+            .map(Vec::as_slice)
+    }
+
+    /// Run the local-branch scan and prime SHA/ref caches.
+    fn scan_local_branches(&self) -> anyhow::Result<LocalBranchInventory> {
+        let output = self.run_command(&["for-each-ref", LOCAL_BRANCH_FORMAT, "refs/heads/"])?;
+
+        let mut branches: Vec<LocalBranch> =
+            output.lines().filter_map(parse_local_branch_line).collect();
+        branches.sort_by_key(|b| std::cmp::Reverse(b.committer_ts));
+
+        for branch in &branches {
+            let qualified = format!("refs/heads/{}", branch.name);
+            self.cache
+                .resolved_refs
+                .insert(branch.name.clone(), qualified.clone());
+            self.cache
+                .commit_shas
+                .insert(qualified, branch.commit_sha.clone());
+            self.cache
+                .commit_shas
+                .insert(branch.name.clone(), branch.commit_sha.clone());
+        }
+
+        Ok(LocalBranchInventory::new(branches))
+    }
+
+    /// Run the remote-tracking-branch scan.
+    fn scan_remote_branches(&self) -> anyhow::Result<Vec<RemoteBranch>> {
+        let output = self.run_command(&["for-each-ref", REMOTE_BRANCH_FORMAT, "refs/remotes/"])?;
+
+        let mut branches: Vec<RemoteBranch> = output
+            .lines()
+            .filter_map(parse_remote_branch_line)
+            .collect();
+        branches.sort_by_key(|b| std::cmp::Reverse(b.committer_ts));
+        Ok(branches)
+    }
+
     /// List all local branch names, sorted by most recent commit first.
     pub fn all_branches(&self) -> anyhow::Result<Vec<String>> {
-        let stdout = self.run_command(&[
-            "for-each-ref",
-            "--sort=-committerdate",
-            "--format=%(refname:lstrip=2)",
-            "refs/heads/",
-        ])?;
-        Ok(stdout
-            .lines()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned)
+        Ok(self
+            .local_branches()?
+            .iter()
+            .map(|b| b.name.clone())
             .collect())
-    }
-
-    /// List all local branches with their HEAD commit SHA.
-    /// Returns a vector of (branch_name, commit_sha) tuples.
-    ///
-    /// As a side effect, primes `resolved_refs` and `commit_shas` caches so
-    /// later `resolve_preferring_branch()` and `rev_parse_commit()` calls hit
-    /// the cache instead of spawning per-branch `git rev-parse` commands.
-    pub fn list_local_branches(&self) -> anyhow::Result<Vec<(String, String)>> {
-        let output = self.run_command(&[
-            "for-each-ref",
-            "--format=%(refname:lstrip=2) %(objectname)",
-            "refs/heads/",
-        ])?;
-
-        let branches: Vec<(String, String)> = output
-            .lines()
-            .filter_map(|line| {
-                let (branch, sha) = line.split_once(' ')?;
-                let qualified = format!("refs/heads/{branch}");
-                self.cache
-                    .resolved_refs
-                    .insert(branch.to_string(), qualified.clone());
-                self.cache.commit_shas.insert(qualified, sha.to_string());
-                self.cache
-                    .commit_shas
-                    .insert(branch.to_string(), sha.to_string());
-                Some((branch.to_string(), sha.to_string()))
-            })
-            .collect();
-
-        Ok(branches)
-    }
-
-    /// List remote branches from all remotes, excluding HEAD refs.
-    ///
-    /// Returns (branch_name, commit_sha) pairs for remote branches.
-    /// Branch names are in the form "origin/feature", not "feature".
-    pub fn list_remote_branches(&self) -> anyhow::Result<Vec<(String, String)>> {
-        let output = self.run_command(&[
-            "for-each-ref",
-            "--format=%(refname:lstrip=2) %(objectname)",
-            "refs/remotes/",
-        ])?;
-
-        let branches: Vec<(String, String)> = output
-            .lines()
-            .filter_map(|line| {
-                let (branch_name, sha) = line.split_once(' ')?;
-                // Skip <remote>/HEAD (symref)
-                if branch_name.ends_with("/HEAD") {
-                    None
-                } else {
-                    Some((branch_name.to_string(), sha.to_string()))
-                }
-            })
-            .collect();
-
-        Ok(branches)
-    }
-
-    /// List all upstream tracking refs that local branches are tracking.
-    ///
-    /// Returns a set of upstream refs like "origin/main", "origin/feature".
-    /// Useful for filtering remote branches to only show those not tracked locally.
-    pub fn list_tracked_upstreams(&self) -> anyhow::Result<HashSet<String>> {
-        let output =
-            self.run_command(&["for-each-ref", "--format=%(upstream:short)", "refs/heads/"])?;
-
-        let upstreams: HashSet<String> = output
-            .lines()
-            .filter(|line| !line.is_empty())
-            .map(|line| line.to_string())
-            .collect();
-
-        Ok(upstreams)
-    }
-
-    /// Fetch all upstream tracking branches in a single `git for-each-ref` call.
-    ///
-    /// Returns a map from local branch name to upstream ref (or None if no
-    /// upstream is configured, or if the configured upstream ref no longer
-    /// exists on the remote — git reports that as `[gone]` via
-    /// `%(upstream:track)`). Called lazily via `OnceCell` on first
-    /// `Branch::upstream()` access.
-    pub(super) fn fetch_all_upstreams(&self) -> anyhow::Result<HashMap<String, Option<String>>> {
-        let output = self.run_command(&[
-            "for-each-ref",
-            "--format=%(refname:lstrip=2)\t%(upstream:short)\t%(upstream:track)",
-            "refs/heads/",
-        ])?;
-
-        Ok(output
-            .lines()
-            .filter_map(|line| {
-                let mut parts = line.splitn(3, '\t');
-                let branch = parts.next()?;
-                let upstream = parts.next()?;
-                let track = parts.next()?;
-                let value = if upstream.is_empty() || track == "[gone]" {
-                    None
-                } else {
-                    Some(upstream.to_string())
-                };
-                Some((branch.to_string(), value))
-            })
-            .collect())
-    }
-
-    /// List remote branches that aren't tracked by any local branch.
-    ///
-    /// Returns (branch_name, commit_sha) pairs for remote branches that have no
-    /// corresponding local tracking branch.
-    pub fn list_untracked_remote_branches(&self) -> anyhow::Result<Vec<(String, String)>> {
-        let all_remote_branches = self.list_remote_branches()?;
-        let tracked_upstreams = self.list_tracked_upstreams()?;
-
-        let remote_branches: Vec<_> = all_remote_branches
-            .into_iter()
-            .filter(|(remote_branch_name, _)| !tracked_upstreams.contains(remote_branch_name))
-            .collect();
-
-        Ok(remote_branches)
     }
 
     /// Get branches that don't have worktrees (available for switch).
     pub fn available_branches(&self) -> anyhow::Result<Vec<String>> {
-        let all_branches = self.all_branches()?;
         let worktrees = self.list_worktrees()?;
-
-        // Collect branches that have worktrees
         let branches_with_worktrees: HashSet<String> = worktrees
             .iter()
             .filter_map(|wt| wt.branch.clone())
             .collect();
-
-        // Filter out branches with worktrees
-        Ok(all_branches
-            .into_iter()
-            .filter(|branch| !branches_with_worktrees.contains(branch))
+        Ok(self
+            .local_branches()?
+            .iter()
+            .filter(|b| !branches_with_worktrees.contains(&b.name))
+            .map(|b| b.name.clone())
             .collect())
     }
 
@@ -193,117 +216,69 @@ impl Repository {
     /// For remote branches, returns the local name (e.g., "fix" not "origin/fix")
     /// since `git worktree add path fix` auto-creates a tracking branch.
     pub fn branches_for_completion(&self) -> anyhow::Result<Vec<CompletionBranch>> {
-        // Get worktree branches
         let worktrees = self.list_worktrees()?;
         let worktree_branches: HashSet<String> = worktrees
             .iter()
             .filter_map(|wt| wt.branch.clone())
             .collect();
 
-        // Get local branches with timestamps
-        let local_output = self.run_command(&[
-            "for-each-ref",
-            "--sort=-committerdate",
-            "--format=%(refname:lstrip=2)\t%(committerdate:unix)",
-            "refs/heads/",
-        ])?;
+        let locals = self.local_branches()?;
+        let local_names: HashSet<&str> = locals.iter().map(|b| b.name.as_str()).collect();
 
-        let local_branches: Vec<(String, i64)> = local_output
-            .lines()
-            .filter_map(|line| {
-                let (name, timestamp_str) = line.split_once('\t')?;
-                let timestamp = timestamp_str.parse().unwrap_or(0);
-                Some((name.to_string(), timestamp))
-            })
-            .collect();
-
-        let local_branch_names: HashSet<String> =
-            local_branches.iter().map(|(n, _)| n.clone()).collect();
-
-        // Get remote branches with timestamps from all remotes
-        // Matches git's behavior: searches all remotes for branch names
-        let remote_output = self.run_command(&[
-            "for-each-ref",
-            "--sort=-committerdate",
-            "--format=%(refname:lstrip=2)\t%(committerdate:unix)",
-            "refs/remotes/",
-        ])?;
-
-        // Group by branch name, collecting all remotes that have each branch.
-        // Uses HashMap for grouping, then sorts by timestamp to preserve recency order.
+        // Group remote branches by local name, collecting all remotes that
+        // have each branch. Skip remotes that have a same-named local branch
+        // (users should use the local one). Keeps the most recent timestamp
+        // across remotes to preserve recency ordering.
         let mut branch_remotes: HashMap<String, (Vec<String>, i64)> = HashMap::new();
-
-        for line in remote_output.lines() {
-            // Format: "<remote>/<branch>\t<timestamp>"
-            let Some((full_name, timestamp_str)) = line.split_once('\t') else {
-                continue;
-            };
-
-            // Parse <remote>/<branch> - find first slash to split
-            let Some((remote_name, local_name)) = full_name.split_once('/') else {
-                continue;
-            };
-
-            // Skip <remote>/HEAD
-            if local_name == "HEAD" {
+        for remote in self.remote_branches()? {
+            if local_names.contains(remote.local_name.as_str()) {
                 continue;
             }
-            // Skip if local branch exists (user should use local)
-            if local_branch_names.contains(local_name) {
-                continue;
-            }
-
-            let timestamp = timestamp_str.parse().unwrap_or(0);
-
-            // Add remote to this branch's list, keeping the most recent timestamp
             branch_remotes
-                .entry(local_name.to_string())
-                .and_modify(|(remotes, existing_ts)| {
-                    remotes.push(remote_name.to_string());
-                    *existing_ts = (*existing_ts).max(timestamp);
+                .entry(remote.local_name.clone())
+                .and_modify(|(remotes, ts)| {
+                    remotes.push(remote.remote_name.clone());
+                    *ts = (*ts).max(remote.committer_ts);
                 })
-                .or_insert_with(|| (vec![remote_name.to_string()], timestamp));
+                .or_insert_with(|| (vec![remote.remote_name.clone()], remote.committer_ts));
         }
-
-        // Convert to vec and sort by timestamp (descending = most recent first)
-        let mut remote_branches: Vec<(String, Vec<String>, i64)> = branch_remotes
+        let mut remote_only: Vec<(String, Vec<String>, i64)> = branch_remotes
             .into_iter()
-            .map(|(name, (mut remotes, timestamp))| {
+            .map(|(name, (mut remotes, ts))| {
                 remotes.sort(); // Deterministic remote ordering within each branch
-                (name, remotes, timestamp)
+                (name, remotes, ts)
             })
             .collect();
-        remote_branches.sort_by_key(|b| std::cmp::Reverse(b.2));
+        remote_only.sort_by_key(|b| std::cmp::Reverse(b.2));
 
-        // Build result: worktrees first, then local, then remote
-        let mut result = Vec::new();
+        let mut result = Vec::with_capacity(locals.len() + remote_only.len());
 
-        // Worktree branches (sorted by recency from local_branches order)
-        for (name, timestamp) in &local_branches {
-            if worktree_branches.contains(name) {
+        // Worktree branches (already sorted by recency via locals order).
+        for branch in locals {
+            if worktree_branches.contains(&branch.name) {
                 result.push(CompletionBranch {
-                    name: name.clone(),
-                    timestamp: *timestamp,
+                    name: branch.name.clone(),
+                    timestamp: branch.committer_ts,
                     category: BranchCategory::Worktree,
                 });
             }
         }
 
-        // Local branches without worktrees
-        for (name, timestamp) in &local_branches {
-            if !worktree_branches.contains(name) {
+        // Local branches without worktrees.
+        for branch in locals {
+            if !worktree_branches.contains(&branch.name) {
                 result.push(CompletionBranch {
-                    name: name.clone(),
-                    timestamp: *timestamp,
+                    name: branch.name.clone(),
+                    timestamp: branch.committer_ts,
                     category: BranchCategory::Local,
                 });
             }
         }
 
-        // Remote-only branches
-        for (local_name, remotes, timestamp) in remote_branches {
+        // Remote-only branches.
+        for (name, remotes, timestamp) in remote_only {
             result.push(CompletionBranch {
-                name: local_name,
+                name,
                 timestamp,
                 category: BranchCategory::Remote(remotes),
             });
@@ -311,4 +286,54 @@ impl Repository {
 
         Ok(result)
     }
+}
+
+/// Parse one record from the local-branch scan.
+///
+/// Returns `None` for malformed lines — e.g. a future git format change or
+/// a control character snuck through. Callers skip those entries rather
+/// than fail the whole scan.
+fn parse_local_branch_line(line: &str) -> Option<LocalBranch> {
+    let mut parts = line.split(FIELD_SEP);
+    let name = parts.next()?.to_string();
+    let commit_sha = parts.next()?.to_string();
+    let committer_ts: i64 = parts.next()?.parse().ok()?;
+    let upstream_short_raw = parts.next()?;
+    let upstream_track = parts.next()?;
+    let upstream_short = if upstream_short_raw.is_empty() || upstream_track == "[gone]" {
+        None
+    } else {
+        Some(upstream_short_raw.to_string())
+    };
+    Some(LocalBranch {
+        name,
+        commit_sha,
+        committer_ts,
+        upstream_short,
+    })
+}
+
+/// Parse one record from the remote-branch scan.
+///
+/// Skips `<remote>/HEAD` symrefs — they duplicate another ref and would
+/// confuse callers that key by local name.
+fn parse_remote_branch_line(line: &str) -> Option<RemoteBranch> {
+    let mut parts = line.split(FIELD_SEP);
+    let short_name = parts.next()?;
+    let commit_sha = parts.next()?.to_string();
+    let committer_ts: i64 = parts.next()?.parse().ok()?;
+
+    // `<remote>/HEAD` is a symref to the remote's default branch; skip it.
+    let (remote_name, local_name) = short_name.split_once('/')?;
+    if local_name == "HEAD" {
+        return None;
+    }
+
+    Some(RemoteBranch {
+        short_name: short_name.to_string(),
+        commit_sha,
+        committer_ts,
+        remote_name: remote_name.to_string(),
+        local_name: local_name.to_string(),
+    })
 }

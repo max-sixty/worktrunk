@@ -61,6 +61,7 @@ pub use remove::{
     BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemovalOutput, RemoveOptions,
     delete_branch_if_safe, remove_worktree_with_cleanup, stage_worktree_removal,
 };
+pub use repository::sha_cache;
 pub use repository::{Branch, Repository, ResolvedWorktree, WorkingTree, set_base_path};
 pub use url::GitRemoteUrl;
 pub use url::parse_owner_repo;
@@ -289,6 +290,43 @@ pub struct CompletionBranch {
     pub category: BranchCategory,
 }
 
+/// A single local branch entry from the branch inventory.
+///
+/// Populated by one `git for-each-ref refs/heads/` scan per Repository lifetime
+/// (see [`Repository::local_branches`]). Sorted by most recent commit first.
+#[derive(Debug, Clone)]
+pub struct LocalBranch {
+    /// Short branch name, e.g., "feature" (not "refs/heads/feature").
+    pub name: String,
+    /// Commit SHA this branch points at.
+    pub commit_sha: String,
+    /// Unix timestamp of the commit.
+    pub committer_ts: i64,
+    /// Upstream tracking ref (e.g., "origin/main"), if configured and present.
+    /// `None` when no upstream is set, or when the configured upstream is gone
+    /// (git reports `[gone]` via `%(upstream:track)`).
+    pub upstream_short: Option<String>,
+}
+
+/// A single remote-tracking branch entry from the branch inventory.
+///
+/// Populated by one `git for-each-ref refs/remotes/` scan per Repository
+/// lifetime (see [`Repository::remote_branches`]). `<remote>/HEAD` symrefs are
+/// excluded. Sorted by most recent commit first.
+#[derive(Debug, Clone)]
+pub struct RemoteBranch {
+    /// Remote-qualified name, e.g., "origin/feature".
+    pub short_name: String,
+    /// Commit SHA this remote ref points at.
+    pub commit_sha: String,
+    /// Unix timestamp of the commit.
+    pub committer_ts: i64,
+    /// Remote name, e.g., "origin".
+    pub remote_name: String,
+    /// Branch name without the remote prefix, e.g., "feature".
+    pub local_name: String,
+}
+
 // Re-export parsing helpers for internal use
 pub(crate) use parse::DefaultBranchName;
 
@@ -414,43 +452,42 @@ pub enum HookType {
 /// which returns `Some(WorkingTree)` only when this ref has a worktree path.
 #[derive(Debug, Clone)]
 pub struct BranchRef {
-    /// Branch name (e.g., "main", "feature/auth", "origin/feature").
-    /// None for detached HEAD.
-    pub branch: Option<String>,
+    /// Full git ref (e.g., `refs/heads/feature`, `refs/remotes/origin/feature`).
+    /// `None` for detached HEAD.
+    ///
+    /// Storing the full ref — rather than a short name plus a remote/local
+    /// flag — makes the ref unambiguous: git lets users create a local branch
+    /// literally named `origin/foo`, and `git rev-parse origin/foo` then picks
+    /// `refs/heads/origin/foo` over `refs/remotes/origin/foo`. With the full
+    /// ref there is nothing to disambiguate.
+    pub full_ref: Option<String>,
     /// Commit SHA this branch/worktree points to.
     pub commit_sha: String,
     /// Path to worktree, if this branch has one.
     /// None for branch-only items (remote branches, local branches without worktrees).
     pub worktree_path: Option<PathBuf>,
-    /// True if this is a remote-tracking ref (e.g., "origin/feature").
-    /// Remote branches inherently exist on the remote and don't need push config.
-    // TODO(full-refs): Consider refactoring to store full refs (e.g., "refs/remotes/origin/feature"
-    // or "refs/heads/feature") instead of short names + is_remote flag. Full refs are self-describing
-    // and unambiguous, but would require changes throughout the codebase and user input resolution.
-    pub is_remote: bool,
 }
 
 impl BranchRef {
     /// Create a BranchRef for a local branch without a worktree.
     pub fn local_branch(branch: &str, commit_sha: &str) -> Self {
         Self {
-            branch: Some(branch.to_string()),
+            full_ref: Some(format!("refs/heads/{branch}")),
             commit_sha: commit_sha.to_string(),
             worktree_path: None,
-            is_remote: false,
         }
     }
 
     /// Create a BranchRef for a remote-tracking branch.
     ///
-    /// Remote branches (e.g., "origin/feature") are refs under refs/remotes/.
-    /// They inherently exist on the remote and don't need upstream tracking config.
+    /// `branch` is the short remote-qualified name (e.g., `"origin/feature"`),
+    /// as produced by `%(refname:lstrip=2)` in `list_remote_branches`. It is
+    /// stored as `refs/remotes/<branch>`.
     pub fn remote_branch(branch: &str, commit_sha: &str) -> Self {
         Self {
-            branch: Some(branch.to_string()),
+            full_ref: Some(format!("refs/remotes/{branch}")),
             commit_sha: commit_sha.to_string(),
             worktree_path: None,
-            is_remote: true,
         }
     }
 
@@ -469,37 +506,58 @@ impl BranchRef {
         self.worktree_path.is_some()
     }
 
-    /// Git ref string suitable for passing to integration helpers.
+    /// Full git ref (e.g., `refs/heads/feature`, `refs/remotes/origin/feature`),
+    /// suitable for passing to integration helpers that go through `git rev-parse`.
     ///
-    /// Remote branches are stored as short names like `origin/foo` (from
-    /// `%(refname:lstrip=2)` in `list_remote_branches`). Git allows local
-    /// branches literally named `origin/foo`, so passing the short form to
-    /// `git rev-parse` resolves to `refs/heads/origin/foo` — the local — and
-    /// the remote row silently computes stats against the wrong ref.
+    /// Returns `None` for detached HEAD.
+    pub fn full_ref(&self) -> Option<&str> {
+        self.full_ref.as_deref()
+    }
+
+    /// Short display name (e.g., `feature`, `origin/feature`) with the
+    /// `refs/heads/` or `refs/remotes/` prefix stripped. Use for user-facing
+    /// output and APIs that expect short names (`git config branch.<name>.*`,
+    /// `gh pr view <branch>`).
     ///
-    /// Qualifying the remote case to `refs/remotes/<name>` makes the ref
-    /// unambiguous; local branches keep the short form so
-    /// `resolve_preferring_branch` can still promote them over same-named
-    /// tags.
+    /// Returns `None` for detached HEAD.
     ///
-    /// Returns `None` for detached HEAD (no branch name).
-    pub fn integration_ref(&self) -> Option<String> {
-        let name = self.branch.as_deref()?;
-        Some(if self.is_remote {
-            format!("refs/remotes/{name}")
-        } else {
-            name.to_string()
-        })
+    /// # Panics
+    ///
+    /// Every constructor on this type produces a `full_ref` starting with
+    /// `refs/heads/` or `refs/remotes/`; this panics if that invariant is
+    /// ever violated (e.g., by a future struct-literal caller). The panic
+    /// is the intended behavior — silently returning an unqualified ref
+    /// would re-open the shadowing class of bug this type exists to rule out.
+    pub fn short_name(&self) -> Option<&str> {
+        let r = self.full_ref.as_deref()?;
+        Some(
+            r.strip_prefix("refs/heads/")
+                .or_else(|| r.strip_prefix("refs/remotes/"))
+                .expect("BranchRef.full_ref must start with refs/heads/ or refs/remotes/"),
+        )
+    }
+
+    /// True if this is a remote-tracking ref (under `refs/remotes/`).
+    pub fn is_remote(&self) -> bool {
+        self.full_ref
+            .as_deref()
+            .is_some_and(|r| r.starts_with("refs/remotes/"))
     }
 }
 
 impl From<&WorktreeInfo> for BranchRef {
     fn from(wt: &WorktreeInfo) -> Self {
+        // `WorktreeInfo.branch` is the short form produced by
+        // `parse_porcelain_list` (one `refs/heads/` prefix stripped). Worktrees
+        // always point at local branches, so re-qualifying with `refs/heads/`
+        // gives the full ref. Note: git permits a branch literally named
+        // `refs/heads/foo`; in that case `wt.branch == "refs/heads/foo"` and
+        // this produces `refs/heads/refs/heads/foo` — which is the correct full
+        // ref for that pathological branch, so we don't special-case it.
         Self {
-            branch: wt.branch.clone(),
+            full_ref: wt.branch.as_deref().map(|b| format!("refs/heads/{b}")),
             commit_sha: wt.head.clone(),
             worktree_path: Some(wt.path.clone()),
-            is_remote: false, // Worktrees are always local
         }
     }
 }
@@ -794,61 +852,72 @@ mod tests {
 
         let branch_ref = BranchRef::from(&wt);
 
-        assert_eq!(branch_ref.branch, Some("feature".to_string()));
+        assert_eq!(branch_ref.full_ref(), Some("refs/heads/feature"));
+        assert_eq!(branch_ref.short_name(), Some("feature"));
         assert_eq!(branch_ref.commit_sha, "abc123");
         assert_eq!(
             branch_ref.worktree_path,
             Some(PathBuf::from("/repo.feature"))
         );
         assert!(branch_ref.has_worktree());
-        assert!(!branch_ref.is_remote); // Worktrees are always local
+        assert!(!branch_ref.is_remote()); // Worktrees are always local
     }
 
     #[test]
     fn test_branch_ref_local_branch() {
         let branch_ref = BranchRef::local_branch("feature", "abc123");
 
-        assert_eq!(branch_ref.branch, Some("feature".to_string()));
+        assert_eq!(branch_ref.full_ref(), Some("refs/heads/feature"));
+        assert_eq!(branch_ref.short_name(), Some("feature"));
         assert_eq!(branch_ref.commit_sha, "abc123");
         assert_eq!(branch_ref.worktree_path, None);
         assert!(!branch_ref.has_worktree());
-        assert!(!branch_ref.is_remote);
+        assert!(!branch_ref.is_remote());
     }
 
     #[test]
     fn test_branch_ref_remote_branch() {
         let branch_ref = BranchRef::remote_branch("origin/feature", "abc123");
 
-        assert_eq!(branch_ref.branch, Some("origin/feature".to_string()));
+        assert_eq!(branch_ref.full_ref(), Some("refs/remotes/origin/feature"));
+        assert_eq!(branch_ref.short_name(), Some("origin/feature"));
         assert_eq!(branch_ref.commit_sha, "abc123");
         assert_eq!(branch_ref.worktree_path, None);
         assert!(!branch_ref.has_worktree());
-        assert!(branch_ref.is_remote);
+        assert!(branch_ref.is_remote());
     }
 
     #[test]
-    fn test_branch_ref_integration_ref() {
-        // Remote branches qualify to refs/remotes/ so they don't get shadowed
-        // by a same-named local branch (git allows local branches literally
-        // named `origin/foo`).
-        assert_eq!(
-            BranchRef::remote_branch("origin/foo", "abc").integration_ref(),
-            Some("refs/remotes/origin/foo".to_string())
-        );
-        // Local branches keep the short form so `resolve_preferring_branch`
-        // can still promote them over same-named tags.
-        assert_eq!(
-            BranchRef::local_branch("feature", "abc").integration_ref(),
-            Some("feature".to_string())
-        );
-        // Detached HEAD has no branch name — caller falls back to commit_sha.
+    fn test_branch_ref_full_ref_disambiguates_remote_from_local() {
+        // Git allows local branches literally named `origin/foo`. Full refs
+        // make the two distinguishable even though they share a short name.
+        //
+        // This pins the type-level contract; the end-to-end guardrail against
+        // `git rev-parse` picking the wrong ref lives at
+        // `test_list_remote_row_not_shadowed_by_same_named_local_branch` in
+        // `tests/integration_tests/list.rs`.
+        let remote = BranchRef::remote_branch("origin/foo", "abc");
+        let local = BranchRef::local_branch("origin/foo", "def");
+
+        assert_eq!(remote.full_ref(), Some("refs/remotes/origin/foo"));
+        assert_eq!(local.full_ref(), Some("refs/heads/origin/foo"));
+        assert_eq!(remote.short_name(), Some("origin/foo"));
+        assert_eq!(local.short_name(), Some("origin/foo"));
+        assert!(remote.is_remote());
+        assert!(!local.is_remote());
+    }
+
+    #[test]
+    fn test_branch_ref_detached_has_no_ref() {
+        // Detached HEAD has no branch name — callers fall back to commit_sha.
         let detached = BranchRef {
-            branch: None,
+            full_ref: None,
             commit_sha: "abc".into(),
             worktree_path: None,
-            is_remote: false,
         };
-        assert_eq!(detached.integration_ref(), None);
+        assert_eq!(detached.full_ref(), None);
+        assert_eq!(detached.short_name(), None);
+        assert!(!detached.is_remote());
     }
 
     #[test]
@@ -1029,7 +1098,8 @@ mod tests {
 
         let branch_ref = BranchRef::from(&wt);
 
-        assert_eq!(branch_ref.branch, None);
+        assert_eq!(branch_ref.full_ref(), None);
+        assert_eq!(branch_ref.short_name(), None);
         assert_eq!(branch_ref.commit_sha, "def456");
         assert!(branch_ref.has_worktree());
     }

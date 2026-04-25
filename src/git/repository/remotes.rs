@@ -315,15 +315,17 @@ impl Repository {
 
     /// Check if a ref is a remote tracking branch.
     ///
-    /// Returns true if the ref exists under `refs/remotes/` (e.g., `origin/main`).
-    /// Returns false for local branches, tags, SHAs, and non-existent refs.
+    /// Returns true if the ref appears in the remote-branch inventory
+    /// (e.g., `origin/main`). Returns false for local branches, tags, SHAs,
+    /// non-existent refs, and `<remote>/HEAD` symrefs (which the inventory
+    /// excludes).
+    ///
+    /// Resolved from the remote-branch inventory — no subprocess calls once
+    /// it's populated.
     pub fn is_remote_tracking_branch(&self, ref_name: &str) -> bool {
-        self.run_command(&[
-            "rev-parse",
-            "--verify",
-            &format!("refs/remotes/{}", ref_name),
-        ])
-        .is_ok()
+        self.remote_branches()
+            .ok()
+            .is_some_and(|branches| branches.iter().any(|r| r.short_name == ref_name))
     }
 
     /// Strip the remote prefix from a remote-tracking branch name.
@@ -332,27 +334,12 @@ impl Repository {
     /// if it's a valid remote-tracking ref. Returns `None` if the name isn't a remote ref
     /// or the remote can't be identified.
     ///
-    /// This handles remote names that don't contain `/` (the common case). It lists
-    /// all configured remotes and finds the one that matches the prefix.
-    ///
-    /// TODO: A cleaner approach would be to strip the prefix upstream — either have
-    /// `list_remote_branches()` return `(remote, local_branch, sha)` tuples, or track
-    /// `is_remote` on `ListItem` so the picker outputs just the local branch name.
-    /// Either would eliminate this runtime `git remote` call. See #1260.
+    /// Resolved from the remote-branch inventory — no subprocess calls once it's populated.
     pub fn strip_remote_prefix(&self, ref_name: &str) -> Option<String> {
-        // Quick check: is this actually a remote-tracking ref?
-        if !self.is_remote_tracking_branch(ref_name) {
-            return None;
-        }
-
-        // List all remotes and find the one that is a prefix of ref_name
-        let output = self.run_command(&["remote"]).ok()?;
-        output.lines().find_map(|remote| {
-            let prefix = format!("{}/", remote.trim());
-            ref_name
-                .strip_prefix(&prefix)
-                .filter(|branch| !branch.is_empty())
-                .map(|branch| branch.to_string())
-        })
+        self.remote_branches()
+            .ok()?
+            .iter()
+            .find(|r| r.short_name == ref_name)
+            .map(|r| r.local_name.clone())
     }
 }

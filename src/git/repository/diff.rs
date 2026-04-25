@@ -53,63 +53,56 @@ impl Repository {
         Ok(files)
     }
 
-    /// Get commit timestamps for multiple commits in a single git command.
+    /// Get commit timestamp and subject for multiple commits in a single git command.
     ///
-    /// Returns a map from commit SHA to timestamp.
-    pub fn commit_timestamps(&self, commits: &[&str]) -> anyhow::Result<HashMap<String, i64>> {
+    /// Returns a map from commit SHA to `(timestamp, subject)`. Uses NUL
+    /// separators between fields so subjects containing spaces or other
+    /// whitespace parse unambiguously. `%s` is the subject line only, so no
+    /// multi-line handling is needed.
+    ///
+    /// Fails if any SHA is invalid — `git log --no-walk` refuses the whole
+    /// batch on a single bad ref. Callers should surface the error rather
+    /// than fall back to per-SHA fetches: the batch is the only commit-detail
+    /// fetch path left, and quietly swallowing the failure produces empty
+    /// cells without telling the user why.
+    pub fn commit_details_many(
+        &self,
+        commits: &[&str],
+    ) -> anyhow::Result<HashMap<String, (i64, String)>> {
         if commits.is_empty() {
             return Ok(HashMap::new());
         }
 
-        // Build command: git log --no-walk --format='%H %ct' sha1 sha2 sha3 ...
-        // --no-walk shows exactly the named commits without DAG walking
-        let mut args = vec!["log", "--no-walk", "--no-show-signature", "--format=%H %ct"];
+        // --no-walk shows exactly the named commits without DAG walking.
+        // --no-show-signature suppresses GPG verification output that otherwise
+        // contaminates stdout when log.showSignature is set.
+        let mut args = vec![
+            "log",
+            "--no-walk",
+            "--no-show-signature",
+            "--format=%H%x00%ct%x00%s",
+        ];
         args.extend(commits);
 
         let stdout = self.run_command(&args)?;
 
         let mut result = HashMap::with_capacity(commits.len());
         for line in stdout.lines() {
-            if let Some((sha, timestamp_str)) = line.split_once(' ')
-                && let Ok(timestamp) = timestamp_str.parse::<i64>()
-            {
-                result.insert(sha.to_string(), timestamp);
-            }
+            let mut parts = line.splitn(3, '\0');
+            let (Some(sha), Some(timestamp_str), Some(subject)) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                bail!(
+                    "Malformed git log output: expected '<sha>\\0<ts>\\0<subject>', got {line:?}"
+                );
+            };
+            let timestamp: i64 = timestamp_str
+                .parse()
+                .with_context(|| format!("Failed to parse timestamp {timestamp_str:?}"))?;
+            result.insert(sha.to_string(), (timestamp, subject.to_owned()));
         }
 
         Ok(result)
-    }
-
-    /// Get commit timestamp and message in a single git command.
-    ///
-    /// Results are cached in the shared repo cache by commit SHA, so multiple
-    /// items pointing at the same commit (e.g., worktrees on main) only run
-    /// `git log -1` once.
-    pub fn commit_details(&self, commit: &str) -> anyhow::Result<(i64, String)> {
-        use dashmap::mapref::entry::Entry;
-        match self.cache.commit_details.entry(commit.to_string()) {
-            Entry::Occupied(e) => Ok(e.get().clone()),
-            Entry::Vacant(e) => {
-                // Use space separator - timestamps don't contain spaces, and %s (subject)
-                // is the first line only (no embedded newlines). Split on first space.
-                // --no-show-signature suppresses GPG verification output that otherwise
-                // contaminates stdout when log.showSignature is set.
-                let stdout = self.run_command(&[
-                    "log",
-                    "-1",
-                    "--no-show-signature",
-                    "--format=%ct %s",
-                    commit,
-                ])?;
-                // Only strip trailing newline, not spaces (empty subject = "timestamp ")
-                let line = stdout.trim_end_matches('\n');
-                let (timestamp_str, message) = line
-                    .split_once(' ')
-                    .context("Failed to parse commit details")?;
-                let timestamp = timestamp_str.parse().context("Failed to parse timestamp")?;
-                Ok(e.insert((timestamp, message.trim().to_owned())).clone())
-            }
-        }
     }
 
     /// Get commit subjects (first line of commit message) from a range.
@@ -263,7 +256,12 @@ impl Repository {
     /// On git < 2.36 or if the command fails, this is a no-op and
     /// `ahead_behind()` falls back to per-branch computation.
     pub fn batch_ahead_behind(&self, base: &str) {
-        let format = format!("%(refname:lstrip=2) %(ahead-behind:{})", base);
+        // Uses `%(refname)` (full ref) rather than `%(refname:lstrip=2)` so the
+        // cache key matches what `AheadBehindTask` queries — that task passes
+        // `BranchRef::full_ref()` (e.g., `refs/heads/feature`). Keying by short
+        // names would force every row to miss the batch cache and fall back to
+        // per-branch `rev-list --count`.
+        let format = format!("%(refname) %(ahead-behind:{})", base);
         let output = match self.run_command(&[
             "for-each-ref",
             &format!("--format={}", format),
@@ -280,17 +278,17 @@ impl Repository {
         output
             .lines()
             .filter_map(|line| {
-                // Format: "branch-name ahead behind"
+                // Format: "refs/heads/branch-name ahead behind"
                 let mut parts = line.rsplitn(3, ' ');
                 let behind: usize = parts.next()?.parse().ok()?;
                 let ahead: usize = parts.next()?.parse().ok()?;
-                let branch = parts.next()?;
-                Some((branch, ahead, behind))
+                let full_ref = parts.next()?;
+                Some((full_ref, ahead, behind))
             })
-            .for_each(|(branch, ahead, behind)| {
+            .for_each(|(full_ref, ahead, behind)| {
                 self.cache
                     .ahead_behind
-                    .insert((base.to_string(), branch.to_string()), (ahead, behind));
+                    .insert((base.to_string(), full_ref.to_string()), (ahead, behind));
             });
     }
 
@@ -384,5 +382,46 @@ impl Repository {
             .ok()
             .map(|output| DiffStats::from_shortstat(&output).format_summary())
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::git::Repository;
+    use crate::testing::TestRepo;
+
+    #[test]
+    fn batch_ahead_behind_keys_cache_by_full_ref() {
+        // Callers in `wt list` pass `BranchRef::full_ref()` (`refs/heads/<name>`)
+        // into `ahead_behind`. This test pins the batch cache to the same key
+        // shape — short-name keys would force every row to miss the batch and
+        // fall back to per-branch `rev-list --count`.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.path()).unwrap();
+
+        test.create_branch("feature");
+        test.run_git(&["checkout", "feature"]);
+        std::fs::write(test.path().join("f.txt"), "x").unwrap();
+        test.run_git(&["add", "."]);
+        test.run_git(&["commit", "-m", "feature"]);
+        test.run_git(&["checkout", "main"]);
+
+        repo.batch_ahead_behind("main");
+
+        assert_eq!(
+            repo.cache
+                .ahead_behind
+                .get(&("main".to_string(), "refs/heads/feature".to_string()))
+                .map(|v| *v),
+            Some((1, 0)),
+            "batch must prime cache under the full ref key"
+        );
+        assert!(
+            repo.cache
+                .ahead_behind
+                .get(&("main".to_string(), "feature".to_string()))
+                .is_none(),
+            "short-name key must not be used",
+        );
     }
 }

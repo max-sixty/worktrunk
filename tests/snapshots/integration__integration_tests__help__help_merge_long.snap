@@ -104,6 +104,17 @@ Unlike [2mgit merge[0m, this merges the current branch into the target branch 
 Merge to the default branch:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m merge[0m
+[107m [0m [2m[0m[2m[34m◎[0m[2m Running pre-merge project:test[0m
+[107m [0m [2m  [0m[2m[34mcargo[0m[2m nextest run[0m
+[107m [0m [2m    [0m[2m[34mFinished[0m[2m `[0m[2m[34mtest[0m[2m` profile [unoptimized + debuginfo] target([0m[2m[34ms[0m[2m) [0m[2m[35min[0m[2m [0m[2m[34m0.02s[0m[2m[0m
+[107m [0m [2m     [0m[2m[34mSummary[0m[2m [   0.002s] 2 tests run: 2 passed, 0 skipped[0m
+[107m [0m [2m[0m[2m[34m◎[0m[2m Merging 1 commit to main @ a1b2c3d ([0m[2m[34mno[0m[2m commit/squash/rebase needed)[0m
+[107m [0m [2m  [0m[2m[34m*[0m[2m a1b2c3d feat: add hook registration[0m
+[107m [0m [2m   [0m[2m[34mhook.rs[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34m31[0m[2m +++++++++++++++++++++++++++++++[0m
+[107m [0m [2m   [0m[2m[34m1[0m[2m file changed, 31 insertions([0m[2m[34m+[0m[2m)[0m
+[107m [0m [2m[0m[2m[34m✓[0m[2m Merged to main ([0m[2m[34m1[0m[2m commit, 1 file, +31)[0m
+[107m [0m [2m[0m[2m[34m◎[0m[2m Removing hooks worktree & [0m[2m[34mbranch[0m[2m in background ([0m[2m[34msame[0m[2m commit as main, _)[0m
+[107m [0m [2m[0m[2m[34m○[0m[2m Switched to worktree for main @ ~/repo[0m
 
 Merge to a different branch:
 

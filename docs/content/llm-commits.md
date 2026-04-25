@@ -63,24 +63,65 @@ These examples assume a feature worktree with changes to commit.
 
 Squashes all changes (uncommitted + existing commits) into one commit with an LLM-generated message, then merges to the default branch:
 
+<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__merge__docs_merge_squash_llm.snap — edit source to update -->
+
 {% terminal(cmd="wt merge") %}
-<span class=c>◎</span> <span class=c>Squashing 3 commits into a single commit <span style='color:var(--bright-black,#555)'>(5 files, <span class=g>+48</span></span></span><span style='color:var(--bright-black,#555)'>)</span>...
+<span class="cmd">wt merge</span>
+<span class=c>◎</span> <span class=c>Squashing 3 commits into a single commit <span style='color:var(--bright-black,#555)'>(5 files, <span class=g>+16</span></span></span><span style='color:var(--bright-black,#555)'>)</span>...
 <span class=c>◎</span> <span class=c>Generating squash commit message...</span>
 <span style='background:var(--bright-white,#fff)'> </span> <b>feat(auth): Implement JWT authentication system</b>
-<span style='background:var(--bright-white,#fff)'> </span> ...
+<span style='background:var(--bright-white,#fff)'> </span>
+<span style='background:var(--bright-white,#fff)'> </span> Add comprehensive JWT token handling including validation, refresh
+<span style='background:var(--bright-white,#fff)'> </span> logic, and authentication tests.
+<span class=g>✓</span> <span class=g>Squashed @ a1b2c3d</span>
+<span class=c>◎</span> <span class=c>Merging 1 commit to <b>main</b> @ <span class=d>a1b2c3d</span> (no rebase needed)</span>
+<span style='background:var(--bright-white,#fff)'> </span> * <span style='color:var(--yellow,#a60)'>a1b2c3d</span> feat(auth): Implement JWT authentication system
+<span style='background:var(--bright-white,#fff)'> </span>  auth.rs             | 2 <span class=g>++</span>
+<span style='background:var(--bright-white,#fff)'> </span>  auth_test.rs        | 2 <span class=g>++</span>
+<span style='background:var(--bright-white,#fff)'> </span>  integration_test.rs | 6 <span class=g>++++++</span>
+<span style='background:var(--bright-white,#fff)'> </span>  jwt.rs              | 3 <span class=g>+++</span>
+<span style='background:var(--bright-white,#fff)'> </span>  jwt_test.rs         | 3 <span class=g>+++</span>
+<span style='background:var(--bright-white,#fff)'> </span>  5 files changed, 16 insertions(+)
+<span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 5 files, +16</span></span><span style='color:var(--bright-black,#555)'>)</span>
+<span class=c>◎</span> <span class=c>Removing <b>feature</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
+<span class=d>○</span> Switched to worktree for <b>main</b> @ <b>~/repo</b>
 {% end %}
+
+<!-- END AUTO-GENERATED -->
 
 ### wt step commit
 
 Stages and commits with LLM-generated message:
 
-{{ terminal(cmd="wt step commit") }}
+<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__merge__docs_step_commit_llm.snap — edit source to update -->
+
+{% terminal(cmd="wt step commit") %}
+<span class="cmd">wt step commit</span>
+<span class=c>◎</span> <span class=c>Generating commit message and committing changes... <span style='color:var(--bright-black,#555)'>(2 files, <span class=g>+26</span></span></span><span style='color:var(--bright-black,#555)'>)</span>
+<span style='background:var(--bright-white,#fff)'> </span> <b>feat(validation): add input validation utilities</b>
+<span class=g>✓</span> <span class=g>Committed changes @ <span class=d>a1b2c3d</span></span>
+{% end %}
+
+<!-- END AUTO-GENERATED -->
 
 ### wt step squash
 
 Squashes branch commits into one with LLM-generated message:
 
-{{ terminal(cmd="wt step squash") }}
+<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__merge__docs_step_squash_llm.snap — edit source to update -->
+
+{% terminal(cmd="wt step squash") %}
+<span class="cmd">wt step squash</span>
+<span class=c>◎</span> <span class=c>Squashing 3 commits into a single commit <span style='color:var(--bright-black,#555)'>(5 files, <span class=g>+16</span></span></span><span style='color:var(--bright-black,#555)'>)</span>...
+<span class=c>◎</span> <span class=c>Generating squash commit message...</span>
+<span style='background:var(--bright-white,#fff)'> </span> <b>feat(auth): Implement JWT authentication system</b>
+<span style='background:var(--bright-white,#fff)'> </span>
+<span style='background:var(--bright-white,#fff)'> </span> Add comprehensive JWT token handling including validation, refresh
+<span style='background:var(--bright-white,#fff)'> </span> logic, and authentication tests.
+<span class=g>✓</span> <span class=g>Squashed @ a1b2c3d</span>
+{% end %}
+
+<!-- END AUTO-GENERATED -->
 
 See [`wt merge`](@/merge.md) and [`wt step`](@/step.md) for full documentation.
 

@@ -186,13 +186,34 @@ pub fn build_hook_context(
     // Resolve commit from the Active branch, not HEAD at discovery path.
     // This ensures {{ commit }} follows the Active branch even when the
     // CommandContext points to a different worktree than where we're running.
-    let commit_ref = ctx.branch.unwrap_or("HEAD");
-    if let Ok(commit) = ctx.repo.run_command(&["rev-parse", commit_ref]) {
-        let commit = commit.trim();
-        map.insert("commit".into(), commit.into());
+    // When `ctx.branch` matches the running worktree's current branch — the
+    // alias / hook hot path — reuse the HEAD SHA already cached by
+    // `WorkingTree::prewarm_info` instead of firing a fresh `rev-parse`.
+    // Detached HEAD (`ctx.branch == None`) must read HEAD from
+    // `ctx.worktree_path`, not the running worktree: `wt step for-each`
+    // iterates over sibling worktrees, and a sibling on detached HEAD has a
+    // different HEAD than the worktree `wt` runs in. Cross-worktree contexts
+    // on a branch fall through to `rev-parse <branch>`, which is repo-wide.
+    let running_wt = ctx.repo.current_worktree();
+    let commit = match ctx.branch {
+        Some(branch) if running_wt.branch().ok().flatten().as_deref() != Some(branch) => ctx
+            .repo
+            .run_command(&["rev-parse", branch])
+            .ok()
+            .map(|s| s.trim().to_owned()),
+        Some(_) => running_wt.head_sha().ok().flatten(),
+        None => ctx
+            .repo
+            .worktree_at(ctx.worktree_path)
+            .head_sha()
+            .ok()
+            .flatten(),
+    };
+    if let Some(commit) = commit {
         if commit.len() >= 7 {
             map.insert("short_commit".into(), commit[..7].into());
         }
+        map.insert("commit".into(), commit);
     }
 
     if let Ok(remote) = ctx.repo.primary_remote() {
@@ -202,7 +223,7 @@ pub fn build_hook_context(
             map.insert("remote_url".into(), url);
         }
         if let Some(branch) = ctx.branch
-            && let Ok(Some(upstream)) = ctx.repo.branch(branch).upstream_single()
+            && let Ok(Some(upstream)) = ctx.repo.branch(branch).upstream()
         {
             map.insert("upstream".into(), upstream);
         }
@@ -447,10 +468,17 @@ fn run_one_command(
     };
 
     let log_label = command_log_label(cmd, origin);
+    // Hooks get a documented JSON context on stdin; aliases inherit stdin so
+    // interactive children (e.g. `wt switch`'s picker) keep their controlling
+    // terminal. Piping JSON into an interactive alias body steals the tty.
+    let stdin_json = match origin {
+        CommandOrigin::Hook { .. } => Some(cmd.context_json.as_str()),
+        CommandOrigin::Alias { .. } => None,
+    };
     let result = execute_shell_command(
         wt_path,
         command_str,
-        Some(&cmd.context_json),
+        stdin_json,
         log_label.as_deref(),
         directives.clone(),
     );

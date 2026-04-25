@@ -51,10 +51,24 @@ Squashes all changes (uncommitted + existing commits) into one commit with an LL
 
 ```bash
 $ wt merge
-<span class=c>◎</span> <span class=c>Squashing 3 commits into a single commit <span style='color:var(--bright-black,#555)'>(5 files, <span class=g>+48</span></span></span><span style='color:var(--bright-black,#555)'>)</span>...
+<span class=c>◎</span> <span class=c>Squashing 3 commits into a single commit <span style='color:var(--bright-black,#555)'>(5 files, <span class=g>+16</span></span></span><span style='color:var(--bright-black,#555)'>)</span>...
 <span class=c>◎</span> <span class=c>Generating squash commit message...</span>
 <span style='background:var(--bright-white,#fff)'> </span> <b>feat(auth): Implement JWT authentication system</b>
-<span style='background:var(--bright-white,#fff)'> </span> ...
+<span style='background:var(--bright-white,#fff)'> </span>
+<span style='background:var(--bright-white,#fff)'> </span> Add comprehensive JWT token handling including validation, refresh
+<span style='background:var(--bright-white,#fff)'> </span> logic, and authentication tests.
+<span class=g>✓</span> <span class=g>Squashed @ a1b2c3d</span>
+<span class=c>◎</span> <span class=c>Merging 1 commit to <b>main</b> @ <span class=d>a1b2c3d</span> (no rebase needed)</span>
+<span style='background:var(--bright-white,#fff)'> </span> * <span style='color:var(--yellow,#a60)'>a1b2c3d</span> feat(auth): Implement JWT authentication system
+<span style='background:var(--bright-white,#fff)'> </span>  auth.rs             | 2 <span class=g>++</span>
+<span style='background:var(--bright-white,#fff)'> </span>  auth_test.rs        | 2 <span class=g>++</span>
+<span style='background:var(--bright-white,#fff)'> </span>  integration_test.rs | 6 <span class=g>++++++</span>
+<span style='background:var(--bright-white,#fff)'> </span>  jwt.rs              | 3 <span class=g>+++</span>
+<span style='background:var(--bright-white,#fff)'> </span>  jwt_test.rs         | 3 <span class=g>+++</span>
+<span style='background:var(--bright-white,#fff)'> </span>  5 files changed, 16 insertions(+)
+<span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 5 files, +16</span></span><span style='color:var(--bright-black,#555)'>)</span>
+<span class=c>◎</span> <span class=c>Removing <b>feature</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
+<span class=d>○</span> Switched to worktree for <b>main</b> @ <b>~/repo</b>
 ```
 
 ### wt step commit
@@ -62,7 +76,10 @@ $ wt merge
 Stages and commits with LLM-generated message:
 
 ```bash
-wt step commit
+$ wt step commit
+<span class=c>◎</span> <span class=c>Generating commit message and committing changes... <span style='color:var(--bright-black,#555)'>(2 files, <span class=g>+26</span></span></span><span style='color:var(--bright-black,#555)'>)</span>
+<span style='background:var(--bright-white,#fff)'> </span> <b>feat(validation): add input validation utilities</b>
+<span class=g>✓</span> <span class=g>Committed changes @ <span class=d>a1b2c3d</span></span>
 ```
 
 ### wt step squash
@@ -70,7 +87,14 @@ wt step commit
 Squashes branch commits into one with LLM-generated message:
 
 ```bash
-wt step squash
+$ wt step squash
+<span class=c>◎</span> <span class=c>Squashing 3 commits into a single commit <span style='color:var(--bright-black,#555)'>(5 files, <span class=g>+16</span></span></span><span style='color:var(--bright-black,#555)'>)</span>...
+<span class=c>◎</span> <span class=c>Generating squash commit message...</span>
+<span style='background:var(--bright-white,#fff)'> </span> <b>feat(auth): Implement JWT authentication system</b>
+<span style='background:var(--bright-white,#fff)'> </span>
+<span style='background:var(--bright-white,#fff)'> </span> Add comprehensive JWT token handling including validation, refresh
+<span style='background:var(--bright-white,#fff)'> </span> logic, and authentication tests.
+<span class=g>✓</span> <span class=g>Squashed @ a1b2c3d</span>
 ```
 
 See [`wt merge`](https://worktrunk.dev/merge/) and [`wt step`](https://worktrunk.dev/step/) for full documentation.

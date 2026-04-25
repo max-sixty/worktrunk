@@ -251,6 +251,33 @@ copy = "wt step copy-ignored"
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__user_hooks__docs_hook_pre_merge.snap — edit source to update -->
+
+{% terminal(cmd="wt hook pre-merge") %}
+<span class=c>◎</span> <span class=c>Running pre-merge <b>project:test</b></span>
+<span style='background:var(--bright-white,#fff)'> </span> <span class=d><span style='color:var(--blue,#00a)'>cargo</span></span><span class=d> test</span>
+    Finished test [unoptimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)
+
+running 18 tests
+test auth::tests::test_jwt_decode ... ok
+test auth::tests::test_jwt_encode ... ok
+test auth::tests::test_token_refresh ... ok
+test auth::tests::test_token_validation ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+<span class=c>◎</span> <span class=c>Running pre-merge <b>project:lint</b></span>
+<span style='background:var(--bright-white,#fff)'> </span> <span class=d><span style='color:var(--blue,#00a)'>cargo</span></span><span class=d> clippy</span>
+    Checking worktrunk v0.1.0
+    Finished dev [unoptimized + debuginfo] target(s) in 1.23s
+{% end %}
+
+<!-- END AUTO-GENERATED -->
+
+{% terminal(cmd="wt hook post-start") %}
+◎ Running post-start: project @ ~/acme
+{% end %}
+
 ## Passing values
 
 `--KEY=VALUE` binds `KEY` whenever `{{ KEY }}` appears in any command of the hook — the same smart-routing rule `wt <alias>` uses. Built-in variables can be overridden: `--branch=foo` sets `{{ branch }}` inside hook templates (the worktree's actual branch doesn't move). Hyphens in keys become underscores: `--my-var=x` sets `{{ my_var }}`.

@@ -6,8 +6,13 @@ Remove worktree; delete branch if merged. Defaults to the current worktree.
 
 Remove current worktree:
 
-```bash
+```
 $ wt remove
+◎ Running pre-remove project:cleanup
+  flyctl scale count 0
+Scaling app to 0 machines
+◎ Removing api worktree & branch in background (same commit as main, _)
+○ Switched to worktree for main @ ~/repo
 ```
 
 Remove specific worktrees / branches:

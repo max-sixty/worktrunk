@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.44.0
+
+### Fixed
+
+- **Interactive alias children (e.g. `sw = "wt switch"`) keep the tty again**: Alias execution was piping the template context JSON into each child's stdin, displacing the controlling terminal; interactive commands like `wt switch` then saw a pipe and bailed with `Interactive picker requires an interactive terminal`. Hooks still receive the documented JSON-on-stdin contract; aliases now inherit stdin unchanged. ([#2380](https://github.com/max-sixty/worktrunk/pull/2380), thanks @KieranP for reporting in [#406](https://github.com/max-sixty/worktrunk/issues/406))
+
+- **`wt list --remotes` stats were shadowed by a same-named local branch**: If a user created a local branch literally named `origin/foo`, the remote row for `origin/foo` silently reported ahead/behind (and every other integration stat) against the local branch, because `git rev-parse` prefers `refs/heads/` over `refs/remotes/`. Integration helpers now pass fully-qualified refs; a follow-up refactor makes the disambiguation unrepresentable at the type level by storing full refs on `BranchRef`. ([#2365](https://github.com/max-sixty/worktrunk/pull/2365), [#2378](https://github.com/max-sixty/worktrunk/pull/2378))
+
+- **`{{ commit }}` resolves to the per-worktree HEAD in `wt step for-each` on detached worktrees**: The hook context was reading HEAD via a process-CWD-keyed cache, so when `for-each` iterated over sibling worktrees with one on detached HEAD, `{{ commit }}` resolved to the running worktree's SHA instead of the sibling's. ([#2382](https://github.com/max-sixty/worktrunk/pull/2382))
+
+- **Global-scope `core.worktree` no longer misdetects the repo root in normal non-bare repos**: The 0.43.0 `repo_path()` fast path ([#2350](https://github.com/max-sixty/worktrunk/pull/2350)) read `core.worktree` from the bulk config map, which merges global and system scope — but git itself only honors `core.worktree` from local config for worktree discovery. When the bulk map reports `core.worktree` we now delegate to `git rev-parse --show-toplevel` so git applies its own scope rules. The common case (no `core.worktree` anywhere) still skips the subprocess. ([#2362](https://github.com/max-sixty/worktrunk/pull/2362))
+
+- **`post-create` hook config is now rejected with an explicit error instead of silently migrating to `pre-start`**: Clears the silent migration ahead of the planned `*-start` → `*-create` rename (see [#1571](https://github.com/max-sixty/worktrunk/issues/1571)). ([#2361](https://github.com/max-sixty/worktrunk/pull/2361))
+
+### Internal
+
+- **Branch enumeration consolidated into a single canonical inventory, with follow-on perf wins**: Five overlapping `for-each-ref` accessors in `src/git/repository/branches.rs` collapsed into two cached scans (`refs/heads/` and `refs/remotes/`), exposed as `Repository::local_branches()` and `remote_branches()`. Shared inventory also powers `Branch::remotes()` ([#2371](https://github.com/max-sixty/worktrunk/pull/2371)), `strip_remote_prefix` ([#2372](https://github.com/max-sixty/worktrunk/pull/2372)), and `is_remote_tracking_branch` ([#2377](https://github.com/max-sixty/worktrunk/pull/2377)), dropping a `rev-parse`/`git remote` subprocess each. `BranchRef` stores full refs ([#2378](https://github.com/max-sixty/worktrunk/pull/2378)); `prewarm_info` returns a typed snapshot with HEAD SHA folded in ([#2367](https://github.com/max-sixty/worktrunk/pull/2367)); alias on-branch dispatch reuses the cached HEAD SHA ([#2374](https://github.com/max-sixty/worktrunk/pull/2374)); `list_worktrees` caches on `RepoCache` ([#2375](https://github.com/max-sixty/worktrunk/pull/2375), [#2383](https://github.com/max-sixty/worktrunk/pull/2383)); `wt list` commit subjects batched pre-skeleton, retiring `CommitDetailsTask` ([#2369](https://github.com/max-sixty/worktrunk/pull/2369), [#2379](https://github.com/max-sixty/worktrunk/pull/2379)); picker's speculative preview warm-up primes `prewarm_info` once ([#2381](https://github.com/max-sixty/worktrunk/pull/2381)). (Breaking library API: `Repository::list_local_branches`, `list_remote_branches`, `list_tracked_upstreams`, `list_untracked_remote_branches`, `commit_timestamps`, `commit_details`, `current_worktree_info`, `Branch::upstream_single`, and `BranchRef { branch, is_remote }` fields are removed; `Repository::batch_ahead_behind` returns `()`.) ([#2368](https://github.com/max-sixty/worktrunk/pull/2368))
+
 ## 0.43.0
 
 ### Fixed

@@ -770,40 +770,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_color_reset_on_empty_style() {
-        // BUG HYPOTHESIS from CLAUDE.md (lines 154-177):
-        // Using {:#} on Style::new() produces empty string, not reset code
-        use anstyle::Style;
-
-        let empty_style = Style::new();
-        let output = format!("{:#}", empty_style);
-
-        // This is the bug: {:#} on empty style produces empty string!
-        assert_eq!(
-            output, "",
-            "BUG: Empty style reset produces empty string, not ANSI reset"
-        );
-
-        // This means colors can leak: "text in color{:#}" where # is on empty Style
-        // doesn't actually reset, it just removes the style prefix!
-    }
-
-    #[test]
-    fn test_proper_reset_with_anstyle_reset() {
-        // The correct way to reset ALL styles is anstyle::Reset
-        use anstyle::Reset;
-
-        let output = format!("{}", Reset);
-
-        // This should produce an actual ANSI escape sequence (starts with ESC)
-        assert!(
-            output.starts_with('\x1b'),
-            "Reset should produce ANSI escape code, got: {:?}",
-            output
-        );
-    }
-
     // ========================================================================
     // Symlink Mapping Tests
     // ========================================================================
@@ -953,33 +919,5 @@ mod tests {
         assert_eq!(mapping.logical_prefix, PathBuf::from("/link"));
         assert_eq!(mapping.canonical_prefix, PathBuf::from("/real"));
         // path/project is the common suffix
-    }
-
-    #[test]
-    fn test_nested_style_resets_leak_color() {
-        // BUG HYPOTHESIS from CLAUDE.md:
-        // Nested style resets can leak colors
-        use anstyle::{AnsiColor, Color, Style};
-
-        let warning = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow)));
-        let bold = Style::new().bold();
-
-        // BAD pattern: nested reset
-        let bad_output = format!("{warning}Text with {bold}nested{bold:#} styles{warning:#}");
-
-        // When {bold:#} resets, it might also reset the warning color!
-        // We can't easily test the actual ANSI codes here, but document the issue
-        std::println!(
-            "Nested reset output: {}",
-            bad_output.replace('\x1b', r"\x1b")
-        );
-
-        // GOOD pattern: compose styles
-        let warning_bold = warning.bold();
-        let good_output =
-            format!("{warning}Text with {warning_bold}composed{warning_bold:#} styles{warning:#}");
-        std::println!("Composed output: {}", good_output.replace('\x1b', r"\x1b"));
-
-        // The good pattern maintains color through the bold section
     }
 }

@@ -26,7 +26,7 @@
 //!    `git diff HEAD` for the current worktree on the preview pool. That bg
 //!    work overlaps with everything below.
 //! 4. Computes `num_items_estimate` — `list_worktrees` plus (conditionally)
-//!    `list_local_branches` / `list_remote_branches`, capped at
+//!    `local_branches` / `remote_branches`, capped at
 //!    `MAX_VISIBLE_ITEMS`. Only used to size skim's `preview_window`.
 //! 5. Builds `SkimOptions` (immutable after this — which is why steps 1-4 have
 //!    to run first).
@@ -80,9 +80,12 @@
 //!
 //! # TODO(picker-perf): dedupe git calls
 //!
-//! `num_items_estimate` and `collect::collect` each call `list_worktrees` and
-//! `list_local_branches`. Pre-seed collect's OnceCells from the main-thread
-//! fetch to save one of each on the bg thread's critical path toward skeleton.
+//! `num_items_estimate` and `collect::collect` each call `list_worktrees`.
+//! Pre-seed collect's OnceCells from the main-thread fetch to save one
+//! `git worktree list` on the bg thread's critical path toward skeleton.
+//! (The branch inventory is already shared via `Repository::cache`, so
+//! calling `local_branches()` / `remote_branches()` from both the main
+//! and bg threads runs the scan at most once.)
 
 mod items;
 mod log_formatter;
@@ -387,6 +390,14 @@ pub fn handle_picker(
     let state = PreviewState::new();
     worktrunk::shell_exec::trace_instant("Picker layout detected");
 
+    // Prime the current worktree's root / git-dir / branch / HEAD-SHA caches
+    // with one batched `git rev-parse`. Subsumes the two standalone forks that
+    // the speculative preview block below would otherwise make via `branch()`
+    // and `root()`, and is also short-circuited when `collect::collect` calls
+    // `repo.url_template()` → `load_project_config()` → `project_config_path()`
+    // (which runs `prewarm_info` again — now a cache hit).
+    let _ = repo.current_worktree().prewarm_info();
+
     // Preview cache + dedicated pool are created up-front so the speculative
     // first-item preview can run in parallel with `collect::collect` below.
     // Wrapped in `Arc` because the progressive handler (running on the
@@ -452,11 +463,11 @@ pub fn handle_picker(
             // Local branches are a superset of worktree branches (each
             // linked worktree normally has one), so take the max rather
             // than summing.
-            let local = repo.list_local_branches().map(|b| b.len()).unwrap_or(cap);
+            let local = repo.local_branches().map(|b| b.len()).unwrap_or(cap);
             estimate = estimate.max(local);
         }
         if estimate < cap && show_remotes {
-            let remotes = repo.list_remote_branches().map(|b| b.len()).unwrap_or(0);
+            let remotes = repo.remote_branches().map(|b| b.len()).unwrap_or(0);
             estimate = estimate.saturating_add(remotes);
         }
         estimate

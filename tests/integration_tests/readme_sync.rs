@@ -283,20 +283,20 @@ fn extract_command_from_snapshot(content: &str) -> Option<String> {
 /// - `[TMPDIR]/repo.branch` → `../repo.branch`
 /// - `[TMPDIR]/repo` → `../repo`
 /// - `[REPO]` → `../repo`
-/// - `_REPO_` → `repo` (just the repo name, no path)
-/// - `_REPO_.branch` → `repo.branch`
+/// - `_REPO_` → `~/repo` (worktree path; tilde so it reads as a path, not a project name)
+/// - `_REPO_.branch` → `~/repo.branch`
 fn replace_placeholders(content: &str) -> String {
     let content = HASH_REGEX.replace_all(content, "a1b2c3d");
     let content = TMPDIR_BRANCH_REGEX.replace_all(&content, "../repo.$1");
     let content = TMPDIR_MAIN_REGEX.replace_all(&content, "../repo$1");
     let content = REPO_REGEX.replace_all(&content, "../repo");
-    // Handle _REPO_.branch -> repo.branch and _REPO_ -> repo
+    // Handle _REPO_.branch -> ~/repo.branch and _REPO_ -> ~/repo
     REPO_UNDERSCORE_REGEX
         .replace_all(&content, |caps: &regex::Captures| {
             if let Some(branch) = caps.get(2) {
-                format!("repo.{}", branch.as_str())
+                format!("~/repo.{}", branch.as_str())
             } else {
-                "repo".to_string()
+                "~/repo".to_string()
             }
         })
         .into_owned()
@@ -384,19 +384,30 @@ fn update_section(
 // =============================================================================
 
 /// Regex to find command placeholder comments in help pages.
-/// Matches: `<!-- wt <id> -->\n```bash\n[$ ]wt <cmd>\n```` — the `$ ` prompt is
-/// optional. Group 1 captures the placeholder id (used for snapshot lookup,
-/// e.g. `wt list (markers)`); group 2 captures the actual command to display
-/// (e.g. `wt list`).
 ///
-/// Pattern expects ```bash``` because --help-page converts ```console``` first.
-/// In HTML mode the `$ ` alternative is a no-op today because
-/// `convert_dollar_console_to_terminal` has already rewritten `$ `‐prefixed
-/// console blocks into `{{ terminal }}` shortcodes upstream, and no raw
-/// ```bash``` blocks with a `$ ` prompt exist in CLI `after_long_help` source;
-/// plain mode skips that conversion, so both forms reach this regex.
+/// A placeholder is an HTML comment `<!-- wt <id> -->` followed by one of three
+/// code-block forms (the form depends on which stage of `--help-page` has run):
+///
+/// - ````bash``` with an optional `$ ` prompt, optionally followed by multi-line
+///   output — this is what plain (`--help-page --plain`) output contains, and
+///   also what `cli/mod.rs` source contains before `convert_dollar_console_to_terminal`.
+/// - `{{ terminal(cmd="...") }}` self-closing Zola shortcode — produced by
+///   `convert_dollar_console_to_terminal` when the source block has only a command.
+/// - `{% terminal(cmd="...") %}…{% end %}` Zola shortcode — produced by
+///   `convert_dollar_console_to_terminal` when the source block has output too.
+///
+/// Capture groups:
+/// 1. placeholder id (e.g. `wt list (markers)`) — drives snapshot lookup
+/// 2. display command when matched in the ```bash form
+/// 3. display command when matched as `{{ terminal() }}`
+/// 4. display command when matched as `{% terminal() %}…{% end %}`
+///
+/// Exactly one of groups 2–4 is non-None per match.
 static COMMAND_PLACEHOLDER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"<!-- (wt [^>]+) -->\n```bash\n(?:\$ )?(wt [^\n]+)\n```").unwrap()
+    Regex::new(
+        r#"(?s)<!-- (wt [^>\n]+) -->\n(?:```bash\n(?:\$ )?(wt [^\n]+).*?\n```|\{\{ terminal\(cmd="(wt [^"]+)"\) \}\}|\{% terminal\(cmd="(wt [^"]+)"\) %\}.*?\{% end %\})"#,
+    )
+    .unwrap()
 });
 
 /// Map commands to their snapshot files for help page expansion
@@ -411,6 +422,21 @@ fn command_to_snapshot(command: &str) -> Option<&'static str> {
         }
         "wt list (markers)" => {
             Some("integration__integration_tests__list__readme_example_list_marker.snap")
+        }
+        // Docs-page example snapshots — drive the static command-output blocks
+        // on pages otherwise dominated by GIFs. See comment in merge.rs test
+        // section for the convention.
+        "wt merge (docs-example)" => {
+            Some("integration__integration_tests__merge__docs_merge_pre_merge_hook.snap")
+        }
+        "wt step commit (docs-example)" => {
+            Some("integration__integration_tests__merge__docs_step_commit_llm.snap")
+        }
+        "wt remove (docs-example)" => {
+            Some("integration__integration_tests__remove__docs_remove_pre_remove_hook.snap")
+        }
+        "wt hook pre-merge (docs-example)" => {
+            Some("integration__integration_tests__user_hooks__docs_hook_pre_merge.snap")
         }
         _ => None,
     }
@@ -446,7 +472,19 @@ fn expand_command_placeholders(
     for cap in COMMAND_PLACEHOLDER_PATTERN.captures_iter(content) {
         let full_match = cap.get(0).unwrap().as_str();
         let placeholder_id = cap.get(1).unwrap().as_str();
-        let display_cmd = cap.get(2).unwrap().as_str();
+        // Exactly one of groups 2–4 matched — pick whichever.
+        let raw_display_cmd = cap
+            .get(2)
+            .or_else(|| cap.get(3))
+            .or_else(|| cap.get(4))
+            .unwrap()
+            .as_str();
+        // Strip trailing `|||` delimiters: `convert_dollar_console_to_terminal`
+        // treats blank lines in a ```console``` body as extra empty commands and
+        // appends them to the `cmd=` parameter with `|||` separators. Those
+        // empties would render as a stray `$ ` prompt in the Zola terminal
+        // template.
+        let display_cmd = raw_display_cmd.trim_end_matches('|').trim_end();
 
         let Some(snapshot_name) = command_to_snapshot(placeholder_id) else {
             continue;
@@ -1667,6 +1705,7 @@ fn test_docs_quickstart_examples_are_in_sync() {
         "docs/content/worktrunk.md",
         "docs/content/claude-code.md",
         "docs/content/tips-patterns.md",
+        "docs/content/llm-commits.md",
     ];
 
     let mut all_errors = Vec::new();
@@ -1737,6 +1776,28 @@ fn sync_frontmatter_description(content: &str, description: &str) -> String {
 const COMMAND_PAGES: &[&str] = &[
     "switch", "list", "merge", "remove", "config", "step", "hook",
 ];
+
+/// Write `expected` to `path` and record `rel_path` in `updated`. Creates
+/// parent directories as needed. Panics on I/O failure — these are test-time
+/// syncs, so any write error should abort the run.
+///
+/// Callers are responsible for the "is it different?" check. This lets each
+/// site apply its own normalization (e.g., `trim_lines`) before comparing
+/// without forcing it into the helper.
+fn write_tracked(
+    path: &Path,
+    expected: &str,
+    rel_path: impl Into<String>,
+    updated: &mut Vec<String>,
+) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .unwrap_or_else(|e| panic!("Failed to create {}: {}", parent.display(), e));
+    }
+    fs::write(path, expected)
+        .unwrap_or_else(|e| panic!("Failed to write {}: {}", path.display(), e));
+    updated.push(rel_path.into());
+}
 
 /// Sync command pages from --help-page output to docs/content/*.md
 /// Returns (errors, updated_files)
@@ -1851,9 +1912,12 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
         };
 
         if current != new_content {
-            fs::write(&doc_path, &new_content)
-                .unwrap_or_else(|e| panic!("Failed to write {}: {}", doc_path.display(), e));
-            updated_files.push(format!("docs/content/{}.md", cmd));
+            write_tracked(
+                &doc_path,
+                &new_content,
+                format!("docs/content/{}.md", cmd),
+                &mut updated_files,
+            );
         }
     }
 
@@ -1999,12 +2063,12 @@ fn transform_docs_for_skill(content: &str) -> String {
     // Strip HTML figure elements (demo GIFs)
     let content = HTML_FIGURE_PATTERN.replace_all(&content, "");
 
-    // Replace experimental markers (shortcode and HTML badge) with plain text
+    // Replace experimental markers (shortcode and HTML badge) with plain text.
+    // Sourcing the badge HTML from `worktrunk::docs` keeps producer (help.rs)
+    // and consumer (this strip) in lockstep: a format change there breaks
+    // here at compile time rather than silently leaking HTML into skills.
     let content = ZOLA_EXPERIMENTAL_SHORTCODE.replace_all(&content, "[experimental]");
-    let content = content.replace(
-        "<span class=\"badge-experimental\"></span>",
-        "[experimental]",
-    );
+    let content = content.replace(worktrunk::docs::BADGE_EXPERIMENTAL_HTML, "[experimental]");
 
     // Prepend title as H1 if extracted
     let content = if let Some(title) = title {
@@ -2058,9 +2122,13 @@ fn convert_console_blocks_in_docs(project_root: &Path) -> Vec<String> {
             let content = fs::read_to_string(&path).unwrap();
             let converted = worktrunk::docs::convert_dollar_console_to_terminal(&content);
             if converted != content {
-                fs::write(&path, &converted).unwrap();
                 let rel = path.strip_prefix(project_root).unwrap_or(&path);
-                updated_files.push(rel.display().to_string());
+                write_tracked(
+                    &path,
+                    &converted,
+                    rel.display().to_string(),
+                    &mut updated_files,
+                );
             }
         }
     }
@@ -2068,9 +2136,20 @@ fn convert_console_blocks_in_docs(project_root: &Path) -> Vec<String> {
     updated_files
 }
 
-/// Sync all docs/content/*.md files to skills/worktrunk/reference/*.md
-/// (excluding _index.md which is a Zola template)
-/// Returns (errors, updated_files)
+/// Sorted `.md` page filenames in `docs/content/` (excluding `_index.md`
+/// and similar underscore-prefixed Zola section markers).
+fn docs_content_page_names(docs_dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(docs_dir)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", docs_dir.display(), e))
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().to_string_lossy().into_owned();
+            (name.ends_with(".md") && !name.starts_with('_')).then_some(name)
+        })
+        .collect();
+    names.sort();
+    names
+}
+
 fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
     let mut errors = Vec::new();
     let mut updated_files = Vec::new();
@@ -2078,19 +2157,7 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
     let docs_dir = project_root.join("docs/content");
     let skill_dir = project_root.join("skills/worktrunk/reference");
 
-    let mut entries: Vec<_> = fs::read_dir(&docs_dir)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", docs_dir.display(), e))
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".md") && !name.starts_with('_') {
-                Some(name)
-            } else {
-                None
-            }
-        })
-        .collect();
-    entries.sort();
+    let entries = docs_content_page_names(&docs_dir);
 
     for name in &entries {
         let skill_file = skill_dir.join(name);
@@ -2127,15 +2194,12 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
         let current = trim_lines(&current);
 
         if current != expected {
-            // Ensure parent directory exists
-            if let Some(parent) = skill_file.parent() {
-                fs::create_dir_all(parent).unwrap_or_else(|e| {
-                    panic!("Failed to create directory {}: {}", parent.display(), e)
-                });
-            }
-            fs::write(&skill_file, format!("{}\n", expected))
-                .unwrap_or_else(|e| panic!("Failed to write {}: {}", skill_file.display(), e));
-            updated_files.push(format!("skills/worktrunk/reference/{name}"));
+            write_tracked(
+                &skill_file,
+                &format!("{expected}\n"),
+                format!("skills/worktrunk/reference/{name}"),
+                &mut updated_files,
+            );
         }
     }
 
@@ -2294,20 +2358,267 @@ fn sync_well_known_skills(project_root: &Path) -> Vec<String> {
     let index_dst = well_known_dir.join("index.json");
     let current_index = fs::read_to_string(&index_dst).unwrap_or_default();
     if current_index != index_json {
-        fs::write(&index_dst, &index_json)
-            .unwrap_or_else(|e| panic!("Failed to write {}: {}", index_dst.display(), e));
-        updated_files.push("docs/static/.well-known/agent-skills/index.json".to_string());
+        write_tracked(
+            &index_dst,
+            &index_json,
+            "docs/static/.well-known/agent-skills/index.json",
+            &mut updated_files,
+        );
     }
 
     updated_files
 }
 
+/// Regex for `<!-- wt <id> -->\n```console\n$ <cmd>\n[body]\n``` ` blocks in
+/// `src/cli/mod.rs`. The body is anything between the command line and the
+/// closing fence, captured non-greedily so adjacent blocks don't overlap.
+///
+/// Capture groups:
+/// 1. placeholder id
+/// 2. display command (the `$ ...` line)
+/// 3. body — multiline output lines (may be empty when the placeholder is a
+///    freshly added stub with no snapshot filled in yet).
+static CLI_MOD_EXAMPLE_BODY_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)<!-- (wt [^>\n]+) -->\n```console\n\$ (wt [^\n]+)\n(.*?)```").unwrap()
+});
+
+/// Fill the body of each `<!-- wt <id> -->`-tagged ```console``` block in
+/// `src/cli/mod.rs` with the plain-text output of the snapshot registered for
+/// that id. This is the write-back half of the docs-example pipeline: it keeps
+/// the terminal `--help` output (which is served verbatim from the source)
+/// faithful to real command output without requiring hand maintenance.
+///
+/// Runs before `sync_command_pages` so `--help-page` sees the fresh bodies.
+fn sync_cli_mod_example_bodies(project_root: &Path) -> (Vec<String>, Vec<String>) {
+    let mut errors = Vec::new();
+    let mut updated_files = Vec::new();
+
+    let cli_mod_path = project_root.join("src/cli/mod.rs");
+    let content = match fs::read_to_string(&cli_mod_path) {
+        Ok(c) => c,
+        Err(e) => {
+            errors.push(format!("Failed to read {}: {}", cli_mod_path.display(), e));
+            return (errors, updated_files);
+        }
+    };
+    let snapshots_dir = project_root.join("tests/snapshots");
+
+    // Collect matches first to replace in reverse (preserves byte offsets).
+    let matches: Vec<_> = CLI_MOD_EXAMPLE_BODY_PATTERN
+        .captures_iter(&content)
+        .map(|cap| {
+            let m = cap.get(0).unwrap();
+            (
+                m.start(),
+                m.end(),
+                cap.get(1).unwrap().as_str().to_string(),
+                cap.get(2).unwrap().as_str().to_string(),
+                cap.get(3).unwrap().as_str().to_string(),
+            )
+        })
+        .collect();
+
+    let mut new_content = content.clone();
+    for (start, end, placeholder_id, display_cmd, current_body) in matches.into_iter().rev() {
+        let Some(snapshot_name) = command_to_snapshot(&placeholder_id) else {
+            continue;
+        };
+
+        let snapshot_path = snapshots_dir.join(snapshot_name);
+        let snapshot_content = match fs::read_to_string(&snapshot_path) {
+            Ok(c) => c,
+            Err(e) => {
+                errors.push(format!(
+                    "Failed to read {}: {} (for placeholder '{}')",
+                    snapshot_path.display(),
+                    e,
+                    placeholder_id
+                ));
+                continue;
+            }
+        };
+
+        let plain = trim_lines(&parse_snapshot_content_for_skill(&snapshot_content));
+        // Body ends with a newline before the closing fence; match the source
+        // convention so we don't churn whitespace on subsequent runs.
+        let new_body = if plain.is_empty() {
+            String::new()
+        } else {
+            format!("{plain}\n")
+        };
+        let replacement =
+            format!("<!-- {placeholder_id} -->\n```console\n$ {display_cmd}\n{new_body}```",);
+
+        // Compare normalized bodies (trim each line of trailing whitespace) so
+        // pre-commit's trailing-whitespace trimmer doesn't create infinite loops.
+        if trim_lines(&current_body) != trim_lines(&new_body) {
+            new_content.replace_range(start..end, &replacement);
+        }
+    }
+
+    if new_content != content {
+        if let Err(e) = fs::write(&cli_mod_path, &new_content) {
+            errors.push(format!("Failed to write {}: {}", cli_mod_path.display(), e));
+        } else {
+            updated_files.push("src/cli/mod.rs".to_string());
+        }
+    }
+
+    (errors, updated_files)
+}
+
+/// Generate `docs/static/llms.txt` from `docs/content/*.md` front-matter,
+/// following the llms.txt spec (https://llmstxt.org/): H1, blockquote summary,
+/// optional intro prose, H2 section headings with bulleted link lists.
+///
+/// Link targets use the `.md` companion URLs (served via symlinks in
+/// `docs/static/*.md` → `skills/worktrunk/reference/*.md`).
+fn sync_llms_txt(project_root: &Path) -> Vec<String> {
+    use serde::Deserialize;
+    use std::collections::BTreeMap;
+
+    #[derive(Deserialize)]
+    struct ExtraFm {
+        group: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct Frontmatter {
+        title: String,
+        #[serde(default)]
+        description: Option<String>,
+        weight: i64,
+        #[serde(default)]
+        extra: Option<ExtraFm>,
+    }
+
+    let docs_dir = project_root.join("docs/content");
+    let config_path = project_root.join("docs/config.toml");
+
+    let config_content = fs::read_to_string(&config_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", config_path.display(), e));
+    let site_config: toml::Value = toml::from_str(&config_content)
+        .unwrap_or_else(|e| panic!("Failed to parse {}: {}", config_path.display(), e));
+    let site_title = site_config
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Worktrunk");
+    let site_description = site_config
+        .get("extra")
+        .and_then(|e| e.get("site_description"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let base_url = site_config
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("https://worktrunk.dev/")
+        .trim_end_matches('/');
+
+    let mut home_intro = String::new();
+    // Group pages by `extra.group`; order groups by their minimum weight so
+    // `## Commands` (weights 10–17) precedes `## Reference` (21–25) without
+    // hard-coding group names.
+    let mut groups: BTreeMap<String, Vec<(String, Frontmatter)>> = BTreeMap::new();
+
+    for name in docs_content_page_names(&docs_dir) {
+        let path = docs_dir.join(&name);
+        let slug = name.trim_end_matches(".md").to_string();
+        let content = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        let Some(rest) = content.strip_prefix("+++\n") else {
+            continue;
+        };
+        let Some((fm_text, body)) = rest.split_once("\n+++\n") else {
+            continue;
+        };
+        let fm: Frontmatter = toml::from_str(fm_text)
+            .unwrap_or_else(|e| panic!("Failed to parse frontmatter of {}: {}", path.display(), e));
+
+        // Ungrouped pages supply the document's intro prose instead of becoming bullets.
+        let Some(group) = fm.extra.as_ref().and_then(|e| e.group.clone()) else {
+            home_intro = extract_intro_prose(body);
+            continue;
+        };
+
+        groups.entry(group).or_default().push((slug, fm));
+    }
+
+    for pages in groups.values_mut() {
+        pages.sort_by_key(|(_, fm)| fm.weight);
+    }
+    let mut ordered: Vec<(String, Vec<(String, Frontmatter)>)> = groups.into_iter().collect();
+    ordered.sort_by_key(|(_, pages)| pages.first().map(|(_, fm)| fm.weight).unwrap_or(i64::MAX));
+
+    use std::fmt::Write;
+    let mut out = String::new();
+    writeln!(out, "# {site_title}\n").unwrap();
+    if !site_description.is_empty() {
+        writeln!(out, "> {site_description}\n").unwrap();
+    }
+    if !home_intro.is_empty() {
+        writeln!(out, "{home_intro}\n").unwrap();
+    }
+    for (group, pages) in ordered {
+        writeln!(out, "## {group}\n").unwrap();
+        for (slug, fm) in pages {
+            let desc = fm
+                .description
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|d| format!(": {d}"))
+                .unwrap_or_default();
+            writeln!(out, "- [{}]({base_url}/{slug}.md){desc}", fm.title).unwrap();
+        }
+        writeln!(out).unwrap();
+    }
+
+    let out = format!("{}\n", out.trim_end());
+
+    let dst = project_root.join("docs/static/llms.txt");
+    let current = fs::read_to_string(&dst).unwrap_or_default();
+    let mut updated = Vec::new();
+    if current != out {
+        write_tracked(&dst, &out, "docs/static/llms.txt", &mut updated);
+    }
+    updated
+}
+
+/// Take the leading prose paragraphs of a page body, stopping at the first
+/// section heading or HTML block (figure, comment, etc.). The homepage uses
+/// this for the llms.txt intro.
+///
+/// Trims trailing lines ending with `:` — those typically introduce the
+/// content we just cut (a figure, code block, etc.) and dangle without it.
+fn extract_intro_prose(body: &str) -> String {
+    let mut lines: Vec<&str> = Vec::new();
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("##") || trimmed.starts_with('<') || trimmed.starts_with("<!--") {
+            break;
+        }
+        lines.push(line);
+    }
+    while lines
+        .last()
+        .is_some_and(|l| l.trim_end().ends_with(':') || l.trim().is_empty())
+    {
+        lines.pop();
+    }
+    lines.join("\n").trim().to_string()
+}
+
 /// Combined test: sync command pages (mod.rs → docs) then skill files (docs → skills)
-/// then .well-known/agent-skills/ (skills → docs/static).
+/// then .well-known/agent-skills/ (skills → docs/static) then llms.txt.
 /// This ensures a single test run handles the full chain when mod.rs changes.
 #[test]
 fn test_command_pages_and_skill_files_are_in_sync() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // Step 0: Fill docs-example bodies in src/cli/mod.rs from snapshots. Runs
+    // before --help-page reads the file so command pages and skill files see
+    // the up-to-date content.
+    let (mod_errors, mod_files) = sync_cli_mod_example_bodies(project_root);
 
     // Step 1: Sync command pages (mod.rs → docs/content/*.md)
     let (cmd_errors, cmd_files) = sync_command_pages(project_root);
@@ -2324,13 +2635,22 @@ fn test_command_pages_and_skill_files_are_in_sync() {
     // This reads the freshly-written skills from step 2
     let well_known_files = sync_well_known_skills(project_root);
 
+    // Step 4: Generate docs/static/llms.txt from docs/content front-matter
+    let llms_files = sync_llms_txt(project_root);
+
     // Aggregate results
-    let all_errors: Vec<_> = cmd_errors.into_iter().chain(skill_errors).collect();
-    let all_files: Vec<_> = cmd_files
+    let all_errors: Vec<_> = mod_errors
         .into_iter()
+        .chain(cmd_errors)
+        .chain(skill_errors)
+        .collect();
+    let all_files: Vec<_> = mod_files
+        .into_iter()
+        .chain(cmd_files)
         .chain(console_files)
         .chain(skill_files)
         .chain(well_known_files)
+        .chain(llms_files)
         .collect();
 
     if !all_errors.is_empty() {
