@@ -596,6 +596,16 @@ Removed worktree for bugfix
 Signs of poor temporal locality: collecting messages in a buffer, single success
 message for batch operations, no progress before slow operations.
 
+## Spinners for Long Single-Operation Work
+
+When per-item `progress_message`s don't fit — recursive copy of thousands of
+files, a long subprocess with no useful streaming output — a stderr spinner
+keeps the user oriented. See `src/copy_progress.rs` (`CopyProgress`) for the
+pattern: TTY-gate, skip when `verbosity() >= 1` or `--dry-run`, ≥300 ms
+startup delay so fast ops stay silent, IEC bytes (KiB/MiB), clear the line
+before printing the summary, and have the summary repeat any counters the
+spinner displayed.
+
 ## Defer Non-Essential Work Until After Primary Output
 
 Fire-and-forget cleanup and cache sweeps run after the command's final
