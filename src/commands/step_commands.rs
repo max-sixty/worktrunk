@@ -26,7 +26,7 @@ use rayon::prelude::*;
 use worktrunk::HookType;
 use worktrunk::config::{CopyIgnoredConfig, UserConfig};
 use worktrunk::copy::{copy_dir_recursive, copy_leaf};
-use worktrunk::copy_progress::CopyProgress;
+use worktrunk::copy_progress::{CopyProgress, format_bytes};
 use worktrunk::git::{Repository, WorktreeInfo};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
@@ -814,6 +814,7 @@ pub fn step_copy_ignored(
     };
 
     let mut copied_count = 0usize;
+    let mut copied_bytes = 0u64;
     for (src_entry, is_dir) in &entries_to_copy {
         let relative = src_entry
             .strip_prefix(&source_path)
@@ -821,10 +822,12 @@ pub fn step_copy_ignored(
         let dest_entry = dest_path.join(relative);
 
         if *is_dir {
-            copied_count += copy_dir_recursive(src_entry, &dest_entry, force, &progress)
+            let (n, b) = copy_dir_recursive(src_entry, &dest_entry, force, &progress)
                 .with_context(|| {
                     format!("copying directory {}", format_path_for_display(relative))
                 })?;
+            copied_count += n;
+            copied_bytes += b;
         } else {
             if let Some(parent) = dest_entry.parent() {
                 fs::create_dir_all(parent).with_context(|| {
@@ -836,6 +839,7 @@ pub fn step_copy_ignored(
             }
             if let Some(bytes) = copy_leaf(src_entry, &dest_entry, force)? {
                 copied_count += 1;
+                copied_bytes += bytes;
                 progress.file_copied(bytes);
             }
         }
@@ -846,7 +850,10 @@ pub fn step_copy_ignored(
     let file_word = if copied_count == 1 { "file" } else { "files" };
     eprintln!(
         "{}",
-        success_message(format!("Copied {copied_count} {file_word}"))
+        success_message(format!(
+            "Copied {copied_count} {file_word} · {}",
+            format_bytes(copied_bytes)
+        ))
     );
 
     Ok(())

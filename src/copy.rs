@@ -20,7 +20,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use anyhow::Context;
 use rayon::prelude::*;
@@ -105,13 +105,13 @@ struct CopyLeaf {
 /// removed before copying. `progress` receives per-file callbacks; pass
 /// [`CopyProgress::disabled`] for a zero-overhead no-op.
 ///
-/// Returns the number of files actually copied (excludes skipped entries).
+/// Returns `(files_copied, bytes_copied)` — counts exclude skipped entries.
 pub fn copy_dir_recursive(
     src: &Path,
     dest: &Path,
     force: bool,
     progress: &CopyProgress,
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<(usize, u64)> {
     // Phase 1: Walk directories iteratively, creating dest dirs and collecting leaves.
     let mut leaves = Vec::new();
     let mut dir_stack = vec![(src.to_path_buf(), dest.to_path_buf())];
@@ -144,13 +144,15 @@ pub fn copy_dir_recursive(
     }
 
     // Phase 2: Copy all leaves in parallel.
-    let copied = AtomicUsize::new(0);
+    let copied_files = AtomicUsize::new(0);
+    let copied_bytes = AtomicU64::new(0);
     COPY_POOL.install(|| {
         leaves
             .par_iter()
             .try_for_each(|leaf| -> anyhow::Result<()> {
                 if let Some(bytes) = copy_leaf(&leaf.src, &leaf.dest, force)? {
-                    copied.fetch_add(1, Ordering::Relaxed);
+                    copied_files.fetch_add(1, Ordering::Relaxed);
+                    copied_bytes.fetch_add(bytes, Ordering::Relaxed);
                     progress.file_copied(bytes);
                 }
                 Ok(())
@@ -169,7 +171,7 @@ pub fn copy_dir_recursive(
             .with_context(|| format!("setting permissions on {}", dest_dir.display()))?;
     }
 
-    Ok(copied.into_inner())
+    Ok((copied_files.into_inner(), copied_bytes.into_inner()))
 }
 
 /// Remove a file, ignoring "not found" errors.

@@ -161,9 +161,11 @@ fn format_count(n: usize) -> String {
     out
 }
 
-fn format_bytes(n: u64) -> String {
-    // IEC binary prefixes — these match the 1024 divisor. SI-prefix "MB" would
-    // imply 10^6, which doesn't match what we compute.
+/// Format a byte count using IEC binary prefixes (KiB, MiB, GiB, TiB).
+///
+/// The divisor is 1024; SI-prefix "MB" would imply 10^6 and doesn't match what
+/// we compute. Used by both the spinner line and the post-copy summary.
+pub fn format_bytes(n: u64) -> String {
     const UNITS: &[&str] = &["B", "KiB", "MiB", "GiB", "TiB"];
     let mut size = n as f64;
     let mut unit = 0;
