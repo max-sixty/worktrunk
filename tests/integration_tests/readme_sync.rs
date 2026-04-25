@@ -28,14 +28,37 @@ use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
+/// Opening prefix for AUTO-GENERATED markers (rest of line: `<id> — edit <source> to update -->`).
+/// Two flavors:
+/// - `MARKER_OPEN_PREFIX` wraps any content (used by command-page sync, help-page sections)
+/// - `MARKER_OPEN_HTML_PREFIX` wraps an HTML terminal shortcode (used by standalone-doc sync)
+const MARKER_OPEN_PREFIX: &str = "<!-- ⚠️ AUTO-GENERATED from ";
+const MARKER_OPEN_HTML_PREFIX: &str = "<!-- ⚠️ AUTO-GENERATED-HTML from ";
+const MARKER_CLOSE: &str = "<!-- END AUTO-GENERATED -->";
+
+/// Format an open marker line for the given id. `flavor` is the prefix const.
+fn format_marker_open(flavor: &str, id: &str, source_label: &str) -> String {
+    format!("{flavor}{id} — edit {source_label} to update -->")
+}
+
+/// Wrap a body in `<!-- ⚠️ AUTO-GENERATED ... -->` markers.
+/// Inner whitespace ("\n\n{body}\n\n") matches the historical layout that
+/// downstream regexes and visual review depend on.
+fn wrap_in_marker(flavor: &str, id: &str, source_label: &str, body: &str) -> String {
+    let open = format_marker_open(flavor, id, source_label);
+    format!("{open}\n\n{body}\n\n{MARKER_CLOSE}")
+}
+
 /// Unified pattern for all AUTO-GENERATED markers (README and docs)
 /// Format: <!-- ⚠️ AUTO-GENERATED from <id> — edit <source> to update -->
 /// ID types: path.snap (snapshot), `cmd` (help), path#anchor (section)
 /// Content may be wrapped in ```console``` (snapshots) or unwrapped (help/sections)
 static MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?s)<!-- ⚠️ AUTO-GENERATED from ([^\n]+?) — edit [^\n]+ to update -->\n+([\s\S]*?)\n*<!-- END AUTO-GENERATED -->",
-    )
+    Regex::new(&format!(
+        r"(?s){}([^\n]+?) — edit [^\n]+ to update -->\n+([\s\S]*?)\n*{}",
+        regex::escape(MARKER_OPEN_PREFIX),
+        regex::escape(MARKER_CLOSE),
+    ))
     .unwrap()
 });
 
@@ -46,9 +69,11 @@ static ANSI_LITERAL_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[[0-
 /// Format: <!-- ⚠️ AUTO-GENERATED-HTML from path.snap — edit source to update -->
 /// Matches both old `{% terminal() %}` and new `{% terminal(cmd="...") %}` forms
 static DOCS_SNAPSHOT_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r#"(?s)<!-- ⚠️ AUTO-GENERATED-HTML from ([^\s]+\.snap) — edit source to update -->\n+\{% terminal\([^)]*\) %\}\n(.*?)\{% end %\}\n+<!-- END AUTO-GENERATED -->"#,
-    )
+    Regex::new(&format!(
+        r"(?s){}([^\s]+\.snap) — edit source to update -->\n+\{{% terminal\([^)]*\) %\}}\n(.*?)\{{% end %\}}\n+{}",
+        regex::escape(MARKER_OPEN_HTML_PREFIX),
+        regex::escape(MARKER_CLOSE),
+    ))
     .unwrap()
 });
 
@@ -314,17 +339,14 @@ fn format_replacement(id: &str, content: &str, format: &OutputFormat) -> String 
                 .captures(content)
                 .map(|c| format!(r#"cmd="{}""#, c.get(1).unwrap().as_str()))
                 .unwrap_or_default();
-            format!(
-                "<!-- ⚠️ AUTO-GENERATED-HTML from {} — edit source to update -->\n\n{{% terminal({}) %}}\n{}\n{{% end %}}\n\n<!-- END AUTO-GENERATED -->",
-                id, cmd_attr, content
+            wrap_in_marker(
+                MARKER_OPEN_HTML_PREFIX,
+                id,
+                "source",
+                &format!("{{% terminal({cmd_attr}) %}}\n{content}\n{{% end %}}"),
             )
         }
-        OutputFormat::Unwrapped => {
-            format!(
-                "<!-- ⚠️ AUTO-GENERATED from {} — edit source to update -->\n\n{}\n\n<!-- END AUTO-GENERATED -->",
-                id, content
-            )
-        }
+        OutputFormat::Unwrapped => wrap_in_marker(MARKER_OPEN_PREFIX, id, "source", content),
     }
 }
 
@@ -473,18 +495,12 @@ fn expand_command_placeholders(
         let full_match = cap.get(0).unwrap().as_str();
         let placeholder_id = cap.get(1).unwrap().as_str();
         // Exactly one of groups 2–4 matched — pick whichever.
-        let raw_display_cmd = cap
+        let display_cmd = cap
             .get(2)
             .or_else(|| cap.get(3))
             .or_else(|| cap.get(4))
             .unwrap()
             .as_str();
-        // Strip trailing `|||` delimiters: `convert_dollar_console_to_terminal`
-        // treats blank lines in a ```console``` body as extra empty commands and
-        // appends them to the `cmd=` parameter with `|||` separators. Those
-        // empties would render as a stray `$ ` prompt in the Zola terminal
-        // template.
-        let display_cmd = raw_display_cmd.trim_end_matches('|').trim_end();
 
         let Some(snapshot_name) = command_to_snapshot(placeholder_id) else {
             continue;
@@ -512,12 +528,11 @@ fn expand_command_placeholders(
                 // placeholder id, so disambiguation suffixes like `(markers)`
                 // don't leak into the rendered prompt. Prompt ($) is added
                 // via CSS ::before, so not included in HTML.
-                format!(
-                    "<!-- ⚠️ AUTO-GENERATED from tests/snapshots/{snapshot_name} — edit source to update -->\n\n\
-                     {{% terminal(cmd=\"{display_cmd}\") %}}\n\
-                     {normalized}\n\
-                     {{% end %}}\n\n\
-                     <!-- END AUTO-GENERATED -->",
+                wrap_in_marker(
+                    MARKER_OPEN_PREFIX,
+                    &format!("tests/snapshots/{snapshot_name}"),
+                    "source",
+                    &format!("{{% terminal(cmd=\"{display_cmd}\") %}}\n{normalized}\n{{% end %}}",),
                 )
             }
             ExpandMode::Plain => {
@@ -899,9 +914,11 @@ fn heading_to_anchor(heading: &str) -> String {
 /// These need to be converted to plain code blocks for README
 /// Matches both `{% terminal() %}` and `{% terminal(cmd="...") %}` forms
 static TERMINAL_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r#"(?s)(?:```bash\n[^\n]+\n```\n+)?<!-- ⚠️ AUTO-GENERATED-HTML from [^\n]+ -->\n+\{% terminal\([^)]*\) %\}\n(.*?)\{% end %\}\n+<!-- END AUTO-GENERATED -->"#,
-    )
+    Regex::new(&format!(
+        r"(?s)(?:```bash\n[^\n]+\n```\n+)?{}[^\n]+ -->\n+\{{% terminal\([^)]*\) %\}}\n(.*?)\{{% end %\}}\n+{}",
+        regex::escape(MARKER_OPEN_HTML_PREFIX),
+        regex::escape(MARKER_CLOSE),
+    ))
     .unwrap()
 });
 
@@ -1951,7 +1968,9 @@ static ZOLA_TERMINAL_SELF_CLOSING_PATTERN: LazyLock<Regex> =
 static ZOLA_EXPERIMENTAL_SHORTCODE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\{\{\s*experimental\(\)\s*\}\}").unwrap());
 
-/// Regex to strip AUTO-GENERATED marker comments (just the comments, not content)
+/// Regex to strip AUTO-GENERATED marker comments (just the comments, not content).
+/// Matches both the open prefixes (with ⚠️) and the close form (with or without
+/// the help-page mirrored suffix).
 static AUTO_GENERATED_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"<!-- ⚠️ AUTO-GENERATED[^>]*-->\n*|<!-- END AUTO-GENERATED[^>]*-->\n*").unwrap()
 });

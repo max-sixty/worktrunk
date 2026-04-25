@@ -76,32 +76,32 @@ pub fn convert_dollar_console_to_terminal(text: &str) -> String {
                 continue;
             }
 
-            // Use cmd parameter for Syntect highlighting on all blocks.
-            // {{ and }} are replaced with placeholders so Tera doesn't interpret
-            // them as template expressions. The terminal shortcode template
-            // replaces them back before Syntect highlighting.
-            // Multiple commands/comments joined with ||| delimiter;
-            // the template splits and highlights each individually.
-            let cmd_value: Vec<_> = block_lines
+            // Classify each line into the cmd= stream (rendered with prompt
+            // prefix and Syntect highlighting, joined by `|||`) or the output
+            // body. `$ <cmd>` lines feed cmd= verbatim (with `"` and `{{`/`}}`
+            // escaped past Tera); `#` lines feed cmd= so the template styles
+            // them as bash-comment section headers (used by the `wt list` jq
+            // recipes block). Blank lines belong to whichever side has content
+            // — to cmd= when the block is command-only (visual spacing between
+            // recipe groups), to body otherwise.
+            let has_output = block_lines
                 .iter()
-                .filter_map(|l| {
-                    if let Some(cmd) = l.strip_prefix("$ ") {
-                        Some(
-                            cmd.replace('"', "__WT_QUOT__")
-                                .replace("{{", "__WT_OPEN2__")
-                                .replace("}}", "__WT_CLOSE2__"),
-                        )
-                    } else if l.starts_with('#') || l.is_empty() {
-                        Some(l.to_string())
-                    } else {
-                        None // output lines go in body
-                    }
-                })
-                .collect();
-            let body_lines: Vec<_> = block_lines
-                .iter()
-                .filter(|l| !l.starts_with("$ ") && !l.starts_with('#') && !l.is_empty())
-                .collect();
+                .any(|l| !l.is_empty() && !l.starts_with("$ ") && !l.starts_with('#'));
+            let mut cmd_value: Vec<String> = Vec::new();
+            let mut body_lines: Vec<&&str> = Vec::new();
+            for line in &block_lines {
+                if let Some(cmd) = line.strip_prefix("$ ") {
+                    cmd_value.push(
+                        cmd.replace('"', "__WT_QUOT__")
+                            .replace("{{", "__WT_OPEN2__")
+                            .replace("}}", "__WT_CLOSE2__"),
+                    );
+                } else if line.starts_with('#') || (line.is_empty() && !has_output) {
+                    cmd_value.push((*line).to_string());
+                } else {
+                    body_lines.push(line);
+                }
+            }
 
             let cmd_str = cmd_value.join("|||");
             if body_lines.is_empty() {
@@ -188,5 +188,18 @@ mod tests {
             "```console\n# Recent commands\n$ tail -5 log.jsonl | jq .\n\n# Failed\n$ jq 'select(.exit != 0)' log.jsonl\n```"
         ), @r##"{{ terminal(cmd="# Recent commands|||tail -5 log.jsonl | jq .||||||# Failed|||jq 'select(.exit != 0)' log.jsonl") }}
         "##);
+
+        // Blank line in mixed-mode block (cmd + output) stays in body, doesn't
+        // leak into cmd= as a stray `$ ` prompt.
+        assert_snapshot!(convert_dollar_console_to_terminal(
+            "```console\n$ wt list\n  Branch  Status\n@ main\n\n○ Showing 1 worktree\n```"
+        ), @r#"
+        {% terminal(cmd="wt list") %}
+          Branch  Status
+        @ main
+
+        ○ Showing 1 worktree
+        {% end %}
+        "#);
     }
 }
