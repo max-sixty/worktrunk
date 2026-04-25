@@ -135,7 +135,7 @@ Alternatively, disable Windows Terminal's alias (Settings → Privacy & security
 
 Create a worktree for a new feature:
 
-<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__quickstart_switch.snap — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__quickstart_switch.snap — edit source to update -->
 
 {% terminal(cmd="wt switch --create feature-auth") %}
 <span class="cmd">wt switch --create feature-auth</span>
@@ -146,7 +146,7 @@ Create a worktree for a new feature:
 
 This creates a new branch and worktree, then switches to it. Do your work, then check all worktrees with [`wt list`](@/list.md):
 
-<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__quickstart_list.snap — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__quickstart_list.snap — edit source to update -->
 
 {% terminal(cmd="wt list") %}
 <span class="cmd">wt list</span>
@@ -169,7 +169,7 @@ When done, either:
 
 **Local merge** — squash, rebase onto main, fast-forward merge, clean up:
 
-<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__quickstart_merge.snap — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__quickstart_merge.snap — edit source to update -->
 
 {% terminal(cmd="wt merge main") %}
 <span class="cmd">wt merge main</span>

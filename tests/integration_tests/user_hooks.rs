@@ -2317,10 +2317,8 @@ fn test_args_indexing_and_length_in_hook_template(repo: TestRepo) {
     // all work the same as in alias templates.
     repo.write_test_config(
         r#"[pre-start]
-test = "echo '{{ args[0] | default(__WT_QUOT__none__WT_QUOT__) }}:{{ args | length }}' > args_seq.txt"
-"#
-        .replace("__WT_QUOT__", "'")
-        .as_str(),
+test = "echo '{{ args[0] | default('none') }}:{{ args | length }}' > args_seq.txt"
+"#,
     );
 
     let output = repo

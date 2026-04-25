@@ -51,7 +51,7 @@ use ansi_str::AnsiStr;
 use clap::ColorChoice;
 use clap::error::ErrorKind;
 use worktrunk::docs::{
-    BADGE_EXPERIMENTAL_HTML, DEMO_MARKER_PREFIX, SUBDOC_MARKER_PREFIX,
+    BADGE_EXPERIMENTAL_HTML, DEMO_MARKER_PREFIX, MARKER_OPEN_PREFIX, SUBDOC_MARKER_PREFIX,
     convert_dollar_console_to_terminal,
 };
 use worktrunk::styling::{eprintln, println};
@@ -122,14 +122,15 @@ impl PageMode {
     fn emit_header(self, subcommand: &str) {
         match self {
             Self::Web => std::println!(
-                "<!-- ⚠️ AUTO-GENERATED from `wt {subcommand} --help-page` — edit cli.rs to update -->"
+                "{MARKER_OPEN_PREFIX}`wt {subcommand} --help-page` — edit cli.rs to update -->"
             ),
             Self::Plain => std::println!("# wt {subcommand}"),
         }
         std::println!();
     }
 
-    /// Emit the closing END marker (web only).
+    /// Emit the closing END marker (web only). Mirrors the open id so the sync
+    /// test can pair adjacent regions unambiguously.
     fn emit_footer(self, subcommand: &str) {
         if matches!(self, Self::Web) {
             std::println!();

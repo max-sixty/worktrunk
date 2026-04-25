@@ -63,7 +63,7 @@ These examples assume a feature worktree with changes to commit.
 
 Squashes all changes (uncommitted + existing commits) into one commit with an LLM-generated message, then merges to the default branch:
 
-<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__merge__docs_merge_squash_llm.snap — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__merge__docs_merge_squash_llm.snap — edit source to update -->
 
 {% terminal(cmd="wt merge") %}
 <span class="cmd">wt merge</span>
@@ -93,7 +93,7 @@ Squashes all changes (uncommitted + existing commits) into one commit with an LL
 
 Stages and commits with LLM-generated message:
 
-<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__merge__docs_step_commit_llm.snap — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__merge__docs_step_commit_llm.snap — edit source to update -->
 
 {% terminal(cmd="wt step commit") %}
 <span class="cmd">wt step commit</span>
@@ -108,7 +108,7 @@ Stages and commits with LLM-generated message:
 
 Squashes branch commits into one with LLM-generated message:
 
-<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__merge__docs_step_squash_llm.snap — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__merge__docs_step_squash_llm.snap — edit source to update -->
 
 {% terminal(cmd="wt step squash") %}
 <span class="cmd">wt step squash</span>

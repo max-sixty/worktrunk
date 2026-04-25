@@ -24,6 +24,19 @@ pub const SUBDOC_MARKER_PREFIX: &str = "<!-- subdoc: ";
 /// docs site (rendered as a `<picture>` figure). Stripped from skill output.
 pub const DEMO_MARKER_PREFIX: &str = "<!-- demo: ";
 
+/// Open-marker prefix for an auto-generated region in a docs file.
+/// Followed by `<id> — edit <source> to update -->`. Both `--help-page` (the
+/// producer in `src/help.rs`) and the doc-sync test (the consumer in
+/// `tests/integration_tests/readme_sync.rs`) reference this so the literal
+/// can't drift between sides.
+pub const MARKER_OPEN_PREFIX: &str = "<!-- ⚠️ AUTO-GENERATED from ";
+
+/// Standard close marker for an auto-generated region. The help-page emitter
+/// uses a mirrored variant (`<!-- END AUTO-GENERATED from <id> -->`) so two
+/// adjacent regions can be parsed without ambiguity; everything else uses
+/// this bare form.
+pub const MARKER_CLOSE: &str = "<!-- END AUTO-GENERATED -->";
+
 /// Convert `$ `‐prefixed console blocks into `{% terminal() %}` shortcodes.
 ///
 /// All shell commands in `console` blocks use `$ ` prefix. This function detects

@@ -28,31 +28,21 @@ use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
-/// Opening prefix for AUTO-GENERATED markers (rest of line: `<id> — edit <source> to update -->`).
-/// Two flavors:
-/// - `MARKER_OPEN_PREFIX` wraps any content (used by command-page sync, help-page sections)
-/// - `MARKER_OPEN_HTML_PREFIX` wraps an HTML terminal shortcode (used by standalone-doc sync)
-const MARKER_OPEN_PREFIX: &str = "<!-- ⚠️ AUTO-GENERATED from ";
-const MARKER_OPEN_HTML_PREFIX: &str = "<!-- ⚠️ AUTO-GENERATED-HTML from ";
-const MARKER_CLOSE: &str = "<!-- END AUTO-GENERATED -->";
-
-/// Format an open marker line for the given id. `flavor` is the prefix const.
-fn format_marker_open(flavor: &str, id: &str, source_label: &str) -> String {
-    format!("{flavor}{id} — edit {source_label} to update -->")
-}
+use worktrunk::docs::{MARKER_CLOSE, MARKER_OPEN_PREFIX};
 
 /// Wrap a body in `<!-- ⚠️ AUTO-GENERATED ... -->` markers.
 /// Inner whitespace ("\n\n{body}\n\n") matches the historical layout that
 /// downstream regexes and visual review depend on.
-fn wrap_in_marker(flavor: &str, id: &str, source_label: &str, body: &str) -> String {
-    let open = format_marker_open(flavor, id, source_label);
-    format!("{open}\n\n{body}\n\n{MARKER_CLOSE}")
+fn wrap_in_marker(id: &str, source_label: &str, body: &str) -> String {
+    format!(
+        "{MARKER_OPEN_PREFIX}{id} — edit {source_label} to update -->\n\n{body}\n\n{MARKER_CLOSE}"
+    )
 }
 
-/// Unified pattern for all AUTO-GENERATED markers (README and docs)
-/// Format: <!-- ⚠️ AUTO-GENERATED from <id> — edit <source> to update -->
-/// ID types: path.snap (snapshot), `cmd` (help), path#anchor (section)
-/// Content may be wrapped in ```console``` (snapshots) or unwrapped (help/sections)
+/// Unified pattern for all AUTO-GENERATED markers.
+/// Format: `<!-- ⚠️ AUTO-GENERATED from <id> — edit <source> to update -->`
+/// ID types: path.snap (snapshot), `cmd` (help), path#anchor (section).
+/// Content may be wrapped in ```console``` (snapshots) or unwrapped (help/sections).
 static MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
         r"(?s){}([^\n]+?) — edit [^\n]+ to update -->\n+([\s\S]*?)\n*{}",
@@ -65,13 +55,14 @@ static MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 /// Regex for literal bracket notation (as stored in snapshots) - used by literal_to_escape
 static ANSI_LITERAL_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[[0-9;]*m").unwrap());
 
-/// Regex to find docs snapshot markers (HTML output)
-/// Format: <!-- ⚠️ AUTO-GENERATED-HTML from path.snap — edit source to update -->
-/// Matches both old `{% terminal() %}` and new `{% terminal(cmd="...") %}` forms
+/// Regex to find snapshot-driven terminal-shortcode markers in standalone docs files
+/// (worktrunk.md, llm-commits.md, etc.) for in-place refresh. The `.snap` ID
+/// requirement and `{% terminal() %}` body together are specific enough to
+/// exclude command-page help-region markers and other AUTO-GENERATED users.
 static DOCS_SNAPSHOT_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
         r"(?s){}([^\s]+\.snap) — edit source to update -->\n+\{{% terminal\([^)]*\) %\}}\n(.*?)\{{% end %\}}\n+{}",
-        regex::escape(MARKER_OPEN_HTML_PREFIX),
+        regex::escape(MARKER_OPEN_PREFIX),
         regex::escape(MARKER_CLOSE),
     ))
     .unwrap()
@@ -195,22 +186,6 @@ impl MarkerType {
             Self::Snapshot
         }
     }
-
-    /// Get the OutputFormat for this marker type
-    fn output_format(&self) -> OutputFormat {
-        match self {
-            Self::Snapshot => unreachable!("README has no snapshot markers"),
-            Self::Help | Self::Section => OutputFormat::Unwrapped,
-        }
-    }
-
-    /// Extract inner content (help/sections are unwrapped)
-    fn extract_inner(&self, content: &str) -> String {
-        match self {
-            Self::Snapshot => unreachable!("README has no snapshot markers"),
-            Self::Help | Self::Section => content.to_string(),
-        }
-    }
 }
 
 /// Parse a snapshot file, returning the user-facing output content
@@ -327,27 +302,24 @@ fn replace_placeholders(content: &str) -> String {
         .into_owned()
 }
 
-/// Format replacement content based on output format
+/// Format replacement content based on output format. The `wrap_in_marker`
+/// envelope is identical for both; only the body construction varies.
 fn format_replacement(id: &str, content: &str, format: &OutputFormat) -> String {
-    match format {
+    let body = match format {
         OutputFormat::DocsHtml => {
-            // Extract command from <span class="cmd"> in body to also emit as cmd= parameter
-            // The cmd= parameter enables giallo syntax highlighting in the shortcode
-            // The span is kept in body for stable sync comparisons
+            // Extract command from <span class="cmd"> in body to also emit as
+            // cmd= parameter (enables giallo syntax highlighting). The span
+            // stays in body so sync comparisons remain stable.
             let cmd_re = Regex::new(r#"^<span class="cmd">([^<]+)</span>"#).unwrap();
             let cmd_attr = cmd_re
                 .captures(content)
                 .map(|c| format!(r#"cmd="{}""#, c.get(1).unwrap().as_str()))
                 .unwrap_or_default();
-            wrap_in_marker(
-                MARKER_OPEN_HTML_PREFIX,
-                id,
-                "source",
-                &format!("{{% terminal({cmd_attr}) %}}\n{content}\n{{% end %}}"),
-            )
+            format!("{{% terminal({cmd_attr}) %}}\n{content}\n{{% end %}}")
         }
-        OutputFormat::Unwrapped => wrap_in_marker(MARKER_OPEN_PREFIX, id, "source", content),
-    }
+        OutputFormat::Unwrapped => content.to_string(),
+    };
+    wrap_in_marker(id, "source", &body)
 }
 
 /// Update sections matching a pattern in content
@@ -529,7 +501,6 @@ fn expand_command_placeholders(
                 // don't leak into the rendered prompt. Prompt ($) is added
                 // via CSS ::before, so not included in HTML.
                 wrap_in_marker(
-                    MARKER_OPEN_PREFIX,
                     &format!("tests/snapshots/{snapshot_name}"),
                     "source",
                     &format!("{{% terminal(cmd=\"{display_cmd}\") %}}\n{normalized}\n{{% end %}}",),
@@ -909,14 +880,15 @@ fn heading_to_anchor(heading: &str) -> String {
         .join("-")
 }
 
-/// Regex to match terminal shortcodes with AUTO-GENERATED-HTML markers
-/// Optionally captures a preceding bash code block (which becomes redundant)
-/// These need to be converted to plain code blocks for README
-/// Matches both `{% terminal() %}` and `{% terminal(cmd="...") %}` forms
+/// Regex to match terminal-shortcode AUTO-GENERATED markers in docs files,
+/// for conversion to plain code blocks when extracting sections into README.
+/// Optionally consumes a preceding ```bash``` block (rendered redundant by
+/// the cmd= parameter on the shortcode).
+/// Matches both `{% terminal() %}` and `{% terminal(cmd="...") %}` forms.
 static TERMINAL_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
         r"(?s)(?:```bash\n[^\n]+\n```\n+)?{}[^\n]+ -->\n+\{{% terminal\([^)]*\) %\}}\n(.*?)\{{% end %\}}\n+{}",
-        regex::escape(MARKER_OPEN_HTML_PREFIX),
+        regex::escape(MARKER_OPEN_PREFIX),
         regex::escape(MARKER_CLOSE),
     ))
     .unwrap()
@@ -948,7 +920,7 @@ fn strip_html(content: &str) -> String {
 /// - `[text](@/page.md#anchor)` → `[text](https://worktrunk.dev/page/#anchor)`
 /// - `{% rawcode() %}...{% end %}` → `<pre>...</pre>`
 /// - `<figure class="demo">...<img src="/assets/X.gif"...>...</figure>` → `![alt](raw.githubusercontent.com/.../X.gif)`
-/// - AUTO-GENERATED-HTML terminal markers → plain code blocks
+/// - AUTO-GENERATED terminal markers → plain code blocks
 /// - `{{ terminal(cmd="...") }}` → ```bash code blocks
 fn transform_zola_to_github(content: &str) -> String {
     // Transform internal links
@@ -1060,14 +1032,19 @@ fn sync_readme_markers(
 
     let total = matches.len();
 
-    // Process in reverse order to preserve positions
-    for (start, end, id, current_with_wrapper) in matches.into_iter().rev() {
-        let marker_type = MarkerType::from_id(&id);
+    // Process in reverse order to preserve positions. README markers are always
+    // Help/Section (unwrapped); a Snapshot marker would mean a stale shortcode
+    // leaked through `transform_zola_to_github` and is a real bug to surface.
+    for (start, end, id, current) in matches.into_iter().rev() {
+        if matches!(MarkerType::from_id(&id), MarkerType::Snapshot) {
+            errors.push(format!(
+                "❌ {id}: README must not contain snapshot markers — \
+                 transform_zola_to_github should have stripped this"
+            ));
+            continue;
+        }
 
-        // Strip wrapper from current content (snapshots have ```console```, others are raw)
-        let current_inner = marker_type.extract_inner(&current_with_wrapper);
-
-        let expected = match generate_readme_content(&id, &current_with_wrapper, project_root) {
+        let expected = match generate_readme_content(&id, &current, project_root) {
             Ok(content) => content,
             Err(e) => {
                 errors.push(format!("❌ {}: {}", id, e));
@@ -1076,8 +1053,8 @@ fn sync_readme_markers(
         };
 
         // Compare with trim_lines normalization applied once to each side
-        if trim_lines(&current_inner) != trim_lines(&expected) {
-            let replacement = format_replacement(&id, &expected, &marker_type.output_format());
+        if trim_lines(&current) != trim_lines(&expected) {
+            let replacement = format_replacement(&id, &expected, &OutputFormat::Unwrapped);
             result.replace_range(start..end, &replacement);
             updated += 1;
         }
@@ -1717,7 +1694,7 @@ fn sync_docs_snapshots(doc_path: &Path, project_root: &Path) -> Result<usize, Ve
 fn test_docs_quickstart_examples_are_in_sync() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    // Process all docs files with AUTO-GENERATED-HTML markers
+    // Process all docs files with snapshot-driven AUTO-GENERATED markers
     let doc_files = [
         "docs/content/worktrunk.md",
         "docs/content/claude-code.md",
@@ -1907,12 +1884,16 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
             current.clone()
         };
 
-        // Find the help-page marker region using mirrored END tag
-        // Pattern: <!-- ⚠️ AUTO-GENERATED from `wt cmd --help-page` ... --> ... <!-- END AUTO-GENERATED from `wt cmd --help-page` -->
+        // Find the help-page marker region. The help-page emitter uses a
+        // mirrored close (`<!-- END AUTO-GENERATED from <id> -->`) so that
+        // adjacent regions never need backtracking past the wrong one — match
+        // the same id literally on both sides.
+        let id_re = regex::escape(&format!("`wt {cmd} --help-page`"));
         let marker_pattern = Regex::new(&format!(
-            r"(?s)<!-- ⚠️ AUTO-GENERATED from `wt {} --help-page`[^>]*-->.*?<!-- END AUTO-GENERATED from `wt {} --help-page` -->",
-            cmd, cmd
-        )).unwrap();
+            r"(?s){open}{id_re}[^>]*-->.*?<!-- END AUTO-GENERATED from {id_re} -->",
+            open = regex::escape(MARKER_OPEN_PREFIX),
+        ))
+        .unwrap();
 
         let new_content = if let Some(m) = marker_pattern.find(&new_content) {
             let before = &new_content[..m.start()];
