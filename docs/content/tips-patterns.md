@@ -322,6 +322,8 @@ To create a worktree and immediately attach:
 
 Each worktree gets its own [cmux](https://cmux.com) workspace. Switching worktrees switches workspaces; removing a worktree closes its workspace.
 
+**Prerequisites:** [jq](https://jqlang.org) (`brew install jq`)
+
 ```toml
 # ~/.config/worktrunk/config.toml
 [pre-start]
@@ -329,20 +331,24 @@ cmux = "cmux new-workspace --name {{ repo | sanitize }}/{{ branch | sanitize }} 
 
 [pre-switch]
 cmux = """
-WS=$(cmux list-workspaces 2>/dev/null | grep -F {{ repo | sanitize }}/{{ branch | sanitize }} | head -1 | grep -o 'workspace:[0-9]*')
+WS=$(cmux --json list-workspaces 2>/dev/null \\
+  | jq -r --arg t '{{ repo | sanitize }}/{{ branch | sanitize }}' \\
+      '.workspaces[] | select(.title == $t) | .ref' | head -1)
 [ -n "$WS" ] && cmux select-workspace --workspace "$WS" || true
 """
 
 [pre-remove]
 cmux = """
-WS=$(cmux list-workspaces 2>/dev/null | grep -F {{ repo | sanitize }}/{{ branch | sanitize }} | head -1 | grep -o 'workspace:[0-9]*')
+WS=$(cmux --json list-workspaces 2>/dev/null \\
+  | jq -r --arg t '{{ repo | sanitize }}/{{ branch | sanitize }}' \\
+      '.workspaces[] | select(.title == $t) | .ref' | head -1)
 [ -n "$WS" ] && cmux close-workspace --workspace "$WS" || true
 """
 ```
 
 **Why `pre-*` instead of `post-*`?** cmux restricts socket access to processes spawned inside a cmux terminal. `post-*` hooks run as detached background processes, breaking the process ancestry chain. `pre-*` hooks run in the foreground and inherit the terminal's process lineage.
 
-The `grep -o 'workspace:[0-9]*'` pattern extracts the workspace ref regardless of whether the workspace is selected (which adds a `*` prefix to the line).
+**Why `cmux --json` and not `cmux list-workspaces --json`?** cmux parses `--json` as a pre-command flag, before the subcommand — placed after the subcommand it falls through to the command's argument list and is silently ignored, leaving you with text output. Exact-matching on `.title` then avoids the substring bleed that `grep -F` would cause for sibling workspaces sharing a prefix (e.g., `demo` vs `demo2`).
 
 ## Xcode DerivedData cleanup
 
