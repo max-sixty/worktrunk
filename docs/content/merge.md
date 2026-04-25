@@ -24,7 +24,23 @@ Unlike `git merge`, this merges the current branch into the target branch — no
 
 Merge to the default branch:
 
-{{ terminal(cmd="wt merge") }}
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__merge__docs_merge_pre_merge_hook.snap — edit source to update -->
+
+{% terminal(cmd="wt merge") %}
+<span class=c>◎</span> <span class=c>Running pre-merge <b>project:test</b></span>
+<span style='background:var(--bright-white,#fff)'> </span> <span class=d><span style='color:var(--blue,#00a)'>cargo</span></span><span class=d> nextest run</span>
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Summary [   0.002s] 2 tests run: 2 passed, 0 skipped
+<span class=c>◎</span> <span class=c>Merging 1 commit to <b>main</b> @ <span class=d>a1b2c3d</span> (no commit/squash/rebase needed)</span>
+<span style='background:var(--bright-white,#fff)'> </span> * <span style='color:var(--yellow,#a60)'>a1b2c3d</span> feat: add hook registration
+<span style='background:var(--bright-white,#fff)'> </span>  hook.rs | 31 <span class=g>+++++++++++++++++++++++++++++++</span>
+<span style='background:var(--bright-white,#fff)'> </span>  1 file changed, 31 insertions(+)
+<span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 1 file, +31</span></span><span style='color:var(--bright-black,#555)'>)</span>
+<span class=c>◎</span> <span class=c>Removing <b>hooks</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
+<span class=d>○</span> Switched to worktree for <b>main</b> @ <b>~/repo</b>
+{% end %}
+
+<!-- END AUTO-GENERATED -->
 
 Merge to a different branch:
 

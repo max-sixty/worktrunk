@@ -144,7 +144,7 @@ Create a worktree for a new feature:
 
 ```console
 $ wt switch --create feature-auth
-✓ Created branch feature-auth from main and worktree @ repo.feature-auth
+✓ Created branch feature-auth from main and worktree @ ~/repo.feature-auth
 
 ```
 
@@ -186,7 +186,7 @@ $ wt merge main
    2 files changed, 53 insertions(+)
 ✓ Merged to main (1 commit, 2 files, +53)
 ◎ Removing feature-auth worktree & branch in background (same commit as main, _)
-○ Switched to worktree for main @ repo
+○ Switched to worktree for main @ ~/repo
 
 ```
 

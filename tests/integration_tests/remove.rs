@@ -2808,6 +2808,65 @@ fn restore_dir_permissions(dir: &std::path::Path) {
 }
 
 // ============================================================================
+// Docs-page example snapshot
+//
+// See tests/integration_tests/merge.rs header comment for the docs-example
+// convention — `<!-- wt remove (docs-example) -->` in `src/cli/mod.rs`.
+// ============================================================================
+
+/// `wt remove` example for `docs/content/remove.md` — pre-remove hook running
+/// `flyctl scale count 0`, background cleanup.
+#[rstest]
+fn test_docs_remove_pre_remove_hook(mut repo: TestRepo) {
+    repo.run_git(&["config", "worktrunk.hints.worktree-path", "true"]);
+
+    let bin_dir = repo.root_path().join(".bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    crate::common::mock_commands::MockConfig::new("flyctl")
+        .command(
+            "scale",
+            crate::common::mock_commands::MockResponse::output("Scaling app to 0 machines\n"),
+        )
+        .write(&bin_dir);
+
+    repo.write_project_config(
+        r#"[[pre-remove]]
+cleanup = "flyctl scale count 0"
+"#,
+    );
+    repo.run_git(&["add", ".config", ".bin"]);
+    repo.run_git(&["commit", "-m", "Add project config"]);
+
+    let api_wt = repo.add_worktree("api");
+
+    let directive_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(".wt-directive-docs-remove");
+    std::fs::write(&directive_file, "").unwrap();
+
+    let mut paths: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    paths.insert(0, bin_dir.clone());
+    let new_path = std::env::join_paths(&paths).unwrap();
+    let bin_dir_str = bin_dir.to_string_lossy().into_owned();
+    let directive_file_str = directive_file.to_string_lossy().into_owned();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        assert_cmd_snapshot!("docs_remove_pre_remove_hook", {
+            let mut cmd = make_snapshot_cmd(&repo, "remove", &["--yes"], Some(&api_wt));
+            cmd.env("PATH", &new_path);
+            cmd.env("MOCK_CONFIG_DIR", &bin_dir_str);
+            cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file_str);
+            cmd
+        });
+    });
+}
+
+// ============================================================================
 // --format=json
 // ============================================================================
 

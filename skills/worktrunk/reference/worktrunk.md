@@ -123,7 +123,7 @@ Create a worktree for a new feature:
 
 ```bash
 $ wt switch --create feature-auth
-<span class=g>✓</span> <span class=g>Created branch <b>feature-auth</b> from <b>main</b> and worktree @ <b>repo.feature-auth</b></span>
+<span class=g>✓</span> <span class=g>Created branch <b>feature-auth</b> from <b>main</b> and worktree @ <b>~/repo.feature-auth</b></span>
 ```
 
 This creates a new branch and worktree, then switches to it. Do your work, then check all worktrees with [`wt list`](https://worktrunk.dev/list/):
@@ -163,7 +163,7 @@ $ wt merge main
 <span style='background:var(--bright-white,#fff)'> </span>  2 files changed, 53 insertions(+)
 <span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 2 files, +53</span></span><span style='color:var(--bright-black,#555)'>)</span>
 <span class=c>◎</span> <span class=c>Removing <b>feature-auth</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
-<span class=d>○</span> Switched to worktree for <b>main</b> @ <b>repo</b>
+<span class=d>○</span> Switched to worktree for <b>main</b> @ <b>~/repo</b>
 ```
 
 For parallel agents, create multiple worktrees and launch an agent in each:

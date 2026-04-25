@@ -33,7 +33,7 @@ repos:
       # Check links using .config/lychee.toml exclusions
       # Uses lychee-system (requires `cargo install lychee`) to avoid /bin/bash dependency on Windows
       - id: lychee-system
-        types: [markdown]
+        files: '\.(md|txt)$'
         args:
           - --config=.config/lychee.toml
   - repo: local
