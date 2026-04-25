@@ -920,5 +920,4 @@ mod tests {
         assert_eq!(mapping.canonical_prefix, PathBuf::from("/real"));
         // path/project is the common suffix
     }
-
 }
