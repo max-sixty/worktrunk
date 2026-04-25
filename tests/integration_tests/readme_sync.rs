@@ -2072,8 +2072,8 @@ fn transform_docs_for_skill(content: &str) -> String {
 
     // Replace placeholders used to escape Tera template syntax in cmd parameters
     let content = content
-        .replace("__WT_OPEN2__", "{{")
-        .replace("__WT_CLOSE2__", "}}")
+        .replace("__WT_OPEN__", "{{")
+        .replace("__WT_CLOSE__", "}}")
         .replace("__WT_QUOT__", "\"");
 
     // Strip AUTO-GENERATED marker comments (keep content)

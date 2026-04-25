@@ -93,8 +93,8 @@ pub fn convert_dollar_console_to_terminal(text: &str) -> String {
                 if let Some(cmd) = line.strip_prefix("$ ") {
                     cmd_value.push(
                         cmd.replace('"', "__WT_QUOT__")
-                            .replace("{{", "__WT_OPEN2__")
-                            .replace("}}", "__WT_CLOSE2__"),
+                            .replace("{{", "__WT_OPEN__")
+                            .replace("}}", "__WT_CLOSE__"),
                     );
                 } else if line.starts_with('#') || (line.is_empty() && !has_output) {
                     cmd_value.push((*line).to_string());
@@ -138,7 +138,7 @@ mod tests {
         assert_snapshot!(convert_dollar_console_to_terminal(
             "```console\n$ wt step eval '{{ branch | hash_port }}'\n16066\n```"
         ), @r#"
-        {% terminal(cmd="wt step eval '__WT_OPEN2__ branch | hash_port __WT_CLOSE2__'") %}
+        {% terminal(cmd="wt step eval '__WT_OPEN__ branch | hash_port __WT_CLOSE__'") %}
         16066
         {% end %}
         "#);

@@ -468,29 +468,29 @@ All [hook template variables and filters](@/hook.md#template-variables) are avai
 
 Get the port for the current branch:
 
-{% terminal(cmd="wt step eval '__WT_OPEN2__ branch | hash_port __WT_CLOSE2__'") %}
+{% terminal(cmd="wt step eval '__WT_OPEN__ branch | hash_port __WT_CLOSE__'") %}
 16066
 {% end %}
 
 Use in shell substitution:
 
-{{ terminal(cmd="curl http://localhost:$(wt step eval '__WT_OPEN2__ branch | hash_port __WT_CLOSE2__')/health") }}
+{{ terminal(cmd="curl http://localhost:$(wt step eval '__WT_OPEN__ branch | hash_port __WT_CLOSE__')/health") }}
 
 Combine multiple values:
 
-{% terminal(cmd="wt step eval '__WT_OPEN2__ branch | hash_port __WT_CLOSE2__,__WT_OPEN2__ (__WT_QUOT__supabase-api-__WT_QUOT__ ~ branch) | hash_port __WT_CLOSE2__'") %}
+{% terminal(cmd="wt step eval '__WT_OPEN__ branch | hash_port __WT_CLOSE__,__WT_OPEN__ (__WT_QUOT__supabase-api-__WT_QUOT__ ~ branch) | hash_port __WT_CLOSE__'") %}
 16066,16739
 {% end %}
 
 Use conditionals and filters:
 
-{% terminal(cmd="wt step eval '__WT_OPEN2__ branch | sanitize_db __WT_CLOSE2__'") %}
+{% terminal(cmd="wt step eval '__WT_OPEN__ branch | sanitize_db __WT_CLOSE__'") %}
 feature_auth_oauth2_a1b
 {% end %}
 
 Show available template variables:
 
-{% terminal(cmd="wt step eval --dry-run '__WT_OPEN2__ branch __WT_CLOSE2__'") %}
+{% terminal(cmd="wt step eval --dry-run '__WT_OPEN__ branch __WT_CLOSE__'") %}
 branch=feature/auth-oauth2
 worktree_path=/home/user/projects/myapp-feature-auth-oauth2
 ...
@@ -558,7 +558,7 @@ Run npm install in all worktrees:
 
 Use branch name in command:
 
-{{ terminal(cmd="wt step for-each -- __WT_QUOT__echo Branch: __WT_OPEN2__ branch __WT_CLOSE2____WT_QUOT__") }}
+{{ terminal(cmd="wt step for-each -- __WT_QUOT__echo Branch: __WT_OPEN__ branch __WT_CLOSE____WT_QUOT__") }}
 
 Pull updates in worktrees with upstreams (skips others):
 

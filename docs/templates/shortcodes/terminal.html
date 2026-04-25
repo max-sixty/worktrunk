@@ -8,7 +8,7 @@
 {% endif %}
 <pre class="terminal"><code>
 {%- for cmd_line in cmd_lines -%}
-{%- set cmd_line = cmd_line | replace(from="__WT_OPEN2__", to="{{") | replace(from="__WT_CLOSE2__", to="}}") | replace(from="__WT_QUOT__", to='"') -%}
+{%- set cmd_line = cmd_line | replace(from="__WT_OPEN__", to="{{") | replace(from="__WT_CLOSE__", to="}}") | replace(from="__WT_QUOT__", to='"') -%}
 {%- set md = fence ~ "bash
 " ~ cmd_line ~ "
 " ~ fence -%}
