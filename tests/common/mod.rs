@@ -901,6 +901,18 @@ fn setup_snapshot_settings_for_paths_with_home(
         "post-start-[NAME]-[TIMESTAMP].log",
     );
 
+    // Normalize byte counts inside the gray "(N files · X UNIT)" stats
+    // parenthetical emitted by `wt remove --foreground`. The walk hits the
+    // renamed worktree's `.git` pointer file, whose content is the gitdir's
+    // path — so the byte total is sensitive to the temp-dir prefix (macOS
+    // `/var/folders/...` vs Linux `/tmp/...` vs Windows). Anchored on the
+    // gray ANSI span (`\x1b[90m(`) to leave deterministic byte counts in
+    // copy-ignored summaries (`Copied N files · X B`) untouched.
+    settings.add_filter(
+        r"(\x1b\[90m\(\d+ files? · )\d+(?:\.\d+)? (B|KiB|MiB|GiB|TiB)",
+        "${1}[BYTES] $2",
+    );
+
     // Filter out Git hint messages that vary across Git versions
     // These hints appear during rebase conflicts and can differ between versions
     // Pattern matches lines with gutter formatting + "hint:" + message + newline
