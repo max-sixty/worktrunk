@@ -1882,8 +1882,7 @@ static ZOLA_EXPERIMENTAL_SHORTCODE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\{\{\s*experimental\(\)\s*\}\}").unwrap());
 
 /// Regex to strip AUTO-GENERATED marker comments (just the comments, not content).
-/// Matches both the open prefixes (with ⚠️) and the close form (with or without
-/// the help-page mirrored suffix).
+/// Matches the open prefix (with ⚠️) and the bare close form.
 static AUTO_GENERATED_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
         r"{open}[^>]*-->\n*|{close}\n*",

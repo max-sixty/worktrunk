@@ -31,10 +31,10 @@ pub const DEMO_MARKER_PREFIX: &str = "<!-- demo: ";
 /// can't drift between sides.
 pub const MARKER_OPEN_PREFIX: &str = "<!-- ⚠️ AUTO-GENERATED from ";
 
-/// Standard close marker for an auto-generated region. The help-page emitter
-/// uses a mirrored variant (`<!-- END AUTO-GENERATED from <id> -->`) so two
-/// adjacent regions can be parsed without ambiguity; everything else uses
-/// this bare form.
+/// Close marker for an auto-generated region. Paired with `MARKER_OPEN_PREFIX`
+/// via non-greedy regex matching; the sync test
+/// `test_no_nested_auto_generated_markers` enforces the no-nesting precondition
+/// that makes that pairing safe.
 pub const MARKER_CLOSE: &str = "<!-- END AUTO-GENERATED -->";
 
 /// Convert `$ `‐prefixed console blocks into `{% terminal() %}` shortcodes.
