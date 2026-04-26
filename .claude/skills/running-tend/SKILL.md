@@ -29,8 +29,39 @@ for i in $(seq 1 5); do
 done
 ```
 
-If codecov fails, investigate with `task coverage` and
+If codecov fails **locally**, investigate with `task coverage` and
 `cargo llvm-cov report --show-missing-lines | grep <file>`.
+
+### Investigating codecov failures in CI
+
+`task` and `cargo-llvm-cov` are not installed in the `claude-setup` action, and
+`cargo install` / `curl | sh` are blocked by the sandbox. Do not attempt to
+install them — in past runs this has cascaded into bash-tool interrupts that
+block even `pwd` and `echo`. Instead, query Codecov directly:
+
+```bash
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+curl -sL "https://api.codecov.io/api/v2/gh/${REPO%/*}/repos/${REPO#*/}/compare/?pullid=<N>" > /tmp/codecov.json
+
+# Patch-level summary per file:
+jq '.files[] | {name: .name.head, patch: .totals.patch}' /tmp/codecov.json
+
+# Uncovered added lines in a specific changed file:
+jq '.files[] | select(.name.head == "<path>") | .lines[] | select(.is_diff and .added and .coverage.head == 0) | {line: .number.head, code: (.value | .[0:80])}' /tmp/codecov.json
+```
+
+If the Codecov API markers aren't enough, download the `code-coverage-report`
+artifact from the PR head's `ci` workflow run — it contains a `cobertura.xml`
+with per-line hit counts:
+
+```bash
+# Find the ci run on the PR head SHA:
+CI_RUN=$(gh api "repos/$REPO/commits/<sha>/check-runs" --jq '.check_runs[] | select(.name == "code-coverage") | .details_url | capture("runs/(?<id>[0-9]+)") | .id')
+# List artifacts, then download the coverage one:
+gh api "repos/$REPO/actions/runs/$CI_RUN/artifacts" --jq '.artifacts[] | {name, id}'
+gh api "repos/$REPO/actions/artifacts/<id>/zip" > /tmp/coverage.zip
+unzip -q /tmp/coverage.zip -d /tmp/coverage
+```
 
 ## Test Commands
 
