@@ -251,8 +251,6 @@ copy = "wt step copy-ignored"
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
-<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__user_hooks__docs_hook_pre_merge.snap — edit source to update -->
-
 {% terminal(cmd="wt hook pre-merge") %}
 <span class=c>◎</span> <span class=c>Running pre-merge <b>project:test</b></span>
 <span style='background:var(--bright-white,#fff)'> </span> <span class=d><span style='color:var(--blue,#00a)'>cargo</span></span><span class=d> test</span>
@@ -271,8 +269,6 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
     Checking worktrunk v0.1.0
     Finished dev [unoptimized + debuginfo] target(s) in 1.23s
 {% end %}
-
-<!-- END AUTO-GENERATED -->
 
 {% terminal(cmd="wt hook post-start") %}
 ◎ Running post-start: project @ ~/acme

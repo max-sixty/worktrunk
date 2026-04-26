@@ -130,7 +130,8 @@ impl PageMode {
     }
 
     /// Emit the closing END marker (web only). Mirrors the open id so the sync
-    /// test can pair adjacent regions unambiguously.
+    /// test can disambiguate from inner snapshot-marker closes nested inside
+    /// the help-page region.
     fn emit_footer(self, subcommand: &str) {
         if matches!(self, Self::Web) {
             std::println!();

@@ -500,11 +500,12 @@ fn expand_command_placeholders(
                 // placeholder id, so disambiguation suffixes like `(markers)`
                 // don't leak into the rendered prompt. Prompt ($) is added
                 // via CSS ::before, so not included in HTML.
-                wrap_in_marker(
-                    &format!("tests/snapshots/{snapshot_name}"),
-                    "source",
-                    &format!("{{% terminal(cmd=\"{display_cmd}\") %}}\n{normalized}\n{{% end %}}",),
-                )
+                //
+                // No inner AUTO-GENERATED wrapper — the whole command page
+                // regenerates wholesale each sync, so the wrapper is dead
+                // weight and would nest inside the outer help-page region's
+                // markers (forcing the outer regex to use a tempered match).
+                format!("{{% terminal(cmd=\"{display_cmd}\") %}}\n{normalized}\n{{% end %}}")
             }
             ExpandMode::Plain => {
                 let plain = trim_lines(&parse_snapshot_content_for_skill(&snapshot_content));
@@ -1589,38 +1590,6 @@ fn sync_help_markers(file_path: &Path, project_root: &Path) -> Result<usize, Vec
 }
 
 #[test]
-fn test_readme_examples_are_in_sync() {
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let readme_path = project_root.join("README.md");
-
-    let readme_content = fs::read_to_string(&readme_path).unwrap();
-
-    // Single pass handles all marker types (snapshots, help, sections)
-    match sync_readme_markers(&readme_content, project_root) {
-        Ok((updated_content, updated_count, total_count)) => {
-            if total_count == 0 {
-                panic!("No README markers found in README.md");
-            }
-
-            if updated_count > 0 {
-                fs::write(&readme_path, &updated_content).unwrap();
-                panic!(
-                    "README out of sync: updated {} of {} section(s). \
-                     Run tests locally and commit the changes.",
-                    updated_count, total_count
-                );
-            }
-        }
-        Err(errors) => {
-            panic!(
-                "README examples are out of sync:\n\n{}\n",
-                errors.join("\n")
-            );
-        }
-    }
-}
-
-#[test]
 fn test_docs_commands_are_in_sync() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let commands_path = project_root.join("docs/content/commands.md");
@@ -1687,45 +1656,6 @@ fn sync_docs_snapshots(doc_path: &Path, project_root: &Path) -> Result<usize, Ve
             Ok(updated_count)
         }
         Err(errs) => Err(errs),
-    }
-}
-
-#[test]
-fn test_docs_quickstart_examples_are_in_sync() {
-    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-
-    // Process all docs files with snapshot-driven AUTO-GENERATED markers
-    let doc_files = [
-        "docs/content/worktrunk.md",
-        "docs/content/claude-code.md",
-        "docs/content/tips-patterns.md",
-        "docs/content/llm-commits.md",
-    ];
-
-    let mut all_errors = Vec::new();
-    let mut total_updated = 0;
-
-    for doc_file in doc_files {
-        let doc_path = project_root.join(doc_file);
-        match sync_docs_snapshots(&doc_path, project_root) {
-            Ok(updated) => total_updated += updated,
-            Err(errors) => all_errors.extend(errors),
-        }
-    }
-
-    if !all_errors.is_empty() {
-        panic!(
-            "Docs examples are out of sync:\n\n{}\n",
-            all_errors.join("\n")
-        );
-    }
-
-    if total_updated > 0 {
-        panic!(
-            "Docs examples out of sync: updated {} section(s). \
-             Run tests locally and commit the changes.",
-            total_updated
-        );
     }
 }
 
@@ -1884,10 +1814,11 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
             current.clone()
         };
 
-        // Find the help-page marker region. The help-page emitter uses a
-        // mirrored close (`<!-- END AUTO-GENERATED from <id> -->`) so that
-        // adjacent regions never need backtracking past the wrong one — match
-        // the same id literally on both sides.
+        // Find the help-page marker region. The mirrored close
+        // (`<!-- END AUTO-GENERATED from <id> -->`) is required because the
+        // help-page body can contain inner snapshot markers (which use the
+        // bare `MARKER_CLOSE`); a bare close on the outer region would let
+        // the regex stop at the first inner close.
         let id_re = regex::escape(&format!("`wt {cmd} --help-page`"));
         let marker_pattern = Regex::new(&format!(
             r"(?s){open}{id_re}[^>]*-->.*?<!-- END AUTO-GENERATED from {id_re} -->",
@@ -2608,50 +2539,96 @@ fn extract_intro_prose(body: &str) -> String {
     lines.join("\n").trim().to_string()
 }
 
-/// Combined test: sync command pages (mod.rs → docs) then skill files (docs → skills)
-/// then .well-known/agent-skills/ (skills → docs/static) then llms.txt.
-/// This ensures a single test run handles the full chain when mod.rs changes.
+/// Single end-to-end sync test that owns the full pipeline.
+///
+/// Steps run in dependency order, so a single pass converges and there's no
+/// way for nextest parallelism to interleave the stages. The earlier
+/// per-stage tests (`test_docs_quickstart_examples_are_in_sync`,
+/// `test_readme_examples_are_in_sync`) collapsed into this — they shared
+/// state via on-disk docs files, which made test ordering a correctness
+/// requirement, not a performance choice.
 #[test]
-fn test_command_pages_and_skill_files_are_in_sync() {
+fn test_docs_are_in_sync() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // Each step's errors and updated-file list are tagged so the failure
+    // message tells a developer which stage broke without grepping for code.
+    let mut all_errors: Vec<String> = Vec::new();
+    let mut all_files: Vec<String> = Vec::new();
+    let mut tag = |stage: &str, errors: Vec<String>, files: Vec<String>| {
+        all_errors.extend(errors.into_iter().map(|e| format!("[{stage}] {e}")));
+        all_files.extend(files.into_iter().map(|f| format!("[{stage}] {f}")));
+    };
 
     // Step 0: Fill docs-example bodies in src/cli/mod.rs from snapshots. Runs
     // before --help-page reads the file so command pages and skill files see
     // the up-to-date content.
     let (mod_errors, mod_files) = sync_cli_mod_example_bodies(project_root);
+    tag("cli/mod.rs", mod_errors, mod_files);
 
     // Step 1: Sync command pages (mod.rs → docs/content/*.md)
     let (cmd_errors, cmd_files) = sync_command_pages(project_root);
+    tag("command pages", cmd_errors, cmd_files);
 
     // Step 1b: Convert $ console blocks to terminal shortcodes in ALL docs
     // (command pages already converted via --help-page; this catches hand-written docs)
     let console_files = convert_console_blocks_in_docs(project_root);
+    tag("console→terminal", Vec::new(), console_files);
 
-    // Step 2: Sync skill files (docs/content/*.md → skills/*)
-    // This reads the freshly-written docs from step 1
+    // Step 2: Sync standalone docs files (snapshots → docs/content/*.md).
+    // README extraction in step 5 reads these, so they must be current first.
+    let standalone_doc_files = [
+        "docs/content/worktrunk.md",
+        "docs/content/claude-code.md",
+        "docs/content/tips-patterns.md",
+        "docs/content/llm-commits.md",
+    ];
+    let mut docs_errors: Vec<String> = Vec::new();
+    let mut docs_files: Vec<String> = Vec::new();
+    for doc_file in standalone_doc_files {
+        let doc_path = project_root.join(doc_file);
+        match sync_docs_snapshots(&doc_path, project_root) {
+            Ok(updated) => {
+                if updated > 0 {
+                    docs_files.push(doc_file.to_string());
+                }
+            }
+            Err(errors) => docs_errors.extend(errors),
+        }
+    }
+    tag("standalone docs", docs_errors, docs_files);
+
+    // Step 3: Sync skill files (docs/content/*.md → skills/*)
     let (skill_errors, skill_files) = sync_skill_files(project_root);
+    tag("skill files", skill_errors, skill_files);
 
-    // Step 3: Sync .well-known/agent-skills/ (skills/ → docs/static/)
-    // This reads the freshly-written skills from step 2
+    // Step 4: Sync .well-known/agent-skills/ (skills/ → docs/static/)
     let well_known_files = sync_well_known_skills(project_root);
+    tag(".well-known", Vec::new(), well_known_files);
 
-    // Step 4: Generate docs/static/llms.txt from docs/content front-matter
+    // Step 5: Generate docs/static/llms.txt from docs/content front-matter
     let llms_files = sync_llms_txt(project_root);
+    tag("llms.txt", Vec::new(), llms_files);
 
-    // Aggregate results
-    let all_errors: Vec<_> = mod_errors
-        .into_iter()
-        .chain(cmd_errors)
-        .chain(skill_errors)
-        .collect();
-    let all_files: Vec<_> = mod_files
-        .into_iter()
-        .chain(cmd_files)
-        .chain(console_files)
-        .chain(skill_files)
-        .chain(well_known_files)
-        .chain(llms_files)
-        .collect();
+    // Step 6: Sync README from the now-fresh docs files. Runs last because
+    // section extraction depends on docs/content/*.md being current.
+    let readme_path = project_root.join("README.md");
+    let readme_content = fs::read_to_string(&readme_path).unwrap();
+    let mut readme_errors: Vec<String> = Vec::new();
+    let mut readme_files: Vec<String> = Vec::new();
+    match sync_readme_markers(&readme_content, project_root) {
+        Ok((updated_content, updated_count, total_count)) => {
+            assert!(total_count > 0, "No README markers found in README.md");
+            if updated_count > 0 {
+                fs::write(&readme_path, &updated_content).unwrap();
+                readme_files.push(format!(
+                    "README.md ({updated_count} of {total_count} section(s) updated)"
+                ));
+            }
+        }
+        Err(errors) => readme_errors.extend(errors),
+    }
+    tag("README", readme_errors, readme_files);
 
     if !all_errors.is_empty() {
         panic!("Sync errors:\n\n{}\n", all_errors.join("\n"));

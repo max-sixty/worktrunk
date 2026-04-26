@@ -966,8 +966,6 @@ Custom status text or emoji shown in the `wt list` Status column.
 
 Markers appear at the end of the Status column, after git symbols:
 
-<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__readme_example_list_marker.snap — edit source to update -->
-
 {% terminal(cmd="wt list") %}
 &#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
 @ main             <span class=d>^</span><span class=d>⇡</span>                         <span class=g>⇡1</span>      <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
@@ -977,8 +975,6 @@ Markers appear at the end of the Status column, after git symbols:
 
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead, 1 column hidden</span>
 {% end %}
-
-<!-- END AUTO-GENERATED -->
 
 ### Use cases
 

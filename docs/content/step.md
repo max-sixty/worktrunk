@@ -15,15 +15,11 @@ Run individual operations. The building blocks of wt merge — commit, squash, r
 
 Commit with LLM-generated message:
 
-<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__merge__docs_step_commit_llm.snap — edit source to update -->
-
 {% terminal(cmd="wt step commit") %}
 <span class=c>◎</span> <span class=c>Generating commit message and committing changes... <span style='color:var(--bright-black,#555)'>(2 files, <span class=g>+26</span></span></span><span style='color:var(--bright-black,#555)'>)</span>
 <span style='background:var(--bright-white,#fff)'> </span> <b>feat(validation): add input validation utilities</b>
 <span class=g>✓</span> <span class=g>Committed changes @ <span class=d>a1b2c3d</span></span>
 {% end %}
-
-<!-- END AUTO-GENERATED -->
 
 Manual merge workflow with review between steps:
 
