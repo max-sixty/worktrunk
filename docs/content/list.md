@@ -311,4 +311,4 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
           Skip approval prompts
 {% end %}
 
-<!-- END AUTO-GENERATED from `wt list --help-page` -->
+<!-- END AUTO-GENERATED -->

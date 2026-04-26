@@ -1100,4 +1100,4 @@ Usage: <b><span class=c>wt config state vars</span></b> <span class=c>[OPTIONS]<
           Skip approval prompts
 {% end %}
 
-<!-- END AUTO-GENERATED from `wt config --help-page` -->
+<!-- END AUTO-GENERATED -->

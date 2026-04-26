@@ -1814,15 +1814,16 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
             current.clone()
         };
 
-        // Find the help-page marker region. The mirrored close
-        // (`<!-- END AUTO-GENERATED from <id> -->`) is required because the
-        // help-page body can contain inner snapshot markers (which use the
-        // bare `MARKER_CLOSE`); a bare close on the outer region would let
-        // the regex stop at the first inner close.
+        // Find the help-page marker region. Non-greedy `.*?` pairs the open
+        // with the nearest `MARKER_CLOSE`. Inner `AUTO-GENERATED` markers are
+        // not emitted by any sync step (verified via test that ensures no
+        // nesting in command pages); if that ever changes, a tempered match
+        // would be needed instead of bare non-greedy.
         let id_re = regex::escape(&format!("`wt {cmd} --help-page`"));
         let marker_pattern = Regex::new(&format!(
-            r"(?s){open}{id_re}[^>]*-->.*?<!-- END AUTO-GENERATED from {id_re} -->",
+            r"(?s){open}{id_re}[^>]*-->.*?{close}",
             open = regex::escape(MARKER_OPEN_PREFIX),
+            close = regex::escape(MARKER_CLOSE),
         ))
         .unwrap();
 
@@ -1884,7 +1885,12 @@ static ZOLA_EXPERIMENTAL_SHORTCODE: LazyLock<Regex> =
 /// Matches both the open prefixes (with ⚠️) and the close form (with or without
 /// the help-page mirrored suffix).
 static AUTO_GENERATED_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"<!-- ⚠️ AUTO-GENERATED[^>]*-->\n*|<!-- END AUTO-GENERATED[^>]*-->\n*").unwrap()
+    Regex::new(&format!(
+        r"{open}[^>]*-->\n*|{close}\n*",
+        open = regex::escape(MARKER_OPEN_PREFIX),
+        close = regex::escape(MARKER_CLOSE),
+    ))
+    .unwrap()
 });
 
 /// Regex to strip HTML figure/picture elements (demo GIFs)
@@ -2042,29 +2048,50 @@ fn remove_section(content: &str, heading: &str) -> String {
 /// Command pages already have this conversion via --help-page, but hand-written
 /// docs (faq.md, llm-commits.md, claude-code.md) can also use ```console with $
 /// and get the same treatment.
-fn convert_console_blocks_in_docs(project_root: &Path) -> Vec<String> {
-    let docs_dir = project_root.join("docs/content");
+fn convert_console_blocks_in_docs(project_root: &Path) -> (Vec<String>, Vec<String>) {
+    let mut errors = Vec::new();
     let mut updated_files = Vec::new();
+    let docs_dir = project_root.join("docs/content");
 
-    for entry in fs::read_dir(&docs_dir).unwrap() {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        if path.extension().is_some_and(|e| e == "md") {
-            let content = fs::read_to_string(&path).unwrap();
-            let converted = worktrunk::docs::convert_dollar_console_to_terminal(&content);
-            if converted != content {
-                let rel = path.strip_prefix(project_root).unwrap_or(&path);
-                write_tracked(
-                    &path,
-                    &converted,
-                    rel.display().to_string(),
-                    &mut updated_files,
-                );
+    let entries = match fs::read_dir(&docs_dir) {
+        Ok(e) => e,
+        Err(e) => {
+            errors.push(format!("read_dir {}: {e}", docs_dir.display()));
+            return (errors, updated_files);
+        }
+    };
+
+    for entry in entries {
+        let path = match entry {
+            Ok(e) => e.path(),
+            Err(e) => {
+                errors.push(format!("dir entry in {}: {e}", docs_dir.display()));
+                continue;
             }
+        };
+        if path.extension().is_none_or(|e| e != "md") {
+            continue;
+        }
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                errors.push(format!("read {}: {e}", path.display()));
+                continue;
+            }
+        };
+        let converted = worktrunk::docs::convert_dollar_console_to_terminal(&content);
+        if converted != content {
+            let rel = path.strip_prefix(project_root).unwrap_or(&path);
+            write_tracked(
+                &path,
+                &converted,
+                rel.display().to_string(),
+                &mut updated_files,
+            );
         }
     }
 
-    updated_files
+    (errors, updated_files)
 }
 
 /// Sorted `.md` page filenames in `docs/content/` (excluding `_index.md`
@@ -2572,8 +2599,8 @@ fn test_docs_are_in_sync() {
 
     // Step 1b: Convert $ console blocks to terminal shortcodes in ALL docs
     // (command pages already converted via --help-page; this catches hand-written docs)
-    let console_files = convert_console_blocks_in_docs(project_root);
-    tag("console→terminal", Vec::new(), console_files);
+    let (console_errors, console_files) = convert_console_blocks_in_docs(project_root);
+    tag("console→terminal", console_errors, console_files);
 
     // Step 2: Sync standalone docs files (snapshots → docs/content/*.md).
     // README extraction in step 5 reads these, so they must be current first.
@@ -2640,6 +2667,45 @@ fn test_docs_are_in_sync() {
             all_files.join("\n  ")
         );
     }
+}
+
+/// `AUTO-GENERATED` markers must not nest. The help-page region's close uses
+/// the bare `MARKER_CLOSE`, paired with the open via non-greedy `.*?` — a
+/// nested inner close would cause the regex to chop the region short, leaving
+/// stale content beyond the inner close. This test catches re-introduction of
+/// nesting before that subtle failure mode lands.
+#[test]
+fn test_no_nested_auto_generated_markers() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut violations = Vec::new();
+    for entry in fs::read_dir(project_root.join("docs/content")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|e| e == "md") {
+            let content = fs::read_to_string(&path).unwrap();
+            let mut depth = 0;
+            for (i, line) in content.lines().enumerate() {
+                if line.contains(MARKER_OPEN_PREFIX) {
+                    depth += 1;
+                    if depth > 1 {
+                        violations.push(format!(
+                            "{}:{}: nested AUTO-GENERATED open (depth {depth})",
+                            path.display(),
+                            i + 1
+                        ));
+                    }
+                } else if line.contains(MARKER_CLOSE) && depth > 0 {
+                    depth -= 1;
+                }
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "Nested AUTO-GENERATED markers found — outer help-page regex would chop \
+         the region at the inner close. Either flatten the nesting or restore a \
+         disambiguating close marker.\n\n{}",
+        violations.join("\n")
+    );
 }
 
 /// The hand-authored `## Template variables` table in `src/cli/mod.rs` must

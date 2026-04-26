@@ -847,4 +847,4 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
           Skip approval prompts
 {% end %}
 
-<!-- END AUTO-GENERATED from `wt step --help-page` -->
+<!-- END AUTO-GENERATED -->

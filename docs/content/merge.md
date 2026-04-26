@@ -165,4 +165,4 @@ Usage: <b><span class=c>wt merge</span></b> <span class=c>[OPTIONS]</span> <span
           Skip approval prompts
 {% end %}
 
-<!-- END AUTO-GENERATED from `wt merge --help-page` -->
+<!-- END AUTO-GENERATED -->

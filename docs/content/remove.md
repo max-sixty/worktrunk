@@ -146,4 +146,4 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
           Skip approval prompts
 {% end %}
 
-<!-- END AUTO-GENERATED from `wt remove --help-page` -->
+<!-- END AUTO-GENERATED -->

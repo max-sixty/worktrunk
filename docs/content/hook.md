@@ -336,4 +336,4 @@ Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span 
           Skip approval prompts
 {% end %}
 
-<!-- END AUTO-GENERATED from `wt hook --help-page` -->
+<!-- END AUTO-GENERATED -->

@@ -51,8 +51,8 @@ use ansi_str::AnsiStr;
 use clap::ColorChoice;
 use clap::error::ErrorKind;
 use worktrunk::docs::{
-    BADGE_EXPERIMENTAL_HTML, DEMO_MARKER_PREFIX, MARKER_OPEN_PREFIX, SUBDOC_MARKER_PREFIX,
-    convert_dollar_console_to_terminal,
+    BADGE_EXPERIMENTAL_HTML, DEMO_MARKER_PREFIX, MARKER_CLOSE, MARKER_OPEN_PREFIX,
+    SUBDOC_MARKER_PREFIX, convert_dollar_console_to_terminal,
 };
 use worktrunk::styling::{eprintln, println};
 
@@ -129,13 +129,11 @@ impl PageMode {
         std::println!();
     }
 
-    /// Emit the closing END marker (web only). Mirrors the open id so the sync
-    /// test can disambiguate from inner snapshot-marker closes nested inside
-    /// the help-page region.
-    fn emit_footer(self, subcommand: &str) {
+    /// Emit the closing END marker (web only).
+    fn emit_footer(self) {
         if matches!(self, Self::Web) {
             std::println!();
-            std::println!("<!-- END AUTO-GENERATED from `wt {subcommand} --help-page` -->");
+            std::println!("{MARKER_CLOSE}");
         }
     }
 }
@@ -524,7 +522,7 @@ Commands with pages: merge, switch, remove, list"
         std::println!("{}", subdocs_expanded.trim());
     }
 
-    mode.emit_footer(subcommand);
+    mode.emit_footer();
 }
 
 /// Post-process CLI help content for web docs rendering.
