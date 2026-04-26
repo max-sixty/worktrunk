@@ -1,14 +1,15 @@
-//! TTY spinner for long-running copy operations.
+//! TTY spinner for long-running file-walk operations.
 //!
-//! Shows a single-line stderr spinner (`⠋ Copying 1,234 files · 312 MiB`) that
-//! updates in place while files are copied. Copy workers bump atomic counters
-//! via [`CopyProgress::file_copied`]; a background thread renders at ~10Hz
-//! using crossterm cursor control.
+//! Shows a single-line stderr spinner (`⠋ Copying 1,234 files · 312 MiB`,
+//! `⠋ Removing 7,272 files · 64.5 MiB`) that updates in place while the work
+//! runs. Workers bump atomic counters via [`Progress::record`]; a background
+//! thread renders at ~10Hz using crossterm cursor control.
 //!
 //! `start` is named deliberately (not `new`) because it spawns a ticker thread
-//! as a side effect — `Default`-style semantics would be misleading.
+//! as a side effect — `Default`-style semantics would be misleading. The verb
+//! (`"Copying"`, `"Removing"`) is fixed for the lifetime of the spinner.
 //!
-//! The progress line is cleared on [`CopyProgress::finish`] or on drop, so the
+//! The progress line is cleared on [`Progress::finish`] or on drop, so the
 //! caller can print a summary message immediately afterward without overlap.
 
 use std::io::{IsTerminal, Write};
@@ -26,13 +27,14 @@ use crossterm::{
 
 const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const TICK_INTERVAL: Duration = Duration::from_millis(100);
-/// Delay before the first frame renders, so sub-second copies stay silent.
+/// Delay before the first frame renders, so sub-second operations stay silent.
 const STARTUP_DELAY: Duration = Duration::from_millis(300);
 
 struct Shared {
     files: AtomicUsize,
     bytes: AtomicU64,
     done: AtomicBool,
+    verb: &'static str,
 }
 
 struct Inner {
@@ -40,17 +42,19 @@ struct Inner {
     ticker: JoinHandle<()>,
 }
 
-/// Live spinner displaying files-copied and bytes-copied counters.
+/// Live spinner displaying file and byte counters for a single operation.
 ///
-/// See [module docs](crate::copy_progress) for the output format and lifecycle.
-pub struct CopyProgress(Option<Inner>);
+/// See [module docs](crate::progress) for the output format and lifecycle.
+pub struct Progress(Option<Inner>);
 
-impl CopyProgress {
+impl Progress {
     /// Start a progress reporter, enabling the spinner iff stderr is a TTY.
     ///
-    /// Spawns a background ticker thread when a TTY is detected. When stderr
-    /// is not a TTY, returns a disabled reporter and does no work.
-    pub fn start() -> Self {
+    /// `verb` is the present-participle label shown to the user (e.g.
+    /// `"Copying"`, `"Removing"`). Spawns a background ticker thread when a
+    /// TTY is detected. When stderr is not a TTY, returns a disabled reporter
+    /// and does no work.
+    pub fn start(verb: &'static str) -> Self {
         if !std::io::stderr().is_terminal() {
             return Self::disabled();
         }
@@ -58,6 +62,7 @@ impl CopyProgress {
             files: AtomicUsize::new(0),
             bytes: AtomicU64::new(0),
             done: AtomicBool::new(false),
+            verb,
         });
         let ticker = {
             let shared = Arc::clone(&shared);
@@ -71,8 +76,8 @@ impl CopyProgress {
         Self(None)
     }
 
-    /// Record that a file (or symlink) was copied. Safe to call from any thread.
-    pub fn file_copied(&self, bytes: u64) {
+    /// Record that a file (or symlink) was processed. Safe to call from any thread.
+    pub fn record(&self, bytes: u64) {
         if let Some(inner) = &self.0 {
             inner.shared.files.fetch_add(1, Ordering::Relaxed);
             inner.shared.bytes.fetch_add(bytes, Ordering::Relaxed);
@@ -86,7 +91,7 @@ impl CopyProgress {
     }
 }
 
-impl Drop for CopyProgress {
+impl Drop for Progress {
     fn drop(&mut self) {
         // `Inner` is Drop-free, so we can take ownership of its fields and
         // run shutdown without partial-move conflicts.
@@ -101,9 +106,9 @@ impl Drop for CopyProgress {
 
 fn ticker_loop(shared: &Shared) {
     let start = Instant::now();
-    // Sub-300ms copies render nothing — the line never gets drawn. park_timeout
-    // returns immediately on `unpark` from drop, so short copies don't block
-    // shutdown either.
+    // Sub-300ms operations render nothing — the line never gets drawn.
+    // park_timeout returns immediately on `unpark` from drop, so short
+    // operations don't block shutdown either.
     while start.elapsed() < STARTUP_DELAY {
         if shared.done.load(Ordering::Relaxed) {
             return;
@@ -115,19 +120,19 @@ fn ticker_loop(shared: &Shared) {
             % SPINNER_FRAMES.len();
         let files = shared.files.load(Ordering::Relaxed);
         let bytes = shared.bytes.load(Ordering::Relaxed);
-        let line = format_line(files, bytes, SPINNER_FRAMES[frame_idx]);
+        let line = format_line(shared.verb, files, bytes, SPINNER_FRAMES[frame_idx]);
         let _ = render_line(&mut std::io::stderr().lock(), &line);
         thread::park_timeout(TICK_INTERVAL);
     }
 }
 
-fn format_line(files: usize, bytes: u64, spinner: char) -> String {
+fn format_line(verb: &str, files: usize, bytes: u64, spinner: char) -> String {
     if files == 0 {
-        cformat!("<cyan>{spinner}</> Copying...")
+        cformat!("<cyan>{spinner}</> {verb}...")
     } else {
         let word = if files == 1 { "file" } else { "files" };
         cformat!(
-            "<cyan>{spinner}</> Copying {} {} · {}",
+            "<cyan>{spinner}</> {verb} {} {} · {}",
             format_count(files),
             word,
             format_bytes(bytes),
@@ -164,7 +169,7 @@ fn format_count(n: usize) -> String {
 /// Format a byte count using IEC binary prefixes (KiB, MiB, GiB, TiB).
 ///
 /// The divisor is 1024; SI-prefix "MB" would imply 10^6 and doesn't match what
-/// we compute. Used by both the spinner line and the post-copy summary.
+/// we compute. Used by both the spinner line and the post-operation summary.
 pub fn format_bytes(n: u64) -> String {
     const UNITS: &[&str] = &["B", "KiB", "MiB", "GiB", "TiB"];
     let mut size = n as f64;
@@ -180,6 +185,28 @@ pub fn format_bytes(n: u64) -> String {
     }
 }
 
+/// Format `(N files · X MiB)` as a gray stats parenthetical, matching the
+/// spinner's units.
+///
+/// Returns an empty string when `files == 0` so callers can unconditionally
+/// concatenate it to a success message without producing `(0 files · 0 B)`
+/// when nothing was processed.
+pub fn format_stats_paren(files: usize, bytes: u64) -> String {
+    if files == 0 {
+        return String::new();
+    }
+    let word = if files == 1 { "file" } else { "files" };
+    // Split the closing paren into a separate cformat so the optimizer doesn't
+    // collapse the two color-print spans (matches the squash-progress pattern
+    // in commands/step_commands.rs).
+    let close = cformat!("<bright-black>)</>");
+    cformat!(
+        " <bright-black>({} {word} · {}</>{close}",
+        format_count(files),
+        format_bytes(bytes),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,17 +214,18 @@ mod tests {
     /// Construct an enabled instance directly, bypassing the TTY check that
     /// would otherwise force a disabled reporter under cargo test. Lives in
     /// the test module per the CLAUDE.md rule against test-only library APIs.
-    fn enabled_for_test() -> CopyProgress {
+    fn enabled_for_test(verb: &'static str) -> Progress {
         let shared = Arc::new(Shared {
             files: AtomicUsize::new(0),
             bytes: AtomicU64::new(0),
             done: AtomicBool::new(false),
+            verb,
         });
         let ticker = {
             let shared = Arc::clone(&shared);
             thread::spawn(move || ticker_loop(&shared))
         };
-        CopyProgress(Some(Inner { shared, ticker }))
+        Progress(Some(Inner { shared, ticker }))
     }
 
     #[test]
@@ -222,23 +250,43 @@ mod tests {
 
     #[test]
     fn test_format_line_empty() {
-        let line = format_line(0, 0, '⠋');
+        let line = format_line("Copying", 0, 0, '⠋');
         assert!(line.contains("Copying..."));
         assert!(line.contains('⠋'));
     }
 
     #[test]
     fn test_format_line_singular() {
-        let line = format_line(1, 42, '⠙');
+        let line = format_line("Copying", 1, 42, '⠙');
         assert!(line.contains("1 file "));
         assert!(line.contains("42 B"));
     }
 
     #[test]
     fn test_format_line_plural() {
-        let line = format_line(2_500, 5 * 1024 * 1024, '⠹');
+        let line = format_line("Removing", 2_500, 5 * 1024 * 1024, '⠹');
+        assert!(line.contains("Removing"));
         assert!(line.contains("2,500 files"));
         assert!(line.contains("5.0 MiB"));
+    }
+
+    #[test]
+    fn test_format_stats_paren_empty_is_blank() {
+        assert_eq!(format_stats_paren(0, 0), "");
+    }
+
+    #[test]
+    fn test_format_stats_paren_singular() {
+        let s = format_stats_paren(1, 42);
+        assert!(s.contains("1 file"));
+        assert!(s.contains("42 B"));
+    }
+
+    #[test]
+    fn test_format_stats_paren_plural() {
+        let s = format_stats_paren(2_500, 5 * 1024 * 1024);
+        assert!(s.contains("2,500 files"));
+        assert!(s.contains("5.0 MiB"));
     }
 
     #[test]
@@ -257,10 +305,10 @@ mod tests {
     }
 
     #[test]
-    fn test_disabled_file_copied_is_noop() {
-        let p = CopyProgress::disabled();
-        p.file_copied(1_000_000);
-        p.file_copied(2_000_000);
+    fn test_disabled_record_is_noop() {
+        let p = Progress::disabled();
+        p.record(1_000_000);
+        p.record(2_000_000);
         // No counters to inspect — Disabled has no fields. The assertion is
         // simply that the call doesn't panic and finish() returns cleanly.
         p.finish();
@@ -268,14 +316,14 @@ mod tests {
 
     #[test]
     fn test_start_in_non_tty_is_disabled() {
-        assert!(CopyProgress::start().0.is_none());
+        assert!(Progress::start("Copying").0.is_none());
     }
 
     #[test]
     fn test_enabled_lifecycle_counters_propagate() {
-        let p = enabled_for_test();
-        p.file_copied(1024);
-        p.file_copied(2048);
+        let p = enabled_for_test("Copying");
+        p.record(1024);
+        p.record(2048);
         let inner = p.0.as_ref().expect("expected enabled");
         assert_eq!(inner.shared.files.load(Ordering::Relaxed), 2);
         assert_eq!(inner.shared.bytes.load(Ordering::Relaxed), 3072);
@@ -284,8 +332,8 @@ mod tests {
 
     #[test]
     fn test_enabled_renders_after_startup_delay() {
-        let p = enabled_for_test();
-        p.file_copied(100);
+        let p = enabled_for_test("Removing");
+        p.record(100);
         // Wait past the startup delay + one tick so ticker_loop reaches the
         // render branch — the part that's hardest to cover otherwise.
         std::thread::sleep(STARTUP_DELAY + TICK_INTERVAL + Duration::from_millis(50));

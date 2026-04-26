@@ -26,9 +26,9 @@ use rayon::prelude::*;
 use worktrunk::HookType;
 use worktrunk::config::{CopyIgnoredConfig, UserConfig};
 use worktrunk::copy::{copy_dir_recursive, copy_leaf};
-use worktrunk::copy_progress::{CopyProgress, format_bytes};
 use worktrunk::git::{Repository, WorktreeInfo};
 use worktrunk::path::format_path_for_display;
+use worktrunk::progress::{Progress, format_bytes};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
@@ -808,9 +808,9 @@ pub fn step_copy_ignored(
 
     // `start` auto-detects the TTY; verbose/dry-run already print enough.
     let progress = if verbose >= 1 || dry_run {
-        CopyProgress::disabled()
+        Progress::disabled()
     } else {
-        CopyProgress::start()
+        Progress::start("Copying")
     };
 
     let mut copied_count = 0usize;
@@ -840,7 +840,7 @@ pub fn step_copy_ignored(
             if let Some(bytes) = copy_leaf(src_entry, &dest_entry, force)? {
                 copied_count += 1;
                 copied_bytes += bytes;
-                progress.file_copied(bytes);
+                progress.record(bytes);
             }
         }
     }
@@ -921,7 +921,7 @@ fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
 /// Copy then delete — fallback when `rename` fails with EXDEV (cross-device).
 fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
     if is_dir {
-        copy_dir_recursive(src, dest, true, &CopyProgress::disabled())?;
+        copy_dir_recursive(src, dest, true, &Progress::disabled())?;
         fs::remove_dir_all(src).context(format!("removing source directory {}", src.display()))?;
     } else {
         copy_leaf(src, dest, true)?;

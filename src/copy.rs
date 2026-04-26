@@ -12,9 +12,9 @@
 //! Callers that want low-priority I/O (e.g. `step_copy_ignored`) should call
 //! [`crate::priority::lower_current_process`] before starting work.
 //!
-//! Callers that want a TTY progress spinner pass a [`CopyProgress`] — every
-//! successful leaf copy calls `progress.file_copied(bytes)`. Non-interactive
-//! callers pass [`CopyProgress::disabled`] for a zero-overhead no-op.
+//! Callers that want a TTY progress spinner pass a [`Progress`] — every
+//! successful leaf copy calls `progress.record(bytes)`. Non-interactive
+//! callers pass [`Progress::disabled`] for a zero-overhead no-op.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use anyhow::Context;
 use rayon::prelude::*;
 
-use crate::copy_progress::CopyProgress;
+use crate::progress::Progress;
 
 /// Capped at 4 threads to avoid saturating the CPU — the global rayon pool is
 /// much larger (2× CPU cores, tuned for network I/O in `wt list`).
@@ -103,14 +103,14 @@ struct CopyLeaf {
 ///
 /// When `force` is true, existing files and symlinks at the destination are
 /// removed before copying. `progress` receives per-file callbacks; pass
-/// [`CopyProgress::disabled`] for a zero-overhead no-op.
+/// [`Progress::disabled`] for a zero-overhead no-op.
 ///
 /// Returns `(files_copied, bytes_copied)` — counts exclude skipped entries.
 pub fn copy_dir_recursive(
     src: &Path,
     dest: &Path,
     force: bool,
-    progress: &CopyProgress,
+    progress: &Progress,
 ) -> anyhow::Result<(usize, u64)> {
     // Phase 1: Walk directories iteratively, creating dest dirs and collecting leaves.
     let mut leaves = Vec::new();
@@ -153,7 +153,7 @@ pub fn copy_dir_recursive(
                 if let Some(bytes) = copy_leaf(&leaf.src, &leaf.dest, force)? {
                     copied_files.fetch_add(1, Ordering::Relaxed);
                     copied_bytes.fetch_add(bytes, Ordering::Relaxed);
-                    progress.file_copied(bytes);
+                    progress.record(bytes);
                 }
                 Ok(())
             })
