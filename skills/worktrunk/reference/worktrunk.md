@@ -97,6 +97,14 @@ Shell integration allows commands to change directories.
 cargo install worktrunk && wt config shell install
 ```
 
+**Conda / Pixi:**
+
+```bash
+conda install -c conda-forge worktrunk && wt config shell install
+```
+
+Or with [Pixi](https://pixi.sh): `pixi global install worktrunk`.
+
 <details>
 <summary><strong>Windows</strong></summary>
 
