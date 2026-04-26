@@ -116,26 +116,26 @@ Shell integration allows commands to change directories.
 
 {{ terminal(cmd="cargo install worktrunk && wt config shell install") }}
 
-**Conda / Pixi:**
-
-{{ terminal(cmd="conda install -c conda-forge worktrunk && wt config shell install") }}
-
-Or with [Pixi](https://pixi.sh): `pixi global install worktrunk`.
-
 <details>
-<summary><strong>Windows</strong></summary>
+<summary><strong>Windows & other</strong></summary>
 
-On Windows, `wt` defaults to Windows Terminal's command. Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
+**Windows.** `wt` defaults to Windows Terminal's command, so Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
 
 {{ terminal(cmd="winget install max-sixty.worktrunk|||git-wt config shell install") }}
 
 Alternatively, disable Windows Terminal's alias (Settings → Privacy & security → For developers → App Execution Aliases → disable "Windows Terminal") to use `wt` directly.
 
-</details>
-
 **Arch Linux:**
 
 {{ terminal(cmd="sudo pacman -S worktrunk && wt config shell install") }}
+
+**Conda / Pixi** (community-maintained [feedstock](https://github.com/conda-forge/worktrunk-feedstock)):
+
+{{ terminal(cmd="conda install -c conda-forge worktrunk && wt config shell install") }}
+
+Or with [Pixi](https://pixi.sh): `pixi global install worktrunk`.
+
+</details>
 
 ## Quick start
 
