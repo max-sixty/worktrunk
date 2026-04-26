@@ -133,7 +133,7 @@ Alternatively, disable Windows Terminal's alias (Settings → Privacy & security
 
 {{ terminal(cmd="conda install -c conda-forge worktrunk && wt config shell install") }}
 
-Or with [Pixi](https://pixi.sh): `pixi global install worktrunk`.
+Or with [Pixi](https://pixi.sh): `pixi global install worktrunk && wt config shell install`.
 
 </details>
 

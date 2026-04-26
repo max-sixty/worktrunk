@@ -121,7 +121,7 @@ sudo pacman -S worktrunk && wt config shell install
 conda install -c conda-forge worktrunk && wt config shell install
 ```
 
-Or with [Pixi](https://pixi.sh): `pixi global install worktrunk`.
+Or with [Pixi](https://pixi.sh): `pixi global install worktrunk && wt config shell install`.
 
 </details>
 
