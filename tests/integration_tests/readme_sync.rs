@@ -1731,10 +1731,6 @@ fn sync_command_pages(project_root: &Path) -> (Vec<String>, Vec<String>) {
 
     for cmd in COMMAND_PAGES {
         let doc_path = project_root.join(format!("docs/content/{}.md", cmd));
-        if !doc_path.exists() {
-            errors.push(format!("Missing command page: {}", doc_path.display()));
-            continue;
-        }
 
         // Run wt <cmd> --help-page (outputs START marker + content + END marker)
         let output = wt_command()
@@ -2052,25 +2048,8 @@ fn convert_console_blocks_in_docs(project_root: &Path) -> (Vec<String>, Vec<Stri
     let mut updated_files = Vec::new();
     let docs_dir = project_root.join("docs/content");
 
-    let entries = match fs::read_dir(&docs_dir) {
-        Ok(e) => e,
-        Err(e) => {
-            errors.push(format!("read_dir {}: {e}", docs_dir.display()));
-            return (errors, updated_files);
-        }
-    };
-
-    for entry in entries {
-        let path = match entry {
-            Ok(e) => e.path(),
-            Err(e) => {
-                errors.push(format!("dir entry in {}: {e}", docs_dir.display()));
-                continue;
-            }
-        };
-        if path.extension().is_none_or(|e| e != "md") {
-            continue;
-        }
+    for name in docs_content_page_names(&docs_dir) {
+        let path = docs_dir.join(&name);
         let content = match fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => {
@@ -2080,11 +2059,10 @@ fn convert_console_blocks_in_docs(project_root: &Path) -> (Vec<String>, Vec<Stri
         };
         let converted = worktrunk::docs::convert_dollar_console_to_terminal(&content);
         if converted != content {
-            let rel = path.strip_prefix(project_root).unwrap_or(&path);
             write_tracked(
                 &path,
                 &converted,
-                rel.display().to_string(),
+                format!("docs/content/{name}"),
                 &mut updated_files,
             );
         }
@@ -2132,23 +2110,14 @@ fn sync_skill_files(project_root: &Path) -> (Vec<String>, Vec<String>) {
         } else {
             // Non-command pages: read from docs, transform Zola syntax, strip residual HTML
             let docs_file = docs_dir.join(name);
-            if !docs_file.exists() {
-                errors.push(format!("Missing docs file: {}", docs_file.display()));
-                continue;
-            }
             let docs_content = fs::read_to_string(&docs_file)
                 .unwrap_or_else(|e| panic!("Failed to read {}: {}", docs_file.display(), e));
             transform_docs_for_skill(&docs_content)
         };
         let expected = trim_lines(&expected);
 
-        let current = if skill_file.exists() {
-            fs::read_to_string(&skill_file)
-                .unwrap_or_else(|e| panic!("Failed to read {}: {}", skill_file.display(), e))
-        } else {
-            String::new()
-        };
-        let current = trim_lines(&current);
+        // Treat any read failure (incl. missing) as empty — we'll write `expected` either way.
+        let current = trim_lines(&fs::read_to_string(&skill_file).unwrap_or_default());
 
         if current != expected {
             write_tracked(
@@ -2252,7 +2221,8 @@ fn finalize_skill_content(content: &str) -> String {
 ///
 /// This function verifies the symlink is correct and generates index.json
 /// with the correct SHA-256 digest per the Cloudflare agent-skills-discovery RFC.
-fn sync_well_known_skills(project_root: &Path) -> Vec<String> {
+fn sync_well_known_skills(project_root: &Path) -> (Vec<String>, Vec<String>) {
+    let mut errors = Vec::new();
     let mut updated_files = Vec::new();
 
     let well_known_dir = project_root.join("docs/static/.well-known/agent-skills");
@@ -2261,43 +2231,48 @@ fn sync_well_known_skills(project_root: &Path) -> Vec<String> {
     // Verify the symlink exists and points to the right place
     let expected_target = Path::new("../../../../skills/worktrunk");
     match fs::read_link(&symlink_path) {
+        Ok(target) if target == expected_target => {}
         Ok(target) => {
-            assert_eq!(
-                target,
-                expected_target,
+            errors.push(format!(
                 "Symlink at {} points to {:?}, expected {:?}",
                 symlink_path.display(),
                 target,
                 expected_target
-            );
+            ));
+            return (errors, updated_files);
         }
         Err(_) => {
-            panic!(
+            errors.push(format!(
                 "Expected symlink at {} → {:?}, but it doesn't exist or isn't a symlink",
                 symlink_path.display(),
                 expected_target
-            );
+            ));
+            return (errors, updated_files);
         }
     }
 
     // Read SKILL.md (through the symlink) for digest and description
     let skill_md_path = symlink_path.join("SKILL.md");
-    let skill_md_content = fs::read_to_string(&skill_md_path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", skill_md_path.display(), e));
+    let skill_md_bytes = match fs::read(&skill_md_path) {
+        Ok(b) => b,
+        Err(e) => {
+            errors.push(format!("read {}: {e}", skill_md_path.display()));
+            return (errors, updated_files);
+        }
+    };
 
     // Generate index.json with SHA-256 digest of SKILL.md
     let digest = {
         use sha2::{Digest, Sha256};
-        let file_bytes = fs::read(&skill_md_path)
-            .unwrap_or_else(|e| panic!("Failed to read {}: {}", skill_md_path.display(), e));
-        let hash = Sha256::digest(&file_bytes);
+        let hash = Sha256::digest(&skill_md_bytes);
         let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
         format!("sha256:{hex}")
     };
 
     // Parse the description from SKILL.md frontmatter
-    let description = skill_md_content
-        .strip_prefix("---\n")
+    let description = std::str::from_utf8(&skill_md_bytes)
+        .ok()
+        .and_then(|s| s.strip_prefix("---\n"))
         .and_then(|rest| rest.split_once("\n---"))
         .and_then(|(frontmatter, _)| {
             frontmatter
@@ -2323,7 +2298,7 @@ fn sync_well_known_skills(project_root: &Path) -> Vec<String> {
         );
     }
 
-    updated_files
+    (errors, updated_files)
 }
 
 /// Regex for `<!-- wt <id> -->\n```console\n$ <cmd>\n[body]\n``` ` blocks in
@@ -2430,7 +2405,7 @@ fn sync_cli_mod_example_bodies(project_root: &Path) -> (Vec<String>, Vec<String>
 ///
 /// Link targets use the `.md` companion URLs (served via symlinks in
 /// `docs/static/*.md` → `skills/worktrunk/reference/*.md`).
-fn sync_llms_txt(project_root: &Path) -> Vec<String> {
+fn sync_llms_txt(project_root: &Path) -> (Vec<String>, Vec<String>) {
     use serde::Deserialize;
     use std::collections::BTreeMap;
 
@@ -2449,13 +2424,26 @@ fn sync_llms_txt(project_root: &Path) -> Vec<String> {
         extra: Option<ExtraFm>,
     }
 
+    let mut errors = Vec::new();
+    let mut updated = Vec::new();
+
     let docs_dir = project_root.join("docs/content");
     let config_path = project_root.join("docs/config.toml");
 
-    let config_content = fs::read_to_string(&config_path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", config_path.display(), e));
-    let site_config: toml::Value = toml::from_str(&config_content)
-        .unwrap_or_else(|e| panic!("Failed to parse {}: {}", config_path.display(), e));
+    let config_content = match fs::read_to_string(&config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            errors.push(format!("read {}: {e}", config_path.display()));
+            return (errors, updated);
+        }
+    };
+    let site_config: toml::Value = match toml::from_str(&config_content) {
+        Ok(v) => v,
+        Err(e) => {
+            errors.push(format!("parse {}: {e}", config_path.display()));
+            return (errors, updated);
+        }
+    };
     let site_title = site_config
         .get("title")
         .and_then(|v| v.as_str())
@@ -2480,16 +2468,26 @@ fn sync_llms_txt(project_root: &Path) -> Vec<String> {
     for name in docs_content_page_names(&docs_dir) {
         let path = docs_dir.join(&name);
         let slug = name.trim_end_matches(".md").to_string();
-        let content = fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                errors.push(format!("read {}: {e}", path.display()));
+                continue;
+            }
+        };
         let Some(rest) = content.strip_prefix("+++\n") else {
             continue;
         };
         let Some((fm_text, body)) = rest.split_once("\n+++\n") else {
             continue;
         };
-        let fm: Frontmatter = toml::from_str(fm_text)
-            .unwrap_or_else(|e| panic!("Failed to parse frontmatter of {}: {}", path.display(), e));
+        let fm: Frontmatter = match toml::from_str(fm_text) {
+            Ok(fm) => fm,
+            Err(e) => {
+                errors.push(format!("parse frontmatter of {}: {e}", path.display()));
+                continue;
+            }
+        };
 
         // Ungrouped pages supply the document's intro prose instead of becoming bullets.
         let Some(group) = fm.extra.as_ref().and_then(|e| e.group.clone()) else {
@@ -2534,11 +2532,10 @@ fn sync_llms_txt(project_root: &Path) -> Vec<String> {
 
     let dst = project_root.join("docs/static/llms.txt");
     let current = fs::read_to_string(&dst).unwrap_or_default();
-    let mut updated = Vec::new();
     if current != out {
         write_tracked(&dst, &out, "docs/static/llms.txt", &mut updated);
     }
-    updated
+    (errors, updated)
 }
 
 /// Take the leading prose paragraphs of a page body, stopping at the first
@@ -2629,12 +2626,12 @@ fn test_docs_are_in_sync() {
     tag("skill files", skill_errors, skill_files);
 
     // Step 4: Sync .well-known/agent-skills/ (skills/ → docs/static/)
-    let well_known_files = sync_well_known_skills(project_root);
-    tag(".well-known", Vec::new(), well_known_files);
+    let (well_known_errors, well_known_files) = sync_well_known_skills(project_root);
+    tag(".well-known", well_known_errors, well_known_files);
 
     // Step 5: Generate docs/static/llms.txt from docs/content front-matter
-    let llms_files = sync_llms_txt(project_root);
-    tag("llms.txt", Vec::new(), llms_files);
+    let (llms_errors, llms_files) = sync_llms_txt(project_root);
+    tag("llms.txt", llms_errors, llms_files);
 
     // Step 6: Sync README from the now-fresh docs files. Runs last because
     // section extraction depends on docs/content/*.md being current.
