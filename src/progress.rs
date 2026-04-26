@@ -55,9 +55,23 @@ impl Progress {
     /// TTY is detected. When stderr is not a TTY, returns a disabled reporter
     /// and does no work.
     pub fn start(verb: &'static str) -> Self {
-        if !std::io::stderr().is_terminal() {
-            return Self::disabled();
+        if std::io::stderr().is_terminal() {
+            Self::enabled(verb)
+        } else {
+            Self::disabled()
         }
+    }
+
+    /// A reporter that does nothing — for benchmarks, tests, and internal moves.
+    pub fn disabled() -> Self {
+        Self(None)
+    }
+
+    /// Constructor for the enabled state, separated so the TTY-gated branch in
+    /// [`Self::start`] and the test-only "force enabled" path share one
+    /// implementation. Spawns the ticker thread; safe to call from any
+    /// context that genuinely wants live output.
+    fn enabled(verb: &'static str) -> Self {
         let shared = Arc::new(Shared {
             files: AtomicUsize::new(0),
             bytes: AtomicU64::new(0),
@@ -69,11 +83,6 @@ impl Progress {
             thread::spawn(move || ticker_loop(&shared))
         };
         Self(Some(Inner { shared, ticker }))
-    }
-
-    /// A reporter that does nothing — for benchmarks, tests, and internal moves.
-    pub fn disabled() -> Self {
-        Self(None)
     }
 
     /// Record that a file (or symlink) was processed. Safe to call from any thread.
@@ -211,23 +220,6 @@ pub fn format_stats_paren(files: usize, bytes: u64) -> String {
 mod tests {
     use super::*;
 
-    /// Construct an enabled instance directly, bypassing the TTY check that
-    /// would otherwise force a disabled reporter under cargo test. Lives in
-    /// the test module per the CLAUDE.md rule against test-only library APIs.
-    fn enabled_for_test(verb: &'static str) -> Progress {
-        let shared = Arc::new(Shared {
-            files: AtomicUsize::new(0),
-            bytes: AtomicU64::new(0),
-            done: AtomicBool::new(false),
-            verb,
-        });
-        let ticker = {
-            let shared = Arc::clone(&shared);
-            thread::spawn(move || ticker_loop(&shared))
-        };
-        Progress(Some(Inner { shared, ticker }))
-    }
-
     #[test]
     fn test_format_count() {
         assert_eq!(format_count(0), "0");
@@ -321,7 +313,7 @@ mod tests {
 
     #[test]
     fn test_enabled_lifecycle_counters_propagate() {
-        let p = enabled_for_test("Copying");
+        let p = Progress::enabled("Copying");
         p.record(1024);
         p.record(2048);
         let inner = p.0.as_ref().expect("expected enabled");
@@ -332,7 +324,7 @@ mod tests {
 
     #[test]
     fn test_enabled_renders_after_startup_delay() {
-        let p = enabled_for_test("Removing");
+        let p = Progress::enabled("Removing");
         p.record(100);
         // Wait past the startup delay + one tick so ticker_loop reaches the
         // render branch — the part that's hardest to cover otherwise.

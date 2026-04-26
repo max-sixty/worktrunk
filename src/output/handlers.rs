@@ -54,16 +54,15 @@ use super::shell_integration::{
 ///
 /// Suppresses the spinner when stderr isn't a TTY (auto-detected by
 /// `Progress::start`) or when verbosity ≥ 1 (verbose mode prefers structured
-/// output over live updates). Errors during cleanup are swallowed by callers
-/// — the worktree is already pruned at this point, and a stuck trash dir is
-/// best-effort cleanup, not a fatal condition.
+/// output over live updates). The walk itself is best-effort — see
+/// [`remove_dir_with_progress`].
 fn cleanup_staged_with_progress(staged: &Path) -> (usize, u64) {
     let progress = if verbosity() >= 1 {
         Progress::disabled()
     } else {
         Progress::start("Removing")
     };
-    let result = remove_dir_with_progress(staged, &progress).unwrap_or((0, 0));
+    let result = remove_dir_with_progress(staged, &progress);
     progress.finish();
     result
 }
@@ -1273,12 +1272,12 @@ fn handle_detached_removed_worktree_output(
             remaining_entries: list_remaining_entries(ctx.worktree_path),
             error: err.to_string(),
         })?;
-        let stats = output
+        let (files, bytes) = output
             .staged_path
             .as_deref()
             .map(cleanup_staged_with_progress)
             .unwrap_or((0, 0));
-        let stats_paren = format_stats_paren(stats.0, stats.1);
+        let stats_paren = format_stats_paren(files, bytes);
         eprintln!(
             "{}",
             success_message(cformat!(
