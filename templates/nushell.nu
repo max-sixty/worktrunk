@@ -77,6 +77,18 @@ export def --env --wrapped {{ cmd }} [...args: string@"nu-complete {{ cmd }}"] {
         ($external | get 0.path)
     }
 
+    # `def --wrapped` does not re-tokenize `--flag="value"` the way it does for
+    # `--flag value` — quotes around the value are stripped only when the flag
+    # and value are separate tokens. So `wt switch --base="releases/4.x.x"`
+    # arrives here as the single token `--base="releases/4.x.x"` (quotes
+    # preserved literally), and forwarding it to the binary makes clap see the
+    # quotes as part of the branch name. Strip surrounding quotes from
+    # `--flag="…"` / `-f='…'` tokens before forwarding so the equals form
+    # behaves like the space form. (worktrunk/worktrunk#2410)
+    let args = ($args | each {|a|
+        $a | str replace -r '^(-{1,2}[^=]+)=(["''])(.*)\2$' '${1}=${3}'
+    })
+
     # `list` is the only command that benefits from streaming stdout (progressive
     # table rendering). It never emits directives, so we skip directive processing
     # and let the binary be the last expression — stdout flows through pipes.

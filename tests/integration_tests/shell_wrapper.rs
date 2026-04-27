@@ -984,6 +984,40 @@ mod unix_tests {
         });
     }
 
+    /// Nushell `def --wrapped` does not re-tokenize `--flag="value"` the way it does
+    /// for `--flag value`, so the quoted form arrives at the wrapper as the single
+    /// literal token `--flag="value"`. The wrapper strips the surrounding quotes
+    /// before forwarding to the binary so clap doesn't see them as part of the value.
+    /// (worktrunk/worktrunk#2410)
+    ///
+    /// Only the double-quoted equals form is exercised here. Single quotes would
+    /// also trigger the bug, but `quote_arg` re-escapes `'`-bearing tokens with
+    /// bash-style `'\''` sequences that nushell doesn't understand — that's a
+    /// test-infra limitation rather than a real-user scenario.
+    #[rstest]
+    fn test_nushell_equals_form_with_quoted_value(repo: TestRepo) {
+        repo.run_git(&["branch", "releases/4.x.x"]);
+
+        let output = exec_through_wrapper(
+            "nu",
+            &repo,
+            "switch",
+            &["--create", "child", r#"--base="releases/4.x.x""#],
+        );
+
+        assert_eq!(
+            output.exit_code, 0,
+            "Command should succeed.\nOutput:\n{}",
+            output.combined
+        );
+        assert!(
+            output.combined.contains("Created branch")
+                && output.combined.contains("releases/4.x.x"),
+            "Should have resolved base branch.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
     /// Test that --execute command exit codes are propagated
     /// Verifies that when wt succeeds but the --execute command fails,
     /// the wrapper returns the command's exit code, not wt's.
