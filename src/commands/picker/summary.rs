@@ -142,6 +142,12 @@ mod tests {
         // Different hash for the same branch is a miss (content-addressed).
         assert!(CachedSummary::read(&repo, branch, "cafebabe").is_none());
 
+        // sweep_lru picks the eviction victim by file mtime; on filesystems
+        // with coarse mtime resolution, back-to-back writes can share a tick
+        // and the order becomes nondeterministic. Match the gap used in
+        // test_sweep_lru_trims_oldest_entries.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
         // Writing a second hash for the same branch prunes the old one.
         let second = CachedSummary {
             summary: "Refactor tests".to_string(),
