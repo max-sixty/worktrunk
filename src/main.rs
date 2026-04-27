@@ -178,6 +178,14 @@ fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
             // which parses against a clap tree augmented with hook-type
             // subcommand stubs and renders their help directly. Execution flow
             // only reaches here for non-help invocations.
+            if args.first().and_then(|s| s.to_str()) == Some("post-create") {
+                eprintln!(
+                    "{}",
+                    warning_message(
+                        "wt hook post-create is deprecated; use wt hook pre-start instead"
+                    )
+                );
+            }
             let opts = HookOptions::parse(&args)?;
             run_hook(
                 opts.hook_type,
@@ -478,6 +486,14 @@ fn handle_list_command(args: ListArgs) -> anyhow::Result<()> {
             format,
             claude_code,
         }) => {
+            if claude_code {
+                eprintln!(
+                    "{}",
+                    warning_message(
+                        "--claude-code is deprecated; use --format=claude-code instead"
+                    )
+                );
+            }
             // Hidden --claude-code flag only applies when format is default (Table)
             // Explicit --format=json takes precedence over --claude-code
             let effective_format = if claude_code && matches!(format, OutputFormat::Table) {
