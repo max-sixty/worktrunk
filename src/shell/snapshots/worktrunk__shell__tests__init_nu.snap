@@ -81,6 +81,16 @@ export def --env --wrapped wt [...args: string@"nu-complete wt"] {
         ($external | get 0.path)
     }
 
+    # Strip surrounding quotes from `--flag="value"` / `-x='value'` tokens
+    # before forwarding. Nushell's `def --wrapped` re-tokenizes the
+    # space-separated form (`--flag "value"` → ["--flag", "value"]) but keeps
+    # the equals form as a single literal token (`--flag="value"` →
+    # ['--flag="value"']), so without this the binary receives the quote
+    # characters in argv and clap parses them as part of the value. See #2410.
+    let args = ($args | each {|a|
+        $a | str replace -r '^(-{1,2}[^=]+)=(["''])(.*)["'']$' '${1}=${3}'
+    })
+
     # `list` is the only command that benefits from streaming stdout (progressive
     # table rendering). It never emits directives, so we skip directive processing
     # and let the binary be the last expression — stdout flows through pipes.

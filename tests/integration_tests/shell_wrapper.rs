@@ -833,6 +833,46 @@ mod unix_tests {
         });
     }
 
+    /// Regression test for #2410.
+    ///
+    /// Nushell's `def --wrapped wt [...args]` re-tokenizes the space-separated
+    /// form (`--base "value"`) into two tokens but keeps the equals form
+    /// (`--base="value"`) as a single literal token, including the surrounding
+    /// quote characters. Without quote stripping in the wrapper, the worktrunk
+    /// binary sees `--base="releases/4.x.x"` in argv and clap parses the value
+    /// as the literal string `"releases/4.x.x"` (with quotes), so branch
+    /// resolution fails.
+    ///
+    /// nu-only — bash/zsh/fish strip quotes in their own tokenizer before the
+    /// wrapper function ever runs.
+    #[test]
+    fn test_wrapper_nu_strips_quoted_equals_flag() {
+        let repo = TestRepo::new();
+        repo.commit("Initial commit");
+        repo.create_branch("releases/4.x.x");
+
+        let output = exec_through_wrapper(
+            "nu",
+            &repo,
+            "switch",
+            &["--create", "feature", "--base=\"releases/4.x.x\""],
+        );
+
+        assert_eq!(
+            output.exit_code, 0,
+            "Quote-stripping should let `--base=\"...\"` succeed.\nOutput:\n{}",
+            output.combined
+        );
+        output.assert_no_directive_leaks();
+        // ANSI codes wrap branch names in bold, so check for the surrounding text.
+        assert!(
+            output.combined.contains("Created branch")
+                && output.combined.contains("releases/4.x.x"),
+            "Should show success message referencing both branches.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
