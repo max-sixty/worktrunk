@@ -1380,6 +1380,39 @@ fn test_standalone_hook_post_create(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_standalone_hook_post_create_alias_deprecated(repo: TestRepo) {
+    // `wt hook post-create` still maps to `pre-start` for scripted callers,
+    // but emits a deprecation warning per invocation.
+    repo.write_project_config(r#"pre-start = "echo 'POST_CREATE_ALIAS' > hook_ran.txt""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-create", "--yes"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt hook post-create should still succeed (alias for pre-start)"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("wt hook post-create is deprecated"),
+        "expected deprecation warning in stderr, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("wt hook pre-start"),
+        "expected migration hint in stderr, got: {stderr}"
+    );
+
+    // Verify the aliased hook actually ran.
+    let marker = repo.root_path().join("hook_ran.txt");
+    crate::common::wait_for_file_content(&marker);
+    let content = fs::read_to_string(&marker).unwrap();
+    assert!(content.contains("POST_CREATE_ALIAS"));
+}
+
+#[rstest]
 fn test_standalone_hook_pre_start_fails_on_failure(repo: TestRepo) {
     // pre-start hooks use FailFast like all other pre-* hooks — consistent with
     // the symmetric pre (blocking, fail-fast) / post (background, warn) pattern.

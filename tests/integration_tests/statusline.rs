@@ -496,6 +496,44 @@ fn test_statusline_json_ignores_claude_code(repo: TestRepo) {
     assert_eq!(item["branch"], "main");
 }
 
+// --- Deprecated flags ---
+
+#[rstest]
+fn test_statusline_claude_code_flag_deprecated(repo: TestRepo) {
+    // The hidden `--claude-code` flag still maps to `--format=claude-code`,
+    // but emits a deprecation warning per invocation.
+    let escaped_path = escape_path_for_json(repo.root_path());
+    let json = format!(r#"{{"workspace": {{"current_dir": "{escaped_path}"}}}}"#);
+
+    let mut cmd = wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.args(["list", "statusline", "--claude-code"]);
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().expect("spawn");
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(json.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().expect("wait");
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--claude-code is deprecated"),
+        "expected deprecation warning in stderr, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("--format=claude-code"),
+        "expected migration hint in stderr, got: {stderr}"
+    );
+}
+
 /// Tests that statusline correctly identifies nested worktrees.
 ///
 /// When worktrees are placed inside other worktrees (e.g., `.worktrees/` layout),
