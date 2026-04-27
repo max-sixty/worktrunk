@@ -12,28 +12,37 @@
 //! The progress line is cleared on [`Progress::finish`] or on drop, so the
 //! caller can print a summary message immediately afterward without overlap.
 
+#[cfg(feature = "cli")]
 use std::io::{IsTerminal, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::thread::{self, JoinHandle};
+#[cfg(feature = "cli")]
+use std::thread;
+use std::thread::JoinHandle;
+#[cfg(feature = "cli")]
 use std::time::{Duration, Instant};
 
 use color_print::cformat;
+#[cfg(feature = "cli")]
 use crossterm::{
     QueueableCommand,
     cursor::MoveToColumn,
     terminal::{Clear, ClearType},
 };
 
+#[cfg(feature = "cli")]
 const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+#[cfg(feature = "cli")]
 const TICK_INTERVAL: Duration = Duration::from_millis(100);
 /// Delay before the first frame renders, so sub-second operations stay silent.
+#[cfg(feature = "cli")]
 const STARTUP_DELAY: Duration = Duration::from_millis(300);
 
 struct Shared {
     files: AtomicUsize,
     bytes: AtomicU64,
     done: AtomicBool,
+    #[cfg(feature = "cli")]
     verb: &'static str,
 }
 
@@ -54,12 +63,18 @@ impl Progress {
     /// `"Copying"`, `"Removing"`). Spawns a background ticker thread when a
     /// TTY is detected. When stderr is not a TTY, returns a disabled reporter
     /// and does no work.
-    pub fn start(verb: &'static str) -> Self {
-        if std::io::stderr().is_terminal() {
-            Self::enabled(verb)
-        } else {
-            Self::disabled()
+    ///
+    /// Without the `cli` feature, the spinner is unavailable (it depends on
+    /// `crossterm` for cursor control), so this always returns a disabled
+    /// reporter. Counters still record but nothing renders.
+    pub fn start(_verb: &'static str) -> Self {
+        #[cfg(feature = "cli")]
+        {
+            if std::io::stderr().is_terminal() {
+                return Self::enabled(_verb);
+            }
         }
+        Self::disabled()
     }
 
     /// A reporter that does nothing — for benchmarks, tests, and internal moves.
@@ -71,6 +86,7 @@ impl Progress {
     /// [`Self::start`] and the test-only "force enabled" path share one
     /// implementation. Spawns the ticker thread; safe to call from any
     /// context that genuinely wants live output.
+    #[cfg(feature = "cli")]
     fn enabled(verb: &'static str) -> Self {
         let shared = Arc::new(Shared {
             files: AtomicUsize::new(0),
@@ -103,16 +119,21 @@ impl Progress {
 impl Drop for Progress {
     fn drop(&mut self) {
         // `Inner` is Drop-free, so we can take ownership of its fields and
-        // run shutdown without partial-move conflicts.
+        // run shutdown without partial-move conflicts. Without `cli`, an
+        // `Inner` is never constructed (see `start`/`enabled`), so this block
+        // is statically unreachable — the `cli`-gated `clear_line` call is
+        // therefore safe to elide.
         if let Some(inner) = self.0.take() {
             inner.shared.done.store(true, Ordering::Relaxed);
             inner.ticker.thread().unpark();
             let _ = inner.ticker.join();
+            #[cfg(feature = "cli")]
             let _ = clear_line(&mut std::io::stderr().lock());
         }
     }
 }
 
+#[cfg(feature = "cli")]
 fn ticker_loop(shared: &Shared) {
     let start = Instant::now();
     // Sub-300ms operations render nothing — the line never gets drawn.
@@ -135,6 +156,7 @@ fn ticker_loop(shared: &Shared) {
     }
 }
 
+#[cfg(feature = "cli")]
 fn format_line(verb: &str, files: usize, bytes: u64, spinner: char) -> String {
     if files == 0 {
         cformat!("<cyan>{spinner}</> {verb}...")
@@ -149,6 +171,7 @@ fn format_line(verb: &str, files: usize, bytes: u64, spinner: char) -> String {
     }
 }
 
+#[cfg(feature = "cli")]
 fn render_line<W: Write>(w: &mut W, line: &str) -> std::io::Result<()> {
     w.queue(MoveToColumn(0))?;
     w.queue(Clear(ClearType::CurrentLine))?;
@@ -156,6 +179,7 @@ fn render_line<W: Write>(w: &mut W, line: &str) -> std::io::Result<()> {
     w.flush()
 }
 
+#[cfg(feature = "cli")]
 fn clear_line<W: Write>(w: &mut W) -> std::io::Result<()> {
     w.queue(MoveToColumn(0))?;
     w.queue(Clear(ClearType::CurrentLine))?;
@@ -240,6 +264,7 @@ mod tests {
         assert_eq!(format_bytes(1_610_612_736), "1.5 GiB");
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn test_format_line_empty() {
         let line = format_line("Copying", 0, 0, '⠋');
@@ -247,6 +272,7 @@ mod tests {
         assert!(line.contains('⠋'));
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn test_format_line_singular() {
         let line = format_line("Copying", 1, 42, '⠙');
@@ -254,6 +280,7 @@ mod tests {
         assert!(line.contains("42 B"));
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn test_format_line_plural() {
         let line = format_line("Removing", 2_500, 5 * 1024 * 1024, '⠹');
@@ -281,6 +308,7 @@ mod tests {
         assert!(s.contains("5.0 MiB"));
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn test_render_line_writes_text_with_prefix_control_bytes() {
         let mut buf = Vec::new();
@@ -289,6 +317,7 @@ mod tests {
         assert!(buf.len() > b"hello".len());
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn test_clear_line_writes_control_bytes() {
         let mut buf = Vec::new();
@@ -311,6 +340,7 @@ mod tests {
         assert!(Progress::start("Copying").0.is_none());
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn test_enabled_lifecycle_counters_propagate() {
         let p = Progress::enabled("Copying");
@@ -322,6 +352,7 @@ mod tests {
         p.finish();
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn test_enabled_renders_after_startup_delay() {
         let p = Progress::enabled("Removing");
