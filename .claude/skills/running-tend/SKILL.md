@@ -256,8 +256,8 @@ Triage each duplicate:
   `merge_base("main", "branch")` keying separately;
   `worktree_at(cwd)` vs `worktree_at(porcelain_path)` not canonicalizing.
 
-Baseline as of 2026-04-13: 29 git subprocesses per render on a clean tree
-(see PR #2209). A jump above ~32 on a clean tree warrants investigation.
+Baseline: ~29 git subprocesses per render on a clean tree; a jump above
+~32 warrants investigation.
 
 ## README Date Check
 
