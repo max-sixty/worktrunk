@@ -599,7 +599,7 @@ main {
 // Tables use display: block + overflow-x: auto for horizontal scrolling within
 // the content area. This prevents tables from breaking out of the container.
 // border-collapse: separate + overflow: clip on inner tbody handles border-radius.
-.content > table {
+.content table {
     display: block;
     overflow-x: auto;
     width: fit-content;
@@ -1486,7 +1486,7 @@ header .logo:hover img {
     }
 
     // Tables
-    .content > table {
+    .content table {
         page-break-inside: avoid;
     }
 

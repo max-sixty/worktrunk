@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
  {%- for sitemap_entry in entries %}
+ {#- Skip pages that declare a non-self canonical — only canonical URLs belong in the sitemap. #}
+ {%- if not sitemap_entry.extra.canonical %}
  <url>
  <loc>{{ sitemap_entry.permalink | escape_xml | safe }}</loc>
  {%- if sitemap_entry.updated %}
@@ -9,5 +11,6 @@
  <lastmod>{{ now() | date(format="%Y-%m-%d") }}</lastmod>
  {%- endif %}
  </url>
+ {%- endif %}
  {%- endfor %}
 </urlset>

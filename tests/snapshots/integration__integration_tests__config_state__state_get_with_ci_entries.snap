@@ -1,6 +1,6 @@
 ---
 source: tests/integration_tests/config_state.rs
-expression: "String::from_utf8_lossy(&output.stderr)"
+expression: "String::from_utf8_lossy(&output.stdout)"
 ---
 [36mDEFAULT BRANCH[39m
 [107m [0m main
@@ -11,12 +11,21 @@ expression: "String::from_utf8_lossy(&output.stderr)"
 [36mBRANCH MARKERS[39m
 [107m [0m (none)
 
+[36mVARS[39m
+[107m [0m (none)
+
 [36mCI STATUS CACHE[39m
  Branch  Status Age   Head   
  ─────── ────── ─── ──────── 
  bugfix  failed now 11122233 
  feature passed now abc12345 
  main    none   now deadbeef
+
+[36mSUMMARY CACHE[39m
+[107m [0m (none)
+
+[36mGIT COMMANDS CACHE[39m
+[107m [0m (none)
 
 [36mHINTS[39m
 [107m [0m (none)
@@ -25,4 +34,10 @@ expression: "String::from_utf8_lossy(&output.stderr)"
 [107m [0m (none)
 
 [36mHOOK OUTPUT[39m @ <PATH>
+[107m [0m (none)
+
+[36mDIAGNOSTIC[39m @ <PATH>
+[107m [0m (none)
+
+[36mTRASH[39m @ _REPO_/.git/wt/trash
 [107m [0m (none)

@@ -74,11 +74,11 @@ fn test_doc_sanitize_filter(repo: TestRepo) {
         "sanitize should replace / with -"
     );
 
-    vars.insert("branch", "user\\task");
+    vars.insert("branch", r"user\task");
     assert_eq!(
         expand_template("{{ branch | sanitize }}", &vars, false, &repository, "test").unwrap(),
         "user-task",
-        "sanitize should replace \\ with -"
+        r"sanitize should replace \ with -"
     );
 
     // Nested paths
@@ -563,7 +563,7 @@ fn test_worktree_path_of_branch_shell_escape(repo: TestRepo) {
     );
     // The escaped path should still reference the worktree
     assert!(
-        result_escaped.contains("My Worktree") || result_escaped.contains("My\\ Worktree"),
+        result_escaped.contains("My Worktree") || result_escaped.contains(r"My\ Worktree"),
         "Escaped path should reference worktree: {result_escaped}"
     );
 

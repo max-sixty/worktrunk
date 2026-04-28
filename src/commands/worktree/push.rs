@@ -361,7 +361,7 @@ pub fn handle_no_ff_merge(
         .run_command(&["update-ref", &target_ref, &merge_sha, &ctx.target_tip])
         .map_err(|e| GitError::PushFailed {
             target_branch: ctx.target_branch.clone(),
-            error: format!("Failed to update ref: {e}"),
+            error: format!("Failed to update ref: {e:#}"),
         })?;
 
     // Sync the target worktree's working tree if it exists.

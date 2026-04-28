@@ -34,12 +34,16 @@ pub fn is_git_subcommand() -> bool {
     std::env::var_os("GIT_EXEC_PATH").is_some()
 }
 
-/// Get the raw `argv[0]` value (how we were invoked).
+/// Get the `argv[0]` value (how we were invoked), with forward-slash separators.
 ///
 /// Used in error messages to show what command was actually run.
 /// Returns the full invocation path (e.g., `target/debug/wt`, `./wt`, `wt`).
+/// Backslashes are normalized to forward slashes on Windows for consistent display.
 pub fn invocation_path() -> String {
-    std::env::args().next().unwrap_or_else(|| "wt".to_string())
+    std::env::args()
+        .next()
+        .map(|s| s.replace('\\', "/"))
+        .unwrap_or_else(|| "wt".to_string())
 }
 
 /// Check if we were invoked via an explicit path rather than PATH lookup.

@@ -8,12 +8,7 @@
 //! - **Complete events** (`ph: "X"`): Command executions with duration
 //! - **Instant events** (`ph: "I"`): Milestones without duration (e.g., "Showed skeleton")
 //!
-//! # Usage
-//!
-//! ```bash
-//! RUST_LOG=debug wt list 2>&1 | grep wt-trace | analyze-trace > trace.json
-//! # Then open trace.json in chrome://tracing or https://ui.perfetto.dev
-//! ```
+//! See [`crate::trace`] for the capture pipeline and SQL query examples.
 //!
 //! # Format Reference
 //!

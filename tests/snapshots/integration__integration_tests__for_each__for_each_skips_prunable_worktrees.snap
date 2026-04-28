@@ -22,16 +22,22 @@ info:
     LANG: C
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
+    OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -42,12 +48,12 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRunning in [1mmain[22m...[39m
-Running in main
+[0mRunning in main
 [36m◎[39m [36mRunning in [1mfeature-a[22m...[39m
-Running in feature-a
+[0mRunning in feature-a
 [36m◎[39m [36mRunning in [1mfeature-b[22m...[39m
-Running in feature-b
+[0mRunning in feature-b
 [36m◎[39m [36mRunning in [1mfeature-c[22m...[39m
-Running in feature-c
+[0mRunning in feature-c
 
 [32m✓[39m [32mCompleted in 4 worktrees[39m

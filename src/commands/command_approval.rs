@@ -192,16 +192,16 @@ pub fn approve_hooks(
     ctx: &super::command_executor::CommandContext<'_>,
     hook_types: &[HookType],
 ) -> anyhow::Result<bool> {
-    approve_hooks_filtered(ctx, hook_types, None)
+    approve_hooks_filtered(ctx, hook_types, &[])
 }
 
-/// Like `approve_hooks` but with optional name filter for targeted hook approval.
+/// Like `approve_hooks` but with name filters for targeted hook approval.
 ///
-/// When `name_filter` is provided, only commands matching that name are shown
-/// in the approval prompt. This is used by `wt hook <type> --name <name>` to
-/// approve only the targeted hook rather than all hooks of that type.
+/// When `name_filters` is non-empty, only commands matching those names are shown
+/// in the approval prompt. This is used by `wt hook <type> <name...>` to
+/// approve only the targeted hooks rather than all hooks of that type.
 ///
-/// Supports filter syntax:
+/// Supports filter syntax per name:
 /// - `"foo"` — approves commands named "foo" from project config
 /// - `"project:foo"` — approves commands named "foo" from project config
 /// - `"project:"` — approves all commands from project config
@@ -209,15 +209,20 @@ pub fn approve_hooks(
 pub fn approve_hooks_filtered(
     ctx: &super::command_executor::CommandContext<'_>,
     hook_types: &[HookType],
-    name_filter: Option<&str>,
+    name_filters: &[String],
 ) -> anyhow::Result<bool> {
-    // Parse filter to understand source and name separately
+    // Parse filters to understand source and name separately
     // Uses the same ParsedFilter as hooks.rs for consistent behavior
-    let parsed = name_filter.map(ParsedFilter::parse);
+    let parsed_filters: Vec<ParsedFilter<'_>> = name_filters
+        .iter()
+        .map(|f| ParsedFilter::parse(f))
+        .collect();
 
-    // If filter explicitly targets user hooks only, skip project approval entirely
-    if let Some(ref f) = parsed
-        && f.source == Some(HookSource::User)
+    // If all filters explicitly target user hooks only, skip project approval entirely
+    if !parsed_filters.is_empty()
+        && parsed_filters
+            .iter()
+            .all(|f| f.source == Some(HookSource::User))
     {
         return Ok(true);
     }
@@ -229,13 +234,21 @@ pub fn approve_hooks_filtered(
 
     let mut commands = collect_commands_for_hooks(&project_config, hook_types);
 
-    // Apply name filter before approval to only prompt for targeted commands
-    // Use the parsed name (not raw filter) for matching
-    // Empty name (e.g., "project:") means match all project commands - no filtering
-    if let Some(ref f) = parsed
-        && !f.name.is_empty()
-    {
-        commands.retain(|cmd| cmd.command.name.as_deref() == Some(f.name));
+    // Apply name filters before approval to only prompt for targeted commands
+    // Collect non-empty name parts from filters
+    // Empty names (e.g., "project:") mean match all project commands - no filtering
+    let filter_names: Vec<&str> = parsed_filters
+        .iter()
+        .map(|f| f.name)
+        .filter(|n| !n.is_empty())
+        .collect();
+    if !filter_names.is_empty() {
+        commands.retain(|cmd| {
+            cmd.command
+                .name
+                .as_deref()
+                .is_some_and(|n| filter_names.contains(&n))
+        });
     }
 
     if commands.is_empty() {

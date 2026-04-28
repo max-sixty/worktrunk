@@ -598,12 +598,97 @@ worktree-path = "{{ nonexistent_variable }}"
     );
 }
 
-/// Test that empty default branch is detected early with actionable error
+/// Regression test: main worktree relocation must surface a failed
+/// `git checkout <default_branch>` rather than silently claiming success.
+///
+/// Setup engineers a state where `worktrunk.default-branch` is set to a
+/// branch that does not exist locally. `Repository::default_branch()`
+/// trusts the persisted value (validation happens downstream), so
+/// `wt step relocate` proceeds into `move_main_worktree`, which tries
+/// `git checkout <nonexistent-branch>`. Before the fix, `Cmd::run()`
+/// returned `Ok(Output { status: non-zero, .. })` and the `?` operator
+/// didn't propagate it, so relocate printed "Relocated main ..." even
+/// though nothing happened.
+///
+/// After the fix: non-zero exit bails with the git stderr, exit code is
+/// non-zero, and the main worktree stays at its original path.
+#[rstest]
+fn test_relocate_main_worktree_checkout_failure_surfaces(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+    let repo_path = repo.root_path().to_path_buf();
+
+    // Switch main worktree to a non-default branch so it becomes a
+    // relocation candidate (expected path = repo.feature, not repo).
+    repo.run_git(&["checkout", "-b", "feature"]);
+
+    // Point worktrunk's default-branch cache at a branch that doesn't
+    // resolve locally. `default_branch()` now returns this value without
+    // validating it, so relocate's preflight does NOT bail and the main
+    // worktree code path runs `git checkout nonexistent-branch-xyz`.
+    repo.run_git(&[
+        "config",
+        "worktrunk.default-branch",
+        "nonexistent-branch-xyz",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "relocate"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "relocate must fail when checkout of default branch fails; \
+         stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("Relocated"),
+        "relocate must not claim success after a failed checkout; \
+         stdout: {stdout}\nstderr: {stderr}"
+    );
+
+    // Main worktree is untouched - still at repo_path, still on feature.
+    assert!(
+        repo_path.exists(),
+        "main worktree path should still exist: {}",
+        repo_path.display()
+    );
+    let expected_path = parent.join("repo.feature");
+    assert!(
+        !expected_path.exists(),
+        "relocate must not create the new worktree path after checkout \
+         failure: {}",
+        expected_path.display()
+    );
+
+    let branch_output = repo
+        .git_command()
+        .args(["branch", "--show-current"])
+        .run()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&branch_output.stdout).trim(),
+        "feature",
+        "main worktree branch should be unchanged after failed checkout"
+    );
+}
+
+/// Test that empty default branch is detected early with actionable error.
+///
+/// Engineers a state where detection genuinely fails (no remote, no
+/// standard branch names, no init.defaultBranch) so `default_branch()`
+/// returns None — relocate's preflight bails with a clear setup hint.
 #[rstest]
 fn test_relocate_empty_default_branch(repo: TestRepo) {
     let parent = worktree_parent(&repo);
 
-    // Create a worktree at a non-standard location
+    // Create a worktree at a non-standard location on a branch with a
+    // non-standard name, then rename `main` to another non-standard name
+    // and remove the remote. With no remote, no main/master/develop/trunk,
+    // and no init.defaultBranch, detection has nothing to go on.
     let wrong_path = parent.join("wrong-location");
     repo.run_git(&[
         "worktree",
@@ -612,15 +697,8 @@ fn test_relocate_empty_default_branch(repo: TestRepo) {
         "feature",
         wrong_path.to_str().unwrap(),
     ]);
-
-    // Set worktrunk.default-branch to a non-existent branch.
-    // The detection logic validates that configured branches exist locally,
-    // and returns None if they don't. This triggers the empty default branch error.
-    repo.run_git(&[
-        "config",
-        "worktrunk.default-branch",
-        "nonexistent-branch-xyz",
-    ]);
+    repo.run_git(&["branch", "-m", "main", "trunk-a"]);
+    repo.run_git(&["remote", "remove", "origin"]);
 
     // Relocate should fail early with helpful error
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["relocate"], None));

@@ -33,6 +33,11 @@ pub fn hyperlink_stdout(url: &str, text: &str) -> String {
 ///
 /// Uses the `osc8` crate's parser to find hyperlinks and extract just the visible text.
 pub fn strip_osc8_hyperlinks(s: &str) -> String {
+    // Fast path — callers routinely pass strings with no hyperlinks (skeleton
+    // rows, plain log output). Skip the parse-and-rebuild work entirely.
+    if !s.contains("\x1b]8;") {
+        return s.to_string();
+    }
     let mut result = s.to_string();
     // Keep parsing and removing hyperlinks until none remain
     while let Ok(Some((_, range))) = Hyperlink::parse(&result) {

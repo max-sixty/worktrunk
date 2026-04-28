@@ -22,6 +22,7 @@ info:
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     NO_COLOR: ""
+    OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -35,6 +36,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -44,11 +46,12 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mProject config has deprecated settings. Run [1mwt config show[22m for details or [1mwt config update[22m to apply updates[39m
+[33m▲[39m [33mProject config: table form for [1mpre-start[22m is deprecated in favor of the pipeline form. We're unifying pre-hooks, post-hooks, and aliases so that list form always runs serially and table form always runs in parallel — migrate now to keep the current serial behavior once the table form is repurposed.[39m
+[2m↳[22m [2mTo see details, run [4mwt config show[24m; to apply updates, run [4mwt config update[24m[22m
 [36m◎[39m [36mRunning pre-start [1mproject:commit[22m @ [1m_REPO_.feature[22m[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Commit: f9680d376e0968fcb45a0029cf83898054742923'[0m[2m [0m[2m[36m>[0m[2m git_vars.txt
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Commit: 72ad3f366b7d9a0fad6f311caa63139e2dc02f0e'[0m[2m [0m[2m[36m>[0m[2m git_vars.txt
 [0m[36m◎[39m [36mRunning pre-start [1mproject:short[22m @ [1m_REPO_.feature[22m[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Short: f9680d3'[0m[2m [0m[2m[36m>>[0m[2m git_vars.txt
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Short: 72ad3f3'[0m[2m [0m[2m[36m>>[0m[2m git_vars.txt
 [0m[36m◎[39m [36mRunning pre-start [1mproject:remote[22m @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Remote: origin'[0m[2m [0m[2m[36m>>[0m[2m git_vars.txt
 [0m[36m◎[39m [36mRunning pre-start [1mproject:worktree_name[22m @ [1m_REPO_.feature[22m[39m

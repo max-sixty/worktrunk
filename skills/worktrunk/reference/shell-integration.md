@@ -8,15 +8,18 @@ Subprocesses cannot change the parent shell's current directory. When
 `wt switch feature` runs, the `wt` binary runs as a child process and cannot
 `cd` the terminal.
 
-Worktrunk solves this with **directive file passing**:
+Worktrunk solves this with **split directive file passing**:
 
-1. Shell wrapper creates a temp file via `mktemp`
-2. Shell sets `WORKTRUNK_DIRECTIVE_FILE` env var to the temp file path
-3. `wt` binary writes shell commands (like `cd '/path'`) to that file
-4. Shell sources the file after `wt` exits, executing the commands
-5. Shell removes the temp file
+1. Shell wrapper creates two temp files via `mktemp` (one for cd, one for exec)
+2. Shell sets `WORKTRUNK_DIRECTIVE_CD_FILE` and `WORKTRUNK_DIRECTIVE_EXEC_FILE`
+3. `wt` binary writes a raw path to the CD file (no shell escaping needed)
+4. `wt` writes shell commands to the EXEC file (only for `--execute`)
+5. Shell reads the CD file with `cd -- "$(< file)"` — no shell parsing
+6. Shell sources the EXEC file if non-empty
+7. Shell removes both temp files
 
-This allows `wt switch` to change the terminal's directory.
+The split design eliminates shell injection from cd directives — the CD file
+holds a raw path that is never parsed as shell.
 
 ## Installation
 
@@ -117,25 +120,31 @@ suggested fix.
 The shell wrapper (installed by `wt config shell install`) defines a shell
 function that:
 
-1. Creates a temp file for directives
-2. Sets `WORKTRUNK_DIRECTIVE_FILE` to that path
+1. Creates two temp files (cd and exec)
+2. Sets `WORKTRUNK_DIRECTIVE_CD_FILE` and `WORKTRUNK_DIRECTIVE_EXEC_FILE`
 3. Runs the real `wt` binary
-4. Sources the directive file (executes `cd` commands)
-5. Cleans up the temp file
+4. Reads the CD file with `cd -- "$(< file)"` (raw path, no shell parsing)
+5. Sources the EXEC file if non-empty (for `--execute` payloads)
+6. Cleans up both temp files
 
 Simplified example (actual wrapper handles completions and edge cases):
 ```bash
 wt() {
-    local directive_file
-    directive_file="$(mktemp)"
+    local cd_file exec_file exit_code=0
+    cd_file="$(mktemp)"
+    exec_file="$(mktemp)"
 
-    WORKTRUNK_DIRECTIVE_FILE="$directive_file" command wt "$@" || exit_code=$?
+    WORKTRUNK_DIRECTIVE_CD_FILE="$cd_file" WORKTRUNK_DIRECTIVE_EXEC_FILE="$exec_file" \
+        command wt "$@" || exit_code=$?
 
-    if [[ -s "$directive_file" ]]; then
-        source "$directive_file"
+    if [[ -s "$cd_file" ]]; then
+        cd -- "$(<"$cd_file")"
+    fi
+    if [[ -s "$exec_file" ]]; then
+        source "$exec_file"
     fi
 
-    rm -f "$directive_file"
+    rm -f "$cd_file" "$exec_file"
     return "$exit_code"
 }
 ```
@@ -187,24 +196,26 @@ grep -n "wt config shell init" ~/.config/fish/config.fish
 
 Should show the `eval` line with line number.
 
-### 3. Check if directive file is set
+### 3. Check if directive files are set
 
 ```bash
-# After running any wt command, this should be unset (temp file deleted)
-echo $WORKTRUNK_DIRECTIVE_FILE
+# After running any wt command, these should be unset (temp files deleted)
+echo $WORKTRUNK_DIRECTIVE_CD_FILE
+echo $WORKTRUNK_DIRECTIVE_EXEC_FILE
 
-# During wt execution, this would be set to a temp file path
+# During wt execution, these would be set to temp file paths
 ```
 
-### 4. Test directive file manually
+### 4. Test directive files manually
 
 ```bash
-# Create a temp file and test
-export WORKTRUNK_DIRECTIVE_FILE=$(mktemp)
+# Create temp files and test
+export WORKTRUNK_DIRECTIVE_CD_FILE=$(mktemp)
+export WORKTRUNK_DIRECTIVE_EXEC_FILE=$(mktemp)
 command wt switch feature
-cat $WORKTRUNK_DIRECTIVE_FILE  # Should contain: cd '/path/to/worktree'
-source $WORKTRUNK_DIRECTIVE_FILE  # Should cd you there
-rm $WORKTRUNK_DIRECTIVE_FILE
+cat $WORKTRUNK_DIRECTIVE_CD_FILE     # Should contain: /path/to/worktree (raw path)
+cd -- "$(<$WORKTRUNK_DIRECTIVE_CD_FILE)"  # Should cd you there
+rm -f $WORKTRUNK_DIRECTIVE_CD_FILE $WORKTRUNK_DIRECTIVE_EXEC_FILE
 ```
 
 ## Common Issues
@@ -239,7 +250,8 @@ If you see path issues, ensure you're using a recent Git for Windows version.
 
 | Variable | Purpose |
 |----------|---------|
-| `WORKTRUNK_DIRECTIVE_FILE` | Set by shell wrapper; path to temp file for directives |
+| `WORKTRUNK_DIRECTIVE_CD_FILE` | Set by shell wrapper; wt writes a raw path, wrapper `cd`s to it |
+| `WORKTRUNK_DIRECTIVE_EXEC_FILE` | Set by shell wrapper; wt writes shell commands, wrapper sources the file |
 | `WORKTRUNK_BIN` | Override binary path (for testing dev builds) |
 | `WORKTRUNK_SHELL` | Set by PowerShell wrapper to indicate shell type |
 

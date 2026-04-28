@@ -1,15 +1,24 @@
 # Claude Code Integration
 
-The worktrunk Claude Code plugin provides two features:
+The worktrunk Claude Code plugin provides three features:
 
 1. **Configuration skill** — Documentation Claude Code can read, so it can help set up LLM commits, hooks, and troubleshoot issues
-2. **Activity tracking** — Status markers in `wt list` showing which worktrees have active Claude sessions (🤖 working, 💬 waiting)
+2. **Worktree isolation** — When Claude Code agents create isolated worktrees, the plugin routes creation and removal through `wt` instead of raw `git`
+3. **Activity tracking** — Status markers in `wt list` showing which worktrees have active Claude sessions (🤖 working, 💬 waiting)
 
 ## Installation
 
+Recommended:
+
 ```bash
-$ claude plugin marketplace add max-sixty/worktrunk
-$ claude plugin install worktrunk@worktrunk
+wt config plugins claude install
+```
+
+Manual equivalent:
+
+```bash
+claude plugin marketplace add max-sixty/worktrunk
+claude plugin install worktrunk@worktrunk
 ```
 
 ## Configuration skill
@@ -17,7 +26,7 @@ $ claude plugin install worktrunk@worktrunk
 The plugin includes a skill — documentation that Claude Code can read — covering worktrunk's configuration system. After installation, Claude Code can help with:
 
 - Setting up LLM-generated commit messages
-- Adding project hooks (post-create, pre-merge, pre-commit)
+- Adding project hooks (pre-start, pre-merge, pre-commit)
 - Configuring worktree path templates
 - Fixing shell integration issues
 
@@ -27,8 +36,8 @@ Claude Code is designed to load the skill automatically when it detects worktrun
 
 The plugin tracks Claude sessions with status markers in `wt list`:
 
-{% terminal(cmd="wt list") %}
-<span class="cmd">wt list</span>
+```bash
+$ wt list
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Path</b>                 <b>Commit</b>    <b>Age</b>   <b>Message</b>
 @ main             <span class=d>^</span><span class=d>⇡</span>                         <span class=g>⇡1</span>      .                    <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
 + feature-api      <span class=d>↑</span> 🤖              <span class=g>↑1</span>               ../repo.feature-api  <span class=d>70343f03</span>  <span class=d>1d</span>    <span class=d>Add REST API endpoints</span>
@@ -36,7 +45,7 @@ The plugin tracks Claude sessions with status markers in `wt list`:
 + wip-docs       <span class=c>?</span> <span class=d>–</span>                                  ../repo.wip-docs     <span class=d>33323bc1</span>  <span class=d>1d</span>    <span class=d>Initial commit</span>
 
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead</span>
-{% end %}
+```
 
 - 🤖 — Claude is working
 - 💬 — Claude is waiting for input
@@ -51,9 +60,13 @@ $ wt config state marker set "✅" --branch feature  # Specific branch
 $ git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Direct
 ```
 
+## Worktree isolation
+
+Claude Code agents can run in isolated worktrees (`isolation: "worktree"`). By default, Claude Code creates these with `git worktree add`. The plugin's `WorktreeCreate` and `WorktreeRemove` hooks route this through `wt switch --create` and `wt remove` instead, so worktrees created by agents get worktrunk's naming conventions, hooks, and lifecycle management.
+
 ## Statusline
 
-`wt list statusline --format=claude-code` outputs a single-line status for the Claude Code statusline. This may fetch CI status from the network when the cache is stale (often ~1–2 seconds), making it suitable for async statuslines but too slow for synchronous shell prompts. If a faster version would be helpful, please [open an issue](https://github.com/max-sixty/worktrunk/issues).
+`wt list statusline --format=claude-code` outputs a single-line status for the Claude Code statusline. When the CI status cache is stale, this fetches from the network — typically 1–2 seconds — making it suitable for async statuslines but too slow for synchronous shell prompts. If a faster version would be helpful, please [open an issue](https://github.com/max-sixty/worktrunk/issues).
 
 <code>~/w/myproject.feature-auth  !🤖  @<span style='color:#0a0'>+42</span> <span style='color:#a00'>-8</span>  <span style='color:#0a0'>↑3</span>  <span style='color:#0a0'>⇡1</span>  <span style='color:#0a0'>●</span>  | Opus 🌔 65%</code>
 

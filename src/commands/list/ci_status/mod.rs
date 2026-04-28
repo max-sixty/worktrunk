@@ -11,7 +11,7 @@ mod platform;
 use anstyle::{AnsiColor, Color, Style};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use worktrunk::git::Repository;
+use worktrunk::git::{BranchRef, Repository};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::utils::epoch_now;
 
@@ -34,54 +34,31 @@ pub struct CiBranchName {
 }
 
 impl CiBranchName {
-    /// Create from a branch name with authoritative `is_remote` flag.
+    /// Create from a [`BranchRef`], using its short name and remote/local kind.
     ///
-    /// For remote branches (e.g., "origin/feature"), extracts the remote name
-    /// and bare branch name by finding the matching remote prefix.
+    /// For remote branches (e.g., "origin/feature"), splits at the first `/`
+    /// to extract the remote name and bare branch name.
     /// For local branches, the name is already bare.
     ///
-    /// The `is_remote` flag should come from an authoritative source:
-    /// - `BranchRef::is_remote` (from collection phase)
-    /// - `git show-ref --verify refs/remotes/<branch>` (for CLI input)
-    pub fn from_branch_ref(branch: &str, is_remote: bool, repo: &Repository) -> Self {
-        if is_remote {
-            // Remote branch - find the remote prefix to extract bare name
-            for (remote_name, _) in repo.all_remote_urls() {
-                let prefix = format!("{}/", remote_name);
-                if let Some(name) = branch.strip_prefix(&prefix) {
-                    log::debug!(
-                        "Remote branch {} -> remote={}, name={}",
-                        branch,
-                        remote_name,
-                        name
-                    );
-                    return Self {
-                        full_name: branch.to_string(),
-                        remote: Some(remote_name),
-                        name: name.to_string(),
-                    };
-                }
-            }
-            // Fallback: couldn't find matching remote, use first segment as remote
-            if let Some((remote, name)) = branch.split_once('/') {
-                log::warn!(
-                    "Remote branch {} has unknown remote '{}', using as-is",
-                    branch,
-                    remote
-                );
-                return Self {
-                    full_name: branch.to_string(),
+    /// Returns `None` for detached HEAD (no short name).
+    pub fn from_branch_ref(branch_ref: &BranchRef) -> Option<Self> {
+        let short = branch_ref.short_name()?;
+        if branch_ref.is_remote() {
+            // Remote branch — split "origin/feature" into remote + bare name.
+            if let Some((remote, name)) = short.split_once('/') {
+                return Some(Self {
+                    full_name: short.to_string(),
                     remote: Some(remote.to_string()),
                     name: name.to_string(),
-                };
+                });
             }
         }
-        // Local branch - name is already bare
-        Self {
-            full_name: branch.to_string(),
+        // Local branch — name is already bare
+        Some(Self {
+            full_name: short.to_string(),
             remote: None,
-            name: branch.to_string(),
-        }
+            name: short.to_string(),
+        })
     }
 
     /// Returns true if this is a remote branch reference.
@@ -390,7 +367,7 @@ impl PrStatus {
     ///
     /// Platform is determined by project config override or remote URL detection.
     /// Returns `None` if the platform cannot be determined (user should set
-    /// `ci.platform` in project config for non-standard hostnames).
+    /// `forge.platform` in project config for non-standard hostnames).
     /// PR/MR detection always runs. Workflow/pipeline fallback only runs if `has_upstream`.
     fn detect_uncached(
         repo: &Repository,
@@ -398,21 +375,16 @@ impl PrStatus {
         local_head: &str,
         has_upstream: bool,
     ) -> Option<Self> {
-        // Load project config for platform override (cached in Repository)
-        let project_config = repo.load_project_config().ok().flatten();
-        let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
-
-        // Determine platform (config override, branch's remote, or any remote URL)
-        // For remote branches, use their specific remote to get the correct platform
-        let platform = platform_for_repo(repo, platform_override, branch.remote.as_deref());
+        // Determine platform (config override, branch's remote, or primary remote URL)
+        let platform = platform_for_repo(repo, branch.remote.as_deref());
 
         match platform {
             Some(p) => p.detect_ci(repo, branch, local_head, has_upstream),
             None => {
-                // Unknown platform - user should set ci.platform in project config
+                // Unknown platform — user should set forge.platform in project config
                 log::debug!(
                     "Could not detect CI platform from remote URL; \
-                     set ci.platform in .config/wt.toml for CI status"
+                     set forge.platform in .config/wt.toml for CI status"
                 );
                 None
             }
@@ -519,6 +491,36 @@ mod tests {
         assert_eq!(error.source, CiSource::Branch);
         assert!(!error.is_stale);
         assert!(error.url.is_none());
+    }
+
+    #[test]
+    fn test_ci_branch_name_from_local_branch_ref() {
+        let branch_ref = BranchRef::local_branch("feature", "abc123");
+        let ci = CiBranchName::from_branch_ref(&branch_ref).expect("local has short_name");
+        assert_eq!(ci.full_name, "feature");
+        assert_eq!(ci.name, "feature");
+        assert_eq!(ci.remote, None);
+        assert!(!ci.is_remote());
+    }
+
+    #[test]
+    fn test_ci_branch_name_from_remote_branch_ref() {
+        let branch_ref = BranchRef::remote_branch("origin/feature", "abc123");
+        let ci = CiBranchName::from_branch_ref(&branch_ref).expect("remote has short_name");
+        assert_eq!(ci.full_name, "origin/feature");
+        assert_eq!(ci.name, "feature");
+        assert_eq!(ci.remote.as_deref(), Some("origin"));
+        assert!(ci.is_remote());
+    }
+
+    #[test]
+    fn test_ci_branch_name_from_detached_head() {
+        let detached = BranchRef {
+            full_ref: None,
+            commit_sha: "abc123".to_string(),
+            worktree_path: None,
+        };
+        assert!(CiBranchName::from_branch_ref(&detached).is_none());
     }
 
     #[test]

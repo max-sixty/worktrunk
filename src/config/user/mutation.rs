@@ -3,14 +3,17 @@
 //! These methods modify the UserConfig and persist changes to disk,
 //! using file locking to prevent race conditions between concurrent processes.
 
-use config::ConfigError;
 use fs2::FileExt;
+
+use crate::config::ConfigError;
 
 use crate::path::format_path_for_display;
 
 use super::UserConfig;
 use super::path;
-use super::sections::{CommitConfig, CommitGenerationConfig};
+use super::sections::CommitGenerationConfig;
+
+const NO_CONFIG_DIR_MSG: &str = "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME";
 
 /// Acquire an exclusive lock on the config file for read-modify-write operations.
 ///
@@ -24,7 +27,7 @@ pub(crate) fn acquire_config_lock(
     // Create parent directory if needed
     if let Some(parent) = lock_path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| ConfigError::Message(format!("Failed to create config directory: {e}")))?;
+            .map_err(|e| ConfigError(format!("Failed to create config directory: {e}")))?;
     }
 
     let file = std::fs::OpenOptions::new()
@@ -33,10 +36,10 @@ pub(crate) fn acquire_config_lock(
         .create(true)
         .truncate(false)
         .open(&lock_path)
-        .map_err(|e| ConfigError::Message(format!("Failed to open lock file: {e}")))?;
+        .map_err(|e| ConfigError(format!("Failed to open lock file: {e}")))?;
 
     file.lock_exclusive()
-        .map_err(|e| ConfigError::Message(format!("Failed to acquire config lock: {e}")))?;
+        .map_err(|e| ConfigError(format!("Failed to acquire config lock: {e}")))?;
 
     Ok(file)
 }
@@ -55,61 +58,47 @@ impl UserConfig {
     {
         let path = match config_path {
             Some(p) => p.to_path_buf(),
-            None => path::config_path().ok_or_else(|| {
-                ConfigError::Message(
-                    "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME".to_string(),
-                )
-            })?,
+            None => path::config_path().ok_or_else(|| ConfigError(NO_CONFIG_DIR_MSG.into()))?,
         };
         let _lock = acquire_config_lock(&path)?;
-        self.reload_projects_from(config_path)?;
+        self.reload_from(&path)?;
 
         if mutate(self) {
-            self.save_impl(config_path)?;
+            self.save_to(&path)?;
         }
         Ok(())
     }
 
-    /// Reload only the projects section from disk, preserving other in-memory state
+    /// Reload all fields from disk so the in-memory config matches the current
+    /// file state before applying mutations.
     ///
-    /// This replaces the in-memory projects with the authoritative disk state,
-    /// while keeping other config values (worktree-path, commit-generation, etc.).
-    /// Callers should reload before modifying and saving to avoid race conditions.
-    fn reload_projects_from(
-        &mut self,
-        config_path: Option<&std::path::Path>,
-    ) -> Result<(), ConfigError> {
-        let path = match config_path {
-            Some(p) => Some(p.to_path_buf()),
-            None => path::config_path(),
-        };
-
-        let Some(path) = path else {
-            return Ok(()); // No config file to reload from
-        };
-
+    /// The diff-based `save_to` writes ALL serializable fields, so the reload
+    /// must refresh everything to avoid overwriting concurrent manual edits
+    /// with stale in-memory data. After reload, the mutator applies its
+    /// specific change, and `save_to` persists the full state.
+    fn reload_from(&mut self, path: &std::path::Path) -> Result<(), ConfigError> {
         if !path.exists() {
-            return Ok(()); // Nothing to reload
+            return Ok(());
         }
 
-        let content = std::fs::read_to_string(&path).map_err(|e| {
-            ConfigError::Message(format!(
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            ConfigError(format!(
                 "Failed to read config file {}: {}",
-                format_path_for_display(&path),
+                format_path_for_display(path),
                 e
             ))
         })?;
 
-        let disk_config: UserConfig = toml::from_str(&content).map_err(|e| {
-            ConfigError::Message(format!(
+        let migrated = crate::config::deprecation::migrate_content(&content);
+        let disk_config: UserConfig = toml::from_str(&migrated).map_err(|e| {
+            ConfigError(format!(
                 "Failed to parse config file {}: {}",
-                format_path_for_display(&path),
+                format_path_for_display(path),
                 e
             ))
         })?;
 
-        // Replace in-memory projects with disk state (disk is authoritative)
-        self.projects = disk_config.projects;
+        *self = disk_config;
 
         Ok(())
     }
@@ -160,10 +149,10 @@ impl UserConfig {
     ) -> Result<(), ConfigError> {
         self.with_locked_mutation(config_path, |config| {
             let entry = config.projects.entry(project.to_string()).or_default();
-            if entry.overrides.worktree_path.as_ref() == Some(&worktree_path) {
+            if entry.worktree_path.as_ref() == Some(&worktree_path) {
                 return false;
             }
-            entry.overrides.worktree_path = Some(worktree_path);
+            entry.worktree_path = Some(worktree_path);
             true
         })
     }
@@ -179,16 +168,11 @@ impl UserConfig {
         config_path: Option<&std::path::Path>,
     ) -> Result<(), ConfigError> {
         self.with_locked_mutation(config_path, |config| {
-            // Ensure commit config exists
-            let commit_config = config
-                .configs
+            let gen_config = config
                 .commit
-                .get_or_insert_with(CommitConfig::default);
-            let gen_config = commit_config
                 .generation
                 .get_or_insert_with(CommitGenerationConfig::default);
 
-            // Set the command
             gen_config.command = Some(command.clone());
             true
         })

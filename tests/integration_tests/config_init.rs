@@ -99,7 +99,7 @@ fn test_config_create_project_already_exists(repo: TestRepo) {
     fs::create_dir_all(&config_dir).unwrap();
     fs::write(
         config_dir.join("wt.toml"),
-        r#"[[project.post-create]]
+        r#"[[project.pre-start]]
 run = "echo hello"
 "#,
     )

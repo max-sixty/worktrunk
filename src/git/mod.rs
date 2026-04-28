@@ -8,6 +8,7 @@ mod error;
 mod parse;
 pub mod recover;
 pub mod remote_ref;
+pub mod remove;
 mod repository;
 mod url;
 
@@ -25,7 +26,7 @@ mod test;
 //
 // Heavy operations protected:
 // - git rev-list --count (accesses commit-graph via mmap)
-// - git diff --numstat (accesses pack files and indexes via mmap)
+// - git diff --shortstat (accesses pack files and indexes via mmap)
 use crate::sync::Semaphore;
 use std::sync::LazyLock;
 static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(4));
@@ -52,12 +53,18 @@ pub use error::{
     // Error inspection functions
     add_hook_skip_hint,
     exit_code,
+    interrupt_exit_code,
 };
 pub use parse::{parse_porcelain_z, parse_untracked_files};
 pub use recover::{current_or_recover, cwd_removed_hint};
+pub use remove::{
+    BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemovalOutput, RemoveOptions,
+    delete_branch_if_safe, remove_worktree_with_cleanup, stage_worktree_removal,
+};
+pub use repository::sha_cache;
 pub use repository::{Branch, Repository, ResolvedWorktree, WorkingTree, set_base_path};
 pub use url::GitRemoteUrl;
-pub use url::{parse_owner_repo, parse_remote_owner};
+pub use url::parse_owner_repo;
 /// Why branch content is considered integrated into the target branch.
 ///
 /// Used by both `wt list` (for status symbols) and `wt remove` (for messages).
@@ -73,6 +80,7 @@ pub use url::{parse_owner_repo, parse_remote_owner};
 /// 3. [`NoAddedChanges`](Self::NoAddedChanges) - three-dot diff (~50-100ms)
 /// 4. [`TreesMatch`](Self::TreesMatch) - tree SHA comparison (~100-300ms)
 /// 5. [`MergeAddsNothing`](Self::MergeAddsNothing) - merge simulation (~500ms-2s)
+/// 6. [`PatchIdMatch`](Self::PatchIdMatch) - patch-id matching when merge-tree conflicts (~1-3s)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, strum::IntoStaticStr)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
@@ -101,11 +109,25 @@ pub enum IntegrationReason {
     /// Symbol in `wt list`: `⊂`
     TreesMatch,
 
-    /// Simulated merge (`git merge-tree`) produces the same tree as target.
-    /// The branch has changes, but they're already in target via a different path.
+    /// The branch has changes, but merging would produce the same tree as target.
+    ///
+    /// Detected via `git merge-tree` simulation. Handles squash-merged branches
+    /// where target has advanced with changes to different files.
     ///
     /// Symbol in `wt list`: `⊂`
     MergeAddsNothing,
+
+    /// The branch's entire squashed diff matches a single commit on target.
+    ///
+    /// Fallback for when `merge-tree` conflicts (both sides modified the same
+    /// files). Computes `git diff-tree -p merge-base branch` as one combined
+    /// diff and checks if any individual commit on target has the same
+    /// patch-id. This specifically detects GitHub/GitLab squash merges — the
+    /// squash commit contains the whole branch in one commit, so the patch-ids
+    /// match. Does NOT detect cherry-picks of individual commits.
+    ///
+    /// Symbol in `wt list`: `⊂`
+    PatchIdMatch,
 }
 
 impl IntegrationReason {
@@ -120,6 +142,7 @@ impl IntegrationReason {
             Self::NoAddedChanges => "no added changes on",
             Self::TreesMatch => "tree matches",
             Self::MergeAddsNothing => "all changes in",
+            Self::PatchIdMatch => "all changes in",
         }
     }
 
@@ -150,6 +173,7 @@ pub struct IntegrationSignals {
     pub has_added_changes: Option<bool>,
     pub trees_match: Option<bool>,
     pub would_merge_add: Option<bool>,
+    pub is_patch_id_match: Option<bool>,
 }
 
 /// Canonical integration check using pre-computed signals.
@@ -180,9 +204,14 @@ pub fn check_integration(signals: &IntegrationSignals) -> Option<IntegrationReas
         return Some(IntegrationReason::TreesMatch);
     }
 
-    // Priority 5 (most expensive ~500ms-2s): Merge would not add anything
+    // Priority 5 (expensive ~500ms-2s): Merge would not add anything
     if signals.would_merge_add == Some(false) {
         return Some(IntegrationReason::MergeAddsNothing);
+    }
+
+    // Priority 6 (most expensive): Patch-id match detects squash merge when merge-tree conflicts
+    if signals.is_patch_id_match == Some(true) {
+        return Some(IntegrationReason::PatchIdMatch);
     }
 
     None
@@ -228,8 +257,13 @@ pub fn compute_integration_lazy(
         return Ok(signals);
     }
 
-    // Priority 5: Would merge add (most expensive)
-    signals.would_merge_add = Some(repo.would_merge_add_to_target(branch, target)?);
+    // Priority 5+6: Merge-tree simulation + patch-id fallback
+    let probe = repo.merge_integration_probe(branch, target)?;
+    signals.would_merge_add = Some(probe.would_merge_add);
+    if !probe.would_merge_add {
+        return Ok(signals);
+    }
+    signals.is_patch_id_match = Some(probe.is_patch_id_match);
 
     Ok(signals)
 }
@@ -256,6 +290,43 @@ pub struct CompletionBranch {
     pub category: BranchCategory,
 }
 
+/// A single local branch entry from the branch inventory.
+///
+/// Populated by one `git for-each-ref refs/heads/` scan per Repository lifetime
+/// (see [`Repository::local_branches`]). Sorted by most recent commit first.
+#[derive(Debug, Clone)]
+pub struct LocalBranch {
+    /// Short branch name, e.g., "feature" (not "refs/heads/feature").
+    pub name: String,
+    /// Commit SHA this branch points at.
+    pub commit_sha: String,
+    /// Unix timestamp of the commit.
+    pub committer_ts: i64,
+    /// Upstream tracking ref (e.g., "origin/main"), if configured and present.
+    /// `None` when no upstream is set, or when the configured upstream is gone
+    /// (git reports `[gone]` via `%(upstream:track)`).
+    pub upstream_short: Option<String>,
+}
+
+/// A single remote-tracking branch entry from the branch inventory.
+///
+/// Populated by one `git for-each-ref refs/remotes/` scan per Repository
+/// lifetime (see [`Repository::remote_branches`]). `<remote>/HEAD` symrefs are
+/// excluded. Sorted by most recent commit first.
+#[derive(Debug, Clone)]
+pub struct RemoteBranch {
+    /// Remote-qualified name, e.g., "origin/feature".
+    pub short_name: String,
+    /// Commit SHA this remote ref points at.
+    pub commit_sha: String,
+    /// Unix timestamp of the commit.
+    pub committer_ts: i64,
+    /// Remote name, e.g., "origin".
+    pub remote_name: String,
+    /// Branch name without the remote prefix, e.g., "feature".
+    pub local_name: String,
+}
+
 // Re-export parsing helpers for internal use
 pub(crate) use parse::DefaultBranchName;
 
@@ -269,18 +340,16 @@ use crate::shell_exec::Cmd;
 ///
 /// Used by PR/MR checkout to detect when a branch name collision exists.
 ///
-/// TODO: This only checks `branch.<name>.merge`, not `branch.<name>.remote`. A branch
-/// could track the right ref but have the wrong remote configured, which matters for
-/// fork PRs/MRs where refs live on the target repo. Consider checking both values.
-///
 /// # Arguments
 /// * `repo_root` - Path to run git commands from
 /// * `branch` - Local branch name to check
 /// * `expected_ref` - Full ref path (e.g., `refs/pull/101/head` or `refs/merge-requests/42/head`)
+/// * `expected_remote` - Optional remote name that must also match `branch.<name>.remote`
 pub fn branch_tracks_ref(
     repo_root: &std::path::Path,
     branch: &str,
     expected_ref: &str,
+    expected_remote: Option<&str>,
 ) -> Option<bool> {
     let config_key = format!("branch.{}.merge", branch);
     let output = Cmd::new("git")
@@ -308,7 +377,29 @@ pub fn branch_tracks_ref(
     }
 
     let merge_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Some(merge_ref == expected_ref)
+    if merge_ref != expected_ref {
+        return Some(false);
+    }
+
+    let Some(expected_remote) = expected_remote else {
+        return Some(true);
+    };
+
+    let remote_key = format!("branch.{}.remote", branch);
+    let remote_output = Cmd::new("git")
+        .args(["config", "--get", &remote_key])
+        .current_dir(repo_root)
+        .run()
+        .ok()?;
+
+    if !remote_output.status.success() {
+        return Some(false);
+    }
+
+    let remote = String::from_utf8_lossy(&remote_output.stdout)
+        .trim()
+        .to_string();
+    Some(remote == expected_remote)
 }
 
 // Note: HookType and WorktreeInfo are defined in this module and are already public.
@@ -321,11 +412,14 @@ pub fn branch_tracks_ref(
     Copy,
     PartialEq,
     Eq,
-    clap::ValueEnum,
+    serde::Serialize,
+    serde::Deserialize,
     strum::Display,
     strum::EnumString,
     strum::EnumIter,
 )]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+#[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum HookType {
     PreSwitch,
@@ -358,43 +452,42 @@ pub enum HookType {
 /// which returns `Some(WorkingTree)` only when this ref has a worktree path.
 #[derive(Debug, Clone)]
 pub struct BranchRef {
-    /// Branch name (e.g., "main", "feature/auth", "origin/feature").
-    /// None for detached HEAD.
-    pub branch: Option<String>,
+    /// Full git ref (e.g., `refs/heads/feature`, `refs/remotes/origin/feature`).
+    /// `None` for detached HEAD.
+    ///
+    /// Storing the full ref — rather than a short name plus a remote/local
+    /// flag — makes the ref unambiguous: git lets users create a local branch
+    /// literally named `origin/foo`, and `git rev-parse origin/foo` then picks
+    /// `refs/heads/origin/foo` over `refs/remotes/origin/foo`. With the full
+    /// ref there is nothing to disambiguate.
+    pub full_ref: Option<String>,
     /// Commit SHA this branch/worktree points to.
     pub commit_sha: String,
     /// Path to worktree, if this branch has one.
     /// None for branch-only items (remote branches, local branches without worktrees).
     pub worktree_path: Option<PathBuf>,
-    /// True if this is a remote-tracking ref (e.g., "origin/feature").
-    /// Remote branches inherently exist on the remote and don't need push config.
-    // TODO(full-refs): Consider refactoring to store full refs (e.g., "refs/remotes/origin/feature"
-    // or "refs/heads/feature") instead of short names + is_remote flag. Full refs are self-describing
-    // and unambiguous, but would require changes throughout the codebase and user input resolution.
-    pub is_remote: bool,
 }
 
 impl BranchRef {
     /// Create a BranchRef for a local branch without a worktree.
     pub fn local_branch(branch: &str, commit_sha: &str) -> Self {
         Self {
-            branch: Some(branch.to_string()),
+            full_ref: Some(format!("refs/heads/{branch}")),
             commit_sha: commit_sha.to_string(),
             worktree_path: None,
-            is_remote: false,
         }
     }
 
     /// Create a BranchRef for a remote-tracking branch.
     ///
-    /// Remote branches (e.g., "origin/feature") are refs under refs/remotes/.
-    /// They inherently exist on the remote and don't need upstream tracking config.
+    /// `branch` is the short remote-qualified name (e.g., `"origin/feature"`),
+    /// as produced by `%(refname:lstrip=2)` in `list_remote_branches`. It is
+    /// stored as `refs/remotes/<branch>`.
     pub fn remote_branch(branch: &str, commit_sha: &str) -> Self {
         Self {
-            branch: Some(branch.to_string()),
+            full_ref: Some(format!("refs/remotes/{branch}")),
             commit_sha: commit_sha.to_string(),
             worktree_path: None,
-            is_remote: true,
         }
     }
 
@@ -412,15 +505,59 @@ impl BranchRef {
     pub fn has_worktree(&self) -> bool {
         self.worktree_path.is_some()
     }
+
+    /// Full git ref (e.g., `refs/heads/feature`, `refs/remotes/origin/feature`),
+    /// suitable for passing to integration helpers that go through `git rev-parse`.
+    ///
+    /// Returns `None` for detached HEAD.
+    pub fn full_ref(&self) -> Option<&str> {
+        self.full_ref.as_deref()
+    }
+
+    /// Short display name (e.g., `feature`, `origin/feature`) with the
+    /// `refs/heads/` or `refs/remotes/` prefix stripped. Use for user-facing
+    /// output and APIs that expect short names (`git config branch.<name>.*`,
+    /// `gh pr view <branch>`).
+    ///
+    /// Returns `None` for detached HEAD.
+    ///
+    /// # Panics
+    ///
+    /// Every constructor on this type produces a `full_ref` starting with
+    /// `refs/heads/` or `refs/remotes/`; this panics if that invariant is
+    /// ever violated (e.g., by a future struct-literal caller). The panic
+    /// is the intended behavior — silently returning an unqualified ref
+    /// would re-open the shadowing class of bug this type exists to rule out.
+    pub fn short_name(&self) -> Option<&str> {
+        let r = self.full_ref.as_deref()?;
+        Some(
+            r.strip_prefix("refs/heads/")
+                .or_else(|| r.strip_prefix("refs/remotes/"))
+                .expect("BranchRef.full_ref must start with refs/heads/ or refs/remotes/"),
+        )
+    }
+
+    /// True if this is a remote-tracking ref (under `refs/remotes/`).
+    pub fn is_remote(&self) -> bool {
+        self.full_ref
+            .as_deref()
+            .is_some_and(|r| r.starts_with("refs/remotes/"))
+    }
 }
 
 impl From<&WorktreeInfo> for BranchRef {
     fn from(wt: &WorktreeInfo) -> Self {
+        // `WorktreeInfo.branch` is the short form produced by
+        // `parse_porcelain_list` (one `refs/heads/` prefix stripped). Worktrees
+        // always point at local branches, so re-qualifying with `refs/heads/`
+        // gives the full ref. Note: git permits a branch literally named
+        // `refs/heads/foo`; in that case `wt.branch == "refs/heads/foo"` and
+        // this produces `refs/heads/refs/heads/foo` — which is the correct full
+        // ref for that pathological branch, so we don't special-case it.
         Self {
-            branch: wt.branch.clone(),
+            full_ref: wt.branch.as_deref().map(|b| format!("refs/heads/{b}")),
             commit_sha: wt.head.clone(),
             worktree_path: Some(wt.path.clone()),
-            is_remote: false, // Worktrees are always local
         }
     }
 }
@@ -527,14 +664,28 @@ mod tests {
     #[test]
     fn test_check_integration() {
         // Each integration reason + not integrated
-        // Tuple: (is_same_commit, is_ancestor, has_added_changes, trees_match, would_merge_add)
+        // Tuple: (is_same_commit, is_ancestor, has_added_changes, trees_match, would_merge_add, is_patch_id_match)
         let cases = [
             (
-                (Some(true), Some(false), Some(true), Some(false), Some(true)),
+                (
+                    Some(true),
+                    Some(false),
+                    Some(true),
+                    Some(false),
+                    Some(true),
+                    None,
+                ),
                 Some(IntegrationReason::SameCommit),
             ),
             (
-                (Some(false), Some(true), Some(true), Some(false), Some(true)),
+                (
+                    Some(false),
+                    Some(true),
+                    Some(true),
+                    Some(false),
+                    Some(true),
+                    None,
+                ),
                 Some(IntegrationReason::Ancestor),
             ),
             (
@@ -544,11 +695,19 @@ mod tests {
                     Some(false),
                     Some(false),
                     Some(true),
+                    None,
                 ),
                 Some(IntegrationReason::NoAddedChanges),
             ),
             (
-                (Some(false), Some(false), Some(true), Some(true), Some(true)),
+                (
+                    Some(false),
+                    Some(false),
+                    Some(true),
+                    Some(true),
+                    Some(true),
+                    None,
+                ),
                 Some(IntegrationReason::TreesMatch),
             ),
             (
@@ -558,42 +717,65 @@ mod tests {
                     Some(true),
                     Some(false),
                     Some(false),
+                    None,
                 ),
                 Some(IntegrationReason::MergeAddsNothing),
             ),
             (
+                // Patch-id match (merge-tree conflicts but patch-id finds squash commit)
                 (
                     Some(false),
                     Some(false),
                     Some(true),
                     Some(false),
                     Some(true),
+                    Some(true),
+                ),
+                Some(IntegrationReason::PatchIdMatch),
+            ),
+            (
+                // Not integrated (nothing matches)
+                (
+                    Some(false),
+                    Some(false),
+                    Some(true),
+                    Some(false),
+                    Some(true),
+                    Some(false),
                 ),
                 None,
-            ), // Not integrated
+            ),
             (
-                (Some(true), Some(true), Some(false), Some(true), Some(false)),
+                (
+                    Some(true),
+                    Some(true),
+                    Some(false),
+                    Some(true),
+                    Some(false),
+                    None,
+                ),
                 Some(IntegrationReason::SameCommit),
             ), // Priority test: is_same_commit wins
             // None values are treated conservatively (as if not integrated)
-            ((None, None, None, None, None), None),
+            ((None, None, None, None, None, None), None),
             (
-                (None, Some(true), Some(false), Some(true), Some(false)),
+                (None, Some(true), Some(false), Some(true), Some(false), None),
                 Some(IntegrationReason::Ancestor),
             ),
         ];
-        for ((same, ancestor, added, trees, merge), expected) in cases {
+        for ((same, ancestor, added, trees, merge, patch_id), expected) in cases {
             let signals = IntegrationSignals {
                 is_same_commit: same,
                 is_ancestor: ancestor,
                 has_added_changes: added,
                 trees_match: trees,
                 would_merge_add: merge,
+                is_patch_id_match: patch_id,
             };
             assert_eq!(
                 check_integration(&signals),
                 expected,
-                "case: {same:?},{ancestor:?},{added:?},{trees:?},{merge:?}"
+                "case: {same:?},{ancestor:?},{added:?},{trees:?},{merge:?},{patch_id:?}"
             );
         }
     }
@@ -612,6 +794,10 @@ mod tests {
         assert_eq!(IntegrationReason::TreesMatch.description(), "tree matches");
         assert_eq!(
             IntegrationReason::MergeAddsNothing.description(),
+            "all changes in"
+        );
+        assert_eq!(
+            IntegrationReason::PatchIdMatch.description(),
             "all changes in"
         );
     }
@@ -666,141 +852,183 @@ mod tests {
 
         let branch_ref = BranchRef::from(&wt);
 
-        assert_eq!(branch_ref.branch, Some("feature".to_string()));
+        assert_eq!(branch_ref.full_ref(), Some("refs/heads/feature"));
+        assert_eq!(branch_ref.short_name(), Some("feature"));
         assert_eq!(branch_ref.commit_sha, "abc123");
         assert_eq!(
             branch_ref.worktree_path,
             Some(PathBuf::from("/repo.feature"))
         );
         assert!(branch_ref.has_worktree());
-        assert!(!branch_ref.is_remote); // Worktrees are always local
+        assert!(!branch_ref.is_remote()); // Worktrees are always local
     }
 
     #[test]
     fn test_branch_ref_local_branch() {
         let branch_ref = BranchRef::local_branch("feature", "abc123");
 
-        assert_eq!(branch_ref.branch, Some("feature".to_string()));
+        assert_eq!(branch_ref.full_ref(), Some("refs/heads/feature"));
+        assert_eq!(branch_ref.short_name(), Some("feature"));
         assert_eq!(branch_ref.commit_sha, "abc123");
         assert_eq!(branch_ref.worktree_path, None);
         assert!(!branch_ref.has_worktree());
-        assert!(!branch_ref.is_remote);
+        assert!(!branch_ref.is_remote());
     }
 
     #[test]
     fn test_branch_ref_remote_branch() {
         let branch_ref = BranchRef::remote_branch("origin/feature", "abc123");
 
-        assert_eq!(branch_ref.branch, Some("origin/feature".to_string()));
+        assert_eq!(branch_ref.full_ref(), Some("refs/remotes/origin/feature"));
+        assert_eq!(branch_ref.short_name(), Some("origin/feature"));
         assert_eq!(branch_ref.commit_sha, "abc123");
         assert_eq!(branch_ref.worktree_path, None);
         assert!(!branch_ref.has_worktree());
-        assert!(branch_ref.is_remote);
+        assert!(branch_ref.is_remote());
     }
 
-    /// Create a git repo with one commit and return the TempDir + repo path.
-    fn init_test_repo() -> (tempfile::TempDir, PathBuf) {
-        use crate::shell_exec::Cmd;
+    #[test]
+    fn test_branch_ref_full_ref_disambiguates_remote_from_local() {
+        // Git allows local branches literally named `origin/foo`. Full refs
+        // make the two distinguishable even though they share a short name.
+        //
+        // This pins the type-level contract; the end-to-end guardrail against
+        // `git rev-parse` picking the wrong ref lives at
+        // `test_list_remote_row_not_shadowed_by_same_named_local_branch` in
+        // `tests/integration_tests/list.rs`.
+        let remote = BranchRef::remote_branch("origin/foo", "abc");
+        let local = BranchRef::local_branch("origin/foo", "def");
 
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("repo");
-        Cmd::new("git")
-            .args(["init", "--initial-branch=main", repo.to_str().unwrap()])
-            .run()
-            .unwrap();
-        Cmd::new("git")
-            .args(["config", "user.email", "test@test.com"])
-            .current_dir(&repo)
-            .run()
-            .unwrap();
-        Cmd::new("git")
-            .args(["config", "user.name", "Test"])
-            .current_dir(&repo)
-            .run()
-            .unwrap();
-        std::fs::write(repo.join("file.txt"), "hello").unwrap();
-        Cmd::new("git")
-            .args(["add", "."])
-            .current_dir(&repo)
-            .run()
-            .unwrap();
-        Cmd::new("git")
-            .args(["commit", "-m", "init"])
-            .current_dir(&repo)
-            .run()
-            .unwrap();
-        (tmp, repo)
+        assert_eq!(remote.full_ref(), Some("refs/remotes/origin/foo"));
+        assert_eq!(local.full_ref(), Some("refs/heads/origin/foo"));
+        assert_eq!(remote.short_name(), Some("origin/foo"));
+        assert_eq!(local.short_name(), Some("origin/foo"));
+        assert!(remote.is_remote());
+        assert!(!local.is_remote());
+    }
+
+    #[test]
+    fn test_branch_ref_detached_has_no_ref() {
+        // Detached HEAD has no branch name — callers fall back to commit_sha.
+        let detached = BranchRef {
+            full_ref: None,
+            commit_sha: "abc".into(),
+            worktree_path: None,
+        };
+        assert_eq!(detached.full_ref(), None);
+        assert_eq!(detached.short_name(), None);
+        assert!(!detached.is_remote());
     }
 
     #[test]
     fn test_branch_tracks_ref_matching() {
-        let (_tmp, repo) = init_test_repo();
+        let test = crate::testing::TestRepo::with_initial_commit();
+        let repo = test.path();
 
         // Create a branch and set its merge config to a PR ref
         crate::shell_exec::Cmd::new("git")
             .args(["branch", "pr-branch"])
-            .current_dir(&repo)
+            .current_dir(repo)
             .run()
             .unwrap();
         crate::shell_exec::Cmd::new("git")
             .args(["config", "branch.pr-branch.merge", "refs/pull/101/head"])
-            .current_dir(&repo)
+            .current_dir(repo)
+            .run()
+            .unwrap();
+        crate::shell_exec::Cmd::new("git")
+            .args(["config", "branch.pr-branch.remote", "origin"])
+            .current_dir(repo)
             .run()
             .unwrap();
 
         assert_eq!(
-            branch_tracks_ref(&repo, "pr-branch", "refs/pull/101/head"),
+            branch_tracks_ref(repo, "pr-branch", "refs/pull/101/head", None),
+            Some(true),
+        );
+        assert_eq!(
+            branch_tracks_ref(repo, "pr-branch", "refs/pull/101/head", Some("origin")),
             Some(true),
         );
     }
 
     #[test]
     fn test_branch_tracks_ref_different_ref() {
-        let (_tmp, repo) = init_test_repo();
+        let test = crate::testing::TestRepo::with_initial_commit();
+        let repo = test.path();
 
         crate::shell_exec::Cmd::new("git")
             .args(["branch", "pr-branch"])
-            .current_dir(&repo)
+            .current_dir(repo)
             .run()
             .unwrap();
         crate::shell_exec::Cmd::new("git")
             .args(["config", "branch.pr-branch.merge", "refs/pull/101/head"])
-            .current_dir(&repo)
+            .current_dir(repo)
             .run()
             .unwrap();
 
         // Ask about a different ref — should return Some(false)
         assert_eq!(
-            branch_tracks_ref(&repo, "pr-branch", "refs/pull/999/head"),
+            branch_tracks_ref(repo, "pr-branch", "refs/pull/999/head", None),
+            Some(false),
+        );
+    }
+
+    #[test]
+    fn test_branch_tracks_ref_wrong_remote() {
+        let test = crate::testing::TestRepo::with_initial_commit();
+        let repo = test.path();
+
+        crate::shell_exec::Cmd::new("git")
+            .args(["branch", "pr-branch"])
+            .current_dir(repo)
+            .run()
+            .unwrap();
+        crate::shell_exec::Cmd::new("git")
+            .args(["config", "branch.pr-branch.merge", "refs/pull/101/head"])
+            .current_dir(repo)
+            .run()
+            .unwrap();
+        crate::shell_exec::Cmd::new("git")
+            .args(["config", "branch.pr-branch.remote", "fork"])
+            .current_dir(repo)
+            .run()
+            .unwrap();
+
+        assert_eq!(
+            branch_tracks_ref(repo, "pr-branch", "refs/pull/101/head", Some("origin")),
             Some(false),
         );
     }
 
     #[test]
     fn test_branch_tracks_ref_no_tracking_config() {
-        let (_tmp, repo) = init_test_repo();
+        let test = crate::testing::TestRepo::with_initial_commit();
+        let repo = test.path();
 
         // Create a branch with no tracking config
         crate::shell_exec::Cmd::new("git")
             .args(["branch", "local-only"])
-            .current_dir(&repo)
+            .current_dir(repo)
             .run()
             .unwrap();
 
         // Branch exists but has no merge config — Some(false)
         assert_eq!(
-            branch_tracks_ref(&repo, "local-only", "refs/pull/1/head"),
+            branch_tracks_ref(repo, "local-only", "refs/pull/1/head", None),
             Some(false),
         );
     }
 
     #[test]
     fn test_branch_tracks_ref_nonexistent_branch() {
-        let (_tmp, repo) = init_test_repo();
+        let test = crate::testing::TestRepo::with_initial_commit();
+        let repo = test.path();
 
         // Branch doesn't exist at all — None
         assert_eq!(
-            branch_tracks_ref(&repo, "no-such-branch", "refs/pull/1/head"),
+            branch_tracks_ref(repo, "no-such-branch", "refs/pull/1/head", None),
             None,
         );
     }
@@ -810,19 +1038,20 @@ mod tests {
         // Invalid repo path causes Cmd::run() to fail → .ok()? returns None
         let bad_path = std::path::Path::new("/nonexistent/repo/path");
         assert_eq!(
-            branch_tracks_ref(bad_path, "main", "refs/pull/1/head"),
+            branch_tracks_ref(bad_path, "main", "refs/pull/1/head", None),
             None,
         );
     }
 
     #[test]
     fn test_branch_tracks_ref_mr_ref() {
-        let (_tmp, repo) = init_test_repo();
+        let test = crate::testing::TestRepo::with_initial_commit();
+        let repo = test.path();
 
         // Test with GitLab-style MR ref
         crate::shell_exec::Cmd::new("git")
             .args(["branch", "mr-branch"])
-            .current_dir(&repo)
+            .current_dir(repo)
             .run()
             .unwrap();
         crate::shell_exec::Cmd::new("git")
@@ -831,16 +1060,26 @@ mod tests {
                 "branch.mr-branch.merge",
                 "refs/merge-requests/42/head",
             ])
-            .current_dir(&repo)
+            .current_dir(repo)
+            .run()
+            .unwrap();
+        crate::shell_exec::Cmd::new("git")
+            .args(["config", "branch.mr-branch.remote", "origin"])
+            .current_dir(repo)
             .run()
             .unwrap();
 
         assert_eq!(
-            branch_tracks_ref(&repo, "mr-branch", "refs/merge-requests/42/head"),
+            branch_tracks_ref(
+                repo,
+                "mr-branch",
+                "refs/merge-requests/42/head",
+                Some("origin"),
+            ),
             Some(true),
         );
         assert_eq!(
-            branch_tracks_ref(&repo, "mr-branch", "refs/pull/42/head"),
+            branch_tracks_ref(repo, "mr-branch", "refs/pull/42/head", Some("origin")),
             Some(false),
         );
     }
@@ -859,7 +1098,8 @@ mod tests {
 
         let branch_ref = BranchRef::from(&wt);
 
-        assert_eq!(branch_ref.branch, None);
+        assert_eq!(branch_ref.full_ref(), None);
+        assert_eq!(branch_ref.short_name(), None);
         assert_eq!(branch_ref.commit_sha, "def456");
         assert!(branch_ref.has_worktree());
     }

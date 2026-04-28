@@ -163,11 +163,11 @@ fn test_bash_shell_integration_post_create_blocks(repo: TestRepo) {
     fs::create_dir_all(&config_dir).unwrap();
     fs::write(
         config_dir.join("wt.toml"),
-        r#"post-create = "echo 'Setup done' > setup.txt""#,
+        r#"pre-start = "echo 'Setup done' > setup.txt""#,
     )
     .unwrap();
 
-    repo.commit("Add post-create command");
+    repo.commit("Add pre-start command");
 
     // Pre-approve command
     repo.write_test_approvals(
@@ -203,12 +203,12 @@ approved-commands = ["echo 'Setup done' > setup.txt"]
         output
     );
 
-    // Verify that post-create command completed before wt returned (blocking behavior)
+    // Verify that pre-start command completed before wt returned (blocking behavior)
     // The file should exist immediately after wt exits
     let setup_file = worktree_path.join("setup.txt");
     assert!(
         setup_file.exists(),
-        "Setup file should exist immediately after wt returns (post-create is blocking)"
+        "Setup file should exist immediately after wt returns (pre-start is blocking)"
     );
 
     let content = fs::read_to_string(&setup_file).unwrap();

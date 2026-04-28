@@ -1,0 +1,12 @@
+---
+source: tests/integration_tests/remove.rs
+expression: "String::from_utf8_lossy(&output.stdout)"
+---
+[
+  {
+    "branch": "orphan-branch",
+    "branch_deleted": true,
+    "kind": "branch_only",
+    "pruned": false
+  }
+]

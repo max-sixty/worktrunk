@@ -1,0 +1,13 @@
+---
+source: tests/integration_tests/step_prune.rs
+expression: "String::from_utf8_lossy(&output.stdout)"
+---
+[
+  {
+    "branch": "orphan-integrated",
+    "kind": "branch_only",
+    "path": null,
+    "reason": "same commit as",
+    "target": "main"
+  }
+]

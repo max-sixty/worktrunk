@@ -1,0 +1,9 @@
+---
+source: tests/integration_tests/config_state.rs
+expression: "String::from_utf8_lossy(&output.stdout)"
+---
+{
+  "status": "passed",
+  "source": "pr",
+  "stale": false
+}

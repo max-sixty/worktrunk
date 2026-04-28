@@ -1,0 +1,13 @@
+---
+source: tests/integration_tests/step_prune.rs
+expression: "String::from_utf8_lossy(&output.stdout)"
+---
+[
+  {
+    "branch": "current-merged",
+    "kind": "current",
+    "path": "<PATH>",
+    "reason": "same commit as",
+    "target": "main"
+  }
+]

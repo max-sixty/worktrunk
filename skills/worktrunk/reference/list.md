@@ -8,44 +8,50 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 ## Full mode
 
-`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries) of each branch's changes. The table displays instantly and columns fill in as results arrive.
+`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries) of each branch's changes.
 
 ## Examples
 
 List all worktrees:
 
-{% terminal(cmd="wt list") %}
-&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>⇡3</span>      <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                         <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-auth: hardened to…</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>     <span class=d>|</span>     <span class=d>b772e68b</span>  <span class=d>5h</span>    <span class=d>Add secure token storage</span>
+```
+$ wt list
+  Branch       Status        HEAD±    main↕  Remote⇅  Commit    Age   Message
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1   ⇡3      6814f02a  30m   Add API tests
+^ main             ^⇅                         ⇡1  ⇣1  41ee0834  4d    Merge fix-auth: hardened to…
++ fix-auth         ↕|                ↑2  ↓1     |     b772e68b  5h    Add secure token storage
++ fix-typos        _|                           |     41ee0834  4d    Merge fix-auth: hardened to…
 
-<span class=d>○</span> <span class=d>Showing 3 worktrees, 1 with changes, 2 ahead, 1 column hidden</span>
-{% end %}
+○ Showing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden
+```
 
 Include CI status, line diffs, and LLM summaries:
 
-{% terminal(cmd="wt list --full") %}
-&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>CI</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>●</span></span>   <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>   <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-au…</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=g>●</span>   <span class=d>b772e68b</span>  <span class=d>5h</span>    <span class=d>Add secure t…</span>
+```
+$ wt list --full
+  Branch       Status        HEAD±    main↕     main…±  Summary                                              Remote⇅  CI  Commit
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware     ⇡3      ●   6814f02a
+^ main             ^⇅                                                                                         ⇡1  ⇣1  ●   41ee0834
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation         |     ●   b772e68b
++ fix-typos        _|                                                                                           |     ●   41ee0834
 
-<span class=d>○</span> <span class=d>Showing 3 worktrees, 1 with changes, 2 ahead, 1 column hidden</span>
-{% end %}
+○ Showing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden
+```
 
 Include branches that don't have worktrees:
 
-{% terminal(cmd="wt list --branches --full") %}
-&#32;&#32;<b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>     <b>main…±</b>  <b>Remote⇅</b>  <b>CI</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+234</span>  <span class=r>-24</span>   <span class=g>⇡3</span>      <span class=d><span style='color:var(--blue,#00a)'>●</span></span>   <span class=d>6814f02a</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>   <span class=d>41ee0834</span>  <span class=d>4d</span>    <span class=d>Merge fix-au…</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=g>●</span>   <span class=d>b772e68b</span>  <span class=d>5h</span>    <span class=d>Add secure t…</span>
-  exp             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+137</span>                    <span class=d>96379229</span>  <span class=d>2d</span>    <span class=d>Add GraphQL…</span>
-  wip             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑1</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+33</span>                    <span class=d>b40716dc</span>  <span class=d>3d</span>    <span class=d>Start API do…</span>
+```
+$ wt list --branches --full
+  Branch       Status        HEAD±    main↕     main…±  Summary                                              Remote⇅  CI  Commit
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST architecture with middleware     ⇡3      ●   6814f02a
+^ main             ^⇅                                                                                         ⇡1  ⇣1  ●   41ee0834
++ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-time token validation         |     ●   b772e68b
++ fix-typos        _|                                                                                           |     ●   41ee0834
+  exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                              96379229
+  wip             /↕                 ↑1  ↓1   +33       Start API documentation                                           b40716dc
 
-<span class=d>○</span> <span class=d>Showing 3 worktrees, 2 branches, 1 with changes, 4 ahead, 1 column hidden</span>
-{% end %}
+○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden
+```
 
 Output as JSON for scripting:
 
@@ -79,19 +85,17 @@ The CI column shows GitHub/GitLab pipeline status:
 
 | Indicator | Meaning |
 |-----------|---------|
-| <span style='color:#0a0'>●</span> green | All checks passed |
-| <span style='color:#00a'>●</span> blue | Checks running |
-| <span style='color:#a00'>●</span> red | Checks failed |
-| <span style='color:#a60'>●</span> yellow | Merge conflicts with base |
-| <span style='color:#888'>●</span> gray | No checks configured |
-| <span style='color:#a60'>⚠</span> yellow | Fetch error (rate limit, network) |
+| `●` green | All checks passed |
+| `●` blue | Checks running |
+| `●` red | Checks failed |
+| `●` yellow | Merge conflicts with base |
+| `●` gray | No checks configured |
+| `⚠` yellow | Fetch error (rate limit, network) |
 | (blank) | No upstream or no PR/MR |
 
 CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when unpushed local changes make the status stale. PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
-### LLM summaries
-
-[experimental]
+### LLM summaries [experimental]
 
 Reuses the [`commit.generation`](https://worktrunk.dev/config/#commit) command — the same LLM that generates commit messages. Enable with `summary = true` in `[list]` config; requires `--full`. Results are cached until the branch's diff changes.
 
@@ -133,8 +137,7 @@ These appear across all columns while the table is loading:
 
 | Symbol | Meaning |
 |--------|---------|
-| `⋯` | Data is loading |
-| `·` | Skipped — collection timed out or branch too stale |
+| `·` | Data is loading, or collection timed out / branch too stale |
 
 ---
 
@@ -144,28 +147,28 @@ Query structured data with `--format=json`:
 
 ```bash
 # Current worktree path (for scripts)
-wt list --format=json | jq -r '.[] | select(.is_current) | .path'
+$ wt list --format=json | jq -r '.[] | select(.is_current) | .path'
 
 # Branches with uncommitted changes
-wt list --format=json | jq '.[] | select(.working_tree.modified)'
+$ wt list --format=json | jq '.[] | select(.working_tree.modified)'
 
 # Worktrees with merge conflicts
-wt list --format=json | jq '.[] | select(.operation_state == "conflicts")'
+$ wt list --format=json | jq '.[] | select(.operation_state == "conflicts")'
 
 # Branches ahead of main (needs merging)
-wt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'
+$ wt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'
 
 # Integrated branches (safe to remove)
-wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty") | .branch'
+$ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty") | .branch'
 
 # Branches without worktrees
-wt list --format=json --branches | jq '.[] | select(.kind == "branch") | .branch'
+$ wt list --format=json --branches | jq '.[] | select(.kind == "branch") | .branch'
 
 # Worktrees ahead of remote (needs pushing)
-wt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'
+$ wt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'
 
 # Stale CI (local changes not reflected in CI)
-wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
+$ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 ```
 
 **Fields:**
@@ -192,6 +195,7 @@ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `summary` | string | LLM-generated branch summary; absent when not configured or no summary |
 | `statusline` | string | Pre-formatted status with ANSI colors |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
+| `vars` | object | Per-branch variables from [`wt config state vars`](https://worktrunk.dev/config/#wt-config-state-vars) (absent when empty) |
 
 ### Commit object
 
@@ -255,55 +259,61 @@ These values describe the relation to the default branch.
 
 ### integration_reason values
 
-When `main_state == "integrated"`: `"ancestor"` `"trees_match"` `"no_added_changes"` `"merge_adds_nothing"`
+When `main_state == "integrated"`: `"ancestor"` `"trees_match"` `"no_added_changes"` `"merge_adds_nothing"` `"patch-id-match"`
 
 ### ci.status values
 
 `"passed"` `"running"` `"failed"` `"conflicts"` `"no-ci"` `"error"`
 
-Missing a field that would be generally useful? [Open an issue](https://github.com/max-sixty/worktrunk/issues).
+Missing a field that would be generally useful? Open an issue at https://github.com/max-sixty/worktrunk.
 
 ## Command reference
 
+```
 wt list - List worktrees and their status
 
-Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
-       <b><span class=c>wt list</span></b> <span class=c>&lt;COMMAND&gt;</span>
+Usage: wt list [OPTIONS]
+       wt list <COMMAND>
 
-<b><span class=g>Commands:</span></b>
-  <b><span class=c>statusline</span></b>  Single-line status for shell prompts
+Commands:
+  statusline  Single-line status for shell prompts
 
-<b><span class=g>Options:</span></b>
-      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+Options:
+      --format <FORMAT>
           Output format (table, json)
 
           [default: table]
 
-      <b><span class=c>--branches</span></b>
+      --branches
           Include branches without worktrees
 
-      <b><span class=c>--remotes</span></b>
+      --remotes
           Include remote branches
 
-      <b><span class=c>--full</span></b>
+      --full
           Show CI, diff analysis, and LLM summaries
 
-      <b><span class=c>--progressive</span></b>
+      --progressive
           Show fast info immediately, update with slow info
 
-          Displays local data (branches, paths, status) first, then updates with
-          remote data (CI, upstream) as it arrives. Use --no-progressive to
-          force buffered rendering. Auto-enabled for TTY.
+          Displays local data (branches, paths, status) first, then updates with remote data (CI,
+          upstream) as it arrives. Use --no-progressive to force buffered rendering. Auto-enabled
+          for TTY.
 
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
+  -h, --help
+          Print help (see a summary with '-h')
 
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+Global Options:
+  -C <path>
           Working directory for this command
 
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+      --config <path>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+  -v, --verbose...
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
+```

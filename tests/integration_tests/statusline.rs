@@ -145,7 +145,7 @@ fn claude_code_snapshot_settings() -> insta::Settings {
 /// Escape a path for use in JSON strings.
 /// On Windows, backslashes must be escaped as double backslashes.
 fn escape_path_for_json(path: &std::path::Path) -> String {
-    path.display().to_string().replace('\\', "\\\\")
+    path.display().to_string().replace('\\', r"\\")
 }
 
 #[rstest]
@@ -282,10 +282,10 @@ fn test_statusline_claude_code_missing_context_window(repo: TestRepo) {
 }
 
 // --- Directive Mode Tests ---
-// Note: With the new WORKTRUNK_DIRECTIVE_FILE architecture, data output (like statusline)
-// still goes to stdout. The directive file is only used for shell directives like
-// `cd '/path'`. So this test is no longer needed - statusline behavior is the same
-// regardless of whether WORKTRUNK_DIRECTIVE_FILE is set.
+// Note: With the split directive file architecture, data output (like statusline)
+// still goes to stdout. The directive files are only used for cd paths and exec
+// commands. So this test is no longer needed - statusline behavior is the same
+// regardless of whether directive env vars are set.
 
 // --- Branch Display Tests ---
 
@@ -412,9 +412,17 @@ fn test_statusline_json_basic(repo: TestRepo) {
     assert!(item["is_current"].as_bool().unwrap());
     assert!(item["is_main"].as_bool().unwrap());
 
-    // commit object should exist with sha
+    // commit object should exist with sha, message, and non-zero timestamp
     assert!(item["commit"]["sha"].is_string());
     assert!(item["commit"]["short_sha"].is_string());
+    assert!(
+        !item["commit"]["message"].as_str().unwrap().is_empty(),
+        "commit.message should be populated from git log"
+    );
+    assert!(
+        item["commit"]["timestamp"].as_i64().unwrap() > 0,
+        "commit.timestamp should be populated from git log"
+    );
 }
 
 #[rstest]
@@ -486,6 +494,44 @@ fn test_statusline_json_ignores_claude_code(repo: TestRepo) {
     assert!(parsed.is_array(), "should produce JSON array output");
     let item = &parsed[0];
     assert_eq!(item["branch"], "main");
+}
+
+// --- Deprecated flags ---
+
+#[rstest]
+fn test_statusline_claude_code_flag_deprecated(repo: TestRepo) {
+    // The hidden `--claude-code` flag still maps to `--format=claude-code`,
+    // but emits a deprecation warning per invocation.
+    let escaped_path = escape_path_for_json(repo.root_path());
+    let json = format!(r#"{{"workspace": {{"current_dir": "{escaped_path}"}}}}"#);
+
+    let mut cmd = wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.args(["list", "statusline", "--claude-code"]);
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().expect("spawn");
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(json.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().expect("wait");
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--claude-code is deprecated"),
+        "expected deprecation warning in stderr, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("--format=claude-code"),
+        "expected migration hint in stderr, got: {stderr}"
+    );
 }
 
 /// Tests that statusline correctly identifies nested worktrees.

@@ -373,7 +373,7 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
         }
     }
 
-    // Phase 3: Split into lines, wrap each, add gutters
+    // Phase 2: Split into lines, wrap each, add gutters
     styled
         .lines()
         .flat_map(|line| wrap_styled_text(line, available_width))

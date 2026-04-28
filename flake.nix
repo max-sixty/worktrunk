@@ -27,8 +27,11 @@
           inherit system overlays;
         };
 
-        # Use latest stable Rust (must meet MSRV of 1.89)
-        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+        # Pin to the channel declared in rust-toolchain.toml so rustup and Nix
+        # stay on the same version. Extensions are dev-shell-only, so we keep
+        # them here rather than in rust-toolchain.toml (which CI also reads).
+        toolchainChannel = (builtins.fromTOML (builtins.readFile ./rust-toolchain.toml)).toolchain.channel;
+        rustToolchain = pkgs.rust-bin.stable.${toolchainChannel}.default.override {
           extensions = [
             "rust-src"
             "rust-analyzer"
@@ -44,7 +47,22 @@
             p: type:
             (craneLib.filterCargoSources p type)
             || (pkgs.lib.hasInfix "/templates/" p)
-            || (baseNameOf (dirOf p) == "templates");
+            || (baseNameOf (dirOf p) == "templates")
+            || (pkgs.lib.hasInfix "/dev/" p)
+            || (baseNameOf (dirOf p) == "dev");
+        };
+
+        # Vendored path dependencies (vendor/skim-tuikit) need their real
+        # source preserved during buildDepsOnly — crane's mkDummySrc stubs
+        # all .rs files, but [patch.crates-io] path deps must compile for
+        # downstream crates (skim) to resolve their imports. Kept as a
+        # separate derivation so non-vendor source edits don't invalidate
+        # the dependency cache.
+        vendorSrc = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          filter =
+            path: _type:
+            pkgs.lib.hasInfix "/vendor/" path || pkgs.lib.hasSuffix "/vendor" path;
         };
 
         # Common arguments for crane builds
@@ -76,8 +94,22 @@
             self.shortRev or self.dirtyShortRev or "nix-${self.lastModifiedDate or "unknown"}";
         };
 
-        # Build just the cargo dependencies for caching
-        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+        # Build just the cargo dependencies for caching.
+        # extraDummyScript restores vendor/ after mkDummySrc stubs all .rs
+        # files — without this, [patch.crates-io] path deps are empty crates.
+        cargoArtifacts = craneLib.buildDepsOnly (
+          commonArgs
+          // {
+            dummySrc = craneLib.mkDummySrc {
+              src = commonArgs.src;
+              extraDummyScript = ''
+                rm -rf $out/vendor
+                cp -r ${vendorSrc}/vendor $out/vendor
+                chmod -R u+w $out/vendor
+              '';
+            };
+          }
+        );
 
         # Build the actual package
         worktrunk = craneLib.buildPackage (

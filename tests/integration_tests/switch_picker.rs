@@ -392,6 +392,47 @@ fn wait_for_stable(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
     wait_for_stable_with_content(rx, parser, None);
 }
 
+/// Check whether skim's match count agrees with the number of visible list rows.
+///
+/// Under heavy macOS load, skim's matcher can update its count indicator ahead of
+/// the display repaint — so the `N/M` counter shows e.g. `1/4` while the list panel
+/// still has a stale row for a filtered-out item. If we snapshot in that window, the
+/// test captures an inconsistent state (count says 1 match, display shows 2 rows).
+///
+/// Returns `false` when we can parse a count and the visible row count disagrees;
+/// returns `true` when there's no disagreement (including when the count can't be
+/// parsed — nothing useful to compare against).
+fn display_matches_count(screen: &str) -> bool {
+    let Some(matched) = parse_match_count(screen) else {
+        return true;
+    };
+    visible_list_rows(screen) == matched
+}
+
+/// Parse skim's `N/M` match counter from the right-panel status area.
+///
+/// Skim paints the counter at the end of a line, optionally jammed against a tab
+/// label (e.g. `summary1/4` when the count is wide enough to overrun the label).
+fn parse_match_count(screen: &str) -> Option<usize> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"(\d+)/\d+\s*$").unwrap());
+    screen
+        .lines()
+        .find_map(|line| re.captures(line.trim_end()))
+        .and_then(|caps| caps[1].parse().ok())
+}
+
+/// Count the number of non-empty rows in the left (list) panel, excluding the
+/// query and header rows.
+fn visible_list_rows(screen: &str) -> usize {
+    let width = SEPARATOR_COL as usize;
+    screen
+        .lines()
+        .skip(2) // query + column header
+        .filter(|line| line.chars().take(width).any(|c| !c.is_whitespace()))
+        .count()
+}
+
 /// Wait for screen content to stabilize, optionally requiring specific content.
 ///
 /// If `expected_content` is provided, waits until the screen contains that string
@@ -446,8 +487,12 @@ fn wait_for_stable_with_content(
             None => true,
         };
 
+        // Reject "stable" states where skim's matcher has advanced past the display
+        // repaint — see `display_matches_count` for background.
+        let display_ready = display_matches_count(&current_content);
+
         // Primary: screen hasn't changed for STABLE_DURATION and content is ready
-        if last_change.elapsed() >= STABLE_DURATION && content_ready {
+        if last_change.elapsed() >= STABLE_DURATION && content_ready && display_ready {
             return;
         }
 
@@ -457,6 +502,7 @@ fn wait_for_stable_with_content(
         // changes don't affect snapshot correctness.
         if let Some(found_time) = content_found_at
             && found_time.elapsed() >= STABLE_DURATION
+            && display_ready
         {
             return;
         }
@@ -484,20 +530,6 @@ fn wait_for_stable_with_content(
     );
 }
 
-/// Disable the picker's 500ms data collection timeout so all task results
-/// arrive before rendering. Without this, slow CI runners (especially macOS)
-/// can show `·` stale placeholders for columns whose data didn't arrive in
-/// time, causing non-deterministic snapshots.
-fn disable_picker_timeout(repo: &TestRepo) {
-    let existing = std::fs::read_to_string(repo.test_config_path()).unwrap_or_default();
-    let config = if existing.is_empty() {
-        "skip-commit-generation-prompt = true\n\n[switch-picker]\ntimeout-ms = 0\n".to_string()
-    } else {
-        format!("{existing}\n[switch-picker]\ntimeout-ms = 0\n")
-    };
-    std::fs::write(repo.test_config_path(), config).unwrap();
-}
-
 /// Create insta settings with filters for switch picker snapshot stability.
 ///
 /// Replaces the manual `normalize_output()` approach with declarative insta filters.
@@ -516,8 +548,8 @@ fn switch_picker_settings(repo: &TestRepo) -> insta::Settings {
     // The tab header line may have the count jammed against "summary" (no space)
     // or even truncate "summary" when skim's width_cjk() treats ambiguous-width
     // unicode symbols (±, …, ⇅) as double-width, consuming extra columns.
-    settings.add_filter(r"(?m)summary?\w*\s*\d+/\d+\s*$", "summary [N/M]");
-    settings.add_filter(r"(?m)\s+\d+/\d+\s*$", " [N/M]");
+    settings.add_filter(r"(?m)summary?\w*\s*\d+/\d+[ \t]*$", "summary [N/M]");
+    settings.add_filter(r"(?m)\s+\d+/\d+[ \t]*$", " [N/M]");
 
     // Commit hashes (7-8 hex chars)
     settings.add_filter(r"\b[0-9a-f]{7,8}\b", "[HASH]");
@@ -536,8 +568,6 @@ fn test_switch_picker_abort_with_escape(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
-    disable_picker_timeout(&repo);
-
     let env_vars = repo.test_env_vars();
     let result = exec_in_pty_capture_before_abort(
         wt_bin().to_str().unwrap(),
@@ -562,8 +592,6 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
-    disable_picker_timeout(&repo);
-
     repo.add_worktree("feature-one");
     repo.add_worktree("feature-two");
 
@@ -592,8 +620,6 @@ fn test_switch_picker_with_branches(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
-    disable_picker_timeout(&repo);
-
     repo.add_worktree("active-worktree");
     // Create a branch without a worktree
     let output = repo
@@ -630,8 +656,6 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
-    disable_picker_timeout(&repo);
-
     let feature_path = repo.add_worktree("feature");
 
     // First, create and commit a file so we have something to modify
@@ -691,8 +715,6 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
-    disable_picker_timeout(&repo);
-
     let feature_path = repo.add_worktree("feature");
 
     // Make several commits in the feature worktree
@@ -751,8 +773,6 @@ fn test_switch_picker_preview_panel_main_diff(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
-    disable_picker_timeout(&repo);
-
     let feature_path = repo.add_worktree("feature");
 
     // Make commits in the feature worktree that differ from main
@@ -844,8 +864,6 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     // Remove origin so snapshots don't show origin/main
     repo.run_git(&["remote", "remove", "origin"]);
-    disable_picker_timeout(&repo);
-
     let feature_path = repo.add_worktree("feature");
 
     // Make a commit so there's content to potentially summarize
@@ -916,9 +934,6 @@ fn test_switch_picker_respects_list_config(mut repo: TestRepo) {
         r#"
 [list]
 branches = true
-
-[switch-picker]
-timeout-ms = 0
 "#,
     );
 
@@ -1062,13 +1077,18 @@ fn test_switch_picker_switch_to_existing_worktree(mut repo: TestRepo) {
     );
 }
 
-/// Helper to create a temporary directive file for PTY tests.
-/// Returns (path, guard) — the guard keeps the temp file alive until dropped.
-fn directive_file_for_pty() -> (PathBuf, tempfile::TempPath) {
-    let file = tempfile::NamedTempFile::new().expect("failed to create temp file");
-    let path = file.path().to_path_buf();
-    let guard = file.into_temp_path();
-    (path, guard)
+/// Helper to create temporary directive files for PTY tests.
+/// Returns (cd_path, exec_path, guards) — guards keep the temp files alive.
+fn directive_files_for_pty() -> (PathBuf, PathBuf, (tempfile::TempPath, tempfile::TempPath)) {
+    let cd = tempfile::NamedTempFile::new().expect("failed to create cd temp file");
+    let exec = tempfile::NamedTempFile::new().expect("failed to create exec temp file");
+    let cd_path = cd.path().to_path_buf();
+    let exec_path = exec.path().to_path_buf();
+    (
+        cd_path,
+        exec_path,
+        (cd.into_temp_path(), exec.into_temp_path()),
+    )
 }
 
 #[rstest]
@@ -1079,12 +1099,16 @@ fn test_switch_picker_no_cd_suppresses_directive(mut repo: TestRepo) {
     // Create a worktree to switch to
     repo.add_worktree("target-branch");
 
-    let (directive_path, _guard) = directive_file_for_pty();
+    let (cd_path, exec_path, _guard) = directive_files_for_pty();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
-        "WORKTRUNK_DIRECTIVE_FILE".to_string(),
-        directive_path.display().to_string(),
+        "WORKTRUNK_DIRECTIVE_CD_FILE".to_string(),
+        cd_path.display().to_string(),
+    ));
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_EXEC_FILE".to_string(),
+        exec_path.display().to_string(),
     ));
 
     // Run `wt switch --no-cd`, select "target-branch" via picker, press Enter
@@ -1104,12 +1128,12 @@ fn test_switch_picker_no_cd_suppresses_directive(mut repo: TestRepo) {
         "Expected exit code 0 for successful switch"
     );
 
-    // Verify directive file does NOT contain cd command
-    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    // Verify CD file is empty (no path written with --no-cd)
+    let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
     assert!(
-        !directives.contains("cd '"),
-        "Directive file should NOT contain cd command with --no-cd via picker, got: {}",
-        directives
+        cd_content.trim().is_empty(),
+        "CD file should be empty with --no-cd via picker, got: {}",
+        cd_content
     );
 }
 
@@ -1121,12 +1145,16 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
     // Create a worktree to switch to
     repo.add_worktree("target-branch");
 
-    let (directive_path, _guard) = directive_file_for_pty();
+    let (cd_path, exec_path, _guard) = directive_files_for_pty();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
-        "WORKTRUNK_DIRECTIVE_FILE".to_string(),
-        directive_path.display().to_string(),
+        "WORKTRUNK_DIRECTIVE_CD_FILE".to_string(),
+        cd_path.display().to_string(),
+    ));
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_EXEC_FILE".to_string(),
+        exec_path.display().to_string(),
     ));
 
     // Run `wt switch` (without --no-cd), select "target-branch" via picker
@@ -1146,12 +1174,12 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
         "Expected exit code 0 for successful switch"
     );
 
-    // Verify directive file DOES contain cd command (default behavior)
-    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    // Verify CD file DOES contain a path (default behavior)
+    let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
     assert!(
-        directives.contains("cd '"),
-        "Directive file should contain cd command without --no-cd, got: {}",
-        directives
+        !cd_content.trim().is_empty(),
+        "CD file should contain a path without --no-cd, got: {}",
+        cd_content
     );
 }
 
@@ -1163,12 +1191,16 @@ fn test_switch_picker_no_cd_prints_branch_without_switching(mut repo: TestRepo) 
     // Create a worktree to select
     repo.add_worktree("target-branch");
 
-    let (directive_path, _guard) = directive_file_for_pty();
+    let (cd_path, exec_path, _guard) = directive_files_for_pty();
 
     let mut env_vars = repo.test_env_vars();
     env_vars.push((
-        "WORKTRUNK_DIRECTIVE_FILE".to_string(),
-        directive_path.display().to_string(),
+        "WORKTRUNK_DIRECTIVE_CD_FILE".to_string(),
+        cd_path.display().to_string(),
+    ));
+    env_vars.push((
+        "WORKTRUNK_DIRECTIVE_EXEC_FILE".to_string(),
+        exec_path.display().to_string(),
     ));
 
     // Run `wt switch --no-cd`, filter to "target", press Enter to select
@@ -1198,10 +1230,10 @@ fn test_switch_picker_no_cd_prints_branch_without_switching(mut repo: TestRepo) 
     );
 
     // --no-cd should NOT emit a cd directive (read-only operation)
-    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
     assert!(
-        !directives.contains("cd '"),
-        "Directive file should NOT contain cd command with --no-cd, got: {}",
-        directives
+        cd_content.trim().is_empty(),
+        "CD file should be empty with --no-cd, got: {}",
+        cd_content
     );
 }

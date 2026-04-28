@@ -7,11 +7,11 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
 ## Examples
 
 ```bash
-wt switch feature-auth           # Switch to worktree
-wt switch -                      # Previous worktree (like cd -)
-wt switch --create new-feature   # Create new branch and worktree
-wt switch --create hotfix --base production
-wt switch pr:123                 # Switch to PR #123's branch
+$ wt switch feature-auth           # Switch to worktree
+$ wt switch -                      # Previous worktree (like cd -)
+$ wt switch --create new-feature   # Create new branch and worktree
+$ wt switch --create hotfix --base production
+$ wt switch pr:123                 # Switch to PR #123's branch
 ```
 
 ## Creating a branch
@@ -20,21 +20,19 @@ The `--create` flag creates a new branch from `--base` — the default branch un
 
 ## Creating worktrees
 
-If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one, running [hooks](https://worktrunk.dev/hook/).
+If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one:
 
-When creating a worktree, worktrunk:
-
-1. Runs [pre-switch hooks](https://worktrunk.dev/hook/#pre-switch) — blocks until complete
+1. Runs [pre-switch hooks](https://worktrunk.dev/hook/#hook-types), blocking until complete
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs [pre-start hooks](https://worktrunk.dev/hook/#pre-start) — blocks until complete
-5. Spawns [post-start](https://worktrunk.dev/hook/#post-start) and [post-switch hooks](https://worktrunk.dev/hook/#post-switch) in the background
+4. Runs [pre-start hooks](https://worktrunk.dev/hook/#hook-types), blocking until complete
+5. Spawns [post-start](https://worktrunk.dev/hook/#hook-types) and [post-switch hooks](https://worktrunk.dev/hook/#hook-types) in the background
 
 ```bash
-wt switch feature                        # Existing branch → creates worktree
-wt switch --create feature               # New branch and worktree
-wt switch --create fix --base release    # New branch from release
-wt switch --create temp --no-verify      # Skip hooks
+$ wt switch feature                        # Existing branch → creates worktree
+$ wt switch --create feature               # New branch and worktree
+$ wt switch --create fix --base release    # New branch from release
+$ wt switch --create temp --no-hooks       # Skip hooks
 ```
 
 ## Shortcuts
@@ -48,16 +46,19 @@ wt switch --create temp --no-verify      # Skip hooks
 | `mr:{N}` | GitLab MR !N's branch |
 
 ```bash
-wt switch -                      # Back to previous
-wt switch ^                      # Default branch worktree
-wt switch --create fix --base=@  # Branch from current HEAD
-wt switch pr:123                 # PR #123's branch
-wt switch mr:101                 # MR !101's branch
+$ wt switch -                           # Back to previous
+$ wt switch ^                           # Default branch worktree
+$ wt switch --create fix --base=@       # Branch from current HEAD
+$ wt switch --create fix --base=pr:123  # Branch from PR #123's head
+$ wt switch pr:123                      # PR #123's branch
+$ wt switch mr:101                      # MR !101's branch
 ```
+
+Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
 
 ## Interactive picker
 
-When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview. The picker requires a TTY.
+When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview.
 
 **Keybindings:**
 
@@ -66,11 +67,12 @@ When called without arguments, `wt switch` opens an interactive picker to browse
 | `↑`/`↓` | Navigate worktree list |
 | (type) | Filter worktrees |
 | `Enter` | Switch to selected worktree |
-| `Alt-c` | Create new worktree from query |
+| `Alt-c` | Create new worktree named as entered text |
 | `Esc` | Cancel |
 | `1`–`5` | Switch preview tab |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
+<!-- Alt-r (remove worktree) works but is omitted: cursor resets after skim reload (#1695). Add once fixed. See #1881. -->
 
 **Preview tabs** — toggle with number keys:
 
@@ -94,8 +96,8 @@ Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <
 The `pr:<number>` and `mr:<number>` shortcuts resolve a GitHub PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
 
 ```bash
-wt switch pr:101                 # GitHub PR #101
-wt switch mr:101                 # GitLab MR !101
+$ wt switch pr:101                 # GitHub PR #101
+$ wt switch mr:101                 # GitLab MR !101
 ```
 
 Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
@@ -112,92 +114,104 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 
 ## Command reference
 
+```
 wt switch - Switch to a worktree; create if needed
 
-Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <span class=c>[BRANCH]</span> <b><span class=c>[--</span></b> <span class=c>&lt;EXECUTE_ARGS&gt;...</span><b><span class=c>]</span></b>
+Usage: wt switch [OPTIONS] [BRANCH] [-- <EXECUTE_ARGS>...]
 
-<b><span class=g>Arguments:</span></b>
-  <span class=c>[BRANCH]</span>
+Arguments:
+  [BRANCH]
           Branch name or shortcut
 
-          Opens interactive picker if omitted. Shortcuts: &#39;^&#39; (default branch),
-          &#39;-&#39; (previous), &#39;@&#39; (current), &#39;pr:{N}&#39; (GitHub PR), &#39;mr:{N}&#39; (GitLab
-          MR)
+          Opens interactive picker if omitted. Shortcuts: '^' (default branch), '-' (previous), '@'
+          (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)
 
-  <span class=c>[EXECUTE_ARGS]...</span>
+  [EXECUTE_ARGS]...
           Additional arguments for --execute command (after --)
 
-          Arguments after <b>--</b> are appended to the execute command. Each argument
-          is expanded for templates, then POSIX shell-escaped.
+          Arguments after -- are appended to the execute command. Each argument is expanded for
+          templates, then POSIX shell-escaped.
 
-<b><span class=g>Options:</span></b>
-  <b><span class=c>-c</span></b>, <b><span class=c>--create</span></b>
+Options:
+  -c, --create
           Create a new branch
 
-  <b><span class=c>-b</span></b>, <b><span class=c>--base</span></b><span class=c> &lt;BASE&gt;</span>
+  -b, --base <BASE>
           Base branch
 
-          Defaults to default branch.
+          Defaults to default branch. Supports the same shortcuts as the branch argument: ^, @, -,
+          pr:{N}, mr:{N}.
 
-  <b><span class=c>-x</span></b>, <b><span class=c>--execute</span></b><span class=c> &lt;EXECUTE&gt;</span>
+  -x, --execute <EXECUTE>
           Command to run after switch
 
-          Replaces the wt process with the command after switching, giving it
-          full terminal control. Useful for launching editors, AI agents, or
-          other interactive tools.
+          Replaces the wt process with the command after switching, giving it full terminal control.
+          Useful for launching editors, AI agents, or other interactive tools.
 
-          Supports <u>hook template variables</u> (<b>{{ branch }}</b>, <b>{{ worktree_path }}</b>,
-          etc.) and filters. <b>{{ base }}</b> and <b>{{ base_worktree_path }}</b> require
-          --create.
+          Supports hook template variables ({{ branch }}, {{ worktree_path }}, etc.) and filters. {{
+          base }} and {{ base_worktree_path }} require --create.
 
           Especially useful with shell aliases:
 
-            <b>alias wsc=&#39;wt switch --create -x claude&#39;</b>
-            <b>wsc feature-branch -- &#39;Fix GH #322&#39;</b>
+            alias wsc='wt switch --create -x claude'
+            wsc feature-branch -- 'Fix GH #322'
 
-          Then <b>wsc feature-branch</b> creates the worktree and launches Claude Code.
-          Arguments after <b>--</b> are passed to the command, so <b>wsc feature -- &#39;Fix</b>
-          GH #322&#39; runs <b>claude &#39;Fix GH #322&#39;</b>, starting Claude with a prompt.
+          Then wsc feature-branch creates the worktree and launches Claude Code. Arguments after --
+          are passed to the command, so wsc feature -- 'Fix GH #322' runs claude 'Fix GH #322',
+          starting Claude with a prompt.
 
-          Template example: <b>-x &#39;code {{ worktree_path }}&#39;</b> opens VS Code at the
-          worktree, <b>-x &#39;tmux new -s {{ branch | sanitize }}&#39;</b> starts a tmux
-          session named after the branch.
+          Template example: -x 'code {{ worktree_path }}' opens VS Code at the worktree, -x 'tmux
+          new -s {{ branch | sanitize }}' starts a tmux session named after the branch.
 
-      <b><span class=c>--clobber</span></b>
+      --clobber
           Remove stale paths at target
 
-      <b><span class=c>--no-cd</span></b>
+      --no-cd
           Skip directory change after switching
 
-          Hooks still run normally. Useful when hooks handle navigation (e.g.,
-          tmux workflows) or for CI/automation. Use --cd to override.
+          Hooks still run normally. Useful when hooks handle navigation (e.g., tmux workflows) or
+          for CI/automation. Use --cd to override.
 
-          In picker mode (no branch argument), prints the selected branch name
-          and exits without switching. Useful for scripting.
+          In picker mode (no branch argument), prints the selected branch name and exits without
+          switching. Useful for scripting.
 
-  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
-          Print help (see a summary with &#39;-h&#39;)
+  -h, --help
+          Print help (see a summary with '-h')
 
-<b><span class=g>Picker Options:</span></b>
-      <b><span class=c>--branches</span></b>
+Picker Options:
+      --branches
           Include branches without worktrees
 
-      <b><span class=c>--remotes</span></b>
+      --remotes
           Include remote branches
 
-<b><span class=g>Automation:</span></b>
-  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
-          Skip approval prompts
-
-      <b><span class=c>--no-verify</span></b>
+Automation:
+      --no-hooks
           Skip hooks
 
-<b><span class=g>Global Options:</span></b>
-  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+      --format <FORMAT>
+          Output format
+
+          JSON prints structured result to stdout. Designed for tool integration (e.g., Claude Code
+          WorktreeCreate hooks).
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
+
+Global Options:
+  -C <path>
           Working directory for this command
 
-      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+      --config <path>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: hooks, templates; -vv: debug report)
+  -v, --verbose...
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
+```

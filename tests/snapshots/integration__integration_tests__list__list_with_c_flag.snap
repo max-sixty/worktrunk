@@ -4,7 +4,7 @@ info:
   program: wt
   args:
     - "-C"
-    - /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpUeh34J/repo
+    - /private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpSeGxzx/repo
     - list
   env:
     CLICOLOR_FORCE: "1"
@@ -12,6 +12,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
@@ -23,6 +24,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---

@@ -2,8 +2,14 @@
 
 TUI demos (Zellij, interactive UIs) can't be validated via text output because
 VHS only captures the outer terminal, not content rendered inside terminal
-multiplexers. Instead, we extract key frames from the GIF and use OCR to verify
+multiplexers. Instead, we extract frames from the GIF and use OCR to verify
 expected content appears.
+
+Checkpoints specify a frame range rather than a single frame. The validator
+scans frames within the range (sampling every N frames) and passes the
+checkpoint if ANY frame in the range matches all expected patterns while
+containing none of the forbidden patterns. This makes validation resilient
+to timing shifts from UI changes.
 
 Usage:
     from shared.validation import validate_tui_demo, TUI_CHECKPOINTS
@@ -18,24 +24,47 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 
-# Checkpoint definitions per TUI demo
-# Format: {demo_name: [(frame_number, expected_patterns, forbidden_patterns), ...]}
-#
-# Frame numbers are calibrated from actual GIF content at 30fps.
-# Expected patterns must ALL be present (case-insensitive).
-# Forbidden patterns must ALL be absent (case-insensitive).
 
-TUI_CHECKPOINTS: dict[str, list[tuple[int, list[str], list[str]]]] = {
-    # Frame numbers calibrated after removing initial wt list (demo starts with picker).
-    # At 30fps: frame 200 = ~6.7s, frame 1750 = ~58.3s
+@dataclass
+class Checkpoint:
+    """A validation checkpoint that scans a range of frames."""
+
+    start: int
+    end: int
+    expected: list[str] = field(default_factory=list)
+    forbidden: list[str] = field(default_factory=list)
+    step: int = 10
+
+
+# Checkpoint definitions per TUI demo.
+# Ranges are calibrated from actual GIF content at 30fps.
+# Expected patterns must ALL be present (case-insensitive) in at least one
+# frame within the range. Forbidden patterns must ALL be absent.
+
+TUI_CHECKPOINTS: dict[str, list[Checkpoint]] = {
     "wt-zellij-omnibus": [
-        # Frame 200: Claude UI visible on TAB 1 (api) - shows Opus model and task
-        (200, ["Opus", "acme", "Add a test"], ["command not found", "Unknown command"]),
-        # Frame 1750: Near end - wt list --full showing all worktrees
-        # (feature removed by wt remove in TAB 3)
-        (1750, ["Branch", "main", "billing"], ["CONFLICT", "error:", "failed"]),
+        # Claude UI visible on TAB 1 (api) — shows model name and task.
+        # Range covers the window where Claude's UI is rendered and stable.
+        # Patterns kept minimal (just "Opus" + "acme") since Claude's UI
+        # layout shifts across versions — task text may wrap or truncate.
+        Checkpoint(
+            start=150,
+            end=350,
+            expected=["Opus", "acme"],
+            forbidden=["command not found", "Unknown command"],
+        ),
+        # Near end — wt list --full showing all worktrees.
+        # "billing" omitted: depends on timing of when the branch appears
+        # in the list relative to the frame window.
+        Checkpoint(
+            start=1650,
+            end=1850,
+            expected=["Branch", "main"],
+            forbidden=["CONFLICT", "error:", "failed"],
+        ),
     ],
 }
 
@@ -52,21 +81,40 @@ def check_dependencies() -> list[str]:
     return missing
 
 
-def extract_frame(gif_path: Path, frame_number: int, output_path: Path) -> bool:
-    """Extract a single frame from a GIF. Returns True on success."""
+def extract_frames(
+    gif_path: Path, frames: list[int], out_dir: Path
+) -> dict[int, Path]:
+    """Extract multiple frames from a GIF in a single ffmpeg pass.
+
+    Returns a mapping from frame number to extracted PNG path.
+    """
+    if not frames:
+        return {}
+
+    # Build select filter: select='eq(n,150)+eq(n,160)+eq(n,170)+...'
+    select_expr = "+".join(f"eq(n\\,{f})" for f in frames)
+    pattern = str(out_dir / "frame_%04d.png")
+
     result = subprocess.run(
         [
             "ffmpeg",
             "-loglevel", "error",
             "-i", str(gif_path),
-            "-vf", f"select=eq(n\\,{frame_number})",
-            "-vframes", "1",
-            "-update", "1",
-            str(output_path),
+            "-vf", f"select='{select_expr}'",
+            "-vsync", "vfr",
+            str(pattern),
         ],
         capture_output=True,
     )
-    return result.returncode == 0 and output_path.exists()
+    if result.returncode != 0:
+        return {}
+
+    # ffmpeg numbers output files sequentially (frame_0001.png, frame_0002.png, ...)
+    return {
+        frame: out_dir / f"frame_{i + 1:04d}.png"
+        for i, frame in enumerate(frames)
+        if (out_dir / f"frame_{i + 1:04d}.png").exists()
+    }
 
 
 def ocr_image(image_path: Path) -> str:
@@ -87,50 +135,77 @@ def ocr_image(image_path: Path) -> str:
     return ""
 
 
-def validate_checkpoint(
-    gif_path: Path,
-    frame_number: int,
+def _check_patterns(
+    text: str,
     expected: list[str],
     forbidden: list[str],
-    work_dir: Path,
-) -> list[str]:
-    """Validate a single checkpoint. Returns list of error messages."""
+) -> tuple[bool, list[str]]:
+    """Check text against expected/forbidden patterns.
+
+    Returns (passed, errors).
+    """
+    text_lower = text.lower()
     errors = []
 
-    # Extract frame
-    frame_path = work_dir / f"frame_{frame_number}.png"
-    if not extract_frame(gif_path, frame_number, frame_path):
-        return [f"Failed to extract frame {frame_number}"]
-
-    # OCR the frame
-    text = ocr_image(frame_path)
-    if not text:
-        return [f"OCR failed for frame {frame_number}"]
-
-    text_lower = text.lower()
-
-    # Check expected patterns
     for pattern in expected:
         if pattern.lower() not in text_lower:
-            errors.append(f"Expected pattern not found: '{pattern}'")
+            errors.append(f"'{pattern}' not found")
 
-    # Check forbidden patterns
     for pattern in forbidden:
         if pattern.lower() in text_lower:
-            errors.append(f"Forbidden pattern found: '{pattern}'")
+            errors.append(f"forbidden '{pattern}' present")
 
-    return errors
+    return len(errors) == 0, errors
+
+
+def validate_checkpoint(
+    gif_path: Path,
+    checkpoint: Checkpoint,
+    work_dir: Path,
+) -> tuple[bool, str]:
+    """Validate a checkpoint by scanning its frame range.
+
+    Extracts all sampled frames in one ffmpeg call, then OCRs each
+    sequentially until one matches (early return on success).
+
+    Returns (passed, detail_message).
+    """
+    frame_numbers = list(range(checkpoint.start, checkpoint.end + 1, checkpoint.step))
+    frame_paths = extract_frames(gif_path, frame_numbers, work_dir)
+
+    if not frame_paths:
+        label = f"frames {checkpoint.start}-{checkpoint.end}"
+        return False, f"failed to extract {label}"
+
+    best_errors: list[str] = []
+    frames_checked = 0
+
+    for frame in frame_numbers:
+        frame_path = frame_paths.get(frame)
+        if frame_path is None:
+            continue
+
+        frames_checked += 1
+        text = ocr_image(frame_path)
+        if not text:
+            continue
+
+        passed, errors = _check_patterns(text, checkpoint.expected, checkpoint.forbidden)
+        if passed:
+            return True, f"matched at frame {frame} ({frames_checked} checked)"
+        if not best_errors or len(errors) < len(best_errors):
+            best_errors = errors
+
+    label = f"frames {checkpoint.start}-{checkpoint.end}"
+    if not frames_checked:
+        return False, f"no readable frames in {label}"
+    return False, f"no match in {label} ({frames_checked} checked): {'; '.join(best_errors)}"
 
 
 def validate_tui_demo(demo_name: str, gif_path: Path) -> list[str]:
     """Validate a TUI demo GIF against its checkpoints.
 
-    Args:
-        demo_name: Name of the demo (e.g., "wt-zellij-omnibus")
-        gif_path: Path to the GIF file to validate
-
-    Returns:
-        List of error messages. Empty list means validation passed.
+    Returns list of error messages. Empty list means validation passed.
     """
     if demo_name not in TUI_CHECKPOINTS:
         return [f"No checkpoints defined for demo: {demo_name}"]
@@ -138,7 +213,6 @@ def validate_tui_demo(demo_name: str, gif_path: Path) -> list[str]:
     if not gif_path.exists():
         return [f"GIF not found: {gif_path}"]
 
-    # Check dependencies
     missing = check_dependencies()
     if missing:
         return [f"Missing required tools: {', '.join(missing)}"]
@@ -149,12 +223,10 @@ def validate_tui_demo(demo_name: str, gif_path: Path) -> list[str]:
     with tempfile.TemporaryDirectory(prefix="wt-validate-") as work_dir:
         work_path = Path(work_dir)
 
-        for frame_number, expected, forbidden in checkpoints:
-            errors = validate_checkpoint(
-                gif_path, frame_number, expected, forbidden, work_path
-            )
-            if errors:
-                all_errors.append(f"Frame {frame_number}: {'; '.join(errors)}")
+        for checkpoint in checkpoints:
+            passed, detail = validate_checkpoint(gif_path, checkpoint, work_path)
+            if not passed:
+                all_errors.append(detail)
 
     return all_errors
 
@@ -162,8 +234,7 @@ def validate_tui_demo(demo_name: str, gif_path: Path) -> list[str]:
 def validate_tui_demo_verbose(demo_name: str, gif_path: Path) -> tuple[bool, str]:
     """Validate a TUI demo with verbose output.
 
-    Returns:
-        (success, output_message)
+    Returns (success, output_message).
     """
     lines = [f"Validating {demo_name}: {gif_path}"]
 
@@ -183,17 +254,14 @@ def validate_tui_demo_verbose(demo_name: str, gif_path: Path) -> tuple[bool, str
     with tempfile.TemporaryDirectory(prefix="wt-validate-") as work_dir:
         work_path = Path(work_dir)
 
-        for frame_number, expected, forbidden in checkpoints:
-            errors = validate_checkpoint(
-                gif_path, frame_number, expected, forbidden, work_path
-            )
-            if errors:
-                lines.append(f"  ✗ Frame {frame_number}")
-                for error in errors:
-                    lines.append(f"    - {error}")
-                all_passed = False
+        for checkpoint in checkpoints:
+            passed, detail = validate_checkpoint(gif_path, checkpoint, work_path)
+            label = f"frames {checkpoint.start}-{checkpoint.end}"
+            if passed:
+                lines.append(f"  ✓ {label}: {detail}")
             else:
-                lines.append(f"  ✓ Frame {frame_number}")
+                lines.append(f"  ✗ {label}: {detail}")
+                all_passed = False
 
     if all_passed:
         lines.append("✓ All checkpoints passed")

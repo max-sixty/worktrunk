@@ -1,6 +1,7 @@
 use crate::common::{
     DAY, HOUR, MINUTE, TestRepo, list_snapshots, make_snapshot_cmd,
-    mock_commands::create_mock_llm_quickstart, repo, repo_with_remote, wt_command,
+    mock_commands::create_mock_llm_quickstart, repo, repo_with_remote,
+    setup_snapshot_settings_for_paths, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
@@ -428,9 +429,8 @@ fn test_list_with_remotes_and_full(#[from(repo_with_remote)] repo: TestRepo) {
 
 #[rstest]
 fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) {
-    // Create a remote-tracking ref for a non-existent remote to exercise the
-    // fallback path in CiBranchName::from_branch_ref (lines 64-75)
-    // This simulates a ref that remains after a remote is deleted
+    // Create a remote-tracking ref for a non-existent remote.
+    // This simulates a ref that remains after a remote is deleted.
     let head_sha = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
@@ -453,10 +453,8 @@ fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) 
         "deleted-remote should not exist"
     );
 
-    // Run with --remotes --full to trigger the fallback path
-    // The orphaned ref should be parsed using split_once('/') as fallback
-    // Note: We don't use snapshot testing here because the spinner character
-    // in stderr is non-deterministic (timing-dependent)
+    // The orphaned ref should still appear — split_once('/') parses it correctly
+    // even though the remote no longer exists.
     let output = repo
         .wt_command()
         .args(["list", "--remotes", "--full"])
@@ -469,11 +467,57 @@ fn test_list_with_orphaned_remote_ref(#[from(repo_with_remote)] repo: TestRepo) 
         stdout.contains("deleted-remote/orphaned-branch"),
         "should show orphaned remote branch in output: {stdout}"
     );
+}
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("unknown remote 'deleted-remote'"),
-        "should warn about unknown remote: {stderr}"
+/// A remote-row must resolve to `refs/remotes/<name>` even when a local branch
+/// with the literal same short name exists. Git allows local branches like
+/// `origin/foo`; without qualifying the ref, `git rev-parse origin/foo` picks
+/// `refs/heads/origin/foo` and the remote row silently reports stats against
+/// the local branch.
+#[rstest]
+fn test_list_remote_row_not_shadowed_by_same_named_local_branch(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    // Remote `foo` = one commit ahead of main.
+    repo.create_branch("foo");
+    repo.run_git(&["checkout", "foo"]);
+    std::fs::write(repo.root_path().join("remote.txt"), "remote").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "Remote foo commit"]);
+    repo.push_branch("foo");
+
+    // Drop local `foo` so only `refs/remotes/origin/foo` remains.
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["branch", "-D", "foo"]);
+
+    // Local branch literally named `origin/foo`, two commits ahead of main on a
+    // different history from the remote.
+    repo.run_git(&["checkout", "-b", "origin/foo"]);
+    std::fs::write(repo.root_path().join("local1.txt"), "local1").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "Local origin/foo 1"]);
+    std::fs::write(repo.root_path().join("local2.txt"), "local2").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "Local origin/foo 2"]);
+    repo.run_git(&["checkout", "main"]);
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--remotes", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let remote_row = json
+        .iter()
+        .find(|w| w["branch"] == "origin/foo" && w["kind"] == "branch")
+        .expect("remote row origin/foo should be present in --remotes output");
+
+    assert_eq!(
+        remote_row["main"]["ahead"].as_u64(),
+        Some(1),
+        "remote row must report remote-branch ahead count (1), not local (2): {remote_row:#?}"
     );
 }
 
@@ -572,6 +616,13 @@ fn test_list_with_upstream_tracking(mut repo: TestRepo) {
     // Without this, Windows CI may show 55y (Unix epoch) because the worktree
     // isn't ready when wt list tries to read commit timestamps.
     repo.run_git_in(&no_upstream_wt, &["status", "--porcelain"]);
+
+    // Scenario 6: Upstream configured but remote ref deleted (git's [gone] state).
+    // Should be treated as no upstream — blank Remote column, no error.
+    let gone_wt = repo.add_worktree("gone-upstream");
+    repo.run_git_in(&gone_wt, &["push", "-u", "origin", "gone-upstream"]);
+    repo.run_git(&["push", "origin", "--delete", "gone-upstream"]);
+    repo.run_git_in(&gone_wt, &["fetch", "--prune", "origin"]);
 
     // Run list --branches --full to show all columns including Remote
     assert_cmd_snapshot!("with_upstream_tracking", {
@@ -1776,13 +1827,47 @@ TODO: Add request/response examples for each endpoint
     // Remove the worktree but keep the branch
     repo.run_git(&["worktree", "remove", wip_wt.to_str().unwrap()]);
 
+    // === Create fix-typos worktree (already merged — shows dimmed as removable) ===
+    // Story: A quick typo fix that was already squash-merged into main.
+    // The worktree is still around and can be removed. Shows dimmed in list output.
+    let fix_typos = repo.add_worktree("fix-typos");
+    repo.run_git_in(&fix_typos, &["push", "-u", "origin", "fix-typos"]);
+    mock_ci_status(repo, "fix-typos", "passed", "pr", false);
+
     // === Mock CI status ===
     // CI requires --full flag, but we mock it so examples show realistic output
     // Note: main's CI is mocked AFTER the merge commit so the hash matches
-    mock_ci_status(repo, "main", "passed", "pull-request", false);
-    mock_ci_status(repo, "fix-auth", "passed", "pull-request", false);
+    mock_ci_status(repo, "main", "passed", "pr", false);
+    mock_ci_status(repo, "fix-auth", "passed", "pr", false);
     // feature-api has unpushed commits, so CI is stale (shows dimmed)
-    mock_ci_status(repo, "feature-api", "running", "pull-request", true);
+    mock_ci_status(repo, "feature-api", "running", "pr", true);
+
+    // === Mock LLM summaries ===
+    // Summary requires --full + [list] summary = true + [commit.generation] command
+    // Pre-populate the cache so tests don't need a real LLM
+    repo.write_test_config(
+        r#"
+[list]
+summary = true
+
+[commit.generation]
+command = "echo unused"
+"#,
+    );
+    mock_summary_cache(
+        repo,
+        "fix-auth",
+        Some(&fix_auth),
+        "Harden auth with constant-time token validation",
+    );
+    mock_summary_cache(
+        repo,
+        "feature-api",
+        Some(&feature_api),
+        "Refactor API to REST architecture with middleware",
+    );
+    mock_summary_cache(repo, "exp", None, "Explore GraphQL schema and resolvers");
+    mock_summary_cache(repo, "wip", None, "Start API documentation");
 
     feature_api
 }
@@ -1836,6 +1921,92 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     std::fs::write(&cache_file, &cache_json).unwrap();
 }
 
+/// Mock summary cache by computing the real diff hash and writing a cache entry.
+///
+/// Mirrors `summary::generate_summary_core` — computes the combined diff
+/// (branch + working tree), SHA-256-hashes it, and writes
+/// `summary/{branch}/{hash}.json` with a CachedSummary body.
+fn mock_summary_cache(
+    repo: &TestRepo,
+    branch: &str,
+    worktree_path: Option<&std::path::Path>,
+    summary: &str,
+) {
+    use sha2::{Digest, Sha256};
+
+    // Compute combined diff (matching compute_combined_diff in summary.rs)
+    let mut diff = String::new();
+
+    // Branch diff: main...<branch>
+    let head_output = repo
+        .git_command()
+        .args(["rev-parse", branch])
+        .run()
+        .unwrap();
+    let head = String::from_utf8_lossy(&head_output.stdout)
+        .trim()
+        .to_string();
+    let merge_base = format!("main...{}", head);
+    if let Ok(output) = repo.git_command().args(["diff", &merge_base]).run() {
+        let branch_diff = String::from_utf8_lossy(&output.stdout);
+        diff.push_str(&branch_diff);
+    }
+
+    // Working tree diff (only if worktree exists)
+    if let Some(wt_path) = worktree_path {
+        let wt_str = wt_path.display().to_string();
+        if let Ok(output) = repo
+            .git_command()
+            .args(["-C", &wt_str, "diff", "HEAD"])
+            .run()
+        {
+            let wt_diff = String::from_utf8_lossy(&output.stdout);
+            if !wt_diff.trim().is_empty() {
+                diff.push_str(&wt_diff);
+            }
+        }
+    }
+
+    // SHA-256 prefix (matches summary::hash_diff — first 16 hex chars).
+    let mut hasher = Sha256::new();
+    hasher.update(diff.as_bytes());
+    let digest = hasher.finalize();
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut diff_hash = String::with_capacity(16);
+    for &b in digest.iter().take(8) {
+        diff_hash.push(HEX[(b >> 4) as usize] as char);
+        diff_hash.push(HEX[(b & 0xf) as usize] as char);
+    }
+
+    // Write cache file
+    let cache_json = format!(
+        r#"{{"summary":"{}","branch":"{}","generated_at":0}}"#,
+        summary, branch
+    );
+
+    let output = repo
+        .git_command()
+        .args(["rev-parse", "--git-common-dir"])
+        .run()
+        .unwrap();
+    let git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let git_path = if std::path::Path::new(&git_dir).is_absolute() {
+        std::path::PathBuf::from(&git_dir)
+    } else {
+        repo.root_path().join(&git_dir)
+    };
+
+    let safe_branch = worktrunk::path::sanitize_for_filename(branch);
+    let branch_dir = git_path
+        .join("wt")
+        .join("cache")
+        .join("summary")
+        .join(&safe_branch);
+    std::fs::create_dir_all(&branch_dir).unwrap();
+    let cache_file = branch_dir.join(format!("{diff_hash}.json"));
+    std::fs::write(&cache_file, &cache_json).unwrap();
+}
+
 // =============================================================================
 // Quick Start Snapshot Tests
 // =============================================================================
@@ -1843,7 +2014,7 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
 /// Generate Quick Start example: `wt switch --create feature-auth` output
 ///
 /// Shows the switch output when creating a new worktree from main.
-/// Sets WORKTRUNK_DIRECTIVE_FILE to simulate shell integration being active,
+/// Sets WORKTRUNK_DIRECTIVE_CD_FILE to simulate shell integration being active,
 /// which suppresses the "Cannot change directory" warning.
 /// Output: tests/snapshots/integration__integration_tests__list__quickstart_switch.snap
 #[rstest]
@@ -1858,7 +2029,7 @@ fn test_quickstart_switch(mut repo: TestRepo) {
     std::fs::write(&directive_file, "").unwrap();
     assert_cmd_snapshot!("quickstart_switch", {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature-auth"], None);
-        cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
+        cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file);
         cmd
     });
 }
@@ -1879,7 +2050,7 @@ fn test_quickstart_list(mut repo: TestRepo) {
 /// Generate Quick Start example: `wt merge` output
 ///
 /// Shows merge output when merging feature-auth into main.
-/// Sets WORKTRUNK_DIRECTIVE_FILE to simulate shell integration being active,
+/// Sets WORKTRUNK_DIRECTIVE_CD_FILE to simulate shell integration being active,
 /// which suppresses the "Cannot change directory" warning.
 /// Output: tests/snapshots/integration__integration_tests__list__quickstart_merge.snap
 #[rstest]
@@ -1982,7 +2153,7 @@ mod tests {
     // Merge feature-auth into main
     assert_cmd_snapshot!("quickstart_merge", {
         let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_auth));
-        cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
+        cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file);
         // Set MOCK_CONFIG_DIR so mock-stub can find llm.json
         cmd.env("MOCK_CONFIG_DIR", &mock_bin_dir);
         // Use to_slash_lossy() for Windows compatibility - bash can't handle backslash paths
@@ -2014,8 +2185,8 @@ fn test_readme_example_list(mut repo: TestRepo) {
 
 /// Generate README example: `wt list --full` output
 ///
-/// Shows additional columns: main…± (line diffs in commits) and CI status.
-/// Uses narrower width (100 cols) to fit in doc site code blocks.
+/// Shows additional columns: main…± (line diffs), CI status, and LLM summaries.
+/// Uses wider terminal (130 cols) than the base example to fit the Summary column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_full.snap
 #[rstest]
 fn test_readme_example_list_full(mut repo: TestRepo) {
@@ -2023,6 +2194,7 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
     assert_cmd_snapshot!("readme_example_list_full", {
         let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
         cmd.arg("--full");
+        cmd.env("COLUMNS", "130");
         cmd
     });
 }
@@ -2030,7 +2202,7 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
 /// Generate README example: `wt list --branches --full` output
 ///
 /// Shows branches without worktrees (⎇ symbol) alongside worktrees, plus CI status.
-/// Uses narrower width (100 cols) to fit in doc site code blocks.
+/// Uses wider terminal (130 cols) than the base example to fit the Summary column.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_branches.snap
 #[rstest]
 fn test_readme_example_list_branches(mut repo: TestRepo) {
@@ -2038,8 +2210,49 @@ fn test_readme_example_list_branches(mut repo: TestRepo) {
     assert_cmd_snapshot!("readme_example_list_branches", {
         let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
         cmd.args(["--branches", "--full"]);
+        cmd.env("COLUMNS", "130");
         cmd
     });
+}
+
+/// Generate config state marker example: `wt list` with user markers
+///
+/// Shows how user markers appear in the Status column alongside git symbols.
+/// Used by `wt config state marker --help` and docs via placeholder expansion.
+/// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_marker.snap
+#[rstest]
+fn test_readme_example_list_marker(mut repo: TestRepo) {
+    remove_fixture_worktrees(&mut repo);
+
+    repo.commit_with_age("Initial commit", DAY);
+
+    // Branch ahead of main with commits and user marker 🤖
+    let _feature_wt = repo.add_worktree_with_commit(
+        "feature-api",
+        "api.rs",
+        "// API implementation",
+        "Add REST API endpoints",
+    );
+    repo.set_marker("feature-api", "🤖");
+
+    // Branch with uncommitted changes and user marker 💬
+    let review_wt = repo.add_worktree_with_commit(
+        "review-ui",
+        "component.tsx",
+        "// UI component",
+        "Add dashboard component",
+    );
+    std::fs::write(review_wt.join("styles.css"), "/* pending styles */").unwrap();
+    repo.set_marker("review-ui", "💬");
+
+    // Branch with uncommitted changes only (no user marker)
+    let wip_wt = repo.add_worktree("wip-docs");
+    std::fs::write(wip_wt.join("README.md"), "# Documentation").unwrap();
+
+    assert_cmd_snapshot!(
+        "readme_example_list_marker",
+        list_snapshots::command_readme(&repo, repo.root_path())
+    );
 }
 
 /// Generate tips-patterns.md example: dev server per worktree workflow
@@ -2676,14 +2889,14 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
 
 ///
 /// This specifically tests the WorkingTreeConflicts task which:
-/// 1. Uses `git stash create` to get a tree object from uncommitted changes
+/// 1. Uses `git write-tree` to snapshot the index (with temp index for unstaged/untracked)
 /// 2. Runs merge-tree against the default branch to detect conflicts
 ///
-/// The key distinction from commit-level conflicts:
-/// - Commit-level: HEAD conflicts with main (always checked)
-/// - Working tree: Uncommitted changes conflict with main (only with --full)
+/// Both kinds of conflicts are checked in both `wt list` and `wt list --full`:
+/// - Commit-level: HEAD conflicts with main
+/// - Working tree: uncommitted changes conflict with main
 #[rstest]
-fn test_list_full_working_tree_conflicts(mut repo: TestRepo) {
+fn test_list_working_tree_conflicts(mut repo: TestRepo) {
     // Create initial commit with a shared file
     std::fs::write(repo.root_path().join("shared.txt"), "original content").unwrap();
     repo.commit("Initial commit");
@@ -2701,13 +2914,14 @@ fn test_list_full_working_tree_conflicts(mut repo: TestRepo) {
     // Now add uncommitted changes to feature that would conflict with main
     std::fs::write(feature.join("shared.txt"), "feature's uncommitted version").unwrap();
 
-    // Without --full: no conflict symbol (only checks commit-level)
+    // Without --full: WorkingTreeConflicts runs and detects the uncommitted conflict.
     assert_cmd_snapshot!(
         "working_tree_conflicts_without_full",
         list_snapshots::command(&repo, repo.root_path())
     );
 
-    // With --full: should show conflict symbol because uncommitted changes conflict
+    // With --full: same conflict detection, plus the wide status column and extra
+    // post-skeleton tasks that non-full mode skips.
     assert_cmd_snapshot!("working_tree_conflicts_with_full", {
         let mut cmd = list_snapshots::command(&repo, repo.root_path());
         cmd.arg("--full");
@@ -2716,7 +2930,7 @@ fn test_list_full_working_tree_conflicts(mut repo: TestRepo) {
 }
 
 ///
-/// Even with --full, if the working tree is clean, we skip the stash-based check
+/// Even with --full, if the working tree is clean, we skip the working-tree check
 /// and just use the commit-level conflict detection.
 #[rstest]
 fn test_list_full_clean_working_tree_uses_commit_conflicts(mut repo: TestRepo) {
@@ -2772,6 +2986,34 @@ fn test_list_shows_warning_on_git_error(mut repo: TestRepo) {
 
     // Write an invalid SHA that doesn't exist in the repo
     std::fs::write(&ref_path, "0000000000000000000000000000000000000000\n").unwrap();
+
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
+}
+
+///
+/// Corrupts a detached worktree's HEAD file to a non-null but unresolvable
+/// SHA. The `collect()` batch filters out `NULL_OID`, so a non-null invalid
+/// SHA reaches `commit_details_many` and fails the whole batch — exercising
+/// the `unwrap_or_else` warning path that reports "Failed to batch-fetch
+/// commit details" on stderr.
+#[rstest]
+fn test_list_warns_when_commit_details_batch_fails(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature");
+
+    // Detach the worktree's HEAD and rewrite its HEAD file to a non-null but
+    // unresolvable SHA. `git worktree list --porcelain` happily reports the
+    // invalid SHA, which flows into the commit-details batch. Delete the
+    // branch ref so `for-each-ref refs/heads/` (branch inventory scan) doesn't
+    // choke on the now-dangling branch.
+    repo.run_git_in(&worktree_path, &["checkout", "--detach"]);
+    repo.run_git(&["branch", "-D", "feature"]);
+    let worktree_dir_name = worktree_path.file_name().unwrap().to_str().unwrap();
+    let head_path = repo
+        .root_path()
+        .join(".git/worktrees")
+        .join(worktree_dir_name)
+        .join("HEAD");
+    std::fs::write(&head_path, "0000000000000000000000000000000000000001\n").unwrap();
 
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
@@ -2844,81 +3086,30 @@ fn test_list_skips_operations_for_prunable_worktrees(mut repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
-/// Tests that branches far behind main show `…` instead of diff stats when
-/// skip_expensive_for_stale is enabled. This saves time in `wt switch` interactive
-/// picker for repos with many stale branches.
-///
-/// The `…` indicator distinguishes "not computed" from "zero changes" (blank).
-#[rstest]
-fn test_list_skips_expensive_for_stale_branches(mut repo: TestRepo) {
-    // Create feature branch at current main
-    let feature_path = repo.add_worktree("feature");
-
-    // Advance main by 2 commits (feature will be 2 behind)
-    repo.commit("Second commit on main");
-    repo.commit("Third commit on main");
-
-    // Add a change on feature so it's not integrated
-    std::fs::write(feature_path.join("feature.txt"), "feature content").unwrap();
-    repo.git_command()
-        .args(["add", "feature.txt"])
-        .current_dir(&feature_path)
-        .run()
-        .unwrap();
-    repo.git_command()
-        .args(["commit", "-m", "Feature work"])
-        .current_dir(&feature_path)
-        .run()
-        .unwrap();
-
-    // With threshold=1, feature branch (2 behind) should skip expensive tasks
-    // and show `…` instead of actual diff stats
-    assert_cmd_snapshot!({
-        let mut cmd = list_snapshots::command(&repo, repo.root_path());
-        cmd.arg("--full"); // Need --full to show BranchDiff column
-        cmd.env("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD", "1");
-        cmd
-    });
-}
-
-/// Tests skip_expensive_for_stale with branch-only entries (no worktree).
-/// This exercises a different code path than the worktree test above.
-#[rstest]
-fn test_list_skips_expensive_for_stale_branches_only(repo: TestRepo) {
-    // Create a branch without a worktree
-    repo.create_branch("stale-branch");
-
-    // Advance main by 2 commits (stale-branch will be 2 behind)
-    repo.commit("Second commit on main");
-    repo.commit("Third commit on main");
-
-    // With threshold=1, stale-branch (2 behind) should skip expensive tasks
-    assert_cmd_snapshot!({
-        let mut cmd = list_snapshots::command(&repo, repo.root_path());
-        cmd.args(["--branches", "--full"]);
-        cmd.env("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD", "1");
-        cmd
-    });
-}
-
 /// Tests that wt list works correctly when the configured default branch doesn't exist.
 ///
 /// When a user sets `wt config state default-branch set develop` but the `develop`
-/// branch doesn't exist locally, `wt list` should show a warning and degrade gracefully
-/// (empty cells for columns needing default branch) rather than failing with git errors.
+/// branch doesn't exist locally, `wt list` degrades gracefully — columns needing
+/// default branch show empty cells rather than failing with git errors.
+///
+/// With `--branches`, the opportunistic stale-default check surfaces a
+/// warning using the already-enumerated branch set (no extra fork). Plain
+/// `wt list` (worktrees only) does not have the full branch set and so does
+/// not emit the warning — the user sees a clearer `StaleDefaultBranch`
+/// error the moment they run a default-branch-consuming command.
 #[rstest]
 fn test_list_with_nonexistent_default_branch(repo: TestRepo) {
     // Set default branch to a non-existent branch
     repo.run_git(&["config", "worktrunk.default-branch", "nonexistent"]);
 
-    // wt list should show a warning and degrade gracefully (empty columns for
-    // main-related data) when configured default branch doesn't exist locally
+    // wt list should degrade gracefully (empty columns for main-related data)
+    // when configured default branch doesn't exist locally
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 /// Tests that wt list --full works correctly when the configured default branch doesn't exist.
 ///
-/// The --full flag enables expensive tasks like BranchDiff and WorkingTreeConflicts.
+/// The --full flag enables expensive tasks like BranchDiff.
 /// These should also degrade gracefully when default_branch is None.
 #[rstest]
 fn test_list_full_with_nonexistent_default_branch(repo: TestRepo) {
@@ -2929,6 +3120,19 @@ fn test_list_full_with_nonexistent_default_branch(repo: TestRepo) {
     assert_cmd_snapshot!({
         let mut cmd = list_snapshots::command(&repo, repo.root_path());
         cmd.arg("--full");
+        cmd
+    });
+}
+
+/// With `--branches`, `wt list` emits the stale-default-branch warning via
+/// the already-enumerated branch set — no extra fork.
+#[rstest]
+fn test_list_branches_with_nonexistent_default_branch(repo: TestRepo) {
+    repo.run_git(&["config", "worktrunk.default-branch", "nonexistent"]);
+
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--branches");
         cmd
     });
 }
@@ -2993,7 +3197,10 @@ fn test_list_nested_worktree_json_is_current(mut repo: TestRepo) {
 #[test]
 fn test_list_empty_repo() {
     let repo = TestRepo::empty();
-    // Pre-set default branch cache so the `is_unborn_head_branch` validation path is exercised
+    let guard =
+        setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees).bind_to_scope();
+    std::mem::forget(guard);
+    // Pre-set default branch so the unborn-HEAD case has something to resolve to
     repo.run_git(&["config", "worktrunk.default-branch", "main"]);
     // Should show the branch with empty commit columns and no errors
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));

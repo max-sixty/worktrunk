@@ -68,6 +68,32 @@ fn test_eval_dry_run(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_eval_owner(repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "git@github.com:max-sixty/worktrunk.git",
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "eval", "{{ owner }}/{{ repo }}"])
+        .output()
+        .expect("Failed to run wt step eval");
+
+    assert!(
+        output.status.success(),
+        "wt step eval should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "max-sixty/repo"
+    );
+}
+
+#[rstest]
 fn test_eval_conditional(repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
@@ -78,4 +104,29 @@ fn test_eval_conditional(repo: TestRepo) {
         ],
         None,
     ));
+}
+
+/// `{{ commit }}` resolves to the running worktree's HEAD SHA on the on-branch
+/// hot path. `build_hook_context` reads the SHA from the cache primed by
+/// `WorkingTree::prewarm_info` instead of firing `git rev-parse <branch>`.
+#[rstest]
+fn test_eval_commit_matches_head_sha(repo: TestRepo) {
+    let expected = repo.git_output(&["rev-parse", "HEAD"]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "eval", "{{ commit }}"])
+        .output()
+        .expect("run wt step eval");
+
+    assert!(
+        output.status.success(),
+        "wt step eval failed: stderr={}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        expected,
+        "eval commit should match HEAD SHA"
+    );
 }

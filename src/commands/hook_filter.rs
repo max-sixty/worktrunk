@@ -8,7 +8,18 @@
 ///
 /// Approval for project hooks is handled at the gate (command entry point),
 /// not during hook execution.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, strum::Display, strum::EnumString)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+)]
+#[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum HookSource {
     /// User hooks from ~/.config/worktrunk/config.toml (no approval required)

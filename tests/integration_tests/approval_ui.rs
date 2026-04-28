@@ -40,7 +40,7 @@ fn snapshot_approval(test_name: &str, repo: &TestRepo, args: &[&str], approve: b
 
 #[rstest]
 fn test_approval_single_command(repo: TestRepo) {
-    repo.write_project_config(r#"post-create = "echo 'Worktree path: {{ worktree_path }}'""#);
+    repo.write_project_config(r#"pre-start = "echo 'Worktree path: {{ worktree_path }}'""#);
 
     repo.commit("Add config");
 
@@ -55,7 +55,7 @@ fn test_approval_single_command(repo: TestRepo) {
 #[rstest]
 fn test_approval_multiple_commands(repo: TestRepo) {
     repo.write_project_config(
-        r#"[post-create]
+        r#"[pre-start]
 branch = "echo 'Branch: {{ branch }}'"
 worktree = "echo 'Worktree: {{ worktree_path }}'"
 repo = "echo 'Repo: {{ repo }}'"
@@ -79,7 +79,7 @@ fn test_approval_mixed_approved_unapproved(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     repo.write_project_config(
-        r#"[post-create]
+        r#"[pre-start]
 first = "echo 'First command'"
 second = "echo 'Second command'"
 third = "echo 'Third command'"
@@ -106,7 +106,7 @@ approved-commands = ["echo 'Second command'"]
 
 #[rstest]
 fn test_yes_flag_does_not_save_approvals(repo: TestRepo) {
-    repo.write_project_config(r#"post-create = "echo 'test command' > output.txt""#);
+    repo.write_project_config(r#"pre-start = "echo 'test command' > output.txt""#);
 
     repo.commit("Add config");
 
@@ -136,7 +136,7 @@ fn test_already_approved_commands_skip_prompt(repo: TestRepo) {
     // Remove origin so worktrunk uses directory name as project identifier
     repo.run_git(&["remote", "remove", "origin"]);
 
-    repo.write_project_config(r#"post-create = "echo 'approved' > output.txt""#);
+    repo.write_project_config(r#"pre-start = "echo 'approved' > output.txt""#);
 
     repo.commit("Add config");
 
@@ -161,7 +161,7 @@ fn test_decline_approval_skips_only_unapproved(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     repo.write_project_config(
-        r#"[post-create]
+        r#"[pre-start]
 first = "echo 'First command'"
 second = "echo 'Second command'"
 third = "echo 'Third command'"
@@ -193,7 +193,7 @@ approved-commands = ["echo 'Second command'"]
 #[rstest]
 fn test_approval_named_commands(repo: TestRepo) {
     repo.write_project_config(
-        r#"[post-create]
+        r#"[pre-start]
 install = "echo 'Installing dependencies...'"
 build = "echo 'Building project...'"
 test = "echo 'Running tests...'"
@@ -282,7 +282,7 @@ fn test_run_hook_post_merge_requires_approval(repo: TestRepo) {
 /// The command should fail with a clear error telling users to use --yes.
 #[rstest]
 fn test_approval_fails_in_non_tty(repo: TestRepo) {
-    repo.write_project_config(r#"post-create = "echo 'test command'""#);
+    repo.write_project_config(r#"pre-start = "echo 'test command'""#);
     repo.commit("Add config");
 
     // Run WITHOUT piping stdin - this simulates non-TTY environment
@@ -297,7 +297,7 @@ fn test_approval_fails_in_non_tty(repo: TestRepo) {
 /// Even in non-TTY environments, --yes should allow commands to execute.
 #[rstest]
 fn test_yes_bypasses_tty_check(repo: TestRepo) {
-    repo.write_project_config(r#"post-create = "echo 'test command'""#);
+    repo.write_project_config(r#"pre-start = "echo 'test command'""#);
     repo.commit("Add config");
 
     // Run with --yes to bypass approval entirely
@@ -385,10 +385,11 @@ fn test_hook_pre_merge_target_is_current_branch(repo: TestRepo) {
 fn test_step_hook_run_named_command(repo: TestRepo) {
     // Config with multiple named commands
     repo.write_project_config(
-        r#"[pre-merge]
-test = "echo 'running test' > test.txt"
-lint = "echo 'running lint' > lint.txt"
-build = "echo 'running build' > build.txt"
+        r#"pre-merge = [
+    {test = "echo 'running test' > test.txt"},
+    {lint = "echo 'running lint' > lint.txt"},
+    {build = "echo 'running build' > build.txt"},
+]
 "#,
     );
     repo.commit("Add pre-merge hooks");
@@ -426,9 +427,10 @@ build = "echo 'running build' > build.txt"
 fn test_step_hook_unknown_name_error(repo: TestRepo) {
     // Config with multiple named commands
     repo.write_project_config(
-        r#"[pre-merge]
-test = "echo 'test'"
-lint = "echo 'lint'"
+        r#"pre-merge = [
+    {test = "echo 'test'"},
+    {lint = "echo 'lint'"},
+]
 "#,
     );
     repo.commit("Add pre-merge hooks");
@@ -510,9 +512,10 @@ test = "echo 'Running project test'"
 #[rstest]
 fn test_project_prefix_all_requires_approval(repo: TestRepo) {
     repo.write_project_config(
-        r#"[pre-merge]
-test = "echo 'Running project test'"
-lint = "echo 'Running project lint'"
+        r#"pre-merge = [
+    {test = "echo 'Running project test'"},
+    {lint = "echo 'Running project lint'"},
+]
 "#,
     );
     repo.commit("Add pre-merge hooks");
@@ -546,10 +549,11 @@ test = "echo 'user test'"
 fn test_step_hook_run_all_commands(repo: TestRepo) {
     // Config with multiple named commands
     repo.write_project_config(
-        r#"[pre-merge]
-first = "echo 'first' >> output.txt"
-second = "echo 'second' >> output.txt"
-third = "echo 'third' >> output.txt"
+        r#"pre-merge = [
+    {first = "echo 'first' >> output.txt"},
+    {second = "echo 'second' >> output.txt"},
+    {third = "echo 'third' >> output.txt"},
+]
 "#,
     );
     repo.commit("Add pre-merge hooks");
@@ -577,5 +581,170 @@ third = "echo 'third' >> output.txt"
         lines,
         vec!["first", "second", "third"],
         "All commands should have run in order"
+    );
+}
+
+/// The global `-y` / `--yes` flag skips approval when placed before the
+/// subcommand (e.g. `wt -y switch --create …`), not only in the per-command
+/// position where it used to live. Non-TTY invocations would fail on an
+/// approval prompt, so a clean exit confirms `-y` was honored.
+#[rstest]
+fn test_global_yes_before_subcommand(repo: TestRepo) {
+    repo.write_project_config(r#"pre-start = "echo 'test command'""#);
+    repo.commit("Add config");
+
+    // Place `-y` before the subcommand name.
+    let output = repo
+        .wt_command()
+        .args(["-y", "switch", "--create", "feature-global-y"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to run wt -y switch");
+
+    assert!(
+        output.status.success(),
+        "wt -y switch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The global `--yes` flag skips approval for `wt hook <type>`, matching the
+/// per-command form at the same position.
+#[rstest]
+fn test_global_yes_for_hook(repo: TestRepo) {
+    repo.write_project_config(r#"pre-merge = "echo 'ran' > marker.txt""#);
+    repo.commit("Add pre-merge hook");
+
+    let output = repo
+        .wt_command()
+        .args(["--yes", "hook", "pre-merge"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to run wt --yes hook pre-merge");
+
+    assert!(
+        output.status.success(),
+        "wt --yes hook pre-merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let marker = repo.root_path().join("marker.txt");
+    let content = std::fs::read_to_string(&marker).expect("marker.txt should exist");
+    assert_eq!(content.trim(), "ran");
+}
+
+/// The global `-y` flag skips approval for project-config aliases, matching
+/// the post-alias `--yes` form.
+#[rstest]
+fn test_global_yes_for_alias(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[aliases]
+deploy = "echo 'ran' > marker.txt"
+"#,
+    );
+    repo.commit("Add alias");
+
+    let output = repo
+        .wt_command()
+        .args(["-y", "deploy"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to run wt -y deploy");
+
+    assert!(
+        output.status.success(),
+        "wt -y deploy failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let marker = repo.root_path().join("marker.txt");
+    let content = std::fs::read_to_string(&marker).expect("marker.txt should exist");
+    assert_eq!(content.trim(), "ran");
+}
+
+/// The post-alias `--yes` form (`wt deploy --yes`) does not skip approval —
+/// clap's `global = true` does not propagate flags across an
+/// `external_subcommand` boundary, so the post-alias position never reaches
+/// the global `-y` parser. Under the smart-routing grammar `--yes` simply
+/// forwards as a positional into `{{ args }}` (since `yes` is not a
+/// referenced template var), and the alias still hits the approval path.
+/// Use `wt -y deploy` / `wt --yes deploy` to skip approval.
+#[rstest]
+fn test_post_alias_yes_does_not_skip_approval(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[aliases]
+deploy = "echo 'ran' > marker.txt"
+"#,
+    );
+    repo.commit("Add alias");
+
+    let output = repo
+        .wt_command()
+        .args(["deploy", "--yes"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to run wt deploy --yes");
+
+    assert!(
+        !output.status.success(),
+        "wt deploy --yes should fail at approval now that post-alias --yes is just a forwarded arg"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("approval") || stderr.contains("Cannot prompt"),
+        "expected approval-failure error, got: {stderr}"
+    );
+
+    let marker = repo.root_path().join("marker.txt");
+    assert!(
+        !marker.exists(),
+        "alias must not run when approval is denied"
+    );
+}
+
+/// The global `-y` flag skips approval when dispatched through
+/// `wt step <alias>`, covering the `step_alias` threading path.
+#[rstest]
+fn test_global_yes_for_step_alias(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[aliases]
+deploy = "echo 'ran' > marker.txt"
+"#,
+    );
+    repo.commit("Add alias");
+
+    let output = repo
+        .wt_command()
+        .args(["-y", "step", "deploy"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to run wt -y step deploy");
+
+    assert!(
+        output.status.success(),
+        "wt -y step deploy failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let marker = repo.root_path().join("marker.txt");
+    let content = std::fs::read_to_string(&marker).expect("marker.txt should exist");
+    assert_eq!(content.trim(), "ran");
+}
+
+/// Commands without approval prompts accept `-y` without erroring — e.g.
+/// `wt -y list` is a valid no-op.
+#[rstest]
+fn test_global_yes_on_command_without_approval(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args(["-y", "list"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to run wt -y list");
+
+    assert!(
+        output.status.success(),
+        "wt -y list failed: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }

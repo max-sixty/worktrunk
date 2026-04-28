@@ -66,47 +66,38 @@ impl<'a> Branch<'a> {
     ///
     /// Returns a list of remote names that have this branch (e.g., `["origin"]`).
     /// Returns an empty list if no remotes have this branch.
+    ///
+    /// Filters the repository's remote-branch inventory (see
+    /// [`Repository::remote_branches`]); the first call within a command
+    /// triggers the `refs/remotes/` scan that populates the inventory.
+    ///
+    /// [`Repository::remote_branches`]: super::Repository::remote_branches
     pub fn remotes(&self) -> anyhow::Result<Vec<String>> {
-        // Get all remote tracking branches matching this name
-        // Format: refs/remotes/<remote>/<branch>
-        let output = self.repo.run_command(&[
-            "for-each-ref",
-            "--format=%(refname:strip=2)",
-            &format!("refs/remotes/*/{}", self.name),
-        ])?;
-
-        // Parse output: each line is "<remote>/<branch>"
-        // Extract the remote name (everything before the last /<branch>)
-        let suffix = format!("/{}", self.name);
-        let remotes: Vec<String> = output
-            .lines()
-            .filter_map(|line| {
-                let line = line.trim();
-                // Strip the branch suffix to get the remote name
-                line.strip_suffix(&suffix).map(String::from)
-            })
-            .collect();
-
-        Ok(remotes)
+        Ok(self
+            .repo
+            .remote_branches()?
+            .iter()
+            .filter(|r| r.local_name == self.name)
+            .map(|r| r.remote_name.clone())
+            .collect())
     }
 
     /// Get the upstream tracking branch for this branch.
     ///
-    /// Uses [`@{upstream}` syntax][1] to resolve the tracking branch.
+    /// Reads from the repository's local-branch inventory (see
+    /// [`Repository::local_branches`]). The first call within a command
+    /// triggers the `refs/heads/` scan that populates the inventory;
+    /// subsequent lookups are O(1). Returns `None` when no upstream is
+    /// configured, when no local branch by this name exists, or when the
+    /// configured upstream is gone from its remote (git's `[gone]` track
+    /// state).
     ///
-    /// [1]: https://git-scm.com/docs/gitrevisions#Documentation/gitrevisions.txt-emltaboranchgtemuaboranchgtupaboranchgtupstream
+    /// [`Repository::local_branches`]: super::Repository::local_branches
     pub fn upstream(&self) -> anyhow::Result<Option<String>> {
-        let result =
-            self.repo
-                .run_command(&["rev-parse", "--abbrev-ref", &format!("{}@{{u}}", self.name)]);
-
-        match result {
-            Ok(upstream) => {
-                let trimmed = upstream.trim();
-                Ok((!trimmed.is_empty()).then(|| trimmed.to_string()))
-            }
-            Err(_) => Ok(None), // No upstream configured
-        }
+        Ok(self
+            .repo
+            .local_branch(&self.name)?
+            .and_then(|b| b.upstream_short.clone()))
     }
 
     /// Unset the upstream tracking branch for this branch.
@@ -148,8 +139,9 @@ impl<'a> Branch<'a> {
     ///
     /// Uses `%(push:remotename)` which returns either a remote name or URL directly
     /// (`gh pr checkout` sets pushremote to a URL rather than a remote name).
+    /// For remote names, uses `effective_remote_url` to apply `url.insteadOf` rewrites.
     /// Returns `None` if no push remote is configured or the remote has no URL.
-    pub fn push_remote_url(&self) -> Option<String> {
+    fn push_remote_url(&self) -> Option<String> {
         // %(push:remotename) returns either a remote name or URL directly
         // Unlike @{push}, this doesn't fail when pushremote is a URL
         let push_remote = self
@@ -167,15 +159,19 @@ impl<'a> Branch<'a> {
         if push_remote.contains("://") || push_remote.starts_with("git@") {
             Some(push_remote)
         } else {
-            // It's a remote name, look up its URL
-            self.repo.remote_url(&push_remote)
+            // It's a remote name — use effective URL (handles insteadOf)
+            self.repo.effective_remote_url(&push_remote)
         }
     }
 
     /// Get the GitHub URL for this branch's push remote, if it's a GitHub URL.
     ///
     /// Returns the push remote URL if configured and pointing to GitHub,
-    /// otherwise returns `None`.
+    /// otherwise returns `None`. Handles `url.insteadOf` aliases via
+    /// `effective_remote_url` (cached).
+    ///
+    /// Handles both remote-name and URL-based pushremotes (the latter is set by
+    /// `gh pr checkout` for fork PRs).
     pub fn github_push_url(&self) -> Option<String> {
         let url = self.push_remote_url()?;
         let parsed = GitRemoteUrl::parse(&url)?;

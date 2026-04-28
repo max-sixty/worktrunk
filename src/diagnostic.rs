@@ -24,14 +24,14 @@
 //! The report explicitly documents what IS and ISN'T included:
 //!
 //! **Included:** worktree paths, branch names, worktree status (prunable, locked),
-//! config files, verbose logs, commit messages (in verbose logs)
+//! config files, trace/output logs, commit messages (in trace logs)
 //!
 //! **Not included:** file contents, credentials
 //!
 //! # File Location
 //!
 //! Reports are written to `<git-common-dir>/wt/logs/diagnostic.md` (typically
-//! `.git/wt/logs/diagnostic.md`). Verbose logs go to `verbose.log` in the same directory.
+//! `.git/wt/logs/diagnostic.md`). Companion log files (`trace.log`, `output.log`) live in the same directory.
 //!
 //! # Usage
 //!
@@ -93,14 +93,22 @@ Shell integration: {{ shell_integration }}
 ```
 </details>
 {%- endif %}
-{%- if verbose_log %}
+{%- if trace_log %}
 
 <details>
-<summary>Verbose log</summary>
+<summary>Trace log</summary>
 
 ```
-{{ verbose_log }}
+{{ trace_log }}
 ```
+</details>
+{%- endif %}
+{%- if output_log_path %}
+
+<details>
+<summary>Raw subprocess output</summary>
+
+Full captured stdout/stderr is in `{{ output_log_path }}` — not inlined because it can be multi-MB.
 </details>
 {%- endif %}
 "#;
@@ -147,11 +155,19 @@ impl DiagnosticReport {
         // Get config show output (if available)
         let config_show = config_show_output(repo);
 
-        // Get verbose log content (if available)
-        let verbose_log = crate::verbose_log::log_file_path()
+        // Inline the trace log (bounded; mirrors stderr). The raw subprocess
+        // output log is only *referenced* by path — it can be multi-MB and
+        // would drown out the trace records that matter in a bug report.
+        let trace_log = crate::log_files::TRACE
+            .path()
             .and_then(|path| std::fs::read_to_string(&path).ok())
             .map(|content| truncate_log(content.trim()))
             .filter(|s| !s.is_empty());
+        // Forward slashes on both platforms so the rendered markdown reads the
+        // same in bug reports regardless of where it was produced.
+        let output_log_path = crate::log_files::OUTPUT
+            .path()
+            .map(|p| path_slash::PathExt::to_slash_lossy(p.as_path()).into_owned());
 
         // Render template
         let env = Environment::new();
@@ -167,7 +183,8 @@ impl DiagnosticReport {
             shell_integration,
             worktree_list,
             config_show,
-            verbose_log,
+            trace_log,
+            output_log_path,
         })
         .unwrap()
     }
@@ -275,7 +292,7 @@ fn strip_ansi_codes(s: &str) -> String {
     s.ansi_strip().into_owned()
 }
 
-/// Truncate verbose log to ~50KB if it's too large.
+/// Truncate log content to ~50KB if it's too large.
 ///
 /// Keeps the last ~50KB of the log, cutting at a line boundary.
 fn truncate_log(content: &str) -> String {

@@ -2,6 +2,4 @@
 source: src/commands/picker/items.rs
 expression: "cache_miss.preview_for_mode(PreviewMode::Summary, 80, 40)"
 ---
-[2m○[22m Generating summary...
-
-Press 5 again to refresh once generation completes.
+[1m○ Generating summary. Press 5 again to refresh.[0m

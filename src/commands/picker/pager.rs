@@ -83,16 +83,15 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
     log::debug!("Piping through pager: {}", pager_cmd);
 
     // Spawn pager with stdin piped
-    let mut child = match Command::new("sh")
-        .arg("-c")
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
         .arg(pager_cmd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .env("COLUMNS", width.to_string())
-        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
-        .spawn()
-    {
+        .env("COLUMNS", width.to_string());
+    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
+    let mut child = match cmd.spawn() {
         Ok(child) => child,
         Err(e) => {
             log::debug!("Failed to spawn pager: {}", e);

@@ -1,5 +1,5 @@
 [files]
-extend-exclude = ["docs/demos/vhs-keystrokes/", "*.snap"]
+extend-exclude = ["docs/demos/vhs-keystrokes/", "*.snap", "vendor/"]
 
 [default.extend-words]
 # Git commit hashes that typos flags as potential typos
@@ -12,3 +12,6 @@ PNGs = "PNGs"
 # Intentional typos in tests for "did you mean?" suggestions
 deplyo = "deplyo"
 comit = "comit"
+siwtch = "siwtch"
+# Intentional typo in CHANGELOG.md illustrating the unreferenced-var warning
+brnach = "brnach"

@@ -1,21 +1,19 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::Path;
 use std::process::Command;
-use wt_perf::{RepoConfig, create_repo};
+use wt_perf::{RepoConfig, create_repo, isolate_cmd};
 
 fn run_completion(binary: &Path, repo_path: &Path, words: &[&str]) {
     let index = words.len().saturating_sub(1);
-    Command::new(binary)
-        .env("COMPLETE", "bash")
+    let mut cmd = Command::new(binary);
+    cmd.arg("--").args(words).current_dir(repo_path);
+    isolate_cmd(&mut cmd, None);
+    cmd.env("COMPLETE", "bash")
         .env("_CLAP_COMPLETE_INDEX", index.to_string())
         .env("_CLAP_COMPLETE_COMP_TYPE", "9")
         .env("_CLAP_COMPLETE_SPACE", "true")
-        .env("_CLAP_IFS", "\n")
-        .arg("--")
-        .args(words)
-        .current_dir(repo_path)
-        .output()
-        .unwrap();
+        .env("_CLAP_IFS", "\n");
+    cmd.output().unwrap();
 }
 
 fn bench_completion_switch(c: &mut Criterion) {

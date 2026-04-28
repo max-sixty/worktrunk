@@ -16,52 +16,61 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::Path;
 use std::process::Command;
-use wt_perf::{RepoConfig, create_repo, setup_fake_remote};
-
-fn release_binary() -> &'static Path {
-    Path::new(env!("CARGO_BIN_EXE_wt"))
-}
-
-/// Run a command and assert it succeeded.
-fn run_bench_cmd(cmd: &mut Command) {
-    let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "Benchmark command failed:\nstderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
+use wt_perf::{RepoConfig, create_repo, invalidate_caches_auto, isolate_cmd, setup_fake_remote};
 
 fn bench_first_output(c: &mut Criterion) {
     let mut group = c.benchmark_group("first_output");
-    let binary = release_binary();
-    let env = ("WORKTRUNK_FIRST_OUTPUT", "1");
+    let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
     let config = RepoConfig::typical(4);
     let temp = create_repo(&config);
     let repo_path = temp.path().join("repo");
     setup_fake_remote(&repo_path);
 
-    // remove: exits after validation, before approval/output
+    let make_cmd = |args: &[&str]| {
+        let mut cmd = Command::new(binary);
+        cmd.args(args).current_dir(&repo_path);
+        isolate_cmd(&mut cmd, None);
+        cmd.env("WORKTRUNK_FIRST_OUTPUT", "1");
+        cmd
+    };
+
+    // remove: exits after validation, before approval/output.
+    //
+    // `prepare_worktree_removal` calls `compute_integration_lazy`, which
+    // populates `.git/wt/cache/{is-ancestor,has-added-changes,merge-add-probe}`
+    // on the first invocation. Without invalidation between iterations, iter 1
+    // is cold and iter 2+ read from cache — the reported timing would be warm
+    // cache, which doesn't reflect the first-invocation TTFO a user sees.
+    // Invalidate via `iter_batched` so every iteration starts cold.
     group.bench_function("remove", |b| {
-        b.iter(|| {
-            run_bench_cmd(
-                Command::new(binary)
-                    .args(["remove", "--yes", "--no-verify", "--force", "feature-wt-1"])
-                    .current_dir(&repo_path)
-                    .env(env.0, env.1),
-            );
-        });
+        b.iter_batched(
+            || invalidate_caches_auto(&repo_path),
+            |_| {
+                let output =
+                    make_cmd(&["remove", "--yes", "--no-hooks", "--force", "feature-wt-1"])
+                        .output()
+                        .unwrap();
+                assert!(
+                    output.status.success(),
+                    "Benchmark command failed:\nstderr: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            },
+            criterion::BatchSize::SmallInput,
+        );
     });
 
     // switch: exits after execute_switch, before mismatch computation and output
     group.bench_function("switch", |b| {
         b.iter(|| {
-            run_bench_cmd(
-                Command::new(binary)
-                    .args(["switch", "--yes", "--no-verify", "feature-wt-1"])
-                    .current_dir(&repo_path)
-                    .env(env.0, env.1),
+            let output = make_cmd(&["switch", "--yes", "--no-hooks", "feature-wt-1"])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "Benchmark command failed:\nstderr: {}",
+                String::from_utf8_lossy(&output.stderr)
             );
         });
     });
@@ -69,11 +78,11 @@ fn bench_first_output(c: &mut Criterion) {
     // list: exits after skeleton data collection, before render
     group.bench_function("list", |b| {
         b.iter(|| {
-            run_bench_cmd(
-                Command::new(binary)
-                    .arg("list")
-                    .current_dir(&repo_path)
-                    .env(env.0, env.1),
+            let output = make_cmd(&["list"]).output().unwrap();
+            assert!(
+                output.status.success(),
+                "Benchmark command failed:\nstderr: {}",
+                String::from_utf8_lossy(&output.stderr)
             );
         });
     });

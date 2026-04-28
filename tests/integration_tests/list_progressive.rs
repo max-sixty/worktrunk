@@ -129,7 +129,7 @@ fn test_list_progressive_overflow(mut repo: TestRepo) {
 
     // No placeholder dots should remain — finalize printed real data
     assert!(
-        !final_text.contains('⋯'),
+        !final_text.contains('·'),
         "No placeholder dots should remain after finalize.\nFinal output:\n{final_text}"
     );
 }

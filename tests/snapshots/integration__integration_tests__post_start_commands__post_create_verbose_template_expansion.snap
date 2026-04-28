@@ -22,6 +22,7 @@ info:
     LC_ALL: C
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     NO_COLOR: ""
+    OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
     PATH: "[PATH]"
     PSModulePath: ""
     RUST_LOG: warn
@@ -35,6 +36,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -44,7 +46,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mProject config has deprecated settings. Run [1mwt config show[22m for details or [1mwt config update[22m to apply updates[39m
 [2m○[22m Expanding [1mworktree-path[22m
 [107m [0m [2m[0m[2m[34m../[0m[2m[32m{{[0m[2m[34m[0m[2m repo [0m[2m[32m}}[0m[2m.[0m[2m[32m{{[0m[2m branch [0m[2m[36m|[0m[2m [0m[2m[34msanitize[0m[2m [0m[2m[32m}}[0m[2m
 [107m [0m [2m→[22m
@@ -53,6 +54,29 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Setting up {{ branch | sanitize }} in {{ worktree_path }}'[0m[2m
 [107m [0m [2m→[22m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Setting up verbose-hooks in _REPO_.verbose-hooks'[0m[2m
+[2m○[22m template variables:
+[107m [0m branch                = verbose-hooks
+[107m [0m worktree_path         = _REPO_.verbose-hooks
+[107m [0m worktree_name         = repo.verbose-hooks
+[107m [0m commit                = 7900f355a9d429e8ac86370140fe4622e7d27e33
+[107m [0m short_commit          = 7900f35
+[107m [0m upstream              = (unset)
+[107m [0m base                  = main
+[107m [0m base_worktree_path    = _REPO_
+[107m [0m target                = verbose-hooks
+[107m [0m target_worktree_path  = _REPO_.verbose-hooks
+[107m [0m pr_number             = (unset)
+[107m [0m pr_url                = (unset)
+[107m [0m repo                  = repo
+[107m [0m repo_path             = _REPO_
+[107m [0m owner                 = (unset)
+[107m [0m primary_worktree_path = _REPO_
+[107m [0m default_branch        = main
+[107m [0m remote                = origin
+[107m [0m remote_url            = ../origin.git
+[107m [0m cwd                   = _REPO_.verbose-hooks
+[107m [0m hook_type             = pre-start
+[107m [0m hook_name             = setup
 [36m◎[39m [36mRunning pre-start [1mproject:setup[22m @ [1m_REPO_.verbose-hooks[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Setting up verbose-hooks in _REPO_.verbose-hooks'[0m[2m
 [0mSetting up verbose-hooks in _REPO_.verbose-hooks

@@ -10,6 +10,5 @@ expression: "&output"
 [2m↳[22m [2mTo set globally, add to [4m[TEMP]/test-config.toml[24m[22m
 
 [32m✓[39m [32mCreated branch [1mfeature[22m and worktree @ [1m[TEMP]/project/feature[22m[39m
-[2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m

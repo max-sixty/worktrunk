@@ -180,10 +180,20 @@ pub enum GitError {
         /// Show hint about creating the branch. Set to false for remove operations
         /// where suggesting creation doesn't make sense.
         show_create_hint: bool,
+        /// Pre-formatted label for the last fetch time (e.g., "3h ago", "never").
+        /// When present, the list-branches hint includes the fetch age as a parenthetical.
+        last_fetch_ago: Option<String>,
     },
     /// Reference (branch, tag, commit) not found - used when any commit-ish is accepted
     ReferenceNotFound {
         reference: String,
+    },
+    /// Persisted `worktrunk.default-branch` points at a branch that no longer
+    /// resolves locally. Surfaced when a command would use the default branch
+    /// (no explicit `--target`) and the cached value is stale, so the user
+    /// gets a cache-reset hint instead of a generic "branch not found".
+    StaleDefaultBranch {
+        branch: String,
     },
 
     // Worktree errors
@@ -404,6 +414,7 @@ impl GitError {
             GitError::BranchNotFound {
                 branch,
                 show_create_hint,
+                last_fetch_ago,
             } => {
                 let list_cmd = suggest_command("list", &[], &["--branches", "--remotes"]);
                 let hint = if *show_create_hint {
@@ -411,8 +422,10 @@ impl GitError {
                     if let Some(ctx) = ctx {
                         create_cmd = ctx.apply(create_cmd);
                     }
+                    let fetch_note = last_fetch_ago.as_ref().map(|ago| cformat!(" ({ago})"));
                     cformat!(
-                        "To create a new branch, run <underline>{create_cmd}</>; to list branches, run <underline>{list_cmd}</>"
+                        "To create a new branch, run <underline>{create_cmd}</>; to list branches, run <underline>{list_cmd}</>{note}",
+                        note = fetch_note.as_deref().unwrap_or("")
                     )
                 } else {
                     cformat!("To list branches, run <underline>{list_cmd}</>")
@@ -431,6 +444,19 @@ impl GitError {
                     "{}",
                     error_message(cformat!(
                         "No branch, tag, or commit named <bold>{reference}</>"
+                    ))
+                )
+            }
+
+            GitError::StaleDefaultBranch { branch } => {
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!(
+                        "Default branch <bold>{branch}</> does not exist locally"
+                    )),
+                    hint_message(cformat!(
+                        "Reset the cached value with <underline>wt config state default-branch clear</>, or set it explicitly with <underline>wt config state default-branch set BRANCH</>"
                     ))
                 )
             }
@@ -742,7 +768,7 @@ impl GitError {
             }
 
             GitError::NotInteractive => {
-                let approvals_cmd = suggest_command("hook", &["approvals", "add"], &[]);
+                let approvals_cmd = suggest_command("config", &["approvals", "add"], &[]);
                 write!(
                     f,
                     "{}\n{}",
@@ -929,8 +955,17 @@ impl std::fmt::Display for GitError {
 /// for cases that need exit code extraction or special handling.
 #[derive(Debug)]
 pub enum WorktrunkError {
-    /// Child process exited with non-zero code (preserves exit code for signals)
-    ChildProcessExited { code: i32, message: String },
+    /// Child process exited with non-zero code (preserves exit code for signals).
+    ///
+    /// `signal` is `Some(sig)` when the process was terminated by a signal
+    /// (on Unix), `None` for a normal non-zero exit. Callers that must treat
+    /// interrupts differently from ordinary failures (e.g., aborting a loop
+    /// on Ctrl-C) check `signal` rather than inferring from `code`.
+    ChildProcessExited {
+        code: i32,
+        message: String,
+        signal: Option<i32>,
+    },
     /// Hook command failed
     HookCommandFailed {
         hook_type: HookType,
@@ -956,7 +991,7 @@ impl std::fmt::Display for WorktrunkError {
                 error,
                 ..
             } => {
-                // Note: Callers that support --no-verify should add the hint themselves
+                // Note: Callers that support --no-hooks should add the hint themselves
                 if let Some(name) = command_name {
                     write!(
                         f,
@@ -999,7 +1034,29 @@ pub fn exit_code(err: &anyhow::Error) -> Option<i32> {
     })
 }
 
-/// If the error is a HookCommandFailed, wrap it to add a hint about using --no-verify.
+/// If `err` is a signal-derived child exit, return the equivalent shell exit
+/// code (`128 + signal`).
+///
+/// Implements the Ctrl-C cancellation policy: command loops call this on every
+/// per-iteration failure and, when it returns `Some`, abort the loop rather
+/// than continuing to the next iteration. The returned code is what wt itself
+/// should exit with, preserving the standard `128 + sig` shell convention
+/// (130 for SIGINT, 143 for SIGTERM).
+///
+/// See the "Signal Handling" section of the project `CLAUDE.md` for the
+/// rationale and the full list of loops that apply this policy.
+pub fn interrupt_exit_code(err: &anyhow::Error) -> Option<i32> {
+    if let Some(WorktrunkError::ChildProcessExited {
+        signal: Some(sig), ..
+    }) = err.downcast_ref::<WorktrunkError>()
+    {
+        Some(128 + sig)
+    } else {
+        None
+    }
+}
+
+/// If the error is a HookCommandFailed, wrap it to add a hint about using --no-hooks.
 ///
 /// ## When to use
 ///
@@ -1011,7 +1068,7 @@ pub fn exit_code(err: &anyhow::Error) -> Option<i32> {
 /// ## When NOT to use
 ///
 /// Don't use for `wt hook <type>` - the user explicitly asked to run hooks,
-/// so suggesting `--no-verify` makes no sense.
+/// so suggesting `--no-hooks` makes no sense.
 pub fn add_hook_skip_hint(err: anyhow::Error) -> anyhow::Error {
     // Extract hook_type first (if applicable), then decide whether to wrap
     let hook_type = err
@@ -1031,8 +1088,8 @@ pub fn add_hook_skip_hint(err: anyhow::Error) -> anyhow::Error {
     }
 }
 
-/// Wrapper that displays a HookCommandFailed error with the --no-verify hint.
-/// Created by `add_hook_skip_hint()` for commands that support `--no-verify`.
+/// Wrapper that displays a HookCommandFailed error with the --no-hooks hint.
+/// Created by `add_hook_skip_hint()` for commands that support `--no-hooks`.
 #[derive(Debug)]
 pub struct HookErrorWithHint {
     inner: anyhow::Error,
@@ -1048,7 +1105,7 @@ impl std::fmt::Display for HookErrorWithHint {
             f,
             "\n{}",
             hint_message(cformat!(
-                "To skip {} hooks, re-run with <underline>--no-verify</>",
+                "To skip {} hooks, re-run with <underline>--no-hooks</>",
                 self.hook_type
             ))
         )
@@ -1125,6 +1182,7 @@ mod tests {
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 42,
             message: "test".into(),
+            signal: None,
         }
         .into();
         assert_eq!(exit_code(&err), Some(42));
@@ -1172,8 +1230,53 @@ mod tests {
     }
 
     #[test]
+    fn test_interrupt_exit_code() {
+        // Signal-derived child exit → 128 + sig
+        let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            code: 130,
+            message: "terminated by signal 2".into(),
+            signal: Some(2),
+        }
+        .into();
+        assert_eq!(interrupt_exit_code(&err), Some(130));
+
+        let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            code: 143,
+            message: "terminated by signal 15".into(),
+            signal: Some(15),
+        }
+        .into();
+        assert_eq!(interrupt_exit_code(&err), Some(143));
+
+        // Ordinary non-zero exit → not an interrupt
+        let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            code: 1,
+            message: "exit status: 1".into(),
+            signal: None,
+        }
+        .into();
+        assert_eq!(interrupt_exit_code(&err), None);
+
+        // Other WorktrunkError variants → not an interrupt
+        assert_eq!(
+            interrupt_exit_code(&WorktrunkError::AlreadyDisplayed { exit_code: 130 }.into()),
+            None,
+        );
+        assert_eq!(
+            interrupt_exit_code(&WorktrunkError::CommandNotApproved.into()),
+            None,
+        );
+
+        // Plain anyhow error → not an interrupt
+        assert_eq!(
+            interrupt_exit_code(&anyhow::anyhow!("some unrelated failure")),
+            None,
+        );
+    }
+
+    #[test]
     fn snapshot_add_hook_skip_hint() {
-        // Wraps HookCommandFailed with --no-verify hint
+        // Wraps HookCommandFailed with --no-hooks hint
         let inner: anyhow::Error = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreMerge,
             command_name: Some("test".into()),
@@ -1183,7 +1286,7 @@ mod tests {
         .into();
         assert_snapshot!(add_hook_skip_hint(inner).to_string(), @"
         [31m✗[39m [31mpre-merge command failed: [1mtest[22m: failed[39m
-        [2m↳[22m [2mTo skip pre-merge hooks, re-run with [4m--no-verify[24m[22m
+        [2m↳[22m [2mTo skip pre-merge hooks, re-run with [4m--no-hooks[24m[22m
         ");
 
         // pre-commit hook type
@@ -1196,25 +1299,26 @@ mod tests {
         .into();
         assert_snapshot!(add_hook_skip_hint(inner).to_string(), @"
         [31m✗[39m [31mpre-commit command failed: [1mbuild[22m: Build failed[39m
-        [2m↳[22m [2mTo skip pre-commit hooks, re-run with [4m--no-verify[24m[22m
+        [2m↳[22m [2mTo skip pre-commit hooks, re-run with [4m--no-hooks[24m[22m
         ");
 
-        // Passes through non-hook errors unchanged (no --no-verify hint)
+        // Passes through non-hook errors unchanged (no --no-hooks hint)
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 1,
             message: "test".into(),
+            signal: None,
         }
         .into();
-        assert!(!add_hook_skip_hint(err).to_string().contains("--no-verify"));
+        assert!(!add_hook_skip_hint(err).to_string().contains("--no-hooks"));
 
         let err: anyhow::Error = GitError::DetachedHead { action: None }.into();
-        assert!(!add_hook_skip_hint(err).to_string().contains("--no-verify"));
+        assert!(!add_hook_skip_hint(err).to_string().contains("--no-hooks"));
 
         let err: anyhow::Error = GitError::Other {
             message: "some error".into(),
         }
         .into();
-        assert!(!add_hook_skip_hint(err).to_string().contains("--no-verify"));
+        assert!(!add_hook_skip_hint(err).to_string().contains("--no-hooks"));
     }
 
     #[test]
@@ -1235,6 +1339,7 @@ mod tests {
         let err = WorktrunkError::ChildProcessExited {
             code: 1,
             message: "Command failed".into(),
+            signal: None,
         };
         assert_snapshot!(err.to_string(), @"[31m✗[39m [31mCommand failed[39m");
 
@@ -1640,6 +1745,7 @@ mod tests {
             source: Box::new(GitError::BranchNotFound {
                 branch: "emails".into(),
                 show_create_hint: true,
+                last_fetch_ago: None,
             }),
             ctx: SwitchSuggestionCtx {
                 extra_flags: vec!["--execute=claude".into()],

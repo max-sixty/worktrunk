@@ -18,6 +18,10 @@
 //! combine_command_docs()         — assembles "definition. subtitle\n\n<after_long_help>"
 //!         │
 //!         ▼
+//! convert_dollar_console_to_terminal() — ```console with $ → {% terminal() %} shortcode
+//! console→bash replacement             — remaining ```console → ```bash
+//!         │
+//!         ▼
 //! post_process_for_html()        — text replacements on after_long_help markdown:
 //!         │                        [experimental] → badge <span>
 //!         │                        `●` green → colored <span>
@@ -46,9 +50,93 @@ use std::process;
 use ansi_str::AnsiStr;
 use clap::ColorChoice;
 use clap::error::ErrorKind;
-use worktrunk::styling::eprintln;
+use worktrunk::docs::{
+    BADGE_EXPERIMENTAL_HTML, DEMO_MARKER_PREFIX, MARKER_CLOSE, MARKER_OPEN_PREFIX,
+    SUBDOC_MARKER_PREFIX, convert_dollar_console_to_terminal,
+};
+use worktrunk::styling::{eprintln, println};
 
 use crate::cli;
+
+/// Output format for a `--help-page`. Web pages keep Zola shortcodes, HTML
+/// spans, and demo GIF figures for the docs site; plain pages strip those for
+/// skill reference files that need portable markdown.
+#[derive(Clone, Copy)]
+enum PageMode {
+    Web,
+    Plain,
+}
+
+impl PageMode {
+    /// ANSI color for the embedded `--help` reference block. Web keeps ANSI so
+    /// it can be converted to HTML downstream; plain strips it.
+    fn color(self) -> ColorChoice {
+        match self {
+            Self::Web => ColorChoice::Always,
+            Self::Plain => ColorChoice::Never,
+        }
+    }
+
+    /// Transform freshly-combined raw help into mode-appropriate markdown. Web
+    /// rewrites `$`-prefixed console blocks into `{% terminal() %}`
+    /// shortcodes; both modes relabel plain ``` ```console ``` fences as
+    /// ``` ```bash ``` for syntax highlighting.
+    fn transform_raw(self, text: String) -> String {
+        let text = match self {
+            Self::Web => convert_dollar_console_to_terminal(&text),
+            Self::Plain => text,
+        };
+        text.replace("```console\n", "```bash\n")
+    }
+
+    /// Transform the body (everything before subdoc placeholders). Web expands
+    /// demo GIFs into `<picture>` figures and converts CLI markers into HTML
+    /// spans; plain strips demo placeholders so they don't leak as comments.
+    fn process_body(self, text: &str) -> String {
+        match self {
+            Self::Web => post_process_for_html(&expand_demo_placeholders(text)),
+            Self::Plain => strip_demo_placeholders(text),
+        }
+    }
+
+    /// Transform subdoc trailing content (e.g. an `Aliases` section after the
+    /// last subdoc marker). Web post-processes CLI markers; plain passes
+    /// through unchanged — each subdoc's body is processed during expansion.
+    fn process_subdoc_trailing(self, text: &str) -> String {
+        match self {
+            Self::Web => post_process_for_html(text),
+            Self::Plain => text.to_string(),
+        }
+    }
+
+    /// Rendering for the `[experimental]` badge.
+    fn experimental_marker(self) -> &'static str {
+        match self {
+            Self::Web => BADGE_EXPERIMENTAL_HTML,
+            Self::Plain => "[experimental]",
+        }
+    }
+
+    /// Emit the page header — an auto-generated comment for web (sync test
+    /// uses it as a region marker), or an H1 title for plain skill pages.
+    fn emit_header(self, subcommand: &str) {
+        match self {
+            Self::Web => std::println!(
+                "{MARKER_OPEN_PREFIX}`wt {subcommand} --help-page` — edit cli.rs to update -->"
+            ),
+            Self::Plain => std::println!("# wt {subcommand}"),
+        }
+        std::println!();
+    }
+
+    /// Emit the closing END marker (web only).
+    fn emit_footer(self) {
+        if matches!(self, Self::Web) {
+            std::println!();
+            std::println!("{MARKER_CLOSE}");
+        }
+    }
+}
 
 /// Custom help handling for pager support and markdown rendering.
 ///
@@ -63,8 +151,14 @@ use crate::cli;
 /// Uses `Error::render()` to get clap's pre-formatted help, which already
 /// respects `-h` (short) vs `--help` (long) distinction.
 ///
-/// Returns `true` if help was handled (caller should exit), `false` to continue normal parsing.
-pub fn maybe_handle_help_with_pager() -> bool {
+/// On a help/version/doc-generation request, prints output and calls
+/// `process::exit(0)`. Otherwise returns so the caller can continue normal parsing.
+///
+/// `alias_help_context` is computed by the caller from the same early-parse
+/// pass that extracts global options. When `Some`, the configured aliases are
+/// spliced into the rendered output — at the top level for `wt --help`, or
+/// under the Aliases section for `wt step --help`.
+pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::HelpContext>) {
     let args: Vec<String> = std::env::args().collect();
 
     // --help uses pager, -h prints directly (git convention)
@@ -72,7 +166,12 @@ pub fn maybe_handle_help_with_pager() -> bool {
 
     // Check for --help-page flag (output full doc page with frontmatter)
     if args.iter().any(|a| a == "--help-page") {
-        handle_help_page(&args);
+        let mode = if args.iter().any(|a| a == "--plain") {
+            PageMode::Plain
+        } else {
+            PageMode::Web
+        };
+        handle_help_page(&args, mode);
         process::exit(0);
     }
 
@@ -85,6 +184,7 @@ pub fn maybe_handle_help_with_pager() -> bool {
     // Check for --help-md flag (output raw markdown without ANSI rendering)
     if args.iter().any(|a| a == "--help-md") {
         let mut cmd = cli::build_command();
+        cmd = crate::completion::inject_hook_subcommands(cmd);
         cmd = cmd.color(ColorChoice::Never); // No ANSI codes for raw markdown
 
         // Replace --help-md with --help for clap
@@ -105,14 +205,7 @@ pub fn maybe_handle_help_with_pager() -> bool {
                 ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
             )
         {
-            // Transform code block languages for Zola compatibility:
-            // - ```text (clap's default for usage) -> ``` (no highlighting)
-            // - ```console (our examples) -> ```bash
-            let output = err
-                .render()
-                .to_string()
-                .replace("```text\n", "```\n")
-                .replace("```console\n", "```bash\n");
+            let output = normalize_clap_help_fences(&err.render().to_string());
             print!("{output}");
             process::exit(0);
         }
@@ -120,70 +213,95 @@ pub fn maybe_handle_help_with_pager() -> bool {
     }
 
     let mut cmd = cli::build_command();
+    cmd = crate::completion::inject_hook_subcommands(cmd);
     cmd = cmd.color(clap::ColorChoice::Always); // Force clap to emit ANSI codes
 
-    match cmd.try_get_matches_from_mut(args) {
-        Ok(_) => false, // Normal args, not help
-        Err(err) => {
-            match err.kind() {
-                ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
-                    // err.render() returns a StyledStr containing ANSI codes.
-                    // Use .ansi() to preserve them; .to_string() strips ANSI codes.
-                    let clap_output = err.render().ansi().to_string();
+    if let Err(err) = cmd.try_get_matches_from_mut(&args) {
+        match err.kind() {
+            ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
+                // err.render() returns a StyledStr containing ANSI codes.
+                // Use .ansi() to preserve them; .to_string() strips ANSI codes.
+                let clap_output = err.render().ansi().to_string();
 
-                    // Render markdown sections (tables, code blocks, prose) with proper wrapping.
-                    // Since we disabled clap's wrapping above, our renderer controls all line breaks.
-                    let width = worktrunk::styling::terminal_width();
-                    let help = crate::md_help::render_markdown_in_help_with_width(
-                        &clap_output,
-                        Some(width),
-                    );
+                // Splice configured aliases into `wt --help` and
+                // `wt step --help` (and their `-h` / bare-subcommand
+                // equivalents) so the help surfaces both the built-ins and
+                // the user's aliases. Other help pages pass through.
+                let clap_output = match alias_help_context {
+                    Some(ctx) => crate::commands::augment_help(&clap_output, ctx),
+                    None => clap_output,
+                };
 
-                    // show_help_in_pager checks if stdout or stderr is a TTY.
-                    // If neither is a TTY (e.g., `wt --help &>file`), it skips the pager.
-                    // use_pager=false for -h (short help), true for --help (long help)
-                    if let Err(e) = crate::help_pager::show_help_in_pager(&help, use_pager) {
-                        log::debug!("Pager invocation failed: {}", e);
-                        eprintln!("{}", help);
-                    }
-                    process::exit(0);
+                // Render markdown sections (tables, code blocks, prose) with proper wrapping.
+                // Since we disabled clap's wrapping above, our renderer controls all line breaks.
+                let width = worktrunk::styling::terminal_width();
+                let help =
+                    crate::md_help::render_markdown_in_help_with_width(&clap_output, Some(width));
+
+                // show_help_in_pager checks if stdout or stderr is a TTY.
+                // If neither is a TTY (e.g., `wt --help &>file`), it skips the pager.
+                // use_pager=false for -h (short help), true for --help (long help)
+                if let Err(e) = crate::help_pager::show_help_in_pager(&help, use_pager) {
+                    log::debug!("Pager invocation failed: {}", e);
+                    println!("{}", help);
                 }
-                ErrorKind::DisplayVersion => {
-                    // Print to stderr - stdout is reserved for data/scripts
-                    // Use eprint! because clap's Error Display already includes a trailing newline
-                    eprint!("{}", err);
-                    process::exit(0);
-                }
-                _ => {
-                    // Not help or version - will be re-parsed by Cli::parse()
-                    false
-                }
+                process::exit(0);
+            }
+            ErrorKind::DisplayVersion => {
+                // Print to stdout — POSIX convention, and scripts rely on
+                // `version=$(wt --version)` working without redirection (#2072).
+                // Use print! because clap's Error Display already includes a trailing newline.
+                print!("{}", err);
+                process::exit(0);
+            }
+            _ => {
+                // Not help or version - will be re-parsed by Cli::parse()
             }
         }
     }
 }
 
-/// Get the help reference block for a command by invoking clap's help system.
+/// Get the help reference block with configurable color output.
 ///
-/// Returns the usage/options/subcommands section without the after_long_help content.
-/// If `width` is provided, wraps text at that width (for web docs); otherwise uses default.
-/// Always preserves ANSI color codes for HTML conversion.
-fn help_reference(command_path: &[&str], width: Option<usize>) -> String {
-    let output = help_reference_inner(command_path, width);
-    // Strip OSC 8 hyperlinks. Clap generates these from markdown links like [text](url),
-    // but web docs convert ANSI to HTML via ansi_to_html which only handles SGR codes
-    // (colors), not OSC sequences - hyperlinks leak through as garbage.
-    worktrunk::styling::strip_osc8_hyperlinks(&output)
+/// `ColorChoice::Always` produces ANSI codes for HTML conversion (web docs).
+/// `ColorChoice::Never` produces plain text (skill reference files).
+fn help_reference_with_color(
+    command_path: &[&str],
+    width: Option<usize>,
+    color: ColorChoice,
+) -> String {
+    let output = help_reference_inner(command_path, width, color);
+    if matches!(color, ColorChoice::Always) {
+        // Strip OSC 8 hyperlinks. Clap generates these from markdown links like [text](url),
+        // but web docs convert ANSI to HTML via ansi_to_html which only handles SGR codes
+        // (colors), not OSC sequences - hyperlinks leak through as garbage.
+        worktrunk::styling::strip_osc8_hyperlinks(&output)
+    } else {
+        output
+    }
 }
 
-fn help_reference_inner(command_path: &[&str], width: Option<usize>) -> String {
+/// Normalize fences in clap-rendered help output for downstream markdown
+/// consumers. `--help-md` and `help_reference_inner` both run this; the lone
+/// `console`→`bash` use in `PageMode::transform_raw` doesn't, because its input
+/// is `after_long_help` markdown which never contains clap's `text` blocks.
+fn normalize_clap_help_fences(text: &str) -> String {
+    text
+        // clap's default for usage blocks — strip the language for plain markdown
+        .replace("```text\n", "```\n")
+        // our authored examples — relabel for syntax highlighting in docs/skills
+        .replace("```console\n", "```bash\n")
+}
+
+fn help_reference_inner(command_path: &[&str], width: Option<usize>, color: ColorChoice) -> String {
     // Build args: ["wt", "config", "create", "--help"]
     let mut args: Vec<String> = vec!["wt".to_string()];
     args.extend(command_path.iter().map(|s| s.to_string()));
     args.push("--help".to_string());
 
     let mut cmd = cli::build_command();
-    cmd = cmd.color(ColorChoice::Always);
+    cmd = crate::completion::inject_hook_subcommands(cmd);
+    cmd = cmd.color(color);
     if let Some(w) = width {
         cmd = cmd.term_width(w);
     }
@@ -194,9 +312,14 @@ fn help_reference_inner(command_path: &[&str], width: Option<usize>) -> String {
             ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
         ) {
         let rendered = err.render();
-        let text = rendered.ansi().to_string();
-        text.replace("```text\n", "```\n")
-            .replace("```console\n", "```bash\n")
+        // .ansi() preserves ANSI codes; .to_string() strips them.
+        // Use .ansi() only when colors are enabled (for web HTML conversion).
+        let text = if matches!(color, ColorChoice::Always) {
+            rendered.ansi().to_string()
+        } else {
+            rendered.to_string()
+        };
+        normalize_clap_help_fences(&text)
     } else {
         return String::new();
     };
@@ -281,6 +404,7 @@ fn extract_about_and_subtitle(cmd: &clap::Command) -> (Option<String>, Option<St
 /// by the docs sync test to auto-populate the `description` field in frontmatter.
 fn handle_help_description(args: &[String]) {
     let mut cmd = cli::build_command();
+    cmd = crate::completion::inject_hook_subcommands(cmd);
     cmd = cmd.color(ColorChoice::Never);
 
     let subcommand = args
@@ -331,8 +455,9 @@ fn handle_help_description(args: &[String]) {
 /// ```
 ///
 /// This is used to generate docs/content/merge.md etc from the source.
-fn handle_help_page(args: &[String]) {
+fn handle_help_page(args: &[String], mode: PageMode) {
     let mut cmd = cli::build_command();
+    cmd = crate::completion::inject_hook_subcommands(cmd);
     cmd = cmd.color(ColorChoice::Never);
 
     // Find the subcommand name (the arg before --help-page, or after wt)
@@ -359,38 +484,20 @@ Commands with pages: merge, switch, remove, list"
         return;
     };
 
-    // Get combined docs: about + subtitle + after_long_help
-    // Transform for web docs: console→bash, status colors, demo images
-    // Subdocs are expanded separately so main Command reference comes first
     let parent_name = format!("wt {}", subcommand);
-    let raw_help = combine_command_docs(sub);
-    let raw_help = raw_help.replace("```console\n", "```bash\n");
+    let raw_help = mode.transform_raw(combine_command_docs(sub));
 
-    // Split content at first subdoc placeholder
-    let subdoc_marker = "<!-- subdoc:";
-    let (main_content, subdoc_content) = if let Some(pos) = raw_help.find(subdoc_marker) {
-        (&raw_help[..pos], Some(&raw_help[pos..]))
-    } else {
-        (raw_help.as_str(), None)
+    // Subdocs are expanded separately so the main command reference comes first.
+    let (main_content, subdoc_content) = match raw_help.find(SUBDOC_MARKER_PREFIX) {
+        Some(pos) => (&raw_help[..pos], Some(&raw_help[pos..])),
+        None => (raw_help.as_str(), None),
     };
 
-    // Process main content (before subdocs)
-    let main_help = {
-        let text = expand_demo_placeholders(main_content);
-        post_process_for_html(&text)
-    };
+    let main_help = mode.process_body(main_content);
+    let reference_block = help_reference_with_color(&[subcommand], Some(100), mode.color());
 
-    // Get the help reference block (wrap at 80 chars for web docs, with colors for HTML)
-    let reference_block = help_reference(&[subcommand], Some(80));
-
-    // Output the generated content (frontmatter is in skeleton files)
-    // Uses region markers so sync can replace just this content
-    // END tag mirrors the ID for unambiguous matching with nested markers
     // Use std::println! to preserve ANSI codes in output (the styling::println strips them)
-    std::println!(
-        "<!-- ⚠️ AUTO-GENERATED from `wt {subcommand} --help-page` — edit cli.rs to update -->"
-    );
-    std::println!();
+    mode.emit_header(subcommand);
     std::println!("{}", main_help.trim());
     std::println!();
 
@@ -404,20 +511,18 @@ Commands with pages: merge, switch, remove, list"
 
     // Subdocs follow, each with their own command reference at the end.
     if let Some(subdocs) = subdoc_content {
-        // Apply post-processing to non-marker text (e.g., the Aliases section after
-        // the last subdoc marker). Must happen before expansion — after expansion,
-        // post_process_for_html has already run on each subcommand section internally
-        // (in format_subcommand_section), so re-running it would double-convert.
-        let subdocs = post_process_for_html(subdocs);
-        let subdocs_expanded = expand_subdoc_placeholders(&subdocs, sub, &parent_name);
+        // Process trailing text (e.g., an Aliases section after the last subdoc
+        // marker) before expansion — each subdoc's own body is post-processed
+        // inside format_subcommand_section, so re-running would double-convert.
+        let subdocs = mode.process_subdoc_trailing(subdocs);
+        let subdocs_expanded = expand_subdoc_placeholders(&subdocs, sub, &parent_name, mode);
         std::println!();
         std::println!("# Subcommands");
         std::println!();
         std::println!("{}", subdocs_expanded.trim());
     }
 
-    std::println!();
-    std::println!("<!-- END AUTO-GENERATED from `wt {subcommand} --help-page` -->");
+    mode.emit_footer();
 }
 
 /// Post-process CLI help content for web docs rendering.
@@ -450,12 +555,7 @@ fn post_process_for_html(text: &str) -> String {
         .replace("`●` yellow", "<span style='color:#a60'>●</span> yellow")
         .replace("`⚠` yellow", "<span style='color:#a60'>⚠</span> yellow")
         .replace("`●` gray", "<span style='color:#888'>●</span> gray")
-        // Experimental badges — empty span, text added via CSS ::after.
-        // Empty so the span doesn't affect Zola's heading slug generation.
-        .replace(
-            "[experimental]",
-            "<span class=\"badge-experimental\"></span>",
-        )
+        .replace("[experimental]", BADGE_EXPERIMENTAL_HTML)
         // Convert plain URL references to markdown links for web docs
         // CLI shows: "Open an issue at https://github.com/max-sixty/worktrunk."
         // Web shows: "[Open an issue](https://github.com/max-sixty/worktrunk/issues)."
@@ -581,13 +681,17 @@ fn increase_heading_levels(content: &str) -> String {
 /// ```
 ///
 /// This allows including subcommand documentation inline in the parent command's docs page.
-fn expand_subdoc_placeholders(text: &str, parent_cmd: &clap::Command, parent_name: &str) -> String {
-    const PREFIX: &str = "<!-- subdoc: ";
+fn expand_subdoc_placeholders(
+    text: &str,
+    parent_cmd: &clap::Command,
+    parent_name: &str,
+    mode: PageMode,
+) -> String {
     const SUFFIX: &str = " -->";
 
     let mut result = text.to_string();
-    while let Some(start) = result.find(PREFIX) {
-        let after_prefix = start + PREFIX.len();
+    while let Some(start) = result.find(SUBDOC_MARKER_PREFIX) {
+        let after_prefix = start + SUBDOC_MARKER_PREFIX.len();
         if let Some(end_offset) = result[after_prefix..].find(SUFFIX) {
             let subcommand_name = result[after_prefix..after_prefix + end_offset].trim();
             let end = after_prefix + end_offset + SUFFIX.len();
@@ -597,7 +701,7 @@ fn expand_subdoc_placeholders(text: &str, parent_cmd: &clap::Command, parent_nam
                 .get_subcommands()
                 .find(|s| s.get_name() == subcommand_name)
             {
-                format_subcommand_section(sub, parent_name, subcommand_name)
+                format_subcommand_section(sub, parent_name, subcommand_name, mode)
             } else {
                 format!(
                     "<!-- subdoc error: subcommand '{}' not found -->",
@@ -645,38 +749,29 @@ fn format_subcommand_section(
     sub: &clap::Command,
     parent_name: &str,
     subcommand_name: &str,
+    mode: PageMode,
 ) -> String {
     // parent_name is "wt config", subcommand_name is "create"
     // full_command is "wt config create"
     let full_command = format!("{} {}", parent_name, subcommand_name);
 
-    // Get combined docs: about + subtitle + after_long_help
-    let raw_help = combine_command_docs(sub);
-    let raw_help = raw_help.replace("```console\n", "```bash\n");
+    let raw_help = mode.transform_raw(combine_command_docs(sub));
 
     // Extract [experimental] marker from content start → badge after heading.
-    // Placed after the heading (not inside it) so Zola's anchor link doesn't
-    // wrap the badge. CSS positions it inline with the heading text.
-    let (has_experimental, raw_help) = if let Some(rest) = raw_help.strip_prefix("[experimental] ")
-    {
-        (true, rest.to_string())
-    } else {
-        (false, raw_help)
+    // Web mode: placed after heading as HTML badge so Zola's anchor link doesn't wrap it.
+    // Plain mode: kept as [experimental] text.
+    let (has_experimental, raw_help) = match raw_help.strip_prefix("[experimental] ") {
+        Some(rest) => (true, rest.to_string()),
+        None => (false, raw_help),
     };
 
     // Split content at first subdoc placeholder so command reference comes before nested subdocs
-    let subdoc_marker = "<!-- subdoc:";
-    let (main_content, subdoc_content) = if let Some(pos) = raw_help.find(subdoc_marker) {
-        (&raw_help[..pos], Some(&raw_help[pos..]))
-    } else {
-        (raw_help.as_str(), None)
+    let (main_content, subdoc_content) = match raw_help.find(SUBDOC_MARKER_PREFIX) {
+        Some(pos) => (&raw_help[..pos], Some(&raw_help[pos..])),
+        None => (raw_help.as_str(), None),
     };
 
-    // Process main content (before any nested subdocs)
-    let main_help = {
-        let text = increase_heading_levels(main_content);
-        post_process_for_html(&text)
-    };
+    let main_help = mode.process_body(&increase_heading_levels(main_content));
 
     // Build command path from parent_name: "wt config" -> ["config", "create"]
     let command_path: Vec<&str> = parent_name
@@ -686,13 +781,13 @@ fn format_subcommand_section(
         .chain(std::iter::once(subcommand_name))
         .collect();
 
-    // Get help reference (wrap at 80 chars for web docs, with colors for HTML)
-    let reference_block = help_reference(&command_path, Some(80));
+    let reference_block = help_reference_with_color(&command_path, Some(100), mode.color());
 
     // Format the section: heading, badge (outside heading), main content, command reference
     let mut section = format!("## {full_command}\n\n");
     if has_experimental {
-        section.push_str("<span class=\"badge-experimental\"></span>\n\n");
+        section.push_str(mode.experimental_marker());
+        section.push_str("\n\n");
     }
 
     if !main_help.is_empty() {
@@ -707,8 +802,8 @@ fn format_subcommand_section(
 
     // Expand nested subdocs after the command reference.
     if let Some(subdocs) = subdoc_content {
-        let subdocs = post_process_for_html(subdocs);
-        let subdocs_expanded = expand_subdoc_placeholders(&subdocs, sub, &full_command);
+        let subdocs = mode.process_subdoc_trailing(subdocs);
+        let subdocs_expanded = expand_subdoc_placeholders(&subdocs, sub, &full_command, mode);
         section.push('\n');
         section.push_str(subdocs_expanded.trim());
         section.push('\n');
@@ -728,12 +823,11 @@ fn format_subcommand_section(
 ///
 /// Supports optional dimensions: `<!-- demo: filename.gif 1600x900 -->`
 fn expand_demo_placeholders(text: &str) -> String {
-    const PREFIX: &str = "<!-- demo: ";
     const SUFFIX: &str = " -->";
 
     let mut result = text.to_string();
-    while let Some(start) = result.find(PREFIX) {
-        let after_prefix = start + PREFIX.len();
+    while let Some(start) = result.find(DEMO_MARKER_PREFIX) {
+        let after_prefix = start + DEMO_MARKER_PREFIX.len();
         if let Some(end_offset) = result[after_prefix..].find(SUFFIX) {
             let content = &result[after_prefix..after_prefix + end_offset];
             // Parse "filename.gif" or "filename.gif 1600x900"
@@ -759,6 +853,32 @@ fn expand_demo_placeholders(text: &str) -> String {
             );
             let end = after_prefix + end_offset + SUFFIX.len();
             result.replace_range(start..end, &replacement);
+        } else {
+            break;
+        }
+    }
+    result
+}
+
+/// Strip demo GIF placeholders from content (for plain/skill output).
+///
+/// Removes `<!-- demo: filename.gif -->` lines entirely. These are invisible in
+/// terminal --help but would leak as HTML comments in skill reference files.
+fn strip_demo_placeholders(text: &str) -> String {
+    const SUFFIX: &str = " -->";
+
+    let mut result = text.to_string();
+    while let Some(start) = result.find(DEMO_MARKER_PREFIX) {
+        let after_prefix = start + DEMO_MARKER_PREFIX.len();
+        if let Some(end_offset) = result[after_prefix..].find(SUFFIX) {
+            let end = after_prefix + end_offset + SUFFIX.len();
+            // Also strip trailing newline if present
+            let end = if result[end..].starts_with('\n') {
+                end + 1
+            } else {
+                end
+            };
+            result.replace_range(start..end, "");
         } else {
             break;
         }

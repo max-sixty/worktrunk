@@ -8,7 +8,7 @@
 # Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
 if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
 
-    # wt wrapper function - uses temp file for directives
+    # wt wrapper function - uses split temp files for directives
     #
     # IMPORTANT: This function must remain a "simple function" (no [CmdletBinding()] or
     # [Parameter()] attributes). Advanced functions add common parameters like -Debug,
@@ -25,28 +25,43 @@ if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN
             $wtBin = (Get-Command {{ cmd }} -CommandType Application | Select-Object -First 1).Source
         }
 
-        $directiveFile = [System.IO.Path]::GetTempFileName()
+        $cdFile = [System.IO.Path]::GetTempFileName()
+        $execFile = [System.IO.Path]::GetTempFileName()
 
         try {
-            # Run wt with WORKTRUNK_DIRECTIVE_FILE env var
-            # WORKTRUNK_SHELL tells the binary to use PowerShell-compatible escaping
-            $env:WORKTRUNK_DIRECTIVE_FILE = $directiveFile
+            # Run wt with split directive env vars
+            # WORKTRUNK_SHELL tells the binary to use PowerShell-compatible escaping (legacy compat)
+            $env:WORKTRUNK_DIRECTIVE_CD_FILE = $cdFile
+            $env:WORKTRUNK_DIRECTIVE_EXEC_FILE = $execFile
             $env:WORKTRUNK_SHELL = "powershell"
             & $wtBin @args
             $exitCode = $LASTEXITCODE
         }
         finally {
-            Remove-Item Env:\WORKTRUNK_DIRECTIVE_FILE -ErrorAction SilentlyContinue
+            Remove-Item Env:\WORKTRUNK_DIRECTIVE_CD_FILE -ErrorAction SilentlyContinue
+            Remove-Item Env:\WORKTRUNK_DIRECTIVE_EXEC_FILE -ErrorAction SilentlyContinue
             Remove-Item Env:\WORKTRUNK_SHELL -ErrorAction SilentlyContinue
         }
 
-        # Execute the directive script if it has content
+        # Process directive files and clean up in a single try/finally so both
+        # temp files are removed even if cd or exec throws.
         try {
-            if ((Test-Path $directiveFile) -and (Get-Item $directiveFile).Length -gt 0) {
-                $script = Get-Content -Path $directiveFile -Raw
+            # cd file holds a raw path (no shell escaping needed)
+            if ((Test-Path $cdFile) -and (Get-Item $cdFile).Length -gt 0) {
+                $target = (Get-Content -Path $cdFile -Raw).Trim()
+                if ($target) {
+                    Set-Location -LiteralPath $target
+                    if ($exitCode -eq 0) {
+                        $exitCode = $LASTEXITCODE
+                    }
+                }
+            }
+
+            # exec file holds arbitrary shell (e.g. from --execute)
+            if ((Test-Path $execFile) -and (Get-Item $execFile).Length -gt 0) {
+                $script = Get-Content -Path $execFile -Raw
                 if ($script.Trim()) {
                     Invoke-Expression $script
-                    # If wt succeeded, use the directive script's exit code
                     if ($exitCode -eq 0) {
                         $exitCode = $LASTEXITCODE
                     }
@@ -54,8 +69,8 @@ if ((Get-Command {{ cmd }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN
             }
         }
         finally {
-            # Cleanup even if Invoke-Expression throws
-            Remove-Item $directiveFile -ErrorAction SilentlyContinue
+            Remove-Item $cdFile -ErrorAction SilentlyContinue
+            Remove-Item $execFile -ErrorAction SilentlyContinue
         }
 
         # Propagate exit code so $? and $LASTEXITCODE are consistent for scripts/CI

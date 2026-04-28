@@ -160,29 +160,6 @@ impl GitRemoteUrl {
     }
 }
 
-/// Extract owner from a git remote URL.
-///
-/// Used for client-side filtering of PRs/MRs by source repository. When multiple users
-/// have PRs with the same branch name (e.g., everyone has a `feature` branch), we need
-/// to identify which PR comes from *our* fork/remote, not just which PR we authored.
-///
-/// # Why not use `--author`?
-///
-/// The `gh pr list --author` flag filters by who *created* the PR, not whose fork
-/// the PR comes *from*. These are usually the same, but not always:
-/// - Maintainers may create PRs from contributor forks
-/// - Bots may create PRs on behalf of users
-/// - Organization repos: `--author company` doesn't match individual user PRs
-///
-/// # Why client-side filtering?
-///
-/// Neither `gh` nor `glab` CLI support server-side filtering by source repository.
-/// The `gh pr list --head` flag only accepts branch name, not `owner:branch` format.
-/// So we fetch PRs matching the branch name, then filter by `headRepositoryOwner`.
-pub fn parse_remote_owner(url: &str) -> Option<String> {
-    GitRemoteUrl::parse(url).map(|u| u.owner().to_string())
-}
-
 /// Extract owner and repository name from a git remote URL.
 pub fn parse_owner_repo(url: &str) -> Option<(String, String)> {
     GitRemoteUrl::parse(url).map(|u| (u.owner().to_string(), u.repo().to_string()))
@@ -309,61 +286,6 @@ mod tests {
         let url = GitRemoteUrl::parse("https://github.com/company-org/project.git").unwrap();
         assert_eq!(url.owner(), "company-org");
         assert_eq!(url.repo(), "project");
-    }
-
-    #[test]
-    fn test_parse_remote_owner() {
-        assert_eq!(
-            parse_remote_owner("https://github.com/max-sixty/worktrunk.git"),
-            Some("max-sixty".to_string())
-        );
-        assert_eq!(
-            parse_remote_owner("  https://github.com/owner/repo\n"),
-            Some("owner".to_string())
-        );
-        assert_eq!(
-            parse_remote_owner("git@github.com:max-sixty/worktrunk.git"),
-            Some("max-sixty".to_string())
-        );
-        assert_eq!(
-            parse_remote_owner("ssh://git@github.com/owner/repo.git"),
-            Some("owner".to_string())
-        );
-        assert_eq!(
-            parse_remote_owner("ssh://github.com/owner/repo.git"),
-            Some("owner".to_string())
-        );
-        assert_eq!(
-            parse_remote_owner("https://gitlab.com/owner/repo.git"),
-            Some("owner".to_string())
-        );
-        assert_eq!(
-            parse_remote_owner("https://gitlab.example.com/owner/repo.git"),
-            Some("owner".to_string())
-        );
-        assert_eq!(
-            parse_remote_owner("git@gitlab.com:owner/repo.git"),
-            Some("owner".to_string())
-        );
-        assert_eq!(
-            parse_remote_owner("https://bitbucket.org/owner/repo.git"),
-            Some("owner".to_string())
-        );
-        assert_eq!(
-            parse_remote_owner("git@bitbucket.org:owner/repo.git"),
-            Some("owner".to_string())
-        );
-        assert_eq!(
-            parse_remote_owner("https://github.com/company-org/project.git"),
-            Some("company-org".to_string())
-        );
-        assert_eq!(
-            parse_remote_owner("http://github.com/owner/repo.git"),
-            Some("owner".to_string())
-        );
-        assert_eq!(parse_remote_owner("https://github.com/"), None);
-        assert_eq!(parse_remote_owner("git@github.com:"), None);
-        assert_eq!(parse_remote_owner(""), None);
     }
 
     #[test]
@@ -590,19 +512,6 @@ mod tests {
         assert_eq!(repo1.owner(), "company/team");
         assert_eq!(repo2.owner(), "company/team");
         assert_ne!(repo1.repo(), repo2.repo());
-    }
-
-    #[test]
-    fn test_parse_remote_owner_nested() {
-        // parse_remote_owner should return the full namespace
-        assert_eq!(
-            parse_remote_owner("https://gitlab.com/group/subgroup/repo.git"),
-            Some("group/subgroup".to_string())
-        );
-        assert_eq!(
-            parse_remote_owner("git@gitlab.com:org/team/project/repo.git"),
-            Some("org/team/project".to_string())
-        );
     }
 
     #[test]

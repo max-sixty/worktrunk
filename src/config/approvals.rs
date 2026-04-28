@@ -22,8 +22,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use config::ConfigError;
 use serde::{Deserialize, Serialize};
+
+use super::ConfigError;
 
 use crate::config::deprecation::normalize_template_vars;
 use crate::path::format_path_for_display;
@@ -99,29 +100,20 @@ impl Approvals {
     /// Load approvals from a specific file path.
     fn load_from_file(path: &Path) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path).map_err(|e| {
-            ConfigError::Message(format!(
+            ConfigError(format!(
                 "Failed to read approvals file {}: {}",
                 format_path_for_display(path),
                 e
             ))
         })?;
         let approvals: Self = toml::from_str(&content).map_err(|e| {
-            ConfigError::Message(format!(
+            ConfigError(format!(
                 "Failed to parse approvals file {}: {}",
                 format_path_for_display(path),
                 e
             ))
         })?;
         Ok(approvals)
-    }
-
-    /// Load approvals from a specific path (no fallback, for testing).
-    #[cfg(test)]
-    pub fn load_from_path(path: &Path) -> Result<Self, ConfigError> {
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        Self::load_from_file(path)
     }
 
     /// Load approvals from an approvals file, falling back to config.toml.
@@ -155,9 +147,8 @@ impl Approvals {
     /// Save approvals to a specific file path.
     pub fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                ConfigError::Message(format!("Failed to create approvals directory: {e}"))
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| ConfigError(format!("Failed to create approvals directory: {e}")))?;
         }
 
         let mut doc = toml_edit::DocumentMut::new();
@@ -188,7 +179,7 @@ impl Approvals {
         };
 
         std::fs::write(path, output)
-            .map_err(|e| ConfigError::Message(format!("Failed to write approvals file: {e}")))?;
+            .map_err(|e| ConfigError(format!("Failed to write approvals file: {e}")))?;
 
         Ok(())
     }
@@ -242,7 +233,7 @@ impl Approvals {
         let path = match approvals_path {
             Some(p) => p.to_path_buf(),
             None => self::approvals_path().ok_or_else(|| {
-                ConfigError::Message(
+                ConfigError(
                     "Cannot determine approvals path. Set $HOME or $XDG_CONFIG_HOME".to_string(),
                 )
             })?,
@@ -266,7 +257,7 @@ impl Approvals {
     /// Extract approved-commands from a specific config file.
     pub(crate) fn load_from_config_file(config_path: &Path) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(config_path).map_err(|e| {
-            ConfigError::Message(format!(
+            ConfigError(format!(
                 "Failed to read config file {}: {}",
                 format_path_for_display(config_path),
                 e
@@ -274,7 +265,7 @@ impl Approvals {
         })?;
 
         let config: super::UserConfig = toml::from_str(&content).map_err(|e| {
-            ConfigError::Message(format!(
+            ConfigError(format!(
                 "Failed to parse config file {}: {}",
                 format_path_for_display(config_path),
                 e
@@ -401,6 +392,14 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let approvals_path = temp_dir.path().join("approvals.toml");
         (temp_dir, approvals_path)
+    }
+
+    /// Load approvals from a specific path (no fallback).
+    fn load_from_path(path: &Path) -> Result<Approvals, ConfigError> {
+        if !path.exists() {
+            return Ok(Approvals::default());
+        }
+        Approvals::load_from_file(path)
     }
 
     #[test]
@@ -538,7 +537,7 @@ mod tests {
             .unwrap();
 
         // Load from disk
-        let loaded = Approvals::load_from_path(&path).unwrap();
+        let loaded = load_from_path(&path).unwrap();
         assert!(loaded.is_command_approved("github.com/user/repo", "npm install"));
         assert!(loaded.is_command_approved("github.com/user/repo", "npm test"));
     }
@@ -693,7 +692,7 @@ approved-commands = ["npm install"]
     fn test_load_from_path_nonexistent() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("nonexistent.toml");
-        let approvals = Approvals::load_from_path(&path).unwrap();
+        let approvals = load_from_path(&path).unwrap();
         assert!(approvals.projects.is_empty());
     }
 

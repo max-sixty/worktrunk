@@ -1,0 +1,5 @@
+---
+source: src/commands/picker/items.rs
+expression: "WorktreeSkimItem::loading_placeholder(mode)"
+---
+○ Loading log. Press 2 again to refresh.

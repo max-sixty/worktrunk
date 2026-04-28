@@ -31,6 +31,26 @@
           }
         ]
       }
+    ],
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.name' | xargs -I{} wt switch --create {} --no-cd --format=json | jq -r '.path'"
+          }
+        ]
+      }
+    ],
+    "WorktreeRemove": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.worktree_path' | xargs wt remove -D --foreground"
+          }
+        ]
+      }
     ]
   }
 }

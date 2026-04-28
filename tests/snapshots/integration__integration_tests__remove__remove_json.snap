@@ -1,0 +1,12 @@
+---
+source: tests/integration_tests/remove.rs
+expression: "String::from_utf8_lossy(&output.stdout)"
+---
+[
+  {
+    "branch": "feature",
+    "branch_deleted": true,
+    "kind": "worktree",
+    "path": "<PATH>"
+  }
+]

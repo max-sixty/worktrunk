@@ -1,7 +1,7 @@
 ---
 name: worktrunk
-description: Guidance for Worktrunk, a CLI tool for managing git worktrees. Covers configuration (user config at ~/.config/worktrunk/config.toml and project hooks at .config/wt.toml), usage, and troubleshooting. Use for "setting up commit message generation", "configuring hooks", "automating tasks", or general worktrunk questions.
-version: 0.33.0
+description: Guidance for Worktrunk (the `wt` CLI) — git worktree management, hooks, and config. Load when editing .config/wt.toml or ~/.config/worktrunk/config.toml; adding, modifying, or debugging hooks (post-merge, post-start, pre-commit, pre-merge, post-switch, etc.); configuring commit message generation or command aliases; or troubleshooting wt behavior. Also answers general worktrunk/wt questions.
+version: 0.45.1
 license: MIT OR Apache-2.0
 compatibility: Requires worktrunk CLI (https://worktrunk.dev)
 ---
@@ -38,7 +38,7 @@ Worktrunk uses two separate config files with different scopes and behaviors:
 ### Project Config (`.config/wt.toml`)
 - **Scope**: Team-wide automation shared by all developers
 - **Location**: `<repo>/.config/wt.toml` (checked into git)
-- **Contains**: Hooks for worktree lifecycle (post-create, pre-merge, etc.)
+- **Contains**: Hooks for worktree lifecycle (pre-start, pre-merge, etc.)
 - **Permission model**: Proactive (create directly, changes are reversible via git)
 - **See**: `reference/hook.md` for detailed guidance
 
@@ -106,7 +106,7 @@ Common request for workflow automation. Follow discovery process:
    - For Python: Check pyproject.toml
 
 3. **Design appropriate hooks** (7 hook types available)
-   - Dependencies (fast, must complete) → `post-create`
+   - Dependencies (fast, must complete) → `pre-start`
    - Tests/linting (must pass) → `pre-commit` or `pre-merge`
    - Long builds, dev servers → `post-start`
    - Terminal/IDE updates → `post-switch`
@@ -122,7 +122,7 @@ Common request for workflow automation. Follow discovery process:
 5. **Create `.config/wt.toml`**
    ```toml
    # Install dependencies when creating worktrees
-   post-create = "npm install"
+   pre-start = "npm install"
 
    # Validate code quality before committing
    [pre-commit]
@@ -149,7 +149,7 @@ When users want to add automation to an existing project:
 1. **Read existing config**: `cat .config/wt.toml`
 
 2. **Determine hook type** - When should this run?
-   - Creating worktree (blocking) → `post-create`
+   - Creating worktree (blocking) → `pre-start`
    - Creating worktree (background) → `post-start`
    - Every switch → `post-switch`
    - Before committing → `pre-commit`
@@ -162,10 +162,10 @@ When users want to add automation to an existing project:
    Single command to named table:
    ```toml
    # Before
-   post-create = "npm install"
+   pre-start = "npm install"
 
    # After (adding db:migrate)
-   [post-create]
+   [pre-start]
    install = "npm install"
    migrate = "npm run db:migrate"
    ```
@@ -242,39 +242,58 @@ Load **reference files** for detailed configuration, hook specifications, and tr
 Find specific sections with grep:
 ```bash
 grep -A 20 "## Setup" reference/llm-commits.md
-grep -A 30 "### post-create" reference/hook.md
+grep -A 30 "### pre-start" reference/hook.md
 grep -A 20 "## Warning Messages" reference/shell-integration.md
 ```
 
+## Hook Approvals in Non-Interactive Sessions
+
+Project hooks and project aliases prompt for approval on first run, so an untrusted `.config/wt.toml` can't silently execute arbitrary commands. Agents running `wt merge`, `wt switch`, or other commands that trigger hooks will hit an error like:
+
+```
+▲ cargo-difftest needs approval to execute 1 command:
+○ post-merge install:
+  cargo install --path .
+✗ Cannot prompt for approval in non-interactive environment
+↳ To skip prompts in CI/CD, add --yes; to pre-approve commands, run wt config approvals add
+```
+
+Two resolutions exist — pick based on who the agent is running for:
+
+- **`wt config approvals add`** — interactive prompt that stores approvals to `~/.config/worktrunk/approvals.toml`. Run once per project; persists across invocations until the command template changes or the project moves. This is the right choice when the human owns the trust decision.
+- **`--yes`** / `-y` — bypasses approval for a single invocation. Appropriate for CI/CD where hook contents are controlled by the pipeline itself.
+
+**When invoked as an agent, stop and escalate to the user** — pre-approval is a security decision about whether this project's hooks should be trusted to run arbitrary commands on their machine. Tell the user to run `wt config approvals add` (or review and re-run with `--yes` if they accept the CI-style one-shot bypass). Don't reach for `--yes` on the user's behalf just to unblock the command.
+
 ## Advanced: Agent Handoffs
 
-When the user requests spawning a worktree with Claude in a background session ("spawn a worktree for...", "hand off to another agent"), use the appropriate pattern for their terminal multiplexer:
+When the user requests spawning a worktree with an agent in a background session ("spawn a worktree for...", "hand off to another agent"), use the appropriate pattern for their terminal multiplexer. Substitute `<agent-cli>` with the CLI you are running as: `claude` for Claude Code, `'opencode run'` for OpenCode.
 
 **tmux** (check `$TMUX` env var):
 ```bash
-tmux new-session -d -s <branch-name> "wt switch --create <branch-name> -x claude -- '<task description>'"
+tmux new-session -d -s <branch-name> "wt switch --create <branch-name> -x <agent-cli> -- '<task description>'"
 ```
 
 **Zellij** (check `$ZELLIJ` env var):
 ```bash
-zellij run -- wt switch --create <branch-name> -x claude -- '<task description>'
+zellij run -- wt switch --create <branch-name> -x <agent-cli> -- '<task description>'
 ```
 
 **Requirements** (all must be true):
 - User explicitly requests spawning/handoff
 - User is in a supported multiplexer (tmux or Zellij)
-- User's CLAUDE.md or explicit instruction authorizes this pattern
+- The user's project instructions (`CLAUDE.md` or `AGENTS.md`) or an explicit prompt authorize this pattern
 
 **Do not use this pattern** for normal worktree operations.
 
-Example (tmux):
+Example (tmux, Claude Code):
 ```bash
 tmux new-session -d -s fix-auth-bug "wt switch --create fix-auth-bug -x claude -- \
   'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'"
 ```
 
-Example (Zellij):
+Example (Zellij, OpenCode):
 ```bash
-zellij run -- wt switch --create fix-auth-bug -x claude -- \
+zellij run -- wt switch --create fix-auth-bug -x 'opencode run' -- \
   'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'
 ```

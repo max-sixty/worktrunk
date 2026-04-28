@@ -87,10 +87,11 @@ git branch -d feat{% end %}</td>
 - **[LLM commit messages](@/llm-commits.md)** — generate commit messages from diffs
 - **[Merge workflow](@/merge.md)** — squash, rebase, merge, clean up in one command
 - **[Interactive picker](@/switch.md#interactive-picker)** — browse worktrees with live diff and log previews
-- **[Copy build caches](@/step.md)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees
+- **[Copy build caches](@/step.md#wt-step-copy-ignored)** — skip cold starts by sharing `target/`, `node_modules/`, etc between worktrees
 - **[`wt list --full`](@/list.md#full-mode)** — [CI status](@/list.md#ci-status) and [AI-generated summaries](@/list.md#llm-summaries) per branch
 - **[PR checkout](@/switch.md#pull-requests-and-merge-requests)** — `wt switch pr:123` to jump straight to a PR's branch
-- **[Dev server per worktree](@/hook.md#dev-servers)** — `hash_port` template filter gives each worktree a unique port
+- **[Dev server per worktree](@/tips-patterns.md#dev-server-per-worktree)** — `hash_port` template filter gives each worktree a unique port
+- **[Aliases](@/extending.md#aliases) & [per-branch variables](@/config.md#wt-config-state-vars)** — custom `wt <name>` commands and branch-scoped state for hook templates
 - ...and **[lots more](#next-steps)**
 
 A demo with some advanced features:
@@ -107,54 +108,51 @@ A demo with some advanced features:
 
 **Homebrew (macOS & Linux):**
 
-```bash
-brew install worktrunk && wt config shell install
-```
+{{ terminal(cmd="brew install worktrunk && wt config shell install") }}
 
 Shell integration allows commands to change directories.
 
 **Cargo:**
 
-```bash
-cargo install worktrunk && wt config shell install
-```
+{{ terminal(cmd="cargo install worktrunk && wt config shell install") }}
 
 <details>
-<summary><strong>Windows</strong></summary>
+<summary><strong>Windows & other</strong></summary>
 
-On Windows, `wt` defaults to Windows Terminal's command. Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
+**Windows.** `wt` defaults to Windows Terminal's command, so Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
 
-```bash
-winget install max-sixty.worktrunk
-git-wt config shell install
-```
+{{ terminal(cmd="winget install max-sixty.worktrunk|||git-wt config shell install") }}
 
 Alternatively, disable Windows Terminal's alias (Settings → Privacy & security → For developers → App Execution Aliases → disable "Windows Terminal") to use `wt` directly.
 
-</details>
-
 **Arch Linux:**
 
-```bash
-paru worktrunk-bin && wt config shell install
-```
+{{ terminal(cmd="sudo pacman -S worktrunk && wt config shell install") }}
+
+**Conda / Pixi** (community-maintained [feedstock](https://github.com/conda-forge/worktrunk-feedstock)):
+
+{{ terminal(cmd="conda install -c conda-forge worktrunk && wt config shell install") }}
+
+Or with [Pixi](https://pixi.sh): `pixi global install worktrunk && wt config shell install`.
+
+</details>
 
 ## Quick start
 
 Create a worktree for a new feature:
 
-<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__quickstart_switch.snap — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__quickstart_switch.snap — edit source to update -->
 
 {% terminal(cmd="wt switch --create feature-auth") %}
 <span class="cmd">wt switch --create feature-auth</span>
-<span class=g>✓</span> <span class=g>Created branch <b>feature-auth</b> from <b>main</b> and worktree @ <b>repo.feature-auth</b></span>
+<span class=g>✓</span> <span class=g>Created branch <b>feature-auth</b> from <b>main</b> and worktree @ <b>~/repo.feature-auth</b></span>
 {% end %}
 
 <!-- END AUTO-GENERATED -->
 
 This creates a new branch and worktree, then switches to it. Do your work, then check all worktrees with [`wt list`](@/list.md):
 
-<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__quickstart_list.snap — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__quickstart_list.snap — edit source to update -->
 
 {% terminal(cmd="wt list") %}
 <span class="cmd">wt list</span>
@@ -173,15 +171,11 @@ When done, either:
 
 **PR workflow** — commit, push, open a PR, merge via GitHub/GitLab, then clean up:
 
-```bash
-wt step commit                    # commit staged changes
-gh pr create                      # or glab mr create
-wt remove                         # after PR is merged
-```
+{{ terminal(cmd="wt step commit                    # commit staged changes|||gh pr create                      # or glab mr create|||wt remove                         # after PR is merged") }}
 
 **Local merge** — squash, rebase onto main, fast-forward merge, clean up:
 
-<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__quickstart_merge.snap — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__quickstart_merge.snap — edit source to update -->
 
 {% terminal(cmd="wt merge main") %}
 <span class="cmd">wt merge main</span>
@@ -195,29 +189,26 @@ wt remove                         # after PR is merged
 <span style='background:var(--bright-white,#fff)'> </span>  2 files changed, 53 insertions(+)
 <span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 2 files, +53</span></span><span style='color:var(--bright-black,#555)'>)</span>
 <span class=c>◎</span> <span class=c>Removing <b>feature-auth</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
-<span class=d>○</span> Switched to worktree for <b>main</b> @ <b>repo</b>
+<span class=d>○</span> Switched to worktree for <b>main</b> @ <b>~/repo</b>
 {% end %}
 
 <!-- END AUTO-GENERATED -->
 
 For parallel agents, create multiple worktrees and launch an agent in each:
 
-```bash
-wt switch -x claude -c feature-a -- 'Add user authentication'
-wt switch -x claude -c feature-b -- 'Fix the pagination bug'
-wt switch -x claude -c feature-c -- 'Write tests for the API'
-```
+{{ terminal(cmd="wt switch -x claude -c feature-a -- 'Add user authentication'|||wt switch -x claude -c feature-b -- 'Fix the pagination bug'|||wt switch -x claude -c feature-c -- 'Write tests for the API'") }}
 
-The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](@/hook.md) to automate setup (install deps, start dev servers).
+The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](@/hook.md#hook-types) to automate setup (install deps, start dev servers).
 
 ## Next steps
 
 - Learn the core commands: [`wt switch`](@/switch.md), [`wt list`](@/list.md), [`wt merge`](@/merge.md), [`wt remove`](@/remove.md)
-- Set up [project hooks](@/hook.md) for automated setup
+- Set up [hooks](@/hook.md) for automated setup
 - Explore [LLM commit messages](@/llm-commits.md), [interactive
   picker](@/switch.md#interactive-picker), [Claude Code integration](@/claude-code.md), [CI
   status & PR links](@/list.md#ci-status)
 - Browse [tips & patterns](@/tips-patterns.md) for recipes: aliases, dev servers, databases, agent handoffs, and more
+- [Extending Worktrunk](@/extending.md) — customize workflows with hooks & aliases
 - Run `wt --help` or `wt <command> --help` for quick CLI reference
 
 ## Further reading

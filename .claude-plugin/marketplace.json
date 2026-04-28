@@ -5,8 +5,7 @@
     "email": "m@maxroos.com"
   },
   "metadata": {
-    "description": "Claude Code plugin for Worktrunk, a CLI for Git worktree management",
-    "version": "1.0.0"
+    "description": "Claude Code plugin for Worktrunk, a CLI for Git worktree management"
   },
   "plugins": [
     {
