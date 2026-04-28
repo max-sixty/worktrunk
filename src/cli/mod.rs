@@ -1361,9 +1361,17 @@ Templates support Jinja2 filters for transforming values:
 | `sanitize` | `{{ branch \| sanitize }}` | Replace `/` and `\` with `-` |
 | `sanitize_db` | `{{ branch \| sanitize_db }}` | Database-safe identifier with hash suffix (`[a-z0-9_]`, max 63 chars) |
 | `sanitize_hash` | `{{ branch \| sanitize_hash }}` | Filesystem-safe name with hash suffix for uniqueness |
+| `hash` | `{{ branch \| hash }}` | 3-character base36 digest of the input |
 | `hash_port` | `{{ branch \| hash_port }}` | Hash to port 10000-19999 |
 
-The `sanitize` filter makes branch names safe for filesystem paths. The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `sanitize_hash` filter produces a filesystem-safe name and appends a 3-character hash suffix when sanitization changed the input, so distinct originals never collide — already-safe names pass through unchanged. The `hash_port` filter is useful for running dev servers on unique ports per worktree:
+The `sanitize` filter makes branch names safe for filesystem paths. The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `sanitize_hash` filter produces a filesystem-safe name and appends a 3-character hash suffix when sanitization changed the input, so distinct originals never collide — already-safe names pass through unchanged. The `hash` filter is the bare 3-character base36 digest, useful for composing your own truncate-with-collision-avoidance recipes when an output budget is tight (e.g., Unix socket paths capped at 107 bytes):
+
+```toml
+# Truncated branch slug + hash: collisions remain disambiguated even when prefixes match
+worktree-path = "/tmp/{{ (branch | sanitize)[:20] }}_{{ branch | sanitize | hash }}/.s.PGSQL.5432"
+```
+
+The `hash_port` filter is useful for running dev servers on unique ports per worktree:
 
 ```toml
 [post-start]

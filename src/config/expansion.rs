@@ -566,6 +566,9 @@ fn setup_template_env(repo: &Repository) -> Environment<'static> {
     env.add_filter("sanitize_hash", |value: Value| -> String {
         crate::path::sanitize_for_filename(value.as_str().unwrap_or_default())
     });
+    env.add_filter("hash", |value: Value| -> String {
+        short_hash(value.as_str().unwrap_or_default())
+    });
     env.add_filter("hash_port", |value: String| string_to_port(&value));
 
     // Register worktree_path_of_branch function for looking up branch worktree paths.
@@ -703,6 +706,7 @@ pub fn validate_template(
 /// - `sanitize` — Replace `/` and `\` with `-` for filesystem-safe paths
 /// - `sanitize_db` — Transform to database-safe identifier (`[a-z0-9_]`, max 63 chars)
 /// - `sanitize_hash` — Filesystem-safe name with hash suffix so distinct inputs never collide
+/// - `hash` — 3-character base36 hash digest of the input
 /// - `hash_port` — Hash to deterministic port number (10000-19999)
 ///
 /// # Functions
@@ -1345,6 +1349,61 @@ mod tests {
     }
 
     #[test]
+    fn test_hash_filter() {
+        let test = test_repo();
+        let mut vars = HashMap::new();
+        vars.insert("branch", "feature/very-long-branch-name");
+
+        // Filter produces a 3-char base36 digest
+        let result =
+            expand_template("{{ branch | hash }}", &vars, false, &test.repo, "test").unwrap();
+        assert_eq!(result.len(), 3);
+        assert!(
+            result
+                .chars()
+                .all(|c| c.is_ascii_digit() || c.is_ascii_lowercase()),
+            "got: {result}"
+        );
+
+        // Deterministic: same input produces same hash across calls
+        let r1 = expand_template("{{ branch | hash }}", &vars, false, &test.repo, "test").unwrap();
+        let r2 = expand_template("{{ branch | hash }}", &vars, false, &test.repo, "test").unwrap();
+        assert_eq!(r1, r2);
+
+        // Composable: hash reflects the upstream filter's output
+        vars.insert("branch", "feature/auth");
+        let raw = expand_template("{{ branch | hash }}", &vars, false, &test.repo, "test").unwrap();
+        let sanitized = expand_template(
+            "{{ branch | sanitize | hash }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        // `sanitize` rewrites `/` to `-`, so the hashed input differs and the digest does too.
+        assert_ne!(raw, sanitized);
+
+        // User-composed truncation + hash recipe (from extending docs)
+        let truncated = expand_template(
+            "{{ (branch | sanitize)[:8] }}_{{ branch | sanitize | hash }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert!(truncated.starts_with("feature-"), "got: {truncated}");
+        assert_eq!(truncated.len(), 8 + 1 + 3);
+
+        // Empty input: still produces a 3-char digest (empty-string hash is stable)
+        vars.insert("branch", "");
+        let empty =
+            expand_template("{{ branch | hash }}", &vars, false, &test.repo, "test").unwrap();
+        assert_eq!(empty.len(), 3);
+    }
+
+    #[test]
     fn test_hash_port_filter() {
         let test = test_repo();
         let mut vars = HashMap::new();
@@ -1751,6 +1810,7 @@ mod tests {
         assert!(
             validate_template("{{ branch | sanitize_hash }}", hook, &test.repo, "test").is_ok()
         );
+        assert!(validate_template("{{ branch | hash }}", hook, &test.repo, "test").is_ok());
         assert!(validate_template("{{ branch | hash_port }}", hook, &test.repo, "test").is_ok());
 
         // Conditionals with optional vars
