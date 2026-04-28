@@ -813,10 +813,12 @@ impl Cmd {
     /// parent's tty must share the foreground pgroup, or the kernel sends
     /// SIGTTOU when the child manipulates terminal settings, suspending it.
     ///
-    /// In the shared-pgroup case the kernel already delivers terminal
-    /// signals (SIGINT from Ctrl-C, etc.) to every process in the foreground
-    /// pgroup, so explicit forwarding to a separate child pgroup is
-    /// redundant.
+    /// In the shared-pgroup case the kernel already delivers tty-initiated
+    /// signals (SIGINT from Ctrl-C, SIGTSTP from Ctrl-Z, SIGHUP on hangup)
+    /// to every process in the foreground pgroup, so explicit forwarding to
+    /// a separate child pgroup is redundant. Externally-delivered signals
+    /// (e.g. `kill -TERM <wt-pid>`) still only reach wt, but interactive
+    /// aliases are not the typical target for those.
     pub fn inherit_stdin(mut self) -> Self {
         self.stdin_cfg = Some(std::process::Stdio::inherit());
         self.share_parent_pgroup = true;
@@ -1186,9 +1188,9 @@ impl Cmd {
             // reads the parent's controlling terminal must share the
             // foreground pgroup, otherwise calls like skim/tuikit's
             // `tcsetattr` on `/dev/tty` raise SIGTTOU and stop the child
-            // mid-render. The kernel already delivers terminal signals to
-            // every process in the shared pgroup, so explicit forwarding is
-            // redundant in that case.
+            // mid-render. The kernel already delivers tty-initiated signals
+            // (Ctrl-C, Ctrl-Z, hangup) to every process in the shared
+            // pgroup, so explicit forwarding is redundant in that case.
             cmd.process_group(0);
         }
 
@@ -1219,10 +1221,10 @@ impl Cmd {
         #[cfg(unix)]
         let (status, seen_signal) = if self.forward_signals {
             // In the shared-pgroup case (`.inherit_stdin()`), the kernel
-            // already delivers terminal signals to every process in the
-            // foreground pgroup, so we only listen for `seen_signal` and
-            // skip the explicit `killpg` forwarding (which would target a
-            // pgid that doesn't exist as a leader).
+            // already delivers tty-initiated signals to every process in
+            // the foreground pgroup, so we only listen for `seen_signal`
+            // and skip the explicit `killpg` forwarding (which would
+            // target a pgid that doesn't exist as a leader).
             let child_pgid = (!self.share_parent_pgroup).then(|| child.id() as i32);
             let mut seen_signal: Option<i32> = None;
             loop {
