@@ -181,21 +181,11 @@ Commit `flake.lock` alongside the other toolchain changes. After bumping, run
 the full test suite (`cargo run -- hook pre-merge --yes`) and verify
 `cargo msrv verify` passes.
 
-## Weekly Maintenance: Nushell Pin
+## Weekly Maintenance: CI Pin Bumps
 
-`.github/workflows/ci.yaml` pins `hustcer/setup-nu@v3` to a concrete nushell
-release rather than `version: '*'` (the wildcard path went flaky under GitHub
-API rate limiting — see PR #2440). Bump that pin weekly to track upstream:
+Bump pinned third-party versions in `.github/workflows/ci.yaml` to track upstream:
 
-```bash
-gh api repos/nushell/nushell/releases/latest --jq '.tag_name'
-```
-
-If the latest tag is newer than the version currently pinned, update **all
-three** `setup-nu` invocations in `.github/workflows/ci.yaml` (the `test`,
-`benchmarks`, and `code-coverage` jobs all install nushell). The `test` job's
-nushell-shell integration tests will validate the bump on Linux and macOS;
-Windows skips nushell entirely.
+- **`hustcer/setup-nu@v3`** — set `version:` to the latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'` and update all three call sites (`test`, `benchmarks`, `code-coverage`). Pinned because `version: '*'` hit GitHub API rate limits (PR #2440).
 
 ## Weekly Maintenance: Statusline Cache-Check
 
