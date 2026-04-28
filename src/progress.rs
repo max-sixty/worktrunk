@@ -13,11 +13,10 @@
 //! caller can print a summary message immediately afterward without overlap.
 //!
 //! The full spinner machinery (crossterm, the ticker thread, the render loop)
-//! lives in the `cli`-gated [`imp`] submodule. Without the `cli` feature,
-//! [`Progress`] is a zero-cost stub: `start` always returns a no-op reporter
-//! and `record` does nothing. Pure formatting helpers ([`format_bytes`],
-//! [`format_stats_paren`]) are always available since callers in both modes
-//! want them.
+//! is gated on the `cli` feature. Without `cli`, [`Progress`] is a zero-cost
+//! stub: `start` always returns a no-op reporter and `record` does nothing.
+//! Pure formatting helpers ([`format_bytes`], [`format_stats_paren`]) are
+//! always available since callers in both modes want them.
 
 use color_print::cformat;
 
