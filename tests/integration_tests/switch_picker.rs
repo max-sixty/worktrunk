@@ -636,10 +636,7 @@ fn test_switch_picker_filter_includes_digits(mut repo: TestRepo) {
         // wait on the alphabetic prefix landing in the query line rather than
         // the post-digit state, because pre-fix the digits never arrive and a
         // post-digit content expectation would just hit the 30s timeout.
-        &[
-            ("", Some("ticket-456")),
-            ("ticket-123", Some("> ticket-")),
-        ],
+        &[("", Some("ticket-456")), ("ticket-123", Some("> ticket-"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
