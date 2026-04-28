@@ -108,7 +108,7 @@ failure, not a broken link:
 When in doubt, post a comment on the failed run summarizing the diagnosis and
 wait — don't open a PR.
 
-## Polling `gh run rerun --failed`: Poll the Job, Not the Run
+## Polling `gh run rerun --failed`: Poll the Jobs, Not the Run
 
 After `gh run rerun <run-id> --failed`, **never** poll the parent run's
 status with `until [ "$(gh run view <run-id> --json status --jq .status)" = "completed" ]`.
@@ -124,22 +124,39 @@ blocked 128 min; tend-mention [25025555994](https://github.com/max-sixty/worktru
 blocked 150 min. Both waited on `benchmarks` while the actually-rerun job was
 green within minutes.
 
-Instead, capture the rerun job ID(s) and poll those directly:
+Instead, capture the rerun job IDs and poll them as a set:
 
 ```bash
 gh run rerun <run-id> --failed --repo "$REPO"
 
+# `gh run rerun` returns immediately, but the new attempt records take a few
+# seconds to surface in `jobs?filter=latest`. Without this sleep, the query
+# below can see only the prior `completed`/`failure` rows and exit without
+# waiting at all.
+sleep 10
+
 # `?filter=latest` returns each job's most recent attempt — the rerun has
 # the prior `failure` conclusion replaced with the new in-flight attempt.
+# Avoid `!=` in --jq filters: the Bash tool rewrites `!` to `\!`, which jq
+# rejects. Phrase the predicate as `== "completed" | not` instead. (See the
+# bundled `running-in-ci` skill for the full list of bang-rewrite hazards.)
 JOB_IDS=$(gh api "repos/$REPO/actions/runs/<run-id>/jobs?filter=latest" \
-  --jq '.jobs[] | select(.status != "completed") | .id')
+  --jq '.jobs[] | select((.status == "completed") | not) | .id')
 
-for JOB_ID in $JOB_IDS; do
-  for i in $(seq 1 15); do
-    STATUS=$(gh api "repos/$REPO/actions/jobs/$JOB_ID" --jq '.status')
-    [ "$STATUS" = "completed" ] && break
-    sleep 60
+# Rollup-style polling — one pass per minute checks all reran jobs together
+# and exits when the last one is terminal, instead of nesting per-job loops
+# that would charge the 15-min cap once per job.
+pending_jobs() {
+  local n=0
+  for id in $JOB_IDS; do
+    s=$(gh api "repos/$REPO/actions/jobs/$id" --jq '.status')
+    [ "$s" = "completed" ] || n=$((n + 1))
   done
+  echo "$n"
+}
+for i in $(seq 1 15); do
+  [ "$(pending_jobs)" -eq 0 ] && break
+  sleep 60
 done
 ```
 
