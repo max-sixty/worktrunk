@@ -1,6 +1,6 @@
 name: nightly
 # Catches feature-flag breakage that workspace feature unification can mask;
-# see issue/PR ...
+# see #2442 for the v0.45.0 incident that motivated this.
 #
 # Runs daily and can be triggered manually. Not wired to push or pull_request —
 # this is a slow check that addresses a class of bug that only matters at
