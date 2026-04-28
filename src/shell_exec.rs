@@ -575,6 +575,11 @@ pub struct Cmd {
     stdout_cfg: Option<std::process::Stdio>,
     /// Stdin configuration for stream() (defaults to null, or piped if stdin_data is set)
     stdin_cfg: Option<std::process::Stdio>,
+    /// If true, the child shares the parent's process group instead of being
+    /// isolated in its own — required when the child reads the controlling
+    /// terminal (interactive TUI pickers, pagers). Set via `.inherit_stdin()`.
+    /// See the comment in `stream()` for the SIGTTOU rationale.
+    share_parent_pgroup: bool,
     /// If true, forward signals to child process group (for stream(), Unix only)
     forward_signals: bool,
     /// When set, log this command to the command log after execution.
@@ -630,6 +635,7 @@ impl Cmd {
             shell_wrap,
             stdout_cfg: None,
             stdin_cfg: None,
+            share_parent_pgroup: false,
             forward_signals: false,
             external_label: None,
             directive_cd_file: None,
@@ -786,8 +792,10 @@ impl Cmd {
 
     /// Set stdin configuration for `.stream()`.
     ///
-    /// Defaults to `Stdio::null()`. Use `Stdio::inherit()` for interactive commands
-    /// that need to read user input.
+    /// Defaults to `Stdio::null()`. For interactive commands that need the
+    /// parent's controlling terminal, use [`Cmd::inherit_stdin()`] instead —
+    /// it also makes `.forward_signals()` keep the child in the parent's
+    /// process group (required to avoid SIGTTOU stopping the child mid-render).
     ///
     /// Only affects `.stream()`. For `.run()`, stdin defaults to null unless
     /// data is provided via `.stdin_bytes()`.
@@ -796,11 +804,35 @@ impl Cmd {
         self
     }
 
+    /// Inherit the parent's stdin, including the controlling terminal.
+    ///
+    /// Required for children that read from a TTY (interactive TUI pickers,
+    /// pagers, anything that calls `tcsetattr` on `/dev/tty`). When combined
+    /// with [`Cmd::forward_signals()`], the child is *not* isolated in its
+    /// own process group — it shares the parent's. A child reading the
+    /// parent's tty must share the foreground pgroup, or the kernel sends
+    /// SIGTTOU when the child manipulates terminal settings, suspending it.
+    ///
+    /// In the shared-pgroup case the kernel already delivers terminal
+    /// signals (SIGINT from Ctrl-C, etc.) to every process in the foreground
+    /// pgroup, so explicit forwarding to a separate child pgroup is
+    /// redundant.
+    pub fn inherit_stdin(mut self) -> Self {
+        self.stdin_cfg = Some(std::process::Stdio::inherit());
+        self.share_parent_pgroup = true;
+        self
+    }
+
     /// Forward signals (SIGINT, SIGTERM) to child process group.
     ///
     /// On Unix, spawns the child in its own process group and forwards signals
     /// with escalation (SIGINT → SIGTERM → SIGKILL). This enables clean shutdown
     /// of the entire process tree on Ctrl-C.
+    ///
+    /// When combined with [`Cmd::inherit_stdin()`], the new-pgroup isolation
+    /// is skipped (the child shares the parent's pgroup so it can drive the
+    /// controlling terminal). The signal listener still runs so signal-derived
+    /// child exits surface as `WorktrunkError::ChildProcessExited { signal: .. }`.
     ///
     /// Only affects `.stream()` on Unix. No-op on Windows.
     pub fn forward_signals(mut self) -> Self {
@@ -1147,8 +1179,16 @@ impl Cmd {
         };
 
         #[cfg(unix)]
-        if self.forward_signals {
+        if self.forward_signals && !self.share_parent_pgroup {
             // Isolate the child in its own process group so we can signal the whole tree.
+            //
+            // Skipped when the caller used `.inherit_stdin()`: a child that
+            // reads the parent's controlling terminal must share the
+            // foreground pgroup, otherwise calls like skim/tuikit's
+            // `tcsetattr` on `/dev/tty` raise SIGTTOU and stop the child
+            // mid-render. The kernel already delivers terminal signals to
+            // every process in the shared pgroup, so explicit forwarding is
+            // redundant in that case.
             cmd.process_group(0);
         }
 
@@ -1178,7 +1218,12 @@ impl Cmd {
         // Wait for child with optional signal forwarding
         #[cfg(unix)]
         let (status, seen_signal) = if self.forward_signals {
-            let child_pgid = child.id() as i32;
+            // In the shared-pgroup case (`.inherit_stdin()`), the kernel
+            // already delivers terminal signals to every process in the
+            // foreground pgroup, so we only listen for `seen_signal` and
+            // skip the explicit `killpg` forwarding (which would target a
+            // pgid that doesn't exist as a leader).
+            let child_pgid = (!self.share_parent_pgroup).then(|| child.id() as i32);
             let mut seen_signal: Option<i32> = None;
             loop {
                 if let Some(status) = child.try_wait().map_err(|e| {
@@ -1192,7 +1237,9 @@ impl Cmd {
                     for sig in signals.pending() {
                         if seen_signal.is_none() {
                             seen_signal = Some(sig);
-                            forward_signal_with_escalation(child_pgid, sig);
+                            if let Some(pgid) = child_pgid {
+                                forward_signal_with_escalation(pgid, sig);
+                            }
                         }
                     }
                 }

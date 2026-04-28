@@ -946,6 +946,55 @@ fail = "exit 1"
     );
 }
 
+/// Aliases must run their child in wt's process group when stdin is inherited,
+/// not isolate it in a new pgroup. Interactive children (`wt switch`'s picker,
+/// pagers, anything that calls `tcsetattr` on `/dev/tty`) only work when they
+/// share the foreground tty pgroup — otherwise the kernel sends SIGTTOU and
+/// stops the child mid-render. We check the invariant directly: the alias body
+/// records its shell pgid, and we assert it matches wt's pid (== wt's pgid
+/// because the test spawns wt as its own pgroup leader).
+#[rstest]
+#[cfg(unix)]
+fn test_alias_child_shares_parent_pgroup(repo: TestRepo) {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    repo.write_test_config(
+        r#"
+[aliases]
+record-pgid = "ps -o pgid= -p $$ | tr -d ' \n' > alias_pgid.txt"
+"#,
+    );
+    repo.commit("initial");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "record-pgid"]);
+    cmd.current_dir(repo.root_path());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    // wt becomes its own pgroup leader: wt.pid == wt.pgid. The alias child
+    // (a `sh -c '...'` shell) should inherit that pgid rather than being
+    // moved into a new group.
+    cmd.process_group(0);
+    let mut child = cmd.spawn().expect("failed to spawn wt step record-pgid");
+    let wt_pid = child.id() as i32;
+    let status = child.wait().expect("failed to wait for wt");
+    assert!(status.success(), "alias should succeed, got: {status:?}");
+
+    let marker = repo.root_path().join("alias_pgid.txt");
+    let recorded = std::fs::read_to_string(&marker)
+        .unwrap_or_else(|e| panic!("missing pgid marker {marker:?}: {e}"));
+    let alias_pgid: i32 = recorded
+        .trim()
+        .parse()
+        .unwrap_or_else(|e| panic!("could not parse pgid {recorded:?}: {e}"));
+    assert_eq!(
+        alias_pgid, wt_pid,
+        "alias child shell must share wt's pgroup (wt pid={wt_pid}); \
+         got child pgid {alias_pgid}, indicating a new pgroup was created"
+    );
+}
+
 /// SIGINT sent to `wt step <alias>` while a concurrent group is mid-flight
 /// must reach every child's process group and tear them all down — otherwise
 /// Ctrl-C on a long-running concurrent alias would leave orphans behind.

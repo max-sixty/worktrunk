@@ -1491,9 +1491,11 @@ pub fn execute_shell_command(
         cmd = cmd.stdin_bytes(content);
     } else {
         // Inherit the parent's stdin so interactive children (e.g. TUI
-        // pickers) keep their controlling terminal. Without this, `Cmd`
-        // defaults stdin to null and `stdin().is_terminal()` checks fail.
-        cmd = cmd.stdin(Stdio::inherit());
+        // pickers) keep their controlling terminal. `inherit_stdin()` also
+        // keeps the child in the parent's process group so `tcsetattr` on
+        // `/dev/tty` succeeds — see the method's doc comment for the
+        // SIGTTOU rationale.
+        cmd = cmd.inherit_stdin();
     }
 
     if let Some(path) = directives.cd_file {
