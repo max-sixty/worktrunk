@@ -108,44 +108,27 @@ failure, not a broken link:
 When in doubt, post a comment on the failed run summarizing the diagnosis and
 wait — don't open a PR.
 
-## Polling `gh run rerun --failed`: Poll the Jobs, Not the Run
+## Polling `gh run rerun --failed`
 
-After `gh run rerun <run-id> --failed`, **never** poll the parent run's
-status with `until [ "$(gh run view <run-id> --json status --jq .status)" = "completed" ]`.
-The parent run stays `in_progress` until *every* job in it finishes —
-including long-running siblings that have nothing to do with the rerun. On
-this repo, `benchmarks` regularly runs ~150 min on dependabot bumps and other
-PRs, while the `--failed` rerun (`test (linux)`, `code-coverage`, etc.) finishes
-in under 10 min. Polling the run's status blocks the bot for the duration of
-the slowest sibling.
-
-Past occurrences: tend-review [24975304574](https://github.com/max-sixty/worktrunk/actions/runs/24975304574)
-blocked 128 min; tend-mention [25025555994](https://github.com/max-sixty/worktrunk/actions/runs/25025555994)
-blocked 150 min. Both waited on `benchmarks` while the actually-rerun job was
-green within minutes.
-
-Instead, capture the rerun job IDs and poll them as a set:
+After `gh run rerun <run-id> --failed`, poll the rerun jobs directly — the
+parent run's `.status` stays `in_progress` until every sibling job finishes,
+including unrelated long-running ones.
 
 ```bash
 gh run rerun <run-id> --failed --repo "$REPO"
 
-# `gh run rerun` returns immediately, but the new attempt records take a few
-# seconds to surface in `jobs?filter=latest`. Without this sleep, the query
-# below can see only the prior `completed`/`failure` rows and exit without
-# waiting at all.
+# New attempt records take a few seconds to surface; without this sleep,
+# the next query can see only the prior `failure` rows and exit immediately.
 sleep 10
 
-# `?filter=latest` returns each job's most recent attempt — the rerun has
-# the prior `failure` conclusion replaced with the new in-flight attempt.
-# Avoid `!=` in --jq filters: the Bash tool rewrites `!` to `\!`, which jq
-# rejects. Phrase the predicate as `== "completed" | not` instead. (See the
-# bundled `running-in-ci` skill for the full list of bang-rewrite hazards.)
+# `?filter=latest` returns each job's most recent attempt. Avoid `!=` in
+# --jq filters: the Bash tool rewrites `!` to `\!`, which jq rejects. Use
+# `== "completed" | not` instead.
 JOB_IDS=$(gh api "repos/$REPO/actions/runs/<run-id>/jobs?filter=latest" \
   --jq '.jobs[] | select((.status == "completed") | not) | .id')
 
-# Rollup-style polling — one pass per minute checks all reran jobs together
-# and exits when the last one is terminal, instead of nesting per-job loops
-# that would charge the 15-min cap once per job.
+# Rollup poll: one pass checks all reran jobs together and exits when the
+# last one is terminal.
 pending_jobs() {
   local n=0
   for id in $JOB_IDS; do
@@ -161,8 +144,8 @@ done
 ```
 
 The bundled `running-in-ci` `pending()` recipe (statusCheckRollup) does not
-help here — `benchmarks` is also a check-run on the head SHA, so it is still
-seen as pending. Polling specific job IDs is the only fix.
+help — sibling check-runs on the head SHA still appear pending. Polling
+specific job IDs is the only fix.
 
 ## Applying GitHub Suggestions
 
