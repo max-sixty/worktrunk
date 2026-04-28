@@ -185,7 +185,7 @@ the full test suite (`cargo run -- hook pre-merge --yes`) and verify
 
 Bump pinned third-party versions in `.github/workflows/ci.yaml` to track upstream:
 
-- **`hustcer/setup-nu@v3`** — set `version:` to the latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'` and update all three call sites (`test`, `benchmarks`, `code-coverage`). Pinned because `version: '*'` hit GitHub API rate limits (PR #2440).
+- **`hustcer/setup-nu@v3`** — set `version:` to the latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'` and update all three call sites (`test`, `benchmarks`, `code-coverage`).
 
 ## Weekly Maintenance: Statusline Cache-Check
 
