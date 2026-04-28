@@ -866,8 +866,11 @@ impl Cmd {
     ///
     /// When combined with [`Cmd::inherit_stdin()`], the new-pgroup isolation
     /// is skipped (the child shares the parent's pgroup so it can drive the
-    /// controlling terminal). The signal listener still runs so signal-derived
-    /// child exits surface as `WorktrunkError::ChildProcessExited { signal: .. }`.
+    /// controlling terminal); the listener then forwards by PID single-shot
+    /// rather than `killpg`-with-escalation, so externally-delivered signals
+    /// (e.g. `kill -TERM <wt-pid>`) still reach the child. Either way,
+    /// signal-derived child exits surface as
+    /// `WorktrunkError::ChildProcessExited { signal: .. }`.
     ///
     /// Only affects `.stream()` on Unix. No-op on Windows.
     pub fn forward_signals(mut self) -> Self {
