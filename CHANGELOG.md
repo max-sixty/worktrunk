@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.45.1
+
+### Fixed
+
+- **`worktrunk` builds again with `--no-default-features`** (regression in v0.45.0): The TTY progress spinner added in [#2420](https://github.com/max-sixty/worktrunk/pull/2420) used `crossterm` unconditionally, but `crossterm` is gated behind the `cli` feature in `Cargo.toml`. `cargo install --locked --no-default-features worktrunk` and library consumers depending on worktrunk with `default-features = false` failed to compile. The crossterm-using internals are now `#[cfg(feature = "cli")]`-gated; without `cli`, `Progress` degrades to a no-op (the public API is unchanged). The bug slipped past the in-workspace `cargo hack check --feature-powerset --no-dev-deps` because workspace dev-dependencies pull `crossterm` in transitively and Cargo's feature unifier leaks it into the lib build. ([#2441](https://github.com/max-sixty/worktrunk/pull/2441))
+
+### Improved
+
+- **Deprecation warnings for `--claude-code` flag and `wt hook post-create` alias**: Both surfaces previously mapped silently to their canonical replacements (`--format=claude-code` and `pre-start`), giving users no signal to migrate before eventual removal. Each invocation now emits a stderr warning, matching the pattern used by `wt select`, `--no-verify`, and `wt hook approvals`. ([#2436](https://github.com/max-sixty/worktrunk/pull/2436))
+
 ## 0.45.0
 
 ### Improved
