@@ -42,9 +42,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-`deploy` is an alias. Inspect with:
-  wt config alias show deploy
-  wt config alias dry-run deploy
-Forward `--help` to the alias body with `wt deploy -- --help`.
 
 ----- stderr -----
+[2m○[22m [1mdeploy[22m is an alias
+[2m↳[22m [2mTo view config, run [4mwt config alias show deploy[24m; to preview expansion, run [4mwt config alias dry-run deploy[24m; to forward --help to the alias body, run [4mwt deploy -- --help[24m[22m
