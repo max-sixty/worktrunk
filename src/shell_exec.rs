@@ -7,6 +7,38 @@
 //! This enables hooks and commands to use the same bash syntax on all platforms.
 //! On Windows, Git for Windows must be installed — this is nearly universal among
 //! Windows developers since git itself is required.
+//!
+//! ## Process groups and signal handling (Unix, `Cmd::stream`)
+//!
+//! Foreground children spawned through `Cmd::stream()` fall into one of two
+//! shapes, selected by the `forward_signals` / `share_parent_pgroup` pair:
+//!
+//! - **Isolated** (`forward_signals()` alone): the child gets its own process
+//!   group via `process_group(0)`. A signal_hook listener catches SIGINT/
+//!   SIGTERM in wt and `killpg`s the child group with SIGINT→SIGTERM→SIGKILL
+//!   escalation. Used for non-interactive children that may fork further
+//!   subprocesses (hook pipelines, alias steps that read from stdin) — `killpg`
+//!   reaches the whole subtree, which a shared-pgroup approach cannot.
+//!
+//! - **Shared-tty** (`forward_signals().inherit_stdin()`): the child stays in
+//!   wt's process group so it can drive `/dev/tty` (raw mode, `tcsetattr`)
+//!   without the kernel raising SIGTTOU. Tty-initiated signals (Ctrl-C, hangup)
+//!   reach the child via the kernel's foreground-pgroup broadcast; the listener
+//!   additionally delivers externally-targeted signals (e.g. `kill -TERM
+//!   <wt-pid>`) to the child by PID, single-shot. Used for interactive TUIs
+//!   (skim picker, pagers, `$EDITOR`).
+//!
+//! In both cases the listener still records `seen_signal`, so a signal-derived
+//! exit surfaces as `WorktrunkError::ChildProcessExited { signal: Some(_) }` —
+//! the structured channel that loop callers (`for-each`, hook/alias pipelines)
+//! use to abort their loops on Ctrl-C rather than continuing to the next
+//! iteration. See `git/interrupt_exit_code` for the consumer side.
+//!
+//! Concurrent foreground children (`output/concurrent.rs`) and detached
+//! background children (`commands/process.rs::spawn_detached_*`) have separate
+//! spawn paths; both isolate-by-default for the same `killpg` reason. They
+//! never share wt's pgroup because they don't drive the tty (concurrent uses
+//! piped stdio, detached escapes the PTY entirely).
 
 use std::ffi::{OsStr, OsString};
 use std::io::{ErrorKind, Read, Write};
