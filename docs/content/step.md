@@ -15,7 +15,11 @@ Run individual operations. The building blocks of wt merge — commit, squash, r
 
 Commit with LLM-generated message:
 
-{{ terminal(cmd="wt step commit") }}
+{% terminal(cmd="wt step commit") %}
+<span class=c>◎</span> <span class=c>Generating commit message and committing changes... <span style='color:var(--bright-black,#555)'>(2 files, <span class=g>+26</span></span></span><span style='color:var(--bright-black,#555)'>)</span>
+<span style='background:var(--bright-white,#fff)'> </span> <b>feat(validation): add input validation utilities</b>
+<span class=g>✓</span> <span class=g>Committed changes @ <span class=d>a1b2c3d</span></span>
+{% end %}
 
 Manual merge workflow with review between steps:
 
@@ -367,9 +371,15 @@ Reflink copies share disk blocks until modified — no data is actually copied. 
 | `cp -R` (full copy) | 2m |
 | `cp -Rc` / `wt step copy-ignored` | 20s |
 
-Uses per-file reflink (like `cp -Rc`) — copy time scales with file count. On Unix, the process is automatically reniced to lowest priority (nice 19) so it yields to interactive work.
+Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
 
 Use the `post-start` hook so the copy runs in the background. Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
+
+### Background-hook priority (experimental)
+
+When invoked from a background hook pipeline (`post-*` hooks), `wt step copy-ignored` self-lowers its CPU and I/O priority — `taskpolicy -b` on macOS, `nice -n 19` plus `ionice -c 3` on Linux — so it yields to interactive work. Foreground callers (`pre-*` hooks, direct interactive use) run at normal priority so the user isn't waiting on a throttled copy.
+
+wt signals background-hook context by exporting `WORKTRUNK_FOREGROUND=-1` into every detached hook pipeline; `copy-ignored` inspects that variable on entry. The variable name is experimental and may change.
 
 ### Language-specific notes
 
@@ -454,29 +464,29 @@ All [hook template variables and filters](@/hook.md#template-variables) are avai
 
 Get the port for the current branch:
 
-{% terminal(cmd="wt step eval '__WT_OPEN2__ branch | hash_port __WT_CLOSE2__'") %}
+{% terminal(cmd="wt step eval '__WT_OPEN__ branch | hash_port __WT_CLOSE__'") %}
 16066
 {% end %}
 
 Use in shell substitution:
 
-{{ terminal(cmd="curl http://localhost:$(wt step eval '__WT_OPEN2__ branch | hash_port __WT_CLOSE2__')/health") }}
+{{ terminal(cmd="curl http://localhost:$(wt step eval '__WT_OPEN__ branch | hash_port __WT_CLOSE__')/health") }}
 
 Combine multiple values:
 
-{% terminal(cmd="wt step eval '__WT_OPEN2__ branch | hash_port __WT_CLOSE2__,__WT_OPEN2__ (__WT_QUOT__supabase-api-__WT_QUOT__ ~ branch) | hash_port __WT_CLOSE2__'") %}
+{% terminal(cmd="wt step eval '__WT_OPEN__ branch | hash_port __WT_CLOSE__,__WT_OPEN__ (__WT_QUOT__supabase-api-__WT_QUOT__ ~ branch) | hash_port __WT_CLOSE__'") %}
 16066,16739
 {% end %}
 
 Use conditionals and filters:
 
-{% terminal(cmd="wt step eval '__WT_OPEN2__ branch | sanitize_db __WT_CLOSE2__'") %}
+{% terminal(cmd="wt step eval '__WT_OPEN__ branch | sanitize_db __WT_CLOSE__'") %}
 feature_auth_oauth2_a1b
 {% end %}
 
 Show available template variables:
 
-{% terminal(cmd="wt step eval --dry-run '__WT_OPEN2__ branch __WT_CLOSE2__'") %}
+{% terminal(cmd="wt step eval --dry-run '__WT_OPEN__ branch __WT_CLOSE__'") %}
 branch=feature/auth-oauth2
 worktree_path=/home/user/projects/myapp-feature-auth-oauth2
 ...
@@ -544,7 +554,7 @@ Run npm install in all worktrees:
 
 Use branch name in command:
 
-{{ terminal(cmd="wt step for-each -- __WT_QUOT__echo Branch: __WT_OPEN2__ branch __WT_CLOSE2____WT_QUOT__") }}
+{{ terminal(cmd="wt step for-each -- __WT_QUOT__echo Branch: __WT_OPEN__ branch __WT_CLOSE____WT_QUOT__") }}
 
 Pull updates in worktrees with upstreams (skips others):
 
@@ -837,4 +847,4 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
           Skip approval prompts
 {% end %}
 
-<!-- END AUTO-GENERATED from `wt step --help-page` -->
+<!-- END AUTO-GENERATED -->

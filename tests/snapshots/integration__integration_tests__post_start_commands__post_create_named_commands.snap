@@ -45,7 +45,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mProject config: [1mpost-create[22m hook is deprecated in favor of [1mpre-start[22m[39m
+[33m▲[39m [33mProject config: table form for [1mpre-start[22m is deprecated in favor of the pipeline form. We're unifying pre-hooks, post-hooks, and aliases so that list form always runs serially and table form always runs in parallel — migrate now to keep the current serial behavior once the table form is repurposed.[39m
 [2m↳[22m [2mTo see details, run [4mwt config show[24m; to apply updates, run [4mwt config update[24m[22m
 [36m◎[39m [36mRunning pre-start [1mproject:install[22m @ [1m_REPO_.feature[22m[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing deps'[0m[2m

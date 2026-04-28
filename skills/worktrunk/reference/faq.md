@@ -112,6 +112,7 @@ Worktrunk stores small amounts of cache and log data in the repository's `.git/`
 |----------|---------|------------|
 | `git config worktrunk.*` | Cached default branch, switch history, branch markers, custom variables | Various commands |
 | `.git/wt/cache/{kind}/*.json` | Cached CI status and git command results (merge-tree, integration probes, diff stats, ancestry checks) | `wt list`, `wt merge`, `wt remove` |
+| `.git/wt/cache/summary/{branch}/{hash}.json` | Cached LLM branch summaries, content-addressed by diff hash | `wt list --full`, `wt switch` (when `[list] summary = true`) |
 | `.git/wt/logs/{branch}/**/*.log` | Background hook output (nested per branch) | Hooks, background `wt remove` |
 | `.git/wt/logs/commands.jsonl` | Command audit log (~2MB max) | Hooks, LLM commands |
 | `.git/wt/logs/trace.log` | Debug log (mirrors stderr) for issue reporting | Running with `-vv` |

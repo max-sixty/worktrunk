@@ -224,4 +224,4 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Skip approval prompts
 {% end %}
 
-<!-- END AUTO-GENERATED from `wt switch --help-page` -->
+<!-- END AUTO-GENERATED -->

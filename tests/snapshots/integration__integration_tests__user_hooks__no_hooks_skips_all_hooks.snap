@@ -46,8 +46,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mUser config: [1mpost-create[22m hook is deprecated in favor of [1mpre-start[22m[39m
-[2m↳[22m [2mTo see details, run [4mwt config show[24m; to apply updates, run [4mwt config update[24m[22m
 [32m✓[39m [32mCreated branch [1mfeature[22m from [1mmain[22m and worktree @ [1m_REPO_.feature[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m

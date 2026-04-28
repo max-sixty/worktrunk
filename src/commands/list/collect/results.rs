@@ -266,9 +266,6 @@ pub(super) fn drain_results_with_timings(
         let item = &mut items[item_idx];
 
         match result {
-            TaskResult::CommitDetails { commit, .. } => {
-                item.commit = Some(commit);
-            }
             TaskResult::AheadBehind {
                 counts, is_orphan, ..
             } => {
@@ -658,7 +655,7 @@ mod tests {
 
         // Register expected results but don't send any — simulates tasks still running
         let expected = ExpectedResults::default();
-        expected.expect(0, TaskKind::CommitDetails);
+        expected.expect(0, TaskKind::Upstream);
         expected.expect(0, TaskKind::AheadBehind);
 
         // Use an already-expired deadline — remaining.is_zero() triggers immediately
@@ -687,7 +684,7 @@ mod tests {
         assert!(
             items_with_missing[0]
                 .missing_kinds
-                .contains(&TaskKind::CommitDetails)
+                .contains(&TaskKind::Upstream)
         );
         assert!(
             items_with_missing[0]
@@ -711,7 +708,7 @@ mod tests {
 
         let expected = ExpectedResults::default();
         expected.expect(0, TaskKind::AheadBehind);
-        expected.expect(1, TaskKind::CommitDetails);
+        expected.expect(1, TaskKind::Upstream);
 
         let mut stall_events: Vec<(usize, TaskKind, String)> = Vec::new();
         let outcome = drain_results_with_timings(
@@ -758,7 +755,7 @@ mod tests {
         let mut errors = Vec::new();
 
         let expected = ExpectedResults::default();
-        expected.expect(0, TaskKind::CommitDetails);
+        expected.expect(0, TaskKind::Upstream);
 
         tx.send(Ok(TaskResult::SummaryGenerate {
             item_idx: 0,
@@ -809,7 +806,7 @@ mod tests {
         let mut errors = Vec::new();
 
         let expected = ExpectedResults::default();
-        expected.expect(0, TaskKind::CommitDetails);
+        expected.expect(0, TaskKind::Upstream);
         expected.expect(0, TaskKind::AheadBehind);
 
         let mut sender = Some(tx);

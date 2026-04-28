@@ -47,5 +47,5 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRemoving [1mfeature-fg-keep[22m worktree...[39m
-[32m✓[39m [32mRemoved [1mfeature-fg-keep[22m worktree[39m
+[32m✓[39m [32mRemoved [1mfeature-fg-keep[22m worktree[39m [90m(3 files · [BYTES] B[39m[90m)[39m
 [2m↳[22m [2mBranch integrated (same commit as [4mmain[24m, [2m_[22m); retained with [4m--no-delete-branch[24m[22m

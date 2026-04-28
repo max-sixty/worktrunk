@@ -205,6 +205,45 @@ fn test_switch_dwim_ambiguous_remotes(#[from(repo_with_remote)] mut repo: TestRe
     snapshot_switch("switch_dwim_ambiguous_remotes", &repo, &["shared-feature"]);
 }
 
+/// `--base <branch>` should accept a branch that exists only as a remote-tracking ref
+/// (e.g., `origin/releases/4.x.x`) when the user passes the bare name. Without this,
+/// `wt switch -c new --base releases/4.x.x` fails the pre-validation in
+/// `resolve_switch_target` even though `git worktree add` would have DWIM'd it.
+/// Regression test for GitHub issue #2410.
+#[rstest]
+fn test_switch_create_with_remote_only_base(#[from(repo_with_remote)] repo: TestRepo) {
+    // Create a branch with slashes/dots on the remote only (matches the issue repro).
+    repo.run_git(&["branch", "releases/4.x.x"]);
+    repo.run_git(&["push", "origin", "releases/4.x.x"]);
+    repo.run_git(&["branch", "-D", "releases/4.x.x"]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "new-wt", "--base", "releases/4.x.x"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The new branch must exist and must NOT track the remote base
+    // (same safety property as test_switch_create_from_remote_base_no_upstream).
+    let branch_output = repo.git_output(&["branch", "--list", "new-wt"]);
+    assert!(branch_output.contains("new-wt"), "branch should be created");
+
+    let upstream_check = repo
+        .git_command()
+        .args(["rev-parse", "--abbrev-ref", "new-wt@{upstream}"])
+        .run()
+        .unwrap();
+    assert!(
+        !upstream_check.status.success(),
+        "new branch should NOT track origin/releases/4.x.x"
+    );
+}
+
 /// When creating a new branch from a remote tracking branch (e.g., origin/main),
 /// the new branch should NOT track the remote base branch.
 /// This prevents accidental `git push` to the base branch (e.g., pushing to main).

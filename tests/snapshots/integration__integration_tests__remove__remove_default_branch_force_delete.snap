@@ -40,4 +40,4 @@ exit_code: 0
 
 ----- stderr -----
 ◎ Removing main worktree...
-✓ Removed main worktree & branch (--force-delete)
+✓ Removed main worktree & branch (--force-delete) (2 files · [BYTES] B)

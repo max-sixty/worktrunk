@@ -901,6 +901,8 @@ fn setup_snapshot_settings_for_paths_with_home(
         "post-start-[NAME]-[TIMESTAMP].log",
     );
 
+    add_remove_stats_byte_filter(&mut settings);
+
     // Filter out Git hint messages that vary across Git versions
     // These hints appear during rebase conflicts and can differ between versions
     // Pattern matches lines with gutter formatting + "hint:" + message + newline
@@ -1114,8 +1116,27 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
     settings.add_filter(r"wt\.exe", "wt");
 
     add_standard_env_redactions(&mut settings);
+    add_remove_stats_byte_filter(&mut settings);
 
     settings
+}
+
+/// Normalize byte counts inside the `(N files · X UNIT)` stats parenthetical
+/// emitted by `wt remove --foreground`.
+///
+/// The walk in `remove_dir_with_progress` hits the renamed worktree's `.git`
+/// pointer file, whose content is the gitdir's absolute path — so the byte
+/// total is sensitive to the temp-dir prefix (macOS `/var/folders/...` vs
+/// Linux `/tmp/...` vs Windows). The literal `(...files · X UNIT)` shape is
+/// unique enough to leave the deterministic copy-ignored summary
+/// (`Copied N files · X B` — no surrounding parens) untouched, so the regex
+/// doesn't depend on ANSI styling and works in both colored and `NO_COLOR`
+/// test environments.
+fn add_remove_stats_byte_filter(settings: &mut insta::Settings) {
+    settings.add_filter(
+        r"(\(\d+ files? · )\d+(?:\.\d+)? (B|KiB|MiB|GiB|TiB)",
+        "${1}[BYTES] $2",
+    );
 }
 
 // =============================================================================

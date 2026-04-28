@@ -29,15 +29,43 @@ use worktrunk::git::{
     remove_worktree_with_cleanup, stage_worktree_removal,
 };
 use worktrunk::path::format_path_for_display;
+use worktrunk::progress::{Progress, format_stats_paren};
+use worktrunk::remove_dir::remove_dir_with_progress;
 use worktrunk::styling::{
     FormattedMessage, eprintln, error_message, format_with_gutter, hint_message, info_message,
-    progress_message, success_message, suggest_command, warning_message,
+    progress_message, success_message, suggest_command, verbosity, warning_message,
 };
 
 use super::shell_integration::{
     compute_shell_warning_reason, explicit_path_hint, git_subcommand_warning,
     shell_integration_hint, should_show_explicit_path_hint,
 };
+
+// ============================================================================
+// Foreground Trash Cleanup
+// ============================================================================
+
+/// Walk the staged trash directory, unlinking files with a TTY spinner.
+///
+/// Used by the foreground removal path after `remove_worktree_with_cleanup`
+/// renames the worktree into `<git-common-dir>/wt/trash/`. The spinner shows
+/// `⠼ Removing N files · X MiB` while the walk proceeds; the returned counts
+/// drive the post-op summary so the success message matches the spinner.
+///
+/// Suppresses the spinner when stderr isn't a TTY (auto-detected by
+/// `Progress::start`) or when verbosity ≥ 1 (verbose mode prefers structured
+/// output over live updates). The walk itself is best-effort — see
+/// [`remove_dir_with_progress`].
+fn cleanup_staged_with_progress(staged: &Path) -> (usize, u64) {
+    let progress = if verbosity() >= 1 {
+        Progress::disabled()
+    } else {
+        Progress::start("Removing")
+    };
+    let result = remove_dir_with_progress(staged, &progress);
+    progress.finish();
+    result
+}
 
 // ============================================================================
 // Background Removal Helpers
@@ -1034,7 +1062,18 @@ impl RemovalDisplayInfo {
     }
 
     /// Print the removal message (progress for background, success for foreground).
-    fn print_message(&self, branch_name: &str, foreground: bool) -> anyhow::Result<()> {
+    ///
+    /// `stats` carries the trash-cleanup file/byte counts surfaced by the
+    /// foreground spinner (see `remove_dir_with_progress`). Pass `None` for
+    /// the background path — those don't run a spinner and shouldn't show
+    /// stats. The `(N files · X MiB)` suffix is gray, matching the
+    /// "stats parentheses" convention in the user-output skill.
+    fn print_message(
+        &self,
+        branch_name: &str,
+        foreground: bool,
+        stats: Option<(usize, u64)>,
+    ) -> anyhow::Result<()> {
         let flag_note = flag_note(
             if self.branch_deleted() {
                 BranchDeletionMode::SafeDelete // Doesn't matter, outcome already determined
@@ -1049,6 +1088,9 @@ impl RemovalDisplayInfo {
         } else {
             ""
         };
+        let stats_paren = stats
+            .map(|(f, b)| format_stats_paren(f, b))
+            .unwrap_or_default();
 
         let msg = if foreground {
             if self.branch_deleted() {
@@ -1057,10 +1099,12 @@ impl RemovalDisplayInfo {
                     "Removed <bold>{branch_name}</> worktree{force_text} & branch{flag_text}"
                 ))
                 .append(&flag_note.after(AnsiColor::Green))
+                .append(&stats_paren)
             } else {
                 success_message(cformat!(
                     "Removed <bold>{branch_name}</> worktree{force_text}"
                 ))
+                .append(&stats_paren)
             }
         } else if self.branch_deleted() {
             let flag_text = &flag_note.text;
@@ -1228,15 +1272,19 @@ fn handle_detached_removed_worktree_output(
             remaining_entries: list_remaining_entries(ctx.worktree_path),
             error: err.to_string(),
         })?;
-        if let Some(staged) = output.staged_path {
-            let _ = std::fs::remove_dir_all(&staged);
-        }
+        let (files, bytes) = output
+            .staged_path
+            .as_deref()
+            .map(cleanup_staged_with_progress)
+            .unwrap_or((0, 0));
+        let stats_paren = format_stats_paren(files, bytes);
         eprintln!(
             "{}",
             success_message(cformat!(
                 "Removed worktree @ <bold>{}</> (detached HEAD, no branch to delete)",
                 format_path_for_display(ctx.worktree_path)
             ))
+            .append(&stats_paren)
         );
     } else {
         let path_display = format_path_for_display(ctx.worktree_path);
@@ -1297,9 +1345,11 @@ fn handle_named_removed_worktree_foreground(
         remaining_entries: list_remaining_entries(ctx.worktree_path),
         error: err.to_string(),
     })?;
-    if let Some(staged) = output.staged_path {
-        let _ = std::fs::remove_dir_all(&staged);
-    }
+    let stats = output
+        .staged_path
+        .as_deref()
+        .map(cleanup_staged_with_progress)
+        .unwrap_or((0, 0));
 
     let display_info = RemovalDisplayInfo::from_branch_result(
         output.branch_result,
@@ -1309,7 +1359,7 @@ fn handle_named_removed_worktree_foreground(
         ctx.force_worktree,
     )?;
 
-    display_info.print_message(branch_name, true)?;
+    display_info.print_message(branch_name, true, Some(stats))?;
     display_info.print_hints(branch_name, ctx.deletion_mode, ctx.pre_computed_integration)?;
     print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
 
@@ -1337,7 +1387,7 @@ fn handle_named_removed_worktree_background(
         ctx.force_worktree,
     );
 
-    display_info.print_message(branch_name, false)?;
+    display_info.print_message(branch_name, false, None)?;
     display_info.print_hints(branch_name, ctx.deletion_mode, ctx.pre_computed_integration)?;
     print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
 
@@ -1439,6 +1489,13 @@ pub fn execute_shell_command(
 
     if let Some(content) = stdin_content {
         cmd = cmd.stdin_bytes(content);
+    } else {
+        // Inherit the parent's stdin so interactive children (e.g. TUI
+        // pickers) keep their controlling terminal. `inherit_stdin()` also
+        // keeps the child in the parent's process group so `tcsetattr` on
+        // `/dev/tty` succeeds — see the method's doc comment for the
+        // SIGTTOU rationale.
+        cmd = cmd.inherit_stdin();
     }
 
     if let Some(path) = directives.cd_file {

@@ -89,13 +89,9 @@ impl RepositoryCliExt for Repository {
         worktrees: Option<&[WorktreeInfo]>,
     ) -> anyhow::Result<RemoveResult> {
         let current_path = current_path.map_or_else(|| self.current_worktree().root(), Ok)?;
-        let owned_worktrees;
         let worktrees = match worktrees {
             Some(wts) => wts,
-            None => {
-                owned_worktrees = self.list_worktrees()?;
-                &owned_worktrees
-            }
+            None => self.list_worktrees()?,
         };
         // Primary worktree path: prefer default branch's worktree, fall back to first
         // worktree, then repo base for bare repos with no worktrees.

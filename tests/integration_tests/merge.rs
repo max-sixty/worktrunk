@@ -1218,6 +1218,294 @@ command = "{llm_path_str}"
 // were removed - they're covered by PTY-based tests in shell_wrapper.rs that capture
 // combined stdout/stderr for README examples.
 
+// ============================================================================
+// Docs-page example snapshots
+//
+// These drive the static command-output blocks on docs pages that are otherwise
+// dominated by GIFs (merge.md, step.md, remove.md, hook.md). Each snapshot is
+// threaded into the corresponding page via a `<!-- wt <cmd> (docs-example) -->`
+// marker in `src/cli/mod.rs`; `readme_sync.rs` writes the plain output back
+// into the source (for terminal `--help`) and also renders the colorized form
+// for the docs site. Keep these scenarios realistic and concise — the output
+// appears on public pages.
+// ============================================================================
+
+/// `wt merge` example for `docs/content/merge.md` — pre-merge hook running
+/// `cargo nextest run`, one-commit fast-forward merge, background cleanup.
+#[rstest]
+fn test_docs_merge_pre_merge_hook(mut repo: TestRepo) {
+    repo.run_git(&["config", "worktrunk.hints.worktree-path", "true"]);
+
+    let bin_dir = repo.root_path().join(".bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    crate::common::mock_commands::MockConfig::new("cargo")
+        .command(
+            "nextest",
+            crate::common::mock_commands::MockResponse::output(
+                "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Summary [   0.002s] 2 tests run: 2 passed, 0 skipped
+",
+            ),
+        )
+        .write(&bin_dir);
+
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        r#"[[pre-merge]]
+test = "cargo nextest run"
+"#,
+    )
+    .unwrap();
+    repo.run_git(&["add", ".config/wt.toml", ".bin"]);
+    repo.run_git(&["commit", "-m", "Add project config"]);
+
+    let feature_wt = repo.add_worktree_with_commit(
+        "hooks",
+        "hook.rs",
+        r#"//! Hook registration and dispatch.
+
+use std::collections::HashMap;
+
+/// A named hook handler.
+pub struct Hook {
+    pub name: String,
+    pub kind: HookKind,
+}
+
+/// Hook invocation phase.
+pub enum HookKind {
+    PreMerge,
+    PreRemove,
+    PostStart,
+}
+
+/// Registry of hooks keyed by name.
+pub struct Registry {
+    hooks: HashMap<String, Hook>,
+}
+
+impl Registry {
+    pub fn new() -> Self {
+        Self { hooks: HashMap::new() }
+    }
+
+    pub fn register(&mut self, hook: Hook) {
+        self.hooks.insert(hook.name.clone(), hook);
+    }
+}
+"#,
+        "feat: add hook registration",
+    );
+
+    let directive_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(".wt-directive-docs-merge");
+    fs::write(&directive_file, "").unwrap();
+
+    let (path_var, path_with_bin) = make_path_with_mock_bin(&bin_dir);
+    let bin_dir_str = bin_dir.to_string_lossy();
+    let directive_file_str = directive_file.to_string_lossy().into_owned();
+    snapshot_merge_with_env(
+        "docs_merge_pre_merge_hook",
+        &repo,
+        &["--yes"],
+        Some(&feature_wt),
+        &[
+            (&path_var, &path_with_bin),
+            ("MOCK_CONFIG_DIR", &bin_dir_str),
+            ("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file_str),
+        ],
+    );
+}
+
+/// `wt merge` example for `docs/content/llm-commits.md` — three commits
+/// squashed with an LLM-generated message, then merged to default branch.
+#[rstest]
+fn test_docs_merge_squash_llm(mut repo: TestRepo) {
+    repo.run_git(&["config", "worktrunk.hints.worktree-path", "true"]);
+
+    let feature_wt = repo.add_worktree("feature");
+
+    fs::write(
+        feature_wt.join("auth.rs"),
+        "pub fn refresh(token: &str) -> String { token.to_string() }\npub fn validate_signature(_: &str) -> bool { true }\n",
+    )
+    .unwrap();
+    fs::write(
+        feature_wt.join("auth_test.rs"),
+        "use super::*;\n#[test] fn refresh_rotates() { assert_eq!(refresh(\"t\"), \"t\"); }\n",
+    )
+    .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "auth.rs", "auth_test.rs"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add token refresh logic"]);
+
+    fs::write(
+        feature_wt.join("jwt.rs"),
+        "pub fn decode_claims(token: &str) -> Option<&str> { token.split('.').nth(1) }\npub fn encode(payload: &str) -> String { format!(\"h.{}.s\", payload) }\npub fn verify(_: &str, _: &str) -> bool { true }\n",
+    )
+    .unwrap();
+    fs::write(
+        feature_wt.join("jwt_test.rs"),
+        "use super::*;\n#[test] fn decode_returns_payload() { assert_eq!(decode_claims(\"h.p.s\"), Some(\"p\")); }\n#[test] fn encode_wraps_payload() { assert_eq!(encode(\"p\"), \"h.p.s\"); }\n",
+    )
+    .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "jwt.rs", "jwt_test.rs"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Implement JWT validation"]);
+
+    fs::write(
+        feature_wt.join("integration_test.rs"),
+        "use super::*;\n#[test] fn full_auth_flow() {\n    let tok = refresh(\"seed\");\n    assert!(validate_signature(&tok));\n    assert!(verify(&tok, \"sig\"));\n}\n",
+    )
+    .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "integration_test.rs"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add authentication tests"]);
+
+    let squash_message = "feat(auth): Implement JWT authentication system
+
+Add comprehensive JWT token handling including validation, refresh
+logic, and authentication tests.";
+
+    let directive_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(".wt-directive-docs-merge-squash");
+    fs::write(&directive_file, "").unwrap();
+    let directive_file_str = directive_file.to_string_lossy().into_owned();
+
+    snapshot_merge_with_env(
+        "docs_merge_squash_llm",
+        &repo,
+        &[],
+        Some(&feature_wt),
+        &[
+            (
+                "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+                &format!("cat >/dev/null && echo '{squash_message}'"),
+            ),
+            ("WORKTRUNK_DIRECTIVE_CD_FILE", &directive_file_str),
+        ],
+    );
+}
+
+/// `wt step squash` example for `docs/content/llm-commits.md` — three commits
+/// squashed with an LLM-generated message.
+#[rstest]
+fn test_docs_step_squash_llm(mut repo: TestRepo) {
+    repo.run_git(&["config", "worktrunk.hints.worktree-path", "true"]);
+
+    let feature_wt = repo.add_worktree("feature");
+
+    // Three commits in the feature worktree, totaling ~48 lines across 5 files.
+    fs::write(
+        feature_wt.join("auth.rs"),
+        "pub fn refresh(token: &str) -> String { token.to_string() }\npub fn validate_signature(_: &str) -> bool { true }\n",
+    )
+    .unwrap();
+    fs::write(
+        feature_wt.join("auth_test.rs"),
+        "use super::*;\n#[test] fn refresh_rotates() { assert_eq!(refresh(\"t\"), \"t\"); }\n",
+    )
+    .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "auth.rs", "auth_test.rs"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add token refresh logic"]);
+
+    fs::write(
+        feature_wt.join("jwt.rs"),
+        "pub fn decode_claims(token: &str) -> Option<&str> { token.split('.').nth(1) }\npub fn encode(payload: &str) -> String { format!(\"h.{}.s\", payload) }\npub fn verify(_: &str, _: &str) -> bool { true }\n",
+    )
+    .unwrap();
+    fs::write(
+        feature_wt.join("jwt_test.rs"),
+        "use super::*;\n#[test] fn decode_returns_payload() { assert_eq!(decode_claims(\"h.p.s\"), Some(\"p\")); }\n#[test] fn encode_wraps_payload() { assert_eq!(encode(\"p\"), \"h.p.s\"); }\n",
+    )
+    .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "jwt.rs", "jwt_test.rs"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Implement JWT validation"]);
+
+    fs::write(
+        feature_wt.join("integration_test.rs"),
+        "use super::*;\n#[test] fn full_auth_flow() {\n    let tok = refresh(\"seed\");\n    assert!(validate_signature(&tok));\n    assert!(verify(&tok, \"sig\"));\n}\n",
+    )
+    .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "integration_test.rs"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add authentication tests"]);
+
+    let squash_message = "feat(auth): Implement JWT authentication system
+
+Add comprehensive JWT token handling including validation, refresh
+logic, and authentication tests.";
+
+    assert_cmd_snapshot!("docs_step_squash_llm", {
+        let mut cmd = make_snapshot_cmd(&repo, "step", &["squash"], Some(&feature_wt));
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            format!("cat >/dev/null && echo '{squash_message}'"),
+        );
+        cmd
+    });
+}
+
+/// `wt step commit` example for `docs/content/step.md` and `docs/content/llm-commits.md`.
+/// Feature worktree with two staged files + LLM-generated commit message.
+#[rstest]
+fn test_docs_step_commit_llm(mut repo: TestRepo) {
+    repo.run_git(&["config", "worktrunk.hints.worktree-path", "true"]);
+
+    let feature_wt = repo.add_worktree("feature");
+
+    fs::write(
+        feature_wt.join("validation.rs"),
+        r#"//! Input validation helpers.
+
+/// Returns true if the value is strictly positive.
+pub fn is_positive(n: i64) -> bool {
+    n > 0
+}
+
+/// Returns true if the string has at least one non-whitespace character.
+pub fn is_non_empty(s: &str) -> bool {
+    !s.trim().is_empty()
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        feature_wt.join("validation_test.rs"),
+        r#"use super::*;
+
+#[test]
+fn accepts_positive_numbers() {
+    assert!(is_positive(1));
+    assert!(!is_positive(0));
+    assert!(!is_positive(-1));
+}
+
+#[test]
+fn accepts_non_empty_strings() {
+    assert!(is_non_empty("hello"));
+    assert!(!is_non_empty(""));
+    assert!(!is_non_empty("   "));
+}
+"#,
+    )
+    .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "validation.rs", "validation_test.rs"]);
+
+    assert_cmd_snapshot!("docs_step_commit_llm", {
+        let mut cmd = make_snapshot_cmd(&repo, "step", &["commit"], Some(&feature_wt));
+        cmd.env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat(validation): add input validation utilities'",
+        );
+        cmd
+    });
+}
+
 #[rstest]
 fn test_merge_no_commit_with_clean_tree(mut repo_with_feature_worktree: TestRepo) {
     let repo = &mut repo_with_feature_worktree;

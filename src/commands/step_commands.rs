@@ -28,6 +28,7 @@ use worktrunk::config::{CopyIgnoredConfig, UserConfig};
 use worktrunk::copy::{copy_dir_recursive, copy_leaf};
 use worktrunk::git::{Repository, WorktreeInfo};
 use worktrunk::path::format_path_for_display;
+use worktrunk::progress::{Progress, format_bytes};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
@@ -704,7 +705,14 @@ pub fn step_copy_ignored(
     dry_run: bool,
     force: bool,
 ) -> anyhow::Result<()> {
-    worktrunk::priority::lower_current_process();
+    // Self-lower only when we're running inside a background hook pipeline
+    // (parent `wt` sets `WORKTRUNK_FOREGROUND=-1` on the detached runner).
+    // Foreground callers — interactive `wt step copy-ignored` and synchronous
+    // `pre-*` hook pipelines — are the UI the user is waiting on and must not
+    // be I/O-throttled by `taskpolicy -b` on macOS.
+    if worktrunk::priority::in_background_hook() {
+        worktrunk::priority::lower_current_process();
+    }
     let repo = Repository::current()?;
     let copy_ignored_config = resolve_copy_ignored_config(&repo)?;
 
@@ -753,8 +761,8 @@ pub fn step_copy_ignored(
 
     let worktree_paths: Vec<PathBuf> = repo
         .list_worktrees()?
-        .into_iter()
-        .map(|wt| wt.path)
+        .iter()
+        .map(|wt| wt.path.clone())
         .collect();
     let entries_to_copy = list_and_filter_ignored_entries(
         &source_path,
@@ -798,7 +806,15 @@ pub fn step_copy_ignored(
         }
     }
 
+    // `start` auto-detects the TTY; verbose/dry-run already print enough.
+    let progress = if verbose >= 1 || dry_run {
+        Progress::disabled()
+    } else {
+        Progress::start("Copying")
+    };
+
     let mut copied_count = 0usize;
+    let mut copied_bytes = 0u64;
     for (src_entry, is_dir) in &entries_to_copy {
         let relative = src_entry
             .strip_prefix(&source_path)
@@ -806,10 +822,12 @@ pub fn step_copy_ignored(
         let dest_entry = dest_path.join(relative);
 
         if *is_dir {
-            copied_count +=
-                copy_dir_recursive(src_entry, &dest_entry, force).with_context(|| {
+            let (n, b) = copy_dir_recursive(src_entry, &dest_entry, force, &progress)
+                .with_context(|| {
                     format!("copying directory {}", format_path_for_display(relative))
                 })?;
+            copied_count += n;
+            copied_bytes += b;
         } else {
             if let Some(parent) = dest_entry.parent() {
                 fs::create_dir_all(parent).with_context(|| {
@@ -819,17 +837,23 @@ pub fn step_copy_ignored(
                     )
                 })?;
             }
-            if copy_leaf(src_entry, &dest_entry, force)? {
+            if let Some(bytes) = copy_leaf(src_entry, &dest_entry, force)? {
                 copied_count += 1;
+                copied_bytes += bytes;
+                progress.record(bytes);
             }
         }
     }
+    progress.finish();
 
     // Show summary
     let file_word = if copied_count == 1 { "file" } else { "files" };
     eprintln!(
         "{}",
-        success_message(format!("Copied {copied_count} {file_word}"))
+        success_message(format!(
+            "Copied {copied_count} {file_word} · {}",
+            format_bytes(copied_bytes)
+        ))
     );
 
     Ok(())
@@ -897,7 +921,7 @@ fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
 /// Copy then delete — fallback when `rename` fails with EXDEV (cross-device).
 fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
     if is_dir {
-        copy_dir_recursive(src, dest, true)?;
+        copy_dir_recursive(src, dest, true, &Progress::disabled())?;
         fs::remove_dir_all(src).context(format!("removing source directory {}", src.display()))?;
     } else {
         copy_leaf(src, dest, true)?;
@@ -1609,9 +1633,7 @@ pub fn step_prune(
                 dry_run_info.push((candidate, info));
             } else if is_current {
                 deferred_current = Some(candidate);
-            } else if try_remove(
-                &candidate, &repo, &config, foreground, run_hooks, &worktrees,
-            )? {
+            } else if try_remove(&candidate, &repo, &config, foreground, run_hooks, worktrees)? {
                 removed.push(candidate);
             }
             continue;
@@ -1662,9 +1684,7 @@ pub fn step_prune(
                 suffix,
             };
             dry_run_info.push((candidate, info));
-        } else if try_remove(
-            &candidate, &repo, &config, foreground, run_hooks, &worktrees,
-        )? {
+        } else if try_remove(&candidate, &repo, &config, foreground, run_hooks, worktrees)? {
             removed.push(candidate);
         }
     }
@@ -1735,7 +1755,7 @@ pub fn step_prune(
 
     // Remove deferred current worktree last (cd-to-primary happens here)
     if let Some(current) = deferred_current
-        && try_remove(&current, &repo, &config, foreground, run_hooks, &worktrees)?
+        && try_remove(&current, &repo, &config, foreground, run_hooks, worktrees)?
     {
         removed.push(current);
     }

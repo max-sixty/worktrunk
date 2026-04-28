@@ -7,6 +7,38 @@
 //! This enables hooks and commands to use the same bash syntax on all platforms.
 //! On Windows, Git for Windows must be installed — this is nearly universal among
 //! Windows developers since git itself is required.
+//!
+//! ## Process groups and signal handling (Unix, `Cmd::stream`)
+//!
+//! Foreground children spawned through `Cmd::stream()` fall into one of two
+//! shapes, selected by the `forward_signals` / `share_parent_pgroup` pair:
+//!
+//! - **Isolated** (`forward_signals()` alone): the child gets its own process
+//!   group via `process_group(0)`. A signal_hook listener catches SIGINT/
+//!   SIGTERM in wt and `killpg`s the child group with SIGINT→SIGTERM→SIGKILL
+//!   escalation. Used for non-interactive children that may fork further
+//!   subprocesses (hook pipelines, alias steps that read from stdin) — `killpg`
+//!   reaches the whole subtree, which a shared-pgroup approach cannot.
+//!
+//! - **Shared-tty** (`forward_signals().inherit_stdin()`): the child stays in
+//!   wt's process group so it can drive `/dev/tty` (raw mode, `tcsetattr`)
+//!   without the kernel raising SIGTTOU. Tty-initiated signals (Ctrl-C, hangup)
+//!   reach the child via the kernel's foreground-pgroup broadcast; the listener
+//!   additionally delivers externally-targeted signals (e.g. `kill -TERM
+//!   <wt-pid>`) to the child by PID, single-shot. Used for interactive TUIs
+//!   (skim picker, pagers, `$EDITOR`).
+//!
+//! In both cases the listener still records `seen_signal`, so a signal-derived
+//! exit surfaces as `WorktrunkError::ChildProcessExited { signal: Some(_) }` —
+//! the structured channel that loop callers (`for-each`, hook/alias pipelines)
+//! use to abort their loops on Ctrl-C rather than continuing to the next
+//! iteration. See `git/interrupt_exit_code` for the consumer side.
+//!
+//! Concurrent foreground children (`output/concurrent.rs`) and detached
+//! background children (`commands/process.rs::spawn_detached_*`) have separate
+//! spawn paths; both isolate-by-default for the same `killpg` reason. They
+//! never share wt's pgroup because they don't drive the tty (concurrent uses
+//! piped stdio, detached escapes the PTY entirely).
 
 use std::ffi::{OsStr, OsString};
 use std::io::{ErrorKind, Read, Write};
@@ -575,6 +607,11 @@ pub struct Cmd {
     stdout_cfg: Option<std::process::Stdio>,
     /// Stdin configuration for stream() (defaults to null, or piped if stdin_data is set)
     stdin_cfg: Option<std::process::Stdio>,
+    /// If true, the child shares the parent's process group instead of being
+    /// isolated in its own — required when the child reads the controlling
+    /// terminal (interactive TUI pickers, pagers). Set via `.inherit_stdin()`.
+    /// See the comment in `stream()` for the SIGTTOU rationale.
+    share_parent_pgroup: bool,
     /// If true, forward signals to child process group (for stream(), Unix only)
     forward_signals: bool,
     /// When set, log this command to the command log after execution.
@@ -630,6 +667,7 @@ impl Cmd {
             shell_wrap,
             stdout_cfg: None,
             stdin_cfg: None,
+            share_parent_pgroup: false,
             forward_signals: false,
             external_label: None,
             directive_cd_file: None,
@@ -786,8 +824,10 @@ impl Cmd {
 
     /// Set stdin configuration for `.stream()`.
     ///
-    /// Defaults to `Stdio::null()`. Use `Stdio::inherit()` for interactive commands
-    /// that need to read user input.
+    /// Defaults to `Stdio::null()`. For interactive commands that need the
+    /// parent's controlling terminal, use [`Cmd::inherit_stdin()`] instead —
+    /// it also makes `.forward_signals()` keep the child in the parent's
+    /// process group (required to avoid SIGTTOU stopping the child mid-render).
     ///
     /// Only affects `.stream()`. For `.run()`, stdin defaults to null unless
     /// data is provided via `.stdin_bytes()`.
@@ -796,11 +836,38 @@ impl Cmd {
         self
     }
 
+    /// Inherit the parent's stdin, including the controlling terminal.
+    ///
+    /// Required for children that read from a TTY (interactive TUI pickers,
+    /// pagers, anything that calls `tcsetattr` on `/dev/tty`). When combined
+    /// with [`Cmd::forward_signals()`], the child is *not* isolated in its
+    /// own process group — it shares the parent's. A child reading the
+    /// parent's tty must share the foreground pgroup, or the kernel sends
+    /// SIGTTOU when the child manipulates terminal settings, suspending it.
+    ///
+    /// In the shared-pgroup case the kernel already delivers tty-initiated
+    /// signals (SIGINT from Ctrl-C, SIGTSTP from Ctrl-Z, SIGHUP on hangup)
+    /// to every process in the foreground pgroup. For externally-delivered
+    /// signals that only reach wt (e.g. `kill -TERM <wt-pid>`), the listener
+    /// re-delivers to the child by PID so the child also exits — without
+    /// escalation, since the caller chose the signal and a premature SIGKILL
+    /// would skip the child's tty restore.
+    pub fn inherit_stdin(mut self) -> Self {
+        self.stdin_cfg = Some(std::process::Stdio::inherit());
+        self.share_parent_pgroup = true;
+        self
+    }
+
     /// Forward signals (SIGINT, SIGTERM) to child process group.
     ///
     /// On Unix, spawns the child in its own process group and forwards signals
     /// with escalation (SIGINT → SIGTERM → SIGKILL). This enables clean shutdown
     /// of the entire process tree on Ctrl-C.
+    ///
+    /// When combined with [`Cmd::inherit_stdin()`], the new-pgroup isolation
+    /// is skipped (the child shares the parent's pgroup so it can drive the
+    /// controlling terminal). The signal listener still runs so signal-derived
+    /// child exits surface as `WorktrunkError::ChildProcessExited { signal: .. }`.
     ///
     /// Only affects `.stream()` on Unix. No-op on Windows.
     pub fn forward_signals(mut self) -> Self {
@@ -1147,8 +1214,16 @@ impl Cmd {
         };
 
         #[cfg(unix)]
-        if self.forward_signals {
+        if self.forward_signals && !self.share_parent_pgroup {
             // Isolate the child in its own process group so we can signal the whole tree.
+            //
+            // Skipped when the caller used `.inherit_stdin()`: a child that
+            // reads the parent's controlling terminal must share the
+            // foreground pgroup, otherwise calls like skim/tuikit's
+            // `tcsetattr` on `/dev/tty` raise SIGTTOU and stop the child
+            // mid-render. The kernel already delivers tty-initiated signals
+            // (Ctrl-C, Ctrl-Z, hangup) to every process in the shared
+            // pgroup, so explicit forwarding is redundant in that case.
             cmd.process_group(0);
         }
 
@@ -1178,7 +1253,7 @@ impl Cmd {
         // Wait for child with optional signal forwarding
         #[cfg(unix)]
         let (status, seen_signal) = if self.forward_signals {
-            let child_pgid = child.id() as i32;
+            let child_pid = child.id() as i32;
             let mut seen_signal: Option<i32> = None;
             loop {
                 if let Some(status) = child.try_wait().map_err(|e| {
@@ -1192,7 +1267,21 @@ impl Cmd {
                     for sig in signals.pending() {
                         if seen_signal.is_none() {
                             seen_signal = Some(sig);
-                            forward_signal_with_escalation(child_pgid, sig);
+                            if self.share_parent_pgroup {
+                                // Shared-pgroup mode: tty-initiated signals
+                                // (Ctrl-C, hangup) already hit the child via
+                                // kernel fg-pgroup delivery. Forward by PID
+                                // anyway so externally-delivered signals
+                                // (e.g. `kill -TERM <wt-pid>`) also reach the
+                                // child — they otherwise stop at wt. Single
+                                // shot, no escalation: if the user chose
+                                // SIGTERM, an unsolicited SIGKILL would skip
+                                // the child's tty restore (raw-mode reset,
+                                // cursor-show) and leave the terminal wedged.
+                                forward_signal_to_pid(child_pid, sig);
+                            } else {
+                                forward_signal_with_escalation(child_pid, sig);
+                            }
                         }
                     }
                 }
@@ -1277,6 +1366,22 @@ fn process_group_alive(pgid: i32) -> bool {
 fn wait_for_exit(pgid: i32, grace: std::time::Duration) -> bool {
     std::thread::sleep(grace);
     !process_group_alive(pgid)
+}
+
+/// Single-shot signal delivery to a specific PID. Used in shared-pgroup mode
+/// where the child isn't a pgroup leader (so `killpg` would target a non-
+/// existent group), and where the kernel has already broadcast tty signals
+/// to the foreground pgroup — explicit forwarding only matters for
+/// externally-delivered signals (e.g. `kill -TERM <wt-pid>`). No escalation:
+/// see the call site in `Cmd::stream` for the rationale.
+#[cfg(unix)]
+fn forward_signal_to_pid(pid: i32, sig: i32) {
+    let nix_sig = match sig {
+        signal_hook::consts::SIGINT => nix::sys::signal::Signal::SIGINT,
+        signal_hook::consts::SIGTERM => nix::sys::signal::Signal::SIGTERM,
+        _ => return,
+    };
+    let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix_sig);
 }
 
 #[cfg(unix)]

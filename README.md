@@ -119,9 +119,9 @@ cargo install worktrunk && wt config shell install
 ```
 
 <details>
-<summary><strong>Windows</strong></summary>
+<summary><strong>Windows & other</strong></summary>
 
-On Windows, `wt` defaults to Windows Terminal's command. Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
+**Windows.** `wt` defaults to Windows Terminal's command, so Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
 
 ```bash
 winget install max-sixty.worktrunk
@@ -130,13 +130,21 @@ git-wt config shell install
 
 Alternatively, disable Windows Terminal's alias (Settings → Privacy & security → For developers → App Execution Aliases → disable "Windows Terminal") to use `wt` directly.
 
-</details>
-
 **Arch Linux:**
 
 ```bash
 sudo pacman -S worktrunk && wt config shell install
 ```
+
+**Conda / Pixi** (community-maintained [feedstock](https://github.com/conda-forge/worktrunk-feedstock)):
+
+```bash
+conda install -c conda-forge worktrunk && wt config shell install
+```
+
+Or with [Pixi](https://pixi.sh): `pixi global install worktrunk && wt config shell install`.
+
+</details>
 
 ## Quick start
 
@@ -144,7 +152,7 @@ Create a worktree for a new feature:
 
 ```console
 $ wt switch --create feature-auth
-✓ Created branch feature-auth from main and worktree @ repo.feature-auth
+✓ Created branch feature-auth from main and worktree @ ~/repo.feature-auth
 
 ```
 
@@ -186,7 +194,7 @@ $ wt merge main
    2 files changed, 53 insertions(+)
 ✓ Merged to main (1 commit, 2 files, +53)
 ◎ Removing feature-auth worktree & branch in background (same commit as main, _)
-○ Switched to worktree for main @ repo
+○ Switched to worktree for main @ ~/repo
 
 ```
 

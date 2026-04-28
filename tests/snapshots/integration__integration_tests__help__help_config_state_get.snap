@@ -65,6 +65,7 @@ Shows all stored state including:
 - [1mBranch markers[0m: User-defined branch notes
 - [1mVars[0m: Custom variables per branch
 - [1mCI status[0m: Cached GitHub/GitLab CI status per branch (30s TTL)
+- [1mSummaries[0m: Cached LLM-generated branch summaries (shown in [2mwt list --full[0m and [2mwt switch[0m preview)
 - [1mGit commands cache[0m: SHA-keyed merge-tree, ancestry, and diff-stats results
 - [1mHints[0m: One-time hints that have been shown
 - [1mLog files[0m: Operation and debug logs

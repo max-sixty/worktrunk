@@ -45,7 +45,7 @@ fn test_post_create_no_config(repo: TestRepo) {
 #[rstest]
 fn test_post_create_single_command(repo: TestRepo) {
     // Create project config with a single command (string format)
-    repo.write_project_config(r#"post-create = "echo 'Setup complete'""#);
+    repo.write_project_config(r#"pre-start = "echo 'Setup complete'""#);
 
     repo.commit("Add config");
 
@@ -68,7 +68,7 @@ approved-commands = ["echo 'Setup complete'"]
 fn test_post_create_named_commands(repo: TestRepo) {
     // Create project config with named commands (table format)
     repo.write_project_config(
-        r#"[post-create]
+        r#"[pre-start]
 install = "echo 'Installing deps'"
 setup = "echo 'Running setup'"
 "#,
@@ -97,7 +97,7 @@ approved-commands = [
 #[rstest]
 fn test_post_create_failing_command(repo: TestRepo) {
     // Create project config with a command that will fail
-    repo.write_project_config(r#"post-create = "exit 1""#);
+    repo.write_project_config(r#"pre-start = "exit 1""#);
 
     repo.commit("Add config with failing command");
 
@@ -108,7 +108,7 @@ approved-commands = ["exit 1"]
 "#,
     );
 
-    // Failing pre-start hook (via deprecated post-create name) aborts with FailFast
+    // Failing pre-start hook (via deprecated pre-start name) aborts with FailFast
     snapshot_switch(
         "post_create_failing_command",
         &repo,
@@ -120,7 +120,7 @@ approved-commands = ["exit 1"]
 fn test_post_create_template_expansion(repo: TestRepo) {
     // Create project config with template variables
     repo.write_project_config(
-        r#"[post-create]
+        r#"[pre-start]
 repo = "echo 'Repo: {{ repo }}' > info.txt"
 branch = "echo 'Branch: {{ branch }}' >> info.txt"
 hash_port = "echo 'Port: {{ branch | hash_port }}' >> info.txt"
@@ -199,9 +199,9 @@ approved-commands = [
 
 #[rstest]
 fn test_post_create_verbose_template_expansion(repo: TestRepo) {
-    // Test that -v shows template expansion for post-create hooks
+    // Test that -v shows template expansion for pre-start hooks
     repo.write_project_config(
-        r#"[post-create]
+        r#"[pre-start]
 setup = "echo 'Setting up {{ branch | sanitize }} in {{ worktree_path }}'"
 "#,
     );
@@ -239,7 +239,7 @@ approved-commands = [
 fn test_post_create_default_branch_template(repo: TestRepo) {
     // Create project config with default_branch template variable
     repo.write_project_config(
-        r#"post-create = "echo 'Default: {{ default_branch }}' > default.txt""#,
+        r#"pre-start = "echo 'Default: {{ default_branch }}' > default.txt""#,
     );
 
     repo.commit("Add config with default_branch template");
@@ -285,7 +285,7 @@ fn test_post_create_git_variables_template(#[from(repo_with_remote)] repo: TestR
 
     // Create project config with git-related template variables
     repo.write_project_config(
-        r#"[post-create]
+        r#"[pre-start]
 commit = "echo 'Commit: {{ commit }}' > git_vars.txt"
 short = "echo 'Short: {{ short_commit }}' >> git_vars.txt"
 remote = "echo 'Remote: {{ remote }}' >> git_vars.txt"
@@ -360,7 +360,7 @@ fn test_post_create_upstream_template(#[from(repo_with_remote)] repo: TestRepo) 
     // Note: {{ upstream }} errors when the new branch has no upstream tracking.
     // The new feature branch won't have an upstream until it's pushed with -u.
     // This test verifies the error case - see test_post_create_upstream_conditional for the fix.
-    repo.write_project_config(r#"post-create = "echo 'Upstream: {{ upstream }}' > upstream.txt""#);
+    repo.write_project_config(r#"pre-start = "echo 'Upstream: {{ upstream }}' > upstream.txt""#);
 
     repo.commit("Add config with upstream template");
 
@@ -393,7 +393,7 @@ fn test_post_create_upstream_conditional(#[from(repo_with_remote)] repo: TestRep
     // Create project config with conditional upstream check
     // Using {% if not upstream %} allows safe handling of undefined variables
     repo.write_project_config(
-        r#"post-create = "{% if not upstream %}echo 'no-upstream' > upstream.txt{% else %}echo '{{ upstream }}' > upstream.txt{% endif %}""#,
+        r#"pre-start = "{% if not upstream %}echo 'no-upstream' > upstream.txt{% else %}echo '{{ upstream }}' > upstream.txt{% endif %}""#,
     );
 
     repo.commit("Add config with conditional upstream");
@@ -433,7 +433,7 @@ approved-commands = ["{% if not upstream %}echo 'no-upstream' > upstream.txt{% e
 fn test_post_create_base_variables(repo: TestRepo) {
     // Create project config with base template variables
     repo.write_project_config(
-        r#"[post-create]
+        r#"[pre-start]
 base = "echo 'Base: {{ base }}' > base_info.txt"
 base_path = "echo 'Base Path: {{ base_worktree_path }}' >> base_info.txt"
 "#,
@@ -505,7 +505,7 @@ fn test_post_create_json_stdin(repo: TestRepo) {
 
     // Create project config with a command that reads JSON from stdin
     // Use cat to capture stdin to a file
-    repo.write_project_config(r#"post-create = "cat > context.json""#);
+    repo.write_project_config(r#"pre-start = "cat > context.json""#);
 
     repo.commit("Add config");
 
@@ -602,7 +602,7 @@ with open('hook_output.txt', 'w') as f:
 
     // Create project config that runs the script
     repo.write_project_config(
-        r#"[post-create]
+        r#"[pre-start]
 setup = "./scripts/setup.py"
 "#,
     );
@@ -825,7 +825,7 @@ approved-commands = [
 fn test_both_post_create_and_post_start(repo: TestRepo) {
     // Create project config with both command types
     repo.write_project_config(
-        r#"post-create = "echo 'Setup done' > setup.txt"
+        r#"pre-start = "echo 'Setup done' > setup.txt"
 
 [post-start]
 server = "sleep 0.05 && echo 'Server running' > server.txt"
@@ -847,7 +847,7 @@ approved-commands = [
     // Post-create should run first (blocking), then post-start (background)
     snapshot_switch("both_create_and_start", &repo, &["--create", "feature"]);
 
-    // Setup file should exist immediately (post-create is blocking)
+    // Setup file should exist immediately (pre-start is blocking)
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     assert!(
         worktree_path.join("setup.txt").exists(),
@@ -861,7 +861,7 @@ approved-commands = [
 #[rstest]
 fn test_invalid_toml(repo: TestRepo) {
     // Create invalid TOML
-    repo.write_project_config("post-create = [invalid syntax\n");
+    repo.write_project_config("pre-start = [invalid syntax\n");
 
     repo.commit("Add invalid config");
 
@@ -1135,7 +1135,7 @@ approved-commands = ["""
 fn test_post_create_multiline_with_control_structures(repo: TestRepo) {
     // Test multiline command with if-else control structure
     repo.write_project_config(
-        r#"post-create = """
+        r#"pre-start = """
 if [ ! -f test.txt ]; then
   echo 'File does not exist' > result.txt
 else

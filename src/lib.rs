@@ -7,6 +7,7 @@
 //! with worktrunk, please [open an issue](https://github.com/max-sixty/worktrunk/issues)
 //! to discuss your use case.
 
+pub mod cache;
 pub mod command_log;
 pub mod config;
 pub mod copy;
@@ -14,6 +15,8 @@ pub mod docs;
 pub mod git;
 pub mod path;
 pub mod priority;
+pub mod progress;
+pub mod remove_dir;
 pub mod shell;
 pub mod shell_exec;
 pub mod styling;

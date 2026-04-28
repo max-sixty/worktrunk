@@ -40,7 +40,7 @@ use worktrunk::config::{
 };
 use worktrunk::git::Repository;
 use worktrunk::styling::{
-    eprintln, format_with_gutter, info_message, println, progress_message, verbosity,
+    eprintln, format_with_gutter, hint_message, info_message, progress_message, verbosity,
     warning_message,
 };
 
@@ -99,11 +99,12 @@ fn help_flag_requested(args: &[String]) -> bool {
 /// inspection path and documents the `--` escape for forwarding `--help` into
 /// the alias body.
 fn emit_alias_help_hint(name: &str) {
-    println!(
-        "`{name}` is an alias. Inspect with:
-  wt config alias show {name}
-  wt config alias dry-run {name}
-Forward `--help` to the alias body with `wt {name} -- --help`."
+    eprintln!("{}", info_message(cformat!("<bold>{name}</> is an alias")));
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "To view config, run <underline>wt config alias show {name}</>; to preview expansion, run <underline>wt config alias dry-run {name}</>; to forward --help to the alias body, run <underline>wt {name} -- --help</>"
+        ))
     );
 }
 

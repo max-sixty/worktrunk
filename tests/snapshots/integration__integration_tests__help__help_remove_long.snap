@@ -91,6 +91,11 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
 Remove current worktree:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove[0m
+[107m [0m [2m[0m[2m[34m◎[0m[2m Running pre-remove project:cleanup[0m
+[107m [0m [2m  [0m[2m[34mflyctl[0m[2m scale count 0[0m
+[107m [0m [2m[0m[2m[34mScaling[0m[2m app to 0 machines[0m
+[107m [0m [2m[0m[2m[34m◎[0m[2m Removing api worktree & [0m[2m[34mbranch[0m[2m in background ([0m[2m[34msame[0m[2m commit as main, _)[0m
+[107m [0m [2m[0m[2m[34m○[0m[2m Switched to worktree for main @ ~/repo[0m
 
 Remove specific worktrees / branches:
 

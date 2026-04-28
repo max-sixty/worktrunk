@@ -38,7 +38,7 @@ Claude Code is designed to load the skill automatically when it detects worktrun
 
 The plugin tracks Claude sessions with status markers in `wt list`:
 
-<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__list_with_user_marker.snap — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__list_with_user_marker.snap — edit source to update -->
 
 {% terminal(cmd="wt list") %}
 <span class="cmd">wt list</span>

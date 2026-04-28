@@ -118,7 +118,7 @@ Documentation has three categories:
    dev/*.example.toml (included via include_str!)
        ↓
    src/cli/mod.rs (PRIMARY SOURCE)
-       ↓ test_command_pages_and_skill_files_are_in_sync
+       ↓ test_docs_are_in_sync
    docs/content/{command}.md → skills/worktrunk/reference/{command}.md
    ```
    Edit `src/cli/mod.rs` (`after_long_help` attributes), never the docs directly.
@@ -126,13 +126,15 @@ Documentation has three categories:
 2. **Non-command docs** (claude-code, faq, llm-commits, tips-patterns, worktrunk):
    ```
    docs/content/*.md (PRIMARY SOURCE)
-       ↓ test_command_pages_and_skill_files_are_in_sync
+       ↓ test_docs_are_in_sync
    skills/worktrunk/reference/*.md
    ```
    Edit the docs file directly. Skill reference is auto-synced.
 
 3. **Skill-only files** (shell-integration.md, troubleshooting.md):
    Edit `skills/worktrunk/reference/` directly — no docs equivalent.
+
+   When adding a skill-only file, also add a `linguist-generated=false` exemption to `.gitattributes`. The broad `skills/worktrunk/reference/*.md linguist-generated=true` rule marks every skill file as generated, which collapses real edits in GitHub PR diffs — a source of surprise during review (see #2409).
 
 ### Help text authoring
 
@@ -149,7 +151,7 @@ Link text must stand alone when the URL is stripped (terminal help drops the URL
 After any doc changes, run tests to sync:
 
 ```bash
-cargo test --test integration test_command_pages_and_skill_files_are_in_sync
+cargo test --test integration test_docs_are_in_sync
 ```
 
 After editing `after_long_help` text, also update the help snapshots:
@@ -421,7 +423,7 @@ CLI commands live in `src/cli/` with implementations in `src/commands/`.
 3. **Add `after_long_help`** attribute for extended help that syncs to docs
 4. **Run doc sync** after adding help text:
    ```bash
-   cargo test --test integration test_command_pages_and_skill_files_are_in_sync
+   cargo test --test integration test_docs_are_in_sync
    ```
 
 Help text in `after_long_help` is the source of truth for `docs/content/{command}.md`.

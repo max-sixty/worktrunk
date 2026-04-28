@@ -19,7 +19,13 @@ metadata:
    ```bash
    cargo release X.Y.Z -p worktrunk -x --no-publish --no-push --no-tag --no-verify --no-confirm && cargo check
    ```
-   This bumps `Cargo.toml`, `Cargo.lock`, and applies `pre-release-replacements` (e.g., SKILL.md), then auto-commits. We'll reset this commit in step 9 to fold in the CHANGELOG.
+   This bumps `Cargo.toml`, `Cargo.lock`, and applies `pre-release-replacements` (e.g., `SKILL.md`'s `version:` line), then auto-commits. We'll reset this commit in step 9 to fold in the CHANGELOG.
+
+   Then sync the SHA-256 digest of `SKILL.md` in `docs/static/.well-known/agent-skills/index.json` — `cargo-release` doesn't know that file derives from `SKILL.md`, so it stays stale until the docs-sync test rewrites it:
+   ```bash
+   cargo test --test integration test_docs_are_in_sync || cargo test --test integration test_docs_are_in_sync
+   ```
+   The first run rewrites the digest and exits non-zero; the second confirms sync. The regenerated `index.json` is then picked up by `git add -A` in step 9.
 8. **Update CHANGELOG**: Add `## X.Y.Z` section at top with changes (see MANDATORY verification below)
 9. **Commit**: Reset the auto-commit from step 7, stage everything, and create the final release commit:
    ```bash

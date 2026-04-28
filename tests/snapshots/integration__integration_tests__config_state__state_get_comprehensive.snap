@@ -25,6 +25,11 @@ expression: "String::from_utf8_lossy(&output.stdout)"
  ─────── ────── ─── ──────── 
  feature passed now abc12345
 
+[36mSUMMARY CACHE[39m
+ Branch               Summary               Age 
+ ─────── ────────────────────────────────── ─── 
+ feature Add constant-time token validation now
+
 [36mGIT COMMANDS CACHE[39m
 [107m [0m 2 entries
 

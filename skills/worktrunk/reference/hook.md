@@ -22,8 +22,8 @@ The most common starting point is `post-start` — it runs background tasks (dev
 |------|---------|
 | `pre-switch` | Runs before branch resolution or worktree creation. `{{ branch }}` is the destination as typed (before resolution) |
 | `post-switch` | Triggers on all switch results: creating, switching to existing, or staying on current |
-| `pre-start` | Tasks that must complete before `post-start`/`--execute`: dependency install, env file generation |
-| `post-start` | Dev servers, long builds, file watchers, copying caches |
+| `pre-start` | Runs once when a new worktree is created, blocking `post-start`/`--execute` until complete: dependency install, env file generation |
+| `post-start` | Runs once when a new worktree is created, in the background: dev servers, long builds, file watchers, copying caches |
 | `pre-commit` | Formatters, linters, type checking — runs during `wt merge` before the squash commit |
 | `post-commit` | CI triggers, notifications, background linting |
 | `pre-merge` | Tests, security scans, build verification — runs after rebase, before merge to target |
@@ -252,6 +252,31 @@ $ wt hook pre-merge -- --extra args     # Forward tokens into {{ args }}
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
+```
+$ wt hook pre-merge
+◎ Running pre-merge project:test
+  cargo test
+    Finished test [unoptimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)
+
+running 18 tests
+test auth::tests::test_jwt_decode ... ok
+test auth::tests::test_jwt_encode ... ok
+test auth::tests::test_token_refresh ... ok
+test auth::tests::test_token_validation ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+◎ Running pre-merge project:lint
+  cargo clippy
+    Checking worktrunk v0.1.0
+    Finished dev [unoptimized + debuginfo] target(s) in 1.23s
+```
+
+```bash
+$ wt hook post-start
+◎ Running post-start: project @ ~/acme
+```
+
 ## Passing values
 
 `--KEY=VALUE` binds `KEY` whenever `{{ KEY }}` appears in any command of the hook — the same smart-routing rule `wt <alias>` uses. Built-in variables can be overridden: `--branch=foo` sets `{{ branch }}` inside hook templates (the worktree's actual branch doesn't move). Hyphens in keys become underscores: `--my-var=x` sets `{{ my_var }}`.
@@ -260,7 +285,7 @@ Any `--KEY=VALUE` whose key isn't referenced by a hook template forwards into `{
 
 The long form `--var KEY=VALUE` is deprecated but still supported. It force-binds regardless of whether any hook template references `KEY` — useful when a template only references the key conditionally (e.g. `{% if override %}…{% endif %}`).
 
-## Recipes
+# Recipes
 
 - [Eliminate cold starts](https://worktrunk.dev/tips-patterns/#eliminate-cold-starts): `wt step copy-ignored` in `post-start` shares build caches and dependencies; use a `[[post-start]]` pipeline when a later hook depends on the copy
 - [Dev server per worktree](https://worktrunk.dev/tips-patterns/#dev-server-per-worktree): `hash_port` in `post-start` for launch and `post-remove` for cleanup, with optional subdomain routing

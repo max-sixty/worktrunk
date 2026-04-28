@@ -33,7 +33,13 @@
 //! **What is NOT cached.** Values that change during command execution are intentionally
 //! excluded:
 //! - `WorkingTree::is_dirty()` — changes as we stage and commit
-//! - `Repository::list_worktrees()` — changes as we create and remove worktrees
+//!
+//! [`Repository::list_worktrees`] is cached despite mutating commands adding or
+//! removing worktrees. The cache is safe because no caller reads the list
+//! through the same `Repository` after its own mutation — mutating paths
+//! either read once up front and thread the slice through, or rebuild a
+//! fresh `Repository::at(...)` before any post-mutation probe. This mirrors
+//! the invariant the branch inventories already rely on.
 //!
 //! **Access patterns.** See the [`RepoCache`] doc comment for the two storage patterns
 //! (repo-wide `OnceCell` vs per-key `DashMap`) and their infallible/fallible variants.
@@ -62,7 +68,6 @@
 //! The picker also maintains a `PreviewCache` (`Arc<DashMap>` in `commands/picker/items.rs`)
 //! for rendered preview output, scoped to a single picker session.
 
-use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -87,7 +92,9 @@ use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 use super::{DefaultBranchName, GitError, IntegrationReason, LineDiff, WorktreeInfo};
 
 // Re-export types needed by submodules
-pub(super) use super::{BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl};
+pub(super) use super::{
+    BranchCategory, CompletionBranch, DiffStats, GitRemoteUrl, LocalBranch, RemoteBranch,
+};
 
 // Submodules with impl blocks
 mod branch;
@@ -96,7 +103,7 @@ mod config;
 mod diff;
 mod integration;
 mod remotes;
-mod sha_cache;
+pub mod sha_cache;
 mod working_tree;
 mod worktrees;
 
@@ -234,7 +241,7 @@ pub(super) struct RepoCache {
     /// Ahead/behind cache: (base_ref, head) -> (ahead, behind).
     /// Primed in bulk by `batch_ahead_behind()`; populated on demand by
     /// `ahead_behind()` for keys the batch didn't cover (e.g., HEAD SHAs
-    /// during rebase/merge, or git < 2.36 where the batch returns empty).
+    /// during rebase/merge, or git < 2.36 where the batch is a no-op).
     pub(super) ahead_behind: DashMap<(String, String), (usize, usize)>,
     /// Effective remote URLs: remote_name -> effective URL (with `url.insteadOf` applied).
     /// Separate from `all_config` because `git remote get-url` applies
@@ -263,14 +270,26 @@ pub(super) struct RepoCache {
     /// Used by `rev_parse_commit()` to key the persistent `sha_cache` by SHA.
     pub(super) commit_shas: DashMap<String, String>,
 
-    /// Upstream tracking branch cache: local branch -> upstream (e.g., "origin/main").
-    /// None means "no upstream configured". Lazily loaded on first access via
-    /// `Branch::upstream()` → `fetch_all_upstreams()`.
-    pub(super) upstreams: OnceCell<HashMap<String, Option<String>>>,
-    /// Commit details cache: commit SHA -> (timestamp, subject).
-    /// Multiple items sharing the same HEAD commit (e.g., worktrees on main)
-    /// would otherwise each spawn a `git log -1` for the same SHA.
-    pub(super) commit_details: DashMap<String, (i64, String)>,
+    /// Local branch inventory: one `git for-each-ref refs/heads/` scan, cached
+    /// for the lifetime of the repository. Entries are sorted by most recent
+    /// commit first; the inventory also holds a name → index map for O(1)
+    /// single-branch lookups. Populated lazily via
+    /// [`Repository::local_branches`] — the first call runs the scan and
+    /// primes `resolved_refs`/`commit_shas` so subsequent ref resolution and
+    /// SHA lookups hit memory.
+    pub(super) local_branches: OnceCell<branches::LocalBranchInventory>,
+    /// Remote-tracking branch inventory: one `git for-each-ref refs/remotes/`
+    /// scan, cached for the lifetime of the repository. Sorted by most recent
+    /// commit first. Populated lazily via [`Repository::remote_branches`].
+    /// Excludes `<remote>/HEAD` symrefs.
+    pub(super) remote_branches: OnceCell<Vec<RemoteBranch>>,
+    /// Worktree inventory: one `git worktree list --porcelain` scan, cached
+    /// for the lifetime of the repository. Populated lazily via
+    /// [`Repository::list_worktrees`]. The picker warms this on the main
+    /// thread (for its preview-window sizing estimate) so the background
+    /// `collect::collect` pass hits memory instead of respawning the
+    /// subprocess on the critical path to skeleton.
+    pub(super) worktrees: OnceCell<Vec<WorktreeInfo>>,
     /// In-memory branch diff stats cache: (base_sha, head_sha) -> LineDiff.
     /// Sits in front of the persistent `sha_cache` to prevent parallel tasks
     /// from racing through the file-based cache for the same SHA pair.
@@ -284,6 +303,11 @@ pub(super) struct RepoCache {
     pub(super) worktree_roots: DashMap<PathBuf, PathBuf>,
     /// Current branch per worktree: worktree_path -> branch name (None = detached HEAD)
     pub(super) current_branches: DashMap<PathBuf, Option<String>>,
+    /// HEAD commit SHA per worktree: worktree_path -> SHA (None = unborn, HEAD unresolvable).
+    /// Primed in bulk by `WorkingTree::prewarm_info()`; lazily resolved on miss via
+    /// `WorkingTree::head_sha()`. Lets alias-context expansion consult the cache
+    /// instead of spawning a fresh `git rev-parse HEAD`.
+    pub(super) head_shas: DashMap<PathBuf, Option<String>>,
     /// Cached `git status --porcelain` output per worktree: worktree_path -> raw porcelain.
     /// Populated by `WorkingTree::status_porcelain_cached()` so parallel tasks
     /// (working-tree diff + conflict detection) share one subprocess per worktree
@@ -628,19 +652,6 @@ impl Repository {
         self.git_common_dir().join("wt")
     }
 
-    /// Clear all cached git command results, returning the count removed.
-    pub fn clear_git_commands_cache(&self) -> usize {
-        sha_cache::clear_all(self)
-    }
-
-    /// Count all cached git command results without clearing.
-    ///
-    /// Surfaces the same state that `clear_git_commands_cache` would sweep,
-    /// for the `wt config state get` parity view.
-    pub fn git_commands_cache_count(&self) -> usize {
-        sha_cache::count_all(self)
-    }
-
     /// Get the directory where worktrunk background logs are stored.
     ///
     /// Returns `<git-common-dir>/wt/logs/` (typically `.git/wt/logs/`).
@@ -668,58 +679,66 @@ impl Repository {
     ///
     /// Result is cached in the repository's shared cache (same for all clones).
     ///
-    /// # Why we run from `git_common_dir`
+    /// # Resolution strategy
     ///
-    /// We need to return the *main* worktree regardless of which worktree we were discovered
-    /// from. For linked worktrees, `git_common_dir` is the stable reference that's shared
-    /// across all worktrees (e.g., `/myapp/.git` whether you're in `/myapp` or `/myapp.feature`).
+    /// We anchor on `git_common_dir` so that linked worktrees return the
+    /// *main* worktree regardless of which worktree we were discovered
+    /// from — `git_common_dir` is the stable reference shared across all
+    /// worktrees (e.g., `/myapp/.git` whether you're in `/myapp` or
+    /// `/myapp.feature`).
     ///
-    /// # Why the try-fallback approach
+    /// | git_common_dir location    | Signal                     | Resolution                    |
+    /// |----------------------------|----------------------------|-------------------------------|
+    /// | Bare `.git`                | `core.bare = true`         | `git_common_dir` is the repo  |
+    /// | Submodule `.git/modules/X` | `core.worktree` set by git | `rev-parse --show-toplevel`   |
+    /// | Normal `.git`              | neither set                | `parent(git_common_dir)`      |
     ///
-    /// `--show-toplevel` behavior depends on whether git has explicit worktree metadata:
+    /// Submodules need `core.worktree` because their git data lives in the
+    /// parent's `.git/modules/` — the `parent(.git)` rule would point at
+    /// `.git/modules`, which is wrong. Git writes `core.worktree`
+    /// explicitly to compensate.
     ///
-    /// | git_common_dir location    | Has `core.worktree`? | `--show-toplevel` works? |
-    /// |----------------------------|----------------------|--------------------------|
-    /// | Normal `.git`              | No (implicit)        | No — "not a work tree"   |
-    /// | Submodule `.git/modules/X` | Yes (explicit)       | Yes — reads config       |
-    ///
-    /// Normal repos don't need `core.worktree` because the worktree is implicitly `parent(.git)`.
-    /// Submodules need it because their git data lives in the parent's `.git/modules/`.
-    ///
-    /// So we try `--show-toplevel` first (handles submodules), fall back to `parent()` (handles
-    /// normal repos). This avoids fragile path-based detection of submodules.
+    /// We can't read `core.worktree` straight from the bulk config map:
+    /// `git config --list -z` merges system/global/local scope, but git
+    /// only honors `core.worktree` from **local** config for worktree
+    /// discovery. So when the bulk map reports it, we delegate to
+    /// `rev-parse --show-toplevel` and let git apply its scope rules; if
+    /// the probe fails (non-local value, git ignored it) we fall through
+    /// to the normal-repo path. The common case — no `core.worktree`
+    /// anywhere — skips the subprocess, which is the point.
     ///
     /// # Errors
     ///
-    /// Returns an error if `is_bare()` fails (e.g., git timeout). This surfaces
-    /// the failure early rather than caching a potentially wrong path.
+    /// Returns an error if the bulk config read fails (e.g., git timeout). This
+    /// surfaces the failure early rather than caching a potentially wrong path.
     pub fn repo_path(&self) -> anyhow::Result<&Path> {
         self.cache
             .repo_path
             .get_or_try_init(|| {
-                // Submodules: --show-toplevel succeeds (git has explicit core.worktree config)
-                if let Ok(out) = Cmd::new("git")
-                    .args(["rev-parse", "--show-toplevel"])
-                    .current_dir(&self.git_common_dir)
-                    .context(path_to_logging_context(&self.git_common_dir))
-                    .run()
+                if self.is_bare()? {
+                    return Ok(self.git_common_dir.clone());
+                }
+
+                // `core.worktree` in the bulk map could come from any scope,
+                // but git only honors the local one. Let git resolve scope
+                // via `rev-parse --show-toplevel` rather than trusting the
+                // merged value ourselves.
+                if self.config_last("core.worktree")?.is_some()
+                    && let Ok(out) = Cmd::new("git")
+                        .args(["rev-parse", "--show-toplevel"])
+                        .current_dir(&self.git_common_dir)
+                        .context(path_to_logging_context(&self.git_common_dir))
+                        .run()
                     && out.status.success()
                 {
                     return Ok(PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()));
                 }
 
-                // --show-toplevel failed:
-                // 1. Bare repos (no working tree) → git_common_dir IS the repo
-                // 2. Normal repos from inside .git → parent is the repo
-                if self.is_bare()? {
-                    Ok(self.git_common_dir.clone())
-                } else {
-                    Ok(self
-                        .git_common_dir
-                        .parent()
-                        .expect("Git directory has no parent")
-                        .to_path_buf())
-                }
+                Ok(self
+                    .git_common_dir
+                    .parent()
+                    .expect("Git directory has no parent")
+                    .to_path_buf())
             })
             .map(|p| p.as_path())
     }
@@ -768,6 +787,19 @@ impl Repository {
         Ok(guard.get(&canonical).and_then(|v| v.last().cloned()))
     }
 
+    /// Read a git-bool config value, defaulting to `false` when the key is
+    /// unset or absent.
+    ///
+    /// Returns `Err` only when the bulk config read itself fails. A missing
+    /// key is `Ok(false)`, matching git's own behaviour for unset booleans.
+    pub(super) fn config_bool(&self, key: &str) -> anyhow::Result<bool> {
+        Ok(self
+            .config_last(key)?
+            .as_deref()
+            .map(parse_git_bool)
+            .unwrap_or(false))
+    }
+
     /// Check if this is a bare repository (no working tree).
     ///
     /// Bare repositories have no main worktree — all worktrees are linked
@@ -787,11 +819,7 @@ impl Repository {
     ///
     /// See <https://github.com/max-sixty/worktrunk/issues/1939>.
     pub fn is_bare(&self) -> anyhow::Result<bool> {
-        Ok(self
-            .config_last("core.bare")?
-            .as_deref()
-            .map(parse_git_bool)
-            .unwrap_or(false))
+        self.config_bool("core.bare")
     }
 
     /// Get the sparse checkout paths for this repository.
@@ -825,12 +853,7 @@ impl Repository {
     /// config to the builtin daemon. Returns false for Watchman hook paths,
     /// disabled, or unset.
     pub fn is_builtin_fsmonitor_enabled(&self) -> bool {
-        self.config_last("core.fsmonitor")
-            .ok()
-            .flatten()
-            .as_deref()
-            .map(parse_git_bool)
-            .unwrap_or(false)
+        self.config_bool("core.fsmonitor").unwrap_or(false)
     }
 
     /// Start the fsmonitor daemon at a worktree path.

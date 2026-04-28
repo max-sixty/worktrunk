@@ -766,6 +766,62 @@ new-branch = "'{wt_toml}' switch --create alias-created"
     );
 }
 
+/// Alias subprocesses inherit the parent's stdin so interactive children
+/// (e.g. `wt switch`'s picker) keep the controlling terminal.
+///
+/// Regression test for #406: alias execution used to pipe the template
+/// context JSON into each child's stdin, which displaced the tty and broke
+/// `stdin().is_terminal()` guards in interactive commands. Only hooks have a
+/// documented JSON-on-stdin contract; aliases must leave stdin alone.
+#[rstest]
+fn test_alias_inherits_stdin(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+echo-stdin = "cat"
+"#,
+    );
+    repo.commit("initial");
+
+    let sentinel = "INHERITED_STDIN_TOKEN";
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "echo-stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().unwrap();
+    {
+        // Drop closes the pipe so `cat` sees EOF and exits.
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(sentinel.as_bytes()).unwrap();
+    }
+    let output = child.wait_with_output().unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "wt step echo-stdin failed: stdout={stdout}\nstderr={stderr}",
+    );
+
+    // stderr carries the "Running alias" banner; the alias body's stdout is
+    // redirected to stderr for deterministic ordering (see
+    // `execute_shell_command`). Check the combined output.
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        combined.contains(sentinel),
+        "alias body should read the parent's stdin ({sentinel} expected), \
+         got stdout={stdout:?} stderr={stderr:?}",
+    );
+    // The pre-fix behavior piped the context JSON (which always includes a
+    // "branch" key) to stdin, so `cat` would have echoed that instead.
+    assert!(
+        !combined.contains("\"branch\""),
+        "alias stdin should not receive the hook JSON context, \
+         got stdout={stdout:?} stderr={stderr:?}",
+    );
+}
+
 /// Pipeline aliases announce their structure: named serial and concurrent
 /// steps appear in the "Running alias" line, joined by `;` and `,`.
 ///
@@ -887,6 +943,189 @@ fail = "exit 1"
     assert!(
         !output.status.success(),
         "wt step check should fail when a concurrent step exits non-zero"
+    );
+}
+
+/// Aliases must run their child in wt's process group when stdin is inherited,
+/// not isolate it in a new pgroup. Interactive children (`wt switch`'s picker,
+/// pagers, anything that calls `tcsetattr` on `/dev/tty`) only work when they
+/// share the foreground tty pgroup — otherwise the kernel sends SIGTTOU and
+/// stops the child mid-render. We check the invariant directly: the alias body
+/// records its shell pgid, and we assert it matches wt's pid (== wt's pgid
+/// because the test spawns wt as its own pgroup leader).
+#[rstest]
+#[cfg(unix)]
+fn test_alias_child_shares_parent_pgroup(repo: TestRepo) {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    repo.write_test_config(
+        r#"
+[aliases]
+record-pgid = "ps -o pgid= -p $$ | tr -d ' \n' > alias_pgid.txt"
+"#,
+    );
+    repo.commit("initial");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "record-pgid"]);
+    cmd.current_dir(repo.root_path());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    // wt becomes its own pgroup leader: wt.pid == wt.pgid. The alias child
+    // (a `sh -c '...'` shell) should inherit that pgid rather than being
+    // moved into a new group.
+    cmd.process_group(0);
+    let mut child = cmd.spawn().expect("failed to spawn wt step record-pgid");
+    let wt_pid = child.id() as i32;
+    let status = child.wait().expect("failed to wait for wt");
+    assert!(status.success(), "alias should succeed, got: {status:?}");
+
+    let marker = repo.root_path().join("alias_pgid.txt");
+    let recorded = std::fs::read_to_string(&marker)
+        .unwrap_or_else(|e| panic!("missing pgid marker {marker:?}: {e}"));
+    let alias_pgid: i32 = recorded
+        .trim()
+        .parse()
+        .unwrap_or_else(|e| panic!("could not parse pgid {recorded:?}: {e}"));
+    assert_eq!(
+        alias_pgid, wt_pid,
+        "alias child shell must share wt's pgroup (wt pid={wt_pid}); \
+         got child pgid {alias_pgid}, indicating a new pgroup was created"
+    );
+}
+
+/// Externally-delivered SIGTERM to wt (e.g. `kill -TERM <wt-pid>`) must still
+/// reach the alias child in the shared-pgroup case. The kernel only delivers
+/// PID-targeted signals to the named process, not the foreground pgroup, so
+/// the listener in `Cmd::stream` must re-deliver to the child by PID.
+/// Without that, wt would latch the signal but the child would keep running
+/// indefinitely.
+#[rstest]
+#[cfg(unix)]
+fn test_alias_external_sigterm_reaches_child(repo: TestRepo) {
+    use crate::common::wait_for_file_content;
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    // The trap installs in wt's wrapper sh (no inner `sh -c`), so SIGTERM
+    // delivered to wt's child by PID hits the same shell that has the
+    // handler. The body uses `sleep 30 & wait $!` rather than a plain
+    // `sleep 30` because POSIX shells defer trap execution until the
+    // current foreground command returns; `wait` (a builtin) is the
+    // canonical interruptible idiom.
+    repo.write_test_config(
+        r#"
+[aliases]
+trapped = "trap 'echo got-term >> trap.log; exit 143' TERM; echo started >> start.log; sleep 30 & wait $!"
+"#,
+    );
+    repo.commit("initial");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "trapped"]);
+    cmd.current_dir(repo.root_path());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    // wt becomes its own pgroup leader so a PID-targeted `kill -TERM` against
+    // wt does NOT incidentally hit the test harness's pgroup, and only reaches
+    // wt itself (not the alias child via kernel broadcast).
+    cmd.process_group(0);
+    let mut child = cmd.spawn().expect("failed to spawn wt step trapped");
+
+    // Wait until the alias shell has installed its trap and entered `sleep`.
+    let start_marker = repo.root_path().join("start.log");
+    wait_for_file_content(&start_marker);
+
+    // Target wt's PID specifically (not its pgroup) — simulates an external
+    // `kill -TERM <wt-pid>`.
+    let wt_pid = Pid::from_raw(child.id() as i32);
+    kill(wt_pid, Signal::SIGTERM).expect("failed to send SIGTERM to wt");
+
+    let status = child.wait().expect("failed to wait for wt");
+
+    // The trap marker proves the alias shell received SIGTERM. Without the
+    // PID-targeted forwarding, this file would never appear and wt would
+    // block on the 30s sleep.
+    let trap_marker = repo.root_path().join("trap.log");
+    let recorded = std::fs::read_to_string(&trap_marker).unwrap_or_else(|e| {
+        panic!(
+            "missing trap marker {trap_marker:?}: {e} — \
+             alias child did not receive SIGTERM (forwarding regressed?)"
+        )
+    });
+    assert!(
+        recorded.contains("got-term"),
+        "trap marker missing expected content: {recorded:?}"
+    );
+
+    // wt itself exits with the signal-derived code (128 + 15 = 143).
+    use std::os::unix::process::ExitStatusExt;
+    assert!(
+        status.signal() == Some(15) || status.code() == Some(143),
+        "wt should exit from SIGTERM (signal 15) or with code 143, got: {status:?}"
+    );
+}
+
+/// SIGINT counterpart of `test_alias_external_sigterm_reaches_child`. A
+/// PID-targeted `kill -INT <wt-pid>` (not pgroup-broadcast) must traverse the
+/// SIGINT arm of `forward_signal_to_pid` — kernel pgroup delivery is bypassed
+/// when the signal is aimed at a single PID, so the child only sees SIGINT if
+/// wt re-delivers it.
+#[rstest]
+#[cfg(unix)]
+fn test_alias_external_sigint_reaches_child(repo: TestRepo) {
+    use crate::common::wait_for_file_content;
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    repo.write_test_config(
+        r#"
+[aliases]
+trapped = "trap 'echo got-int >> trap.log; exit 130' INT; echo started >> start.log; sleep 30 & wait $!"
+"#,
+    );
+    repo.commit("initial");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "trapped"]);
+    cmd.current_dir(repo.root_path());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    cmd.process_group(0);
+    let mut child = cmd.spawn().expect("failed to spawn wt step trapped");
+
+    let start_marker = repo.root_path().join("start.log");
+    wait_for_file_content(&start_marker);
+
+    // Target wt's PID specifically (not its pgroup). Kernel won't broadcast to
+    // the alias child; the only way the child sees SIGINT is via wt's PID-
+    // forwarding path.
+    let wt_pid = Pid::from_raw(child.id() as i32);
+    kill(wt_pid, Signal::SIGINT).expect("failed to send SIGINT to wt");
+
+    let status = child.wait().expect("failed to wait for wt");
+
+    let trap_marker = repo.root_path().join("trap.log");
+    let recorded = std::fs::read_to_string(&trap_marker).unwrap_or_else(|e| {
+        panic!(
+            "missing trap marker {trap_marker:?}: {e} — \
+             alias child did not receive SIGINT (forwarding regressed?)"
+        )
+    });
+    assert!(
+        recorded.contains("got-int"),
+        "trap marker missing expected content: {recorded:?}"
+    );
+
+    use std::os::unix::process::ExitStatusExt;
+    assert!(
+        status.signal() == Some(2) || status.code() == Some(130),
+        "wt should exit from SIGINT (signal 2) or with code 130, got: {status:?}"
     );
 }
 

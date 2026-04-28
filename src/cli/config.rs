@@ -604,6 +604,7 @@ pub enum StateCommand {
 - **Branch markers**: User-defined branch notes
 - **Vars**: Custom variables per branch
 - **CI status**: Cached GitHub/GitLab CI status per branch (30s TTL)
+- **Summaries**: Cached LLM-generated branch summaries (shown in `wt list --full` and `wt switch` preview)
 - **Git commands cache**: SHA-keyed merge-tree, ancestry, and diff-stats results
 - **Hints**: One-time hints that have been shown
 - **Log files**: Operation and debug logs
@@ -625,7 +626,7 @@ CI cache entries show status, age, and the commit SHA they were fetched for."#)]
 - Previous branch
 - All branch markers
 - All variables
-- All caches (CI status, git commands)
+- All caches (CI status, summaries, git commands)
 - All hints
 - All log files
 - Stale trash from worktree removal (`.git/wt/trash/`)

@@ -9,8 +9,7 @@ use worktrunk::git::LineDiff;
 
 use super::super::ci_status::PrStatus;
 use super::super::model::{
-    ActiveGitOperation, AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus,
-    WorkingTreeStatus,
+    ActiveGitOperation, AheadBehind, BranchDiffTotals, UpstreamStatus, WorkingTreeStatus,
 };
 
 /// Task results sent as each git operation completes.
@@ -31,11 +30,6 @@ use super::super::model::{
     strum(serialize_all = "kebab-case")
 )]
 pub(crate) enum TaskResult {
-    /// Commit timestamp and message
-    CommitDetails {
-        item_idx: usize,
-        commit: CommitDetails,
-    },
     /// Ahead/behind counts vs default branch
     AheadBehind {
         item_idx: usize,
@@ -130,8 +124,7 @@ impl TaskResult {
     /// Get the item index for this result
     pub fn item_idx(&self) -> usize {
         match self {
-            TaskResult::CommitDetails { item_idx, .. }
-            | TaskResult::AheadBehind { item_idx, .. }
+            TaskResult::AheadBehind { item_idx, .. }
             | TaskResult::CommittedTreesMatch { item_idx, .. }
             | TaskResult::HasFileChanges { item_idx, .. }
             | TaskResult::WouldMergeAdd { item_idx, .. }

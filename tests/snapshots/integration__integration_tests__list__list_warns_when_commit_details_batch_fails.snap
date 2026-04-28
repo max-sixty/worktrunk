@@ -1,0 +1,61 @@
+---
+source: tests/integration_tests/list.rs
+info:
+  program: wt
+  args:
+    - list
+  env:
+    APPDATA: "[TEST_CONFIG_HOME]"
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
+    HOME: "[TEST_HOME]"
+    LANG: C
+    LC_ALL: C
+    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
+    OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
+    PATH: "[PATH]"
+    PSModulePath: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+  [1mBranch[0m     [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mRemote⇅[0m  [1mPath[0m               [1mCommit[0m    [1mAge[0m   [1mMessage
+@ main           [2m^[22m[2m|[22m                           [2m|[0m     .                  [2m05a4a45d[0m  [2m·[0m     [2m·
++ -          [2m·[0m  [2m·[0m[2m·[0m             [2m·[0m        [2m·[0m           ../repo.feature    [2m00000000[0m  [2m·[0m     [2m·
++ feature-a      [2m↑[22m                 [32m↑1[0m               ../repo.feature-a  [2m1b87d473[0m  [2m·[0m     [2m·
++ feature-b      [2m↑[22m                 [32m↑1[0m               ../repo.feature-b  [2mf62940fc[0m  [2m·[0m     [2m·
++ feature-c      [2m↑[22m                 [32m↑1[0m               ../repo.feature-c  [2m345c7c93[0m  [2m·[0m     [2m·
+
+[2m○[22m [2mShowing 5 worktrees, 3 ahead. 5 tasks failed
+
+----- stderr -----
+[33m▲[39m [33mFailed to batch-fetch commit details: fatal: bad object 0000000000000000000000000000000000000001[39m
+[33m▲[39m [33mSome git operations failed:
+[107m [0m [1m(detached)[22m: ahead-behind (git merge-base failed for main 0000000000000000000000000000000000000001: fatal: Not a valid commit name 0000000000000000000000000000000000000001)
+[107m [0m [1m(detached)[22m: committed-trees-match (fatal: ambiguous argument '0000000000000000000000000000000000000001^{tree}': unknown revision or path not in the working tree.)
+[107m [0m [1m(detached)[22m: working-tree-diff (fatal: bad object HEAD)
+[107m [0m [1m(detached)[22m: merge-tree-conflicts (git merge-base failed for 05a4a45d0b981dad5c27db59dca482836d59f89e 0000000000000000000000000000000000000001: fatal: Not a valid commit name 0000000000000000000000000000000000000001)
+[107m [0m [1m(detached)[22m: working-tree-conflicts (fatal: bad object HEAD)[39m
+[2m↳[22m [2mTo create a diagnostic file, run with [4m-vv[24m[22m

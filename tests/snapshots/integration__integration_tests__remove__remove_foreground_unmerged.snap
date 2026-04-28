@@ -46,5 +46,5 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRemoving [1mfeature-unmerged-fg[22m worktree...[39m
-[32m✓[39m [32mRemoved [1mfeature-unmerged-fg[22m worktree[39m
+[32m✓[39m [32mRemoved [1mfeature-unmerged-fg[22m worktree[39m [90m(4 files · [BYTES] B[39m[90m)[39m
 [2m↳[22m [2mBranch unmerged; to delete, run [4mwt remove -D feature-unmerged-fg[24m[22m

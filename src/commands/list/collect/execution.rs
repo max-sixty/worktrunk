@@ -28,17 +28,16 @@ use super::super::model::{
 };
 use super::CollectOptions;
 use super::tasks::{
-    AheadBehindTask, BranchDiffTask, CiStatusTask, CommitDetailsTask, CommittedTreesMatchTask,
-    GitOperationTask, HasFileChangesTask, IsAncestorTask, MergeTreeConflictsTask,
-    SummaryGenerateTask, Task, TaskContext, UpstreamTask, UrlStatusTask, UserMarkerTask,
-    WorkingTreeConflictsTask, WorkingTreeDiffTask, WouldMergeAddTask,
+    AheadBehindTask, BranchDiffTask, CiStatusTask, CommittedTreesMatchTask, GitOperationTask,
+    HasFileChangesTask, IsAncestorTask, MergeTreeConflictsTask, SummaryGenerateTask, Task,
+    TaskContext, UpstreamTask, UrlStatusTask, UserMarkerTask, WorkingTreeConflictsTask,
+    WorkingTreeDiffTask, WouldMergeAddTask,
 };
 use super::types::{TaskError, TaskKind, TaskResult};
 
 /// Tasks that require a valid commit SHA. Skipped for unborn branches (no commits yet).
 /// Without this, these tasks would fail on the null OID and show as errors in the table.
 const COMMIT_TASKS: &[TaskKind] = &[
-    TaskKind::CommitDetails,
     TaskKind::AheadBehind,
     TaskKind::CommittedTreesMatch,
     TaskKind::HasFileChanges,
@@ -79,7 +78,6 @@ impl WorkItem {
 /// Dispatch a task by kind, calling the appropriate Task::compute().
 fn dispatch_task(kind: TaskKind, ctx: TaskContext) -> Result<TaskResult, TaskError> {
     match kind {
-        TaskKind::CommitDetails => CommitDetailsTask::compute(ctx),
         TaskKind::AheadBehind => AheadBehindTask::compute(ctx),
         TaskKind::CommittedTreesMatch => CommittedTreesMatchTask::compute(ctx),
         TaskKind::HasFileChanges => HasFileChangesTask::compute(ctx),
@@ -159,16 +157,15 @@ impl ExpectedResults {
 /// pre-seed `status_symbols.main_state` directly — see
 /// [`seed_unborn_main_state`].
 ///
-/// Non-status-feeding tasks (`CommitDetails`, `BranchDiff`, `CiStatus`,
-/// `UrlStatus`, `SummaryGenerate`) are rendered by their own columns with
-/// their own placeholders; `refresh_status_symbols` doesn't read them, so
-/// there is nothing to seed.
+/// Non-status-feeding tasks (`BranchDiff`, `CiStatus`, `UrlStatus`,
+/// `SummaryGenerate`) are rendered by their own columns with their own
+/// placeholders; `refresh_status_symbols` doesn't read them, so there is
+/// nothing to seed.
 pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
     match kind {
         // Not consumed by refresh_status_symbols — columns handle their own
         // loading state.
-        TaskKind::CommitDetails
-        | TaskKind::BranchDiff
+        TaskKind::BranchDiff
         | TaskKind::CiStatus
         | TaskKind::UrlStatus
         | TaskKind::SummaryGenerate => {}
@@ -367,7 +364,6 @@ pub fn work_items_for_worktree(
     let mut items = Vec::with_capacity(15);
 
     for kind in [
-        TaskKind::CommitDetails,
         TaskKind::AheadBehind,
         TaskKind::CommittedTreesMatch,
         TaskKind::HasFileChanges,
@@ -478,7 +474,6 @@ pub fn work_items_for_branch(
     let mut items = Vec::with_capacity(11);
 
     for kind in [
-        TaskKind::CommitDetails,
         TaskKind::AheadBehind,
         TaskKind::CommittedTreesMatch,
         TaskKind::HasFileChanges,

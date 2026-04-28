@@ -117,36 +117,42 @@ Shell integration allows commands to change directories.
 {{ terminal(cmd="cargo install worktrunk && wt config shell install") }}
 
 <details>
-<summary><strong>Windows</strong></summary>
+<summary><strong>Windows & other</strong></summary>
 
-On Windows, `wt` defaults to Windows Terminal's command. Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
+**Windows.** `wt` defaults to Windows Terminal's command, so Winget additionally installs Worktrunk as `git-wt` to avoid the conflict:
 
 {{ terminal(cmd="winget install max-sixty.worktrunk|||git-wt config shell install") }}
 
 Alternatively, disable Windows Terminal's alias (Settings → Privacy & security → For developers → App Execution Aliases → disable "Windows Terminal") to use `wt` directly.
 
-</details>
-
 **Arch Linux:**
 
 {{ terminal(cmd="sudo pacman -S worktrunk && wt config shell install") }}
+
+**Conda / Pixi** (community-maintained [feedstock](https://github.com/conda-forge/worktrunk-feedstock)):
+
+{{ terminal(cmd="conda install -c conda-forge worktrunk && wt config shell install") }}
+
+Or with [Pixi](https://pixi.sh): `pixi global install worktrunk && wt config shell install`.
+
+</details>
 
 ## Quick start
 
 Create a worktree for a new feature:
 
-<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__quickstart_switch.snap — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__quickstart_switch.snap — edit source to update -->
 
 {% terminal(cmd="wt switch --create feature-auth") %}
 <span class="cmd">wt switch --create feature-auth</span>
-<span class=g>✓</span> <span class=g>Created branch <b>feature-auth</b> from <b>main</b> and worktree @ <b>repo.feature-auth</b></span>
+<span class=g>✓</span> <span class=g>Created branch <b>feature-auth</b> from <b>main</b> and worktree @ <b>~/repo.feature-auth</b></span>
 {% end %}
 
 <!-- END AUTO-GENERATED -->
 
 This creates a new branch and worktree, then switches to it. Do your work, then check all worktrees with [`wt list`](@/list.md):
 
-<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__quickstart_list.snap — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__quickstart_list.snap — edit source to update -->
 
 {% terminal(cmd="wt list") %}
 <span class="cmd">wt list</span>
@@ -169,7 +175,7 @@ When done, either:
 
 **Local merge** — squash, rebase onto main, fast-forward merge, clean up:
 
-<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__quickstart_merge.snap — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__quickstart_merge.snap — edit source to update -->
 
 {% terminal(cmd="wt merge main") %}
 <span class="cmd">wt merge main</span>
@@ -183,7 +189,7 @@ When done, either:
 <span style='background:var(--bright-white,#fff)'> </span>  2 files changed, 53 insertions(+)
 <span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 2 files, +53</span></span><span style='color:var(--bright-black,#555)'>)</span>
 <span class=c>◎</span> <span class=c>Removing <b>feature-auth</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
-<span class=d>○</span> Switched to worktree for <b>main</b> @ <b>repo</b>
+<span class=d>○</span> Switched to worktree for <b>main</b> @ <b>~/repo</b>
 {% end %}
 
 <!-- END AUTO-GENERATED -->

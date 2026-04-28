@@ -15,7 +15,13 @@ Remove worktree; delete branch if merged. Defaults to the current worktree.
 
 Remove current worktree:
 
-{{ terminal(cmd="wt remove") }}
+{% terminal(cmd="wt remove") %}
+<span class=c>◎</span> <span class=c>Running pre-remove <b>project:cleanup</b></span>
+<span style='background:var(--bright-white,#fff)'> </span> <span class=d><span style='color:var(--blue,#00a)'>flyctl</span></span><span class=d> scale count 0</span>
+Scaling app to 0 machines
+<span class=c>◎</span> <span class=c>Removing <b>api</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
+<span class=d>○</span> Switched to worktree for <b>main</b> @ <b>~/repo</b>
+{% end %}
 
 Remove specific worktrees / branches:
 
@@ -140,4 +146,4 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
           Skip approval prompts
 {% end %}
 
-<!-- END AUTO-GENERATED from `wt remove --help-page` -->
+<!-- END AUTO-GENERATED -->

@@ -29,8 +29,39 @@ for i in $(seq 1 5); do
 done
 ```
 
-If codecov fails, investigate with `task coverage` and
+If codecov fails **locally**, investigate with `task coverage` and
 `cargo llvm-cov report --show-missing-lines | grep <file>`.
+
+### Investigating codecov failures in CI
+
+`task` and `cargo-llvm-cov` are not installed in the `claude-setup` action, and
+`cargo install` / `curl | sh` are blocked by the sandbox. Do not attempt to
+install them — in past runs this has cascaded into bash-tool interrupts that
+block even `pwd` and `echo`. Instead, query Codecov directly:
+
+```bash
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+curl -sL "https://api.codecov.io/api/v2/gh/${REPO%/*}/repos/${REPO#*/}/compare/?pullid=<N>" > /tmp/codecov.json
+
+# Patch-level summary per file:
+jq '.files[] | {name: .name.head, patch: .totals.patch}' /tmp/codecov.json
+
+# Uncovered added lines in a specific changed file:
+jq '.files[] | select(.name.head == "<path>") | .lines[] | select(.is_diff and .added and .coverage.head == 0) | {line: .number.head, code: (.value | .[0:80])}' /tmp/codecov.json
+```
+
+If the Codecov API markers aren't enough, download the `code-coverage-report`
+artifact from the PR head's `ci` workflow run — it contains a `cobertura.xml`
+with per-line hit counts:
+
+```bash
+# Find the ci run on the PR head SHA:
+CI_RUN=$(gh api "repos/$REPO/commits/<sha>/check-runs" --jq '.check_runs[] | select(.name == "code-coverage") | .details_url | capture("runs/(?<id>[0-9]+)") | .id')
+# List artifacts, then download the coverage one:
+gh api "repos/$REPO/actions/runs/$CI_RUN/artifacts" --jq '.artifacts[] | {name, id}'
+gh api "repos/$REPO/actions/artifacts/<id>/zip" > /tmp/coverage.zip
+unzip -q /tmp/coverage.zip -d /tmp/coverage
+```
 
 ## Test Commands
 
@@ -84,12 +115,21 @@ If surrounding lines also need updating, note that in your reply.
 
 ## Issue Triage
 
-When a bug may already be fixed, ask the reporter: `wt --version`
+When you need more information to diagnose a reported bug, the **primary
+ask is `wt -vv <command>`**. Re-running the failing command with `-vv`
+writes `.git/wt/logs/diagnostic.md` — a single report containing wt/git/OS
+versions, shell integration, `wt config show`, `git worktree list
+--porcelain`, and a `trace.log` of every git invocation with its output —
+and prints a `gh gist create --web <path>` hint. One gist URL pasted into
+the issue gives us most of what we'd otherwise ask for piecemeal, so lead
+with this for unexplained failures rather than chaining version/config/repro
+questions across multiple round-trips.
 
-When an issue involves config, shell integration, completions, or unexpected
-behavior that could stem from user setup, ask the reporter for
-`wt config show` output. This reveals installed shells, config paths, and
-active settings — essential context for diagnosing config-related problems.
+Reach for narrower asks only when the diagnostic is overkill:
+
+- `wt --version` — when the only question is whether a fix has landed.
+- `wt config show` — when the suspicion is purely config/shell-integration
+  and you already have the command + repro.
 
 ### Closing Duplicates
 
@@ -140,6 +180,12 @@ nix flake update
 Commit `flake.lock` alongside the other toolchain changes. After bumping, run
 the full test suite (`cargo run -- hook pre-merge --yes`) and verify
 `cargo msrv verify` passes.
+
+## Weekly Maintenance: CI Pin Bumps
+
+Bump pinned third-party versions in `.github/workflows/ci.yaml` to track upstream:
+
+- **`hustcer/setup-nu@v3`** — set `version:` to the latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'` and update all three call sites (`test`, `benchmarks`, `code-coverage`).
 
 ## Weekly Maintenance: Statusline Cache-Check
 

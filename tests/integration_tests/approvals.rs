@@ -42,7 +42,7 @@ fn test_add_approvals_no_config(repo: TestRepo) {
 
 #[rstest]
 fn test_add_approvals_all_with_none_approved(repo: TestRepo) {
-    repo.write_project_config(r#"post-create = "echo 'test'""#);
+    repo.write_project_config(r#"pre-start = "echo 'test'""#);
     repo.commit("Add config");
 
     snapshot_add_approvals("add_approvals_all_none_approved", &repo, &["--all"]);
@@ -105,7 +105,7 @@ fn test_clear_approvals_with_approvals(repo: TestRepo) {
     // matches what `Repository::project_identifier` computes at runtime.
     repo.run_git(&["remote", "remove", "origin"]);
     repo.commit("Initial commit");
-    repo.write_project_config(r#"post-create = "echo 'test'""#);
+    repo.write_project_config(r#"pre-start = "echo 'test'""#);
     repo.commit("Add config");
 
     // Manually approve the command using the same project id wt will compute.
@@ -133,7 +133,7 @@ fn test_clear_approvals_global_with_approvals(repo: TestRepo) {
     // matches what `Repository::project_identifier` computes at runtime.
     repo.run_git(&["remote", "remove", "origin"]);
     repo.commit("Initial commit");
-    repo.write_project_config(r#"post-create = "echo 'test'""#);
+    repo.write_project_config(r#"pre-start = "echo 'test'""#);
     repo.commit("Add config");
 
     // Manually approve the command using the same project id wt will compute.
@@ -160,7 +160,7 @@ fn test_clear_approvals_after_clear(repo: TestRepo) {
     // matches what `Repository::project_identifier` computes at runtime.
     repo.run_git(&["remote", "remove", "origin"]);
     repo.commit("Initial commit");
-    repo.write_project_config(r#"post-create = "echo 'test'""#);
+    repo.write_project_config(r#"pre-start = "echo 'test'""#);
     repo.commit("Add config");
 
     // Manually approve the command using the same project id wt will compute.
@@ -228,7 +228,7 @@ fn test_clear_approvals_multiple_approvals(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
     repo.write_project_config(
         r#"
-post-create = "echo 'first'"
+pre-start = "echo 'first'"
 post-start = "echo 'second'"
 [pre-commit]
 lint = "echo 'third'"
@@ -275,7 +275,7 @@ fn test_add_approvals_all_already_approved(repo: TestRepo) {
     // matches what `Repository::project_identifier` computes at runtime.
     repo.run_git(&["remote", "remove", "origin"]);
     repo.commit("Initial commit");
-    repo.write_project_config(r#"post-create = "echo 'test'""#);
+    repo.write_project_config(r#"pre-start = "echo 'test'""#);
     repo.commit("Add config");
 
     // Manually approve the command using the same project id wt will compute.
@@ -326,7 +326,7 @@ fn test_add_approvals_bare_repo_config_in_primary_worktree() {
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(
         config_dir.join("wt.toml"),
-        r#"post-create = "echo 'hello'"
+        r#"pre-start = "echo 'hello'"
 "#,
     )
     .unwrap();

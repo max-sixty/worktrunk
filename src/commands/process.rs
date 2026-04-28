@@ -319,6 +319,12 @@ fn spawn_detached_windows(
 ///
 /// Used for structured child processes like `wt hook run-pipeline` where the parent
 /// passes data via stdin rather than through a temp file or shell arguments.
+///
+/// When `hook_log` is [`HookLog::Hook`], the spawn is treated as a background
+/// hook pipeline: the child (and every process it later spawns) receives
+/// [`worktrunk::priority::FOREGROUND_ENV_VAR`] =
+/// [`worktrunk::priority::BACKGROUND_HOOK_VALUE`] so nested `wt` invocations
+/// can tell they're running inside a background hook.
 pub fn spawn_detached_exec(
     repo: &Repository,
     worktree_path: &Path,
@@ -337,6 +343,8 @@ pub fn spawn_detached_exec(
         log_path.file_name().unwrap_or_default().to_string_lossy()
     );
 
+    let is_background_hook = matches!(hook_log, HookLog::Hook { .. });
+
     #[cfg(unix)]
     {
         let low_priority = matches!(hook_log, HookLog::Internal(_));
@@ -347,15 +355,34 @@ pub fn spawn_detached_exec(
             log_file,
             stdin_bytes,
             low_priority,
+            is_background_hook,
         )?;
     }
 
     #[cfg(windows)]
     {
-        spawn_detached_exec_windows(worktree_path, program, args, log_file, stdin_bytes)?;
+        spawn_detached_exec_windows(
+            worktree_path,
+            program,
+            args,
+            log_file,
+            stdin_bytes,
+            is_background_hook,
+        )?;
     }
 
     Ok(log_path)
+}
+
+/// Apply [`worktrunk::priority::FOREGROUND_ENV_VAR`] to a
+/// [`std::process::Command`] when spawning a background hook pipeline.
+fn set_background_hook_env(cmd: &mut std::process::Command, is_background_hook: bool) {
+    if is_background_hook {
+        cmd.env(
+            worktrunk::priority::FOREGROUND_ENV_VAR,
+            worktrunk::priority::BACKGROUND_HOOK_VALUE,
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -366,6 +393,7 @@ fn spawn_detached_exec_unix(
     log_file: fs::File,
     stdin_bytes: &[u8],
     low_priority: bool,
+    is_background_hook: bool,
 ) -> anyhow::Result<()> {
     use std::io::Write;
     use std::os::unix::process::CommandExt;
@@ -383,6 +411,7 @@ fn spawn_detached_exec_unix(
         .stderr(Stdio::from(log_file))
         .process_group(0);
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
+    set_background_hook_env(&mut cmd, is_background_hook);
     let mut child = cmd.spawn().context("Failed to spawn detached process")?;
 
     if let Some(mut stdin) = child.stdin.take() {
@@ -400,6 +429,7 @@ fn spawn_detached_exec_windows(
     args: &[&str],
     log_file: fs::File,
     stdin_bytes: &[u8],
+    is_background_hook: bool,
 ) -> anyhow::Result<()> {
     use std::io::Write;
     use std::os::windows::process::CommandExt;
@@ -419,6 +449,7 @@ fn spawn_detached_exec_windows(
         .stderr(Stdio::from(log_file))
         .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
+    set_background_hook_env(&mut cmd, is_background_hook);
     let mut child = cmd.spawn().context("Failed to spawn detached process")?;
 
     if let Some(mut stdin) = child.stdin.take() {

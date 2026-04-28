@@ -119,8 +119,9 @@ pub fn gather_candidates(
     // Get all worktrees, excluding prunable ones
     let worktrees: Vec<_> = repo
         .list_worktrees()?
-        .into_iter()
+        .iter()
         .filter(|wt| wt.prunable.is_none())
+        .cloned()
         .collect();
 
     // Filter to requested branches if any were specified

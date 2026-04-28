@@ -232,7 +232,7 @@ pub const TEST_EPOCH: u64 = 1735776000;
 
 /// Default timeout for background hook/command completion.
 /// Generous to avoid flakiness under CI load; exponential backoff means fast tests when things work.
-const BG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const BG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Static environment variables shared by all test isolation helpers.
 ///

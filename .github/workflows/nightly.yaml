@@ -1,0 +1,73 @@
+name: nightly
+# Catches feature-flag breakage that workspace feature unification can mask;
+# see #2442 for the v0.45.0 incident that motivated this.
+#
+# Runs daily and can be triggered manually. Not wired to push or pull_request —
+# this is a slow check that addresses a class of bug that only matters at
+# integration time, not per-commit.
+#
+# Runner versions pinned; see ci.yaml header comment for rationale.
+
+on:
+  schedule:
+    # Run at 5:37 UTC every day. Off-peak minute (avoid :00 to be a good
+    # citizen w.r.t. GitHub's cron scheduler), and offset from
+    # nightly-benchmark.yaml (4:17 UTC) so they don't contend for runners.
+    - cron: '37 5 * * *'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: -C debuginfo=0
+
+jobs:
+  feature-powerset:
+    # Every combination of cli/syntax-highlighting/shell-integration-tests/
+    # git-wt should compile. Catches regressions in feature gating — including
+    # the v0.45.0 case where lib code used a `cli`-gated dependency
+    # unconditionally.
+    #
+    # Workspace members must use `default-features = false` when depending on
+    # worktrunk, or feature unification will mask gating bugs by silently
+    # enabling `cli` in the lib build (see tests/helpers/wt-perf/Cargo.toml).
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v6
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install cargo-hack
+      uses: taiki-e/install-action@v2.75.22
+      with:
+        tool: cargo-hack
+
+    - name: cargo hack check --feature-powerset --no-dev-deps
+      run: cargo hack check --feature-powerset --no-dev-deps
+
+  create-issue-on-nightly-failure:
+    needs:
+      - feature-powerset
+    if: always() && contains(needs.*.result, 'failure') && github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v6
+
+    - uses: JasonEtco/create-an-issue@v2
+      env:
+        # Use WORKTRUNK_BOT_TOKEN for a consistent bot identity (per
+        # .github/CLAUDE.md) and so any future issue-triage automation can
+        # cascade off issue creation — events from the default GITHUB_TOKEN
+        # don't trigger other workflows.
+        GITHUB_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+        LINK: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      with:
+        filename: .github/nightly-failure.md
+        update_existing: true
+        search_existing: open

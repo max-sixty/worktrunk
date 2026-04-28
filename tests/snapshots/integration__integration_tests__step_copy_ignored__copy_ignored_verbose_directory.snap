@@ -47,4 +47,4 @@ exit_code: 0
 ----- stderr -----
 [2m○[22m Copying 1 entry:
 [107m [0m target (dir)
-[32m✓[39m [32mCopied 1 file[39m
+[32m✓[39m [32mCopied 1 file · 6 B[39m

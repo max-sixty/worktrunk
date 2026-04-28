@@ -46,8 +46,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mProject config: [1mpost-create[22m hook is deprecated in favor of [1mpre-start[22m[39m
-[2m↳[22m [2mTo see details, run [4mwt config show[24m; to apply updates, run [4mwt config update[24m[22m
 [2m○[22m Expanding [1mworktree-path[22m
 [107m [0m [2m[0m[2m[34m../[0m[2m[32m{{[0m[2m[34m[0m[2m repo [0m[2m[32m}}[0m[2m.[0m[2m[32m{{[0m[2m branch [0m[2m[36m|[0m[2m [0m[2m[34msanitize[0m[2m [0m[2m[32m}}[0m[2m
 [107m [0m [2m→[22m
@@ -60,8 +58,8 @@ exit_code: 0
 [107m [0m branch                = verbose-hooks
 [107m [0m worktree_path         = _REPO_.verbose-hooks
 [107m [0m worktree_name         = repo.verbose-hooks
-[107m [0m commit                = 8b2a39bbbeb5897579b4db89e4785539fd72278d
-[107m [0m short_commit          = 8b2a39b
+[107m [0m commit                = 7900f355a9d429e8ac86370140fe4622e7d27e33
+[107m [0m short_commit          = 7900f35
 [107m [0m upstream              = (unset)
 [107m [0m base                  = main
 [107m [0m base_worktree_path    = _REPO_

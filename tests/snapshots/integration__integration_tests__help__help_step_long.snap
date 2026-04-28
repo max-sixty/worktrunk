@@ -71,6 +71,9 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 Commit with LLM-generated message:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m step commit[0m
+[107m [0m [2m[0m[2m[34m◎[0m[2m Generating commit message and committing changes... ([0m[2m[34m2[0m[2m files, +26)[0m
+[107m [0m [2m  [0m[2m[34mfeat[0m[2m([0m[2m[34mvalidation[0m[2m): [0m[2m[34madd[0m[2m input validation utilities[0m
+[107m [0m [2m[0m[2m[34m✓[0m[2m Committed changes @ a1b2c3d[0m
 
 Manual merge workflow with review between steps:
 

@@ -1,9 +1,0 @@
----
-source: src/config/deprecation.rs
-expression: "migration_diff(content, &result)"
----
--post-create = "npm install"
-+pre-start = "npm install"
- 
- [post-start]
- server = "npm run dev"

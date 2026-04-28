@@ -47,4 +47,4 @@ exit_code: 0
 [36m◎[39m [36mRunning pre-remove project hook[39m
 [107m [0m [2m[0m[2m[34mtouch[0m[2m _REPO_/m.txt
 [0m[36m◎[39m [36mRemoving worktree @ [1m_REPO_.feature-detached-hook[22m... (detached HEAD, no branch to delete)[39m
-[32m✓[39m [32mRemoved worktree @ [1m_REPO_.feature-detached-hook[22m (detached HEAD, no branch to delete)[39m
+[32m✓[39m [32mRemoved worktree @ [1m_REPO_.feature-detached-hook[22m (detached HEAD, no branch to delete)[39m [90m(4 files · [BYTES] B[39m[90m)[39m

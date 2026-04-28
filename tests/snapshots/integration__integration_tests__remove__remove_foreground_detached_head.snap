@@ -45,4 +45,4 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRemoving worktree @ [1m_REPO_.feature-detached-fg[22m... (detached HEAD, no branch to delete)[39m
-[32m✓[39m [32mRemoved worktree @ [1m_REPO_.feature-detached-fg[22m (detached HEAD, no branch to delete)[39m
+[32m✓[39m [32mRemoved worktree @ [1m_REPO_.feature-detached-fg[22m (detached HEAD, no branch to delete)[39m [90m(3 files · [BYTES] B[39m[90m)[39m

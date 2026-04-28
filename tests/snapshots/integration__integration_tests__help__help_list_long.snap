@@ -87,14 +87,37 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 List all worktrees:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m list[0m
+[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status        HEAD±    main↕  Remote⇅  Commit    Age   Message[0m
+[107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1   ⇡3      6814f02a  30m   Add API tests[0m
+[107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                         ⇡1  ⇣1  41ee0834  4d    Merge fix-auth: hardened to…[0m
+[107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1     [0m[2m[36m|[0m[2m     [0m[2m[34mb772e68b[0m[2m  5h    Add secure token storage[0m
+[107m [0m [2m+ fix-typos        _[0m[2m[36m|[0m[2m                           [0m[2m[36m|[0m[2m     [0m[2m[34m41ee0834[0m[2m  4d    Merge fix-auth: hardened to…[0m
+[107m [0m [2m[0m
+[107m [0m [2m○ Showing 4 worktrees, 1 with changes, 2 ahead, 1 column hidden[0m
 
 Include CI status, line diffs, and LLM summaries:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--full[0m[2m[0m
+[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status        HEAD±    main↕     main…±  Summary                                              Remote⇅  CI  Commit[0m
+[107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1  +234  [0m[2m[36m-24[0m[2m  Refactor API to REST architecture with middleware     ⇡3      ●   6814f02a[0m
+[107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                                                                         ⇡1  ⇣1  ●   41ee0834[0m
+[107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m  Harden auth with constant-time token validation         [0m[2m[36m|[0m[2m     [0m[2m[34m●[0m[2m   b772e68b[0m
+[107m [0m [2m+ fix-typos        _[0m[2m[36m|[0m[2m                                                                                           [0m[2m[36m|[0m[2m     [0m[2m[34m●[0m[2m   41ee0834[0m
+[107m [0m [2m[0m
+[107m [0m [2m○ Showing 4 worktrees, 1 with changes, 2 ahead, 3 columns hidden[0m
 
 Include branches that don't have worktrees:
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m list [0m[2m[36m--branches[0m[2m [0m[2m[36m--full[0m[2m[0m
+[107m [0m [2m  [0m[2m[34mBranch[0m[2m       Status        HEAD±    main↕     main…±  Summary                                              Remote⇅  CI  Commit[0m
+[107m [0m [2m[0m[2m[34m@[0m[2m feature-api  +   ↕⇡     +54   [0m[2m[36m-5[0m[2m   ↑4  ↓1  +234  [0m[2m[36m-24[0m[2m  Refactor API to REST architecture with middleware     ⇡3      ●   6814f02a[0m
+[107m [0m [2m[0m[2m[34m^[0m[2m main             ^⇅                                                                                         ⇡1  ⇣1  ●   41ee0834[0m
+[107m [0m [2m[0m[2m[34m+[0m[2m fix-auth         ↕[0m[2m[36m|[0m[2m                [0m[2m[34m↑2[0m[2m  ↓1   +25  [0m[2m[36m-11[0m[2m  Harden auth with constant-time token validation         [0m[2m[36m|[0m[2m     [0m[2m[34m●[0m[2m   b772e68b[0m
+[107m [0m [2m+ fix-typos        _[0m[2m[36m|[0m[2m                                                                                           [0m[2m[36m|[0m[2m     [0m[2m[34m●[0m[2m   41ee0834[0m
+[107m [0m [2m  exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and resolvers                              96379229[0m
+[107m [0m [2m  wip             /↕                 ↑1  ↓1   +33       Start API documentation                                           b40716dc[0m
+[107m [0m [2m[0m
+[107m [0m [2m○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, 3 columns hidden[0m
 
 Output as JSON for scripting:
 

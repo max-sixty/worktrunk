@@ -6,8 +6,11 @@ Run individual operations. The building blocks of wt merge — commit, squash, r
 
 Commit with LLM-generated message:
 
-```bash
+```
 $ wt step commit
+◎ Generating commit message and committing changes... (2 files, +26)
+  feat(validation): add input validation utilities
+✓ Committed changes @ a1b2c3d
 ```
 
 Manual merge workflow with review between steps:
@@ -381,9 +384,15 @@ Reflink copies share disk blocks until modified — no data is actually copied. 
 | `cp -R` (full copy) | 2m |
 | `cp -Rc` / `wt step copy-ignored` | 20s |
 
-Uses per-file reflink (like `cp -Rc`) — copy time scales with file count. On Unix, the process is automatically reniced to lowest priority (nice 19) so it yields to interactive work.
+Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
 
 Use the `post-start` hook so the copy runs in the background. Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
+
+### Background-hook priority (experimental)
+
+When invoked from a background hook pipeline (`post-*` hooks), `wt step copy-ignored` self-lowers its CPU and I/O priority — `taskpolicy -b` on macOS, `nice -n 19` plus `ionice -c 3` on Linux — so it yields to interactive work. Foreground callers (`pre-*` hooks, direct interactive use) run at normal priority so the user isn't waiting on a throttled copy.
+
+wt signals background-hook context by exporting `WORKTRUNK_FOREGROUND=-1` into every detached hook pipeline; `copy-ignored` inspects that variable on entry. The variable name is experimental and may change.
 
 ### Language-specific notes
 
