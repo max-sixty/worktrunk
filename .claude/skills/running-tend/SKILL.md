@@ -108,6 +108,45 @@ failure, not a broken link:
 When in doubt, post a comment on the failed run summarizing the diagnosis and
 wait — don't open a PR.
 
+## Polling `gh run rerun --failed`: Poll the Job, Not the Run
+
+After `gh run rerun <run-id> --failed`, **never** poll the parent run's
+status with `until [ "$(gh run view <run-id> --json status --jq .status)" = "completed" ]`.
+The parent run stays `in_progress` until *every* job in it finishes —
+including long-running siblings that have nothing to do with the rerun. On
+this repo, `benchmarks` regularly runs ~150 min on dependabot bumps and other
+PRs, while the `--failed` rerun (`test (linux)`, `code-coverage`, etc.) finishes
+in under 10 min. Polling the run's status blocks the bot for the duration of
+the slowest sibling.
+
+Past occurrences: tend-review [24975304574](https://github.com/max-sixty/worktrunk/actions/runs/24975304574)
+blocked 128 min; tend-mention [25025555994](https://github.com/max-sixty/worktrunk/actions/runs/25025555994)
+blocked 150 min. Both waited on `benchmarks` while the actually-rerun job was
+green within minutes.
+
+Instead, capture the rerun job ID(s) and poll those directly:
+
+```bash
+gh run rerun <run-id> --failed --repo "$REPO"
+
+# `?filter=latest` returns each job's most recent attempt — the rerun has
+# the prior `failure` conclusion replaced with the new in-flight attempt.
+JOB_IDS=$(gh api "repos/$REPO/actions/runs/<run-id>/jobs?filter=latest" \
+  --jq '.jobs[] | select(.status != "completed") | .id')
+
+for JOB_ID in $JOB_IDS; do
+  for i in $(seq 1 15); do
+    STATUS=$(gh api "repos/$REPO/actions/jobs/$JOB_ID" --jq '.status')
+    [ "$STATUS" = "completed" ] && break
+    sleep 60
+  done
+done
+```
+
+The bundled `running-in-ci` `pending()` recipe (statusCheckRollup) does not
+help here — `benchmarks` is also a check-run on the head SHA, so it is still
+seen as pending. Polling specific job IDs is the only fix.
+
 ## Applying GitHub Suggestions
 
 Apply the literal suggestion only — change the lines it covers, nothing more.
