@@ -1069,6 +1069,66 @@ trapped = "trap 'echo got-term >> trap.log; exit 143' TERM; echo started >> star
     );
 }
 
+/// SIGINT counterpart of `test_alias_external_sigterm_reaches_child`. A
+/// PID-targeted `kill -INT <wt-pid>` (not pgroup-broadcast) must traverse the
+/// SIGINT arm of `forward_signal_to_pid` — kernel pgroup delivery is bypassed
+/// when the signal is aimed at a single PID, so the child only sees SIGINT if
+/// wt re-delivers it.
+#[rstest]
+#[cfg(unix)]
+fn test_alias_external_sigint_reaches_child(repo: TestRepo) {
+    use crate::common::wait_for_file_content;
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    repo.write_test_config(
+        r#"
+[aliases]
+trapped = "trap 'echo got-int >> trap.log; exit 130' INT; echo started >> start.log; sleep 30 & wait $!"
+"#,
+    );
+    repo.commit("initial");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "trapped"]);
+    cmd.current_dir(repo.root_path());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    cmd.process_group(0);
+    let mut child = cmd.spawn().expect("failed to spawn wt step trapped");
+
+    let start_marker = repo.root_path().join("start.log");
+    wait_for_file_content(&start_marker);
+
+    // Target wt's PID specifically (not its pgroup). Kernel won't broadcast to
+    // the alias child; the only way the child sees SIGINT is via wt's PID-
+    // forwarding path.
+    let wt_pid = Pid::from_raw(child.id() as i32);
+    kill(wt_pid, Signal::SIGINT).expect("failed to send SIGINT to wt");
+
+    let status = child.wait().expect("failed to wait for wt");
+
+    let trap_marker = repo.root_path().join("trap.log");
+    let recorded = std::fs::read_to_string(&trap_marker).unwrap_or_else(|e| {
+        panic!(
+            "missing trap marker {trap_marker:?}: {e} — \
+             alias child did not receive SIGINT (forwarding regressed?)"
+        )
+    });
+    assert!(
+        recorded.contains("got-int"),
+        "trap marker missing expected content: {recorded:?}"
+    );
+
+    use std::os::unix::process::ExitStatusExt;
+    assert!(
+        status.signal() == Some(2) || status.code() == Some(130),
+        "wt should exit from SIGINT (signal 2) or with code 130, got: {status:?}"
+    );
+}
+
 /// SIGINT sent to `wt step <alias>` while a concurrent group is mid-flight
 /// must reach every child's process group and tear them all down — otherwise
 /// Ctrl-C on a long-running concurrent alias would leave orphans behind.
