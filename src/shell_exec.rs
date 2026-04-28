@@ -815,10 +815,11 @@ impl Cmd {
     ///
     /// In the shared-pgroup case the kernel already delivers tty-initiated
     /// signals (SIGINT from Ctrl-C, SIGTSTP from Ctrl-Z, SIGHUP on hangup)
-    /// to every process in the foreground pgroup, so explicit forwarding to
-    /// a separate child pgroup is redundant. Externally-delivered signals
-    /// (e.g. `kill -TERM <wt-pid>`) still only reach wt, but interactive
-    /// aliases are not the typical target for those.
+    /// to every process in the foreground pgroup. For externally-delivered
+    /// signals that only reach wt (e.g. `kill -TERM <wt-pid>`), the listener
+    /// re-delivers to the child by PID so the child also exits — without
+    /// escalation, since the caller chose the signal and a premature SIGKILL
+    /// would skip the child's tty restore.
     pub fn inherit_stdin(mut self) -> Self {
         self.stdin_cfg = Some(std::process::Stdio::inherit());
         self.share_parent_pgroup = true;
@@ -1220,12 +1221,7 @@ impl Cmd {
         // Wait for child with optional signal forwarding
         #[cfg(unix)]
         let (status, seen_signal) = if self.forward_signals {
-            // In the shared-pgroup case (`.inherit_stdin()`), the kernel
-            // already delivers tty-initiated signals to every process in
-            // the foreground pgroup, so we only listen for `seen_signal`
-            // and skip the explicit `killpg` forwarding (which would
-            // target a pgid that doesn't exist as a leader).
-            let child_pgid = (!self.share_parent_pgroup).then(|| child.id() as i32);
+            let child_pid = child.id() as i32;
             let mut seen_signal: Option<i32> = None;
             loop {
                 if let Some(status) = child.try_wait().map_err(|e| {
@@ -1239,8 +1235,20 @@ impl Cmd {
                     for sig in signals.pending() {
                         if seen_signal.is_none() {
                             seen_signal = Some(sig);
-                            if let Some(pgid) = child_pgid {
-                                forward_signal_with_escalation(pgid, sig);
+                            if self.share_parent_pgroup {
+                                // Shared-pgroup mode: tty-initiated signals
+                                // (Ctrl-C, hangup) already hit the child via
+                                // kernel fg-pgroup delivery. Forward by PID
+                                // anyway so externally-delivered signals
+                                // (e.g. `kill -TERM <wt-pid>`) also reach the
+                                // child — they otherwise stop at wt. Single
+                                // shot, no escalation: if the user chose
+                                // SIGTERM, an unsolicited SIGKILL would skip
+                                // the child's tty restore (raw-mode reset,
+                                // cursor-show) and leave the terminal wedged.
+                                forward_signal_to_pid(child_pid, sig);
+                            } else {
+                                forward_signal_with_escalation(child_pid, sig);
                             }
                         }
                     }
@@ -1326,6 +1334,22 @@ fn process_group_alive(pgid: i32) -> bool {
 fn wait_for_exit(pgid: i32, grace: std::time::Duration) -> bool {
     std::thread::sleep(grace);
     !process_group_alive(pgid)
+}
+
+/// Single-shot signal delivery to a specific PID. Used in shared-pgroup mode
+/// where the child isn't a pgroup leader (so `killpg` would target a non-
+/// existent group), and where the kernel has already broadcast tty signals
+/// to the foreground pgroup — explicit forwarding only matters for
+/// externally-delivered signals (e.g. `kill -TERM <wt-pid>`). No escalation:
+/// see the call site in `Cmd::stream` for the rationale.
+#[cfg(unix)]
+fn forward_signal_to_pid(pid: i32, sig: i32) {
+    let nix_sig = match sig {
+        signal_hook::consts::SIGINT => nix::sys::signal::Signal::SIGINT,
+        signal_hook::consts::SIGTERM => nix::sys::signal::Signal::SIGTERM,
+        _ => return,
+    };
+    let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix_sig);
 }
 
 #[cfg(unix)]

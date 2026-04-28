@@ -995,6 +995,80 @@ record-pgid = "ps -o pgid= -p $$ | tr -d ' \n' > alias_pgid.txt"
     );
 }
 
+/// Externally-delivered SIGTERM to wt (e.g. `kill -TERM <wt-pid>`) must still
+/// reach the alias child in the shared-pgroup case. The kernel only delivers
+/// PID-targeted signals to the named process, not the foreground pgroup, so
+/// the listener in `Cmd::stream` must re-deliver to the child by PID.
+/// Without that, wt would latch the signal but the child would keep running
+/// indefinitely.
+#[rstest]
+#[cfg(unix)]
+fn test_alias_external_sigterm_reaches_child(repo: TestRepo) {
+    use crate::common::wait_for_file_content;
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    // The trap installs in wt's wrapper sh (no inner `sh -c`), so SIGTERM
+    // delivered to wt's child by PID hits the same shell that has the
+    // handler. The body uses `sleep 30 & wait $!` rather than a plain
+    // `sleep 30` because POSIX shells defer trap execution until the
+    // current foreground command returns; `wait` (a builtin) is the
+    // canonical interruptible idiom.
+    repo.write_test_config(
+        r#"
+[aliases]
+trapped = "trap 'echo got-term >> trap.log; exit 143' TERM; echo started >> start.log; sleep 30 & wait $!"
+"#,
+    );
+    repo.commit("initial");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "trapped"]);
+    cmd.current_dir(repo.root_path());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    // wt becomes its own pgroup leader so a PID-targeted `kill -TERM` against
+    // wt does NOT incidentally hit the test harness's pgroup, and only reaches
+    // wt itself (not the alias child via kernel broadcast).
+    cmd.process_group(0);
+    let mut child = cmd.spawn().expect("failed to spawn wt step trapped");
+
+    // Wait until the alias shell has installed its trap and entered `sleep`.
+    let start_marker = repo.root_path().join("start.log");
+    wait_for_file_content(&start_marker);
+
+    // Target wt's PID specifically (not its pgroup) — simulates an external
+    // `kill -TERM <wt-pid>`.
+    let wt_pid = Pid::from_raw(child.id() as i32);
+    kill(wt_pid, Signal::SIGTERM).expect("failed to send SIGTERM to wt");
+
+    let status = child.wait().expect("failed to wait for wt");
+
+    // The trap marker proves the alias shell received SIGTERM. Without the
+    // PID-targeted forwarding, this file would never appear and wt would
+    // block on the 30s sleep.
+    let trap_marker = repo.root_path().join("trap.log");
+    let recorded = std::fs::read_to_string(&trap_marker).unwrap_or_else(|e| {
+        panic!(
+            "missing trap marker {trap_marker:?}: {e} — \
+             alias child did not receive SIGTERM (forwarding regressed?)"
+        )
+    });
+    assert!(
+        recorded.contains("got-term"),
+        "trap marker missing expected content: {recorded:?}"
+    );
+
+    // wt itself exits with the signal-derived code (128 + 15 = 143).
+    use std::os::unix::process::ExitStatusExt;
+    assert!(
+        status.signal() == Some(15) || status.code() == Some(143),
+        "wt should exit from SIGTERM (signal 15) or with code 143, got: {status:?}"
+    );
+}
+
 /// SIGINT sent to `wt step <alias>` while a concurrent group is mid-flight
 /// must reach every child's process group and tear them all down — otherwise
 /// Ctrl-C on a long-running concurrent alias would leave orphans behind.
