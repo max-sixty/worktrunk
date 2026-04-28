@@ -1368,7 +1368,7 @@ The `sanitize` filter makes branch names safe for filesystem paths. The `sanitiz
 
 ```toml
 # Truncated branch slug + hash: collisions remain disambiguated even when prefixes match
-worktree-path = "/tmp/{{ (branch | sanitize)[:20] }}_{{ branch | sanitize | hash }}/.s.PGSQL.5432"
+worktree-path = "/tmp/{{ (branch | sanitize)[:20] }}_{{ branch | sanitize | hash }}"
 ```
 
 The `hash_port` filter is useful for running dev servers on unique ports per worktree:
