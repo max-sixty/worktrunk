@@ -615,6 +615,43 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
     });
 }
 
+/// Reproduction for #2448: typing digits into the picker filter must reach the
+/// query, not be swallowed by preview-tab shortcuts. Pre-fix, the `1`/`2`/`3`
+/// digit keys were bound to preview-mode switching, so typing `ticket-123` left
+/// the query as `ticket-` and lost the trailing digits.
+#[rstest]
+fn test_switch_picker_filter_includes_digits(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("ticket-123");
+    repo.add_worktree("ticket-456");
+
+    let env_vars = repo.test_env_vars();
+    let result = exec_in_pty_capture_before_abort(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        // Wait for items to render, then type the digit-bearing filter. We
+        // wait on the alphabetic prefix landing in the query line rather than
+        // the post-digit state, because pre-fix the digits never arrive and a
+        // post-digit content expectation would just hit the 30s timeout.
+        &[
+            ("", Some("ticket-456")),
+            ("ticket-123", Some("> ticket-")),
+        ],
+    );
+
+    assert_valid_abort_exit_code(result.exit_code);
+
+    let (list, _preview) = result.panels();
+    assert!(
+        list.contains("> ticket-123"),
+        "expected query line to contain the full `ticket-123` filter, but \
+         digits were swallowed by preview-tab shortcuts (#2448).\nList panel:\n{list}"
+    );
+}
+
 #[rstest]
 fn test_switch_picker_with_branches(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
