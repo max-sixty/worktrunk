@@ -348,10 +348,12 @@ pub trait PickerProgressHandler: Send + Sync {
     /// up on the next heartbeat.
     fn on_update(&self, idx: usize, rendered: String);
 
-    /// Fired at the 200ms reveal deadline. Entry per row: `Some(line)` for
-    /// rows still at skeleton state (placeholder needs promoting to `·`),
-    /// `None` for rows that already received real data via `on_update`.
-    fn on_reveal(&self, rendered: Vec<Option<String>>);
+    /// Fired at the 200ms reveal deadline. One pre-rendered line per row,
+    /// with the placeholder promoted from blank to `·`: rows that have
+    /// received real data use `format_list_item_line`, rows still at
+    /// skeleton state use the skeleton renderer. The handler writes every
+    /// slot — slot writes are idempotent.
+    fn on_reveal(&self, rendered: Vec<String>);
 }
 
 /// Controls how show flags (branches/remotes/full) are determined in [`collect`].
@@ -394,17 +396,16 @@ fn render_reveal(
     has_data: &[bool],
     items: &[super::model::ListItem],
     layout: &super::layout::LayoutConfig,
-) -> Vec<Option<String>> {
+) -> Vec<String> {
     items
         .iter()
         .enumerate()
         .map(|(idx, item)| {
-            let line = if has_data[idx] {
+            if has_data[idx] {
                 layout.format_list_item_line(item)
             } else {
                 layout.render_skeleton_row(item).render()
-            };
-            Some(line)
+            }
         })
         .collect()
 }
@@ -1262,10 +1263,8 @@ pub fn collect(
 
                     if let Some(state_cell) = progressive_state.as_ref() {
                         let mut s = state_cell.borrow_mut();
-                        for (idx, update) in updates.iter().enumerate() {
-                            if let Some(line) = update {
-                                s.table.update_row(idx, line.clone());
-                            }
+                        for (idx, line) in updates.iter().enumerate() {
+                            s.table.update_row(idx, line.clone());
                         }
                         if let Err(e) = s.table.flush() {
                             log::debug!("Progressive table reveal flush failed: {}", e);
@@ -1780,10 +1779,7 @@ mod tests {
         let has_data = vec![true, false];
         let updates = render_reveal(&has_data, &items, &layout);
         assert_eq!(updates.len(), 2);
-
-        let row_zero = updates[0].as_deref().unwrap();
-        let row_one = updates[1].as_deref().unwrap();
-        assert_eq!(row_zero, layout.format_list_item_line(&items[0]));
-        assert_eq!(row_one, layout.render_skeleton_row(&items[1]).render());
+        assert_eq!(updates[0], layout.format_list_item_line(&items[0]));
+        assert_eq!(updates[1], layout.render_skeleton_row(&items[1]).render());
     }
 }
