@@ -693,11 +693,7 @@ mod tests {
             test.run_git(&["switch", "main"]);
         }
 
-        let refs = test.git_output(&[
-            "for-each-ref",
-            "--format=%(refname)",
-            "refs/wt-backup/",
-        ]);
+        let refs = test.git_output(&["for-each-ref", "--format=%(refname)", "refs/wt-backup/"]);
         let mut listed: Vec<&str> = refs.lines().collect();
         listed.sort();
         assert_eq!(
