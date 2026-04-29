@@ -501,10 +501,6 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 /// and untracked files in a single diff. Copies the real index to preserve git's stat
 /// cache (avoiding re-reads of unchanged files), then registers untracked files with
 /// `git add -N` so they appear in the diff.
-///
-/// TODO: consider adding `--stage` flag (all/tracked/none) like `step commit` to
-/// control which change types are included. `tracked` would skip the temp index,
-/// `none` would diff only committed changes.
 pub fn step_diff(target: Option<&str>, extra_args: &[String]) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let wt = repo.current_worktree();

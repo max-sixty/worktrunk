@@ -15,7 +15,7 @@ use super::repository_ext::{
     RepositoryCliExt, check_not_default_branch, compute_integration_reason, is_primary_worktree,
 };
 use super::worktree::{
-    MergeOperations, RemoveResult, handle_no_ff_merge, handle_push, path_mismatch,
+    MergeOperations, PushKind, RemoveResult, handle_no_ff_merge, handle_push, path_mismatch,
 };
 use worktrunk::git::BranchDeletionMode;
 
@@ -255,7 +255,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         handle_no_ff_merge(Some(&target_branch), operations, &current_branch)?;
     } else {
         // Fast-forward push to target branch
-        handle_push(Some(&target_branch), "Merged to", operations)?;
+        handle_push(Some(&target_branch), PushKind::MergeFastForward, operations)?;
     }
 
     // Destination: prefer the target branch's worktree; fall back to home path.
