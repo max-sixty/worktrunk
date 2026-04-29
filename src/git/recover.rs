@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use color_print::cformat;
 
+use crate::path::canonicalize_with_parents;
 use crate::styling::eprintln;
 
 use super::Repository;
@@ -192,42 +193,7 @@ fn paths_match(worktree_path: &Path, deleted_path: &Path) -> bool {
     // Canonicalize the existing prefix of each path so symlinked spellings
     // collapse to the real on-disk path, then compare with starts_with so a
     // descendant of the worktree still matches.
-    let canonical_deleted = canonicalize_existing_prefix(deleted_path);
-    let canonical_worktree = canonicalize_existing_prefix(worktree_path);
-    matches!(
-        (canonical_deleted, canonical_worktree),
-        (Some(d), Some(w)) if d.starts_with(&w)
-    )
-}
-
-/// Canonicalize the longest existing ancestor of `path` and re-attach the
-/// trailing components that no longer exist on disk.
-///
-/// For a path that exists, this is equivalent to `dunce::canonicalize`. For a
-/// path whose leaf has been deleted (the recovery case), the deepest surviving
-/// ancestor is canonicalized so any symlinks in the parents resolve, and the
-/// tail is appended verbatim — giving a stable key for comparing two
-/// spellings of the same logical worktree path.
-fn canonicalize_existing_prefix(path: &Path) -> Option<PathBuf> {
-    if let Ok(canon) = dunce::canonicalize(path) {
-        return Some(canon);
-    }
-    let mut tail: Vec<&std::ffi::OsStr> = Vec::new();
-    let mut current = path;
-    loop {
-        let parent = current.parent()?;
-        if let Some(name) = current.file_name() {
-            tail.push(name);
-        }
-        if let Ok(canon) = dunce::canonicalize(parent) {
-            let mut result = canon;
-            for name in tail.iter().rev() {
-                result.push(name);
-            }
-            return Some(result);
-        }
-        current = parent;
-    }
+    canonicalize_with_parents(deleted_path).starts_with(canonicalize_with_parents(worktree_path))
 }
 
 #[cfg(test)]

@@ -142,7 +142,7 @@ pub fn format_path_for_display(path: &Path) -> String {
 /// For non-existent paths, canonicalizes the longest existing prefix and appends
 /// the remaining components. This handles macOS `/var` -> `/private/var` symlinks
 /// correctly for computed worktree paths that don't exist yet.
-fn canonicalize_with_parents(path: &Path) -> PathBuf {
+pub(crate) fn canonicalize_with_parents(path: &Path) -> PathBuf {
     if let Ok(canonical) = canonicalize(path) {
         return canonical;
     }
