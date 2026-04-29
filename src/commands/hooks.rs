@@ -386,6 +386,11 @@ impl Drop for HookAnnouncer<'_> {
 
 /// Announce and spawn background hook pipelines.
 ///
+/// Internal primitive: sites should construct a [`HookAnnouncer`] (one per
+/// command) and `register`/`extend` into it; `flush` lands here. The function
+/// stays separate to keep the announce/spawn formatting isolated from the
+/// announcer's pending-list bookkeeping.
+///
 /// Displays a single combined summary line covering all hook types, then
 /// spawns each pipeline independently. Pipelines may carry different
 /// `CommandContext`s (e.g., post-remove uses the removed branch while
@@ -396,12 +401,7 @@ impl Drop for HookAnnouncer<'_> {
 /// `Running post-remove for feature: docs; post-switch for feature: zellij-tab`
 ///
 /// Without `show_branch`: `Running post-switch: zellij-tab; post-start: deps, assets, docs`
-///
-/// Sites that fire hooks at multiple moments within the same `wt` command
-/// should batch through [`HookAnnouncer`] so all phases share one announce
-/// line; this entry is the convenience for callers that produce all pipelines
-/// in one place.
-pub fn run_hooks_background(
+pub(crate) fn run_hooks_background(
     pipelines: Vec<(CommandContext<'_>, Vec<SourcedStep>)>,
     show_branch: bool,
 ) -> anyhow::Result<()> {
@@ -769,20 +769,19 @@ pub(crate) fn lookup_hook_configs<'a>(
 
 /// Spawn background hooks for a single hook type (post-commit, post-merge, …).
 ///
-/// Symmetric to [`execute_hook`] for the background path: auto-loads project
-/// config, prepares source-grouped pipelines, and spawns. Single-type callers
-/// (commit, step_commands::handle_squash, picker post-remove) prefer this;
-/// multi-type batches (handle_switch's PostSwitch + PostStart) build pipelines
-/// via [`prepare_background_pipelines`] and call [`run_hooks_background`]
-/// directly so all types share one announce line.
+/// Symmetric to [`execute_hook`] for the background path: a one-shot
+/// convenience that constructs a single-phase [`HookAnnouncer`], registers the
+/// hook type, and flushes. Multi-phase callers should build a [`HookAnnouncer`]
+/// directly and call `register` per phase so all types share one announce line.
 pub(crate) fn spawn_background_hooks(
     ctx: &CommandContext,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
     display_path: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let pipelines = prepare_background_pipelines(ctx, hook_type, extra_vars, display_path)?;
-    run_hooks_background(pipelines, false)
+    let mut announcer = HookAnnouncer::new(ctx.repo, ctx.config, false);
+    announcer.register(ctx, hook_type, extra_vars, display_path)?;
+    announcer.flush()
 }
 
 /// Run a single hook type in the foreground for an operation (merge, switch,

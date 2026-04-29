@@ -11,9 +11,7 @@ use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
 
 use crate::commands::command_executor::CommandContext;
 use crate::commands::command_executor::FailureStrategy;
-use crate::commands::hooks::{
-    HookAnnouncer, execute_hook, prepare_background_pipelines, run_hooks_background,
-};
+use crate::commands::hooks::{HookAnnouncer, execute_hook, prepare_background_pipelines};
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
 };
@@ -951,7 +949,9 @@ fn spawn_hooks_after_remove(
     if let Some(announcer) = announcer {
         announcer.extend(pipelines);
     } else {
-        run_hooks_background(pipelines, ctx.show_branch_in_hooks)?;
+        let mut local = HookAnnouncer::new(repo, &config, ctx.show_branch_in_hooks);
+        local.extend(pipelines);
+        local.flush()?;
     }
 
     Ok(())
