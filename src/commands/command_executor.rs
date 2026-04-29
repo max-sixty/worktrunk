@@ -319,6 +319,23 @@ pub fn expand_shell_template(
     Ok(expand_template(template, &vars, true, repo, label)?)
 }
 
+/// Resolve the shell string to execute for a prepared command.
+///
+/// Commands carrying a `lazy_template` are re-expanded against their
+/// `context_json` at execution time so they see fresh git-config state
+/// (`vars.*` set by earlier steps). Commands without one were already
+/// expanded at prep time — return the cached `expanded` string.
+fn resolve_command_str(cmd: &PreparedCommand, repo: &Repository) -> Result<String> {
+    match &cmd.lazy_template {
+        Some(template) => {
+            let context: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
+                .context("failed to deserialize context_json")?;
+            expand_shell_template(template, &context, repo, &cmd.label)
+        }
+        None => Ok(cmd.expanded.clone()),
+    }
+}
+
 /// Short summary name: "user:name" for named commands, "user" otherwise.
 pub(crate) fn command_summary_name(name: Option<&str>, source: HookSource) -> String {
     match name {
@@ -390,19 +407,10 @@ fn run_concurrent_group(
         announce_command(cmd, &fg_step.announce);
     }
 
-    // Commands with `lazy_template` are re-expanded at execution time so
-    // they see fresh git-config state (e.g., `vars.*` set by earlier steps).
-    // Commands without it were already expanded at prep time — use `expanded`.
-    let mut expanded: Vec<String> = Vec::with_capacity(cmds.len());
-    for cmd in cmds {
-        if let Some(template) = &cmd.lazy_template {
-            let context: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
-                .context("failed to deserialize context_json")?;
-            expanded.push(expand_shell_template(template, &context, repo, &cmd.label)?);
-        } else {
-            expanded.push(cmd.expanded.clone());
-        }
-    }
+    let expanded: Vec<String> = cmds
+        .iter()
+        .map(|cmd| resolve_command_str(cmd, repo))
+        .collect::<Result<_>>()?;
 
     // Both alias tables and hook tables produce named commands (TOML keys
     // become `name`), so `cmd.name` is always `Some` here.
@@ -459,15 +467,7 @@ fn run_one_command(
 ) -> anyhow::Result<()> {
     announce_command(cmd, &fg_step.announce);
 
-    let lazy_expanded;
-    let command_str = if let Some(template) = &cmd.lazy_template {
-        let context: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
-            .context("failed to deserialize context_json")?;
-        lazy_expanded = expand_shell_template(template, &context, repo, &cmd.label)?;
-        &lazy_expanded
-    } else {
-        &cmd.expanded
-    };
+    let command_str = resolve_command_str(cmd, repo)?;
 
     // Hooks get a documented JSON context on stdin; aliases inherit stdin so
     // interactive children (e.g. `wt switch`'s picker) keep their controlling
@@ -479,7 +479,7 @@ fn run_one_command(
     };
     let result = execute_shell_command(
         wt_path,
-        command_str,
+        &command_str,
         stdin_json,
         cmd.log_label.as_deref(),
         directives.clone(),
