@@ -969,15 +969,17 @@ fn test_merge_drops_pending_hooks_when_post_merge_fails(mut repo: TestRepo) {
 
     // post-merge references an undefined variable, so `register` errors after
     // post-remove + post-switch are already pending in the announcer.
+    // Use TOML literal strings (single-quoted) so Windows backslashes in paths
+    // aren't interpreted as escape sequences (e.g. `\t` → tab).
     repo.write_test_config(&format!(
         r#"[post-remove]
-cleanup = "echo POST_REMOVE_RAN > {}"
+cleanup = 'echo POST_REMOVE_RAN > {}'
 
 [post-switch]
 notify = "echo switched"
 
 [post-merge]
-sync = "echo POST_MERGE_RAN > {} {{{{ does_not_exist }}}}"
+sync = 'echo POST_MERGE_RAN > {} {{{{ does_not_exist }}}}'
 "#,
         post_remove_marker.display(),
         post_merge_marker.display(),
