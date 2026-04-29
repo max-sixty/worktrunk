@@ -955,6 +955,44 @@ sync = "echo merged"
     );
 }
 
+/// `wt merge` (no squash) with uncommitted changes auto-commits via
+/// `CommitOptions::commit`, which threads the merge announcer through. The
+/// post-commit phase should join post-remove + post-switch + post-merge on
+/// one combined announce line — the non-squash sibling of
+/// [`test_merge_squash_combines_post_commit_post_remove_post_switch_post_merge`].
+#[rstest]
+fn test_merge_auto_commit_combines_post_commit_post_remove_post_switch_post_merge(
+    mut repo: TestRepo,
+) {
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature", "Add feature");
+    // Leave an uncommitted change so the merge auto-commits via
+    // CommitOptions::commit (the path that exercises the announcer Some arm).
+    std::fs::write(feature_wt.join("dirty.txt"), "uncommitted").unwrap();
+
+    repo.write_test_config(
+        r#"[post-commit]
+mark = "echo committed"
+
+[post-remove]
+cleanup = "echo removed"
+
+[post-switch]
+notify = "echo switched"
+
+[post-merge]
+sync = "echo merged"
+"#,
+    );
+
+    snapshot_merge(
+        "merge_auto_commit_combines_post_commit_post_remove_post_switch_post_merge",
+        &repo,
+        &["main", "--yes", "--no-squash"],
+        Some(&feature_wt),
+    );
+}
+
 /// `wt merge --squash` fires post-commit (from the squash phase), post-remove,
 /// post-switch (from worktree removal), and post-merge. All four should share
 /// one `Running …` announce line so the user sees a single status line for

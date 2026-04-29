@@ -155,13 +155,13 @@ impl<'a> CommitGenerator<'a> {
     }
 }
 
-/// Commit uncommitted changes with the shared commit pipeline.
-///
-/// `announcer`: when `Some`, post-commit pipelines are extended onto the
-/// caller's announcer so they share an announce line with later phases (e.g.
-/// `wt merge --squash` batching post-commit + post-remove + post-switch +
-/// post-merge). When `None`, post-commit self-announces.
 impl CommitOptions<'_> {
+    /// Commit uncommitted changes with the shared commit pipeline.
+    ///
+    /// `announcer`: when `Some`, post-commit pipelines are extended onto the
+    /// caller's announcer so they share an announce line with later phases
+    /// (e.g. `wt merge --squash` batching post-commit + post-remove +
+    /// post-switch + post-merge). When `None`, post-commit self-announces.
     pub fn commit(self, announcer: Option<&mut HookAnnouncer<'_>>) -> anyhow::Result<()> {
         let project_config = self.ctx.repo.load_project_config()?;
         let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_deref());
