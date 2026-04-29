@@ -25,6 +25,7 @@ pub(crate) mod repository_ext;
 mod run_pipeline;
 pub(crate) mod statusline;
 pub(crate) mod step_commands;
+pub(crate) mod template_vars;
 pub(crate) mod worktree;
 
 pub(crate) use alias::{
