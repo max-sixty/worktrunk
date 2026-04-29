@@ -27,14 +27,14 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{Repository, WorktreeInfo};
-use worktrunk::path::format_path_for_display;
+use worktrunk::path::{format_path_for_display, paths_match};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
     warning_message,
 };
 
 use super::commit::{CommitGenerator, StageMode};
-use super::worktree::{compute_worktree_path, paths_match};
+use super::worktree::compute_worktree_path;
 
 // ============================================================================
 // Types representing each stage of the pipeline

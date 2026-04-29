@@ -89,7 +89,6 @@ mod types;
 
 // Re-export public types and functions
 pub use push::{PushKind, handle_no_ff_merge, handle_push};
-pub(crate) use resolve::paths_match;
 pub use resolve::{
     compute_worktree_path, is_worktree_at_expected_path, offer_bare_repo_worktree_path_fix,
     path_mismatch, resolve_worktree_arg, worktree_display_name,

@@ -1101,6 +1101,29 @@ fn test_switch_detached_worktree_by_path(mut repo: TestRepo) {
     );
 }
 
+/// Switch via a symlink that resolves to an existing worktree (#2460).
+#[cfg(unix)]
+#[rstest]
+fn test_switch_worktree_by_symlinked_path(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-symlinked");
+
+    let symlink_path = worktree_path.parent().unwrap().join("worktree-link");
+    std::os::unix::fs::symlink(&worktree_path, &symlink_path).unwrap();
+
+    let symlink_str = symlink_path.to_string_lossy().to_string();
+    let output = repo
+        .wt_command()
+        .args(["switch", &symlink_str])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt switch via symlink should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// Switch to a detached worktree by relative path (#1661).
 /// Relative paths with directory separators (e.g., "../repo.feature") are resolved against CWD.
 #[rstest]
