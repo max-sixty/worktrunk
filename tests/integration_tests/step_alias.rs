@@ -273,6 +273,42 @@ deploy = [
     assert_cmd_snapshot!(cmd);
 }
 
+/// Alias body output is delivered on stdout so it can be piped into other
+/// commands (#2478). Worktrunk's own progress/announcement messages still go
+/// to stderr; only the child shell's stdout passes through.
+#[rstest]
+fn test_alias_body_writes_to_stdout(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+emit = "echo hello"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args(["-y", "emit"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "alias failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stdout.lines().any(|line| line.trim() == "hello"),
+        "expected `hello` on stdout (so `wt <alias> | …` is usable in scripts), \
+         got stdout={stdout:?} stderr={stderr:?}"
+    );
+}
+
 /// Alias command failure propagates exit code (-y bypasses approval)
 #[rstest]
 fn test_step_alias_exit_code(mut repo: TestRepo) {

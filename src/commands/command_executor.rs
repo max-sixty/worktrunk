@@ -90,6 +90,11 @@ pub struct ForegroundStep {
     /// the parent's stdin so interactive children keep the controlling tty
     /// (aliases).
     pub pipe_stdin: bool,
+    /// Merge the child's stdout onto wt's stderr (`true`, hooks) or pass it
+    /// through unchanged (`false`, aliases). Hooks merge so their output stays
+    /// ordered with wt's own stderr "Running …" lines; aliases pass through so
+    /// `wt <alias> | …` remains usable in scripts (#2478).
+    pub redirect_stdout_to_stderr: bool,
     /// Wraps a per-command failure into the final error returned to the caller.
     pub error_wrapper: ErrorWrapper,
 }
@@ -483,6 +488,7 @@ fn run_one_command(
         stdin_json,
         cmd.log_label.as_deref(),
         directives.clone(),
+        fg_step.redirect_stdout_to_stderr,
     );
 
     match result {

@@ -42,6 +42,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+custom-commit
 
 ----- stderr -----
-[0mcustom-commit

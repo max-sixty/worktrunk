@@ -742,6 +742,9 @@ pub(crate) fn run_hooks_foreground(
                 display_path: sourced.display_path,
             },
             pipe_stdin: true,
+            // Hooks merge stdout onto stderr so child output stays ordered
+            // with wt's own "Running …" announcement lines.
+            redirect_stdout_to_stderr: true,
             error_wrapper: hook_error_wrapper(sourced.hook_type),
         })
         .collect();

@@ -42,6 +42,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+deploying from user config
 
 ----- stderr -----
-[0mdeploying from user config

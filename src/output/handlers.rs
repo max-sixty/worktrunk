@@ -1441,7 +1441,7 @@ fn handle_removed_worktree_output(
 /// (`run_pipeline.rs`) has its own spawning logic since it redirects to log
 /// files and runs detached.
 ///
-/// Capabilities: stdout→stderr redirect for deterministic ordering,
+/// Capabilities: optional stdout→stderr redirect for deterministic ordering,
 /// SIGINT/SIGTERM forwarding to child process group, ANSI reset before child
 /// runs, `Cmd` tracing/logging, and directive file control.
 ///
@@ -1461,6 +1461,18 @@ fn handle_removed_worktree_output(
 ///   only the CD file passes through; in legacy compat mode the single
 ///   legacy file passes through to preserve pre-split behavior.
 ///
+/// ## Stdout routing
+///
+/// `redirect_stdout_to_stderr` controls whether the child's stdout is merged
+/// onto wt's stderr (`true`) or passed through unchanged (`false`).
+///
+/// - Hooks and `for-each` pass `true`: their output is decoration around
+///   wt's own stderr messages, and merging keeps "Running …" / progress lines
+///   ordered with the child's own writes.
+/// - Aliases pass `false`: `wt <alias>` is a user-defined command and its
+///   stdout must remain pipeable, so `wt my-alias | jq` and similar
+///   compositions work (#2478).
+///
 /// ## ANSI reset
 ///
 /// Resets ANSI codes on stderr before the child runs. Terminal emulators
@@ -1473,6 +1485,7 @@ pub fn execute_shell_command(
     stdin_content: Option<&str>,
     command_log_label: Option<&str>,
     directives: DirectivePassthrough,
+    redirect_stdout_to_stderr: bool,
 ) -> anyhow::Result<()> {
     // Flush stdout before executing command to ensure all our messages appear
     // before the child process output
@@ -1484,11 +1497,13 @@ pub fn execute_shell_command(
     eprint!("{}", anstyle::Reset);
     stderr().flush().ok(); // Ignore flush errors - reset is best-effort, command execution should proceed
 
-    // Execute with stdout→stderr redirect for deterministic ordering
     let mut cmd = Cmd::shell(command)
         .current_dir(working_dir)
-        .stdout(Stdio::from(std::io::stderr()))
         .forward_signals();
+
+    if redirect_stdout_to_stderr {
+        cmd = cmd.stdout(Stdio::from(std::io::stderr()));
+    }
 
     if let Some(label) = command_log_label {
         cmd = cmd.external(label);

@@ -43,6 +43,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+hello world
 
 ----- stderr -----
 [2m○[22m template variables:
@@ -66,4 +67,3 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34mecho[0m[2m hello [0m[2m[32m{{[0m[2m args [0m[2m[32m}}[0m[2m
 [107m [0m [2m→[22m
 [107m [0m [2m[0m[2m[34mecho[0m[2m hello world
-[0mhello world

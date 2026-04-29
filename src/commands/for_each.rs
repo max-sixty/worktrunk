@@ -86,12 +86,17 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
         // Pipe context JSON to stdin for scripts that want structured data.
         // Directive files are scrubbed — commands run in other worktrees should
         // not influence the parent shell's working directory.
+        // for-each prints decorated headers/footers around child output, so
+        // we merge child stdout onto stderr to keep ordering deterministic.
+        // The structured `--format=json` output is a separate stdout write
+        // emitted after all child commands complete (see below).
         match execute_shell_command(
             &wt.path,
             &command,
             Some(&context_json),
             None,
             DirectivePassthrough::none(),
+            true,
         ) {
             Ok(()) => {
                 if json_mode {
