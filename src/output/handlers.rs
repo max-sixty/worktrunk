@@ -12,7 +12,8 @@ use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
 use crate::commands::command_executor::CommandContext;
 use crate::commands::command_executor::FailureStrategy;
 use crate::commands::hooks::{
-    prepare_background_pipelines, run_hooks_background, run_hooks_foreground_for_type,
+    HookAnnouncer, prepare_background_pipelines, run_hooks_background,
+    run_hooks_foreground_for_type,
 };
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
@@ -736,6 +737,7 @@ pub fn handle_remove_output(
     verify: bool,
     quiet: bool,
     show_branch_in_hooks: bool,
+    announcer: Option<&mut HookAnnouncer<'_>>,
 ) -> anyhow::Result<()> {
     match result {
         RemoveResult::RemovedWorktree {
@@ -749,21 +751,24 @@ pub fn handle_remove_output(
             force_worktree,
             expected_path,
             removed_commit,
-        } => handle_removed_worktree_output(RemovedWorktreeOutputContext {
-            main_path,
-            worktree_path,
-            changed_directory: *changed_directory,
-            branch_name: branch_name.as_deref(),
-            deletion_mode: *deletion_mode,
-            target_branch: target_branch.as_deref(),
-            pre_computed_integration: *integration_reason,
-            force_worktree: *force_worktree,
-            expected_path: expected_path.as_deref(),
-            removed_commit: removed_commit.as_deref(),
-            foreground,
-            verify,
-            show_branch_in_hooks,
-        }),
+        } => handle_removed_worktree_output(
+            RemovedWorktreeOutputContext {
+                main_path,
+                worktree_path,
+                changed_directory: *changed_directory,
+                branch_name: branch_name.as_deref(),
+                deletion_mode: *deletion_mode,
+                target_branch: target_branch.as_deref(),
+                pre_computed_integration: *integration_reason,
+                force_worktree: *force_worktree,
+                expected_path: expected_path.as_deref(),
+                removed_commit: removed_commit.as_deref(),
+                foreground,
+                verify,
+                show_branch_in_hooks,
+            },
+            announcer,
+        ),
         RemoveResult::BranchOnly {
             branch_name,
             deletion_mode,
@@ -874,10 +879,12 @@ fn handle_branch_only_output(
     Ok(())
 }
 
-/// Spawn post-remove and post-switch hooks as a single batch after worktree removal.
+/// Register or spawn post-remove and post-switch hooks after worktree removal.
 ///
-/// Combines both hook types into one output line for consistency with how
-/// post-switch and post-start are combined during worktree creation.
+/// When `ctx.announcer` is `Some`, pipelines are registered on the caller's
+/// announcer so they can share an announce line with later hooks (e.g.
+/// post-merge in `wt merge`). When `None`, this self-announces and spawns —
+/// the standalone `wt remove` path.
 ///
 /// Post-remove template variables reflect the removed worktree (branch, path, commit).
 /// Post-switch hooks only run when `changed_directory` is true (user cd'd to main).
@@ -887,6 +894,7 @@ fn spawn_hooks_after_remove(
     repo: &Repository,
     ctx: &RemovedWorktreeOutputContext<'_>,
     removed_branch: &str,
+    announcer: Option<&mut HookAnnouncer<'_>>,
 ) -> anyhow::Result<()> {
     if !ctx.verify {
         return Ok(());
@@ -941,7 +949,11 @@ fn spawn_hooks_after_remove(
         )?);
     }
 
-    run_hooks_background(pipelines, ctx.show_branch_in_hooks)?;
+    if let Some(announcer) = announcer {
+        announcer.extend(pipelines);
+    } else {
+        run_hooks_background(pipelines, ctx.show_branch_in_hooks)?;
+    }
 
     Ok(())
 }
@@ -1237,6 +1249,7 @@ fn prepare_remove_directory_change(
 fn handle_detached_removed_worktree_output(
     repo: &Repository,
     ctx: &RemovedWorktreeOutputContext<'_>,
+    announcer: Option<&mut HookAnnouncer<'_>>,
 ) -> anyhow::Result<()> {
     if ctx.foreground {
         eprintln!(
@@ -1297,7 +1310,7 @@ fn handle_detached_removed_worktree_output(
     }
 
     // Post-remove hooks for detached HEAD use "HEAD" as the branch identifier
-    spawn_hooks_after_remove(repo, ctx, "HEAD")?;
+    spawn_hooks_after_remove(repo, ctx, "HEAD", announcer)?;
     stderr().flush()?;
     Ok(())
 }
@@ -1306,6 +1319,7 @@ fn handle_named_removed_worktree_foreground(
     repo: &Repository,
     ctx: &RemovedWorktreeOutputContext<'_>,
     branch_name: &str,
+    announcer: Option<&mut HookAnnouncer<'_>>,
 ) -> anyhow::Result<()> {
     eprintln!(
         "{}",
@@ -1353,7 +1367,7 @@ fn handle_named_removed_worktree_foreground(
     display_info.print_hints(branch_name, ctx.deletion_mode, ctx.pre_computed_integration)?;
     print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
 
-    spawn_hooks_after_remove(repo, ctx, branch_name)?;
+    spawn_hooks_after_remove(repo, ctx, branch_name, announcer)?;
     stderr().flush()?;
     Ok(())
 }
@@ -1362,6 +1376,7 @@ fn handle_named_removed_worktree_background(
     repo: &Repository,
     ctx: &RemovedWorktreeOutputContext<'_>,
     branch_name: &str,
+    announcer: Option<&mut HookAnnouncer<'_>>,
 ) -> anyhow::Result<()> {
     if let Some(expected) = ctx.expected_path {
         eprintln!(
@@ -1391,13 +1406,16 @@ fn handle_named_removed_worktree_background(
         ctx.changed_directory,
     )?;
 
-    spawn_hooks_after_remove(repo, ctx, branch_name)?;
+    spawn_hooks_after_remove(repo, ctx, branch_name, announcer)?;
     stderr().flush()?;
     Ok(())
 }
 
 /// Handle output for RemovedWorktree removal
-fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyhow::Result<()> {
+fn handle_removed_worktree_output(
+    ctx: RemovedWorktreeOutputContext<'_>,
+    announcer: Option<&mut HookAnnouncer<'_>>,
+) -> anyhow::Result<()> {
     // Use main_path for discovery - the worktree being removed might be cwd,
     // and git operations after removal need a valid working directory.
     let repo = worktrunk::git::Repository::at(ctx.main_path)?;
@@ -1407,13 +1425,13 @@ fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyh
 
     // Handle detached HEAD case (no branch known)
     let Some(branch_name) = ctx.branch_name else {
-        return handle_detached_removed_worktree_output(&repo, &ctx);
+        return handle_detached_removed_worktree_output(&repo, &ctx, announcer);
     };
 
     if ctx.foreground {
-        handle_named_removed_worktree_foreground(&repo, &ctx, branch_name)
+        handle_named_removed_worktree_foreground(&repo, &ctx, branch_name, announcer)
     } else {
-        handle_named_removed_worktree_background(&repo, &ctx, branch_name)
+        handle_named_removed_worktree_background(&repo, &ctx, branch_name, announcer)
     }
 }
 

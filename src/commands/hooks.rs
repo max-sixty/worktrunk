@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
-use worktrunk::config::{CommandConfig, format_hook_variables};
+use worktrunk::config::{CommandConfig, UserConfig, format_hook_variables};
+use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     eprintln, format_with_gutter, info_message, progress_message, verbosity, warning_message,
@@ -260,6 +261,129 @@ fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
     )
 }
 
+/// Coordinates background hook announcements within a single `wt` command.
+///
+/// The principle: one `◎ Running …` line per command. Sites that would have
+/// individually spawned background hooks instead `register` their pipelines
+/// here, and the command `flush`es once after all phases have been resolved.
+/// All registered hook types end up on a single combined line, joined by `;`.
+///
+/// Just-in-time honesty: registration happens at each phase's normal moment,
+/// so if an earlier phase fails (e.g. pre-merge errors before post-merge is
+/// queued), the announce only describes hooks that actually ran. The line is
+/// emitted at `flush`, not at the first registration.
+pub struct HookAnnouncer<'a> {
+    pending: Vec<PendingPipeline>,
+    repo: &'a Repository,
+    /// Shared config used to rebuild `CommandContext`s at flush time.
+    config: &'a UserConfig,
+    show_branch: bool,
+}
+
+/// Owned spawn data for a registered pipeline. Stores enough to rebuild a
+/// `CommandContext` at flush time so the announcer can outlive any short-lived
+/// contexts at the registration site.
+struct PendingPipeline {
+    worktree_path: PathBuf,
+    branch: Option<String>,
+    steps: Vec<SourcedStep>,
+}
+
+impl<'a> HookAnnouncer<'a> {
+    /// `show_branch=true` includes the branch name for disambiguation in batch
+    /// contexts (e.g., prune removing multiple worktrees):
+    /// `Running post-remove for feature: docs; post-switch for feature: zellij-tab`
+    pub fn new(repo: &'a Repository, config: &'a UserConfig, show_branch: bool) -> Self {
+        Self {
+            pending: Vec::new(),
+            repo,
+            config,
+            show_branch,
+        }
+    }
+
+    /// Add prepared pipelines to the announcer.
+    ///
+    /// Pipelines come from `prepare_background_pipelines` / its callers, which
+    /// already filter out empty source groups — empty `steps` is unreachable.
+    pub fn extend<'b, I>(&mut self, pipelines: I)
+    where
+        I: IntoIterator<Item = (CommandContext<'b>, Vec<SourcedStep>)>,
+    {
+        for (ctx, steps) in pipelines {
+            self.pending.push(PendingPipeline {
+                worktree_path: ctx.worktree_path.to_path_buf(),
+                branch: ctx.branch.map(String::from),
+                steps,
+            });
+        }
+    }
+
+    /// Prepare and add user+project pipelines for a single hook type.
+    pub fn register(
+        &mut self,
+        ctx: &CommandContext<'_>,
+        hook_type: HookType,
+        extra_vars: &[(&str, &str)],
+        display_path: Option<&Path>,
+    ) -> anyhow::Result<()> {
+        let pipelines = prepare_background_pipelines(ctx, hook_type, extra_vars, display_path)?;
+        self.extend(pipelines);
+        Ok(())
+    }
+
+    /// Emit the combined announce line and spawn all registered pipelines.
+    ///
+    /// No-op when nothing was registered. Drains `pending` so the announcer
+    /// can be reused (though one-per-command is the intended pattern).
+    pub fn flush(&mut self) -> anyhow::Result<()> {
+        let mut pending = std::mem::take(&mut self.pending);
+        if pending.is_empty() {
+            return Ok(());
+        }
+
+        // Borrow `worktree_path` / `branch` from each `pending` slot for
+        // CommandContext while moving `steps` out via `mem::take`. `pending`
+        // outlives `pipelines`, so the borrow checker is satisfied.
+        let pipelines: Vec<_> = pending
+            .iter_mut()
+            .map(|p| {
+                (
+                    CommandContext::new(
+                        self.repo,
+                        self.config,
+                        p.branch.as_deref(),
+                        &p.worktree_path,
+                        false,
+                    ),
+                    std::mem::take(&mut p.steps),
+                )
+            })
+            .collect();
+
+        run_hooks_background(pipelines, self.show_branch)
+    }
+}
+
+impl Drop for HookAnnouncer<'_> {
+    /// Best-effort flush on drop so hooks registered before an early-return
+    /// error still spawn. Without this, a `register` error in a later phase
+    /// would silently swallow earlier-registered pipelines — a regression
+    /// from the prior fire-and-forget pattern. On the success path,
+    /// `flush()` runs explicitly first and `pending` is empty here.
+    fn drop(&mut self) {
+        if self.pending.is_empty() {
+            return;
+        }
+        if let Err(err) = self.flush() {
+            eprintln!(
+                "{}",
+                warning_message(format!("Failed to spawn pending hooks: {err:#}"))
+            );
+        }
+    }
+}
+
 /// Announce and spawn background hook pipelines.
 ///
 /// Displays a single combined summary line covering all hook types, then
@@ -272,21 +396,25 @@ fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
 /// `Running post-remove for feature: docs; post-switch for feature: zellij-tab`
 ///
 /// Without `show_branch`: `Running post-switch: zellij-tab; post-start: deps, assets, docs`
+///
+/// Sites that fire hooks at multiple moments within the same `wt` command
+/// should batch through [`HookAnnouncer`] so all phases share one announce
+/// line; this entry is the convenience for callers that produce all pipelines
+/// in one place.
 pub fn run_hooks_background(
     pipelines: Vec<(CommandContext<'_>, Vec<SourcedStep>)>,
     show_branch: bool,
 ) -> anyhow::Result<()> {
-    let non_empty: Vec<_> = pipelines
+    let pipelines: Vec<_> = pipelines
         .into_iter()
         .filter(|(_, steps)| !steps.is_empty())
         .collect();
-    if non_empty.is_empty() {
+    if pipelines.is_empty() {
         return Ok(());
     }
-
     // Build combined summary, merging groups with the same hook type:
     // "post-switch: zellij-tab; post-start: deps, assets, docs"
-    let display_path = non_empty
+    let display_path = pipelines
         .iter()
         .flat_map(|(_, g)| g.iter())
         .find_map(|s| s.display_path.as_ref());
@@ -294,7 +422,7 @@ pub fn run_hooks_background(
     // Merge summaries by hook type so user+project for the same type
     // shows "post-start: user_bg, project" not "post-start: user_bg; post-start: project".
     let mut type_summaries: Vec<(HookType, Vec<String>)> = Vec::new();
-    for (_, group) in &non_empty {
+    for (_, group) in &pipelines {
         let hook_type = group[0].hook_type;
         let summary = format_pipeline_summary(group);
         if let Some(entry) = type_summaries.iter_mut().find(|(ht, _)| *ht == hook_type) {
@@ -308,7 +436,7 @@ pub fn run_hooks_background(
     // This is the removed branch — it identifies the triggering event even for
     // post-switch hooks that fire as a consequence of the removal.
     let branch_suffix = if show_branch {
-        non_empty
+        pipelines
             .first()
             .and_then(|(ctx, _)| ctx.branch)
             .map(|b| cformat!(" for <bold>{b}</>"))
@@ -332,11 +460,11 @@ pub fn run_hooks_background(
         None => format!("Running {combined}"),
     };
     if verbosity() >= 1 {
-        print_background_variable_tables(&non_empty);
+        print_background_variable_tables(&pipelines);
     }
     eprintln!("{}", progress_message(message));
 
-    for (ctx, group) in non_empty {
+    for (ctx, group) in pipelines {
         spawn_hook_pipeline_quiet(&ctx, group)?;
     }
 

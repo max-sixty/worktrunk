@@ -45,7 +45,7 @@ pub(crate) use crate::cli::OutputFormat;
 #[cfg(unix)]
 use commands::handle_picker;
 use commands::repository_ext::RepositoryCliExt;
-use commands::worktree::{handle_no_ff_merge, handle_push};
+use commands::worktree::{PushKind, handle_no_ff_merge, handle_push};
 use commands::{
     HookCliArgs, MergeOptions, OperationMode, RebaseResult, RemoveTarget, SquashResult,
     SwitchOptions, add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show,
@@ -243,7 +243,7 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
                 let current_branch = repo.require_current_branch("step push --no-ff")?;
                 handle_no_ff_merge(target.as_deref(), None, &current_branch)
             } else {
-                handle_push(target.as_deref(), "Pushed to", None)
+                handle_push(target.as_deref(), PushKind::Standalone, None)
             }
         }
         StepCommand::Rebase { target } => {
@@ -804,7 +804,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 // "Approve at the Gate": approval happens AFTER validation passes
                 let run_hooks = verify && approve_remove(yes)?;
 
-                handle_remove_output(&result, args.foreground, run_hooks, false, false)?;
+                handle_remove_output(&result, args.foreground, run_hooks, false, false, None)?;
                 if json_mode {
                     let json = serde_json::json!([result.to_json()]);
                     println!("{}", serde_json::to_string_pretty(&json)?);
@@ -843,13 +843,34 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 let show_branch =
                     plans.others.len() + plans.branch_only.len() + plans.current.iter().len() > 1;
                 for result in &plans.others {
-                    handle_remove_output(result, args.foreground, run_hooks, false, show_branch)?;
+                    handle_remove_output(
+                        result,
+                        args.foreground,
+                        run_hooks,
+                        false,
+                        show_branch,
+                        None,
+                    )?;
                 }
                 for result in &plans.branch_only {
-                    handle_remove_output(result, args.foreground, run_hooks, false, show_branch)?;
+                    handle_remove_output(
+                        result,
+                        args.foreground,
+                        run_hooks,
+                        false,
+                        show_branch,
+                        None,
+                    )?;
                 }
                 if let Some(ref result) = plans.current {
-                    handle_remove_output(result, args.foreground, run_hooks, false, show_branch)?;
+                    handle_remove_output(
+                        result,
+                        args.foreground,
+                        run_hooks,
+                        false,
+                        show_branch,
+                        None,
+                    )?;
                 }
 
                 if json_mode {
