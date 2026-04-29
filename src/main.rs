@@ -17,7 +17,6 @@ use worktrunk::styling::{
 
 use commands::command_approval::approve_hooks;
 use commands::command_executor::CommandContext;
-use commands::list::progressive::RenderMode;
 use commands::worktree::RemoveResult;
 
 mod cli;
@@ -505,14 +504,13 @@ fn handle_list_command(args: ListArgs) -> anyhow::Result<()> {
         }
         None => {
             let (repo, _recovered) = current_or_recover()?;
-            let render_mode = RenderMode::detect(flag_pair(args.progressive, args.no_progressive));
             handle_list(
                 repo,
                 args.format,
                 args.branches,
                 args.remotes,
                 args.full,
-                render_mode,
+                flag_pair(args.progressive, args.no_progressive),
             )
         }
     }

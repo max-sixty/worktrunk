@@ -114,6 +114,7 @@ use super::handle_switch::{
 };
 use super::hooks::{execute_hook, spawn_background_hooks};
 use super::list::collect;
+use super::list::progressive::RenderTarget;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::hooks::PostRemoveContext;
 use super::worktree::{
@@ -634,8 +635,9 @@ pub fn handle_picker(
                     list_width: Some(skim_list_width),
                     progressive_handler: Some(bg_handler),
                 },
-                false, // show_progress (picker renders its own UI)
-                false, // render_table
+                // Picker renders its own UI through `progressive_handler`;
+                // collect must not write to stdout.
+                RenderTarget::Json,
             );
         })
         .context("Failed to spawn picker-collect thread")?;
