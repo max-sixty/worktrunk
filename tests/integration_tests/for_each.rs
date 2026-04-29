@@ -92,6 +92,48 @@ fn test_for_each_spawn_fails(mut repo: TestRepo) {
     ));
 }
 
+/// argv boundaries and quoting from the post-`--` args must survive the trip
+/// through `sh -c`. Without per-arg shell-escaping the user's quoting is
+/// lost: `python3 -c 'import sys; print(sys.argv[1:])' 'a b'` collapses into
+/// a `Syntax error: word unexpected (expecting ")")` because the inline `;`
+/// and `()` inside the `-c` body break out of the unquoted reconstruction.
+/// See issue #2461.
+#[rstest]
+#[cfg(unix)]
+fn test_for_each_preserves_argv_quoting(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "for-each",
+            "--",
+            "python3",
+            "-c",
+            "import sys; print(sys.argv[1:])",
+            "a b",
+        ])
+        .output()
+        .expect("run wt step for-each");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        output.status.success(),
+        "for-each should succeed when argv quoting is preserved: {combined}",
+    );
+    assert!(
+        combined.contains("['a b']"),
+        "expected python to receive 'a b' as a single argv element, got: {combined}",
+    );
+    assert!(
+        !combined.contains("Syntax error"),
+        "for-each should not produce shell syntax errors when argv has quoted args: {combined}",
+    );
+}
+
 /// Force the shell spawn itself to fail (rather than the command inside the
 /// shell exiting non-zero) by setting `PATH` to a directory that contains
 /// only `git` (so wt can still operate) but no `sh` (so the child shell
@@ -170,19 +212,17 @@ fn test_for_each_aborts_on_signal_exit(repo: TestRepo) {
     // so we just need the command to abort on the first visit.
 
     // A marker file per visited worktree lets us assert that the loop stopped
-    // after the first signal. for-each joins the post-`--` args with spaces
-    // and runs the result through `sh -c`; we pass shell fragments that
-    // touch a marker and then self-signal with SIGTERM.
+    // after the first signal. for-each shell-escapes each post-`--` argv
+    // element before passing the result through `sh -c`, so shell features
+    // (`&&`, `$$`, `$(...)`) must be packaged into a single argv string.
     let marker_dir = tempfile::tempdir().expect("create marker tmpdir");
     let marker_path = marker_dir.path().to_string_lossy().to_string();
 
-    let touch_cmd = format!("touch {marker_path}/$(basename \"$(pwd)\")");
+    let shell_cmd = format!("touch {marker_path}/$(basename \"$(pwd)\") && kill -TERM $$");
 
     let output = repo
         .wt_command()
-        .args([
-            "step", "for-each", "--", &touch_cmd, "&&", "kill", "-TERM", "$$",
-        ])
+        .args(["step", "for-each", "--", &shell_cmd])
         .output()
         .expect("run wt step for-each");
 

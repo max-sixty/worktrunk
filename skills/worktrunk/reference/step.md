@@ -557,6 +557,10 @@ Run command in each worktree. Executes sequentially with real-time output; conti
 
 A summary of successes and failures is shown at the end. Context JSON is piped to stdin for scripts that need structured data.
 
+### Argument forms
+
+Multiple post-`--` arguments are treated as argv: each element is shell-escaped before the command is passed to `sh -c`, so quoting and argument boundaries survive. To compose shell features (pipes, `&&`, redirects), pass a single quoted argument containing the shell snippet.
+
 ### Template variables
 
 All variables are shell-escaped. See [`wt hook` template variables](https://worktrunk.dev/hook/#template-variables) for the complete list and filters.

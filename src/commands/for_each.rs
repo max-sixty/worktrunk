@@ -59,8 +59,20 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
     let mut interrupted: Option<i32> = None;
     let total = worktrees.len();
 
-    // Join args into a template string (will be expanded per-worktree)
-    let command_template = args.join(" ");
+    // Build a shell command from the post-`--` argv. With multiple args we
+    // shell-escape each element before joining so quoting and argv boundaries
+    // survive the trip through `sh -c` — a raw `args.join(" ")` would flatten
+    // `python3 -c 'import sys; print(sys.argv[1:])' 'a b'` into a syntax
+    // error. A single argv element is treated as a literal shell snippet
+    // (the documented form for composing pipes, `&&`, redirects, etc.).
+    let command_template = if args.len() == 1 {
+        args[0].clone()
+    } else {
+        args.iter()
+            .map(|arg| shell_escape::escape(arg.into()).into_owned())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
 
     for &wt in &worktrees {
         let display_name = worktree_display_name(wt, &repo, &config);
