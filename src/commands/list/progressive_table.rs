@@ -286,11 +286,6 @@ impl ProgressiveTable {
             self.flush()
         }
     }
-
-    /// Check if output is going to a TTY.
-    pub fn is_tty(&self) -> bool {
-        self.is_tty
-    }
 }
 
 #[cfg(test)]
@@ -362,19 +357,6 @@ mod tests {
         // Update with same content returns false (no change)
         assert!(!table.update_footer(footer.clone()));
         assert_eq!(table.lines.last().unwrap(), &footer);
-    }
-
-    #[test]
-    fn test_is_tty_returns_value() {
-        let table = ProgressiveTable::new(
-            "header".to_string(),
-            vec!["row".to_string()],
-            "footer".to_string(),
-            80,
-        );
-
-        // In test environment, stdout is typically not a TTY
-        let _ = table.is_tty();
     }
 
     #[test]

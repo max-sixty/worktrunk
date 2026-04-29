@@ -113,14 +113,12 @@ impl PickerProgressHandler for PickerHandler {
         }
     }
 
-    fn on_reveal(&self, rendered: Vec<Option<String>>) {
+    fn on_reveal(&self, rendered: Vec<String>) {
         let Some(slots) = self.rendered_slots.get() else {
             return;
         };
         for (slot, line) in slots.iter().zip(rendered) {
-            if let Some(line) = line {
-                *slot.lock().unwrap() = strip_osc8_hyperlinks(&line);
-            }
+            *slot.lock().unwrap() = strip_osc8_hyperlinks(&line);
         }
     }
 }
@@ -238,14 +236,11 @@ mod tests {
         assert_eq!(*slots[0].lock().unwrap(), "skel-one", "row 0 untouched");
         assert_eq!(*slots[1].lock().unwrap(), "updated-two");
 
-        // on_reveal: Some entries rewrite the slot, None entries leave it.
-        handler.on_reveal(vec![Some("rev-one".into()), None]);
+        // on_reveal rewrites every slot — slot writes are idempotent
+        // through `Mutex<String>`, so unconditional updates are safe.
+        handler.on_reveal(vec!["rev-one".into(), "rev-two".into()]);
         assert_eq!(*slots[0].lock().unwrap(), "rev-one");
-        assert_eq!(
-            *slots[1].lock().unwrap(),
-            "updated-two",
-            "row 1 had data — reveal must not clobber it"
-        );
+        assert_eq!(*slots[1].lock().unwrap(), "rev-two");
     }
 
     /// Header + items get published in order. `output()` of the

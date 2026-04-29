@@ -21,6 +21,7 @@ use worktrunk::styling::{
 use super::resolve::{compute_clobber_backup, compute_worktree_path};
 use super::types::{CreationMethod, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::commands::command_executor::CommandContext;
+use crate::commands::template_vars::TemplateVars;
 
 /// Result of resolving the switch target.
 struct ResolvedTarget {
@@ -909,8 +910,8 @@ pub fn execute_switch(
                 .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
             // PR/MR identity travels into both the pre-start hook below and the
-            // SwitchResult — switch_extra_vars then forwards it to background
-            // post-switch / post-start hooks.
+            // SwitchResult — TemplateVars::for_post_switch then forwards it to
+            // background post-switch / post-start hooks.
             let (pr_number, pr_url) = match &method {
                 CreationMethod::ForkRef {
                     number, ref_url, ..
@@ -921,37 +922,21 @@ pub fn execute_switch(
             // Execute post-create commands
             if run_hooks {
                 let ctx = CommandContext::new(repo, config, Some(&branch), &worktree_path, force);
-                let target_wt_posix =
-                    worktrunk::path::to_posix_path(&worktree_path.to_string_lossy());
-
+                let mut vars = TemplateVars::new()
+                    .with_target(&branch)
+                    .with_target_worktree_path(&worktree_path);
                 match &method {
                     CreationMethod::Regular { base_branch, .. } => {
-                        let extra_vars: Vec<(&str, &str)> = [
-                            base_branch.as_ref().map(|b| ("base", b.as_str())),
-                            base_worktree_path
-                                .as_ref()
-                                .map(|p| ("base_worktree_path", p.as_str())),
-                            Some(("target", branch.as_str())),
-                            Some(("target_worktree_path", target_wt_posix.as_str())),
-                        ]
-                        .into_iter()
-                        .flatten()
-                        .collect();
-                        ctx.execute_pre_start_commands(&extra_vars)?;
+                        vars = vars
+                            .with_base_strs(base_branch.as_deref(), base_worktree_path.as_deref());
                     }
                     CreationMethod::ForkRef {
                         number, ref_url, ..
                     } => {
-                        let num_str = number.to_string();
-                        let extra_vars: Vec<(&str, &str)> = vec![
-                            ("pr_number", &num_str),
-                            ("pr_url", ref_url),
-                            ("target", &branch),
-                            ("target_worktree_path", &target_wt_posix),
-                        ];
-                        ctx.execute_pre_start_commands(&extra_vars)?;
+                        vars = vars.with_pr(Some(*number), Some(ref_url));
                     }
                 }
+                ctx.execute_pre_start_commands(&vars.as_extra_vars())?;
             }
 
             // Record successful switch in history

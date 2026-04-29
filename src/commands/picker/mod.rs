@@ -110,13 +110,15 @@ use worktrunk::git::{Repository, current_or_recover};
 
 use super::command_executor::FailureStrategy;
 use super::handle_switch::{
-    approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
+    approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks,
 };
 use super::hooks::{
     prepare_background_pipelines, run_hooks_background, run_hooks_foreground_for_type,
 };
 use super::list::collect;
+use super::list::progressive::RenderTarget;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
+use super::template_vars::TemplateVars;
 use super::worktree::hooks::PostRemoveContext;
 use super::worktree::{
     RemoveResult, SwitchBranchInfo, SwitchResult, execute_switch,
@@ -636,8 +638,9 @@ pub fn handle_picker(
                     list_width: Some(skim_list_width),
                     progressive_handler: Some(bg_handler),
                 },
-                false, // show_progress (picker renders its own UI)
-                false, // render_table
+                // Picker renders its own UI through `progressive_handler`;
+                // collect must not write to stdout.
+                RenderTarget::Json,
             );
         })
         .context("Failed to spawn picker-collect thread")?;
@@ -758,10 +761,12 @@ pub fn handle_picker(
         let hooks_display_path =
             handle_switch_output(&result, &branch_info, change_dir, Some(&source_root), &cwd)?;
 
-        // Spawn background hooks after success message
+        // Spawn background hooks after success message. Picker doesn't capture
+        // pre-switch source identity, so existing-switch `base` vars stay
+        // unset; result-derived `base` (creates) and `target` flow as usual.
         if hooks_approved {
-            let mut pr_number_buf = String::new();
-            let extra_vars = switch_extra_vars(&result, &mut pr_number_buf);
+            let template_vars = TemplateVars::for_post_switch(&result, &branch_info, "", "");
+            let extra_vars = template_vars.as_extra_vars();
             spawn_switch_background_hooks(
                 &repo,
                 &config,
