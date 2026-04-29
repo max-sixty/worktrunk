@@ -344,7 +344,8 @@ pub fn sanitize_branch_name(branch: &str) -> String {
 /// 3. Collapse consecutive underscores into single underscore
 /// 4. Add `_` prefix if identifier starts with a digit (SQL prohibits leading digits)
 /// 5. Append 3-character hash suffix for uniqueness (avoids reserved words and collisions)
-/// 6. Truncate to 63 characters (PostgreSQL limit; MySQL=64, SQL Server=128)
+/// 6. Truncate to 48 characters total (well within PostgreSQL's 63-char identifier
+///    limit, leaving room for prefixes/suffixes when composing paths or identifiers)
 ///
 /// The hash suffix ensures that:
 /// - SQL reserved words are avoided (e.g., `user` → `user_abc`, not a reserved word)
@@ -388,10 +389,11 @@ pub fn sanitize_db(s: &str) -> String {
         result.insert(0, '_');
     }
 
-    // Truncate base to leave room for hash suffix (4 chars: _ + 3 hash chars)
-    // PostgreSQL limit is 63, so max base is 59
-    if result.len() > 59 {
-        result.truncate(59);
+    // Truncate base to leave room for hash suffix (4 chars: _ + 3 hash chars).
+    // Total cap is 48 chars (well within PostgreSQL's 63-char identifier limit),
+    // so max base is 44.
+    if result.len() > 44 {
+        result.truncate(44);
     }
 
     // Append 3-character hash suffix for collision avoidance and reserved word safety
@@ -704,7 +706,7 @@ pub fn validate_template(
 ///
 /// # Filters
 /// - `sanitize` — Replace `/` and `\` with `-` for filesystem-safe paths
-/// - `sanitize_db` — Transform to database-safe identifier (`[a-z0-9_]`, max 63 chars)
+/// - `sanitize_db` — Transform to database-safe identifier (`[a-z0-9_]`, max 48 chars)
 /// - `sanitize_hash` — Filesystem-safe name with hash suffix so distinct inputs never collide
 /// - `hash` — 3-character base36 hash digest of the input
 /// - `hash_port` — Hash to deterministic port number (10000-19999)
@@ -964,14 +966,14 @@ mod tests {
 
     #[test]
     fn test_sanitize_db_truncation() {
-        // Total output is always max 63 characters
-        // Base is truncated to 59 chars, then _xxx suffix (4 chars) is added
+        // Total output is always max 48 characters
+        // Base is truncated to 44 chars, then _xxx suffix (4 chars) is added
 
-        // Very long input: base truncated to 59, + 4 = 63
+        // Very long input: base truncated to 44, + 4 = 48
         let long_input = "a".repeat(100);
         let result = sanitize_db(&long_input);
-        assert_eq!(result.len(), 63, "result: {result}");
-        assert!(result.starts_with(&"a".repeat(58)), "result: {result}");
+        assert_eq!(result.len(), 48, "result: {result}");
+        assert!(result.starts_with(&"a".repeat(43)), "result: {result}");
         assert!(!result.ends_with('_'), "should end with hash chars");
 
         // Short input: base + _ + hash
@@ -983,7 +985,7 @@ mod tests {
         // Truncation happens after prefix is added for digit-starting inputs
         let digit_start = format!("1{}", "x".repeat(100));
         let result = sanitize_db(&digit_start);
-        assert_eq!(result.len(), 63, "result: {result}");
+        assert_eq!(result.len(), 48, "result: {result}");
         assert!(result.starts_with("_1"), "result: {result}");
     }
 
