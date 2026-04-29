@@ -151,16 +151,13 @@ fn canonicalize_with_parents(path: &Path) -> PathBuf {
     let mut suffix_components = Vec::new();
 
     while !existing_prefix.exists() {
-        if let Some(file_name) = existing_prefix.file_name() {
-            suffix_components.push(file_name.to_os_string());
-            if let Some(parent) = existing_prefix.parent() {
-                existing_prefix = parent.to_path_buf();
-            } else {
-                return path.to_path_buf();
-            }
-        } else {
+        let (Some(file_name), Some(parent)) =
+            (existing_prefix.file_name(), existing_prefix.parent())
+        else {
             return path.to_path_buf();
-        }
+        };
+        suffix_components.push(file_name.to_os_string());
+        existing_prefix = parent.to_path_buf();
     }
 
     let canonical_prefix = canonicalize(&existing_prefix).unwrap_or(existing_prefix);
@@ -467,6 +464,13 @@ mod tests {
         let tmp = std::env::temp_dir();
         let canonical = canonicalize_with_parents(&tmp);
         assert!(canonical.is_absolute());
+    }
+
+    #[test]
+    fn test_canonicalize_with_parents_degenerate() {
+        // Empty path can't be decomposed (no file_name) — falls through to returning as-is.
+        let canonical = canonicalize_with_parents(std::path::Path::new(""));
+        assert_eq!(canonical, PathBuf::from(""));
     }
 
     #[test]
