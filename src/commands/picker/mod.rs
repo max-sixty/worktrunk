@@ -112,7 +112,9 @@ use super::command_executor::FailureStrategy;
 use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks, switch_extra_vars,
 };
-use super::hooks::{execute_hook, spawn_background_hooks};
+use super::hooks::{
+    prepare_background_pipelines, run_hooks_background, run_hooks_foreground_for_type,
+};
 use super::list::collect;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::hooks::PostRemoveContext;
@@ -199,12 +201,11 @@ impl PickerCollector {
                 ];
                 let pre_ctx =
                     CommandContext::new(&repo, config, Some(hook_branch), worktree_path, false);
-                execute_hook(
+                run_hooks_foreground_for_type(
                     &pre_ctx,
                     worktrunk::HookType::PreRemove,
                     &extra_vars,
                     FailureStrategy::FailFast,
-                    &[],
                     None, // no display path in TUI context
                 )?;
 
@@ -232,12 +233,13 @@ impl PickerCollector {
                     &repo,
                 );
                 let extra_vars = remove_vars.extra_vars(hook_branch);
-                spawn_background_hooks(
+                let pipelines = prepare_background_pipelines(
                     &post_ctx,
                     worktrunk::HookType::PostRemove,
                     &extra_vars,
                     None, // no display path in TUI context
                 )?;
+                run_hooks_background(pipelines, false)?;
             }
             RemoveResult::BranchOnly {
                 branch_name,

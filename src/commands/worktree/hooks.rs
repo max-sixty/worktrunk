@@ -11,7 +11,7 @@ use worktrunk::path::to_posix_path;
 
 use crate::commands::command_executor::CommandContext;
 use crate::commands::command_executor::FailureStrategy;
-use crate::commands::hooks::execute_hook;
+use crate::commands::hooks::run_hooks_foreground_for_type;
 
 impl<'a> CommandContext<'a> {
     /// Execute pre-start commands sequentially (blocking)
@@ -22,12 +22,11 @@ impl<'a> CommandContext<'a> {
     ///
     /// `extra_vars`: Additional template variables (e.g., `base`, `base_worktree_path`).
     pub fn execute_pre_start_commands(&self, extra_vars: &[(&str, &str)]) -> anyhow::Result<()> {
-        execute_hook(
+        run_hooks_foreground_for_type(
             self,
             HookType::PreStart,
             extra_vars,
             FailureStrategy::FailFast,
-            &[],
             crate::output::post_hook_display_path(self.worktree_path),
         )
     }

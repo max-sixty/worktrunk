@@ -15,7 +15,7 @@ use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, hint_message, info_message, warning_message,
 };
 
-use commands::command_approval::approve_hooks;
+use commands::command_approval::approve_or_skip;
 use commands::command_executor::CommandContext;
 use commands::list::progressive::RenderMode;
 use commands::worktree::RemoveResult;
@@ -770,18 +770,15 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     &approve_worktree_path,
                     yes,
                 );
-                let approved = approve_hooks(
+                approve_or_skip(
                     &ctx,
                     &[
                         HookType::PreRemove,
                         HookType::PostRemove,
                         HookType::PostSwitch,
                     ],
-                )?;
-                if !approved {
-                    eprintln!("{}", info_message("Commands declined, continuing removal"));
-                }
-                Ok(approved)
+                    "Commands declined, continuing removal",
+                )
             };
 
             let branches = args.branches;

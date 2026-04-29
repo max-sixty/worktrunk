@@ -12,7 +12,7 @@ use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
 use crate::commands::command_executor::CommandContext;
 use crate::commands::command_executor::FailureStrategy;
 use crate::commands::hooks::{
-    announce_and_spawn_background_hooks, execute_hook, prepare_background_hooks,
+    prepare_background_pipelines, run_hooks_background, run_hooks_foreground_for_type,
 };
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
@@ -915,17 +915,12 @@ fn spawn_hooks_after_remove(
     let remove_ctx = CommandContext::new(repo, &config, Some(removed_branch), ctx.main_path, false);
 
     // Collect post-remove and post-switch hooks for a single combined announcement.
-    let mut pipelines = Vec::new();
-    pipelines.extend(
-        prepare_background_hooks(
-            &remove_ctx,
-            worktrunk::HookType::PostRemove,
-            &extra_vars,
-            display_path,
-        )?
-        .into_iter()
-        .map(|g| (remove_ctx, g)),
-    );
+    let mut pipelines = prepare_background_pipelines(
+        &remove_ctx,
+        worktrunk::HookType::PostRemove,
+        &extra_vars,
+        display_path,
+    )?;
 
     // Post-switch: only when the user actually changed directory.
     // Uses its own context with the destination branch for template variables.
@@ -938,19 +933,15 @@ fn spawn_hooks_after_remove(
     if let Some(ref dest_branch) = dest_branch {
         let switch_ctx =
             CommandContext::new(repo, &config, dest_branch.as_deref(), ctx.main_path, false);
-        pipelines.extend(
-            prepare_background_hooks(
-                &switch_ctx,
-                worktrunk::HookType::PostSwitch,
-                &[],
-                display_path,
-            )?
-            .into_iter()
-            .map(|g| (switch_ctx, g)),
-        );
+        pipelines.extend(prepare_background_pipelines(
+            &switch_ctx,
+            worktrunk::HookType::PostSwitch,
+            &[],
+            display_path,
+        )?);
     }
 
-    announce_and_spawn_background_hooks(pipelines, ctx.show_branch_in_hooks)?;
+    run_hooks_background(pipelines, ctx.show_branch_in_hooks)?;
 
     Ok(())
 }
@@ -1219,12 +1210,11 @@ fn execute_pre_remove_hooks_if_needed(
         ("target_worktree_path", &target_path_str),
     ];
 
-    execute_hook(
+    run_hooks_foreground_for_type(
         &command_ctx,
         worktrunk::HookType::PreRemove,
         &extra_vars,
         FailureStrategy::FailFast,
-        &[],
         display_path,
     )
 }

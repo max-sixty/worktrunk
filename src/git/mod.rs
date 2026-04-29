@@ -434,6 +434,22 @@ pub enum HookType {
     PostRemove,
 }
 
+impl HookType {
+    /// True for `pre-*` hooks. `pre-*` hooks block the operation and propagate
+    /// failures fail-fast; `post-*` hooks run after success and default to
+    /// background-with-warn.
+    pub fn is_pre(self) -> bool {
+        matches!(
+            self,
+            HookType::PreSwitch
+                | HookType::PreStart
+                | HookType::PreCommit
+                | HookType::PreMerge
+                | HookType::PreRemove
+        )
+    }
+}
+
 /// Reference to a branch for parallel task execution.
 ///
 /// Works for both worktree items (has path) and branch-only items (no worktree).

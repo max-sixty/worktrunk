@@ -10,14 +10,15 @@ use worktrunk::config::{
     UserConfig, ValidationScope, expand_template, template_references_var, validate_template,
 };
 use worktrunk::git::{GitError, Repository, SwitchSuggestionCtx, current_or_recover};
-use worktrunk::styling::{eprintln, info_message};
 
 use crate::cli::SwitchFormat;
 
-use super::command_approval::approve_hooks;
+use super::command_approval::{approve_hooks, approve_or_skip};
 use super::command_executor::FailureStrategy;
 use super::command_executor::{CommandContext, build_hook_context};
-use super::hooks::execute_hook;
+use super::hooks::{
+    prepare_background_pipelines, run_hooks_background, run_hooks_foreground_for_type,
+};
 use super::worktree::{
     SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, offer_bare_repo_worktree_path_fix,
     path_mismatch, plan_switch,
@@ -152,12 +153,11 @@ pub(crate) fn run_pre_switch_hooks(
         // (the source worktree = cwd). The planned destination path is computed
         // later during plan_switch, after pre-switch hooks complete.
 
-        execute_hook(
+        run_hooks_foreground_for_type(
             &pre_ctx,
             HookType::PreSwitch,
             &extra_vars,
             FailureStrategy::FailFast,
-            &[],
             crate::output::pre_hook_display_path(pre_ctx.worktree_path),
         )?;
     }
@@ -196,20 +196,12 @@ pub(crate) fn approve_switch_hooks(
     }
 
     let ctx = CommandContext::new(repo, config, plan.branch(), plan.worktree_path(), yes);
-    let approved = approve_hooks(&ctx, switch_post_hook_types(plan.is_create()))?;
-
-    if !approved {
-        eprintln!(
-            "{}",
-            info_message(if plan.is_create() {
-                "Commands declined, continuing worktree creation"
-            } else {
-                "Commands declined"
-            })
-        );
-    }
-
-    Ok(approved)
+    let on_decline = if plan.is_create() {
+        "Commands declined, continuing worktree creation"
+    } else {
+        "Commands declined"
+    };
+    approve_or_skip(&ctx, switch_post_hook_types(plan.is_create()), on_decline)
 }
 
 /// Compute extra template variables from a switch result.
@@ -261,32 +253,19 @@ pub(crate) fn spawn_switch_background_hooks(
 ) -> anyhow::Result<()> {
     let ctx = CommandContext::new(repo, config, branch, result.path(), yes);
 
-    let mut pipelines = Vec::new();
-    pipelines.extend(
-        super::hooks::prepare_background_hooks(
-            &ctx,
-            HookType::PostSwitch,
-            extra_vars,
-            hooks_display_path,
-        )?
-        .into_iter()
-        .map(|g| (ctx, g)),
-    );
+    let mut pipelines =
+        prepare_background_pipelines(&ctx, HookType::PostSwitch, extra_vars, hooks_display_path)?;
 
     if matches!(result, SwitchResult::Created { .. }) {
-        pipelines.extend(
-            super::hooks::prepare_background_hooks(
-                &ctx,
-                HookType::PostStart,
-                extra_vars,
-                hooks_display_path,
-            )?
-            .into_iter()
-            .map(|g| (ctx, g)),
-        );
+        pipelines.extend(prepare_background_pipelines(
+            &ctx,
+            HookType::PostStart,
+            extra_vars,
+            hooks_display_path,
+        )?);
     }
 
-    super::hooks::announce_and_spawn_background_hooks(pipelines, false)
+    run_hooks_background(pipelines, false)
 }
 
 /// Handle the switch command.

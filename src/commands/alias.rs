@@ -46,8 +46,8 @@ use worktrunk::styling::{
 
 use crate::commands::command_approval::approve_alias_commands;
 use crate::commands::command_executor::{
-    CommandContext, CommandOrigin, FailureStrategy, ForegroundStep, PreparedCommand, PreparedStep,
-    build_hook_context, execute_pipeline_foreground,
+    AnnouncePolicy, CommandContext, FailureStrategy, ForegroundStep, PreparedCommand, PreparedStep,
+    alias_error_wrapper, build_hook_context, execute_pipeline_foreground,
 };
 use crate::commands::hooks::{format_pipeline_summary_from_names, step_names_from_config};
 use crate::commands::{build_invalid_subcommand_error, similar_subcommands};
@@ -539,27 +539,27 @@ fn run_alias(
     // Build ForegroundSteps: all alias commands use lazy expansion so vars.*
     // references resolved from git config at execution time are visible to
     // later steps that set vars via `wt config state vars set`.
-    let origin = CommandOrigin::Alias {
-        name: opts.name.clone(),
-    };
+    let alias_name = opts.name.clone();
     let foreground_steps: Vec<ForegroundStep> = cmd_config
         .steps()
         .iter()
         .map(|step| {
             let prepared = match step {
                 HookStep::Single(cmd) => {
-                    PreparedStep::Single(alias_prepared_command(cmd, &context_json))
+                    PreparedStep::Single(alias_prepared_command(cmd, &context_json, &alias_name))
                 }
                 HookStep::Concurrent(cmds) => PreparedStep::Concurrent(
                     cmds.iter()
-                        .map(|cmd| alias_prepared_command(cmd, &context_json))
+                        .map(|cmd| alias_prepared_command(cmd, &context_json, &alias_name))
                         .collect(),
                 ),
             };
             ForegroundStep {
                 step: prepared,
-                origin: origin.clone(),
                 concurrent: true,
+                announce: AnnouncePolicy::None,
+                pipe_stdin: false,
+                error_wrapper: alias_error_wrapper(alias_name.clone()),
             }
         })
         .collect();
@@ -574,12 +574,18 @@ fn run_alias(
 }
 
 /// Build a PreparedCommand for an alias, deferring template expansion to execution time.
-fn alias_prepared_command(cmd: &worktrunk::config::Command, context_json: &str) -> PreparedCommand {
+fn alias_prepared_command(
+    cmd: &worktrunk::config::Command,
+    context_json: &str,
+    alias_name: &str,
+) -> PreparedCommand {
     PreparedCommand {
         name: cmd.name.clone(),
         expanded: cmd.template.clone(),
         context_json: context_json.to_string(),
         lazy_template: Some(cmd.template.clone()),
+        label: alias_name.to_string(),
+        log_label: None,
     }
 }
 

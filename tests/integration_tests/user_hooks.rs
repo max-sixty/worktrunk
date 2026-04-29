@@ -1360,6 +1360,29 @@ approved-commands = ["echo 'PROJECT_POST_START' > project_bg.txt"]
 // ============================================================================
 
 #[rstest]
+fn test_standalone_hook_failure_omits_skip_hint(repo: TestRepo) {
+    // `wt hook <type>` is the user explicitly requesting hooks. When a hook
+    // fails, suggesting `--no-hooks` makes no sense (they didn't ask for the
+    // operation that runs hooks; they asked for the hooks themselves). The
+    // hint must be reserved for operation-driven hooks (merge, commit, ...).
+    repo.write_project_config(r#"pre-merge = "exit 1""#);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["hook", "pre-merge", "--yes"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "wt hook pre-merge should fail when hook exits non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("--no-hooks"),
+        "wt hook <type> failure must not suggest --no-hooks; got: {stderr}"
+    );
+}
+
+#[rstest]
 fn test_standalone_hook_post_create(repo: TestRepo) {
     // Write project config with pre-start hook
     repo.write_project_config(r#"pre-start = "echo 'STANDALONE_POST_CREATE' > hook_ran.txt""#);

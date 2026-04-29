@@ -8,7 +8,7 @@ use worktrunk::styling::{
 
 use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
-use super::hooks::{HookCommandSpec, spawn_background_hooks};
+use super::hooks::{HookCommandSpec, prepare_background_pipelines, run_hooks_background};
 use super::repository_ext::warn_about_untracked_files;
 
 // Re-export StageMode from config for use by CLI
@@ -177,8 +177,9 @@ impl CommitOptions<'_> {
                 .map(|target| ("target", target))
                 .collect();
 
-            // Run pre-commit hooks (user first, then project)
-            super::hooks::run_hook_with_filter(
+            // Run pre-commit hooks (user first, then project). Tag with the
+            // skip hint so failures suggest `--no-hooks` (operation-driven).
+            super::hooks::run_hooks_foreground(
                 self.ctx,
                 HookCommandSpec {
                     user_config: user_cfg,
@@ -236,7 +237,9 @@ impl CommitOptions<'_> {
                 .into_iter()
                 .map(|target| ("target", target))
                 .collect();
-            spawn_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?;
+            let pipelines =
+                prepare_background_pipelines(self.ctx, HookType::PostCommit, &extra_vars, None)?;
+            run_hooks_background(pipelines, false)?;
         }
 
         Ok(())

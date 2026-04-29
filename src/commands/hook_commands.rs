@@ -25,11 +25,11 @@ use super::command_approval::approve_hooks_filtered;
 use super::command_executor::build_hook_context;
 
 use super::command_executor::CommandContext;
-use super::command_executor::{FailureStrategy, command_summary_name};
+use super::command_executor::FailureStrategy;
 use super::context::CommandEnv;
 use super::hooks::{
-    HookCommandSpec, check_name_filter_matched, count_sourced_commands, prepare_sourced_steps,
-    run_hook_with_filter, spawn_background_hooks, spawn_hook_pipeline,
+    HookCommandSpec, lookup_hook_configs, prepare_and_check, prepare_background_pipelines,
+    run_hooks_background, run_hooks_foreground,
 };
 
 fn run_filtered_hook(
@@ -41,7 +41,7 @@ fn run_filtered_hook(
     name_filters: &[String],
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
-    run_hook_with_filter(
+    run_hooks_foreground(
         ctx,
         HookCommandSpec {
             user_config,
@@ -64,42 +64,42 @@ fn run_post_hook(
     extra_vars: &[(&str, &str)],
     name_filters: &[String],
 ) -> anyhow::Result<()> {
-    // Default to background execution; --foreground is for debugging.
-    if !foreground.unwrap_or(false) {
-        if !name_filters.is_empty() {
-            let steps = prepare_sourced_steps(
-                ctx,
-                HookCommandSpec {
-                    user_config,
-                    project_config,
-                    hook_type,
-                    extra_vars,
-                    name_filters,
-                    display_path: None,
-                },
-            )?;
-            check_name_filter_matched(
-                name_filters,
-                count_sourced_commands(&steps),
-                user_config,
-                project_config,
-            )?;
-            return spawn_hook_pipeline(ctx, steps);
-        }
-
-        // No name filter: prepare and spawn source-grouped pipelines.
-        return spawn_background_hooks(ctx, hook_type, extra_vars, None);
+    // --foreground is for debugging; default is background.
+    if foreground.unwrap_or(false) {
+        return run_filtered_hook(
+            ctx,
+            user_config,
+            project_config,
+            hook_type,
+            extra_vars,
+            name_filters,
+            FailureStrategy::Warn,
+        );
     }
 
-    run_filtered_hook(
-        ctx,
-        user_config,
-        project_config,
-        hook_type,
-        extra_vars,
-        name_filters,
-        FailureStrategy::Warn,
-    )
+    // Filter path merges user + project matches into one pipeline (the user
+    // cherry-picked specific names across sources). The default path keeps
+    // sources independent so a user hook failure doesn't abort project hooks.
+    let pipelines = if name_filters.is_empty() {
+        prepare_background_pipelines(ctx, hook_type, extra_vars, None)?
+    } else {
+        let flat = prepare_and_check(
+            ctx,
+            HookCommandSpec {
+                user_config,
+                project_config,
+                hook_type,
+                extra_vars,
+                name_filters,
+                display_path: None,
+            },
+        )?;
+        if flat.is_empty() {
+            return Ok(());
+        }
+        vec![(*ctx, flat)]
+    };
+    run_hooks_background(pipelines, false)
 }
 
 /// Build best-effort directional vars for manual `wt hook` invocation.
@@ -256,10 +256,8 @@ pub fn run_hook(
 
     // Get effective user hooks (global + per-project merged)
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
-    let (user_config, proj_config) = (
-        user_hooks.get(hook_type),
-        project_config.as_ref().and_then(|c| c.hooks.get(hook_type)),
-    );
+    let (user_config, proj_config) =
+        lookup_hook_configs(&user_hooks, project_config.as_ref(), hook_type);
     // No hooks configured: warn and exit successfully. Running hooks that
     // don't exist is a no-op, so scripts can invoke `wt hook <type>`
     // unconditionally without special-casing empty configuration.
@@ -326,7 +324,7 @@ pub fn run_hook(
     extra_vars.push((ALIAS_ARGS_KEY, &args_json));
 
     if dry_run {
-        let steps = prepare_sourced_steps(
+        let steps = prepare_and_check(
             &ctx,
             HookCommandSpec {
                 user_config,
@@ -337,20 +335,13 @@ pub fn run_hook(
                 display_path: None,
             },
         )?;
-        check_name_filter_matched(
-            name_filters,
-            count_sourced_commands(&steps),
-            user_config,
-            proj_config,
-        )?;
 
         for sourced in steps {
             for cmd in sourced.step.into_commands() {
-                let summary = command_summary_name(cmd.name.as_deref(), sourced.source);
                 let label = if cmd.name.is_some() {
-                    cformat!("{hook_type} <bold>{summary}</> would run:")
+                    cformat!("{hook_type} <bold>{}</> would run:", cmd.label)
                 } else {
-                    cformat!("{hook_type} <bold>{summary}</> hook would run:")
+                    cformat!("{hook_type} <bold>{}</> hook would run:", cmd.label)
                 };
                 eprintln!(
                     "{}",
@@ -364,27 +355,19 @@ pub fn run_hook(
         return Ok(());
     }
 
-    // Execute the hook based on type
-    // pre-* hooks are blocking (fail-fast), post-* hooks run in background
-    match hook_type {
-        HookType::PreSwitch
-        | HookType::PreStart
-        | HookType::PreRemove
-        | HookType::PreCommit
-        | HookType::PreMerge => run_filtered_hook(
+    // pre-* hooks block (fail-fast); post-* hooks default to background.
+    if hook_type.is_pre() {
+        run_filtered_hook(
             &ctx,
             user_config,
             proj_config,
             hook_type,
             &extra_vars,
             name_filters,
-            FailureStrategy::FailFast,
-        ),
-        HookType::PostStart
-        | HookType::PostSwitch
-        | HookType::PostCommit
-        | HookType::PostMerge
-        | HookType::PostRemove => run_post_hook(
+            FailureStrategy::default_for(hook_type),
+        )
+    } else {
+        run_post_hook(
             &ctx,
             foreground,
             user_config,
@@ -392,7 +375,7 @@ pub fn run_hook(
             hook_type,
             &extra_vars,
             name_filters,
-        ),
+        )
     }
 }
 

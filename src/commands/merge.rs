@@ -9,7 +9,9 @@ use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
-use super::hooks::{execute_hook, spawn_background_hooks};
+use super::hooks::{
+    prepare_background_pipelines, run_hooks_background, run_hooks_foreground_for_type,
+};
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::repository_ext::{
     RepositoryCliExt, check_not_default_branch, compute_integration_reason, is_primary_worktree,
@@ -163,11 +165,11 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
 
     // If commands were declined, skip hooks but continue with merge
     // Shadow verify to gate all subsequent hook execution on approval
-    let verify = if !approved {
+    let verify = if approved {
+        verify
+    } else {
         eprintln!("{}", info_message("Commands declined, continuing merge"));
         false
-    } else {
-        verify
     };
 
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
@@ -234,12 +236,11 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         if let Some(ref p) = target_wt_path_str {
             extra.push(("target_worktree_path", p));
         }
-        execute_hook(
+        run_hooks_foreground_for_type(
             &ctx,
             HookType::PreMerge,
             &extra,
             FailureStrategy::FailFast,
-            &[],
             crate::output::pre_hook_display_path(ctx.worktree_path),
         )?;
     }
@@ -358,7 +359,9 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             extra.push(("short_commit", sc));
         }
 
-        spawn_background_hooks(&ctx, HookType::PostMerge, &extra, display_path)?;
+        let pipelines =
+            prepare_background_pipelines(&ctx, HookType::PostMerge, &extra, display_path)?;
+        run_hooks_background(pipelines, false)?;
     }
 
     if json_mode {
