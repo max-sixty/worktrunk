@@ -448,9 +448,10 @@ Most data is stable for the duration of a command. `Repository` caches read-only
 
 **Not cached (changes during command execution):**
 - `is_dirty()` — changes as we stage/commit
-- `list_worktrees()` — changes as we create/remove worktrees
 
-When adding new cached methods, see `RepoCache` in `src/git/repository/mod.rs` for patterns (repo-wide via `OnceCell`, per-worktree via `DashMap`).
+`list_worktrees()` *is* cached, even though `wt switch --create` / `wt remove` mutate the underlying list. The invariant is that mutating paths must not read the list through the same `Repository` after their own mutation: either read once up front and thread the slice through, or call `Repository::at(...)` again to get a fresh cache before any post-mutation probe.
+
+When adding new cached methods, see `RepoCache` in `src/git/repository/mod.rs` for patterns (repo-wide via `OnceCell`, per-worktree via `DashMap`) and the full caching contract.
 
 ## Releases
 
