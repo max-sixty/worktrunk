@@ -70,10 +70,19 @@ impl TemplateVars {
     }
 
     /// Override the Active worktree identity. Sets `worktree_path` (and the
-    /// deprecated `worktree` alias) plus `worktree_name`.
+    /// deprecated `worktree` alias) plus `worktree_name`. Falls back to
+    /// `"unknown"` for `worktree_name` when the path has no file name or the
+    /// file name isn't UTF-8 — matches the pre-refactor merge.rs behavior so
+    /// templates that reference `{{ worktree_name }}` keep rendering rather
+    /// than failing on undefined.
     pub fn with_active_worktree(mut self, path: &Path) -> Self {
         self.active_worktree_path = Some(to_posix_path(&path.to_string_lossy()));
-        self.active_worktree_name = path.file_name().and_then(|n| n.to_str()).map(str::to_owned);
+        self.active_worktree_name = Some(
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string(),
+        );
         self
     }
 
@@ -200,6 +209,15 @@ mod tests {
         assert!(pairs.contains(&("worktree_path", "/repo.feature")));
         assert!(pairs.contains(&("worktree", "/repo.feature")));
         assert!(pairs.contains(&("worktree_name", "repo.feature")));
+    }
+
+    #[test]
+    fn active_worktree_name_falls_back_to_unknown() {
+        // Pre-refactor merge.rs used `unwrap_or("unknown")` for the name;
+        // preserve that so `{{ worktree_name }}` templates keep rendering.
+        let vars = TemplateVars::new().with_active_worktree(&PathBuf::from("/"));
+        let pairs = vars.as_extra_vars();
+        assert!(pairs.contains(&("worktree_name", "unknown")));
     }
 
     #[test]

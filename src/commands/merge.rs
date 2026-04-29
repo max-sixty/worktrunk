@@ -346,7 +346,12 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         if let Some(p) = target_worktree_path.as_deref() {
             vars = vars.with_target_worktree_path(p);
         }
-        announcer.register(&ctx, HookType::PostMerge, &vars.as_extra_vars(), display_path)?;
+        announcer.register(
+            &ctx,
+            HookType::PostMerge,
+            &vars.as_extra_vars(),
+            display_path,
+        )?;
     }
 
     announcer.flush()?;

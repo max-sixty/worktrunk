@@ -910,8 +910,8 @@ pub fn execute_switch(
                 .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
             // PR/MR identity travels into both the pre-start hook below and the
-            // SwitchResult — switch_extra_vars then forwards it to background
-            // post-switch / post-start hooks.
+            // SwitchResult — TemplateVars::for_post_switch then forwards it to
+            // background post-switch / post-start hooks.
             let (pr_number, pr_url) = match &method {
                 CreationMethod::ForkRef {
                     number, ref_url, ..
