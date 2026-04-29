@@ -11,6 +11,7 @@ use crate::common::{
     setup_snapshot_settings, wait_for_file, wait_for_file_content, wait_for_file_count,
 };
 use insta_cmd::assert_cmd_snapshot;
+use path_slash::PathExt as _;
 use rstest::rstest;
 use std::fs;
 use std::thread;
@@ -969,20 +970,21 @@ fn test_merge_drops_pending_hooks_when_post_merge_fails(mut repo: TestRepo) {
 
     // post-merge references an undefined variable, so `register` errors after
     // post-remove + post-switch are already pending in the announcer.
-    // Use TOML literal strings (single-quoted) so Windows backslashes in paths
-    // aren't interpreted as escape sequences (e.g. `\t` → tab).
+    // Convert to forward slashes so the rendered shell command parses the same
+    // way under Windows Git Bash (where backslashes in unquoted paths get
+    // eaten as escape-of-next-char).
     repo.write_test_config(&format!(
         r#"[post-remove]
-cleanup = 'echo POST_REMOVE_RAN > {}'
+cleanup = "echo POST_REMOVE_RAN > {}"
 
 [post-switch]
 notify = "echo switched"
 
 [post-merge]
-sync = 'echo POST_MERGE_RAN > {} {{{{ does_not_exist }}}}'
+sync = "echo POST_MERGE_RAN > {} {{{{ does_not_exist }}}}"
 "#,
-        post_remove_marker.display(),
-        post_merge_marker.display(),
+        post_remove_marker.to_slash_lossy(),
+        post_merge_marker.to_slash_lossy(),
     ));
 
     let output = repo
