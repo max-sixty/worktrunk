@@ -44,7 +44,8 @@ use anyhow::Context;
 use worktrunk::command_log::log_command;
 use worktrunk::git::WorktrunkError;
 use worktrunk::shell_exec::{
-    DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR, ShellConfig, scrub_directive_env_vars,
+    DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR, ShellConfig,
+    scrub_directive_env_vars,
 };
 use worktrunk::styling::stderr;
 
@@ -248,6 +249,9 @@ fn spawn_child(
     scrub_directive_env_vars(&mut command);
     if let Some(path) = &cmd.directives.cd_file {
         command.env(DIRECTIVE_CD_FILE_ENV_VAR, path);
+    }
+    if let Some(path) = &cmd.directives.exec_file {
+        command.env(DIRECTIVE_EXEC_FILE_ENV_VAR, path);
     }
     if let Some(path) = &cmd.directives.legacy_file {
         command.env(DIRECTIVE_FILE_ENV_VAR, path);
@@ -497,9 +501,9 @@ mod tests {
         // passing a log_label doesn't panic and the command still runs.
     }
 
-    /// `DirectivePassthrough` with both `cd_file` and `legacy_file` set must
-    /// propagate both env vars to the child. The child script echoes each env
-    /// var; we assert both values are delivered.
+    /// `DirectivePassthrough` with `cd_file`, `exec_file`, and `legacy_file`
+    /// set must propagate all three env vars to the child. The child script
+    /// echoes each env var; we assert every value is delivered.
     ///
     /// Unix-only: the script uses POSIX `sh` redirect syntax and relies on
     /// native temp paths that don't need escaping. Git Bash on Windows would
@@ -509,24 +513,29 @@ mod tests {
     fn test_directive_env_vars_passed_through() {
         use tempfile::NamedTempFile;
         let cd = NamedTempFile::new().unwrap();
+        let exec = NamedTempFile::new().unwrap();
         let legacy = NamedTempFile::new().unwrap();
         let directives = DirectivePassthrough {
             cd_file: Some(cd.path().to_path_buf()),
+            exec_file: Some(exec.path().to_path_buf()),
             legacy_file: Some(legacy.path().to_path_buf()),
         };
         // Write each env var's value to its matching temp file. If the child
         // didn't receive the env var, the redirect would fail or write an
         // empty file.
         let script = format!(
-            "printf CD > {} && printf LEGACY > {}",
+            "printf CD > {} && printf EXEC > {} && printf LEGACY > {}",
             cd.path().display(),
+            exec.path().display(),
             legacy.path().display(),
         );
         let outcomes = run_one_with_directives("job", &script, None, &directives);
         assert!(outcomes[0].is_ok(), "child should exit 0");
         let cd_contents = std::fs::read_to_string(cd.path()).unwrap();
+        let exec_contents = std::fs::read_to_string(exec.path()).unwrap();
         let legacy_contents = std::fs::read_to_string(legacy.path()).unwrap();
         assert_eq!(cd_contents, "CD");
+        assert_eq!(exec_contents, "EXEC");
         assert_eq!(legacy_contents, "LEGACY");
     }
 

@@ -20,17 +20,21 @@
 //!   sources after the `cd`. This is how `wt switch --execute <cmd>` runs its
 //!   payload in the user's interactive shell, inheriting functions and env.
 //!   Because the contents are sourced verbatim, wt scrubs this env var from
-//!   alias and foreground-hook child processes so a hook body cannot inject
-//!   shell into the parent session.
+//!   project-alias and foreground-hook child processes so a body authored in
+//!   shared config cannot inject shell into the parent session.
 //!
 //! # Conservative scrub
 //!
-//! Because the EXEC env var is scrubbed from alias/hook child environments, a
-//! nested `wt` invocation inside an alias body (e.g. `wt step my-alias` where
-//! the alias runs `wt switch main --execute claude`) sees no EXEC file and
-//! refuses to run the `--execute` payload, emitting a warning and a link to
+//! User-source aliases pass the EXEC env var through (issue #2101): the body
+//! lives in the user's own config, so `wt step my-alias` running
+//! `wt switch main --execute claude` is no different from the user typing
+//! the same command at the top level.
+//!
+//! Project aliases and foreground hooks keep the scrub. A nested `wt
+//! --execute …` inside one of those bodies sees no EXEC file and refuses to
+//! run the payload, emitting a warning and a link to
 //! <https://github.com/max-sixty/worktrunk/issues/2101> so users can report
-//! whether to relax the restriction.
+//! whether to relax the restriction further.
 //!
 //! # Legacy compat
 //!
@@ -64,8 +68,9 @@ use worktrunk::shell_exec::{
 };
 use worktrunk::styling::{hint_message, warning_message};
 
-/// Issue tracking whether to relax the conservative EXEC scrub for alias/hook
-/// bodies. Emitted in the warning so users can report use cases.
+/// Issue tracking whether to relax the EXEC scrub further for project aliases
+/// and hooks. (User aliases already pass EXEC through.) Emitted in the warning
+/// so users can report use cases.
 pub const EXEC_SCRUB_ISSUE_URL: &str = "https://github.com/max-sixty/worktrunk/issues/2101";
 
 // Re-export set_verbosity from the library's styling module.
@@ -292,13 +297,13 @@ fn warn_exec_scrubbed_once(command: &str) {
     eprintln!(
         "{}",
         warning_message(cformat!(
-            "<bold>--execute</> disabled inside alias/hook bodies for safety; skipping <bold>{command}</>"
+            "<bold>--execute</> disabled inside project alias / hook bodies for safety; skipping <bold>{command}</>"
         ))
     );
     eprintln!(
         "{}",
         hint_message(cformat!(
-            "This is extremely conservative; comment at <underline>{EXEC_SCRUB_ISSUE_URL}</> if this affects you"
+            "User-source aliases allow it. Comment at <underline>{EXEC_SCRUB_ISSUE_URL}</> if you need it for project aliases or hooks"
         ))
     );
 }

@@ -305,9 +305,10 @@ pub const DIRECTIVE_CD_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_CD_FILE";
 /// Shell wrappers set this to a temp file; wt writes shell commands (e.g. the
 /// body of `wt switch --execute`) to it and the wrapper sources the file after
 /// wt exits, so the command runs in the user's interactive shell. Because the
-/// file contents are arbitrary shell, wt scrubs this from alias/hook child
-/// environments — a hook body writing to this file could inject shell into
-/// the parent shell. Only trusted wt-internal callers write to it.
+/// file contents are arbitrary shell, wt scrubs this from project-alias and
+/// hook child environments — a body authored in shared config could inject
+/// shell into the parent shell. User-source aliases re-add it (issue #2101)
+/// since the body is user-authored just like a top-level `wt --execute`.
 pub const DIRECTIVE_EXEC_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_EXEC_FILE";
 
 /// Legacy pre-split directive file env var. Honored for one release so users
@@ -620,9 +621,14 @@ pub struct Cmd {
     /// When set, re-adds `WORKTRUNK_DIRECTIVE_CD_FILE` after the security scrub
     /// in `apply_common_settings`. Used by aliases and foreground hooks — their
     /// shell bodies may emit cd directives (the file holds a raw path, no shell
-    /// injection surface). `WORKTRUNK_DIRECTIVE_EXEC_FILE` is NEVER re-added,
-    /// so alias/hook bodies cannot inject arbitrary shell into the parent.
+    /// injection surface).
     directive_cd_file: Option<std::path::PathBuf>,
+    /// When set, re-adds `WORKTRUNK_DIRECTIVE_EXEC_FILE` after the security
+    /// scrub. Set only by user-source aliases (issue #2101): the body is the
+    /// user's own config, so a nested `wt --execute` is no different from the
+    /// user typing it at the top level. Project aliases and hooks must NEVER
+    /// set this — they could inject arbitrary shell into the parent session.
+    directive_exec_file: Option<std::path::PathBuf>,
     /// When set, re-adds the legacy `WORKTRUNK_DIRECTIVE_FILE` env var. Used in
     /// legacy-wrapper compat mode to preserve pre-split behavior for alias/hook
     /// bodies running under an old shell wrapper.
@@ -671,6 +677,7 @@ impl Cmd {
             forward_signals: false,
             external_label: None,
             directive_cd_file: None,
+            directive_exec_file: None,
             directive_legacy_file: None,
         }
     }
@@ -894,12 +901,22 @@ impl Cmd {
     /// contexts (aliases, foreground hooks) where the child should be able
     /// to request a directory change. It is always safe to pass through: the
     /// file holds a raw path, not shell, so there is no injection surface.
-    ///
-    /// `WORKTRUNK_DIRECTIVE_EXEC_FILE` is intentionally *not* exposed by any
-    /// `Cmd` method — only wt-internal Rust code writes arbitrary shell
-    /// directives, so no child process ever needs the env var.
     pub fn directive_cd_file(mut self, path: impl Into<std::path::PathBuf>) -> Self {
         self.directive_cd_file = Some(path.into());
+        self
+    }
+
+    /// Pass the EXEC directive file through to the child process.
+    ///
+    /// Re-adds `WORKTRUNK_DIRECTIVE_EXEC_FILE`, allowing the child to request
+    /// arbitrary shell execution in the parent shell (the wrapper sources the
+    /// file after wt exits). This is only safe when the child's command body
+    /// is itself trusted user-authored input — currently just user-source
+    /// aliases, where the alias body lives in the user's own config and
+    /// nesting `wt --execute` is no different from the user typing it. Project
+    /// aliases and hooks must not call this — see issue #2101.
+    pub fn directive_exec_file(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.directive_exec_file = Some(path.into());
         self
     }
 
@@ -930,7 +947,9 @@ impl Cmd {
             "Cmd::shell() commands must use .stream(), not .run()"
         );
         debug_assert!(
-            self.directive_cd_file.is_none() && self.directive_legacy_file.is_none(),
+            self.directive_cd_file.is_none()
+                && self.directive_exec_file.is_none()
+                && self.directive_legacy_file.is_none(),
             "directive_*_file is only applied by .stream(), not .run()"
         );
 
@@ -1036,8 +1055,10 @@ impl Cmd {
         );
         debug_assert!(
             self.directive_cd_file.is_none()
+                && self.directive_exec_file.is_none()
                 && self.directive_legacy_file.is_none()
                 && next.directive_cd_file.is_none()
+                && next.directive_exec_file.is_none()
                 && next.directive_legacy_file.is_none(),
             "directive_*_file is only applied by .stream(), not pipe_into"
         );
@@ -1188,9 +1209,14 @@ impl Cmd {
 
         // Re-add directive files after security scrub for trusted contexts.
         // CD file is always safe to pass through (raw path, no shell). EXEC
-        // file is never re-added — alias/hook bodies must not inject shell.
+        // file is only re-added for user-source aliases (issue #2101); project
+        // aliases and hooks leave it scrubbed so their bodies cannot inject
+        // shell into the parent session.
         if let Some(ref path) = self.directive_cd_file {
             cmd.env(DIRECTIVE_CD_FILE_ENV_VAR, path);
+        }
+        if let Some(ref path) = self.directive_exec_file {
+            cmd.env(DIRECTIVE_EXEC_FILE_ENV_VAR, path);
         }
         if let Some(ref path) = self.directive_legacy_file {
             cmd.env(DIRECTIVE_FILE_ENV_VAR, path);

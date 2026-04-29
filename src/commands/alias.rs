@@ -278,6 +278,16 @@ fn alias_needs_approval(
         .cloned()
 }
 
+/// Whether the project config defines an alias by this name.
+///
+/// Treated as the "is this a project alias" predicate at runtime: project
+/// entries shadow user entries with the same name in the merged map, so any
+/// alias the project config defines is the one that runs. Used to decide
+/// whether the EXEC directive file is safe to pass through to the body.
+fn project_aliases_contain(project_config: Option<&ProjectConfig>, alias_name: &str) -> bool {
+    project_config.is_some_and(|pc| pc.aliases.contains_key(alias_name))
+}
+
 /// Synthesize clap's native `InvalidSubcommand` error for `wt step <name>`
 /// and return it via `enhance_clap_error`, so the output matches what
 /// `wt <typo>` produces at the top level. Suggestion candidates include both
@@ -536,8 +546,16 @@ fn run_alias(
         );
     }
 
-    // CD passed through, EXEC scrubbed (see `output::global` for rationale).
-    let directives = DirectivePassthrough::inherit_from_env();
+    // User-source aliases get the EXEC directive file passed through so a
+    // nested `wt switch --execute …` inside the body works the same as the
+    // user typing it at the top level. Project aliases keep the conservative
+    // scrub: the body lives in shared config and could inject arbitrary
+    // shell into the parent session. See issue #2101.
+    let directives = if project_aliases_contain(project_config.as_ref(), &opts.name) {
+        DirectivePassthrough::inherit_from_env()
+    } else {
+        DirectivePassthrough::inherit_from_env_with_exec()
+    };
 
     // Build ForegroundSteps: all alias commands use lazy expansion so vars.*
     // references resolved from git config at execution time are visible to

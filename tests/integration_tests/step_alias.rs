@@ -766,6 +766,108 @@ new-branch = "'{wt_toml}' switch --create alias-created"
     );
 }
 
+/// User-source aliases pass the EXEC directive file through to the body, so a
+/// nested `wt switch --execute X` writes the payload back to the parent
+/// shell's EXEC file the same as a top-level `wt switch --execute X` would.
+///
+/// Regression test for #2101: the conservative scrub used to refuse `--execute`
+/// inside any alias body, breaking workflows like `issue = "wt switch --create
+/// {{ args[0] }} --execute claude"` even when the alias lived in user config.
+#[rstest]
+fn test_user_alias_passes_exec_directive(repo: TestRepo) {
+    repo.commit("initial");
+    let wt = wt_bin();
+    let wt_str = wt.to_string_lossy();
+    assert!(
+        !wt_str.contains('\''),
+        "wt binary path should not contain single quotes: {wt_str}"
+    );
+    let wt_toml = wt_str.replace('\\', r"\\");
+
+    repo.write_test_config(&format!(
+        r#"
+[aliases]
+exec-passthrough = "'{wt_toml}' switch --create user-alias-target --execute 'echo from-user-alias'"
+"#
+    ));
+
+    let (cd_path, exec_path, _guard) = directive_files();
+
+    let mut cmd = repo.wt_command();
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    cmd.args(["step", "exec-passthrough"]);
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "wt step exec-passthrough failed: stdout={}\nstderr={stderr}",
+        String::from_utf8_lossy(&output.stdout),
+    );
+    assert!(
+        !stderr.contains("disabled inside"),
+        "user alias should not trip the EXEC scrub warning, got: {stderr}"
+    );
+
+    let exec_content = std::fs::read_to_string(&exec_path).unwrap_or_default();
+    assert!(
+        exec_content.contains("echo from-user-alias"),
+        "EXEC file should contain the alias's --execute payload, got: {exec_content:?}"
+    );
+}
+
+/// Project-source aliases keep the conservative EXEC scrub: a nested
+/// `wt switch --execute X` is refused with a warning pointing at the tracking
+/// issue. The body is shared config, so allowing it would let the project
+/// inject arbitrary shell into every contributor's interactive session.
+#[rstest]
+fn test_project_alias_scrubs_exec_directive(repo: TestRepo) {
+    repo.commit("initial");
+    let wt = wt_bin();
+    let wt_str = wt.to_string_lossy();
+    assert!(
+        !wt_str.contains('\''),
+        "wt binary path should not contain single quotes: {wt_str}"
+    );
+    let wt_toml = wt_str.replace('\\', r"\\");
+
+    repo.write_project_config(&format!(
+        r#"
+[aliases]
+exec-blocked = "'{wt_toml}' switch --create project-alias-target --execute 'echo should-not-pass'"
+"#
+    ));
+
+    let (cd_path, exec_path, _guard) = directive_files();
+
+    let mut cmd = repo.wt_command();
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    // -y skips the project-alias approval prompt.
+    cmd.args(["-y", "step", "exec-blocked"]);
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "wt -y step exec-blocked failed: stdout={}\nstderr={stderr}",
+        String::from_utf8_lossy(&output.stdout),
+    );
+    assert!(
+        stderr.contains("disabled inside project alias"),
+        "project alias should warn that --execute is disabled, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("issues/2101"),
+        "warning should link the tracking issue, got: {stderr}"
+    );
+
+    let exec_content = std::fs::read_to_string(&exec_path).unwrap_or_default();
+    assert!(
+        !exec_content.contains("should-not-pass"),
+        "EXEC file should NOT contain the scrubbed payload, got: {exec_content:?}"
+    );
+}
+
 /// Alias subprocesses inherit the parent's stdin so interactive children
 /// (e.g. `wt switch`'s picker) keep the controlling terminal.
 ///

@@ -50,5 +50,5 @@ exit_code: 0
 ----- stderr -----
 [32m✓[39m [32mCreated branch [1mscrub-test[22m from [1mmain[22m and worktree @ [1m_REPO_.scrub-test[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
-[33m▲[39m [33m[1m--execute[22m disabled inside alias/hook bodies for safety; skipping [1mecho should-not-run[22m[39m
-[2m↳[22m [2mThis is extremely conservative; comment at [4mhttps://github.com/max-sixty/worktrunk/issues/2101[24m if this affects you[22m
+[33m▲[39m [33m[1m--execute[22m disabled inside project alias / hook bodies for safety; skipping [1mecho should-not-run[22m[39m
+[2m↳[22m [2mUser-source aliases allow it. Comment at [4mhttps://github.com/max-sixty/worktrunk/issues/2101[24m if you need it for project aliases or hooks[22m
