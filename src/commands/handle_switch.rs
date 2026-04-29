@@ -16,9 +16,7 @@ use crate::cli::SwitchFormat;
 use super::command_approval::{approve_hooks, approve_or_skip};
 use super::command_executor::FailureStrategy;
 use super::command_executor::{CommandContext, build_hook_context};
-use super::hooks::{
-    prepare_background_pipelines, run_hooks_background, run_hooks_foreground_for_type,
-};
+use super::hooks::{execute_hook, prepare_background_pipelines, run_hooks_background};
 use super::template_vars::TemplateVars;
 use super::worktree::{
     SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, offer_bare_repo_worktree_path_fix,
@@ -135,7 +133,7 @@ pub(crate) fn run_pre_switch_hooks(
         }
         let extra_vars = vars.as_extra_vars();
 
-        run_hooks_foreground_for_type(
+        execute_hook(
             &pre_ctx,
             HookType::PreSwitch,
             &extra_vars,

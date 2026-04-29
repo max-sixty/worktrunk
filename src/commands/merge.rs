@@ -9,7 +9,7 @@ use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
-use super::hooks::{HookAnnouncer, run_hooks_foreground_for_type};
+use super::hooks::{HookAnnouncer, execute_hook};
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::repository_ext::{
     RepositoryCliExt, check_not_default_branch, compute_integration_reason, is_primary_worktree,
@@ -229,7 +229,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         if let Some(p) = target_worktree_path.as_deref() {
             vars = vars.with_target_worktree_path(p);
         }
-        run_hooks_foreground_for_type(
+        execute_hook(
             &ctx,
             HookType::PreMerge,
             &vars.as_extra_vars(),

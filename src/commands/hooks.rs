@@ -706,21 +706,16 @@ pub(crate) fn prepare_and_check(
 
 /// Run user and project hooks for a given hook type in the foreground.
 ///
-/// Canonical foreground entry point. Runs user hooks first, then project hooks
-/// sequentially. Handles name filtering and returns an error if a name filter
-/// was provided but no matching command was found.
-///
-/// Errors are returned raw — operation callers (merge, commit, switch …) wrap
-/// them with `add_hook_skip_hint` so users see the `--no-hooks` reminder.
-/// The `wt hook <type>` path leaves errors unwrapped because the user already
-/// asked for the hooks explicitly. `run_hooks_foreground_for_type` adds the
-/// hint for its callers (all operation-driven); direct callers of this
-/// function add it themselves when appropriate.
+/// Used directly only by the `wt hook <type>` path, which intentionally
+/// leaves errors unwrapped (the user explicitly asked for the hooks; the
+/// `--no-hooks` hint would be misleading). Operation-driven callers should go
+/// through [`execute_hook`] which auto-looks-up configs and adds the skip
+/// hint.
 ///
 /// `display_path` (in the spec): pass `pre_hook_display_path(ctx.worktree_path)`
 /// for automatic detection, or `Some(path)` when hooks run somewhere the user
 /// won't be cd'd to.
-pub fn run_hooks_foreground(
+pub(crate) fn run_hooks_foreground(
     ctx: &CommandContext,
     spec: HookCommandSpec<'_, '_, '_, '_>,
     failure_strategy: FailureStrategy,
@@ -772,14 +767,33 @@ pub(crate) fn lookup_hook_configs<'a>(
     )
 }
 
-/// Run a single hook type in the foreground with auto config lookup.
+/// Spawn background hooks for a single hook type (post-commit, post-merge, …).
 ///
-/// Convenience wrapper around [`run_hooks_foreground`] for operation-driven
-/// callers (merge, switch, remove, …) that don't already have user/project
-/// configs in scope. Loads project config via `ctx.repo.load_project_config()`,
-/// looks up the per-type configs, runs, and tags failures with
-/// `add_hook_skip_hint` so the user sees the `--no-hooks` reminder.
-pub(crate) fn run_hooks_foreground_for_type(
+/// Symmetric to [`execute_hook`] for the background path: auto-loads project
+/// config, prepares source-grouped pipelines, and spawns. Single-type callers
+/// (commit, step_commands::handle_squash, picker post-remove) prefer this;
+/// multi-type batches (handle_switch's PostSwitch + PostStart) build pipelines
+/// via [`prepare_background_pipelines`] and call [`run_hooks_background`]
+/// directly so all types share one announce line.
+pub(crate) fn spawn_background_hooks(
+    ctx: &CommandContext,
+    hook_type: HookType,
+    extra_vars: &[(&str, &str)],
+    display_path: Option<&Path>,
+) -> anyhow::Result<()> {
+    let pipelines = prepare_background_pipelines(ctx, hook_type, extra_vars, display_path)?;
+    run_hooks_background(pipelines, false)
+}
+
+/// Run a single hook type in the foreground for an operation (merge, switch,
+/// commit, remove, …).
+///
+/// Auto-loads project config, looks up the per-type configs, runs the hooks,
+/// and tags failures with `add_hook_skip_hint` so the user sees the
+/// `--no-hooks` reminder. This is the canonical operation-driven entry point;
+/// the only path that should bypass it is `wt hook <type>` (which calls
+/// [`run_hooks_foreground`] directly so failures don't carry the hint).
+pub(crate) fn execute_hook(
     ctx: &CommandContext,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],

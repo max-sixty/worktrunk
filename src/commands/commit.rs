@@ -8,7 +8,7 @@ use worktrunk::styling::{
 
 use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
-use super::hooks::{HookCommandSpec, prepare_background_pipelines, run_hooks_background};
+use super::hooks::{execute_hook, spawn_background_hooks};
 use super::repository_ext::warn_about_untracked_files;
 
 // Re-export StageMode from config for use by CLI
@@ -177,21 +177,14 @@ impl CommitOptions<'_> {
                 .map(|target| ("target", target))
                 .collect();
 
-            // Run pre-commit hooks (user first, then project). Tag with the
-            // skip hint so failures suggest `--no-hooks` (operation-driven).
-            super::hooks::run_hooks_foreground(
+            // Run pre-commit hooks (user first, then project).
+            execute_hook(
                 self.ctx,
-                HookCommandSpec {
-                    user_config: user_cfg,
-                    project_config: proj_cfg,
-                    hook_type: HookType::PreCommit,
-                    extra_vars: &extra_vars,
-                    name_filters: &[],
-                    display_path: crate::output::pre_hook_display_path(self.ctx.worktree_path),
-                },
+                HookType::PreCommit,
+                &extra_vars,
                 FailureStrategy::FailFast,
-            )
-            .map_err(worktrunk::git::add_hook_skip_hint)?;
+                crate::output::pre_hook_display_path(self.ctx.worktree_path),
+            )?;
         }
 
         // Use the worktree path from context — this is the target worktree when
@@ -237,9 +230,7 @@ impl CommitOptions<'_> {
                 .into_iter()
                 .map(|target| ("target", target))
                 .collect();
-            let pipelines =
-                prepare_background_pipelines(self.ctx, HookType::PostCommit, &extra_vars, None)?;
-            run_hooks_background(pipelines, false)?;
+            spawn_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?;
         }
 
         Ok(())

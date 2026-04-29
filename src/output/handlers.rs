@@ -12,8 +12,7 @@ use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
 use crate::commands::command_executor::CommandContext;
 use crate::commands::command_executor::FailureStrategy;
 use crate::commands::hooks::{
-    HookAnnouncer, prepare_background_pipelines, run_hooks_background,
-    run_hooks_foreground_for_type,
+    HookAnnouncer, execute_hook, prepare_background_pipelines, run_hooks_background,
 };
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
@@ -1222,7 +1221,7 @@ fn execute_pre_remove_hooks_if_needed(
         ("target_worktree_path", &target_path_str),
     ];
 
-    run_hooks_foreground_for_type(
+    execute_hook(
         &command_ctx,
         worktrunk::HookType::PreRemove,
         &extra_vars,

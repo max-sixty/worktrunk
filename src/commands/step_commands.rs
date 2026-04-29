@@ -39,9 +39,7 @@ use super::command_approval::approve_or_skip;
 use super::command_executor::FailureStrategy;
 use super::commit::{CommitGenerator, CommitOptions, StageMode};
 use super::context::CommandEnv;
-use super::hooks::{
-    HookCommandSpec, prepare_background_pipelines, run_hooks_background, run_hooks_foreground,
-};
+use super::hooks::{execute_hook, spawn_background_hooks};
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use crate::output::handle_remove_output;
 use worktrunk::git::BranchDeletionMode;
@@ -185,23 +183,16 @@ pub fn handle_squash(
         }
     }
 
-    // Run pre-commit hooks (user first, then project). Tag with the skip
-    // hint so failures suggest `--no-hooks` (operation-driven).
+    // Run pre-commit hooks (user first, then project).
     if verify {
         let extra_vars = [("target", integration_target.as_str())];
-        run_hooks_foreground(
+        execute_hook(
             &ctx,
-            HookCommandSpec {
-                user_config: user_cfg,
-                project_config: proj_cfg,
-                hook_type: HookType::PreCommit,
-                extra_vars: &extra_vars,
-                name_filters: &[],
-                display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
-            },
+            HookType::PreCommit,
+            &extra_vars,
             FailureStrategy::FailFast,
-        )
-        .map_err(worktrunk::git::add_hook_skip_hint)?;
+            crate::output::pre_hook_display_path(ctx.worktree_path),
+        )?;
     }
 
     // Get merge base with target branch (required for squash)
@@ -352,9 +343,7 @@ pub fn handle_squash(
     // Spawn post-commit hooks in background (respects --no-hooks)
     if verify {
         let extra_vars: Vec<(&str, &str)> = vec![("target", integration_target.as_str())];
-        let pipelines =
-            prepare_background_pipelines(&ctx, HookType::PostCommit, &extra_vars, None)?;
-        run_hooks_background(pipelines, false)?;
+        spawn_background_hooks(&ctx, HookType::PostCommit, &extra_vars, None)?;
     }
 
     Ok(SquashResult::Squashed)
