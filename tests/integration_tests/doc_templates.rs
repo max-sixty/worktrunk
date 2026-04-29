@@ -92,7 +92,7 @@ fn test_doc_sanitize_filter(repo: TestRepo) {
 
 // =============================================================================
 // Sanitize DB Filter (docs/content/hook.md: Filters table)
-// "Transform to database-safe identifier ([a-z0-9_], max 63 chars)"
+// "Transform to database-safe identifier ([a-z0-9_], max 48 chars)"
 // =============================================================================
 
 #[rstest]
