@@ -1,6 +1,6 @@
 use anyhow::Context;
 use worktrunk::HookType;
-use worktrunk::config::{Approvals, UserConfig};
+use worktrunk::config::{Approvals, MergeConfig, UserConfig};
 use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, info_message};
 
@@ -20,28 +20,58 @@ use super::worktree::{
 };
 use worktrunk::git::BranchDeletionMode;
 
-/// Options for the merge command
-///
-/// All boolean fields are optional CLI overrides. If None, the effective config
-/// (project-specific merged with global) is used. If that's also None, defaults apply.
+/// Tri-state CLI overrides for the six `wt merge` boolean flags. `None` =
+/// fall through to effective config; `Some(b)` = user explicitly chose.
+pub struct MergeFlagOverrides {
+    pub squash: Option<bool>,
+    pub commit: Option<bool>,
+    pub rebase: Option<bool>,
+    pub remove: Option<bool>,
+    pub ff: Option<bool>,
+    pub verify: Option<bool>,
+}
+
+impl MergeFlagOverrides {
+    pub fn from_cli(args: &crate::cli::MergeArgs) -> Self {
+        Self {
+            squash: crate::flag_pair(args.squash, args.no_squash),
+            commit: crate::flag_pair(args.commit, args.no_commit),
+            rebase: crate::flag_pair(args.rebase, args.no_rebase),
+            remove: crate::flag_pair(args.remove, args.no_remove),
+            ff: crate::flag_pair(args.ff, args.no_ff),
+            verify: crate::flag_pair(args.verify, args.no_hooks || args.no_verify),
+        }
+    }
+
+    /// Apply the override → effective-config → default-true chain.
+    pub fn resolve(&self, config: &MergeConfig) -> ResolvedMergeFlags {
+        ResolvedMergeFlags {
+            squash: self.squash.unwrap_or(config.squash()),
+            commit: self.commit.unwrap_or(config.commit()),
+            rebase: self.rebase.unwrap_or(config.rebase()),
+            remove: self.remove.unwrap_or(config.remove()),
+            ff: self.ff.unwrap_or(config.ff()),
+            verify: self.verify.unwrap_or(config.verify()),
+        }
+    }
+}
+
+pub struct ResolvedMergeFlags {
+    pub squash: bool,
+    pub commit: bool,
+    pub rebase: bool,
+    pub remove: bool,
+    pub ff: bool,
+    pub verify: bool,
+}
+
+/// Options for the merge command. `flags` carries tri-state CLI overrides for
+/// the six boolean flags; `stage` is the same shape but for stage mode.
 pub struct MergeOptions<'a> {
     pub target: Option<&'a str>,
-    /// CLI override for squash. None = use effective config default.
-    pub squash: Option<bool>,
-    /// CLI override for commit. None = use effective config default.
-    pub commit: Option<bool>,
-    /// CLI override for rebase. None = use effective config default.
-    pub rebase: Option<bool>,
-    /// CLI override for remove. None = use effective config default.
-    pub remove: Option<bool>,
-    /// CLI override for ff. None = use effective config default.
-    pub ff: Option<bool>,
-    /// CLI override for verify. None = use effective config default.
-    pub verify: Option<bool>,
+    pub flags: MergeFlagOverrides,
     pub yes: bool,
-    /// CLI override for stage mode. None = use effective config default.
     pub stage: Option<super::commit::StageMode>,
-    /// Output format (text or json).
     pub format: crate::cli::SwitchFormat,
 }
 
@@ -90,12 +120,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let json_mode = opts.format == crate::cli::SwitchFormat::Json;
     let MergeOptions {
         target,
-        squash: squash_opt,
-        commit: commit_opt,
-        rebase: rebase_opt,
-        remove: remove_opt,
-        ff: ff_opt,
-        verify: verify_opt,
+        flags,
         yes,
         stage,
         ..
@@ -103,7 +128,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
 
     // Load config once, run LLM setup prompt if committing, then reuse config
     let mut config = UserConfig::load().context("Failed to load config")?;
-    if commit_opt.unwrap_or(true) {
+    if flags.commit.unwrap_or(true) {
         // One-time LLM setup prompt (errors logged internally; don't block merge)
         let _ = crate::output::prompt_commit_generation(&mut config);
     }
@@ -117,13 +142,14 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Get effective settings (project-specific merged with global, defaults applied)
     let resolved = env.resolved();
 
-    // CLI flags override config values
-    let squash = squash_opt.unwrap_or(resolved.merge.squash());
-    let commit = commit_opt.unwrap_or(resolved.merge.commit());
-    let rebase = rebase_opt.unwrap_or(resolved.merge.rebase());
-    let remove = remove_opt.unwrap_or(resolved.merge.remove());
-    let ff = ff_opt.unwrap_or(resolved.merge.ff());
-    let verify = verify_opt.unwrap_or(resolved.merge.verify());
+    let ResolvedMergeFlags {
+        squash,
+        commit,
+        rebase,
+        remove,
+        ff,
+        verify,
+    } = flags.resolve(&resolved.merge);
     let stage_mode = stage.unwrap_or(resolved.commit.stage());
 
     // Cache current worktree for multiple queries
