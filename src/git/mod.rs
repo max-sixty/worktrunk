@@ -438,15 +438,22 @@ impl HookType {
     /// True for `pre-*` hooks. `pre-*` hooks block the operation and propagate
     /// failures fail-fast; `post-*` hooks run after success and default to
     /// background-with-warn.
+    ///
+    /// Uses an exhaustive match (not `matches!`) so a new variant trips a
+    /// compile-time nudge instead of silently classifying as post-*.
     pub fn is_pre(self) -> bool {
-        matches!(
-            self,
+        match self {
             HookType::PreSwitch
-                | HookType::PreStart
-                | HookType::PreCommit
-                | HookType::PreMerge
-                | HookType::PreRemove
-        )
+            | HookType::PreStart
+            | HookType::PreCommit
+            | HookType::PreMerge
+            | HookType::PreRemove => true,
+            HookType::PostSwitch
+            | HookType::PostStart
+            | HookType::PostCommit
+            | HookType::PostMerge
+            | HookType::PostRemove => false,
+        }
     }
 }
 
