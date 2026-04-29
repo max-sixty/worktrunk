@@ -1,37 +1,37 @@
 use std::io::IsTerminal;
 
-/// Rendering mode for list command
+use crate::OutputFormat;
+
+/// Resolved rendering decision for `wt list`. Collapses output format,
+/// `--progressive`/`--no-progressive` flags, and stdout TTY detection into
+/// a single value the rest of the pipeline can match on.
+///
+/// `Table { progressive: true }` is only set when stdout is a TTY — an
+/// explicit `--progressive` flag on a piped stdout still resolves to
+/// `progressive: false` because the in-place updates can't reach the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RenderMode {
-    /// Buffered: collect all data, then render (traditional)
-    Buffered,
-    /// Progressive: show rows immediately, update as data arrives
-    Progressive,
+pub enum RenderTarget {
+    /// Caller serializes data themselves (JSON output, picker UI). `collect`
+    /// returns data without writing to stdout.
+    Json,
+    /// Render a table to stdout. `progressive` controls whether intermediate
+    /// rows are streamed (`true`) or only the final table is written (`false`).
+    Table { progressive: bool },
 }
 
-impl RenderMode {
-    /// Determine rendering mode based on CLI flags and TTY status
-    ///
-    /// # Arguments
-    ///
-    /// * `progressive` - Rendering mode (Some(true) = --progressive, Some(false) = --no-progressive, None = auto)
-    ///
-    /// Table output goes to stdout, so we check stdout's TTY status. When piped
-    /// (`wt list | grep`), we buffer; when interactive, we render progressively.
-    pub fn detect(progressive: Option<bool>) -> Self {
-        // Priority 1: Explicit CLI flag
-        match progressive {
-            Some(true) => return RenderMode::Progressive,
-            Some(false) => return RenderMode::Buffered,
-            None => {} // Fall through to auto-detection
-        }
-
-        // Priority 2: Auto-detect based on stdout TTY
-        if std::io::stdout().is_terminal() {
-            // TODO: Check for pager in environment
-            RenderMode::Progressive
-        } else {
-            RenderMode::Buffered
+impl RenderTarget {
+    /// Resolve the target from CLI inputs and the current stdout TTY state.
+    pub fn detect(format: OutputFormat, progressive_flag: Option<bool>) -> Self {
+        match format {
+            OutputFormat::Json => RenderTarget::Json,
+            OutputFormat::Table | OutputFormat::ClaudeCode => {
+                let is_tty = std::io::stdout().is_terminal();
+                let progressive = match progressive_flag {
+                    Some(p) => p && is_tty,
+                    None => is_tty,
+                };
+                RenderTarget::Table { progressive }
+            }
         }
     }
 }
@@ -41,13 +41,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_render_mode_detect_explicit_flags() {
-        // --progressive (Some(true)) should force progressive mode
-        assert_eq!(RenderMode::detect(Some(true)), RenderMode::Progressive);
+    fn json_format_always_resolves_to_json() {
+        assert_eq!(
+            RenderTarget::detect(OutputFormat::Json, None),
+            RenderTarget::Json
+        );
+        assert_eq!(
+            RenderTarget::detect(OutputFormat::Json, Some(true)),
+            RenderTarget::Json
+        );
+        assert_eq!(
+            RenderTarget::detect(OutputFormat::Json, Some(false)),
+            RenderTarget::Json
+        );
+    }
 
-        // --no-progressive (Some(false)) should force buffered mode
-        assert_eq!(RenderMode::detect(Some(false)), RenderMode::Buffered);
-
-        // None should auto-detect (tested via TTY checks in runtime)
+    #[test]
+    fn explicit_no_progressive_disables_progressive() {
+        // In test runs stdout isn't a TTY, but we assert the explicit-false
+        // branch regardless of TTY state.
+        assert_eq!(
+            RenderTarget::detect(OutputFormat::Table, Some(false)),
+            RenderTarget::Table { progressive: false }
+        );
     }
 }

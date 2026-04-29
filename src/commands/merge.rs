@@ -9,13 +9,14 @@ use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
-use super::hooks::{execute_hook, spawn_background_hooks};
+use super::hooks::{HookAnnouncer, execute_hook};
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::repository_ext::{
     RepositoryCliExt, check_not_default_branch, compute_integration_reason, is_primary_worktree,
 };
+use super::template_vars::TemplateVars;
 use super::worktree::{
-    MergeOperations, RemoveResult, handle_no_ff_merge, handle_push, path_mismatch,
+    MergeOperations, PushKind, RemoveResult, handle_no_ff_merge, handle_push, path_mismatch,
 };
 use worktrunk::git::BranchDeletionMode;
 
@@ -220,24 +221,18 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         false // Already rebased, no rebase occurred
     };
 
-    // Target worktree path for template variables (pre-merge and post-merge hooks).
-    // Computed once here so both hook sites can reference it.
-    let target_wt_path_str = target_worktree_path
-        .as_deref()
-        .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
-
     // Run pre-merge checks unless --no-hooks was specified
     // Do this after commit/squash/rebase to validate the final state that will be pushed
     if verify {
         let ctx = env.context(yes);
-        let mut extra: Vec<(&str, &str)> = vec![("target", target_branch.as_str())];
-        if let Some(ref p) = target_wt_path_str {
-            extra.push(("target_worktree_path", p));
+        let mut vars = TemplateVars::new().with_target(&target_branch);
+        if let Some(p) = target_worktree_path.as_deref() {
+            vars = vars.with_target_worktree_path(p);
         }
         execute_hook(
             &ctx,
             HookType::PreMerge,
-            &extra,
+            &vars.as_extra_vars(),
             FailureStrategy::FailFast,
             &[],
             crate::output::pre_hook_display_path(ctx.worktree_path),
@@ -255,34 +250,32 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         handle_no_ff_merge(Some(&target_branch), operations, &current_branch)?;
     } else {
         // Fast-forward push to target branch
-        handle_push(Some(&target_branch), "Merged to", operations)?;
+        handle_push(Some(&target_branch), PushKind::MergeFastForward, operations)?;
     }
 
     // Destination: prefer the target branch's worktree; fall back to home path.
-    let destination_path = match target_worktree_path {
-        Some(path) => path,
+    let destination_path = match target_worktree_path.as_deref() {
+        Some(path) => path.to_path_buf(),
         None => repo.home_path()?,
     };
 
-    // Capture feature worktree identity BEFORE removal for post-merge template vars.
-    // After removal the feature worktree is gone, but post-merge hooks need to
-    // reference it as the Active identity (branch, worktree_path, commit).
-    let feature_path_str = worktrunk::path::to_posix_path(&env.worktree_path.to_string_lossy());
-    let feature_name = env
-        .worktree_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string();
+    // Capture feature worktree identity BEFORE removal as Active overrides for
+    // post-merge hooks. After removal the feature worktree is gone, but
+    // post-merge hooks need to reference its branch, path, and commit.
+    let mut feature_vars = TemplateVars::new().with_active_worktree(&env.worktree_path);
     let feature_commit = repo
         .current_worktree()
         .run_command(&["rev-parse", "HEAD"])
         .ok()
         .map(|s| s.trim().to_string());
-    let feature_short_commit = feature_commit
-        .as_ref()
-        .filter(|c| c.len() >= 7)
-        .map(|c| c[..7].to_string());
+    if let Some(commit) = feature_commit.as_deref() {
+        feature_vars = feature_vars.with_active_commit(commit);
+    }
+
+    // One announcer for the whole command's background hooks: post-remove +
+    // post-switch (from worktree removal) and post-merge share a single
+    // `◎ Running …` line, flushed at the end.
+    let mut announcer = HookAnnouncer::new(repo, config, false);
 
     // Finish worktree unless removal is disabled or blocked.
     // Guards are shared with `wt remove`: is_primary_worktree (Phase 2) and
@@ -327,7 +320,14 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             expected_path,
             removed_commit: feature_commit.clone(),
         };
-        crate::output::handle_remove_output(&remove_result, false, verify, false, false)?;
+        crate::output::handle_remove_output(
+            &remove_result,
+            false,
+            verify,
+            false,
+            false,
+            Some(&mut announcer),
+        )?;
         true
     };
 
@@ -342,24 +342,19 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             crate::output::pre_hook_display_path(&destination_path)
         };
 
-        // Override bare vars to Active (feature branch identity)
-        let mut extra: Vec<(&str, &str)> = vec![("target", target_branch.as_str())];
-        if let Some(ref p) = target_wt_path_str {
-            extra.push(("target_worktree_path", p));
+        let mut vars = feature_vars.with_target(&target_branch);
+        if let Some(p) = target_worktree_path.as_deref() {
+            vars = vars.with_target_worktree_path(p);
         }
-        // Active = feature: override worktree_path and friends
-        extra.push(("worktree_path", &feature_path_str));
-        extra.push(("worktree", &feature_path_str)); // deprecated alias
-        extra.push(("worktree_name", &feature_name));
-        if let Some(ref c) = feature_commit {
-            extra.push(("commit", c));
-        }
-        if let Some(ref sc) = feature_short_commit {
-            extra.push(("short_commit", sc));
-        }
-
-        spawn_background_hooks(&ctx, HookType::PostMerge, &extra, display_path)?;
+        announcer.register(
+            &ctx,
+            HookType::PostMerge,
+            &vars.as_extra_vars(),
+            display_path,
+        )?;
     }
+
+    announcer.flush()?;
 
     if json_mode {
         let output = serde_json::json!({

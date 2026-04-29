@@ -95,10 +95,18 @@ fn help_flag_requested(args: &[String]) -> bool {
     false
 }
 
-/// Print guidance when `wt <alias> --help` is invoked. Points at the canonical
-/// inspection path and documents the `--` escape for forwarding `--help` into
-/// the alias body.
-fn emit_alias_help_hint(name: &str) {
+/// If `args` requests `--help` for an alias, emit the help hint and return
+/// `true`. Aliases have no clap-style help page — the template *is* the help —
+/// so dispatchers redirect the user to `wt config alias show / dry-run`.
+///
+/// Aliases can bind a `help` variable; only intercept when the template
+/// doesn't reference it. `-h` is never a binding, so it's always safe to
+/// intercept. Conservatively: intercept if any help flag appears and no
+/// binding is claimed on `help`.
+fn try_intercept_alias_help(name: &str, args: &[String], referenced: &BTreeSet<String>) -> bool {
+    if referenced.contains("help") || !help_flag_requested(args) {
+        return false;
+    }
     eprintln!("{}", info_message(cformat!("<bold>{name}</> is an alias")));
     eprintln!(
         "{}",
@@ -106,6 +114,7 @@ fn emit_alias_help_hint(name: &str) {
             "To view config, run <underline>wt config alias show {name}</>; to preview expansion, run <underline>wt config alias dry-run {name}</>; to forward --help to the alias body, run <underline>wt {name} -- --help</>"
         ))
     );
+    true
 }
 
 /// Options parsed from alias-dispatch args (`wt step <alias>` or `wt <alias>`).
@@ -355,12 +364,7 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
         return Ok(None);
     };
     let referenced = referenced_vars_for_config(cmd_config)?;
-    // Aliases can bind a `help` variable; only intercept `--help` when the
-    // template doesn't reference it. `-h` is never a binding, so it's always
-    // safe to intercept. Conservatively: intercept if any help flag appears
-    // and no binding is claimed on `help`.
-    if !referenced.contains("help") && help_flag_requested(&rest) {
-        emit_alias_help_hint(&name);
+    if try_intercept_alias_help(&name, &rest, &referenced) {
         return Ok(Some(()));
     }
     let mut alias_args = Vec::with_capacity(1 + rest.len());
@@ -417,8 +421,7 @@ pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
         return Err(unknown_step_command_error(&name, &alias_names));
     };
     let referenced = referenced_vars_for_config(cmd_config)?;
-    if !referenced.contains("help") && help_flag_requested(&args[1..]) {
-        emit_alias_help_hint(&name);
+    if try_intercept_alias_help(&name, &args[1..], &referenced) {
         return Ok(());
     }
     let (opts, warnings) = AliasOptions::parse(args, &referenced)?;

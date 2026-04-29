@@ -1,15 +1,14 @@
+use dunce::canonicalize;
 use path_slash::PathExt as _;
 use shell_escape::unix::escape;
 use std::borrow::Cow;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use sanitize_filename::{Options as SanitizeOptions, sanitize_with_options};
 
 use crate::config::short_hash;
 #[cfg(windows)]
 use crate::shell_exec::{Cmd, ShellConfig};
-#[cfg(windows)]
-use std::path::PathBuf;
 
 /// Convert a path to POSIX format for Git Bash compatibility.
 ///
@@ -137,6 +136,47 @@ pub fn format_path_for_display(path: &Path) -> String {
     }
 }
 
+/// Canonicalize a path, resolving parent symlinks even if the path doesn't exist.
+///
+/// For existing paths, uses standard canonicalization.
+/// For non-existent paths, canonicalizes the longest existing prefix and appends
+/// the remaining components. This handles macOS `/var` -> `/private/var` symlinks
+/// correctly for computed worktree paths that don't exist yet.
+fn canonicalize_with_parents(path: &Path) -> PathBuf {
+    if let Ok(canonical) = canonicalize(path) {
+        return canonical;
+    }
+
+    let mut existing_prefix = path.to_path_buf();
+    let mut suffix_components = Vec::new();
+
+    while !existing_prefix.exists() {
+        let (Some(file_name), Some(parent)) =
+            (existing_prefix.file_name(), existing_prefix.parent())
+        else {
+            return path.to_path_buf();
+        };
+        suffix_components.push(file_name.to_os_string());
+        existing_prefix = parent.to_path_buf();
+    }
+
+    let canonical_prefix = canonicalize(&existing_prefix).unwrap_or(existing_prefix);
+    let mut result = canonical_prefix;
+    for component in suffix_components.into_iter().rev() {
+        result.push(component);
+    }
+    result
+}
+
+/// Compare two paths for equality, canonicalizing to handle symlinks and relative paths.
+///
+/// Returns `true` if the paths resolve to the same location.
+/// Handles the case where one path exists and the other doesn't by resolving
+/// parent directory symlinks for non-existent paths.
+pub fn paths_match(a: &Path, b: &Path) -> bool {
+    canonicalize_with_parents(a) == canonicalize_with_parents(b)
+}
+
 /// Sanitize a string for use as a filename on all platforms.
 ///
 /// Uses `sanitize-filename` crate to handle invalid characters, control characters,
@@ -177,7 +217,10 @@ pub fn sanitize_for_filename(value: &str) -> String {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{format_path_for_display, home_dir, sanitize_for_filename, to_posix_path};
+    use super::{
+        canonicalize_with_parents, format_path_for_display, home_dir, paths_match,
+        sanitize_for_filename, to_posix_path,
+    };
 
     #[test]
     fn shortens_path_under_home() {
@@ -401,5 +444,85 @@ mod tests {
         $HOME/project's/repo => QUOTED_ABSOLUTE
         $HOME => ~
         ");
+    }
+
+    #[test]
+    fn test_paths_match_identical() {
+        let path = PathBuf::from("/tmp/test");
+        assert!(paths_match(&path, &path));
+    }
+
+    #[test]
+    fn test_paths_match_different() {
+        let a = PathBuf::from("/tmp/foo");
+        let b = PathBuf::from("/tmp/bar");
+        assert!(!paths_match(&a, &b));
+    }
+
+    #[test]
+    fn test_canonicalize_with_parents_existing_path() {
+        let tmp = std::env::temp_dir();
+        let canonical = canonicalize_with_parents(&tmp);
+        assert!(canonical.is_absolute());
+    }
+
+    #[test]
+    fn test_canonicalize_with_parents_degenerate() {
+        // Empty path can't be decomposed (no file_name) — falls through to returning as-is.
+        let canonical = canonicalize_with_parents(std::path::Path::new(""));
+        assert_eq!(canonical, PathBuf::from(""));
+    }
+
+    #[test]
+    fn test_canonicalize_with_parents_nonexistent() {
+        let tmp = std::env::temp_dir();
+        let nonexistent = tmp.join("nonexistent-test-dir-12345");
+        let canonical = canonicalize_with_parents(&nonexistent);
+
+        assert!(canonical.is_absolute());
+        assert_eq!(
+            canonical.file_name().unwrap().to_str().unwrap(),
+            "nonexistent-test-dir-12345"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_paths_match_macos_var_symlink() {
+        // On macOS, /var is a symlink to /private/var
+        let test_dir = PathBuf::from("/var/tmp/wt-test-paths-match");
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+        std::fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+        let private_path = PathBuf::from("/private/var/tmp/wt-test-paths-match/subdir");
+        let var_path = PathBuf::from("/var/tmp/wt-test-paths-match/subdir");
+
+        assert!(
+            paths_match(&private_path, &var_path),
+            "Paths should match: {:?} vs {:?}",
+            canonicalize_with_parents(&private_path),
+            canonicalize_with_parents(&var_path)
+        );
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_paths_match_existing_vs_nonexistent() {
+        let tmp = std::env::temp_dir();
+
+        let existing = tmp.join("wt-test-existing");
+        std::fs::create_dir_all(&existing).expect("Failed to create test dir");
+
+        let nonexistent = tmp.join("wt-test-nonexistent");
+        let _ = std::fs::remove_dir_all(&nonexistent);
+
+        assert!(!paths_match(&existing, &nonexistent));
+
+        let canonical = canonicalize_with_parents(&existing);
+        assert!(paths_match(&existing, &canonical));
+
+        let _ = std::fs::remove_dir_all(&existing);
     }
 }

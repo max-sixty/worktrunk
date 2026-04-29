@@ -18,6 +18,7 @@ use super::command_approval::approve_hooks;
 use super::command_executor::FailureStrategy;
 use super::command_executor::{CommandContext, build_hook_context};
 use super::hooks::execute_hook;
+use super::template_vars::TemplateVars;
 use super::worktree::{
     SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, offer_bare_repo_worktree_path_fix,
     path_mismatch, plan_switch,
@@ -118,39 +119,20 @@ pub(crate) fn run_pre_switch_hooks(
 
     let pre_switch_approved = approve_hooks(&pre_ctx, &[HookType::PreSwitch])?;
     if pre_switch_approved {
-        // Base vars: source (where the user currently is)
+        // Base vars: source (where the user currently is). Target vars and
+        // Active overrides come from the destination worktree if it exists —
+        // for creates the planned path is computed later during plan_switch,
+        // so worktree_path stays at its default (the source = cwd).
         let base_branch = current_wt.branch().ok().flatten().unwrap_or_default();
-        let base_path_str = worktrunk::path::to_posix_path(&current_path.to_string_lossy());
-
-        let mut extra_vars: Vec<(&str, &str)> = vec![
-            ("base", &base_branch),
-            ("base_worktree_path", &base_path_str),
-        ];
-
-        // Target vars and Active overrides: destination worktree.
-        // For existing worktrees: override bare vars (worktree_path, worktree_name,
-        // worktree) to point to the destination (Active), not the source.
         let dest_path = repo.worktree_for_branch(&resolved_target).ok().flatten();
-        let dest_name = dest_path
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .and_then(|n| n.to_str())
-            .map(|s| s.to_string());
-        let dest_path_str = dest_path.map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
-        extra_vars.push(("target", &resolved_target));
-        if let Some(ref p) = dest_path_str {
-            // Existing destination: override bare vars to Active (destination)
-            extra_vars.push(("target_worktree_path", p));
-            extra_vars.push(("worktree_path", p));
-            extra_vars.push(("worktree", p)); // deprecated alias
-            if let Some(ref name) = dest_name {
-                extra_vars.push(("worktree_name", name));
-            }
+        let mut vars = TemplateVars::new()
+            .with_base(&base_branch, &current_path)
+            .with_target(&resolved_target);
+        if let Some(p) = dest_path.as_deref() {
+            vars = vars.with_target_worktree_path(p).with_active_worktree(p);
         }
-        // For creates (dest_path_str is None): worktree_path keeps its default
-        // (the source worktree = cwd). The planned destination path is computed
-        // later during plan_switch, after pre-switch hooks complete.
+        let extra_vars = vars.as_extra_vars();
 
         execute_hook(
             &pre_ctx,
@@ -210,43 +192,6 @@ pub(crate) fn approve_switch_hooks(
     }
 
     Ok(approved)
-}
-
-/// Compute extra template variables from a switch result.
-///
-/// Returns base branch context (`base`, `base_worktree_path`) and, for
-/// `pr:N` / `mr:N` creations, `pr_number` and `pr_url` for hooks and template
-/// expansion. The caller owns the `pr_number` string buffer because the
-/// returned slice borrows from it.
-pub(crate) fn switch_extra_vars<'a>(
-    result: &'a SwitchResult,
-    pr_number_buf: &'a mut String,
-) -> Vec<(&'a str, &'a str)> {
-    match result {
-        SwitchResult::Created {
-            base_branch,
-            base_worktree_path,
-            pr_number,
-            pr_url,
-            ..
-        } => {
-            if let Some(n) = pr_number {
-                *pr_number_buf = n.to_string();
-            }
-            [
-                base_branch.as_deref().map(|b| ("base", b)),
-                base_worktree_path
-                    .as_deref()
-                    .map(|p| ("base_worktree_path", p)),
-                pr_number.map(|_| ("pr_number", pr_number_buf.as_str())),
-                pr_url.as_deref().map(|u| ("pr_url", u)),
-            ]
-            .into_iter()
-            .flatten()
-            .collect()
-        }
-        SwitchResult::Existing { .. } | SwitchResult::AlreadyAt(_) => Vec::new(),
-    }
 }
 
 /// Spawn post-switch (and post-start for creates) background hooks.
@@ -432,31 +377,13 @@ pub fn handle_switch(
         let _ = prompt_shell_integration(config, binary_name, skip_prompt);
     }
 
-    // Build extra vars for base/target context (used by both hooks and --execute).
-    // "base" is the source worktree the user switched from (all switches),
-    // or the branch they branched from (creates).
-    // "target" matches the bare vars (the destination) — documented as
-    // "target = bare vars" for switch/create and kept symmetric with pre-switch.
-    let target_path_str = worktrunk::path::to_posix_path(&result.path().to_string_lossy());
-
-    let mut pr_number_buf = String::new();
-    let mut extra_vars = switch_extra_vars(&result, &mut pr_number_buf);
-    if let Some(target_branch) = branch_info.branch.as_deref() {
-        extra_vars.push(("target", target_branch));
-    }
-    extra_vars.push(("target_worktree_path", &target_path_str));
-    // For existing switches, add source worktree as base
-    if matches!(
-        result,
-        SwitchResult::Existing { .. } | SwitchResult::AlreadyAt(_)
-    ) {
-        if !source_branch.is_empty() {
-            extra_vars.push(("base", &source_branch));
-        }
-        if !source_path.is_empty() {
-            extra_vars.push(("base_worktree_path", &source_path));
-        }
-    }
+    // Build template vars for base/target context (used by both hooks and
+    // --execute). "base" is the source worktree the user switched from (all
+    // switches), or the branch they branched from (creates). "target" matches
+    // the bare vars (the destination) — kept symmetric with pre-switch.
+    let template_vars =
+        TemplateVars::for_post_switch(&result, &branch_info, &source_branch, &source_path);
+    let extra_vars = template_vars.as_extra_vars();
 
     // Spawn background hooks after success message
     // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)
