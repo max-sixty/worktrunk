@@ -389,38 +389,30 @@ jobs:
         echo "merge-base with origin/main: $sha"
 
     - name: 💾 Restore coverage DB
-      id: db
       uses: actions/cache/restore@v4
       with:
         path: target/affected
         # Exact match: collect ran on the PR's merge-base → tight diff.
         key: cargo-affected-db-v1-${{ runner.os }}-${{ steps.mb.outputs.sha }}
         # Fallback: most recent main DB. cargo-affected runs all tests when
-        # collect_sha isn't an ancestor of HEAD (instead of bailing), so this
-        # path is correct, just broader.
+        # collect_sha isn't an ancestor of HEAD; with no DB at all it does
+        # the same. Either way the run produces a useful signal.
         restore-keys: |
           cargo-affected-db-v1-${{ runner.os }}-
 
-    - name: 🛑 Skip if no DB cached
-      if: steps.db.outputs.cache-matched-key == ''
-      run: echo "::notice::No cargo-affected DB cached yet — the collect-affected job on main bootstraps it. Skipping."
-
     - name: Install cargo-insta
-      if: steps.db.outputs.cache-matched-key != ''
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-insta
         version: "=1.46.3"
 
     - name: Install cargo-nextest
-      if: steps.db.outputs.cache-matched-key != ''
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-nextest
         version: "=0.9.132"
 
     - name: Install cargo-affected
-      if: steps.db.outputs.cache-matched-key != ''
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-affected
@@ -428,28 +420,23 @@ jobs:
         # No rev/branch/tag → action resolves to latest default-branch sha.
 
     - name: Install llvm-tools
-      if: steps.db.outputs.cache-matched-key != ''
       run: rustup component add llvm-tools
 
     - name: 💰 Cache
-      if: steps.db.outputs.cache-matched-key != ''
       uses: Swatinem/rust-cache@v2
 
     - name: Install shells (zsh, fish)
-      if: steps.db.outputs.cache-matched-key != ''
       uses: awalsh128/cache-apt-pkgs-action@latest
       with:
         packages: zsh fish
         version: 1.0
 
     - name: Install nushell
-      if: steps.db.outputs.cache-matched-key != ''
       uses: hustcer/setup-nu@v3
       with:
         version: '0.112.2'
 
     - name: 🎯 Run affected tests
-      if: steps.db.outputs.cache-matched-key != ''
       env:
         NEXTEST_NO_INPUT_HANDLER: 1
       run: cargo affected run --features shell-integration-tests --verbose
