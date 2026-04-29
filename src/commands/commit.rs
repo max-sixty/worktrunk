@@ -8,7 +8,9 @@ use worktrunk::styling::{
 
 use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
-use super::hooks::{execute_hook, spawn_background_hooks};
+use super::hooks::{
+    HookAnnouncer, execute_hook, prepare_background_pipelines, run_hooks_background,
+};
 use super::repository_ext::warn_about_untracked_files;
 
 // Re-export StageMode from config for use by CLI
@@ -154,8 +156,13 @@ impl<'a> CommitGenerator<'a> {
 }
 
 /// Commit uncommitted changes with the shared commit pipeline.
+///
+/// `announcer`: when `Some`, post-commit pipelines are extended onto the
+/// caller's announcer so they share an announce line with later phases (e.g.
+/// `wt merge --squash` batching post-commit + post-remove + post-switch +
+/// post-merge). When `None`, post-commit self-announces.
 impl CommitOptions<'_> {
-    pub fn commit(self) -> anyhow::Result<()> {
+    pub fn commit(self, announcer: Option<&mut HookAnnouncer<'_>>) -> anyhow::Result<()> {
         let project_config = self.ctx.repo.load_project_config()?;
         let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_deref());
         let (user_cfg, proj_cfg) = super::hooks::lookup_hook_configs(
@@ -223,14 +230,20 @@ impl CommitOptions<'_> {
             self.stage_mode,
         )?;
 
-        // Spawn post-commit hooks in background (respects --no-hooks)
+        // Spawn post-commit hooks in background (respects --no-hooks).
         if self.verify {
             let extra_vars: Vec<(&str, &str)> = self
                 .target_branch
                 .into_iter()
                 .map(|target| ("target", target))
                 .collect();
-            spawn_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?;
+            let pipelines =
+                prepare_background_pipelines(self.ctx, HookType::PostCommit, &extra_vars, None)?;
+            if let Some(announcer) = announcer {
+                announcer.extend(pipelines);
+            } else {
+                run_hooks_background(pipelines, false)?;
+            }
         }
 
         Ok(())

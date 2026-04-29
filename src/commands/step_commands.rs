@@ -39,7 +39,9 @@ use super::command_approval::approve_or_skip;
 use super::command_executor::FailureStrategy;
 use super::commit::{CommitGenerator, CommitOptions, StageMode};
 use super::context::CommandEnv;
-use super::hooks::{execute_hook, spawn_background_hooks};
+use super::hooks::{
+    HookAnnouncer, execute_hook, prepare_background_pipelines, run_hooks_background,
+};
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use crate::output::handle_remove_output;
 use worktrunk::git::BranchDeletionMode;
@@ -95,7 +97,7 @@ pub fn step_commit(
     // Only warn about untracked if we're staging all
     options.warn_about_untracked = stage_mode == StageMode::All;
 
-    options.commit()
+    options.commit(None)
 }
 
 /// Result of a squash operation
@@ -116,11 +118,16 @@ pub enum SquashResult {
 /// # Arguments
 /// * `verify` - If true, run pre-commit hooks (false when --no-hooks flag is passed)
 /// * `stage` - CLI-provided stage mode. If None, uses the effective config default.
+/// * `parent_announcer` - When `Some`, post-commit hooks register on the
+///   caller's announcer so they share an announce line with later phases
+///   (e.g. `wt merge --squash` combining post-commit + post-remove +
+///   post-switch + post-merge). When `None`, post-commit self-announces.
 pub fn handle_squash(
     target: Option<&str>,
     yes: bool,
     verify: bool,
     stage: Option<StageMode>,
+    parent_announcer: Option<&mut HookAnnouncer<'_>>,
 ) -> anyhow::Result<SquashResult> {
     // Load config once, run LLM setup prompt, then reuse config
     let mut config = UserConfig::load().context("Failed to load config")?;
@@ -340,10 +347,16 @@ pub fn handle_squash(
         success_message(cformat!("Squashed @ <dim>{commit_hash}</>"))
     );
 
-    // Spawn post-commit hooks in background (respects --no-hooks)
+    // Spawn post-commit hooks in background (respects --no-hooks).
     if verify {
         let extra_vars: Vec<(&str, &str)> = vec![("target", integration_target.as_str())];
-        spawn_background_hooks(&ctx, HookType::PostCommit, &extra_vars, None)?;
+        let pipelines =
+            prepare_background_pipelines(&ctx, HookType::PostCommit, &extra_vars, None)?;
+        if let Some(announcer) = parent_announcer {
+            announcer.extend(pipelines);
+        } else {
+            run_hooks_background(pipelines, false)?;
+        }
     }
 
     Ok(SquashResult::Squashed)
