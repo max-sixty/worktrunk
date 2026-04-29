@@ -300,9 +300,9 @@ jobs:
   #   may be ahead of the merge-base; cargo-affected handles that by running
   #   all tests with a notice (no `Diverged` bail), so the fallback always
   #   produces a useful run, just with broader selection.
-  # - Cache keys include `runner.os` (fingerprint embeds `rustc -vV`) and
-  #   the cargo-affected commit sha resolved at runtime, so schema-affecting
-  #   upstream changes invalidate stale DBs automatically.
+  # - Cache keys include `runner.os` (fingerprint embeds `rustc -vV`) and a
+  #   manual `db-v{N}` marker. Bump the marker if cargo-affected ships an
+  #   on-disk schema change; the cache is otherwise version-agnostic.
   collect-affected:
     name: collect affected coverage
     if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
@@ -314,13 +314,6 @@ jobs:
         # `cargo affected run` later diffs PR HEAD against the sha that was
         # HEAD when collect ran. That sha must be reachable.
         fetch-depth: 0
-
-    - name: Resolve cargo-affected latest sha
-      id: ca
-      run: |
-        sha=$(git ls-remote --exit-code https://github.com/max-sixty/cargo-affected HEAD | cut -f1)
-        echo "rev=$sha" >> "$GITHUB_OUTPUT"
-        echo "Using cargo-affected $sha"
 
     - name: Install cargo-insta
       uses: baptiste0928/cargo-install@v3
@@ -339,7 +332,7 @@ jobs:
       with:
         crate: cargo-affected
         git: https://github.com/max-sixty/cargo-affected
-        rev: ${{ steps.ca.outputs.rev }}
+        # No rev/branch/tag → action resolves to latest default-branch sha.
 
     - name: Install llvm-tools
       run: rustup component add llvm-tools
@@ -367,7 +360,7 @@ jobs:
       uses: actions/cache/save@v4
       with:
         path: target/affected
-        key: cargo-affected-db-${{ runner.os }}-${{ steps.ca.outputs.rev }}-${{ github.sha }}
+        key: cargo-affected-db-v1-${{ runner.os }}-${{ github.sha }}
 
   affected-tests:
     name: affected tests (linux, advisory)
@@ -385,13 +378,6 @@ jobs:
         # see collect-affected above.
         fetch-depth: 0
 
-    - name: Resolve cargo-affected latest sha
-      id: ca
-      run: |
-        sha=$(git ls-remote --exit-code https://github.com/max-sixty/cargo-affected HEAD | cut -f1)
-        echo "rev=$sha" >> "$GITHUB_OUTPUT"
-        echo "Using cargo-affected $sha"
-
     - name: Compute merge-base for cache key
       id: mb
       env:
@@ -408,12 +394,12 @@ jobs:
       with:
         path: target/affected
         # Exact match: collect ran on the PR's merge-base → tight diff.
-        key: cargo-affected-db-${{ runner.os }}-${{ steps.ca.outputs.rev }}-${{ steps.mb.outputs.sha }}
+        key: cargo-affected-db-v1-${{ runner.os }}-${{ steps.mb.outputs.sha }}
         # Fallback: most recent main DB. cargo-affected runs all tests when
         # collect_sha isn't an ancestor of HEAD (instead of bailing), so this
         # path is correct, just broader.
         restore-keys: |
-          cargo-affected-db-${{ runner.os }}-${{ steps.ca.outputs.rev }}-
+          cargo-affected-db-v1-${{ runner.os }}-
 
     - name: 🛑 Skip if no DB cached
       if: steps.db.outputs.cache-matched-key == ''
@@ -439,7 +425,7 @@ jobs:
       with:
         crate: cargo-affected
         git: https://github.com/max-sixty/cargo-affected
-        rev: ${{ steps.ca.outputs.rev }}
+        # No rev/branch/tag → action resolves to latest default-branch sha.
 
     - name: Install llvm-tools
       if: steps.db.outputs.cache-matched-key != ''
