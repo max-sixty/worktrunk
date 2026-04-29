@@ -9,14 +9,14 @@ use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
-use super::hooks::{execute_hook, spawn_background_hooks};
+use super::hooks::{HookAnnouncer, execute_hook};
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::repository_ext::{
     RepositoryCliExt, check_not_default_branch, compute_integration_reason, is_primary_worktree,
 };
 use super::template_vars::TemplateVars;
 use super::worktree::{
-    MergeOperations, RemoveResult, handle_no_ff_merge, handle_push, path_mismatch,
+    MergeOperations, PushKind, RemoveResult, handle_no_ff_merge, handle_push, path_mismatch,
 };
 use worktrunk::git::BranchDeletionMode;
 
@@ -250,7 +250,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         handle_no_ff_merge(Some(&target_branch), operations, &current_branch)?;
     } else {
         // Fast-forward push to target branch
-        handle_push(Some(&target_branch), "Merged to", operations)?;
+        handle_push(Some(&target_branch), PushKind::MergeFastForward, operations)?;
     }
 
     // Destination: prefer the target branch's worktree; fall back to home path.
@@ -271,6 +271,11 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     if let Some(commit) = feature_commit.as_deref() {
         feature_vars = feature_vars.with_active_commit(commit);
     }
+
+    // One announcer for the whole command's background hooks: post-remove +
+    // post-switch (from worktree removal) and post-merge share a single
+    // `◎ Running …` line, flushed at the end.
+    let mut announcer = HookAnnouncer::new(repo, config, false);
 
     // Finish worktree unless removal is disabled or blocked.
     // Guards are shared with `wt remove`: is_primary_worktree (Phase 2) and
@@ -315,7 +320,14 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             expected_path,
             removed_commit: feature_commit.clone(),
         };
-        crate::output::handle_remove_output(&remove_result, false, verify, false, false)?;
+        crate::output::handle_remove_output(
+            &remove_result,
+            false,
+            verify,
+            false,
+            false,
+            Some(&mut announcer),
+        )?;
         true
     };
 
@@ -334,13 +346,10 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         if let Some(p) = target_worktree_path.as_deref() {
             vars = vars.with_target_worktree_path(p);
         }
-        spawn_background_hooks(
-            &ctx,
-            HookType::PostMerge,
-            &vars.as_extra_vars(),
-            display_path,
-        )?;
+        announcer.register(&ctx, HookType::PostMerge, &vars.as_extra_vars(), display_path)?;
     }
+
+    announcer.flush()?;
 
     if json_mode {
         let output = serde_json::json!({
