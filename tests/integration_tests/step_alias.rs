@@ -868,6 +868,61 @@ exec-blocked = "'{wt_toml}' switch --create project-alias-target --execute 'echo
     );
 }
 
+/// Same alias name in both user and project configs: EXEC is scrubbed for the
+/// merged pipeline. `append_aliases` concatenates the two sources' steps
+/// (user first, then project), so the merged body runs project-authored
+/// steps too — passing EXEC selectively to the user steps isn't possible, so
+/// the conservative scrub applies to the whole pipeline.
+#[rstest]
+fn test_user_and_project_alias_collision_scrubs_exec_directive(repo: TestRepo) {
+    repo.commit("initial");
+    let wt = wt_bin();
+    let wt_str = wt.to_string_lossy();
+    assert!(
+        !wt_str.contains('\''),
+        "wt binary path should not contain single quotes: {wt_str}"
+    );
+    let wt_toml = wt_str.replace('\\', r"\\");
+
+    repo.write_test_config(&format!(
+        r#"
+[aliases]
+shared = "'{wt_toml}' switch --create user-step-target --execute 'echo from-user-step'"
+"#
+    ));
+    repo.write_project_config(
+        r#"
+[aliases]
+shared = "echo from-project-step"
+"#,
+    );
+
+    let (cd_path, exec_path, _guard) = directive_files();
+
+    let mut cmd = repo.wt_command();
+    configure_directive_files(&mut cmd, &cd_path, &exec_path);
+    // -y skips the project-alias approval prompt.
+    cmd.args(["-y", "step", "shared"]);
+    let output = cmd.output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "wt -y step shared failed: stdout={}\nstderr={stderr}",
+        String::from_utf8_lossy(&output.stdout),
+    );
+    assert!(
+        stderr.contains("disabled inside project alias"),
+        "merged pipeline should warn that --execute is disabled, got: {stderr}"
+    );
+
+    let exec_content = std::fs::read_to_string(&exec_path).unwrap_or_default();
+    assert!(
+        !exec_content.contains("from-user-step"),
+        "EXEC file should NOT contain the user step's payload when project shares the name, got: {exec_content:?}"
+    );
+}
+
 /// Alias subprocesses inherit the parent's stdin so interactive children
 /// (e.g. `wt switch`'s picker) keep the controlling terminal.
 ///

@@ -280,10 +280,10 @@ fn alias_needs_approval(
 
 /// Whether the project config defines an alias by this name.
 ///
-/// Treated as the "is this a project alias" predicate at runtime: project
-/// entries shadow user entries with the same name in the merged map, so any
-/// alias the project config defines is the one that runs. Used to decide
-/// whether the EXEC directive file is safe to pass through to the body.
+/// When the same name appears in both user and project configs, the merged
+/// alias appends both sources' steps (user first, then project) — see
+/// `append_aliases`. Returning `true` here scrubs EXEC for the entire
+/// pipeline, since we can't selectively pass it to user steps only.
 fn project_aliases_contain(project_config: Option<&ProjectConfig>, alias_name: &str) -> bool {
     project_config.is_some_and(|pc| pc.aliases.contains_key(alias_name))
 }
