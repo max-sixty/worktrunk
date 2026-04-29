@@ -1216,12 +1216,19 @@ pub fn collect(
 
             match event {
                 results::DrainEvent::Result { item_idx, item } => {
+                    has_data[item_idx] = true;
+
+                    // JSON and buffered-table modes render once at the end,
+                    // not per-result.
+                    if progressive_state.is_none() && progressive_handler.is_none() {
+                        return;
+                    }
+
                     // `update_row` and the picker handler both write through
                     // an idempotent slot (terminal line / `Mutex<String>`),
                     // so forwarding every result without dedup is safe; the
                     // table dedups internally against its previous render.
                     let rendered = layout.format_list_item_line(item);
-                    has_data[item_idx] = true;
 
                     if let Some(state_cell) = progressive_state.as_ref() {
                         let mut s = state_cell.borrow_mut();

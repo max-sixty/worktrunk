@@ -37,11 +37,10 @@ pub struct ProgressiveTable {
     row_count: usize,
     /// Total number of data rows (including those not shown in skeleton)
     total_row_count: usize,
-    /// Whether output is going to a TTY
-    is_tty: bool,
     /// Lines that have been modified since last flush
     dirty: Vec<usize>,
-    /// Whether the skeleton was printed (only true in TTY mode after render_skeleton)
+    /// Whether the skeleton was printed. Tests skip `render_skeleton` to keep
+    /// this false and suppress stdout output.
     rendered: bool,
 }
 
@@ -78,7 +77,6 @@ impl ProgressiveTable {
         max_width: usize,
         terminal_height: Option<usize>,
     ) -> Self {
-        let is_tty = stdout().is_terminal();
         let total_row_count = skeletons.len();
 
         // Limit visible rows to fit in terminal: header + rows + spacer + footer = rows + 3
@@ -107,17 +105,16 @@ impl ProgressiveTable {
             max_width,
             row_count: visible_row_count,
             total_row_count,
-            is_tty,
             dirty: Vec::new(),
             rendered: false,
         }
     }
 
-    /// Print the skeleton table to stdout (TTY only).
+    /// Print the skeleton table to stdout.
     ///
     /// Idempotent: calling multiple times has no effect after the first render.
     pub fn render_skeleton(&mut self) -> std::io::Result<()> {
-        if self.is_tty && !self.rendered {
+        if !self.rendered {
             self.print_all()?;
             self.rendered = true;
         }
@@ -200,11 +197,10 @@ impl ProgressiveTable {
             return Ok(());
         }
 
-        // Defense-in-depth: dirty should only be non-empty if we're in TTY mode and rendered.
-        // The update_* methods gate on `self.rendered`, which is only set when is_tty is true.
+        // Defense-in-depth: dirty is only populated after render_skeleton has run.
         debug_assert!(
-            self.is_tty && self.rendered,
-            "dirty list should only be non-empty after render_skeleton in TTY mode"
+            self.rendered,
+            "dirty list should only be non-empty after render_skeleton"
         );
 
         // Take ownership of dirty indices to avoid borrow conflict with redraw_line
@@ -445,9 +441,7 @@ mod tests {
             80,
         );
 
-        // Simulate TTY render state (in tests, is_tty is false so render_skeleton is a no-op,
-        // but we can manually set both flags to test dirty tracking while maintaining invariant)
-        table.is_tty = true;
+        // Simulate post-render state without actually printing the skeleton.
         table.rendered = true;
 
         // After render, updates mark lines as dirty
