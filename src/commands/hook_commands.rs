@@ -124,10 +124,9 @@ fn build_manual_hook_template_vars(
     let worktree_path = ctx.worktree_path;
     match hook_type {
         // Merge/commit hooks: target = merge target (default branch for commit, current for merge)
-        HookType::PreCommit | HookType::PostCommit => match default_branch {
-            Some(t) => TemplateVars::new().with_target(t),
-            None => TemplateVars::new(),
-        },
+        HookType::PreCommit | HookType::PostCommit => {
+            default_branch.map_or_else(TemplateVars::new, |t| TemplateVars::new().with_target(t))
+        }
         HookType::PreMerge | HookType::PostMerge => TemplateVars::new()
             .with_target(branch)
             .with_target_worktree_path(worktree_path),

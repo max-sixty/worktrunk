@@ -171,10 +171,9 @@ impl CommitOptions<'_> {
             eprintln!("{}", info_message("Skipping pre-commit hooks (--no-hooks)"));
         }
 
-        let mut template_vars = TemplateVars::new();
-        if let Some(target) = self.target_branch {
-            template_vars = template_vars.with_target(target);
-        }
+        let template_vars = self
+            .target_branch
+            .map_or_else(TemplateVars::new, |t| TemplateVars::new().with_target(t));
 
         if self.verify {
             // Run pre-commit hooks (user first, then project).
@@ -225,12 +224,8 @@ impl CommitOptions<'_> {
 
         // Spawn post-commit hooks in background (respects --no-hooks)
         if self.verify {
-            spawn_background_hooks(
-                self.ctx,
-                HookType::PostCommit,
-                &template_vars.as_extra_vars(),
-                None,
-            )?;
+            let extra_vars = template_vars.as_extra_vars();
+            spawn_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?;
         }
 
         Ok(())

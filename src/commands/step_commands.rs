@@ -343,12 +343,8 @@ pub fn handle_squash(
 
     // Spawn post-commit hooks in background (respects --no-hooks)
     if verify {
-        spawn_background_hooks(
-            &ctx,
-            HookType::PostCommit,
-            &template_vars.as_extra_vars(),
-            None,
-        )?;
+        let extra_vars = template_vars.as_extra_vars();
+        spawn_background_hooks(&ctx, HookType::PostCommit, &extra_vars, None)?;
     }
 
     Ok(SquashResult::Squashed)
