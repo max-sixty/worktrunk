@@ -926,6 +926,34 @@ cleanup = "echo 'POST_REMOVE_DURING_MERGE' > ../merge_postremove_marker.txt"
     );
 }
 
+/// `wt merge` with removal fires post-remove, post-switch, and post-merge in
+/// sequence. They should share one `Running …` announce line so the user sees
+/// a single status line for the whole command, not three.
+#[rstest]
+fn test_merge_combines_post_remove_post_switch_post_merge(mut repo: TestRepo) {
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature", "Add feature");
+
+    repo.write_test_config(
+        r#"[post-remove]
+cleanup = "echo removed"
+
+[post-switch]
+notify = "echo switched"
+
+[post-merge]
+sync = "echo merged"
+"#,
+    );
+
+    snapshot_merge(
+        "merge_combines_post_remove_post_switch_post_merge",
+        &repo,
+        &["main", "--yes"],
+        Some(&feature_wt),
+    );
+}
+
 /// When removing the current worktree (cd back to main), both post-remove and
 /// post-switch hooks fire. They should appear on a single combined announcement line.
 #[rstest]

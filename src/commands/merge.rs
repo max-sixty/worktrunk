@@ -9,7 +9,7 @@ use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
-use super::hooks::{execute_hook, spawn_background_hooks};
+use super::hooks::{HookAnnouncer, execute_hook};
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::repository_ext::{
     RepositoryCliExt, check_not_default_branch, compute_integration_reason, is_primary_worktree,
@@ -284,6 +284,11 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         .filter(|c| c.len() >= 7)
         .map(|c| c[..7].to_string());
 
+    // One announcer for the whole command's background hooks: post-remove +
+    // post-switch (from worktree removal) and post-merge share a single
+    // `◎ Running …` line, flushed at the end.
+    let mut announcer = HookAnnouncer::new(repo, config, false);
+
     // Finish worktree unless removal is disabled or blocked.
     // Guards are shared with `wt remove`: is_primary_worktree (Phase 2) and
     // check_not_default_branch (Phase 3) are the same helpers both paths use.
@@ -327,7 +332,14 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             expected_path,
             removed_commit: feature_commit.clone(),
         };
-        crate::output::handle_remove_output(&remove_result, false, verify, false, false)?;
+        crate::output::handle_remove_output(
+            &remove_result,
+            false,
+            verify,
+            false,
+            false,
+            Some(&mut announcer),
+        )?;
         true
     };
 
@@ -358,8 +370,10 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             extra.push(("short_commit", sc));
         }
 
-        spawn_background_hooks(&ctx, HookType::PostMerge, &extra, display_path)?;
+        announcer.register(&ctx, HookType::PostMerge, &extra, display_path)?;
     }
+
+    announcer.flush()?;
 
     if json_mode {
         let output = serde_json::json!({
