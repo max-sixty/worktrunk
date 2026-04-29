@@ -302,15 +302,15 @@ impl<'a> HookAnnouncer<'a> {
         }
     }
 
-    /// Add prepared pipelines to the announcer. Empty groups are skipped.
+    /// Add prepared pipelines to the announcer.
+    ///
+    /// Pipelines come from `prepare_background_hooks` / its callers, which
+    /// already filter out empty source groups — empty `steps` is unreachable.
     pub fn extend<'b, I>(&mut self, pipelines: I)
     where
         I: IntoIterator<Item = (CommandContext<'b>, Vec<SourcedStep>)>,
     {
         for (ctx, steps) in pipelines {
-            if steps.is_empty() {
-                continue;
-            }
             self.pending.push(PendingPipeline {
                 worktree_path: ctx.worktree_path.to_path_buf(),
                 branch: ctx.branch.map(String::from),
