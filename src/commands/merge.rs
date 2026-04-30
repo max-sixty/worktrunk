@@ -13,8 +13,8 @@ use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::repository_ext::RepositoryCliExt;
 use super::template_vars::TemplateVars;
 use super::worktree::{
-    FinishAfterMergeArgs, FinishAfterMergeResult, MergeOperations, PushKind, finish_after_merge,
-    handle_no_ff_merge, handle_push,
+    FinishAfterMergeArgs, MergeOperations, PushKind, finish_after_merge, handle_no_ff_merge,
+    handle_push,
 };
 
 /// Tri-state CLI overrides for the six `wt merge` boolean flags. `None` =
@@ -290,7 +290,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         handle_push(Some(&target_branch), PushKind::MergeFastForward, operations)?;
     }
 
-    let FinishAfterMergeResult { removed } = finish_after_merge(
+    let removed = finish_after_merge(
         repo,
         config,
         &env,
@@ -299,7 +299,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             current_branch: &current_branch,
             target_branch: &target_branch,
             target_worktree_path: target_worktree_path.as_deref(),
-            on_target,
             remove,
             verify,
             yes,

@@ -43,20 +43,15 @@ pub struct FinishAfterMergeArgs<'a> {
     pub current_branch: &'a str,
     pub target_branch: &'a str,
     pub target_worktree_path: Option<&'a Path>,
-    pub on_target: bool,
     pub remove: bool,
     pub verify: bool,
     pub yes: bool,
 }
 
-/// Result of [`finish_after_merge`]. Currently only conveys whether the feature
-/// worktree was removed, which the caller folds into its `--format=json` blob.
-pub struct FinishAfterMergeResult {
-    pub removed: bool,
-}
-
 /// Run the post-merge finish sequence: capture feature identity, optionally
-/// remove the feature worktree, register the post-merge hook.
+/// remove the feature worktree, register the post-merge hook. Returns whether
+/// the feature worktree was removed (the caller folds this into its
+/// `--format=json` blob).
 ///
 /// `announcer` is mutated in place; `flush()` stays with the caller because it
 /// covers the whole command's background hooks (post-commit, post-remove,
@@ -67,16 +62,17 @@ pub fn finish_after_merge(
     env: &CommandEnv,
     announcer: &mut HookAnnouncer<'_>,
     args: FinishAfterMergeArgs<'_>,
-) -> anyhow::Result<FinishAfterMergeResult> {
+) -> anyhow::Result<bool> {
     let FinishAfterMergeArgs {
         current_branch,
         target_branch,
         target_worktree_path,
-        on_target,
         remove,
         verify,
         yes,
     } = args;
+
+    let on_target = current_branch == target_branch;
 
     // Destination: prefer the target branch's worktree; fall back to home path.
     let destination_path = match target_worktree_path {
@@ -86,13 +82,17 @@ pub fn finish_after_merge(
 
     // Capture feature worktree identity BEFORE removal as Active overrides for
     // post-merge hooks. After removal the feature worktree is gone, but
-    // post-merge hooks need to reference its branch, path, and commit.
+    // post-merge hooks need to reference its branch, path, and commit. Skip the
+    // subprocess when nothing reads the result (`--no-remove --no-hooks`).
     let mut feature_vars = TemplateVars::new().with_active_worktree(&env.worktree_path);
-    let feature_commit = repo
-        .current_worktree()
-        .run_command(&["rev-parse", "HEAD"])
-        .ok()
-        .map(|s| s.trim().to_string());
+    let feature_commit = if verify || remove {
+        repo.current_worktree()
+            .run_command(&["rev-parse", "HEAD"])
+            .ok()
+            .map(|s| s.trim().to_string())
+    } else {
+        None
+    };
     if let Some(commit) = feature_commit.as_deref() {
         feature_vars = feature_vars.with_active_commit(commit);
     }
@@ -167,5 +167,5 @@ pub fn finish_after_merge(
         )?;
     }
 
-    Ok(FinishAfterMergeResult { removed })
+    Ok(removed)
 }
