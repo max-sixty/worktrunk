@@ -31,7 +31,7 @@ metadata:
    ```bash
    git reset --soft HEAD~1 && git add -A && git commit -m "Release vX.Y.Z"
    ```
-10. **Merge to main**: `wt merge --no-remove` (rebases onto main, pushes, keeps worktree)
+10. **Merge to main**: `/gpk` — opens a PR, waits for CI, merges via PR (preserves worktree)
 11. **Tag and push**: `git tag vX.Y.Z && git push origin vX.Y.Z`
 12. **Wait for release workflow**: Poll with `gh pr checks --required` or `gh run view <run-id>` every 60 seconds until complete (avoid `gh run watch` — it can hang). Non-required checks are ignored
 
