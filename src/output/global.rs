@@ -36,12 +36,13 @@
 //!
 //! Users who upgrade wt without restarting their shell still run the previous
 //! release's shell wrapper, which only sets `WORKTRUNK_DIRECTIVE_FILE`. When
-//! only that variable is set, wt falls back to the pre-split protocol (shell
-//! commands written to the single file) silently. For bash, zsh, fish, and
-//! PowerShell a shell restart picks up the new wrapper automatically; nushell
-//! is the only shell where users have to rerun `wt config shell install`
-//! because its wrapper is a static file. Remove the legacy path in the next
-//! breaking release.
+//! only that variable is set, top-level wt falls back to the pre-split
+//! protocol (shell commands written to the single file) silently. Child alias,
+//! foreground-hook, and concurrent command execution do not pass this legacy
+//! env var through. For bash, zsh, fish, and PowerShell a shell restart picks
+//! up the new wrapper automatically; nushell is the only shell where users
+//! have to rerun `wt config shell install` because its wrapper is a static
+//! file. Remove the legacy path in the next breaking release.
 
 use std::fs::OpenOptions;
 use std::io::{self, Write};

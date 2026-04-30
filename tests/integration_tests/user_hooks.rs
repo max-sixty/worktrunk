@@ -7,8 +7,9 @@
 //! - Skipped together with project hooks via --no-hooks
 
 use crate::common::{
-    TestRepo, make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo, resolve_git_common_dir,
-    setup_snapshot_settings, wait_for_file, wait_for_file_content, wait_for_file_count,
+    TestRepo, configure_legacy_directive_file, legacy_directive_file, make_snapshot_cmd,
+    make_snapshot_cmd_with_global_flags, repo, resolve_git_common_dir, setup_snapshot_settings,
+    wait_for_file, wait_for_file_content, wait_for_file_count,
 };
 use insta_cmd::assert_cmd_snapshot;
 use path_slash::PathExt as _;
@@ -3571,6 +3572,39 @@ setup = "'{wt_toml}' switch --create hook-created --no-hooks"
     assert!(
         !stderr.contains("shell integration"),
         "inner wt should not warn about shell integration being uninstalled, got: {stderr}",
+    );
+}
+
+/// Foreground hooks do not pass the legacy `WORKTRUNK_DIRECTIVE_FILE` through
+/// to child shell commands. If the child could see the env var, it would
+/// append to the file; the file must remain empty.
+#[rstest]
+#[cfg(unix)]
+fn test_foreground_hook_does_not_pass_legacy_directive_file(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[pre-start]
+setup = "if [ -n \"${WORKTRUNK_DIRECTIVE_FILE:-}\" ]; then printf CHILD >> \"$WORKTRUNK_DIRECTIVE_FILE\"; fi"
+"#,
+    );
+
+    let (directive_path, _guard) = legacy_directive_file();
+
+    let mut cmd = repo.wt_command();
+    configure_legacy_directive_file(&mut cmd, &directive_path);
+    cmd.args(["hook", "pre-start", "setup"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "foreground hook should succeed even when the legacy directive file is set: stderr={}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    assert!(
+        directives.trim().is_empty(),
+        "foreground hook child should not be able to append to WORKTRUNK_DIRECTIVE_FILE, got: {directives:?}"
     );
 }
 

@@ -28,7 +28,9 @@
 //! first, then project. The CD directive file is passed through to child
 //! processes so inner `wt` invocations can redirect the parent shell's cwd;
 //! the EXEC directive file is scrubbed so alias bodies cannot inject
-//! arbitrary shell into the interactive session.
+//! arbitrary shell into the interactive session. The legacy single-file
+//! directive is handled only by top-level legacy output mode, not by alias
+//! child execution.
 
 use std::collections::{BTreeMap, BTreeSet};
 

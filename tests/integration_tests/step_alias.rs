@@ -1,8 +1,9 @@
 //! Integration tests for `wt step <alias>`
 
 use crate::common::{
-    TestRepo, configure_directive_files, directive_files, make_snapshot_cmd,
-    make_snapshot_cmd_with_global_flags, repo, setup_snapshot_settings, wt_bin,
+    TestRepo, configure_directive_files, configure_legacy_directive_file, directive_files,
+    legacy_directive_file, make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo,
+    setup_snapshot_settings, wt_bin,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -799,6 +800,40 @@ new-branch = "'{wt_toml}' switch --create alias-created"
     assert!(
         !stderr.contains("shell integration"),
         "inner wt should not warn about shell integration being uninstalled, got: {stderr}",
+    );
+}
+
+/// `wt step <alias>` does not pass the legacy `WORKTRUNK_DIRECTIVE_FILE`
+/// through to the alias subprocess. The child shell body would append to the
+/// file if it could see the env var; the file must remain empty.
+#[rstest]
+#[cfg(unix)]
+fn test_alias_does_not_pass_legacy_directive_file(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+probe = "if [ -n \"${WORKTRUNK_DIRECTIVE_FILE:-}\" ]; then printf CHILD >> \"$WORKTRUNK_DIRECTIVE_FILE\"; fi"
+"#,
+    );
+    repo.commit("Add alias config");
+
+    let (directive_path, _guard) = legacy_directive_file();
+
+    let mut cmd = repo.wt_command();
+    configure_legacy_directive_file(&mut cmd, &directive_path);
+    cmd.args(["step", "probe"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "alias should succeed even when the legacy directive file is set: stderr={}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+    assert!(
+        directives.trim().is_empty(),
+        "alias child should not be able to append to WORKTRUNK_DIRECTIVE_FILE, got: {directives:?}"
     );
 }
 

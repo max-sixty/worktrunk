@@ -1448,9 +1448,9 @@ fn handle_removed_worktree_output(
 ///   (outlive the parent shell).
 /// - `DirectivePassthrough::inherit_from_env()` — re-adds whichever directive
 ///   env vars are currently set in this process. Used by aliases and
-///   foreground hooks, which may emit `cd` directives. In new-protocol mode
-///   only the CD file passes through; in legacy compat mode the single
-///   legacy file passes through to preserve pre-split behavior.
+///   foreground hooks, which may emit `cd` directives. Only the CD file
+///   passes through; the legacy single-file directive is handled exclusively
+///   by top-level legacy output mode.
 ///
 /// ## Stdout routing
 ///
@@ -1514,9 +1514,6 @@ pub fn execute_shell_command(
     if let Some(path) = directives.cd_file {
         cmd = cmd.directive_cd_file(path);
     }
-    if let Some(path) = directives.legacy_file {
-        cmd = cmd.directive_legacy_file(path);
-    }
 
     cmd.stream()?;
 
@@ -1531,11 +1528,12 @@ pub fn execute_shell_command(
 /// Constructed by callers via [`DirectivePassthrough::none`] or
 /// [`DirectivePassthrough::inherit_from_env`]. The EXEC file is intentionally
 /// never included — alias/hook shell bodies must not inject arbitrary shell
-/// into the parent session.
+/// into the parent session. The legacy single-file `WORKTRUNK_DIRECTIVE_FILE`
+/// is also excluded; it is only honored by top-level legacy output handling in
+/// `output::global`.
 #[derive(Debug, Default, Clone)]
 pub struct DirectivePassthrough {
     pub cd_file: Option<std::path::PathBuf>,
-    pub legacy_file: Option<std::path::PathBuf>,
 }
 
 impl DirectivePassthrough {
@@ -1544,20 +1542,23 @@ impl DirectivePassthrough {
         Self::default()
     }
 
-    /// Pass CD and legacy directive files through to the child, reading the
-    /// current process environment. Used by trusted contexts (aliases,
-    /// foreground hooks) that may legitimately emit a `cd` directive. The
-    /// EXEC file is deliberately omitted.
+    /// Pass the CD directive file through to the child, reading the current
+    /// process environment. Used by trusted contexts (aliases, foreground
+    /// hooks) that may legitimately emit a `cd` directive. The EXEC file and
+    /// legacy single-file directive are deliberately omitted.
     pub fn inherit_from_env() -> Self {
-        use worktrunk::shell_exec::{DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR};
+        Self::inherit_from_reader(|var| std::env::var_os(var))
+    }
+
+    fn inherit_from_reader(read_env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Self {
+        use worktrunk::shell_exec::DIRECTIVE_CD_FILE_ENV_VAR;
         let read = |var: &str| {
-            std::env::var_os(var)
+            read_env(var)
                 .map(std::path::PathBuf::from)
                 .filter(|p| !p.as_os_str().is_empty())
         };
         Self {
             cd_file: read(DIRECTIVE_CD_FILE_ENV_VAR),
-            legacy_file: read(DIRECTIVE_FILE_ENV_VAR),
         }
     }
 }
@@ -1664,6 +1665,23 @@ mod tests {
                 reason
             );
         }
+    }
+
+    #[test]
+    fn test_inherit_from_env_ignores_legacy_directive_file() {
+        use std::collections::HashMap;
+
+        let legacy_file = std::path::PathBuf::from("/tmp/directive-legacy");
+        let env = HashMap::from([(
+            worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR.to_string(),
+            legacy_file.display().to_string(),
+        )]);
+
+        let directives = DirectivePassthrough::inherit_from_reader(|var| {
+            env.get(var).map(std::ffi::OsString::from)
+        });
+
+        assert!(directives.cd_file.is_none());
     }
 
     #[test]
