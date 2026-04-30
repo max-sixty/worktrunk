@@ -84,12 +84,22 @@ fn test_for_each_detached_branch_variable(mut repo: TestRepo) {
 fn test_for_each_spawn_fails(mut repo: TestRepo) {
     repo.add_worktree("feature");
 
-    assert_cmd_snapshot!(make_snapshot_cmd(
-        &repo,
-        "step",
-        &["for-each", "--", "nonexistent-command-12345", "--some-arg"],
-        None,
-    ));
+    // Normalize platform-specific spawn-error text so the snapshot is
+    // identical on Unix (`No such file or directory (os error 2)`) and
+    // Windows (`program not found`).
+    insta::with_settings!({
+        filters => vec![
+            (r"No such file or directory \(os error \d+\)", "[SPAWN_FAIL]"),
+            (r"program not found", "[SPAWN_FAIL]"),
+        ],
+    }, {
+        assert_cmd_snapshot!(make_snapshot_cmd(
+            &repo,
+            "step",
+            &["for-each", "--", "nonexistent-command-12345", "--some-arg"],
+            None,
+        ));
+    });
 }
 
 /// argv boundaries from the post-`--` args reach the program intact. The
