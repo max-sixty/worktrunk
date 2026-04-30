@@ -643,18 +643,18 @@ impl Repository {
             }
         };
 
-        if check_local {
-            let signals = compute_integration_lazy(self, branch, target)?;
-            if let Some(reason) = check_integration(&signals) {
-                return Ok((target.to_string(), Some(reason)));
-            }
+        if check_local
+            && let Some(reason) =
+                check_integration(&compute_integration_lazy(self, branch, target)?)
+        {
+            return Ok((target.to_string(), Some(reason)));
         }
 
-        if let Some(upstream) = fallback_upstream {
-            let signals = compute_integration_lazy(self, branch, &upstream)?;
-            if let Some(reason) = check_integration(&signals) {
-                return Ok((upstream, Some(reason)));
-            }
+        if let Some(upstream) = fallback_upstream
+            && let Some(reason) =
+                check_integration(&compute_integration_lazy(self, branch, &upstream)?)
+        {
+            return Ok((upstream, Some(reason)));
         }
 
         Ok((target.to_string(), None))
