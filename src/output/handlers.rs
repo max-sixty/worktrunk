@@ -733,8 +733,7 @@ pub fn handle_remove_output(
     foreground: bool,
     verify: bool,
     quiet: bool,
-    show_branch_in_hooks: bool,
-    announcer: Option<&mut HookAnnouncer<'_>>,
+    announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     match result {
         RemoveResult::RemovedWorktree {
@@ -762,7 +761,6 @@ pub fn handle_remove_output(
                 removed_commit: removed_commit.as_deref(),
                 foreground,
                 verify,
-                show_branch_in_hooks,
             },
             announcer,
         ),
@@ -891,7 +889,7 @@ fn spawn_hooks_after_remove(
     repo: &Repository,
     ctx: &RemovedWorktreeOutputContext<'_>,
     removed_branch: &str,
-    announcer: Option<&mut HookAnnouncer<'_>>,
+    announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     if !ctx.verify {
         return Ok(());
@@ -946,14 +944,7 @@ fn spawn_hooks_after_remove(
         )?);
     }
 
-    if let Some(announcer) = announcer {
-        announcer.extend(pipelines);
-    } else {
-        let mut local = HookAnnouncer::new(repo, &config, ctx.show_branch_in_hooks);
-        local.extend(pipelines);
-        local.flush()?;
-    }
-
+    announcer.extend(pipelines);
     Ok(())
 }
 
@@ -1181,8 +1172,6 @@ struct RemovedWorktreeOutputContext<'a> {
     removed_commit: Option<&'a str>,
     foreground: bool,
     verify: bool,
-    /// Show branch name in hook announcements for disambiguation in batch contexts.
-    show_branch_in_hooks: bool,
 }
 
 fn execute_pre_remove_hooks_if_needed(
@@ -1248,7 +1237,7 @@ fn prepare_remove_directory_change(
 fn handle_detached_removed_worktree_output(
     repo: &Repository,
     ctx: &RemovedWorktreeOutputContext<'_>,
-    announcer: Option<&mut HookAnnouncer<'_>>,
+    announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     if ctx.foreground {
         eprintln!(
@@ -1318,7 +1307,7 @@ fn handle_named_removed_worktree_foreground(
     repo: &Repository,
     ctx: &RemovedWorktreeOutputContext<'_>,
     branch_name: &str,
-    announcer: Option<&mut HookAnnouncer<'_>>,
+    announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     eprintln!(
         "{}",
@@ -1375,7 +1364,7 @@ fn handle_named_removed_worktree_background(
     repo: &Repository,
     ctx: &RemovedWorktreeOutputContext<'_>,
     branch_name: &str,
-    announcer: Option<&mut HookAnnouncer<'_>>,
+    announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     if let Some(expected) = ctx.expected_path {
         eprintln!(
@@ -1413,7 +1402,7 @@ fn handle_named_removed_worktree_background(
 /// Handle output for RemovedWorktree removal
 fn handle_removed_worktree_output(
     ctx: RemovedWorktreeOutputContext<'_>,
-    announcer: Option<&mut HookAnnouncer<'_>>,
+    announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     // Use main_path for discovery - the worktree being removed might be cwd,
     // and git operations after removal need a valid working directory.

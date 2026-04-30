@@ -222,7 +222,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             options.warn_about_untracked = stage_mode == super::commit::StageMode::All;
             options.show_no_squash_note = true;
 
-            options.commit(Some(&mut announcer))?;
+            options.commit(&mut announcer)?;
             true // Committed directly
         }
     } else {
@@ -355,14 +355,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             expected_path,
             removed_commit: feature_commit.clone(),
         };
-        crate::output::handle_remove_output(
-            &remove_result,
-            false,
-            verify,
-            false,
-            false,
-            Some(&mut announcer),
-        )?;
+        crate::output::handle_remove_output(&remove_result, false, verify, false, &mut announcer)?;
         true
     };
 

@@ -17,6 +17,7 @@ use worktrunk::styling::{
 
 use commands::command_approval::approve_or_skip;
 use commands::command_executor::CommandContext;
+use commands::hooks::HookAnnouncer;
 use commands::worktree::RemoveResult;
 
 mod cli;
@@ -808,7 +809,9 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 // "Approve at the Gate": approval happens AFTER validation passes
                 let run_hooks = verify && approve_remove(yes)?;
 
-                handle_remove_output(&result, args.foreground, run_hooks, false, false, None)?;
+                let mut announcer = HookAnnouncer::new(&repo, &config, false);
+                handle_remove_output(&result, args.foreground, run_hooks, false, &mut announcer)?;
+                announcer.flush()?;
                 if json_mode {
                     let json = serde_json::json!([result.to_json()]);
                     println!("{}", serde_json::to_string_pretty(&json)?);
@@ -847,34 +850,37 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 let show_branch =
                     plans.others.len() + plans.branch_only.len() + plans.current.iter().len() > 1;
                 for result in &plans.others {
+                    let mut announcer = HookAnnouncer::new(&repo, &config, show_branch);
                     handle_remove_output(
                         result,
                         args.foreground,
                         run_hooks,
                         false,
-                        show_branch,
-                        None,
+                        &mut announcer,
                     )?;
+                    announcer.flush()?;
                 }
                 for result in &plans.branch_only {
+                    let mut announcer = HookAnnouncer::new(&repo, &config, show_branch);
                     handle_remove_output(
                         result,
                         args.foreground,
                         run_hooks,
                         false,
-                        show_branch,
-                        None,
+                        &mut announcer,
                     )?;
+                    announcer.flush()?;
                 }
                 if let Some(ref result) = plans.current {
+                    let mut announcer = HookAnnouncer::new(&repo, &config, show_branch);
                     handle_remove_output(
                         result,
                         args.foreground,
                         run_hooks,
                         false,
-                        show_branch,
-                        None,
+                        &mut announcer,
                     )?;
+                    announcer.flush()?;
                 }
 
                 if json_mode {
