@@ -35,12 +35,13 @@ use worktrunk::styling::{
     verbosity, warning_message,
 };
 
-use super::command_approval::approve_hooks;
+use super::command_approval::approve_or_skip;
 use super::command_executor::FailureStrategy;
 use super::commit::{CommitGenerator, CommitOptions, StageMode};
 use super::context::CommandEnv;
-use super::hooks::{HookCommandSpec, run_hook_with_filter, spawn_background_hooks};
+use super::hooks::{execute_hook, spawn_background_hooks};
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
+use super::template_vars::TemplateVars;
 use crate::output::handle_remove_output;
 use worktrunk::git::BranchDeletionMode;
 
@@ -81,20 +82,12 @@ pub fn step_commit(
 
     // "Approve at the Gate": approve commit hooks upfront (unless --no-hooks)
     // Shadow verify: if user declines approval, skip hooks but continue commit
-    let verify = if verify {
-        let approved = approve_hooks(&ctx, &[HookType::PreCommit, HookType::PostCommit])?;
-        if !approved {
-            eprintln!(
-                "{}",
-                info_message("Commands declined, committing without hooks",)
-            );
-            false
-        } else {
-            true
-        }
-    } else {
-        false // --no-hooks was passed
-    };
+    let verify = verify
+        && approve_or_skip(
+            &ctx,
+            &[HookType::PreCommit, HookType::PostCommit],
+            "Commands declined, committing without hooks",
+        )?;
 
     let mut options = CommitOptions::new(&ctx);
     options.verify = verify;
@@ -159,16 +152,11 @@ pub fn handle_squash(
     // "Approve at the Gate": approve commit hooks upfront (unless --no-hooks)
     // Shadow verify: if user declines approval, skip hooks but continue squash
     let verify = if verify {
-        let approved = approve_hooks(&ctx, &[HookType::PreCommit, HookType::PostCommit])?;
-        if !approved {
-            eprintln!(
-                "{}",
-                info_message("Commands declined, squashing without hooks")
-            );
-            false
-        } else {
-            true
-        }
+        approve_or_skip(
+            &ctx,
+            &[HookType::PreCommit, HookType::PostCommit],
+            "Commands declined, squashing without hooks",
+        )?
     } else {
         // Show skip message when --no-hooks was passed and hooks exist
         if any_hooks_exist {
@@ -179,6 +167,7 @@ pub fn handle_squash(
 
     // Get and validate target ref (any commit-ish for merge-base calculation)
     let integration_target = repo.require_target_ref(target)?;
+    let template_vars = TemplateVars::new().with_target(&integration_target);
 
     // Auto-stage changes before running pre-commit hooks so both beta and merge paths behave identically
     match stage_mode {
@@ -196,22 +185,15 @@ pub fn handle_squash(
         }
     }
 
-    // Run pre-commit hooks (user first, then project)
+    // Run pre-commit hooks (user first, then project).
     if verify {
-        let extra_vars = [("target", integration_target.as_str())];
-        run_hook_with_filter(
+        execute_hook(
             &ctx,
-            HookCommandSpec {
-                user_config: user_cfg,
-                project_config: proj_cfg,
-                hook_type: HookType::PreCommit,
-                extra_vars: &extra_vars,
-                name_filters: &[],
-                display_path: crate::output::pre_hook_display_path(ctx.worktree_path),
-            },
+            HookType::PreCommit,
+            &template_vars.as_extra_vars(),
             FailureStrategy::FailFast,
-        )
-        .map_err(worktrunk::git::add_hook_skip_hint)?;
+            crate::output::pre_hook_display_path(ctx.worktree_path),
+        )?;
     }
 
     // Get merge base with target branch (required for squash)
@@ -361,7 +343,7 @@ pub fn handle_squash(
 
     // Spawn post-commit hooks in background (respects --no-hooks)
     if verify {
-        let extra_vars: Vec<(&str, &str)> = vec![("target", integration_target.as_str())];
+        let extra_vars = template_vars.as_extra_vars();
         spawn_background_hooks(&ctx, HookType::PostCommit, &extra_vars, None)?;
     }
 
@@ -501,10 +483,6 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 /// and untracked files in a single diff. Copies the real index to preserve git's stat
 /// cache (avoiding re-reads of unchanged files), then registers untracked files with
 /// `git add -N` so they appear in the diff.
-///
-/// TODO: consider adding `--stage` flag (all/tracked/none) like `step commit` to
-/// control which change types are included. `tracked` would skip the temp index,
-/// `none` would diff only committed changes.
 pub fn step_diff(target: Option<&str>, extra_args: &[String]) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let wt = repo.current_worktree();
@@ -1387,18 +1365,15 @@ pub fn step_prune(
     } else {
         let env = CommandEnv::for_action_branchless()?;
         let ctx = env.context(yes);
-        let approved = approve_hooks(
+        approve_or_skip(
             &ctx,
             &[
                 HookType::PreRemove,
                 HookType::PostRemove,
                 HookType::PostSwitch,
             ],
-        )?;
-        if !approved {
-            eprintln!("{}", info_message("Commands declined, continuing removal"));
-        }
-        approved
+            "Commands declined, continuing removal",
+        )?
     };
 
     let mut removed: Vec<Candidate> = Vec::new();
@@ -1451,7 +1426,7 @@ pub fn step_prune(
                 return Ok(false);
             }
         };
-        handle_remove_output(&plan, foreground, run_hooks, true, true)?;
+        handle_remove_output(&plan, foreground, run_hooks, true, true, None)?;
         Ok(true)
     }
 

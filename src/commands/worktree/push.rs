@@ -16,6 +16,34 @@ use worktrunk::styling::{
 use super::types::MergeOperations;
 use crate::commands::repository_ext::{RepositoryCliExt, TargetWorktreeStash};
 
+/// Distinguishes a standalone push from a fast-forward push driven by `wt merge`.
+///
+/// Carried into [`handle_push`] so progress/success messages use the right verb
+/// without sniffing a passed-in string.
+#[derive(Debug, Clone, Copy)]
+pub enum PushKind {
+    /// `wt push` — no merge operations precede the push.
+    Standalone,
+    /// `wt merge` resolved to a fast-forward.
+    MergeFastForward,
+}
+
+impl PushKind {
+    fn verb_past(self) -> &'static str {
+        match self {
+            PushKind::Standalone => "Pushed to",
+            PushKind::MergeFastForward => "Merged to",
+        }
+    }
+
+    fn verb_progressive(self) -> &'static str {
+        match self {
+            PushKind::Standalone => "Pushing",
+            PushKind::MergeFastForward => "Merging",
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Shared scaffolding
 // ---------------------------------------------------------------------------
@@ -98,11 +126,12 @@ impl MergeContext {
 
     /// Print progress message, commit graph, and diff statistics.
     ///
-    /// `verb_ing` is the gerund shown in the progress line (e.g. "Merging", "Pushing").
-    /// `extra_note` is appended after the SHA (e.g. " (--no-ff)").
+    /// `verb_progressive` is the present participle shown in the progress line
+    /// (e.g. "Merging", "Pushing"). `extra_note` is appended after the SHA
+    /// (e.g. " (--no-ff)").
     fn show_progress(
         &self,
-        verb_ing: &str,
+        verb_progressive: &str,
         extra_note: &str,
         operations: Option<MergeOperations>,
     ) -> anyhow::Result<()> {
@@ -123,7 +152,7 @@ impl MergeContext {
         eprintln!(
             "{}",
             progress_message(cformat!(
-                "{verb_ing} {} {commit_text} to <bold>{}</> @ <dim>{head_sha}</>{extra_note}{operations_note}",
+                "{verb_progressive} {} {commit_text} to <bold>{}</> @ <dim>{head_sha}</>{extra_note}{operations_note}",
                 self.commit_count,
                 self.target_branch,
             ))
@@ -248,17 +277,12 @@ fn format_up_to_date_context(operations: Option<MergeOperations>) -> String {
 /// overlaps with the push range.
 pub fn handle_push(
     target: Option<&str>,
-    verb: &str,
+    kind: PushKind,
     operations: Option<MergeOperations>,
 ) -> anyhow::Result<()> {
     let mut ctx = MergeContext::prepare(target, operations)?;
 
-    let verb_ing = if verb.starts_with("Merged") {
-        "Merging"
-    } else {
-        "Pushing"
-    };
-    ctx.show_progress(verb_ing, "", operations)?;
+    ctx.show_progress(kind.verb_progressive(), "", operations)?;
 
     // Perform the push via --receive-pack (atomically updates ref + working tree)
     let git_common_dir = ctx.repo.git_common_dir();
@@ -281,7 +305,7 @@ pub fn handle_push(
     ctx.restore_stash();
 
     if ctx.commit_count > 0 {
-        ctx.show_success(verb, "", "");
+        ctx.show_success(kind.verb_past(), "", "");
     } else {
         ctx.show_up_to_date_if_needed(operations);
     }

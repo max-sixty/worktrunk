@@ -45,8 +45,8 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+step1 env=prod
+step2 region=us-east
 
 ----- stderr -----
 [36m◎[39m [36mRunning alias [1mdeploy[22m: [1mpublish[22m[39m
-[0mstep1 env=prod
-[0mstep2 region=us-east

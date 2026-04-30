@@ -4,10 +4,9 @@ use std::path::{Path, PathBuf};
 
 use color_print::cformat;
 use dunce::canonicalize;
-use normalize_path::NormalizePath;
 
 use super::{GitError, Repository, ResolvedWorktree, WorktreeInfo};
-use crate::path::format_path_for_display;
+use crate::path::{format_path_for_display, paths_match};
 
 impl Repository {
     /// List all worktrees for this repository.
@@ -90,17 +89,18 @@ impl Repository {
     ///
     /// Returns `Some((path, branch))` if a worktree exists at the path,
     /// where `branch` is `None` for detached HEAD worktrees.
+    ///
+    /// Uses symlink-aware comparison so a path that resolves to a worktree
+    /// through one or more symlinks still matches the worktree's recorded path.
     pub fn worktree_at_path(
         &self,
         path: &Path,
     ) -> anyhow::Result<Option<(PathBuf, Option<String>)>> {
         let worktrees = self.list_worktrees()?;
-        // Use lexical normalization so comparison works even when path doesn't exist
-        let normalized_path = path.normalize();
 
         Ok(worktrees
             .iter()
-            .find(|wt| wt.path.normalize() == normalized_path)
+            .find(|wt| paths_match(&wt.path, path))
             .map(|wt| (wt.path.clone(), wt.branch.clone())))
     }
 

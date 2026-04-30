@@ -45,6 +45,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+got one two three four
 
 ----- stderr -----
-[0mgot one two three four

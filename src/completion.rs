@@ -512,7 +512,7 @@ fn build_hook_completion_command(name: &'static str) -> Command {
 /// completion but would misrepresent alias semantics on a `--help` page. The
 /// help-path counterparts are `augment_help` (text-splices the `Aliases:`
 /// section into `wt --help` / `wt step --help`, preserving source markers and
-/// shadowed-by-builtin annotations) and `emit_alias_help_hint` (redirects
+/// shadowed-by-builtin annotations) and `try_intercept_alias_help` (redirects
 /// `wt <alias> --help` to `wt config alias show` / `dry-run`).
 fn inject_alias_subcommands(cmd: Command) -> Command {
     let aliases = load_aliases_for_completion();

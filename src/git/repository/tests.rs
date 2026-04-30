@@ -706,3 +706,27 @@ fn commit_details_many_deduplicates_repeated_sha() {
     assert_eq!(result.len(), 1);
     assert_eq!(result[&sha].1, "only commit");
 }
+
+#[test]
+#[cfg(unix)]
+fn worktree_at_path_resolves_symlinked_path() {
+    // Reproduction for issue #2460: `wt switch` fails to resolve existing
+    // worktrees through symlink paths because `worktree_at_path` compares
+    // paths lexically and misses symlink-equivalent spellings.
+    use crate::testing::TestRepo;
+
+    let mut test = TestRepo::with_initial_commit();
+    let worktree_path = test.add_worktree("feature");
+
+    let parent = worktree_path.parent().unwrap();
+    let symlink_path = parent.join("feature-link");
+    std::os::unix::fs::symlink(&worktree_path, &symlink_path).unwrap();
+
+    let resolved = test.repo.worktree_at_path(&symlink_path).unwrap();
+    assert!(
+        resolved.is_some(),
+        "worktree_at_path should resolve a symlinked path to its target worktree, got None for {symlink_path:?} -> {worktree_path:?}"
+    );
+    let (_, branch) = resolved.unwrap();
+    assert_eq!(branch.as_deref(), Some("feature"));
+}

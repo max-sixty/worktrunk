@@ -11,6 +11,7 @@ use crate::common::{
     setup_snapshot_settings, wait_for_file, wait_for_file_content, wait_for_file_count,
 };
 use insta_cmd::assert_cmd_snapshot;
+use path_slash::PathExt as _;
 use rstest::rstest;
 use std::fs;
 use std::thread;
@@ -926,6 +927,92 @@ cleanup = "echo 'POST_REMOVE_DURING_MERGE' > ../merge_postremove_marker.txt"
     );
 }
 
+/// `wt merge` with removal fires post-remove, post-switch, and post-merge in
+/// sequence. They should share one `Running …` announce line so the user sees
+/// a single status line for the whole command, not three.
+#[rstest]
+fn test_merge_combines_post_remove_post_switch_post_merge(mut repo: TestRepo) {
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature", "Add feature");
+
+    repo.write_test_config(
+        r#"[post-remove]
+cleanup = "echo removed"
+
+[post-switch]
+notify = "echo switched"
+
+[post-merge]
+sync = "echo merged"
+"#,
+    );
+
+    snapshot_merge(
+        "merge_combines_post_remove_post_switch_post_merge",
+        &repo,
+        &["main", "--yes"],
+        Some(&feature_wt),
+    );
+}
+
+/// When post-merge template prep errors after post-remove + post-switch are
+/// already registered, the announcer's `Drop` impl flushes the pending hooks
+/// so they still spawn — preserving the prior fire-and-forget behavior in
+/// which earlier hooks couldn't be lost by a later failure.
+#[rstest]
+fn test_merge_drops_pending_hooks_when_post_merge_fails(mut repo: TestRepo) {
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature", "Add feature");
+
+    let temp_root = repo.root_path().parent().unwrap();
+    let post_remove_marker = temp_root.join("drop_postremove_marker.txt");
+    let post_merge_marker = temp_root.join("drop_postmerge_marker.txt");
+
+    // post-merge references an undefined variable, so `register` errors after
+    // post-remove + post-switch are already pending in the announcer.
+    // Convert to forward slashes so the rendered shell command parses the same
+    // way under Windows Git Bash (where backslashes in unquoted paths get
+    // eaten as escape-of-next-char).
+    repo.write_test_config(&format!(
+        r#"[post-remove]
+cleanup = "echo POST_REMOVE_RAN > {}"
+
+[post-switch]
+notify = "echo switched"
+
+[post-merge]
+sync = "echo POST_MERGE_RAN > {} {{{{ does_not_exist }}}}"
+"#,
+        post_remove_marker.to_slash_lossy(),
+        post_merge_marker.to_slash_lossy(),
+    ));
+
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--yes"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "merge should fail when post-merge template references undefined variable"
+    );
+
+    // Drop flushed the pending pipelines: post-remove ran despite the failure.
+    crate::common::wait_for_file_content(&post_remove_marker);
+    let contents = fs::read_to_string(&post_remove_marker).unwrap();
+    assert!(
+        contents.contains("POST_REMOVE_RAN"),
+        "post-remove should have spawned via Drop: {contents}"
+    );
+
+    // post-merge never registered (template prep failed), so its marker stays absent.
+    assert!(
+        !post_merge_marker.exists(),
+        "post-merge marker should not exist (template prep failed before spawn)"
+    );
+}
+
 /// When removing the current worktree (cd back to main), both post-remove and
 /// post-switch hooks fire. They should appear on a single combined announcement line.
 #[rstest]
@@ -1358,6 +1445,29 @@ approved-commands = ["echo 'PROJECT_POST_START' > project_bg.txt"]
 // ============================================================================
 // Standalone Hook Execution Tests (wt hook <type>)
 // ============================================================================
+
+#[rstest]
+fn test_standalone_hook_failure_omits_skip_hint(repo: TestRepo) {
+    // `wt hook <type>` is the user explicitly requesting hooks. When a hook
+    // fails, suggesting `--no-hooks` makes no sense (they didn't ask for the
+    // operation that runs hooks; they asked for the hooks themselves). The
+    // hint must be reserved for operation-driven hooks (merge, commit, ...).
+    repo.write_project_config(r#"pre-merge = "exit 1""#);
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["hook", "pre-merge", "--yes"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "wt hook pre-merge should fail when hook exits non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("--no-hooks"),
+        "wt hook <type> failure must not suggest --no-hooks; got: {stderr}"
+    );
+}
 
 #[rstest]
 fn test_standalone_hook_post_create(repo: TestRepo) {

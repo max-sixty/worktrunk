@@ -8,8 +8,9 @@ use worktrunk::styling::{
 
 use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
-use super::hooks::{HookCommandSpec, spawn_background_hooks};
+use super::hooks::{execute_hook, spawn_background_hooks};
 use super::repository_ext::warn_about_untracked_files;
+use super::template_vars::TemplateVars;
 
 // Re-export StageMode from config for use by CLI
 pub use worktrunk::config::StageMode;
@@ -170,27 +171,19 @@ impl CommitOptions<'_> {
             eprintln!("{}", info_message("Skipping pre-commit hooks (--no-hooks)"));
         }
 
-        if self.verify {
-            let extra_vars: Vec<(&str, &str)> = self
-                .target_branch
-                .into_iter()
-                .map(|target| ("target", target))
-                .collect();
+        let template_vars = self
+            .target_branch
+            .map_or_else(TemplateVars::new, |t| TemplateVars::new().with_target(t));
 
-            // Run pre-commit hooks (user first, then project)
-            super::hooks::run_hook_with_filter(
+        if self.verify {
+            // Run pre-commit hooks (user first, then project).
+            execute_hook(
                 self.ctx,
-                HookCommandSpec {
-                    user_config: user_cfg,
-                    project_config: proj_cfg,
-                    hook_type: HookType::PreCommit,
-                    extra_vars: &extra_vars,
-                    name_filters: &[],
-                    display_path: crate::output::pre_hook_display_path(self.ctx.worktree_path),
-                },
+                HookType::PreCommit,
+                &template_vars.as_extra_vars(),
                 FailureStrategy::FailFast,
-            )
-            .map_err(worktrunk::git::add_hook_skip_hint)?;
+                crate::output::pre_hook_display_path(self.ctx.worktree_path),
+            )?;
         }
 
         // Use the worktree path from context — this is the target worktree when
@@ -231,11 +224,7 @@ impl CommitOptions<'_> {
 
         // Spawn post-commit hooks in background (respects --no-hooks)
         if self.verify {
-            let extra_vars: Vec<(&str, &str)> = self
-                .target_branch
-                .into_iter()
-                .map(|target| ("target", target))
-                .collect();
+            let extra_vars = template_vars.as_extra_vars();
             spawn_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?;
         }
 

@@ -46,8 +46,8 @@ use worktrunk::styling::{
 
 use crate::commands::command_approval::approve_alias_commands;
 use crate::commands::command_executor::{
-    CommandContext, CommandOrigin, FailureStrategy, ForegroundStep, PreparedCommand, PreparedStep,
-    build_hook_context, execute_pipeline_foreground,
+    AnnouncePolicy, CommandContext, FailureStrategy, ForegroundStep, PreparedCommand, PreparedStep,
+    alias_error_wrapper, build_hook_context, execute_pipeline_foreground,
 };
 use crate::commands::hooks::{format_pipeline_summary_from_names, step_names_from_config};
 use crate::commands::{build_invalid_subcommand_error, similar_subcommands};
@@ -95,10 +95,18 @@ fn help_flag_requested(args: &[String]) -> bool {
     false
 }
 
-/// Print guidance when `wt <alias> --help` is invoked. Points at the canonical
-/// inspection path and documents the `--` escape for forwarding `--help` into
-/// the alias body.
-fn emit_alias_help_hint(name: &str) {
+/// If `args` requests `--help` for an alias, emit the help hint and return
+/// `true`. Aliases have no clap-style help page — the template *is* the help —
+/// so dispatchers redirect the user to `wt config alias show / dry-run`.
+///
+/// Aliases can bind a `help` variable; only intercept when the template
+/// doesn't reference it. `-h` is never a binding, so it's always safe to
+/// intercept. Conservatively: intercept if any help flag appears and no
+/// binding is claimed on `help`.
+fn try_intercept_alias_help(name: &str, args: &[String], referenced: &BTreeSet<String>) -> bool {
+    if referenced.contains("help") || !help_flag_requested(args) {
+        return false;
+    }
     eprintln!("{}", info_message(cformat!("<bold>{name}</> is an alias")));
     eprintln!(
         "{}",
@@ -106,6 +114,7 @@ fn emit_alias_help_hint(name: &str) {
             "To view config, run <underline>wt config alias show {name}</>; to preview expansion, run <underline>wt config alias dry-run {name}</>; to forward --help to the alias body, run <underline>wt {name} -- --help</>"
         ))
     );
+    true
 }
 
 /// Options parsed from alias-dispatch args (`wt step <alias>` or `wt <alias>`).
@@ -355,12 +364,7 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
         return Ok(None);
     };
     let referenced = referenced_vars_for_config(cmd_config)?;
-    // Aliases can bind a `help` variable; only intercept `--help` when the
-    // template doesn't reference it. `-h` is never a binding, so it's always
-    // safe to intercept. Conservatively: intercept if any help flag appears
-    // and no binding is claimed on `help`.
-    if !referenced.contains("help") && help_flag_requested(&rest) {
-        emit_alias_help_hint(&name);
+    if try_intercept_alias_help(&name, &rest, &referenced) {
         return Ok(Some(()));
     }
     let mut alias_args = Vec::with_capacity(1 + rest.len());
@@ -417,8 +421,7 @@ pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
         return Err(unknown_step_command_error(&name, &alias_names));
     };
     let referenced = referenced_vars_for_config(cmd_config)?;
-    if !referenced.contains("help") && help_flag_requested(&args[1..]) {
-        emit_alias_help_hint(&name);
+    if try_intercept_alias_help(&name, &args[1..], &referenced) {
         return Ok(());
     }
     let (opts, warnings) = AliasOptions::parse(args, &referenced)?;
@@ -539,27 +542,31 @@ fn run_alias(
     // Build ForegroundSteps: all alias commands use lazy expansion so vars.*
     // references resolved from git config at execution time are visible to
     // later steps that set vars via `wt config state vars set`.
-    let origin = CommandOrigin::Alias {
-        name: opts.name.clone(),
-    };
+    let alias_name = opts.name.clone();
     let foreground_steps: Vec<ForegroundStep> = cmd_config
         .steps()
         .iter()
         .map(|step| {
             let prepared = match step {
                 HookStep::Single(cmd) => {
-                    PreparedStep::Single(alias_prepared_command(cmd, &context_json))
+                    PreparedStep::Single(alias_prepared_command(cmd, &context_json, &alias_name))
                 }
                 HookStep::Concurrent(cmds) => PreparedStep::Concurrent(
                     cmds.iter()
-                        .map(|cmd| alias_prepared_command(cmd, &context_json))
+                        .map(|cmd| alias_prepared_command(cmd, &context_json, &alias_name))
                         .collect(),
                 ),
             };
             ForegroundStep {
                 step: prepared,
-                origin: origin.clone(),
                 concurrent: true,
+                announce: AnnouncePolicy::None,
+                pipe_stdin: false,
+                // Aliases pass child stdout through so `wt <alias> | …` works
+                // in scripts (#2478). Worktrunk's own messages still go to
+                // stderr.
+                redirect_stdout_to_stderr: false,
+                error_wrapper: alias_error_wrapper(alias_name.clone()),
             }
         })
         .collect();
@@ -574,12 +581,18 @@ fn run_alias(
 }
 
 /// Build a PreparedCommand for an alias, deferring template expansion to execution time.
-fn alias_prepared_command(cmd: &worktrunk::config::Command, context_json: &str) -> PreparedCommand {
+fn alias_prepared_command(
+    cmd: &worktrunk::config::Command,
+    context_json: &str,
+    alias_name: &str,
+) -> PreparedCommand {
     PreparedCommand {
         name: cmd.name.clone(),
         expanded: cmd.template.clone(),
         context_json: context_json.to_string(),
         lazy_template: Some(cmd.template.clone()),
+        label: alias_name.to_string(),
+        log_label: None,
     }
 }
 

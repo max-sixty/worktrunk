@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use color_print::cformat;
 
+use crate::path::canonicalize_with_parents;
 use crate::styling::eprintln;
 
 use super::Repository;
@@ -177,31 +178,22 @@ fn was_worktree_of(repo: &Repository, deleted_path: &Path) -> bool {
 /// Compare worktree paths, accounting for the fact that the deleted path
 /// may not be canonical (e.g., symlinks in parent directories).
 ///
-/// Note: the symlink fallback only handles the case where `deleted_path` is
-/// the worktree root itself. If `deleted_path` is deeper (e.g., `.../wt/src/`)
-/// AND there are symlinks in the parent, this won't match. The `starts_with`
-/// check in `was_worktree_of` handles the non-symlink descendant case.
+/// Returns true when `deleted_path` is the worktree itself, or a descendant
+/// of it, after symlinks anywhere in the existing portion of either path are
+/// resolved. This covers the case where the shell entered a worktree through
+/// a symlinked spelling (`~/link/repo.feature/src`) and the worktree was then
+/// removed — neither the literal `starts_with` nor a same-`file_name` check
+/// matches such a path.
 fn paths_match(worktree_path: &Path, deleted_path: &Path) -> bool {
-    // Direct comparison first (includes descendant check via starts_with)
+    // Direct prefix check (covers the no-symlink case cheaply).
     if deleted_path.starts_with(worktree_path) {
         return true;
     }
 
-    // Symlink fallback: canonicalize parents and compare the final component.
-    // Only handles exact match (same final component), not descendants.
-    let wt_name = worktree_path.file_name();
-    let del_name = deleted_path.file_name();
-    if wt_name != del_name {
-        return false;
-    }
-
-    let wt_parent = worktree_path
-        .parent()
-        .and_then(|p| dunce::canonicalize(p).ok());
-    let del_parent = deleted_path
-        .parent()
-        .and_then(|p| dunce::canonicalize(p).ok());
-    matches!((wt_parent, del_parent), (Some(a), Some(b)) if a == b)
+    // Canonicalize the existing prefix of each path so symlinked spellings
+    // collapse to the real on-disk path, then compare with starts_with so a
+    // descendant of the worktree still matches.
+    canonicalize_with_parents(deleted_path).starts_with(canonicalize_with_parents(worktree_path))
 }
 
 #[cfg(test)]
@@ -409,6 +401,43 @@ mod tests {
         // (simulates $PWD being in a subdirectory when the worktree was removed)
         let deep_path = wt_path.join("src").join("lib.rs");
         assert!(recover_from_path(&deep_path).is_some());
+    }
+
+    /// Regression test for #2462: deleted-CWD recovery must handle a
+    /// subdirectory path whose parents include a symlink. The shell may have
+    /// been entered through a symlinked parent (e.g. `~/link/repo.feature`)
+    /// and may have descended into a subdirectory before the worktree was
+    /// removed, so $PWD is `~/link/repo.feature/src` while the worktree git
+    /// recorded is `<canonical>/repo.feature`.
+    #[cfg(unix)]
+    #[test]
+    fn test_recover_from_path_symlinked_subdir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+        let test = TestRepo::at(&base.join("repo"));
+        test.commit("init");
+
+        let wt_path = base.join("feature-wt");
+        let wt_str = wt_path.to_string_lossy();
+        test.repo
+            .run_command(&["worktree", "add", &wt_str, "-b", "feature"])
+            .unwrap();
+
+        // Symlink that points at `base`, so paths like `<base>/link/feature-wt`
+        // resolve to `<base>/feature-wt` but spell differently.
+        let link = base.join("link");
+        std::os::unix::fs::symlink(&base, &link).unwrap();
+
+        // Delete the worktree (simulating wt remove from another terminal)
+        std::fs::remove_dir_all(&wt_path).unwrap();
+
+        // The shell's $PWD goes through the symlink and descends into the
+        // worktree. Recovery must still find the parent repo.
+        let deep_path = link.join("feature-wt").join("src").join("lib.rs");
+        assert!(
+            recover_from_path(&deep_path).is_some(),
+            "recovery should succeed for symlinked subdirectory of a removed worktree"
+        );
     }
 
     #[test]

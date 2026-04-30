@@ -135,7 +135,7 @@ mod spacing_test;
 use anstyle::Style;
 use anyhow::Context;
 use model::{ListData, ListItem};
-use progressive::RenderMode;
+use progressive::RenderTarget;
 use worktrunk::git::Repository;
 use worktrunk::styling::INFO_SYMBOL;
 
@@ -149,21 +149,9 @@ pub fn handle_list(
     cli_branches: bool,
     cli_remotes: bool,
     cli_full: bool,
-    render_mode: RenderMode,
+    progressive_flag: Option<bool>,
 ) -> anyhow::Result<()> {
-    // Progressive rendering only for table format with Progressive mode
-    let show_progress = match format {
-        crate::OutputFormat::Table | crate::OutputFormat::ClaudeCode => {
-            render_mode == RenderMode::Progressive
-        }
-        crate::OutputFormat::Json => false, // JSON never shows progress
-    };
-
-    // Render table in collect() for all table modes (progressive + buffered)
-    let render_table = matches!(
-        format,
-        crate::OutputFormat::Table | crate::OutputFormat::ClaudeCode
-    );
+    let render_target = RenderTarget::detect(format, progressive_flag);
 
     let list_data = collect::collect(
         &repo,
@@ -172,27 +160,20 @@ pub fn handle_list(
             cli_remotes,
             cli_full,
         },
-        show_progress,
-        render_table,
+        render_target,
     )?;
 
     let Some(ListData { items, .. }) = list_data else {
         return Ok(());
     };
 
-    match format {
-        crate::OutputFormat::Json => {
-            // Convert to new JSON structure
-            let json_items = json_output::to_json_items(&items, &repo);
-            let json =
-                serde_json::to_string_pretty(&json_items).context("Failed to serialize to JSON")?;
-            println!("{}", json);
-        }
-        crate::OutputFormat::Table | crate::OutputFormat::ClaudeCode => {
-            // Table and summary already rendered in collect() for all modes
-            // Nothing to do here - collect() handles the complete table rendering
-        }
+    if matches!(render_target, RenderTarget::Json) {
+        let json_items = json_output::to_json_items(&items, &repo);
+        let json =
+            serde_json::to_string_pretty(&json_items).context("Failed to serialize to JSON")?;
+        println!("{}", json);
     }
+    // Table modes already rendered inside `collect()`.
 
     Ok(())
 }

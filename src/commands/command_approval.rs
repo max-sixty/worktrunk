@@ -259,3 +259,20 @@ pub fn approve_hooks_filtered(
     let approvals = Approvals::load().context("Failed to load approvals")?;
     approve_command_batch(&commands, &project_id, &approvals, ctx.yes, false)
 }
+
+/// Approve `hook_types` and centralize the "decline → continue without hooks" message.
+///
+/// Returns `true` when approval succeeded (hooks should run) and `false` when the
+/// user declined (caller should fall through without hook execution). Emits
+/// `on_decline` as an info message on the decline path.
+pub fn approve_or_skip(
+    ctx: &super::command_executor::CommandContext<'_>,
+    hook_types: &[HookType],
+    on_decline: &str,
+) -> anyhow::Result<bool> {
+    let approved = approve_hooks(ctx, hook_types)?;
+    if !approved {
+        worktrunk::styling::eprintln!("{}", worktrunk::styling::info_message(on_decline));
+    }
+    Ok(approved)
+}

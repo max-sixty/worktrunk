@@ -575,10 +575,10 @@ pub fn compute_hooks_display_path<'a>(
 ///
 /// ```ignore
 /// // In pre-commit, pre-merge, pre-remove hooks:
-/// run_hook_with_filter(..., pre_hook_display_path(ctx.worktree_path))?;
+/// run_hooks_foreground(..., pre_hook_display_path(ctx.worktree_path))?;
 ///
 /// // In manual wt hook commands (even for post-* hook types):
-/// run_hook_with_filter(..., pre_hook_display_path(ctx.worktree_path))?;
+/// run_hooks_foreground(..., pre_hook_display_path(ctx.worktree_path))?;
 /// ```
 pub fn pre_hook_display_path(hooks_run_at: &std::path::Path) -> Option<&std::path::Path> {
     let cwd = match std::env::current_dir() {
@@ -601,7 +601,7 @@ pub fn pre_hook_display_path(hooks_run_at: &std::path::Path) -> Option<&std::pat
 /// # Examples
 ///
 /// ```ignore
-/// // Prepare and spawn hooks with display path:
+/// // Spawn hooks with display path:
 /// spawn_background_hooks(&ctx, HookType::PostStart, &extra_vars, post_hook_display_path(&destination))?;
 /// ```
 pub fn post_hook_display_path(destination: &std::path::Path) -> Option<&std::path::Path> {

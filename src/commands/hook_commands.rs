@@ -25,12 +25,13 @@ use super::command_approval::approve_hooks_filtered;
 use super::command_executor::build_hook_context;
 
 use super::command_executor::CommandContext;
-use super::command_executor::{FailureStrategy, command_summary_name};
+use super::command_executor::FailureStrategy;
 use super::context::CommandEnv;
 use super::hooks::{
-    HookCommandSpec, check_name_filter_matched, count_sourced_commands, prepare_sourced_steps,
-    run_hook_with_filter, spawn_background_hooks, spawn_hook_pipeline,
+    HookCommandSpec, lookup_hook_configs, prepare_and_check, prepare_background_pipelines,
+    run_hooks_background, run_hooks_foreground,
 };
+use super::template_vars::TemplateVars;
 
 fn run_filtered_hook(
     ctx: &CommandContext,
@@ -41,7 +42,7 @@ fn run_filtered_hook(
     name_filters: &[String],
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
-    run_hook_with_filter(
+    run_hooks_foreground(
         ctx,
         HookCommandSpec {
             user_config,
@@ -64,93 +65,83 @@ fn run_post_hook(
     extra_vars: &[(&str, &str)],
     name_filters: &[String],
 ) -> anyhow::Result<()> {
-    // Default to background execution; --foreground is for debugging.
-    if !foreground.unwrap_or(false) {
-        if !name_filters.is_empty() {
-            let steps = prepare_sourced_steps(
-                ctx,
-                HookCommandSpec {
-                    user_config,
-                    project_config,
-                    hook_type,
-                    extra_vars,
-                    name_filters,
-                    display_path: None,
-                },
-            )?;
-            check_name_filter_matched(
-                name_filters,
-                count_sourced_commands(&steps),
-                user_config,
-                project_config,
-            )?;
-            return spawn_hook_pipeline(ctx, steps);
-        }
-
-        // No name filter: prepare and spawn source-grouped pipelines.
-        return spawn_background_hooks(ctx, hook_type, extra_vars, None);
+    // --foreground is for debugging; default is background.
+    if foreground.unwrap_or(false) {
+        return run_filtered_hook(
+            ctx,
+            user_config,
+            project_config,
+            hook_type,
+            extra_vars,
+            name_filters,
+            FailureStrategy::Warn,
+        );
     }
 
-    run_filtered_hook(
-        ctx,
-        user_config,
-        project_config,
-        hook_type,
-        extra_vars,
-        name_filters,
-        FailureStrategy::Warn,
-    )
+    // Filter path merges user + project matches into one pipeline (the user
+    // cherry-picked specific names across sources). The default path keeps
+    // sources independent so a user hook failure doesn't abort project hooks.
+    let pipelines = if name_filters.is_empty() {
+        prepare_background_pipelines(ctx, hook_type, extra_vars, None)?
+    } else {
+        let flat = prepare_and_check(
+            ctx,
+            HookCommandSpec {
+                user_config,
+                project_config,
+                hook_type,
+                extra_vars,
+                name_filters,
+                display_path: None,
+            },
+        )?;
+        if flat.is_empty() {
+            return Ok(());
+        }
+        vec![(*ctx, flat)]
+    };
+    run_hooks_background(pipelines, false)
 }
 
 /// Build best-effort directional vars for manual `wt hook` invocation.
 ///
 /// When hooks run during real operations (switch, merge, remove), each call site
-/// builds precise extra_vars from the actual source/destination context. When
-/// invoked manually via `wt hook <type>`, we only have the current worktree —
-/// so we provide reasonable defaults: the current branch as both base and target,
-/// and the current worktree path for directional path vars.
+/// builds precise vars from the actual source/destination context. When invoked
+/// manually via `wt hook <type>`, we only have the current worktree — so we
+/// provide reasonable defaults: the current branch as both base and target, and
+/// the current worktree path for directional path vars.
 ///
 /// This is the single source of truth for manual hook context — both `run_hook`
 /// (execution + dry-run) and `expand_command_template` (hook show --expanded)
-/// use this function.
-fn build_manual_hook_extra_vars<'a>(
-    ctx: &'a CommandContext,
+/// use this function. Returns a `TemplateVars` so callers can extend with
+/// additional bindings (e.g. CLI shorthand) before materializing.
+fn build_manual_hook_template_vars(
+    ctx: &CommandContext,
     hook_type: HookType,
-    custom_vars: &'a [(&'a str, &'a str)],
-    default_branch: Option<&'a str>,
-    worktree_path_str: &'a str,
-) -> Vec<(&'a str, &'a str)> {
+    default_branch: Option<&str>,
+) -> TemplateVars {
     let branch = ctx.branch_or_head();
-    let mut vars: Vec<(&str, &str)> = match hook_type {
+    let worktree_path = ctx.worktree_path;
+    match hook_type {
         // Merge/commit hooks: target = merge target (default branch for commit, current for merge)
         HookType::PreCommit | HookType::PostCommit => {
-            default_branch.into_iter().map(|t| ("target", t)).collect()
+            default_branch.map_or_else(TemplateVars::new, |t| TemplateVars::new().with_target(t))
         }
-        HookType::PreMerge | HookType::PostMerge => {
-            vec![
-                ("target", branch),
-                ("target_worktree_path", worktree_path_str),
-            ]
-        }
+        HookType::PreMerge | HookType::PostMerge => TemplateVars::new()
+            .with_target(branch)
+            .with_target_worktree_path(worktree_path),
         // Switch hooks: base = current (we're "switching from" here)
         HookType::PreSwitch | HookType::PreStart | HookType::PostStart | HookType::PostSwitch => {
-            vec![
-                ("base", branch),
-                ("base_worktree_path", worktree_path_str),
-                ("target", branch),
-                ("target_worktree_path", worktree_path_str),
-            ]
+            TemplateVars::new()
+                .with_base(branch, worktree_path)
+                .with_target(branch)
+                .with_target_worktree_path(worktree_path)
         }
         // Remove hooks: target = where user ends up (current worktree is the best guess)
-        HookType::PreRemove | HookType::PostRemove => {
-            vec![
-                ("target", branch),
-                ("target_worktree_path", worktree_path_str),
-            ]
-        }
-    };
-    vars.extend(custom_vars.iter().copied());
-    vars
+        HookType::PreRemove | HookType::PostRemove => TemplateVars::new()
+            .with_target(branch)
+            .with_target_worktree_path(worktree_path),
+    }
 }
 
 /// Parse a raw `KEY=VALUE` shorthand token into a canonicalized
@@ -256,10 +247,8 @@ pub fn run_hook(
 
     // Get effective user hooks (global + per-project merged)
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
-    let (user_config, proj_config) = (
-        user_hooks.get(hook_type),
-        project_config.as_ref().and_then(|c| c.hooks.get(hook_type)),
-    );
+    let (user_config, proj_config) =
+        lookup_hook_configs(&user_hooks, project_config.as_ref(), hook_type);
     // No hooks configured: warn and exit successfully. Running hooks that
     // don't exist is a no-op, so scripts can invoke `wt hook <type>`
     // unconditionally without special-casing empty configuration.
@@ -306,27 +295,22 @@ pub fn run_hook(
 
     // Build extra vars per hook type (shared by dry-run and execution paths)
     let default_branch = repo.default_branch();
-    let worktree_path_str = worktrunk::path::to_posix_path(&ctx.worktree_path.to_string_lossy());
     // Splice `args` into the template context as a JSON-encoded sequence.
     // `expand_template` rehydrates it as `ShellArgs` so bare `{{ args }}`
     // renders space-joined with per-element shell escaping. Mirrors
     // `run_alias` at `src/commands/alias.rs`.
     let args_json =
         serde_json::to_string(&args).expect("Vec<String> serialization should never fail");
-    let mut extra_vars = build_manual_hook_extra_vars(
-        &ctx,
-        hook_type,
-        &custom_vars_refs,
-        default_branch.as_deref(),
-        &worktree_path_str,
-    );
+    let template_vars = build_manual_hook_template_vars(&ctx, hook_type, default_branch.as_deref());
+    let mut extra_vars = template_vars.as_extra_vars();
+    extra_vars.extend(custom_vars_refs.iter().copied());
     // Forward positional CLI args as `{{ args }}` (empty sequence when
     // nothing was forwarded). `expand_template` rehydrates this JSON into a
     // `ShellArgs` sequence that renders space-joined, per-element escaped.
     extra_vars.push((ALIAS_ARGS_KEY, &args_json));
 
     if dry_run {
-        let steps = prepare_sourced_steps(
+        let steps = prepare_and_check(
             &ctx,
             HookCommandSpec {
                 user_config,
@@ -337,20 +321,13 @@ pub fn run_hook(
                 display_path: None,
             },
         )?;
-        check_name_filter_matched(
-            name_filters,
-            count_sourced_commands(&steps),
-            user_config,
-            proj_config,
-        )?;
 
         for sourced in steps {
             for cmd in sourced.step.into_commands() {
-                let summary = command_summary_name(cmd.name.as_deref(), sourced.source);
                 let label = if cmd.name.is_some() {
-                    cformat!("{hook_type} <bold>{summary}</> would run:")
+                    cformat!("{hook_type} <bold>{}</> would run:", cmd.label)
                 } else {
-                    cformat!("{hook_type} <bold>{summary}</> hook would run:")
+                    cformat!("{hook_type} <bold>{}</> hook would run:", cmd.label)
                 };
                 eprintln!(
                     "{}",
@@ -364,27 +341,19 @@ pub fn run_hook(
         return Ok(());
     }
 
-    // Execute the hook based on type
-    // pre-* hooks are blocking (fail-fast), post-* hooks run in background
-    match hook_type {
-        HookType::PreSwitch
-        | HookType::PreStart
-        | HookType::PreRemove
-        | HookType::PreCommit
-        | HookType::PreMerge => run_filtered_hook(
+    // pre-* hooks block (fail-fast); post-* hooks default to background.
+    if hook_type.is_pre() {
+        run_filtered_hook(
             &ctx,
             user_config,
             proj_config,
             hook_type,
             &extra_vars,
             name_filters,
-            FailureStrategy::FailFast,
-        ),
-        HookType::PostStart
-        | HookType::PostSwitch
-        | HookType::PostCommit
-        | HookType::PostMerge
-        | HookType::PostRemove => run_post_hook(
+            FailureStrategy::default_for(hook_type),
+        )
+    } else {
+        run_post_hook(
             &ctx,
             foreground,
             user_config,
@@ -392,7 +361,7 @@ pub fn run_hook(
             hook_type,
             &extra_vars,
             name_filters,
-        ),
+        )
     }
 }
 
@@ -619,14 +588,8 @@ fn expand_command_template(
     hook_name: Option<&str>,
 ) -> anyhow::Result<String> {
     let default_branch = ctx.repo.default_branch();
-    let worktree_path_str = worktrunk::path::to_posix_path(&ctx.worktree_path.to_string_lossy());
-    let extra_vars = build_manual_hook_extra_vars(
-        ctx,
-        hook_type,
-        &[],
-        default_branch.as_deref(),
-        &worktree_path_str,
-    );
+    let template_vars = build_manual_hook_template_vars(ctx, hook_type, default_branch.as_deref());
+    let extra_vars = template_vars.as_extra_vars();
     let mut template_ctx = build_hook_context(ctx, &extra_vars)?;
     template_ctx.insert("hook_type".into(), hook_type.to_string());
     if let Some(name) = hook_name {
