@@ -25,7 +25,9 @@ use path_slash::PathExt as _;
 use rayon::prelude::*;
 use worktrunk::HookType;
 use worktrunk::config::{CopyIgnoredConfig, UserConfig};
-use worktrunk::copy::{copy_dir_recursive, copy_leaf};
+use worktrunk::copy::{
+    copy_dir_recursive, copy_dir_recursive_within_root, copy_leaf, copy_leaf_within_root,
+};
 use worktrunk::git::{Repository, WorktreeInfo};
 use worktrunk::path::format_path_for_display;
 use worktrunk::progress::{Progress, format_bytes};
@@ -820,10 +822,14 @@ pub fn step_copy_ignored(
         let dest_entry = dest_path.join(relative);
 
         if *is_dir {
-            let (n, b) = copy_dir_recursive(src_entry, &dest_entry, force, &progress)
-                .with_context(|| {
-                    format!("copying directory {}", format_path_for_display(relative))
-                })?;
+            let (n, b) = copy_dir_recursive_within_root(
+                src_entry,
+                &dest_entry,
+                &dest_path,
+                force,
+                &progress,
+            )
+            .with_context(|| format!("copying directory {}", format_path_for_display(relative)))?;
             copied_count += n;
             copied_bytes += b;
         } else {
@@ -835,7 +841,7 @@ pub fn step_copy_ignored(
                     )
                 })?;
             }
-            if let Some(bytes) = copy_leaf(src_entry, &dest_entry, force)? {
+            if let Some(bytes) = copy_leaf_within_root(src_entry, &dest_entry, &dest_path, force)? {
                 copied_count += 1;
                 copied_bytes += bytes;
                 progress.record(bytes);
