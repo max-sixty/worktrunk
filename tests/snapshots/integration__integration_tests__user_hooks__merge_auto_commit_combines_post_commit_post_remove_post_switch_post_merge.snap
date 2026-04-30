@@ -63,7 +63,4 @@ exit_code: 0
 [2m↳[22m [2mBranch unmerged; to delete, run [4mwt remove -D feature[24m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
-[36m◎[39m [36mRunning post-commit: [1muser[22m: [1mmark[22m @ [1m_REPO_[22m[39m
-[36m◎[39m [36mRunning post-remove: [1muser[22m: [1mcleanup[22m @ [1m_REPO_[22m[39m
-[36m◎[39m [36mRunning post-switch: [1muser[22m: [1mnotify[22m @ [1m_REPO_[22m[39m
-[36m◎[39m [36mRunning post-merge: [1muser[22m: [1msync[22m @ [1m_REPO_[22m[39m
+[36m◎[39m [36mRunning post-commit: [1mmark[22m ([1muser[22m); post-remove: [1mcleanup[22m ([1muser[22m); post-switch: [1mnotify[22m ([1muser[22m); post-merge: [1msync[22m ([1muser[22m) @ [1m_REPO_[22m[39m
