@@ -19,8 +19,7 @@
 # (via upload-artifact/download-artifact) is fine since it's scoped to the
 # current run.
 
-permissions:
-  "contents": "write"
+permissions: {}
 
 # This task will run whenever you push a git tag that looks like a version
 # like "1.0.0", "v0.1.0-prerelease.1", "my-app/0.1.0", "releases/v1.0.0", etc.
@@ -55,6 +54,8 @@ jobs:
   # Run 'dist plan' (or host) to determine what tasks we need to do
   plan:
     runs-on: "ubuntu-24.04"
+    permissions:
+      contents: read
     outputs:
       val: ${{ steps.plan.outputs.manifest }}
       tag: ${{ !github.event.pull_request && github.ref_name || '' }}
@@ -114,6 +115,8 @@ jobs:
       # - N "local" tasks that build each platform's binaries and platform-specific installers
       matrix: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix }}
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
     container: ${{ matrix.container && matrix.container.image || null }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -177,6 +180,8 @@ jobs:
       - plan
       - build-local-artifacts
     runs-on: "ubuntu-24.04"
+    permissions:
+      contents: read
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BUILD_MANIFEST_NAME: target/distrib/global-dist-manifest.json
@@ -228,6 +233,8 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-24.04"
+    permissions:
+      contents: write
     outputs:
       val: ${{ steps.host.outputs.manifest }}
     steps:
@@ -302,6 +309,8 @@ jobs:
     runs-on: ubuntu-24.04
     environment: release
     if: ${{ needs.plan.outputs.publishing == 'true' }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - name: Publish to crates.io
@@ -317,6 +326,7 @@ jobs:
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     env:
       GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+    permissions: {}
     steps:
       - name: Sync winget-pkgs fork with upstream
         run: |
@@ -340,6 +350,7 @@ jobs:
       GITHUB_USER: "worktrunk-bot"
       GITHUB_EMAIL: "worktrunk-bot@users.noreply.github.com"
     if: ${{ needs.plan.outputs.publishing == 'true' && (!fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases) }}
+    permissions: {}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -368,6 +379,8 @@ jobs:
     runs-on: ubuntu-24.04
     environment: release
     if: ${{ needs.plan.outputs.publishing == 'true' }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - name: Update PKGBUILD version
@@ -402,6 +415,8 @@ jobs:
     runs-on: "ubuntu-24.04"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
         with:

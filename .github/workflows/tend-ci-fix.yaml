@@ -13,6 +13,8 @@ on:
     types: [completed]
     branches: ["main"]
 
+permissions: {}
+
 jobs:
   fix-ci:
     if: github.event.workflow_run.conclusion == 'failure'

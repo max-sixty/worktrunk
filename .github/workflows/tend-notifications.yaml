@@ -12,6 +12,8 @@ on:
     - cron: "*/15 * * * *"
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   notifications:
     runs-on: ubuntu-24.04

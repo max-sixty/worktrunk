@@ -30,6 +30,8 @@ on:
   pull_request_review_comment:
     types: [edited]
 
+permissions: {}
+
 jobs:
   verify:
     # Filter out fork PRs for review events — secrets are unavailable there

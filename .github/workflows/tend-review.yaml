@@ -11,6 +11,8 @@ on:
   pull_request_target:
     types: [opened, synchronize, ready_for_review, reopened]
 
+permissions: {}
+
 jobs:
   review:
     if: >-
@@ -26,12 +28,19 @@ jobs:
       actions: read
       issues: write
     steps:
+      - name: Skip privileged review on fork PRs
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        run: >-
+          echo "::notice::Skipping tend-review for fork PR #${{ github.event.pull_request.number }} from
+          ${{ github.event.pull_request.head.repo.full_name }}. Privileged review automation only runs for same-repo pull requests."
+
       # GitHub only materializes refs/pull/N/merge for mergeable PRs — on
       # conflicting PRs it 404s and every downstream step cascades as skipped.
       # Probe first and fall back to /head so review always runs; on fallback
       # the review sees the PR branch in isolation rather than the post-merge
       # tree.
       - name: Resolve PR checkout ref
+        if: github.event.pull_request.head.repo.full_name == github.repository
         id: pr_ref
         env:
           GH_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
@@ -44,6 +53,7 @@ jobs:
             echo "::notice::refs/pull/$PR/merge unavailable (likely merge conflict); falling back to /head"
           fi
       - uses: actions/checkout@v6
+        if: github.event.pull_request.head.repo.full_name == github.repository
         with:
           ref: ${{ steps.pr_ref.outputs.ref }}
           fetch-depth: 0
@@ -51,8 +61,10 @@ jobs:
           token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - uses: ./.github/actions/claude-setup
+        if: github.event.pull_request.head.repo.full_name == github.repository
 
       - uses: max-sixty/tend@v1
+        if: github.event.pull_request.head.repo.full_name == github.repository
         with:
           github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

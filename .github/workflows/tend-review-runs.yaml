@@ -12,6 +12,8 @@ on:
     - cron: "47 7 * * *"
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   review-runs:
     runs-on: ubuntu-24.04

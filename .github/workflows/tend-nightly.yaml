@@ -12,6 +12,8 @@ on:
     - cron: "17 6 * * *"
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   nightly:
     runs-on: ubuntu-24.04
