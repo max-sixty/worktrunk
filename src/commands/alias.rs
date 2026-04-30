@@ -330,6 +330,17 @@ fn format_alias_announcement(name: &str, cmd_config: &CommandConfig) -> Option<S
 }
 
 /// Load the merged alias map (user config + project config, in runtime order).
+///
+/// TODO(#2474): the dispatch path no longer merges *for execution* —
+/// `prepare_alias_sourced_steps` builds steps from per-source `CommandConfig`
+/// lookups directly. This merged map is now only used for orchestration:
+/// existence check (does any source define the name?), referenced-vars union
+/// (so `AliasOptions::parse` can route `--KEY=VALUE` against the union of
+/// vars across both bodies), and the announcement banner. Replace with a
+/// source-aware shape (e.g. `BTreeMap<String, Vec<(HookSource,
+/// CommandConfig)>>`) so we trigger both without ever building a merged
+/// `CommandConfig`. Same observable behavior; cleaner data flow. Keeping
+/// this PR focused on the EXEC-per-step redesign.
 fn load_merged_aliases(
     repo: &Repository,
     user_config: &UserConfig,
