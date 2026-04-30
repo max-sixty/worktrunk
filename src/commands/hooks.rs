@@ -770,23 +770,6 @@ pub(crate) fn lookup_hook_configs<'a>(
     )
 }
 
-/// Spawn background hooks for a single hook type (post-commit, post-merge, …).
-///
-/// Symmetric to [`execute_hook`] for the background path: a one-shot
-/// convenience that constructs a single-phase [`HookAnnouncer`], registers the
-/// hook type, and flushes. Multi-phase callers should build a [`HookAnnouncer`]
-/// directly and call `register` per phase so all types share one announce line.
-pub(crate) fn spawn_background_hooks(
-    ctx: &CommandContext,
-    hook_type: HookType,
-    extra_vars: &[(&str, &str)],
-    display_path: Option<&Path>,
-) -> anyhow::Result<()> {
-    let mut announcer = HookAnnouncer::new(ctx.repo, ctx.config, false);
-    announcer.register(ctx, hook_type, extra_vars, display_path)?;
-    announcer.flush()
-}
-
 /// Run a single hook type in the foreground for an operation (merge, switch,
 /// commit, remove, …).
 ///
