@@ -32,7 +32,11 @@ metadata:
    git reset --soft HEAD~1 && git add -A && git commit -m "Release vX.Y.Z"
    ```
 10. **Merge to main**: `/gpk` — opens a PR, waits for CI, merges via PR (preserves worktree)
-11. **Tag and push**: `git tag vX.Y.Z && git push origin vX.Y.Z`
+11. **Tag the merge commit and push**: After `/gpk` squash-merges, the local branch HEAD is not the commit on main. Tag the PR's merge commit explicitly so the tag is reachable from main:
+    ```bash
+    MERGE_SHA=$(gh pr view --json mergeCommit --jq '.mergeCommit.oid')
+    git tag vX.Y.Z "$MERGE_SHA" && git push origin vX.Y.Z
+    ```
 12. **Wait for release workflow**: Poll with `gh pr checks --required` or `gh run view <run-id>` every 60 seconds until complete (avoid `gh run watch` — it can hang). Non-required checks are ignored
 
 The tag push triggers the release workflow which builds binaries and publishes to crates.io, Homebrew, and winget automatically.
