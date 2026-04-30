@@ -1,3 +1,62 @@
+//! # Hook announcement format
+//!
+//! Background hook execution emits a `Running <hook-type>: ...` line per hook
+//! type. Each separator carries one meaning, with visually wider punctuation
+//! marking wider scope:
+//!
+//! ```text
+//! &  : concurrent commands within a step    (tightest)
+//! ,  : serial steps within a pipeline
+//! ;  : source pipelines within a hook type  (multi-source only)
+//! \n : hook-type clauses                    (loosest — split lines)
+//! ```
+//!
+//! ## Grammar
+//!
+//! ```text
+//! Running <hook-clause> [@ <path>]                    # one line per hook type
+//!
+//! <hook-clause> := <hook-type> [" for " <branch>] ": " <pipelines>
+//! <pipelines>   := <pipeline> | <labeled> ("; " <labeled>)*
+//! <labeled>     := <source> ": " <pipeline>           # all-named or mixed
+//!               |  <source> [" ×" N]                  # all-unnamed (no colon)
+//! <pipeline>    := <step> (", " <step>)*
+//! <step>        := <command> (" & " <command>)*
+//! <command>     := <name>                             # named
+//!               |  "…"                                # unnamed run of 1
+//!               |  "…×" N                             # unnamed run of N≥2
+//! ```
+//!
+//! The source prefix appears **once per pipeline** (`user: install, build`),
+//! not once per command. The all-unnamed degenerate case has no names to list,
+//! so it stays bare (`user` or `user ×N`) without the colon.
+//!
+//! ## Examples
+//!
+//! | Pipeline shape (single source) | Output |
+//! |---|---|
+//! | one named command | `user: notify` |
+//! | two serial named | `user: sync, push` |
+//! | one concurrent step | `user: build & lint` |
+//! | concurrent then serial | `user: install, build & lint` |
+//! | mixed unnamed + named | `user: …, bg` (or `…×2, bg`) |
+//! | all unnamed | `user ×2` |
+//!
+//! Multi-source for one hook type: `user: sync, push; project: build`.
+//!
+//! Multiple hook types fire as separate `Running ...` lines (e.g., `wt switch`
+//! firing post-switch and post-start).
+//!
+//! ## Implementation
+//!
+//! - [`format_pipeline_summary_from_names`] produces the bare `<pipeline>`
+//!   body (handles `&` / `,` and unnamed-flush). Shared with alias announces.
+//! - [`format_pipeline_summary`] wraps it with the per-pipeline source label,
+//!   collapsing the all-unnamed case to the bare `<source>` / `<source> ×N`
+//!   form.
+//! - [`run_hooks_background`] joins source summaries with `;` within a hook
+//!   type, then emits one `Running ...` line per hook type.
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -171,18 +230,18 @@ pub(crate) fn step_names_from_config(
         .collect()
 }
 
-/// Format a pipeline summary from per-step command names.
+/// Format the bare `<pipeline>` body from per-step command names — see the
+/// module-level grammar.
 ///
 /// `step_names[i]` is the list of commands in step `i`; `Some(name)` for named
-/// commands, `None` for unnamed. Serial steps are joined by `;`, concurrent
-/// commands within a step by `,`. Contiguous runs of unnamed commands (across
-/// steps, until the next named command) are collapsed into a single
+/// commands, `None` for unnamed. Serial steps join with `, `; concurrent
+/// commands within a step join with ` & `. Contiguous runs of unnamed commands
+/// (across steps, until the next named command) collapse into a single
 /// `label_unnamed(count)` entry; return `None` from that closure to drop
 /// unnamed commands entirely.
 ///
-/// Shared by hook announcements (where unnamed commands collapse to
-/// `user ×N`) and alias announcements (which skip unnamed commands since
-/// aliases have no natural fallback label).
+/// Shared by hook and alias announcements. The caller wraps the body with any
+/// surrounding context (source prefix for hooks, alias name for aliases).
 ///
 /// Note: unnamed commands within a `Concurrent` step aren't reachable from
 /// config today — TOML named tables always produce all-named commands, and
@@ -213,7 +272,7 @@ pub(crate) fn format_pipeline_summary_from_names(
                 parts.push(s);
             }
             unnamed_count = 0;
-            parts.push(named.join(", "));
+            parts.push(named.join(" & "));
         }
     }
 
@@ -224,18 +283,16 @@ pub(crate) fn format_pipeline_summary_from_names(
         parts.push(s);
     }
 
-    parts.join("; ")
+    parts.join(", ")
 }
 
-/// Format a summary description of a hook pipeline for display.
+/// Format a `<labeled>` source pipeline for the announce line — see the
+/// module-level grammar.
 ///
-/// Named steps show as `source:name`; unnamed steps are collapsed into a single
-/// `source ×N` count. Serial steps are separated by `;`, concurrent steps by `,`.
-/// Example: "user:install; user:build, user:lint"
-///
-/// TODO: The `source:` prefix on named steps may be too verbose when only one
-/// source is present (e.g., `user:bg` vs just `bg`). Consider prefixing only
-/// when both user and project hooks exist for the same hook type.
+/// Returns `<source>: <body>` for named/mixed pipelines, or the bare
+/// `<source>` / `<source> ×N` form when every command is unnamed (no names to
+/// list, so the colon would dangle). Unnamed runs inside a mixed pipeline
+/// render as `…` (1) or `…×N` (≥2).
 fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
     // All steps in a group share the same source.
     let source_label = steps[0].source.to_string();
@@ -248,30 +305,44 @@ fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
         })
         .collect();
 
-    format_pipeline_summary_from_names(
+    let total_unnamed: usize = step_names.iter().flatten().filter(|n| n.is_none()).count();
+    let any_named = step_names.iter().flatten().any(|n| n.is_some());
+
+    // All-unnamed degenerate case: no names to list, so skip the colon.
+    if !any_named {
+        return if total_unnamed == 1 {
+            cformat!("<bold>{source_label}</>")
+        } else {
+            cformat!("<bold>{source_label}</> ×{total_unnamed}")
+        };
+    }
+
+    let body = format_pipeline_summary_from_names(
         &step_names,
-        |name| cformat!("<bold>{source_label}:{name}</>"),
+        |name| cformat!("<bold>{name}</>"),
         |count| {
             Some(if count == 1 {
-                cformat!("<bold>{source_label}</>")
+                "…".to_string()
             } else {
-                cformat!("<bold>{source_label}</> ×{count}")
+                format!("…×{count}")
             })
         },
-    )
+    );
+    cformat!("<bold>{source_label}</>: {body}")
 }
 
 /// Coordinates background hook announcements within a single `wt` command.
 ///
-/// The principle: one `◎ Running …` line per command. Sites that would have
+/// The principle: one `◎ Running …` line per hook type. Sites that would have
 /// individually spawned background hooks instead `register` their pipelines
-/// here, and the command `flush`es once after all phases have been resolved.
-/// All registered hook types end up on a single combined line, joined by `;`.
+/// here, and the command `flush`es once after all phases have been resolved —
+/// one `Running ...` line per registered hook type, in registration order
+/// (see module spec for the line format).
 ///
 /// Just-in-time honesty: registration happens at each phase's normal moment,
 /// so if an earlier phase fails (e.g. pre-merge errors before post-merge is
-/// queued), the announce only describes hooks that actually ran. The line is
-/// emitted at `flush`, not at the first registration.
+/// queued), the announce only describes hooks that actually ran. Lines are
+/// emitted at `flush`, not at registration time.
 pub struct HookAnnouncer<'a> {
     pending: Vec<PendingPipeline>,
     repo: &'a Repository,
@@ -292,7 +363,11 @@ struct PendingPipeline {
 impl<'a> HookAnnouncer<'a> {
     /// `show_branch=true` includes the branch name for disambiguation in batch
     /// contexts (e.g., prune removing multiple worktrees):
-    /// `Running post-remove for feature: docs; post-switch for feature: zellij-tab`
+    ///
+    /// ```text
+    /// Running post-remove for feature: user: docs
+    /// Running post-switch for feature: user: zellij-tab
+    /// ```
     pub fn new(repo: &'a Repository, config: &'a UserConfig, show_branch: bool) -> Self {
         Self {
             pending: Vec::new(),
@@ -391,16 +466,14 @@ impl Drop for HookAnnouncer<'_> {
 /// stays separate to keep the announce/spawn formatting isolated from the
 /// announcer's pending-list bookkeeping.
 ///
-/// Displays a single combined summary line covering all hook types, then
-/// spawns each pipeline independently. Pipelines may carry different
-/// `CommandContext`s (e.g., post-remove uses the removed branch while
-/// post-switch uses the destination branch).
+/// Emits one `Running <hook-type>: ...` line per hook type (see module-level
+/// grammar) and spawns each pipeline independently. Pipelines may carry
+/// different `CommandContext`s (e.g., post-remove uses the removed branch
+/// while post-switch uses the destination branch).
 ///
-/// When `show_branch` is true, includes the branch name for disambiguation in batch
-/// contexts (e.g., prune removing multiple worktrees):
-/// `Running post-remove for feature: docs; post-switch for feature: zellij-tab`
-///
-/// Without `show_branch`: `Running post-switch: zellij-tab; post-start: deps, assets, docs`
+/// When `show_branch` is true, the announce includes the branch name for
+/// disambiguation in batch contexts (e.g., prune removing multiple worktrees):
+/// `Running post-remove for feature: user: docs`.
 pub(crate) fn run_hooks_background(
     pipelines: Vec<(CommandContext<'_>, Vec<SourcedStep>)>,
     show_branch: bool,
@@ -412,15 +485,13 @@ pub(crate) fn run_hooks_background(
     if pipelines.is_empty() {
         return Ok(());
     }
-    // Build combined summary, merging groups with the same hook type:
-    // "post-switch: zellij-tab; post-start: deps, assets, docs"
     let display_path = pipelines
         .iter()
         .flat_map(|(_, g)| g.iter())
         .find_map(|s| s.display_path.as_ref());
 
-    // Merge summaries by hook type so user+project for the same type
-    // shows "post-start: user_bg, project" not "post-start: user_bg; post-start: project".
+    // Merge per-source summaries by hook type so user+project for the same
+    // type render as one clause: `post-merge: user: sync, push; project: build`.
     let mut type_summaries: Vec<(HookType, Vec<String>)> = Vec::new();
     for (_, group) in &pipelines {
         let hook_type = group[0].hook_type;
@@ -444,25 +515,21 @@ pub(crate) fn run_hooks_background(
         None
     };
 
-    let combined: String = type_summaries
-        .iter()
-        .map(|(ht, summaries)| {
-            let suffix = branch_suffix.as_deref().unwrap_or("");
-            format!("{ht}{suffix}: {}", summaries.join(", "))
-        })
-        .collect::<Vec<_>>()
-        .join("; ");
-    let message = match display_path {
-        Some(path) => {
-            let path_display = format_path_for_display(path);
-            cformat!("Running {combined} @ <bold>{path_display}</>")
+    for (ht, summaries) in &type_summaries {
+        if verbosity() >= 1 {
+            print_background_variable_table(&pipelines, *ht);
         }
-        None => format!("Running {combined}"),
-    };
-    if verbosity() >= 1 {
-        print_background_variable_tables(&pipelines);
+        let suffix = branch_suffix.as_deref().unwrap_or("");
+        let body = summaries.join("; ");
+        let message = match display_path {
+            Some(path) => {
+                let path_display = format_path_for_display(path);
+                cformat!("Running {ht}{suffix}: {body} @ <bold>{path_display}</>")
+            }
+            None => format!("Running {ht}{suffix}: {body}"),
+        };
+        eprintln!("{}", progress_message(message));
     }
-    eprintln!("{}", progress_message(message));
 
     for (ctx, group) in pipelines {
         spawn_hook_pipeline_quiet(&ctx, group)?;
@@ -519,18 +586,20 @@ pub(crate) fn prepare_background_pipelines<'c>(
         .collect())
 }
 
-/// Emit a `template variables:` block per distinct hook type in `pipelines`.
+/// Emit a `template variables:` block for one hook type, using the first
+/// matching step's context.
 ///
 /// Background hooks don't flow through `announce_command` (which prints the
-/// table in the foreground path), so this is the symmetric entry point: once
-/// per hook type, using the first command's context. `hook_name` within a
-/// table reflects that first command — the combined announce line above
-/// already enumerates the rest.
-fn print_background_variable_tables(pipelines: &[(CommandContext<'_>, Vec<SourcedStep>)]) {
-    let mut seen: Vec<HookType> = Vec::new();
+/// table in the foreground path), so this is the symmetric entry point.
+/// Called once per hook type from `run_hooks_background`, immediately before
+/// that hook type's `Running ...` line, so each hook type reads as one block.
+fn print_background_variable_table(
+    pipelines: &[(CommandContext<'_>, Vec<SourcedStep>)],
+    hook_type: HookType,
+) {
     for (_, group) in pipelines {
         for sourced in group {
-            if seen.contains(&sourced.hook_type) {
+            if sourced.hook_type != hook_type {
                 continue;
             }
             let cmd = match &sourced.step {
@@ -542,9 +611,9 @@ fn print_background_variable_tables(pipelines: &[(CommandContext<'_>, Vec<Source
             eprintln!("{}", info_message("template variables:"));
             eprintln!(
                 "{}",
-                format_with_gutter(&format_hook_variables(sourced.hook_type, &ctx), None)
+                format_with_gutter(&format_hook_variables(hook_type, &ctx), None)
             );
-            seen.push(sourced.hook_type);
+            return;
         }
     }
 }
@@ -919,7 +988,7 @@ mod tests {
             ])),
         ];
         let summary = format_pipeline_summary(&steps);
-        assert_snapshot!(summary.ansi_strip(), @"user:install; user:build, user:lint");
+        assert_snapshot!(summary.ansi_strip(), @"user: install, build & lint");
     }
 
     #[test]
@@ -939,7 +1008,7 @@ mod tests {
             make_sourced_step(PreparedStep::Single(make_cmd(Some("bg"), "npm run dev"))),
         ];
         let summary = format_pipeline_summary(&steps);
-        assert_snapshot!(summary.ansi_strip(), @"user; user:bg");
+        assert_snapshot!(summary.ansi_strip(), @"user: …, bg");
     }
 
     #[test]
@@ -970,7 +1039,7 @@ mod tests {
             ])),
         ];
         let summary = format_pipeline_summary(&steps);
-        assert_snapshot!(summary.ansi_strip(), @"user:install, user:setup; user:build, user:lint");
+        assert_snapshot!(summary.ansi_strip(), @"user: install & setup, build & lint");
     }
 
     #[test]
