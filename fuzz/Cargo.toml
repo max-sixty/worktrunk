@@ -1,0 +1,42 @@
+[package]
+name = "worktrunk-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+worktrunk = { path = "..", default-features = false }
+
+[[bin]]
+name = "git_remote_url_parse"
+path = "fuzz_targets/git_remote_url_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config_migrate_content"
+path = "fuzz_targets/config_migrate_content.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config_template_validation"
+path = "fuzz_targets/config_template_validation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sanitize_for_filename"
+path = "fuzz_targets/sanitize_for_filename.rs"
+test = false
+doc = false
+bench = false
