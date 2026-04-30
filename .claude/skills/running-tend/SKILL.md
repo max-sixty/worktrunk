@@ -98,20 +98,24 @@ Before opening a `fix/ci-*` PR, classify the failure:
   upstream", "won't fix"), do **not** open another PR. The bundled
   `tend-ci-runner:ci-fix` open-PR check (`gh pr list --state open --head
   "fix/ci-"`) misses closed PRs, so add a closed-state lookup before
-  classifying:
+  classifying. Use the `head:fix/ci-` search qualifier (not `in:head`,
+  which is silently ignored and falls back to default-field text matching),
+  and request `body` in `--json` so the failure diagnostic embedded in the
+  PR description is available for shape-matching:
 
   ```bash
   BOT_LOGIN=$(gh api user --jq '.login')
-  gh pr list --state closed --author "$BOT_LOGIN" --search "fix/ci- in:head" \
-    --json number,title,closedAt,comments,headRefName \
+  gh pr list --state closed --author "$BOT_LOGIN" --search "head:fix/ci-" \
+    --json number,title,closedAt,body,comments,headRefName \
     --jq '[.[] | select((now - (.closedAt | fromdateiso8601)) < 1209600)] | .[]'
   ```
 
   Match by failure shape (the diagnostic snippet from `gh run view
-  --log-failed`), not branch name — branches encode run IDs and never repeat.
-  If a closed PR with maintainer rejection covers the same failure, exit
-  silently. The maintainer already saw the diagnosis; another comment is
-  noise.
+  --log-failed` against the PR `body`), not branch name — branches encode
+  run IDs and never repeat. The maintainer's rejection rationale typically
+  lives in `comments` (closure comment or review). If a closed PR with
+  maintainer rejection covers the same failure, exit silently. The
+  maintainer already saw the diagnosis; another comment is noise.
 - **Real regression** — proceed with a fix PR.
 
 **Lychee link-check timeouts are always transient** unless the same URL has
