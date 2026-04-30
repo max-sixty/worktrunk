@@ -391,20 +391,23 @@ pub enum ShowConfig {
 /// received at least one task result use `format_list_item_line` so still-
 /// pending cells pick up the promoted `·`; rows with no data yet stay on
 /// the skeleton renderer to avoid flashing seeded defaults like "55y". The
-/// `has_data` bitmap is the only state needed to make that choice.
+/// `has_data` bitmap is the only state needed to make that choice. Callers
+/// pass the post-reveal placeholder (always [`super::render::PLACEHOLDER`]
+/// in production — the reveal tick is what promotes blank to dot).
 fn render_reveal(
     has_data: &[bool],
     items: &[super::model::ListItem],
     layout: &super::layout::LayoutConfig,
+    placeholder: &str,
 ) -> Vec<String> {
     items
         .iter()
         .enumerate()
         .map(|(idx, item)| {
             if has_data[idx] {
-                layout.format_list_item_line(item)
+                layout.format_list_item_line(item, placeholder)
             } else {
-                layout.render_skeleton_row(item).render()
+                layout.render_skeleton_row(item, placeholder).render()
             }
         })
         .collect()
@@ -903,15 +906,21 @@ pub fn collect(
             format!("Showing {} worktree{}", num_worktrees, plural)
         };
 
-    // Create progressive table if showing progress.
-    //
-    // Skeleton renders with `PLACEHOLDER_BLANK` (space) so commands that finish
-    // under ~200ms never flash the `·` loading indicator. After
-    // `PLACEHOLDER_REVEAL_DELAY` the placeholder is promoted to `·` via the
-    // drain tick below.
-    let mut progressive_table = if show_progress {
-        layout.placeholder.set(super::render::PLACEHOLDER_BLANK);
+    // Track which placeholder rendering currently uses. Progressive renderers
+    // (table or picker) start blank so commands that finish under
+    // `PLACEHOLDER_REVEAL_DELAY` never flash the `·` loading indicator; the
+    // reveal event below promotes it to [`super::render::PLACEHOLDER`].
+    // Non-progressive callers (e.g. JSON, buffered table) render once at the
+    // end and use the dot directly.
+    let progressive_active = show_progress || progressive_handler.is_some();
+    let mut placeholder: &'static str = if progressive_active {
+        super::render::PLACEHOLDER_BLANK
+    } else {
+        super::render::PLACEHOLDER
+    };
 
+    // Create progressive table if showing progress.
+    let mut progressive_table = if show_progress {
         let dim = Style::new().dimmed();
 
         // Build skeleton rows for both worktrees and branches
@@ -919,7 +928,7 @@ pub fn collect(
         // hasn't been loaded yet. Using format_list_item_line would show default values like "55y".
         let skeletons: Vec<String> = all_items
             .iter()
-            .map(|item| layout.render_skeleton_row(item).render())
+            .map(|item| layout.render_skeleton_row(item, placeholder).render())
             .collect();
 
         let initial_footer = format!("{INFO_SYMBOL} {dim}{footer_base} (loading...){dim:#}");
@@ -937,22 +946,13 @@ pub fn collect(
         None
     };
 
-    // Picker mirrors `wt list`'s blank→`·` reveal. The placeholder starts
-    // blank so fast completions don't flash loading dots; the Reveal event
-    // below promotes it to `·` at 200ms. The picker passes
-    // `RenderTarget::Json`, which skips the block above, so set the
-    // placeholder here unconditionally when a handler is present.
-    if progressive_handler.is_some() {
-        layout.placeholder.set(super::render::PLACEHOLDER_BLANK);
-    }
-
     // Deliver the skeleton to the picker handler. Rendered strings use the
     // blank placeholder so skim's initial render mirrors the `wt list`
     // pre-reveal look.
     if let Some(handler) = progressive_handler.as_ref() {
         let skeletons: Vec<String> = all_items
             .iter()
-            .map(|item| layout.render_skeleton_row(item).render())
+            .map(|item| layout.render_skeleton_row(item, placeholder).render())
             .collect();
         handler.on_skeleton(all_items.clone(), skeletons, layout.render_header_line());
         // Mirror the `wt list` progressive-table marker so `wt-perf phases`
@@ -1228,7 +1228,7 @@ pub fn collect(
                     // an idempotent slot (terminal line / `Mutex<String>`),
                     // so forwarding every result without dedup is safe; the
                     // table dedups internally against its previous render.
-                    let rendered = layout.format_list_item_line(item);
+                    let rendered = layout.format_list_item_line(item, placeholder);
 
                     if let Some(state_cell) = progressive_state.as_ref() {
                         let mut s = state_cell.borrow_mut();
@@ -1265,8 +1265,8 @@ pub fn collect(
                     }
                 }
                 results::DrainEvent::Reveal { items } => {
-                    layout.placeholder.set(super::render::PLACEHOLDER);
-                    let updates = render_reveal(&has_data, items, &layout);
+                    placeholder = super::render::PLACEHOLDER;
+                    let updates = render_reveal(&has_data, items, &layout, placeholder);
 
                     if let Some(state_cell) = progressive_state.as_ref() {
                         let mut s = state_cell.borrow_mut();
@@ -1324,10 +1324,11 @@ pub fn collect(
         }
         None => (None, false),
     };
-    // Reveal the placeholder synchronously for any path where the drain
-    // finished before the reveal could fire — keeps subsequent renders
-    // (including `finalize`) consistent with the post-reveal placeholder.
-    layout.placeholder.set(super::render::PLACEHOLDER);
+    // Force the dot for any post-drain render. The reveal event only fires
+    // once the 200ms deadline has passed; if every result arrives before
+    // then, the closure left `placeholder` on `PLACEHOLDER_BLANK`, and the
+    // final table / finalize / timeout paths must not inherit that.
+    placeholder = super::render::PLACEHOLDER;
 
     // Handle timeout if it occurred.
     // Budget-based deadlines (collect_deadline) are intentional truncation — don't warn.
@@ -1390,7 +1391,7 @@ pub fn collect(
         header: layout.format_header_line(),
         rows: all_items
             .iter()
-            .map(|item| layout.format_list_item_line(item))
+            .map(|item| layout.format_list_item_line(item, placeholder))
             .collect(),
         summary: super::format_summary_message(
             &all_items,
@@ -1779,14 +1780,19 @@ mod tests {
         ];
         let skip_tasks: HashSet<TaskKind> = HashSet::new();
         let layout = calculate_layout_with_width(&items, &skip_tasks, 80, Path::new("/tmp"), None);
-
-        layout.placeholder.set(super::super::render::PLACEHOLDER);
+        let placeholder = super::super::render::PLACEHOLDER;
 
         // Row 0 has data → format_list_item_line; row 1 doesn't → skeleton.
         let has_data = vec![true, false];
-        let updates = render_reveal(&has_data, &items, &layout);
+        let updates = render_reveal(&has_data, &items, &layout, placeholder);
         assert_eq!(updates.len(), 2);
-        assert_eq!(updates[0], layout.format_list_item_line(&items[0]));
-        assert_eq!(updates[1], layout.render_skeleton_row(&items[1]).render());
+        assert_eq!(
+            updates[0],
+            layout.format_list_item_line(&items[0], placeholder)
+        );
+        assert_eq!(
+            updates[1],
+            layout.render_skeleton_row(&items[1], placeholder).render()
+        );
     }
 }

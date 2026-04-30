@@ -43,9 +43,9 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+INSTALL
 
 ----- stderr -----
 [36m◎[39m [36mRunning alias [1mdeploy[22m: [1minstall[22m; [1mbuild[22m, [1mlint[22m[39m
-[0mINSTALL
-[1m[36mbuild[0m │ BUILD
+[0m[1m[36mbuild[0m │ BUILD
 [1m[35mlint [0m │ LINT

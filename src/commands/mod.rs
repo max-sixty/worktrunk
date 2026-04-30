@@ -49,7 +49,7 @@ pub(crate) use handle_switch::{SwitchOptions, handle_switch};
 pub(crate) use hook_commands::{HookCliArgs, handle_hook_show, run_hook};
 pub(crate) use init::{handle_completions, handle_init};
 pub(crate) use list::handle_list;
-pub(crate) use merge::{MergeOptions, handle_merge};
+pub(crate) use merge::{MergeFlagOverrides, MergeOptions, handle_merge};
 #[cfg(unix)]
 pub(crate) use picker::handle_picker;
 pub(crate) use repository_ext::RemoveTarget;

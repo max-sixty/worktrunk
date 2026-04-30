@@ -44,6 +44,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+got --env=staging foo
 
 ----- stderr -----
-[0mgot --env=staging foo

@@ -37,10 +37,11 @@ use worktrunk::styling::{
 
 use super::command_approval::approve_or_skip;
 use super::command_executor::FailureStrategy;
-use super::commit::{CommitGenerator, CommitOptions, StageMode};
+use super::commit::{CommitGenerator, CommitOptions, HookGate, StageMode};
 use super::context::CommandEnv;
-use super::hooks::{execute_hook, spawn_background_hooks};
+use super::hooks::{HookAnnouncer, execute_hook};
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
+use super::template_vars::TemplateVars;
 use crate::output::handle_remove_output;
 use worktrunk::git::BranchDeletionMode;
 
@@ -79,23 +80,26 @@ pub fn step_commit(
     // CLI flag overrides config value
     let stage_mode = stage.unwrap_or(env.resolved().commit.stage());
 
-    // "Approve at the Gate": approve commit hooks upfront (unless --no-hooks)
-    // Shadow verify: if user declines approval, skip hooks but continue commit
-    let verify = verify
+    // "Approve at the Gate": prompt for approval upfront (when hooks are enabled) so
+    // hook execution downstream is fully gated.
+    let approved = verify
         && approve_or_skip(
             &ctx,
             &[HookType::PreCommit, HookType::PostCommit],
             "Commands declined, committing without hooks",
         )?;
+    let hooks = HookGate::from_approval(verify, approved);
 
     let mut options = CommitOptions::new(&ctx);
-    options.verify = verify;
+    options.hooks = hooks;
     options.stage_mode = stage_mode;
     options.show_no_squash_note = false;
     // Only warn about untracked if we're staging all
     options.warn_about_untracked = stage_mode == StageMode::All;
 
-    options.commit()
+    let mut announcer = HookAnnouncer::new(ctx.repo, ctx.config, false);
+    options.commit(&mut announcer)?;
+    announcer.flush()
 }
 
 /// Result of a squash operation
@@ -114,13 +118,21 @@ pub enum SquashResult {
 /// Handle shared squash workflow (used by `wt step squash` and `wt merge`)
 ///
 /// # Arguments
-/// * `verify` - If true, run pre-commit hooks (false when --no-hooks flag is passed)
+/// * `hooks` - Whether to run pre-commit hooks. `Run` triggers an internal approval
+///   prompt; `NoHooksFlag` skips with a "(--no-hooks)" message; `Silent` skips silently
+///   (used when the caller already declined approval upstream and announced it).
 /// * `stage` - CLI-provided stage mode. If None, uses the effective config default.
+/// * `announcer` - Post-commit hooks register on the caller's announcer; the
+///   caller decides when to flush. Multi-phase callers (`wt merge --squash`
+///   combining post-commit + post-remove + post-switch + post-merge) share
+///   one announce line; standalone callers (`wt step squash`) construct an
+///   announcer of their own and flush right after.
 pub fn handle_squash(
     target: Option<&str>,
     yes: bool,
-    verify: bool,
+    hooks: HookGate,
     stage: Option<StageMode>,
+    announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<SquashResult> {
     // Load config once, run LLM setup prompt, then reuse config
     let mut config = UserConfig::load().context("Failed to load config")?;
@@ -148,24 +160,34 @@ pub fn handle_squash(
     );
     let any_hooks_exist = user_cfg.is_some() || proj_cfg.is_some();
 
-    // "Approve at the Gate": approve commit hooks upfront (unless --no-hooks)
-    // Shadow verify: if user declines approval, skip hooks but continue squash
-    let verify = if verify {
-        approve_or_skip(
-            &ctx,
-            &[HookType::PreCommit, HookType::PostCommit],
-            "Commands declined, squashing without hooks",
-        )?
-    } else {
-        // Show skip message when --no-hooks was passed and hooks exist
-        if any_hooks_exist {
-            eprintln!("{}", info_message("Skipping pre-commit hooks (--no-hooks)"));
+    // Resolve the hook gate: Run triggers an approval prompt and downgrades to Silent
+    // on decline (approve_or_skip prints its own message). NoHooksFlag prints the skip
+    // message itself; Silent stays quiet so the upstream caller's decline message isn't
+    // followed by a spurious "(--no-hooks)" line.
+    let hooks = match hooks {
+        HookGate::Run => {
+            if approve_or_skip(
+                &ctx,
+                &[HookType::PreCommit, HookType::PostCommit],
+                "Commands declined, squashing without hooks",
+            )? {
+                HookGate::Run
+            } else {
+                HookGate::Silent
+            }
         }
-        false // --no-hooks was passed
+        HookGate::NoHooksFlag => {
+            if any_hooks_exist {
+                eprintln!("{}", info_message("Skipping pre-commit hooks (--no-hooks)"));
+            }
+            HookGate::NoHooksFlag
+        }
+        HookGate::Silent => HookGate::Silent,
     };
 
     // Get and validate target ref (any commit-ish for merge-base calculation)
     let integration_target = repo.require_target_ref(target)?;
+    let template_vars = TemplateVars::new().with_target(&integration_target);
 
     // Auto-stage changes before running pre-commit hooks so both beta and merge paths behave identically
     match stage_mode {
@@ -184,12 +206,11 @@ pub fn handle_squash(
     }
 
     // Run pre-commit hooks (user first, then project).
-    if verify {
-        let extra_vars = [("target", integration_target.as_str())];
+    if hooks.run() {
         execute_hook(
             &ctx,
             HookType::PreCommit,
-            &extra_vars,
+            &template_vars.as_extra_vars(),
             FailureStrategy::FailFast,
             crate::output::pre_hook_display_path(ctx.worktree_path),
         )?;
@@ -340,10 +361,10 @@ pub fn handle_squash(
         success_message(cformat!("Squashed @ <dim>{commit_hash}</>"))
     );
 
-    // Spawn post-commit hooks in background (respects --no-hooks)
-    if verify {
-        let extra_vars: Vec<(&str, &str)> = vec![("target", integration_target.as_str())];
-        spawn_background_hooks(&ctx, HookType::PostCommit, &extra_vars, None)?;
+    // Register post-commit hooks onto the caller's announcer (respects --no-hooks).
+    if hooks.run() {
+        let extra_vars = template_vars.as_extra_vars();
+        announcer.register(&ctx, HookType::PostCommit, &extra_vars, None)?;
     }
 
     Ok(SquashResult::Squashed)
@@ -1425,7 +1446,9 @@ pub fn step_prune(
                 return Ok(false);
             }
         };
-        handle_remove_output(&plan, foreground, run_hooks, true, true, None)?;
+        let mut announcer = HookAnnouncer::new(repo, config, true);
+        handle_remove_output(&plan, foreground, run_hooks, true, &mut announcer)?;
+        announcer.flush()?;
         Ok(true)
     }
 
