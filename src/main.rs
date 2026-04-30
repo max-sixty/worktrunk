@@ -42,6 +42,7 @@ pub(crate) use invocation::{
 
 pub(crate) use crate::cli::OutputFormat;
 
+use commands::commit::HookGate;
 #[cfg(unix)]
 use commands::handle_picker;
 use commands::repository_ext::RepositoryCliExt;
@@ -218,11 +219,16 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
                 // Approval is handled inside handle_squash (like step_commit).
                 let repo = Repository::current()?;
                 let config = UserConfig::load().context("Failed to load config")?;
+                let hooks = if verify {
+                    HookGate::Run
+                } else {
+                    HookGate::NoHooksFlag
+                };
                 let mut announcer = HookAnnouncer::new(&repo, &config, false);
                 let result = handle_squash(
                     args.target.as_deref(),
                     yes,
-                    verify,
+                    hooks,
                     args.stage,
                     &mut announcer,
                 )?;

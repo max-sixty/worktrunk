@@ -7,7 +7,7 @@ use worktrunk::styling::{eprintln, info_message};
 use super::command_approval::approve_command_batch;
 use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
-use super::commit::CommitOptions;
+use super::commit::{CommitOptions, HookGate};
 use super::context::CommandEnv;
 use super::hooks::{HookAnnouncer, execute_hook};
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
@@ -188,8 +188,14 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let approvals = Approvals::load().context("Failed to load approvals")?;
     let approved = approve_command_batch(&all_commands, &project_id, &approvals, yes, false)?;
 
-    // If commands were declined, skip hooks but continue with merge
-    // Shadow verify to gate all subsequent hook execution on approval
+    // Commit-phase gate uses the original `verify` (before the shadow below) so it can
+    // distinguish --no-hooks from declined-approval; CommitOptions and handle_squash
+    // need that distinction to suppress a duplicate "(--no-hooks)" line.
+    let commit_hooks = HookGate::from_approval(verify, approved);
+
+    // If commands were declined, skip hooks but continue with merge.
+    // Shadow verify to gate all subsequent hook execution (pre-merge, post-merge,
+    // pre-remove, post-switch) on approval.
     let verify = if approved {
         verify
     } else {
@@ -211,7 +217,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             let ctx = env.context(yes);
             let mut options = CommitOptions::new(&ctx);
             options.target_branch = Some(&target_branch);
-            options.verify = verify;
+            options.hooks = commit_hooks;
             options.stage_mode = stage_mode;
             options.warn_about_untracked = stage_mode == super::commit::StageMode::All;
             options.show_no_squash_note = true;
@@ -223,13 +229,15 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         false // No dirty changes or --no-commit
     };
 
-    // Squash commits if enabled - track whether squashing occurred
+    // Squash commits if enabled - track whether squashing occurred.
+    // Pass `commit_hooks` (not the shadowed `verify`) so handle_squash gets the
+    // --no-hooks vs declined-approval distinction.
     let squashed = if squash_enabled {
         matches!(
             super::step_commands::handle_squash(
                 Some(&target_branch),
                 yes,
-                verify,
+                commit_hooks,
                 Some(stage_mode),
                 &mut announcer,
             )?,
