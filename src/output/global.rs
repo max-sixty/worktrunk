@@ -260,22 +260,19 @@ fn compute_directive_mode() -> DirectiveMode {
     }
 
     if read_env_path(DIRECTIVE_FILE_ENV_VAR).is_some() {
-        warn_stale_wrapper_once();
+        warn_stale_wrapper();
     }
 
     DirectiveMode::Interactive
 }
 
 /// Warn that only the legacy `WORKTRUNK_DIRECTIVE_FILE` env var is set, meaning
-/// the parent shell still has a pre-split wrapper loaded. Fires at most once
-/// per process. The user's next shell restart picks up the new wrapper for
-/// bash/zsh/fish/PowerShell; nushell users have to rerun
+/// the parent shell still has a pre-split wrapper loaded. Called at most once
+/// per process (from `compute_directive_mode`, which `state()` only invokes
+/// once via its `OnceLock`). The user's next shell restart picks up the new
+/// wrapper for bash/zsh/fish/PowerShell; nushell users have to rerun
 /// `wt config shell install nu` because its wrapper is a static file.
-fn warn_stale_wrapper_once() {
-    static WARNED: OnceLock<()> = OnceLock::new();
-    if WARNED.set(()).is_err() {
-        return;
-    }
+fn warn_stale_wrapper() {
     eprintln!(
         "{}",
         warning_message(cformat!(
