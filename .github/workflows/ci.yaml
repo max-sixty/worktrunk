@@ -276,6 +276,171 @@ jobs:
     - name: 📊 Run benchmarks
       run: cargo bench
 
+  # cargo-affected: runs only the tests whose recorded coverage overlaps the
+  # diff. Advisory at this stage — `test (linux/macos/windows)` still runs the
+  # full suite. The signal is the runtime delta on the exact-match path and
+  # whether selection misses any failures the full suite catches.
+  #
+  # TODO: once cargo-affected is trusted on this repo, gate the full test
+  # matrix to run only on pushes to main and on PRs with a `full-tests` label
+  # (or similar). PR pushes would default to affected-only. The full suite
+  # could fold into the existing `nightly` workflow, which already hosts
+  # slower integration-time checks. Periodic full runs remain essential —
+  # cargo-affected misses non-Rust inputs (`include_str!`, templates, SQL),
+  # build-time inputs not in its fingerprint (build.rs, rust-toolchain.toml,
+  # .cargo/config.toml), and proc-macro source edits.
+  #
+  # Cache strategy:
+  # - `collect-affected` (push to main) saves `target/affected/` to
+  #   actions/cache keyed on the main commit sha.
+  # - `affected-tests` (PRs) restores the cache. Primary key is the
+  #   PR/main merge-base — when collect ran on that exact commit, we get a
+  #   tight diff (`PR changes only`) and the smallest possible selection.
+  # - Restore-keys fall back to the most recent main DB. Its `collect_sha`
+  #   may be ahead of the merge-base; cargo-affected handles that by running
+  #   all tests with a notice (no `Diverged` bail), so the fallback always
+  #   produces a useful run, just with broader selection.
+  # - Cache keys include `runner.os` (fingerprint embeds `rustc -vV`) and a
+  #   manual `db-v{N}` marker. Bump the marker if cargo-affected ships an
+  #   on-disk schema change; the cache is otherwise version-agnostic.
+  collect-affected:
+    name: collect affected coverage
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v6
+      with:
+        # `cargo affected run` later diffs PR HEAD against the sha that was
+        # HEAD when collect ran. That sha must be reachable.
+        fetch-depth: 0
+
+    - name: Install cargo-insta
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-insta
+        version: "=1.46.3"
+
+    - name: Install cargo-nextest
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-nextest
+        version: "=0.9.132"
+
+    - name: Install cargo-affected
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-affected
+        git: https://github.com/max-sixty/cargo-affected
+        # No rev/branch/tag → action resolves to latest default-branch sha.
+
+    - name: Install llvm-tools
+      run: rustup component add llvm-tools
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install shells (zsh, fish)
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: zsh fish
+        version: 1.0
+
+    - name: Install nushell
+      uses: hustcer/setup-nu@v3
+      with:
+        version: '0.112.2'
+
+    - name: 📊 Collect coverage data
+      env:
+        NEXTEST_NO_INPUT_HANDLER: 1
+      run: cargo affected collect --features shell-integration-tests
+
+    - name: 💾 Save coverage DB
+      uses: actions/cache/save@v4
+      with:
+        path: target/affected
+        key: cargo-affected-db-v1-${{ runner.os }}-${{ github.sha }}
+
+  affected-tests:
+    name: affected tests (linux, advisory)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    # Advisory while we calibrate selection accuracy against the full suite.
+    # The full matrix (`test (linux/macos/windows)`) is still required for
+    # merge.
+    continue-on-error: true
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v6
+      with:
+        # Need the cached `collect_sha` reachable from HEAD for the diff;
+        # see collect-affected above.
+        fetch-depth: 0
+
+    - name: Compute merge-base for cache key
+      id: mb
+      env:
+        PR_HEAD: ${{ github.event.pull_request.head.sha }}
+      run: |
+        git fetch --no-tags --depth=200 origin main
+        sha=$(git merge-base origin/main "$PR_HEAD")
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+        echo "merge-base with origin/main: $sha"
+
+    - name: 💾 Restore coverage DB
+      uses: actions/cache/restore@v4
+      with:
+        path: target/affected
+        # Exact match: collect ran on the PR's merge-base → tight diff.
+        key: cargo-affected-db-v1-${{ runner.os }}-${{ steps.mb.outputs.sha }}
+        # Fallback: most recent main DB. cargo-affected runs all tests when
+        # collect_sha isn't an ancestor of HEAD; with no DB at all it does
+        # the same. Either way the run produces a useful signal.
+        restore-keys: |
+          cargo-affected-db-v1-${{ runner.os }}-
+
+    - name: Install cargo-insta
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-insta
+        version: "=1.46.3"
+
+    - name: Install cargo-nextest
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-nextest
+        version: "=0.9.132"
+
+    - name: Install cargo-affected
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-affected
+        git: https://github.com/max-sixty/cargo-affected
+        # No rev/branch/tag → action resolves to latest default-branch sha.
+
+    - name: Install llvm-tools
+      run: rustup component add llvm-tools
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install shells (zsh, fish)
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: zsh fish
+        version: 1.0
+
+    - name: Install nushell
+      uses: hustcer/setup-nu@v3
+      with:
+        version: '0.112.2'
+
+    - name: 🎯 Run affected tests
+      env:
+        NEXTEST_NO_INPUT_HANDLER: 1
+      run: cargo affected run --features shell-integration-tests --verbose
+
   code-coverage:
     runs-on: ubuntu-24.04
     steps:
