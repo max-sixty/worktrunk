@@ -28,8 +28,7 @@ use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
 use super::context::CommandEnv;
 use super::hooks::{
-    HookCommandSpec, lookup_hook_configs, prepare_and_check, prepare_background_pipelines,
-    run_hooks_background, run_hooks_foreground,
+    HookAnnouncer, HookCommandSpec, lookup_hook_configs, prepare_and_check, run_hooks_foreground,
 };
 use super::template_vars::TemplateVars;
 
@@ -81,8 +80,9 @@ fn run_post_hook(
     // Filter path merges user + project matches into one pipeline (the user
     // cherry-picked specific names across sources). The default path keeps
     // sources independent so a user hook failure doesn't abort project hooks.
-    let pipelines = if name_filters.is_empty() {
-        prepare_background_pipelines(ctx, hook_type, extra_vars, None)?
+    let mut announcer = HookAnnouncer::new(ctx.repo, ctx.config, false);
+    if name_filters.is_empty() {
+        announcer.register(ctx, hook_type, extra_vars, None)?;
     } else {
         let flat = prepare_and_check(
             ctx,
@@ -98,9 +98,9 @@ fn run_post_hook(
         if flat.is_empty() {
             return Ok(());
         }
-        vec![(*ctx, flat)]
-    };
-    run_hooks_background(pipelines, false)
+        announcer.extend(std::iter::once((*ctx, flat)));
+    }
+    announcer.flush()
 }
 
 /// Build best-effort directional vars for manual `wt hook` invocation.

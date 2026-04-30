@@ -140,14 +140,7 @@ pub fn finish_after_merge(
             expected_path,
             removed_commit: feature_commit.clone(),
         };
-        crate::output::handle_remove_output(
-            &remove_result,
-            false,
-            verify,
-            false,
-            false,
-            Some(announcer),
-        )?;
+        crate::output::handle_remove_output(&remove_result, false, verify, false, announcer)?;
         true
     };
 

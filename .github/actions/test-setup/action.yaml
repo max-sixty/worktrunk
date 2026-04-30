@@ -1,5 +1,8 @@
-name: cargo-affected setup
-description: Tools and caches shared by collect-affected and affected-tests
+name: test setup
+description: |
+  Cargo test tooling, rust-cache, and the shells our PTY tests exercise.
+  Used by the test matrix and the cargo-affected jobs (which add their own
+  cargo-affected + llvm-tools steps after this).
 
 runs:
   using: composite
@@ -16,27 +19,25 @@ runs:
         crate: cargo-nextest
         version: "=0.9.132"
 
-    - name: Install cargo-affected
-      uses: baptiste0928/cargo-install@v3
-      with:
-        crate: cargo-affected
-        git: https://github.com/max-sixty/cargo-affected
-        # No rev/branch/tag → action resolves to latest default-branch sha.
-
-    - name: Install llvm-tools
-      shell: bash
-      run: rustup component add llvm-tools
-
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
 
-    - name: Install shells (zsh, fish)
+    - name: Install shells (zsh, fish) - Ubuntu
+      if: runner.os == 'Linux'
       uses: awalsh128/cache-apt-pkgs-action@latest
       with:
         packages: zsh fish
         version: 1.0
 
+    - name: Install shells (fish) - macOS
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install fish
+        # bash and zsh are pre-installed on macOS
+
     - name: Install nushell
+      if: runner.os != 'Windows'
       uses: hustcer/setup-nu@v3
       with:
         version: '0.112.2'

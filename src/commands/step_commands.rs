@@ -39,9 +39,7 @@ use super::command_approval::approve_or_skip;
 use super::command_executor::FailureStrategy;
 use super::commit::{CommitGenerator, CommitOptions, HookGate, StageMode};
 use super::context::CommandEnv;
-use super::hooks::{
-    HookAnnouncer, execute_hook, prepare_background_pipelines, run_hooks_background,
-};
+use super::hooks::{HookAnnouncer, execute_hook};
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::template_vars::TemplateVars;
 use crate::output::handle_remove_output;
@@ -99,7 +97,9 @@ pub fn step_commit(
     // Only warn about untracked if we're staging all
     options.warn_about_untracked = stage_mode == StageMode::All;
 
-    options.commit(None)
+    let mut announcer = HookAnnouncer::new(ctx.repo, ctx.config, false);
+    options.commit(&mut announcer)?;
+    announcer.flush()
 }
 
 /// Result of a squash operation
@@ -122,16 +122,17 @@ pub enum SquashResult {
 ///   prompt; `NoHooksFlag` skips with a "(--no-hooks)" message; `Silent` skips silently
 ///   (used when the caller already declined approval upstream and announced it).
 /// * `stage` - CLI-provided stage mode. If None, uses the effective config default.
-/// * `parent_announcer` - When `Some`, post-commit hooks register on the
-///   caller's announcer so they share an announce line with later phases
-///   (e.g. `wt merge --squash` combining post-commit + post-remove +
-///   post-switch + post-merge). When `None`, post-commit self-announces.
+/// * `announcer` - Post-commit hooks register on the caller's announcer; the
+///   caller decides when to flush. Multi-phase callers (`wt merge --squash`
+///   combining post-commit + post-remove + post-switch + post-merge) share
+///   one announce line; standalone callers (`wt step squash`) construct an
+///   announcer of their own and flush right after.
 pub fn handle_squash(
     target: Option<&str>,
     yes: bool,
     hooks: HookGate,
     stage: Option<StageMode>,
-    parent_announcer: Option<&mut HookAnnouncer<'_>>,
+    announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<SquashResult> {
     // Load config once, run LLM setup prompt, then reuse config
     let mut config = UserConfig::load().context("Failed to load config")?;
@@ -360,16 +361,10 @@ pub fn handle_squash(
         success_message(cformat!("Squashed @ <dim>{commit_hash}</>"))
     );
 
-    // Spawn post-commit hooks in background (respects --no-hooks).
+    // Register post-commit hooks onto the caller's announcer (respects --no-hooks).
     if hooks.run() {
         let extra_vars = template_vars.as_extra_vars();
-        let pipelines =
-            prepare_background_pipelines(&ctx, HookType::PostCommit, &extra_vars, None)?;
-        if let Some(announcer) = parent_announcer {
-            announcer.extend(pipelines);
-        } else {
-            run_hooks_background(pipelines, false)?;
-        }
+        announcer.register(&ctx, HookType::PostCommit, &extra_vars, None)?;
     }
 
     Ok(SquashResult::Squashed)
@@ -1451,7 +1446,9 @@ pub fn step_prune(
                 return Ok(false);
             }
         };
-        handle_remove_output(&plan, foreground, run_hooks, true, true, None)?;
+        let mut announcer = HookAnnouncer::new(repo, config, true);
+        handle_remove_output(&plan, foreground, run_hooks, true, &mut announcer)?;
+        announcer.flush()?;
         Ok(true)
     }
 

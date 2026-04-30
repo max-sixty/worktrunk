@@ -219,7 +219,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             options.warn_about_untracked = stage_mode == super::commit::StageMode::All;
             options.show_no_squash_note = true;
 
-            options.commit(Some(&mut announcer))?;
+            options.commit(&mut announcer)?;
             true // Committed directly
         }
     } else {
@@ -236,7 +236,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
                 yes,
                 commit_hooks,
                 Some(stage_mode),
-                Some(&mut announcer),
+                &mut announcer,
             )?,
             super::step_commands::SquashResult::Squashed
         )

@@ -17,6 +17,7 @@ use worktrunk::styling::{
 
 use commands::command_approval::approve_or_skip;
 use commands::command_executor::CommandContext;
+use commands::hooks::HookAnnouncer;
 use commands::worktree::RemoveResult;
 
 mod cli;
@@ -215,31 +216,41 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             if args.show_prompt {
                 commands::step_show_squash_prompt(args.target.as_deref())
             } else {
-                // Approval is handled inside handle_squash (like step_commit)
+                // Approval is handled inside handle_squash (like step_commit).
+                let repo = Repository::current()?;
+                let config = UserConfig::load().context("Failed to load config")?;
                 let hooks = if verify {
                     HookGate::Run
                 } else {
                     HookGate::NoHooksFlag
                 };
-                handle_squash(args.target.as_deref(), yes, hooks, args.stage, None).map(|result| {
-                    match result {
-                        SquashResult::Squashed | SquashResult::NoNetChanges => {}
-                        SquashResult::NoCommitsAhead(branch) => {
-                            eprintln!(
-                                "{}",
-                                info_message(format!(
-                                    "Nothing to squash; no commits ahead of {branch}"
-                                ))
-                            );
-                        }
-                        SquashResult::AlreadySingleCommit => {
-                            eprintln!(
-                                "{}",
-                                info_message("Nothing to squash; already a single commit")
-                            );
-                        }
+                let mut announcer = HookAnnouncer::new(&repo, &config, false);
+                let result = handle_squash(
+                    args.target.as_deref(),
+                    yes,
+                    hooks,
+                    args.stage,
+                    &mut announcer,
+                )?;
+                announcer.flush()?;
+                match result {
+                    SquashResult::Squashed | SquashResult::NoNetChanges => {}
+                    SquashResult::NoCommitsAhead(branch) => {
+                        eprintln!(
+                            "{}",
+                            info_message(format!(
+                                "Nothing to squash; no commits ahead of {branch}"
+                            ))
+                        );
                     }
-                })
+                    SquashResult::AlreadySingleCommit => {
+                        eprintln!(
+                            "{}",
+                            info_message("Nothing to squash; already a single commit")
+                        );
+                    }
+                }
+                Ok(())
             }
         }
         StepCommand::Push { target, no_ff, .. } => {
@@ -808,7 +819,9 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 // "Approve at the Gate": approval happens AFTER validation passes
                 let run_hooks = verify && approve_remove(yes)?;
 
-                handle_remove_output(&result, args.foreground, run_hooks, false, false, None)?;
+                let mut announcer = HookAnnouncer::new(&repo, &config, false);
+                handle_remove_output(&result, args.foreground, run_hooks, false, &mut announcer)?;
+                announcer.flush()?;
                 if json_mode {
                     let json = serde_json::json!([result.to_json()]);
                     println!("{}", serde_json::to_string_pretty(&json)?);
@@ -846,35 +859,25 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 // Execute all validated plans: others first, branch-only next, current last
                 let show_branch =
                     plans.others.len() + plans.branch_only.len() + plans.current.iter().len() > 1;
-                for result in &plans.others {
+                let run = |result: &RemoveResult| -> anyhow::Result<()> {
+                    let mut announcer = HookAnnouncer::new(&repo, &config, show_branch);
                     handle_remove_output(
                         result,
                         args.foreground,
                         run_hooks,
                         false,
-                        show_branch,
-                        None,
+                        &mut announcer,
                     )?;
+                    announcer.flush()
+                };
+                for result in &plans.others {
+                    run(result)?;
                 }
                 for result in &plans.branch_only {
-                    handle_remove_output(
-                        result,
-                        args.foreground,
-                        run_hooks,
-                        false,
-                        show_branch,
-                        None,
-                    )?;
+                    run(result)?;
                 }
                 if let Some(ref result) = plans.current {
-                    handle_remove_output(
-                        result,
-                        args.foreground,
-                        run_hooks,
-                        false,
-                        show_branch,
-                        None,
-                    )?;
+                    run(result)?;
                 }
 
                 if json_mode {
