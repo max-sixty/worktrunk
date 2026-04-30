@@ -315,41 +315,7 @@ jobs:
         # HEAD when collect ran. That sha must be reachable.
         fetch-depth: 0
 
-    - name: Install cargo-insta
-      uses: baptiste0928/cargo-install@v3
-      with:
-        crate: cargo-insta
-        version: "=1.46.3"
-
-    - name: Install cargo-nextest
-      uses: baptiste0928/cargo-install@v3
-      with:
-        crate: cargo-nextest
-        version: "=0.9.132"
-
-    - name: Install cargo-affected
-      uses: baptiste0928/cargo-install@v3
-      with:
-        crate: cargo-affected
-        git: https://github.com/max-sixty/cargo-affected
-        # No rev/branch/tag → action resolves to latest default-branch sha.
-
-    - name: Install llvm-tools
-      run: rustup component add llvm-tools
-
-    - name: 💰 Cache
-      uses: Swatinem/rust-cache@v2
-
-    - name: Install shells (zsh, fish)
-      uses: awalsh128/cache-apt-pkgs-action@latest
-      with:
-        packages: zsh fish
-        version: 1.0
-
-    - name: Install nushell
-      uses: hustcer/setup-nu@v3
-      with:
-        version: '0.112.2'
+    - uses: ./.github/actions/affected-setup
 
     - name: 📊 Collect coverage data
       env:
@@ -400,41 +366,7 @@ jobs:
         restore-keys: |
           cargo-affected-db-v1-${{ runner.os }}-
 
-    - name: Install cargo-insta
-      uses: baptiste0928/cargo-install@v3
-      with:
-        crate: cargo-insta
-        version: "=1.46.3"
-
-    - name: Install cargo-nextest
-      uses: baptiste0928/cargo-install@v3
-      with:
-        crate: cargo-nextest
-        version: "=0.9.132"
-
-    - name: Install cargo-affected
-      uses: baptiste0928/cargo-install@v3
-      with:
-        crate: cargo-affected
-        git: https://github.com/max-sixty/cargo-affected
-        # No rev/branch/tag → action resolves to latest default-branch sha.
-
-    - name: Install llvm-tools
-      run: rustup component add llvm-tools
-
-    - name: 💰 Cache
-      uses: Swatinem/rust-cache@v2
-
-    - name: Install shells (zsh, fish)
-      uses: awalsh128/cache-apt-pkgs-action@latest
-      with:
-        packages: zsh fish
-        version: 1.0
-
-    - name: Install nushell
-      uses: hustcer/setup-nu@v3
-      with:
-        version: '0.112.2'
+    - uses: ./.github/actions/affected-setup
 
     - name: 🎯 Run affected tests
       env:
