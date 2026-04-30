@@ -497,10 +497,9 @@ pub fn terminate_output() -> io::Result<()> {
     stderr.flush()
 }
 
-/// Check if we're in shell integration mode (any directive-file protocol active).
+/// Check if we're in shell integration mode (directive-file protocol active).
 ///
-/// Useful for handlers that need to know whether shell integration is in effect,
-/// regardless of which protocol (new or legacy) is being used.
+/// Useful for handlers that need to know whether shell integration is in effect.
 pub fn is_shell_integration_active() -> bool {
     !matches!(
         state().lock().expect("OUTPUT_STATE lock poisoned").mode,
