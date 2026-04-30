@@ -3008,3 +3008,101 @@ fn test_remove_json_multi_with_current(mut repo: TestRepo) {
     assert_eq!(items[1]["branch"], "current-feature");
     assert_eq!(items[1]["kind"], "worktree");
 }
+
+/// Regression: integration check ORs over local AND upstream. A branch merged
+/// into LOCAL `main` must still be detected as integrated when `main` and
+/// `origin/main` have diverged — symmetric to
+/// `test_remove_squash_merged_on_remote_when_local_main_diverged`, which
+/// covers the merged-on-remote side.
+#[rstest]
+fn test_remove_merged_locally_when_upstream_diverged(#[from(repo_with_remote)] repo: TestRepo) {
+    let remote_path = repo.remote_path().unwrap().to_path_buf();
+
+    // Advance origin/main with a remote-only commit so local and upstream diverge.
+    let github_sim = repo.home_path().join("github-sim-local-merge");
+    repo.run_git_in(
+        repo.home_path(),
+        &[
+            "clone",
+            remote_path.to_str().unwrap(),
+            "github-sim-local-merge",
+        ],
+    );
+    std::fs::write(github_sim.join("remote-only.txt"), "remote only").unwrap();
+    repo.run_git_in(&github_sim, &["add", "remote-only.txt"]);
+    repo.run_git_in(&github_sim, &["commit", "-m", "Remote-only main commit"]);
+    repo.run_git_in(&github_sim, &["push", "origin", "main"]);
+
+    // Create a feature branch off the original main and merge it locally
+    // (no fetch yet, so local main moves while origin/main stays at the
+    // original tip in our local view).
+    repo.run_git(&["checkout", "-b", "feature-local-merge"]);
+    std::fs::write(repo.root_path().join("feature.txt"), "feature").unwrap();
+    repo.run_git(&["add", "feature.txt"]);
+    repo.run_git(&["commit", "-m", "Add feature"]);
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["merge", "--ff-only", "feature-local-merge"]);
+
+    // Now fetch — origin/main holds the remote commit, local main holds the
+    // feature merge, neither is an ancestor of the other.
+    repo.run_git(&["fetch", "origin"]);
+
+    let local_main = repo.git_output(&["rev-parse", "main"]);
+    let origin_main = repo.git_output(&["rev-parse", "origin/main"]);
+    assert_ne!(
+        local_main, origin_main,
+        "main and origin/main should differ"
+    );
+    assert!(
+        !repo
+            .git_command()
+            .args(["merge-base", "--is-ancestor", "main", "origin/main"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "local main should not be an ancestor of origin/main"
+    );
+    assert!(
+        !repo
+            .git_command()
+            .args(["merge-base", "--is-ancestor", "origin/main", "main"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "origin/main should not be an ancestor of local main"
+    );
+
+    // Remove the feature branch — should detect integration via local main
+    // even though origin/main does not contain the feature commit.
+    let output = make_snapshot_cmd(&repo, "remove", &["feature-local-merge"], None)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(
+        output.status.success(),
+        "remove should succeed\nstderr:\n{stderr}",
+    );
+    assert!(
+        !stderr.contains("Branch unmerged"),
+        "integration check must detect local merges, not just upstream\nstderr:\n{stderr}",
+    );
+
+    let branch_still_exists = repo
+        .git_command()
+        .args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "refs/heads/feature-local-merge",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        !branch_still_exists.status.success(),
+        "feature branch should be deleted after detection via local main"
+    );
+}

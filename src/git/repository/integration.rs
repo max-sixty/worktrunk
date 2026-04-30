@@ -435,18 +435,19 @@ impl Repository {
         Ok(result)
     }
 
-    /// Determine the effective target for integration checks.
+    /// Choose a single integration target for status display (`wt list`).
     ///
-    /// If the upstream of the local target (e.g., `origin/main`) contains commits that
-    /// the local target does not, uses the upstream. This handles both the common "local
-    /// branch is behind upstream" case and the diverged case where local has extra commits
-    /// but upstream contains a remote merge that local hasn't integrated yet.
+    /// Picks one ref so a status column renders unambiguously:
+    /// - Same commit: local (cleaner messaging).
+    /// - Local strictly behind upstream: upstream (superset).
+    /// - Upstream strictly behind local: local (superset).
+    /// - Diverged: upstream (so remotely merged branches still show as
+    ///   integrated in the column).
     ///
-    /// When local and upstream are the same commit, prefers local for clearer messaging.
-    ///
-    /// Returns the effective target ref to check against.
-    ///
-    /// Used by both `wt list` and `wt remove` to ensure consistent integration detection.
+    /// **Not for safety-critical integration checks.** Picking one ref in the
+    /// diverged case misses branches merged into the unchosen side. Use
+    /// [`Self::integration_reason()`] when deciding whether a branch is safe
+    /// to delete — it ORs over both refs.
     ///
     pub fn effective_integration_target(&self, local_target: &str) -> String {
         self.cache
@@ -548,17 +549,36 @@ impl Repository {
 
     /// Check if a branch is integrated into a target.
     ///
-    /// This is a convenience method that combines [`compute_integration_lazy()`] and
-    /// [`check_integration()`]. The `target` is transformed via [`Self::effective_integration_target()`]
-    /// before checking, which may use an upstream ref if it's ahead of the local target.
+    /// Combines [`compute_integration_lazy()`] and [`check_integration()`], and
+    /// considers both the local target and its upstream so a branch counts as
+    /// integrated whether it was merged locally OR remotely.
     ///
-    /// Uses lazy evaluation with short-circuit: stops as soon as any check confirms
-    /// integration, avoiding expensive operations like merge simulation when cheaper
-    /// checks succeed.
+    /// Behavior depends on how local and upstream relate:
+    ///
+    /// - No upstream, or upstream at the same commit: check local only.
+    /// - Local is an ancestor of upstream (local strictly behind): upstream is
+    ///   a superset, so check upstream only — anything in local is also in
+    ///   upstream.
+    /// - Upstream is an ancestor of local (upstream strictly behind): local is
+    ///   a superset, so check local only.
+    /// - Diverged (neither is an ancestor): check local first; if not
+    ///   integrated, also check upstream. The branch is integrated if either
+    ///   matches.
+    ///
+    /// The "diverged → OR" case is the safety-critical one. After `wt merge`
+    /// updates local main, local and upstream diverge until the merge is
+    /// pushed; checking only one side would falsely report the just-merged
+    /// branch as unmerged.
+    ///
+    /// Uses lazy evaluation with short-circuit: stops as soon as any check
+    /// confirms integration, avoiding expensive operations like merge
+    /// simulation when cheaper checks succeed.
     ///
     /// Returns `(effective_target, reason)` where:
-    /// - `effective_target` is the ref actually checked (may be upstream like "origin/main")
-    /// - `reason` is `Some(reason)` if integrated, `None` if not
+    /// - `effective_target` is the ref that actually matched (the local target
+    ///   when local matches or the branch is unmerged; the upstream ref when
+    ///   only upstream matches).
+    /// - `reason` is `Some(reason)` if integrated, `None` if not.
     ///
     /// # Example
     /// ```no_run
@@ -584,13 +604,74 @@ impl Repository {
         {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
-                let effective_target = self.effective_integration_target(target);
-                let signals = compute_integration_lazy(self, branch, &effective_target)?;
-                let result = (effective_target, check_integration(&signals));
+                let result = self.compute_integration_reason_uncached(branch, target)?;
                 Ok(e.insert(result).clone())
             }
         }
     }
+
+    fn compute_integration_reason_uncached(
+        &self,
+        branch: &str,
+        target: &str,
+    ) -> anyhow::Result<(String, Option<IntegrationReason>)> {
+        // Resolve upstream once. Errors and "no upstream" both collapse to None.
+        let upstream = self.branch(target).upstream().ok().flatten();
+
+        // Decide whether to check local, upstream, or both.
+        //
+        // The ancestor checks here run git directly with ref names rather than
+        // going through cached `is_ancestor`/`rev_parse_commit`, because the
+        // local target may have just been updated (e.g. by `wt merge`'s ref
+        // update). Cached SHAs would be stale and could misclassify the
+        // local/upstream relationship.
+        let (check_local, fallback_upstream) = match upstream {
+            None => (true, None),
+            Some(u) if self.same_commit(target, &u).unwrap_or(false) => (true, None),
+            Some(u) if ref_is_ancestor(self, target, &u) => {
+                // Local strictly behind upstream — upstream is the superset.
+                let signals = compute_integration_lazy(self, branch, &u)?;
+                return Ok((u, check_integration(&signals)));
+            }
+            Some(u) if ref_is_ancestor(self, &u, target) => {
+                // Upstream strictly behind local — local is the superset.
+                (true, None)
+            }
+            Some(u) => {
+                // Diverged — check local first, fall back to upstream.
+                (true, Some(u))
+            }
+        };
+
+        if check_local {
+            let signals = compute_integration_lazy(self, branch, target)?;
+            if let Some(reason) = check_integration(&signals) {
+                return Ok((target.to_string(), Some(reason)));
+            }
+        }
+
+        if let Some(upstream) = fallback_upstream {
+            let signals = compute_integration_lazy(self, branch, &upstream)?;
+            if let Some(reason) = check_integration(&signals) {
+                return Ok((upstream, Some(reason)));
+            }
+        }
+
+        Ok((target.to_string(), None))
+    }
+}
+
+/// Run `git merge-base --is-ancestor` directly with ref names, bypassing
+/// `Repository::is_ancestor`'s SHA cache.
+///
+/// `is_ancestor` resolves both refs through the cached `rev_parse_commit`,
+/// so a ref that was updated mid-command (e.g. `wt merge` rewriting local
+/// `main`) returns its old SHA. For relationships where freshness matters —
+/// in particular comparing a just-updated local target against its upstream —
+/// running git directly with ref names dodges that staleness.
+fn ref_is_ancestor(repo: &Repository, base: &str, head: &str) -> bool {
+    repo.run_command_check(&["merge-base", "--is-ancestor", base, head])
+        .unwrap_or(false)
 }
 
 /// Returns true when `s` is a 40-character hex string — the canonical form
