@@ -11,9 +11,11 @@
 # prevents them from being included in releases.
 #
 # HOW THE BINARY GETS BUILT:
-# Has a dummy integration test (tests/builds.rs) that triggers binary compilation
-# when running `cargo test`. Combined with `workspace.default-members` including
-# this package, `cargo test` automatically builds the binary.
+# Has a dummy integration test (tests/mock_stub_builds.rs) that triggers binary
+# compilation when running `cargo test`. Combined with `workspace.default-members`
+# including this package, `cargo test` automatically builds the binary.
+# The test target name is crate-prefixed so cargo-affected's runner-shim can
+# disambiguate it from wt-perf's similar dummy test.
 [package]
 name = "mock-stub"
 version = "0.1.0"
