@@ -69,6 +69,15 @@ pub enum CreationMethod {
         create_branch: bool,
         /// Base branch for creation (resolved, validated to exist)
         base_branch: Option<String>,
+        /// When `--base pr:N` / `--base mr:N` (same-repo) is paired with `--create`,
+        /// the user's intent is "create a new branch tracking the PR/MR's source
+        /// branch on the remote", so `git push` from the new worktree pushes back
+        /// to that PR/MR. `git worktree add -b new <bare-name>` doesn't set up
+        /// tracking on its own (only `<remote>/<branch>` triggers DWIM, and even
+        /// then we'd unset it via the issue-#713 safety check), so we capture the
+        /// (remote, branch) pair here and configure tracking explicitly after
+        /// `git worktree add` succeeds. `None` for any other base resolution.
+        base_pr_upstream: Option<(String, String)>,
     },
     /// Fork PR/MR: fetch from refs/pull/N/head or refs/merge-requests/N/head,
     /// create branch, configure pushRemote.
