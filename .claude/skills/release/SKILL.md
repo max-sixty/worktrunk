@@ -37,9 +37,12 @@ metadata:
     MERGE_SHA=$(gh pr view --json mergeCommit --jq '.mergeCommit.oid')
     git tag vX.Y.Z "$MERGE_SHA" && git push origin vX.Y.Z
     ```
-12. **Wait for release workflow**: Poll with `gh pr checks --required` or `gh run view <run-id>` every 60 seconds until complete (avoid `gh run watch` — it can hang). Non-required checks are ignored
+12. **Wait for the release workflow**: The tag push triggers `release.yaml`. Launch a ci-reporter agent to monitor the run through to completion (avoid `gh run watch` — it can hang); the run ID comes from:
+    ```bash
+    gh run list --workflow=release.yaml --event=push --branch=vX.Y.Z --limit 1 --json databaseId --jq '.[0].databaseId'
+    ```
 
-The tag push triggers the release workflow which builds binaries and publishes to crates.io, Homebrew, and winget automatically.
+`release.yaml` builds binaries and publishes to crates.io, Homebrew, and winget automatically.
 
 ## CHANGELOG Review
 
@@ -244,18 +247,3 @@ Interpreting results:
 - **Tool fails to run** (e.g., missing baseline): likely the crate hasn't been published yet or the registry cache is stale. Try `cargo semver-checks check-release -p worktrunk --baseline-version <last-published>`.
 
 This check validates the chosen bump — it doesn't distinguish patch vs. minor when no breakage exists. Continue using the commit review to decide between patch (fixes only) and minor (new features).
-
-## Troubleshooting
-
-### Release workflow fails after tag push
-
-If the workflow fails (e.g., cargo publish error), fix the issue, then recreate the tag:
-
-```bash
-gh release delete vX.Y.Z --yes           # Delete GitHub release
-git push origin :refs/tags/vX.Y.Z        # Delete remote tag
-git tag -d vX.Y.Z                        # Delete local tag
-git tag vX.Y.Z && git push origin vX.Y.Z # Recreate and push
-```
-
-The new tag will trigger a fresh workflow run with the fixed code.
