@@ -386,10 +386,10 @@ impl Drop for HookAnnouncer<'_> {
 
 /// Announce and spawn background hook pipelines.
 ///
-/// Internal primitive: sites should construct a [`HookAnnouncer`] (one per
-/// command) and `register`/`extend` into it; `flush` lands here. The function
-/// stays separate to keep the announce/spawn formatting isolated from the
-/// announcer's pending-list bookkeeping.
+/// Module-private implementation of [`HookAnnouncer::flush`] — sites construct
+/// a [`HookAnnouncer`] (one per command) and `register`/`extend` into it;
+/// `flush` lands here. The function stays separate to keep the announce/spawn
+/// formatting isolated from the announcer's pending-list bookkeeping.
 ///
 /// Displays a single combined summary line covering all hook types, then
 /// spawns each pipeline independently. Pipelines may carry different
@@ -401,7 +401,7 @@ impl Drop for HookAnnouncer<'_> {
 /// `Running post-remove for feature: docs; post-switch for feature: zellij-tab`
 ///
 /// Without `show_branch`: `Running post-switch: zellij-tab; post-start: deps, assets, docs`
-pub(crate) fn run_hooks_background(
+fn run_hooks_background(
     pipelines: Vec<(CommandContext<'_>, Vec<SourcedStep>)>,
     show_branch: bool,
 ) -> anyhow::Result<()> {

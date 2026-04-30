@@ -725,7 +725,9 @@ pub fn execute_user_command(command: &str, display_path: Option<&Path>) -> anyho
 
 /// Handle output for a remove operation
 ///
-/// Approval is handled at the gate (command entry point), not here.
+/// Approval is handled at the gate (command entry point), not here. The
+/// `announcer`'s `show_branch` setting (set by the caller) controls whether
+/// hook announce lines include the branch name for batch-context disambiguation.
 /// When `quiet` is true (prune context), suppresses informational messages
 /// like "No worktree found for branch X" that are noise in batch operations.
 pub fn handle_remove_output(
@@ -733,8 +735,7 @@ pub fn handle_remove_output(
     foreground: bool,
     verify: bool,
     quiet: bool,
-    show_branch_in_hooks: bool,
-    announcer: Option<&mut HookAnnouncer<'_>>,
+    announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     match result {
         RemoveResult::RemovedWorktree {
@@ -762,7 +763,6 @@ pub fn handle_remove_output(
                 removed_commit: removed_commit.as_deref(),
                 foreground,
                 verify,
-                show_branch_in_hooks,
             },
             announcer,
         ),
@@ -876,22 +876,22 @@ fn handle_branch_only_output(
     Ok(())
 }
 
-/// Register or spawn post-remove and post-switch hooks after worktree removal.
+/// Register post-remove and post-switch hooks after worktree removal onto the
+/// caller's announcer.
 ///
-/// When `ctx.announcer` is `Some`, pipelines are registered on the caller's
-/// announcer so they can share an announce line with later hooks (e.g.
-/// post-merge in `wt merge`). When `None`, this self-announces and spawns —
-/// the standalone `wt remove` path.
-///
-/// Post-remove template variables reflect the removed worktree (branch, path, commit).
-/// Post-switch hooks only run when `changed_directory` is true (user cd'd to main).
+/// Pipelines come from two contexts: post-remove uses the removed worktree's
+/// identity (branch, path, commit), while post-switch (only when
+/// `changed_directory` is true) uses the destination worktree's branch. Both
+/// types share whatever announce line the caller's announcer eventually
+/// flushes — multi-phase callers (e.g. `wt merge`) batch with later phases,
+/// standalone callers (e.g. `wt remove`) flush immediately after.
 ///
 /// Only runs if `ctx.verify` is true (hooks approved).
 fn spawn_hooks_after_remove(
     repo: &Repository,
     ctx: &RemovedWorktreeOutputContext<'_>,
     removed_branch: &str,
-    announcer: Option<&mut HookAnnouncer<'_>>,
+    announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     if !ctx.verify {
         return Ok(());
@@ -946,14 +946,7 @@ fn spawn_hooks_after_remove(
         )?);
     }
 
-    if let Some(announcer) = announcer {
-        announcer.extend(pipelines);
-    } else {
-        let mut local = HookAnnouncer::new(repo, &config, ctx.show_branch_in_hooks);
-        local.extend(pipelines);
-        local.flush()?;
-    }
-
+    announcer.extend(pipelines);
     Ok(())
 }
 
@@ -1181,8 +1174,6 @@ struct RemovedWorktreeOutputContext<'a> {
     removed_commit: Option<&'a str>,
     foreground: bool,
     verify: bool,
-    /// Show branch name in hook announcements for disambiguation in batch contexts.
-    show_branch_in_hooks: bool,
 }
 
 fn execute_pre_remove_hooks_if_needed(
@@ -1248,7 +1239,7 @@ fn prepare_remove_directory_change(
 fn handle_detached_removed_worktree_output(
     repo: &Repository,
     ctx: &RemovedWorktreeOutputContext<'_>,
-    announcer: Option<&mut HookAnnouncer<'_>>,
+    announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     if ctx.foreground {
         eprintln!(
@@ -1318,7 +1309,7 @@ fn handle_named_removed_worktree_foreground(
     repo: &Repository,
     ctx: &RemovedWorktreeOutputContext<'_>,
     branch_name: &str,
-    announcer: Option<&mut HookAnnouncer<'_>>,
+    announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     eprintln!(
         "{}",
@@ -1375,7 +1366,7 @@ fn handle_named_removed_worktree_background(
     repo: &Repository,
     ctx: &RemovedWorktreeOutputContext<'_>,
     branch_name: &str,
-    announcer: Option<&mut HookAnnouncer<'_>>,
+    announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     if let Some(expected) = ctx.expected_path {
         eprintln!(
@@ -1413,7 +1404,7 @@ fn handle_named_removed_worktree_background(
 /// Handle output for RemovedWorktree removal
 fn handle_removed_worktree_output(
     ctx: RemovedWorktreeOutputContext<'_>,
-    announcer: Option<&mut HookAnnouncer<'_>>,
+    announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     // Use main_path for discovery - the worktree being removed might be cwd,
     // and git operations after removal need a valid working directory.
