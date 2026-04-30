@@ -207,6 +207,11 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
 /// program is exec'd directly without `sh -c` interposition. Directive env
 /// vars are scrubbed by `Cmd` for every spawn, so child commands run in
 /// other worktrees can't perturb the parent shell's CD/exec state.
+///
+/// Child stdout is merged onto stderr so it interleaves cleanly with
+/// for-each's decorated per-worktree headers and footers; the structured
+/// `--format=json` output is the only stdout write, emitted once after all
+/// children complete.
 fn run_argv(
     working_dir: &std::path::Path,
     argv: Vec<String>,

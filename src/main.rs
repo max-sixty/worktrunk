@@ -15,9 +15,9 @@ use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, hint_message, info_message, warning_message,
 };
 
-use commands::command_approval::approve_hooks;
+use commands::command_approval::approve_or_skip;
 use commands::command_executor::CommandContext;
-use commands::list::progressive::RenderMode;
+use commands::hooks::HookAnnouncer;
 use commands::worktree::RemoveResult;
 
 mod cli;
@@ -42,17 +42,18 @@ pub(crate) use invocation::{
 
 pub(crate) use crate::cli::OutputFormat;
 
+use commands::commit::HookGate;
 #[cfg(unix)]
 use commands::handle_picker;
 use commands::repository_ext::RepositoryCliExt;
-use commands::worktree::{handle_no_ff_merge, handle_push};
+use commands::worktree::{PushKind, handle_no_ff_merge, handle_push};
 use commands::{
-    HookCliArgs, MergeOptions, OperationMode, RebaseResult, RemoveTarget, SquashResult,
-    SwitchOptions, add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show,
-    handle_claude_install, handle_claude_install_statusline, handle_claude_uninstall,
-    handle_completions, handle_config_create, handle_config_show, handle_config_update,
-    handle_configure_shell, handle_custom_command, handle_hints_clear, handle_hints_get,
-    handle_hook_show, handle_init, handle_list, handle_logs_list, handle_merge,
+    HookCliArgs, MergeFlagOverrides, MergeOptions, OperationMode, RebaseResult, RemoveTarget,
+    SquashResult, SwitchOptions, add_approvals, clear_approvals, handle_alias_dry_run,
+    handle_alias_show, handle_claude_install, handle_claude_install_statusline,
+    handle_claude_uninstall, handle_completions, handle_config_create, handle_config_show,
+    handle_config_update, handle_configure_shell, handle_custom_command, handle_hints_clear,
+    handle_hints_get, handle_hook_show, handle_init, handle_list, handle_logs_list, handle_merge,
     handle_opencode_install, handle_opencode_uninstall, handle_promote, handle_rebase,
     handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
     handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
@@ -127,7 +128,7 @@ fn print_windows_picker_unavailable() {
     );
 }
 
-fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
+pub(crate) fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
     match (positive, negative) {
         (true, _) => Some(true),
         (_, true) => Some(false),
@@ -215,26 +216,41 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             if args.show_prompt {
                 commands::step_show_squash_prompt(args.target.as_deref())
             } else {
-                // Approval is handled inside handle_squash (like step_commit)
-                handle_squash(args.target.as_deref(), yes, verify, args.stage).map(|result| {
-                    match result {
-                        SquashResult::Squashed | SquashResult::NoNetChanges => {}
-                        SquashResult::NoCommitsAhead(branch) => {
-                            eprintln!(
-                                "{}",
-                                info_message(format!(
-                                    "Nothing to squash; no commits ahead of {branch}"
-                                ))
-                            );
-                        }
-                        SquashResult::AlreadySingleCommit => {
-                            eprintln!(
-                                "{}",
-                                info_message("Nothing to squash; already a single commit")
-                            );
-                        }
+                // Approval is handled inside handle_squash (like step_commit).
+                let repo = Repository::current()?;
+                let config = UserConfig::load().context("Failed to load config")?;
+                let hooks = if verify {
+                    HookGate::Run
+                } else {
+                    HookGate::NoHooksFlag
+                };
+                let mut announcer = HookAnnouncer::new(&repo, &config, false);
+                let result = handle_squash(
+                    args.target.as_deref(),
+                    yes,
+                    hooks,
+                    args.stage,
+                    &mut announcer,
+                )?;
+                announcer.flush()?;
+                match result {
+                    SquashResult::Squashed | SquashResult::NoNetChanges => {}
+                    SquashResult::NoCommitsAhead(branch) => {
+                        eprintln!(
+                            "{}",
+                            info_message(format!(
+                                "Nothing to squash; no commits ahead of {branch}"
+                            ))
+                        );
                     }
-                })
+                    SquashResult::AlreadySingleCommit => {
+                        eprintln!(
+                            "{}",
+                            info_message("Nothing to squash; already a single commit")
+                        );
+                    }
+                }
+                Ok(())
             }
         }
         StepCommand::Push { target, no_ff, .. } => {
@@ -243,7 +259,7 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
                 let current_branch = repo.require_current_branch("step push --no-ff")?;
                 handle_no_ff_merge(target.as_deref(), None, &current_branch)
             } else {
-                handle_push(target.as_deref(), "Pushed to", None)
+                handle_push(target.as_deref(), PushKind::Standalone, None)
             }
         }
         StepCommand::Rebase { target } => {
@@ -505,14 +521,13 @@ fn handle_list_command(args: ListArgs) -> anyhow::Result<()> {
         }
         None => {
             let (repo, _recovered) = current_or_recover()?;
-            let render_mode = RenderMode::detect(flag_pair(args.progressive, args.no_progressive));
             handle_list(
                 repo,
                 args.format,
                 args.branches,
                 args.remotes,
                 args.full,
-                render_mode,
+                flag_pair(args.progressive, args.no_progressive),
             )
         }
     }
@@ -770,18 +785,15 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     &approve_worktree_path,
                     yes,
                 );
-                let approved = approve_hooks(
+                approve_or_skip(
                     &ctx,
                     &[
                         HookType::PreRemove,
                         HookType::PostRemove,
                         HookType::PostSwitch,
                     ],
-                )?;
-                if !approved {
-                    eprintln!("{}", info_message("Commands declined, continuing removal"));
-                }
-                Ok(approved)
+                    "Commands declined, continuing removal",
+                )
             };
 
             let branches = args.branches;
@@ -807,7 +819,9 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 // "Approve at the Gate": approval happens AFTER validation passes
                 let run_hooks = verify && approve_remove(yes)?;
 
-                handle_remove_output(&result, args.foreground, run_hooks, false, false)?;
+                let mut announcer = HookAnnouncer::new(&repo, &config, false);
+                handle_remove_output(&result, args.foreground, run_hooks, false, &mut announcer)?;
+                announcer.flush()?;
                 if json_mode {
                     let json = serde_json::json!([result.to_json()]);
                     println!("{}", serde_json::to_string_pretty(&json)?);
@@ -845,14 +859,25 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 // Execute all validated plans: others first, branch-only next, current last
                 let show_branch =
                     plans.others.len() + plans.branch_only.len() + plans.current.iter().len() > 1;
+                let run = |result: &RemoveResult| -> anyhow::Result<()> {
+                    let mut announcer = HookAnnouncer::new(&repo, &config, show_branch);
+                    handle_remove_output(
+                        result,
+                        args.foreground,
+                        run_hooks,
+                        false,
+                        &mut announcer,
+                    )?;
+                    announcer.flush()
+                };
                 for result in &plans.others {
-                    handle_remove_output(result, args.foreground, run_hooks, false, show_branch)?;
+                    run(result)?;
                 }
                 for result in &plans.branch_only {
-                    handle_remove_output(result, args.foreground, run_hooks, false, show_branch)?;
+                    run(result)?;
                 }
                 if let Some(ref result) = plans.current {
-                    handle_remove_output(result, args.foreground, run_hooks, false, show_branch)?;
+                    run(result)?;
                 }
 
                 if json_mode {
@@ -1097,12 +1122,7 @@ fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {
     }
     handle_merge(MergeOptions {
         target: args.target.as_deref(),
-        squash: flag_pair(args.squash, args.no_squash),
-        commit: flag_pair(args.commit, args.no_commit),
-        rebase: flag_pair(args.rebase, args.no_rebase),
-        remove: flag_pair(args.remove, args.no_remove),
-        ff: flag_pair(args.ff, args.no_ff),
-        verify: flag_pair(args.verify, args.no_hooks || args.no_verify),
+        flags: MergeFlagOverrides::from_cli(&args),
         yes,
         stage: args.stage,
         format: args.format,

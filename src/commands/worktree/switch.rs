@@ -21,6 +21,7 @@ use worktrunk::styling::{
 use super::resolve::{compute_clobber_backup, compute_worktree_path};
 use super::types::{CreationMethod, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::commands::command_executor::CommandContext;
+use crate::commands::template_vars::TemplateVars;
 
 /// Result of resolving the switch target.
 struct ResolvedTarget {
@@ -138,6 +139,7 @@ fn resolve_fork_ref(
                 method: CreationMethod::Regular {
                     create_branch: false,
                     base_branch: None,
+                    base_pr_upstream: None,
                 },
             });
         }
@@ -164,6 +166,7 @@ fn resolve_fork_ref(
                         method: CreationMethod::Regular {
                             create_branch: false,
                             base_branch: None,
+                            base_pr_upstream: None,
                         },
                     });
                 }
@@ -267,6 +270,7 @@ fn resolve_same_repo_ref(
         method: CreationMethod::Regular {
             create_branch: false,
             base_branch: None,
+            base_pr_upstream: None,
         },
     })
 }
@@ -291,13 +295,20 @@ fn fetch_same_repo_branch(repo: &Repository, info: &RemoteRefInfo) -> anyhow::Re
 /// Resolve a `--base` value, expanding `pr:`/`mr:` shortcuts. Non-shortcut
 /// inputs go through [`Repository::resolve_worktree_name`] (handles `@`/`-`/`^`).
 ///
+/// Returns the resolved ref plus, when the user picked a `pr:`/`mr:` shortcut
+/// against a same-repo PR/MR, the `(remote, branch)` pair the new branch
+/// should be configured to track — see [`CreationMethod::Regular`].
+///
 /// When the bare name doesn't exist locally but a single remote has it,
 /// returns the remote-qualified form so the validation in
 /// [`resolve_switch_target`] doesn't reject `wt switch -c new --base
 /// remote-only-branch`. Git's rev-parse doesn't auto-expand `foo` to
 /// `refs/remotes/origin/foo`. The new branch's upstream is unset downstream
 /// to keep `git push` from targeting the base.
-fn resolve_base_ref(repo: &Repository, base: &str) -> anyhow::Result<String> {
+fn resolve_base_ref(
+    repo: &Repository,
+    base: &str,
+) -> anyhow::Result<(String, Option<(String, String)>)> {
     if let Some(suffix) = base.strip_prefix("pr:")
         && let Ok(number) = suffix.parse::<u32>()
     {
@@ -315,21 +326,22 @@ fn resolve_base_ref(repo: &Repository, base: &str) -> anyhow::Result<String> {
     if !repo.ref_exists(&resolved)? {
         let remotes = repo.branch(&resolved).remotes()?;
         if remotes.len() == 1 {
-            return Ok(format!("{}/{}", remotes[0], resolved));
+            return Ok((format!("{}/{}", remotes[0], resolved), None));
         }
     }
 
-    Ok(resolved)
+    Ok((resolved, None))
 }
 
 /// Resolve `pr:{N}` / `mr:{N}` for `--base`. Same-repo returns the source
-/// branch name; fork returns the PR head SHA so we don't create a tracking
-/// branch for a ref the user hasn't asked to check out.
+/// branch name plus the (remote, branch) the new branch should track; fork
+/// returns the PR head SHA so we don't create a tracking branch for a ref
+/// the user hasn't asked to check out.
 fn resolve_remote_ref_as_base(
     repo: &Repository,
     provider: &dyn RemoteRefProvider,
     number: u32,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<(String, Option<(String, String)>)> {
     let ref_type = provider.ref_type();
     let symbol = ref_type.symbol();
 
@@ -346,18 +358,23 @@ fn resolve_remote_ref_as_base(
 
     if !info.is_cross_repo {
         fetch_same_repo_branch(repo, &info)?;
-        return Ok(info.source_branch.clone());
+        let remote = remote_ref::find_remote(repo, &info)?;
+        return Ok((
+            info.source_branch.clone(),
+            Some((remote, info.source_branch.clone())),
+        ));
     }
 
     let remote = remote_ref::find_remote(repo, &info)?;
     let display = ref_type.display(number);
     repo.run_command(&["fetch", "--", &remote, &provider.tracking_ref(number)])
         .with_context(|| cformat!("Failed to fetch <bold>{display}</> from {remote}"))?;
-    Ok(repo
+    let sha = repo
         .run_command(&["rev-parse", "FETCH_HEAD"])
         .context("Failed to resolve FETCH_HEAD to a commit SHA")?
         .trim()
-        .to_string())
+        .to_string();
+    Ok((sha, None))
 }
 
 /// Resolve the switch target, handling pr:/mr: syntax and --create/--base flags.
@@ -396,25 +413,25 @@ fn resolve_switch_target(
     }
 
     // Resolve and validate base (only when --create is set)
-    let resolved_base = if let Some(base_str) = base {
+    let (resolved_base, base_pr_upstream) = if let Some(base_str) = base {
         if !create {
             eprintln!(
                 "{}",
                 warning_message("--base flag is only used with --create, ignoring")
             );
-            None
+            (None, None)
         } else {
-            let resolved = resolve_base_ref(repo, base_str)?;
+            let (resolved, upstream) = resolve_base_ref(repo, base_str)?;
             if !repo.ref_exists(&resolved)? {
                 return Err(GitError::ReferenceNotFound {
                     reference: resolved,
                 }
                 .into());
             }
-            Some(resolved)
+            (Some(resolved), upstream)
         }
     } else {
-        None
+        (None, None)
     };
 
     // Validate --create constraints
@@ -469,6 +486,7 @@ fn resolve_switch_target(
         method: CreationMethod::Regular {
             create_branch: create,
             base_branch,
+            base_pr_upstream,
         },
     })
 }
@@ -764,6 +782,7 @@ pub fn execute_switch(
                 CreationMethod::Regular {
                     create_branch,
                     base_branch,
+                    base_pr_upstream,
                 } => {
                     // Check if local branch exists BEFORE git worktree add (for DWIM detection)
                     let branch_handle = repo.branch(&branch);
@@ -832,6 +851,21 @@ pub fn execute_switch(
                     {
                         // Unset the upstream to prevent accidental pushes
                         branch_handle.unset_upstream()?;
+                    }
+
+                    // `--base pr:N` / `--base mr:N` against a same-repo PR/MR: the
+                    // user asked for a custom local name pointing at an existing
+                    // remote branch — wire up tracking so `git push` from the new
+                    // worktree pushes back to the PR/MR's source branch instead
+                    // of failing with "no upstream branch". See issue #2497.
+                    if *create_branch
+                        && let Some((upstream_remote, upstream_branch)) = base_pr_upstream
+                    {
+                        repo.set_config(&format!("branch.{branch}.remote"), upstream_remote)?;
+                        repo.set_config(
+                            &format!("branch.{branch}.merge"),
+                            &format!("refs/heads/{upstream_branch}"),
+                        )?;
                     }
 
                     // Report tracking info when the branch was auto-created from a remote
@@ -909,8 +943,8 @@ pub fn execute_switch(
                 .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
             // PR/MR identity travels into both the pre-start hook below and the
-            // SwitchResult — switch_extra_vars then forwards it to background
-            // post-switch / post-start hooks.
+            // SwitchResult — TemplateVars::for_post_switch then forwards it to
+            // background post-switch / post-start hooks.
             let (pr_number, pr_url) = match &method {
                 CreationMethod::ForkRef {
                     number, ref_url, ..
@@ -921,37 +955,21 @@ pub fn execute_switch(
             // Execute post-create commands
             if run_hooks {
                 let ctx = CommandContext::new(repo, config, Some(&branch), &worktree_path, force);
-                let target_wt_posix =
-                    worktrunk::path::to_posix_path(&worktree_path.to_string_lossy());
-
+                let mut vars = TemplateVars::new()
+                    .with_target(&branch)
+                    .with_target_worktree_path(&worktree_path);
                 match &method {
                     CreationMethod::Regular { base_branch, .. } => {
-                        let extra_vars: Vec<(&str, &str)> = [
-                            base_branch.as_ref().map(|b| ("base", b.as_str())),
-                            base_worktree_path
-                                .as_ref()
-                                .map(|p| ("base_worktree_path", p.as_str())),
-                            Some(("target", branch.as_str())),
-                            Some(("target_worktree_path", target_wt_posix.as_str())),
-                        ]
-                        .into_iter()
-                        .flatten()
-                        .collect();
-                        ctx.execute_pre_start_commands(&extra_vars)?;
+                        vars = vars
+                            .with_base_strs(base_branch.as_deref(), base_worktree_path.as_deref());
                     }
                     CreationMethod::ForkRef {
                         number, ref_url, ..
                     } => {
-                        let num_str = number.to_string();
-                        let extra_vars: Vec<(&str, &str)> = vec![
-                            ("pr_number", &num_str),
-                            ("pr_url", ref_url),
-                            ("target", &branch),
-                            ("target_worktree_path", &target_wt_posix),
-                        ];
-                        ctx.execute_pre_start_commands(&extra_vars)?;
+                        vars = vars.with_pr(Some(*number), Some(ref_url));
                     }
                 }
+                ctx.execute_pre_start_commands(&vars.as_extra_vars())?;
             }
 
             // Record successful switch in history

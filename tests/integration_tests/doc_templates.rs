@@ -92,7 +92,7 @@ fn test_doc_sanitize_filter(repo: TestRepo) {
 
 // =============================================================================
 // Sanitize DB Filter (docs/content/hook.md: Filters table)
-// "Transform to database-safe identifier ([a-z0-9_], max 63 chars)"
+// "Transform to database-safe identifier ([a-z0-9_], max 48 chars)"
 // =============================================================================
 
 #[rstest]
@@ -191,7 +191,7 @@ fn test_doc_sanitize_db_truncation(repo: TestRepo) {
     let repository = Repository::at(repo.root_path()).unwrap();
     let mut vars = HashMap::new();
 
-    // Truncates to 63 characters (PostgreSQL limit)
+    // Truncates to 48 characters (well within PostgreSQL's 63-char identifier limit)
     let long_branch = "a".repeat(100);
     vars.insert("branch", long_branch.as_str());
     let result = expand_template(
@@ -204,8 +204,8 @@ fn test_doc_sanitize_db_truncation(repo: TestRepo) {
     .unwrap();
     assert_eq!(
         result.len(),
-        63,
-        "sanitize_db should truncate to 63 characters"
+        48,
+        "sanitize_db should truncate to 48 characters"
     );
 }
 

@@ -173,7 +173,7 @@ Templates support Jinja2 filters for transforming values:
 | Filter | Example | Description |
 |--------|---------|-------------|
 | `sanitize` | `{{ branch \| sanitize }}` | Replace `/` and `\` with `-` |
-| `sanitize_db` | `{{ branch \| sanitize_db }}` | Database-safe identifier with hash suffix (`[a-z0-9_]`, max 63 chars) |
+| `sanitize_db` | `{{ branch \| sanitize_db }}` | Database-safe identifier with hash suffix (`[a-z0-9_]`, max 48 chars) |
 | `sanitize_hash` | `{{ branch \| sanitize_hash }}` | Filesystem-safe name with hash suffix for uniqueness |
 | `hash` | `{{ branch \| hash }}` | 3-character base36 digest of the input |
 | `hash_port` | `{{ branch \| hash_port }}` | Hash to port 10000-19999 |

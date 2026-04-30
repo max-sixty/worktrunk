@@ -1,46 +1,74 @@
 use anyhow::Context;
 use worktrunk::HookType;
-use worktrunk::config::{Approvals, UserConfig};
+use worktrunk::config::{Approvals, MergeConfig, UserConfig};
 use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, info_message};
 
 use super::command_approval::approve_command_batch;
-use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
-use super::commit::CommitOptions;
+use super::commit::{CommitOptions, HookGate};
 use super::context::CommandEnv;
-use super::hooks::{execute_hook, spawn_background_hooks};
+use super::hooks::{HookAnnouncer, execute_hook};
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
-use super::repository_ext::{
-    RepositoryCliExt, check_not_default_branch, compute_integration_reason, is_primary_worktree,
-};
+use super::repository_ext::RepositoryCliExt;
+use super::template_vars::TemplateVars;
 use super::worktree::{
-    MergeOperations, RemoveResult, handle_no_ff_merge, handle_push, path_mismatch,
+    FinishAfterMergeArgs, MergeOperations, PushKind, finish_after_merge, handle_no_ff_merge,
+    handle_push,
 };
-use worktrunk::git::BranchDeletionMode;
 
-/// Options for the merge command
-///
-/// All boolean fields are optional CLI overrides. If None, the effective config
-/// (project-specific merged with global) is used. If that's also None, defaults apply.
+/// Tri-state CLI overrides for the six `wt merge` boolean flags. `None` =
+/// fall through to effective config; `Some(b)` = user explicitly chose.
+pub struct MergeFlagOverrides {
+    pub squash: Option<bool>,
+    pub commit: Option<bool>,
+    pub rebase: Option<bool>,
+    pub remove: Option<bool>,
+    pub ff: Option<bool>,
+    pub verify: Option<bool>,
+}
+
+impl MergeFlagOverrides {
+    pub fn from_cli(args: &crate::cli::MergeArgs) -> Self {
+        Self {
+            squash: crate::flag_pair(args.squash, args.no_squash),
+            commit: crate::flag_pair(args.commit, args.no_commit),
+            rebase: crate::flag_pair(args.rebase, args.no_rebase),
+            remove: crate::flag_pair(args.remove, args.no_remove),
+            ff: crate::flag_pair(args.ff, args.no_ff),
+            verify: crate::flag_pair(args.verify, args.no_hooks || args.no_verify),
+        }
+    }
+
+    /// Apply the override → effective-config → default-true chain.
+    pub fn resolve(&self, config: &MergeConfig) -> ResolvedMergeFlags {
+        ResolvedMergeFlags {
+            squash: self.squash.unwrap_or(config.squash()),
+            commit: self.commit.unwrap_or(config.commit()),
+            rebase: self.rebase.unwrap_or(config.rebase()),
+            remove: self.remove.unwrap_or(config.remove()),
+            ff: self.ff.unwrap_or(config.ff()),
+            verify: self.verify.unwrap_or(config.verify()),
+        }
+    }
+}
+
+pub struct ResolvedMergeFlags {
+    pub squash: bool,
+    pub commit: bool,
+    pub rebase: bool,
+    pub remove: bool,
+    pub ff: bool,
+    pub verify: bool,
+}
+
+/// Options for the merge command. `flags` carries tri-state CLI overrides for
+/// the six boolean flags; `stage` is the same shape but for stage mode.
 pub struct MergeOptions<'a> {
     pub target: Option<&'a str>,
-    /// CLI override for squash. None = use effective config default.
-    pub squash: Option<bool>,
-    /// CLI override for commit. None = use effective config default.
-    pub commit: Option<bool>,
-    /// CLI override for rebase. None = use effective config default.
-    pub rebase: Option<bool>,
-    /// CLI override for remove. None = use effective config default.
-    pub remove: Option<bool>,
-    /// CLI override for ff. None = use effective config default.
-    pub ff: Option<bool>,
-    /// CLI override for verify. None = use effective config default.
-    pub verify: Option<bool>,
+    pub flags: MergeFlagOverrides,
     pub yes: bool,
-    /// CLI override for stage mode. None = use effective config default.
     pub stage: Option<super::commit::StageMode>,
-    /// Output format (text or json).
     pub format: crate::cli::SwitchFormat,
 }
 
@@ -89,12 +117,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let json_mode = opts.format == crate::cli::SwitchFormat::Json;
     let MergeOptions {
         target,
-        squash: squash_opt,
-        commit: commit_opt,
-        rebase: rebase_opt,
-        remove: remove_opt,
-        ff: ff_opt,
-        verify: verify_opt,
+        flags,
         yes,
         stage,
         ..
@@ -102,7 +125,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
 
     // Load config once, run LLM setup prompt if committing, then reuse config
     let mut config = UserConfig::load().context("Failed to load config")?;
-    if commit_opt.unwrap_or(true) {
+    if flags.commit.unwrap_or(true) {
         // One-time LLM setup prompt (errors logged internally; don't block merge)
         let _ = crate::output::prompt_commit_generation(&mut config);
     }
@@ -116,13 +139,14 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Get effective settings (project-specific merged with global, defaults applied)
     let resolved = env.resolved();
 
-    // CLI flags override config values
-    let squash = squash_opt.unwrap_or(resolved.merge.squash());
-    let commit = commit_opt.unwrap_or(resolved.merge.commit());
-    let rebase = rebase_opt.unwrap_or(resolved.merge.rebase());
-    let remove = remove_opt.unwrap_or(resolved.merge.remove());
-    let ff = ff_opt.unwrap_or(resolved.merge.ff());
-    let verify = verify_opt.unwrap_or(resolved.merge.verify());
+    let ResolvedMergeFlags {
+        squash,
+        commit,
+        rebase,
+        remove,
+        ff,
+        verify,
+    } = flags.resolve(&resolved.merge);
     let stage_mode = stage.unwrap_or(resolved.commit.stage());
 
     // Cache current worktree for multiple queries
@@ -161,14 +185,26 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let approvals = Approvals::load().context("Failed to load approvals")?;
     let approved = approve_command_batch(&all_commands, &project_id, &approvals, yes, false)?;
 
-    // If commands were declined, skip hooks but continue with merge
-    // Shadow verify to gate all subsequent hook execution on approval
-    let verify = if !approved {
+    // Commit-phase gate uses the original `verify` (before the shadow below) so it can
+    // distinguish --no-hooks from declined-approval; CommitOptions and handle_squash
+    // need that distinction to suppress a duplicate "(--no-hooks)" line.
+    let commit_hooks = HookGate::from_approval(verify, approved);
+
+    // If commands were declined, skip hooks but continue with merge.
+    // Shadow verify to gate all subsequent hook execution (pre-merge, post-merge,
+    // pre-remove, post-switch) on approval.
+    let verify = if approved {
+        verify
+    } else {
         eprintln!("{}", info_message("Commands declined, continuing merge"));
         false
-    } else {
-        verify
     };
+
+    // One announcer for the whole command's background hooks: post-commit
+    // (from auto-commit or squash), post-remove + post-switch (from worktree
+    // removal), and post-merge share a single `◎ Running …` line flushed at
+    // the end.
+    let mut announcer = HookAnnouncer::new(repo, config, false);
 
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
     let committed = if commit && current_wt.is_dirty()? {
@@ -178,26 +214,29 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             let ctx = env.context(yes);
             let mut options = CommitOptions::new(&ctx);
             options.target_branch = Some(&target_branch);
-            options.verify = verify;
+            options.hooks = commit_hooks;
             options.stage_mode = stage_mode;
             options.warn_about_untracked = stage_mode == super::commit::StageMode::All;
             options.show_no_squash_note = true;
 
-            options.commit()?;
+            options.commit(&mut announcer)?;
             true // Committed directly
         }
     } else {
         false // No dirty changes or --no-commit
     };
 
-    // Squash commits if enabled - track whether squashing occurred
+    // Squash commits if enabled - track whether squashing occurred.
+    // Pass `commit_hooks` (not the shadowed `verify`) so handle_squash gets the
+    // --no-hooks vs declined-approval distinction.
     let squashed = if squash_enabled {
         matches!(
             super::step_commands::handle_squash(
                 Some(&target_branch),
                 yes,
-                verify,
-                Some(stage_mode)
+                commit_hooks,
+                Some(stage_mode),
+                &mut announcer,
             )?,
             super::step_commands::SquashResult::Squashed
         )
@@ -220,26 +259,19 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         false // Already rebased, no rebase occurred
     };
 
-    // Target worktree path for template variables (pre-merge and post-merge hooks).
-    // Computed once here so both hook sites can reference it.
-    let target_wt_path_str = target_worktree_path
-        .as_deref()
-        .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
-
     // Run pre-merge checks unless --no-hooks was specified
     // Do this after commit/squash/rebase to validate the final state that will be pushed
     if verify {
         let ctx = env.context(yes);
-        let mut extra: Vec<(&str, &str)> = vec![("target", target_branch.as_str())];
-        if let Some(ref p) = target_wt_path_str {
-            extra.push(("target_worktree_path", p));
+        let mut vars = TemplateVars::new().with_target(&target_branch);
+        if let Some(p) = target_worktree_path.as_deref() {
+            vars = vars.with_target_worktree_path(p);
         }
         execute_hook(
             &ctx,
             HookType::PreMerge,
-            &extra,
+            &vars.as_extra_vars(),
             FailureStrategy::FailFast,
-            &[],
             crate::output::pre_hook_display_path(ctx.worktree_path),
         )?;
     }
@@ -255,111 +287,25 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         handle_no_ff_merge(Some(&target_branch), operations, &current_branch)?;
     } else {
         // Fast-forward push to target branch
-        handle_push(Some(&target_branch), "Merged to", operations)?;
+        handle_push(Some(&target_branch), PushKind::MergeFastForward, operations)?;
     }
 
-    // Destination: prefer the target branch's worktree; fall back to home path.
-    let destination_path = match target_worktree_path {
-        Some(path) => path,
-        None => repo.home_path()?,
-    };
+    let removed = finish_after_merge(
+        repo,
+        config,
+        &env,
+        &mut announcer,
+        FinishAfterMergeArgs {
+            current_branch: &current_branch,
+            target_branch: &target_branch,
+            target_worktree_path: target_worktree_path.as_deref(),
+            remove,
+            verify,
+            yes,
+        },
+    )?;
 
-    // Capture feature worktree identity BEFORE removal for post-merge template vars.
-    // After removal the feature worktree is gone, but post-merge hooks need to
-    // reference it as the Active identity (branch, worktree_path, commit).
-    let feature_path_str = worktrunk::path::to_posix_path(&env.worktree_path.to_string_lossy());
-    let feature_name = env
-        .worktree_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string();
-    let feature_commit = repo
-        .current_worktree()
-        .run_command(&["rev-parse", "HEAD"])
-        .ok()
-        .map(|s| s.trim().to_string());
-    let feature_short_commit = feature_commit
-        .as_ref()
-        .filter(|c| c.len() >= 7)
-        .map(|c| c[..7].to_string());
-
-    // Finish worktree unless removal is disabled or blocked.
-    // Guards are shared with `wt remove`: is_primary_worktree (Phase 2) and
-    // check_not_default_branch (Phase 3) are the same helpers both paths use.
-    let removed = if !remove {
-        eprintln!("{}", info_message("Worktree preserved (--no-remove)"));
-        false
-    } else if on_target {
-        eprintln!(
-            "{}",
-            info_message("Worktree preserved (already on target branch)")
-        );
-        false
-    } else if is_primary_worktree(repo)? {
-        eprintln!("{}", info_message("Worktree preserved (primary worktree)"));
-        false
-    } else {
-        // Phase 3: reject removing default branch (merge always uses SafeDelete).
-        check_not_default_branch(repo, &current_branch, &BranchDeletionMode::SafeDelete)?;
-
-        let current_wt = repo.current_worktree();
-        current_wt.ensure_clean("remove worktree after merge", Some(&current_branch), false)?;
-
-        let worktree_root = current_wt.root()?;
-        let (integration_reason, _) = compute_integration_reason(
-            repo,
-            Some(&current_branch),
-            Some(&target_branch),
-            BranchDeletionMode::SafeDelete,
-        );
-        let expected_path = path_mismatch(repo, &current_branch, &worktree_root, config);
-
-        let remove_result = RemoveResult::RemovedWorktree {
-            main_path: destination_path.clone(),
-            worktree_path: worktree_root,
-            changed_directory: true,
-            branch_name: Some(current_branch.to_string()),
-            deletion_mode: BranchDeletionMode::SafeDelete,
-            target_branch: Some(target_branch.to_string()),
-            integration_reason,
-            force_worktree: false,
-            expected_path,
-            removed_commit: feature_commit.clone(),
-        };
-        crate::output::handle_remove_output(&remove_result, false, verify, false, false)?;
-        true
-    };
-
-    if verify {
-        // Post-merge hooks run in the destination worktree (target), but bare vars
-        // point to the Active (feature branch) per the template variable model.
-        // The destination worktree is the execution context (cwd).
-        let ctx = CommandContext::new(repo, config, Some(&current_branch), &destination_path, yes);
-        let display_path = if removed {
-            crate::output::post_hook_display_path(&destination_path)
-        } else {
-            crate::output::pre_hook_display_path(&destination_path)
-        };
-
-        // Override bare vars to Active (feature branch identity)
-        let mut extra: Vec<(&str, &str)> = vec![("target", target_branch.as_str())];
-        if let Some(ref p) = target_wt_path_str {
-            extra.push(("target_worktree_path", p));
-        }
-        // Active = feature: override worktree_path and friends
-        extra.push(("worktree_path", &feature_path_str));
-        extra.push(("worktree", &feature_path_str)); // deprecated alias
-        extra.push(("worktree_name", &feature_name));
-        if let Some(ref c) = feature_commit {
-            extra.push(("commit", c));
-        }
-        if let Some(ref sc) = feature_short_commit {
-            extra.push(("short_commit", sc));
-        }
-
-        spawn_background_hooks(&ctx, HookType::PostMerge, &extra, display_path)?;
-    }
+    announcer.flush()?;
 
     if json_mode {
         let output = serde_json::json!({

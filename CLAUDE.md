@@ -305,6 +305,10 @@ cargo bench --bench list bench_list_by_worktree_count # specific benchmark
 
 Real repo benchmarks clone rust-lang/rust (~2-5 min first run, cached thereafter). Skip with `--skip real`. See `benches/CLAUDE.md` for methodology and adding new benchmarks.
 
+### Don't wait for CI `benchmarks` before merging
+
+The `benchmarks` job is non-required — only `test (linux)`, `test (macos)`, and `test (windows)` block merge. Bench runs can take 80+ minutes (the `rust-lang/rust` clone plus a full `cargo bench`) and are often still pending when required checks have already passed. `gh pr view` reports `mergeStateStatus: UNSTABLE` in that state — that's mergeable, and it's generally fine to merge without waiting.
+
 ## JSON Output Format
 
 Use `wt list --format=json` for structured data access. See `wt list --help` for complete field documentation, status variants, and query examples.

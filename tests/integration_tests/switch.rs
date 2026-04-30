@@ -1101,6 +1101,29 @@ fn test_switch_detached_worktree_by_path(mut repo: TestRepo) {
     );
 }
 
+/// Switch via a symlink that resolves to an existing worktree (#2460).
+#[cfg(unix)]
+#[rstest]
+fn test_switch_worktree_by_symlinked_path(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-symlinked");
+
+    let symlink_path = worktree_path.parent().unwrap().join("worktree-link");
+    std::os::unix::fs::symlink(&worktree_path, &symlink_path).unwrap();
+
+    let symlink_str = symlink_path.to_string_lossy().to_string();
+    let output = repo
+        .wt_command()
+        .args(["switch", &symlink_str])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt switch via symlink should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// Switch to a detached worktree by relative path (#1661).
 /// Relative paths with directory separators (e.g., "../repo.feature") are resolved against CWD.
 #[rstest]
@@ -2445,6 +2468,99 @@ fn test_switch_base_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
         configure_mock_gh_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_base_pr_same_repo", cmd);
     });
+}
+
+/// Reproduction for #2497: `wt switch --create X --base pr:N` should set the
+/// new local branch's upstream to the PR's source branch on the remote, so
+/// `git push` from the new worktree pushes back to the PR rather than failing
+/// with "no upstream branch".
+#[rstest]
+fn test_switch_base_pr_sets_upstream(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let pr_source_branch = "feature-this-is-a-very-long-pr-source-branch-name";
+    repo.add_worktree(pr_source_branch);
+    repo.run_git(&["push", "origin", pr_source_branch]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = format!(
+        r#"{{
+        "title": "Some PR title",
+        "user": {{"login": "alice"}},
+        "state": "open",
+        "draft": false,
+        "head": {{
+            "ref": "{pr_source_branch}",
+            "repo": {{"name": "test-repo", "owner": {{"login": "owner"}}}}
+        }},
+        "base": {{
+            "ref": "main",
+            "repo": {{"name": "test-repo", "owner": {{"login": "owner"}}}}
+        }},
+        "html_url": "https://github.com/owner/test-repo/pull/2648"
+    }}"#
+    );
+
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(&gh_response));
+
+    let mut cmd = repo.wt_command();
+    cmd.args([
+        "switch", "--create", "swa-65", "--base", "pr:2648", "--no-cd",
+    ]);
+    configure_mock_gh_env(&mut cmd, &mock_bin);
+    let status = cmd.status().expect("wt switch should run");
+    assert!(status.success(), "wt switch failed: {:?}", status);
+
+    let remote = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "--get", "branch.swa-65.remote"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    let merge = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "--get", "branch.swa-65.merge"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    assert_eq!(
+        remote, "origin",
+        "branch.swa-65.remote should be set so `git push` knows where to push"
+    );
+    assert_eq!(
+        merge,
+        format!("refs/heads/{pr_source_branch}"),
+        "branch.swa-65.merge should target the PR's source branch on the remote"
+    );
 }
 
 /// `wt switch --create X --base pr:N` resolves a fork PR to its head commit

@@ -44,8 +44,8 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-
------ stderr -----
-[0mfirst=alpha
+first=alpha
 count=2
 each= alpha beta gamma
+
+----- stderr -----

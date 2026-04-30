@@ -555,13 +555,10 @@ impl<'a> WorkingTree<'a> {
             .unwrap_or("HEAD")
             .to_string();
 
-        // Sanitize branch name for use in ref path (replace / with -)
-        let safe_branch = branch.replace('/', "-");
-
-        // Update a custom ref to point to this commit
-        // --create-reflog ensures the reflog is created for this custom ref
-        // This creates a reflog entry but doesn't add to the stash list
-        let ref_name = format!("refs/wt-backup/{}", safe_branch);
+        // Slashes are valid in ref names, so use the branch as-is —
+        // flattening `/` to `-` would collide e.g. `a/b` with `a-b`.
+        // --create-reflog creates the reflog without adding to the stash list.
+        let ref_name = format!("refs/wt-backup/{}", branch);
         self.run_command(&[
             "update-ref",
             "--create-reflog",
@@ -676,6 +673,34 @@ mod tests {
         let info = wt.prewarm_info().unwrap();
         assert!(!info.is_inside);
         assert!(info.root.is_none());
+    }
+
+    #[test]
+    fn create_safety_backup_distinguishes_slash_and_dash_branches() {
+        // Branches `a/b` and `a-b` must back up to distinct refs;
+        // flattening `/` to `-` would let one backup clobber the other.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let wt = repo.worktree_at(test.root_path());
+
+        for branch in ["a/b", "a-b"] {
+            test.run_git(&["switch", "-c", branch]);
+            // Modify the tracked file so `git stash create` picks up changes.
+            std::fs::write(test.root_path().join("file.txt"), branch).unwrap();
+            wt.create_safety_backup(&format!("{branch} (squash)"))
+                .unwrap();
+            test.run_git(&["checkout", "--", "file.txt"]);
+            test.run_git(&["switch", "main"]);
+        }
+
+        let refs = test.git_output(&["for-each-ref", "--format=%(refname)", "refs/wt-backup/"]);
+        let mut listed: Vec<&str> = refs.lines().collect();
+        listed.sort();
+        assert_eq!(
+            listed,
+            vec!["refs/wt-backup/a-b", "refs/wt-backup/a/b"],
+            "expected distinct backup refs for `a/b` and `a-b`, got: {refs}"
+        );
     }
 
     #[test]

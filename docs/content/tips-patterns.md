@@ -170,7 +170,7 @@ Custom emoji markers show agent state in `wt list`. The [Claude Code](@/claude-c
 
 Set status manually for any workflow:
 
-{{ terminal(cmd="wt config state marker set &quot;🚧&quot;                   # Current branch|||wt config state marker set &quot;✅&quot; --branch feature  # Specific branch|||git config worktrunk.state.feature.marker '{&quot;marker&quot;:&quot;💬&quot;,&quot;set_at&quot;:0}'  # Direct") }}
+{{ terminal(cmd="wt config state marker set __WT_QUOT__🚧__WT_QUOT__                   # Current branch|||wt config state marker set __WT_QUOT__✅__WT_QUOT__ --branch feature  # Specific branch|||git config worktrunk.state.feature.marker '{__WT_QUOT__marker__WT_QUOT__:__WT_QUOT__💬__WT_QUOT__,__WT_QUOT__set_at__WT_QUOT__:0}'  # Direct") }}
 
 See [Claude Code Integration](@/claude-code.md#installation) for plugin installation.
 
@@ -265,7 +265,7 @@ Branch from current HEAD instead of the default branch:
 Spawn a worktree with an agent CLI running in the background. Examples below use `claude`; for OpenCode, replace `claude` with `'opencode run'`.
 
 **tmux** (new detached session):
-{{ terminal(cmd="tmux new-session -d -s fix-auth-bug &quot;wt switch --create fix-auth-bug -x claude -- \|||  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'&quot;") }}
+{{ terminal(cmd="tmux new-session -d -s fix-auth-bug __WT_QUOT__wt switch --create fix-auth-bug -x claude -- \|||  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'__WT_QUOT__") }}
 
 **Zellij** (new pane in current session):
 {{ terminal(cmd="zellij run -- wt switch --create fix-auth-bug -x claude -- \|||  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'") }}
@@ -374,13 +374,13 @@ url = "http://{{ branch | sanitize }}.{{ repo }}.localhost:8080"
 
 Follow background hook output in real-time:
 
-{{ terminal(cmd="tail -f &quot;$(wt config state logs get --hook=user:post-start:server)&quot;") }}
+{{ terminal(cmd="tail -f __WT_QUOT__$(wt config state logs get --hook=user:post-start:server)__WT_QUOT__") }}
 
 The `--hook` format is `source:hook-type:name` — e.g., `project:post-start:build` for project-defined hooks. Use `wt config state logs get` to list all available logs.
 
 Create an alias for frequent use:
 
-{{ terminal(cmd="alias wtlog='f() { tail -f &quot;$(wt config state logs get --hook=&quot;$1&quot;)&quot;; }; f'") }}
+{{ terminal(cmd="alias wtlog='f() { tail -f __WT_QUOT__$(wt config state logs get --hook=__WT_QUOT__$1__WT_QUOT__)__WT_QUOT__; }; f'") }}
 
 ## Bare repository layout
 
