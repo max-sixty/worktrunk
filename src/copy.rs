@@ -148,13 +148,41 @@ pub fn copy_dir_recursive(
     force: bool,
     progress: &Progress,
 ) -> anyhow::Result<(usize, u64)> {
+    copy_dir_recursive_inner(src, dest, None, force, progress)
+}
+
+/// Copy a directory tree, refusing destination directory ancestry that resolves
+/// outside `root`.
+pub fn copy_dir_recursive_within_root(
+    src: &Path,
+    dest: &Path,
+    root: &Path,
+    force: bool,
+    progress: &Progress,
+) -> anyhow::Result<(usize, u64)> {
+    copy_dir_recursive_inner(src, dest, Some(root), force, progress)
+}
+
+fn copy_dir_recursive_inner(
+    src: &Path,
+    dest: &Path,
+    root: Option<&Path>,
+    force: bool,
+    progress: &Progress,
+) -> anyhow::Result<(usize, u64)> {
     // Phase 1: Walk directories iteratively, creating dest dirs and collecting leaves.
+    // When `root` is set, every directory we descend into is checked against the
+    // boundary; leaves inherit that guarantee because `entry.file_name()` is a
+    // single basename and cannot escape the validated `dest_dir`.
     let mut leaves = Vec::new();
     let mut dir_stack = vec![(src.to_path_buf(), dest.to_path_buf())];
     #[cfg(unix)]
     let mut dirs_for_perms: Vec<(PathBuf, PathBuf)> = Vec::new();
 
     while let Some((src_dir, dest_dir)) = dir_stack.pop() {
+        if let Some(root) = root {
+            ensure_path_within_root(&dest_dir, root)?;
+        }
         fs::create_dir_all(&dest_dir)
             .with_context(|| format!("creating directory {}", dest_dir.display()))?;
         #[cfg(unix)]
@@ -198,77 +226,6 @@ pub fn copy_dir_recursive(
     // Phase 3: Preserve source directory permissions AFTER copying contents.
     // Must be done after copying — if the source lacks write permission (e.g., 0o555),
     // setting it before copying would make the destination read-only and fail the copies.
-    #[cfg(unix)]
-    for (src_dir, dest_dir) in &dirs_for_perms {
-        let src_perms = fs::metadata(src_dir)
-            .with_context(|| format!("reading permissions for {}", src_dir.display()))?
-            .permissions();
-        fs::set_permissions(dest_dir, src_perms)
-            .with_context(|| format!("setting permissions on {}", dest_dir.display()))?;
-    }
-
-    Ok((copied_files.into_inner(), copied_bytes.into_inner()))
-}
-
-/// Copy a directory tree, refusing destination directory ancestry that resolves
-/// outside `root`.
-pub fn copy_dir_recursive_within_root(
-    src: &Path,
-    dest: &Path,
-    root: &Path,
-    force: bool,
-    progress: &Progress,
-) -> anyhow::Result<(usize, u64)> {
-    // Phase 1: Walk directories iteratively, creating dest dirs and collecting leaves.
-    let mut leaves = Vec::new();
-    let mut dir_stack = vec![(src.to_path_buf(), dest.to_path_buf())];
-    #[cfg(unix)]
-    let mut dirs_for_perms: Vec<(PathBuf, PathBuf)> = Vec::new();
-
-    while let Some((src_dir, dest_dir)) = dir_stack.pop() {
-        ensure_path_within_root(&dest_dir, root)?;
-        fs::create_dir_all(&dest_dir)
-            .with_context(|| format!("creating directory {}", dest_dir.display()))?;
-        #[cfg(unix)]
-        dirs_for_perms.push((src_dir.clone(), dest_dir.clone()));
-
-        let entries: Vec<_> = fs::read_dir(&src_dir)?.collect::<Result<Vec<_>, _>>()?;
-        for entry in entries {
-            let file_type = entry.file_type()?;
-            let src_path = entry.path();
-            let dest_path = dest_dir.join(entry.file_name());
-
-            if file_type.is_dir() {
-                dir_stack.push((src_path, dest_path));
-            } else if file_type.is_file() || file_type.is_symlink() {
-                ensure_parent_within_root(&dest_path, root)?;
-                leaves.push(CopyLeaf {
-                    src: src_path,
-                    dest: dest_path,
-                });
-            } else {
-                log::debug!("skipping non-regular file: {}", src_path.display());
-            }
-        }
-    }
-
-    // Phase 2: Copy all leaves in parallel.
-    let copied_files = AtomicUsize::new(0);
-    let copied_bytes = AtomicU64::new(0);
-    COPY_POOL.install(|| {
-        leaves
-            .par_iter()
-            .try_for_each(|leaf| -> anyhow::Result<()> {
-                if let Some(bytes) = copy_leaf(&leaf.src, &leaf.dest, force)? {
-                    copied_files.fetch_add(1, Ordering::Relaxed);
-                    copied_bytes.fetch_add(bytes, Ordering::Relaxed);
-                    progress.record(bytes);
-                }
-                Ok(())
-            })
-    })?;
-
-    // Phase 3: Preserve source directory permissions AFTER copying contents.
     #[cfg(unix)]
     for (src_dir, dest_dir) in &dirs_for_perms {
         let src_perms = fs::metadata(src_dir)
