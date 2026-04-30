@@ -5,20 +5,17 @@ use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, info_message};
 
 use super::command_approval::approve_command_batch;
-use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
 use super::commit::{CommitOptions, HookGate};
 use super::context::CommandEnv;
 use super::hooks::{HookAnnouncer, execute_hook};
 use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
-use super::repository_ext::{
-    RepositoryCliExt, check_not_default_branch, compute_integration_reason, is_primary_worktree,
-};
+use super::repository_ext::RepositoryCliExt;
 use super::template_vars::TemplateVars;
 use super::worktree::{
-    MergeOperations, PushKind, RemoveResult, handle_no_ff_merge, handle_push, path_mismatch,
+    FinishAfterMergeArgs, FinishAfterMergeResult, MergeOperations, PushKind, finish_after_merge,
+    handle_no_ff_merge, handle_push,
 };
-use worktrunk::git::BranchDeletionMode;
 
 /// Tri-state CLI overrides for the six `wt merge` boolean flags. `None` =
 /// fall through to effective config; `Some(b)` = user explicitly chose.
@@ -293,101 +290,21 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         handle_push(Some(&target_branch), PushKind::MergeFastForward, operations)?;
     }
 
-    // Destination: prefer the target branch's worktree; fall back to home path.
-    let destination_path = match target_worktree_path.as_deref() {
-        Some(path) => path.to_path_buf(),
-        None => repo.home_path()?,
-    };
-
-    // Capture feature worktree identity BEFORE removal as Active overrides for
-    // post-merge hooks. After removal the feature worktree is gone, but
-    // post-merge hooks need to reference its branch, path, and commit.
-    let mut feature_vars = TemplateVars::new().with_active_worktree(&env.worktree_path);
-    let feature_commit = repo
-        .current_worktree()
-        .run_command(&["rev-parse", "HEAD"])
-        .ok()
-        .map(|s| s.trim().to_string());
-    if let Some(commit) = feature_commit.as_deref() {
-        feature_vars = feature_vars.with_active_commit(commit);
-    }
-
-    // Finish worktree unless removal is disabled or blocked.
-    // Guards are shared with `wt remove`: is_primary_worktree (Phase 2) and
-    // check_not_default_branch (Phase 3) are the same helpers both paths use.
-    let removed = if !remove {
-        eprintln!("{}", info_message("Worktree preserved (--no-remove)"));
-        false
-    } else if on_target {
-        eprintln!(
-            "{}",
-            info_message("Worktree preserved (already on target branch)")
-        );
-        false
-    } else if is_primary_worktree(repo)? {
-        eprintln!("{}", info_message("Worktree preserved (primary worktree)"));
-        false
-    } else {
-        // Phase 3: reject removing default branch (merge always uses SafeDelete).
-        check_not_default_branch(repo, &current_branch, &BranchDeletionMode::SafeDelete)?;
-
-        let current_wt = repo.current_worktree();
-        current_wt.ensure_clean("remove worktree after merge", Some(&current_branch), false)?;
-
-        let worktree_root = current_wt.root()?;
-        let (integration_reason, _) = compute_integration_reason(
-            repo,
-            Some(&current_branch),
-            Some(&target_branch),
-            BranchDeletionMode::SafeDelete,
-        );
-        let expected_path = path_mismatch(repo, &current_branch, &worktree_root, config);
-
-        let remove_result = RemoveResult::RemovedWorktree {
-            main_path: destination_path.clone(),
-            worktree_path: worktree_root,
-            changed_directory: true,
-            branch_name: Some(current_branch.to_string()),
-            deletion_mode: BranchDeletionMode::SafeDelete,
-            target_branch: Some(target_branch.to_string()),
-            integration_reason,
-            force_worktree: false,
-            expected_path,
-            removed_commit: feature_commit.clone(),
-        };
-        crate::output::handle_remove_output(
-            &remove_result,
-            false,
+    let FinishAfterMergeResult { removed } = finish_after_merge(
+        repo,
+        config,
+        &env,
+        &mut announcer,
+        FinishAfterMergeArgs {
+            current_branch: &current_branch,
+            target_branch: &target_branch,
+            target_worktree_path: target_worktree_path.as_deref(),
+            on_target,
+            remove,
             verify,
-            false,
-            false,
-            Some(&mut announcer),
-        )?;
-        true
-    };
-
-    if verify {
-        // Post-merge hooks run in the destination worktree (target), but bare vars
-        // point to the Active (feature branch) per the template variable model.
-        // The destination worktree is the execution context (cwd).
-        let ctx = CommandContext::new(repo, config, Some(&current_branch), &destination_path, yes);
-        let display_path = if removed {
-            crate::output::post_hook_display_path(&destination_path)
-        } else {
-            crate::output::pre_hook_display_path(&destination_path)
-        };
-
-        let mut vars = feature_vars.with_target(&target_branch);
-        if let Some(p) = target_worktree_path.as_deref() {
-            vars = vars.with_target_worktree_path(p);
-        }
-        announcer.register(
-            &ctx,
-            HookType::PostMerge,
-            &vars.as_extra_vars(),
-            display_path,
-        )?;
-    }
+            yes,
+        },
+    )?;
 
     announcer.flush()?;
 
