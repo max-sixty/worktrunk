@@ -92,12 +92,12 @@ fn test_for_each_spawn_fails(mut repo: TestRepo) {
     ));
 }
 
-/// argv boundaries and quoting from the post-`--` args must survive the trip
-/// through `sh -c`. Without per-arg shell-escaping the user's quoting is
-/// lost: `python3 -c 'import sys; print(sys.argv[1:])' 'a b'` collapses into
-/// a `Syntax error: word unexpected (expecting ")")` because the inline `;`
-/// and `()` inside the `-c` body break out of the unquoted reconstruction.
-/// See issue #2461.
+/// argv boundaries from the post-`--` args reach the program intact. The
+/// command is exec'd directly — no implicit shell — so each argv element
+/// arrives at the child as a single argument regardless of its content.
+/// See issue #2461 for the legacy bug where joining argv into `sh -c`
+/// collapsed `python3 -c 'import sys; print(sys.argv[1:])' 'a b'` into a
+/// shell syntax error.
 #[rstest]
 #[cfg(unix)]
 fn test_for_each_preserves_argv_quoting(repo: TestRepo) {
@@ -134,36 +134,22 @@ fn test_for_each_preserves_argv_quoting(repo: TestRepo) {
     );
 }
 
-/// Force the shell spawn itself to fail (rather than the command inside the
-/// shell exiting non-zero) by setting `PATH` to a directory that contains
-/// only `git` (so wt can still operate) but no `sh` (so the child shell
-/// spawn fails). This is the only branch in the failure handler that does
-/// NOT downcast to `WorktrunkError::ChildProcessExited`, and it appears in
-/// JSON mode as `exit_code: null`. Without this test the spawn-failed JSON
-/// path is unreachable from the integration suite (#2089 review).
+/// Spawn failure (program not found) is the one branch in the failure
+/// handler that does NOT downcast to `WorktrunkError::ChildProcessExited`,
+/// and it appears in JSON mode as `exit_code: null`. Without this test the
+/// spawn-failed JSON path is unreachable from the integration suite
+/// (#2089 review).
 #[rstest]
 #[cfg(unix)]
 fn test_for_each_json_spawn_failure(repo: TestRepo) {
-    use std::path::PathBuf;
-
-    // Locate a real `git` so we can symlink it into the minimal PATH dir.
-    // wt itself shells out to git constantly; clearing PATH entirely makes
-    // wt fail before it ever reaches the shell-spawn branch we want to test.
-    let git_path: PathBuf = std::env::var_os("PATH")
-        .iter()
-        .flat_map(std::env::split_paths)
-        .map(|p| p.join("git"))
-        .find(|p| p.is_file())
-        .expect("git must be in PATH for tests");
-
-    let tmp = tempfile::tempdir().expect("create tmpdir for minimal PATH");
-    std::os::unix::fs::symlink(&git_path, tmp.path().join("git"))
-        .expect("symlink git into minimal PATH");
-    // Deliberately do NOT symlink `sh` — that's what makes the shell spawn fail.
-
     let mut cmd = repo.wt_command();
-    cmd.env("PATH", tmp.path());
-    cmd.args(["step", "for-each", "--format=json", "--", "true"]);
+    cmd.args([
+        "step",
+        "for-each",
+        "--format=json",
+        "--",
+        "nonexistent-command-12345",
+    ]);
     let output = cmd.output().unwrap();
 
     assert!(
@@ -212,9 +198,9 @@ fn test_for_each_aborts_on_signal_exit(repo: TestRepo) {
     // so we just need the command to abort on the first visit.
 
     // A marker file per visited worktree lets us assert that the loop stopped
-    // after the first signal. for-each shell-escapes each post-`--` argv
-    // element before passing the result through `sh -c`, so shell features
-    // (`&&`, `$$`, `$(...)`) must be packaged into a single argv string.
+    // after the first signal. for-each exec's argv directly with no implicit
+    // shell, so shell features (`&&`, `$$`, `$(...)`) need an explicit
+    // `sh -c` invocation.
     let marker_dir = tempfile::tempdir().expect("create marker tmpdir");
     let marker_path = marker_dir.path().to_string_lossy().to_string();
 
@@ -222,7 +208,7 @@ fn test_for_each_aborts_on_signal_exit(repo: TestRepo) {
 
     let output = repo
         .wt_command()
-        .args(["step", "for-each", "--", &shell_cmd])
+        .args(["step", "for-each", "--", "sh", "-c", &shell_cmd])
         .output()
         .expect("run wt step for-each");
 

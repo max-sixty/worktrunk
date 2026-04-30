@@ -538,31 +538,27 @@ Run command in each worktree. Executes sequentially with real-time output; conti
 
 A summary of successes and failures is shown at the end. Context JSON is piped to stdin for scripts that need structured data.
 
-### Argument forms
+### Arguments
 
-Multiple post-`--` arguments are treated as argv: each element is shell-escaped before the command is passed to `sh -c`, so quoting and argument boundaries survive. To compose shell features (pipes, `&&`, redirects), pass a single quoted argument containing the shell snippet.
+Arguments after `--` are the program and its arguments — run directly, no shell.
+
+{{ terminal(cmd="wt step for-each -- npm install|||wt step for-each -- python3 -c 'import sys; print(sys.argv[1:])' 'a b'") }}
+
+For pipes, redirects, variables, or globs, wrap in `sh -c`:
+
+{{ terminal(cmd="wt step for-each -- sh -c 'git status | wc -l'|||wt step for-each -- sh -c 'echo $HOME && git pull'") }}
 
 ### Template variables
 
-All variables are shell-escaped. See [`wt hook` template variables](@/hook.md#template-variables) for the complete list and filters.
+Variables substitute into each argv element before exec. See [`wt hook` template variables](@/hook.md#template-variables) for the complete list and filters.
+
+{{ terminal(cmd="wt step for-each -- echo 'Branch: __WT_OPEN__ branch __WT_CLOSE__'") }}
 
 ### Examples
 
-Check status across all worktrees:
-
-{{ terminal(cmd="wt step for-each -- git status --short") }}
-
-Run npm install in all worktrees:
-
-{{ terminal(cmd="wt step for-each -- npm install") }}
-
-Use branch name in command:
-
-{{ terminal(cmd="wt step for-each -- __WT_QUOT__echo Branch: __WT_OPEN__ branch __WT_CLOSE____WT_QUOT__") }}
-
 Pull updates in worktrees with upstreams (skips others):
 
-{{ terminal(cmd="git fetch --prune && wt step for-each -- '[ __WT_QUOT__$(git rev-parse @{u} 2>/dev/null)__WT_QUOT__ ] || exit 0; git pull --autostash'") }}
+{{ terminal(cmd="git fetch --prune && wt step for-each -- sh -c '[ __WT_QUOT__$(git rev-parse @{u} 2>/dev/null)__WT_QUOT__ ] || exit 0; git pull --autostash'") }}
 
 Note: This command is experimental and may change in future versions.
 

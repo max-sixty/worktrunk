@@ -1445,9 +1445,8 @@ fn handle_removed_worktree_output(ctx: RemovedWorktreeOutputContext<'_>) -> anyh
 /// through (raw path, no injection surface); the EXEC file is never passed
 /// through — only wt-internal Rust code writes arbitrary shell directives.
 ///
-/// - `DirectivePassthrough::none()` — scrubs all directive env vars from the
-///   child. Used by `for-each` (runs in other worktrees) and background hooks
-///   (outlive the parent shell).
+/// - `DirectivePassthrough::default()` — scrubs all directive env vars from
+///   the child. Used by background hooks (outlive the parent shell).
 /// - `DirectivePassthrough::inherit_from_env()` — re-adds whichever directive
 ///   env vars are currently set in this process. Used by aliases and
 ///   foreground hooks, which may emit `cd` directives. In new-protocol mode
@@ -1515,10 +1514,11 @@ pub fn execute_shell_command(
 
 /// Selector for which directive file env vars to pass through to a child shell.
 ///
-/// Constructed by callers via [`DirectivePassthrough::none`] or
-/// [`DirectivePassthrough::inherit_from_env`]. The EXEC file is intentionally
-/// never included — alias/hook shell bodies must not inject arbitrary shell
-/// into the parent session.
+/// `Default` (no fields set) scrubs all directive env vars from the child;
+/// [`DirectivePassthrough::inherit_from_env`] reads the current process
+/// environment for trusted contexts. The EXEC file is intentionally never
+/// included — alias/hook shell bodies must not inject arbitrary shell into
+/// the parent session.
 #[derive(Debug, Default, Clone)]
 pub struct DirectivePassthrough {
     pub cd_file: Option<std::path::PathBuf>,
@@ -1526,11 +1526,6 @@ pub struct DirectivePassthrough {
 }
 
 impl DirectivePassthrough {
-    /// Scrub all directive file env vars from the child process.
-    pub fn none() -> Self {
-        Self::default()
-    }
-
     /// Pass CD and legacy directive files through to the child, reading the
     /// current process environment. Used by trusted contexts (aliases,
     /// foreground hooks) that may legitimately emit a `cd` directive. The

@@ -488,7 +488,7 @@ mod tests {
             "job",
             "true",
             Some("test-label"),
-            &DirectivePassthrough::none(),
+            &DirectivePassthrough::default(),
         );
         assert_eq!(outcomes.len(), 1);
         assert!(outcomes[0].is_ok(), "`true` should exit 0");

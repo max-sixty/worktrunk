@@ -421,38 +421,36 @@ Note: This command is experimental and may change in future versions.
     #[command(
         after_long_help = r#"A summary of successes and failures is shown at the end. Context JSON is piped to stdin for scripts that need structured data.
 
-## Argument forms
+## Arguments
 
-Multiple post-`--` arguments are treated as argv: each element is shell-escaped before the command is passed to `sh -c`, so quoting and argument boundaries survive. To compose shell features (pipes, `&&`, redirects), pass a single quoted argument containing the shell snippet.
-
-## Template variables
-
-All variables are shell-escaped. See [`wt hook` template variables](@/hook.md#template-variables) for the complete list and filters.
-
-## Examples
-
-Check status across all worktrees:
-
-```console
-$ wt step for-each -- git status --short
-```
-
-Run npm install in all worktrees:
+Arguments after `--` are the program and its arguments — run directly, no shell.
 
 ```console
 $ wt step for-each -- npm install
+$ wt step for-each -- python3 -c 'import sys; print(sys.argv[1:])' 'a b'
 ```
 
-Use branch name in command:
+For pipes, redirects, variables, or globs, wrap in `sh -c`:
 
 ```console
-$ wt step for-each -- "echo Branch: {{ branch }}"
+$ wt step for-each -- sh -c 'git status | wc -l'
+$ wt step for-each -- sh -c 'echo $HOME && git pull'
 ```
+
+## Template variables
+
+Variables substitute into each argv element before exec. See [`wt hook` template variables](@/hook.md#template-variables) for the complete list and filters.
+
+```console
+$ wt step for-each -- echo 'Branch: {{ branch }}'
+```
+
+## Examples
 
 Pull updates in worktrees with upstreams (skips others):
 
 ```console
-$ git fetch --prune && wt step for-each -- '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
+$ git fetch --prune && wt step for-each -- sh -c '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
 ```
 
 Note: This command is experimental and may change in future versions.
