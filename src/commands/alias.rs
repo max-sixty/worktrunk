@@ -25,10 +25,13 @@
 //!
 //! User-config aliases are trusted (skip approval). Project-config aliases
 //! require command approval. When both define the same alias, both run — user
-//! first, then project. The CD directive file is passed through to child
-//! processes so inner `wt` invocations can redirect the parent shell's cwd;
-//! the EXEC directive file is scrubbed so alias bodies cannot inject
-//! arbitrary shell into the interactive session.
+//! first, then project. Steps are tagged with their source (`HookSource::User`
+//! / `Project`), and `sourced_steps_to_foreground` applies per-step
+//! `DirectivePassthrough`: the CD directive file is passed through to every
+//! step so inner `wt` invocations can redirect the parent shell's cwd; the
+//! EXEC directive file passes through user-source steps but is scrubbed for
+//! project-source steps. In a merged user+project body, the user's own steps
+//! still get the EXEC relaxation. See issue #2101.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -46,12 +49,14 @@ use worktrunk::styling::{
 
 use crate::commands::command_approval::approve_alias_commands;
 use crate::commands::command_executor::{
-    AnnouncePolicy, CommandContext, FailureStrategy, ForegroundStep, PreparedCommand, PreparedStep,
-    alias_error_wrapper, build_hook_context, execute_pipeline_foreground,
+    CommandContext, FailureStrategy, PipelineKind, PreparedCommand, PreparedStep,
+    build_hook_context, execute_pipeline_foreground,
 };
-use crate::commands::hooks::{format_pipeline_summary_from_names, step_names_from_config};
+use crate::commands::hooks::{
+    HookSource, SourcedStep, format_pipeline_summary_from_names, sourced_steps_to_foreground,
+    step_names_from_config,
+};
 use crate::commands::{build_invalid_subcommand_error, similar_subcommands};
-use crate::output::DirectivePassthrough;
 
 /// Built-in `wt step` subcommand names. Aliases with these names are
 /// reachable via `wt <name>` (top-level) but shadowed via `wt step <name>`.
@@ -276,16 +281,6 @@ fn alias_needs_approval(
         .as_ref()
         .and_then(|pc| pc.aliases.get(alias_name))
         .cloned()
-}
-
-/// Whether the project config defines an alias by this name.
-///
-/// When the same name appears in both user and project configs, the merged
-/// alias appends both sources' steps (user first, then project) — see
-/// `append_aliases`. Returning `true` here scrubs EXEC for the entire
-/// pipeline, since we can't selectively pass it to user steps only.
-fn project_aliases_contain(project_config: Option<&ProjectConfig>, alias_name: &str) -> bool {
-    project_config.is_some_and(|pc| pc.aliases.contains_key(alias_name))
 }
 
 /// Synthesize clap's native `InvalidSubcommand` error for `wt step <name>`
@@ -546,52 +541,80 @@ fn run_alias(
         );
     }
 
-    // User-source aliases get the EXEC directive file passed through so a
-    // nested `wt switch --execute …` inside the body works the same as the
-    // user typing it at the top level. Project aliases keep the conservative
-    // scrub: the body lives in shared config and could inject arbitrary
-    // shell into the parent session. See issue #2101.
-    let directives = if project_aliases_contain(project_config.as_ref(), &opts.name) {
-        DirectivePassthrough::inherit_from_env()
-    } else {
-        DirectivePassthrough::inherit_from_env_with_exec()
-    };
+    // Build source-tagged steps from per-source CommandConfig lookups instead
+    // of the merged `cmd_config`. Same shape `prepare_sourced_steps` produces
+    // for hooks, so both flow through `sourced_steps_to_foreground` for the
+    // EXEC-passthrough policy: user-source steps relax (EXEC passes through),
+    // project-source steps stay conservative (scrub). When both configs
+    // define the alias, the user steps still get the relaxation — the
+    // decision is per-step now, not per-pipeline. See issue #2101.
+    let user_alias = user_config
+        .aliases(repo.project_identifier().ok().as_deref())
+        .get(&opts.name)
+        .cloned();
+    let project_alias = project_config
+        .as_ref()
+        .and_then(|pc| pc.aliases.get(&opts.name).cloned());
 
-    // Build ForegroundSteps: all alias commands use lazy expansion so vars.*
-    // references resolved from git config at execution time are visible to
-    // later steps that set vars via `wt config state vars set`.
     let alias_name = opts.name.clone();
-    let foreground_steps: Vec<ForegroundStep> = cmd_config
-        .steps()
-        .iter()
-        .map(|step| {
-            let prepared = match step {
-                HookStep::Single(cmd) => {
-                    PreparedStep::Single(alias_prepared_command(cmd, &context_json, &alias_name))
-                }
-                HookStep::Concurrent(cmds) => PreparedStep::Concurrent(
-                    cmds.iter()
-                        .map(|cmd| alias_prepared_command(cmd, &context_json, &alias_name))
-                        .collect(),
-                ),
-            };
-            ForegroundStep {
-                step: prepared,
-                concurrent: true,
-                announce: AnnouncePolicy::None,
-                pipe_stdin: false,
-                error_wrapper: alias_error_wrapper(alias_name.clone()),
-            }
-        })
-        .collect();
+    let sourced_steps = prepare_alias_sourced_steps(
+        user_alias.as_ref(),
+        project_alias.as_ref(),
+        &context_json,
+        &alias_name,
+    );
+    let foreground_steps =
+        sourced_steps_to_foreground(sourced_steps, &PipelineKind::Alias { name: alias_name });
 
     execute_pipeline_foreground(
         &foreground_steps,
         &repo,
         &wt_path,
-        &directives,
         FailureStrategy::FailFast,
     )
+}
+
+/// Build source-tagged steps for an alias from per-source `CommandConfig`s.
+///
+/// User steps appear first, then project steps — matching runtime order from
+/// the previous `append_aliases` merge. Both sources use the same
+/// `context_json` and `alias_name` (the variable bindings and label are
+/// pipeline-wide, not per-source).
+fn prepare_alias_sourced_steps(
+    user_alias: Option<&CommandConfig>,
+    project_alias: Option<&CommandConfig>,
+    context_json: &str,
+    alias_name: &str,
+) -> Vec<SourcedStep> {
+    let mut result = Vec::new();
+    for (source, config) in [
+        (HookSource::User, user_alias),
+        (HookSource::Project, project_alias),
+    ] {
+        let Some(cfg) = config else { continue };
+        for step in cfg.steps() {
+            let prepared = match step {
+                HookStep::Single(cmd) => {
+                    PreparedStep::Single(alias_prepared_command(cmd, context_json, alias_name))
+                }
+                HookStep::Concurrent(cmds) => PreparedStep::Concurrent(
+                    cmds.iter()
+                        .map(|cmd| alias_prepared_command(cmd, context_json, alias_name))
+                        .collect(),
+                ),
+            };
+            result.push(SourcedStep {
+                step: prepared,
+                source,
+                hook_type: None,
+                display_path: None,
+                // Aliases have no deprecated single-table form, so concurrent
+                // commands always run concurrently.
+                is_pipeline: true,
+            });
+        }
+    }
+    result
 }
 
 /// Build a PreparedCommand for an alias, deferring template expansion to execution time.

@@ -868,13 +868,16 @@ exec-blocked = "'{wt_toml}' switch --create project-alias-target --execute 'echo
     );
 }
 
-/// Same alias name in both user and project configs: EXEC is scrubbed for the
-/// merged pipeline. `append_aliases` concatenates the two sources' steps
-/// (user first, then project), so the merged body runs project-authored
-/// steps too — passing EXEC selectively to the user steps isn't possible, so
-/// the conservative scrub applies to the whole pipeline.
+/// Same alias name in both user and project configs: EXEC passes through for
+/// the user-source step but is scrubbed for the project-source step.
+///
+/// EXEC passthrough is a per-step decision driven by `HookSource` on each
+/// `SourcedStep`, not a per-pipeline scrub. When both sources define the
+/// alias, both run (user first, then project) — the user's own step still
+/// gets the relaxation, and the project-authored step keeps the conservative
+/// scrub even though it's part of the same merged body.
 #[rstest]
-fn test_user_and_project_alias_collision_scrubs_exec_directive(repo: TestRepo) {
+fn test_user_and_project_alias_collision_scrubs_only_project_step(repo: TestRepo) {
     repo.commit("initial");
     let wt = wt_bin();
     let wt_str = wt.to_string_lossy();
@@ -890,12 +893,14 @@ fn test_user_and_project_alias_collision_scrubs_exec_directive(repo: TestRepo) {
 shared = "'{wt_toml}' switch --create user-step-target --execute 'echo from-user-step'"
 "#
     ));
-    repo.write_project_config(
+    // Project step also tries `--execute` so we can assert its payload is
+    // scrubbed even though the user step's payload passes through.
+    repo.write_project_config(&format!(
         r#"
 [aliases]
-shared = "echo from-project-step"
+shared = "'{wt_toml}' switch --create project-step-target --execute 'echo from-project-step'"
 "#,
-    );
+    ));
 
     let (cd_path, exec_path, _guard) = directive_files();
 
@@ -913,13 +918,17 @@ shared = "echo from-project-step"
     );
     assert!(
         stderr.contains("disabled inside project alias"),
-        "merged pipeline should warn that --execute is disabled, got: {stderr}"
+        "project-source step should still warn that --execute is disabled, got: {stderr}"
     );
 
     let exec_content = std::fs::read_to_string(&exec_path).unwrap_or_default();
     assert!(
-        !exec_content.contains("from-user-step"),
-        "EXEC file should NOT contain the user step's payload when project shares the name, got: {exec_content:?}"
+        exec_content.contains("from-user-step"),
+        "EXEC file should contain the user step's payload (per-step relaxation), got: {exec_content:?}"
+    );
+    assert!(
+        !exec_content.contains("from-project-step"),
+        "EXEC file should NOT contain the project step's payload (per-step scrub), got: {exec_content:?}"
     );
 }
 
