@@ -292,7 +292,7 @@ jobs:
       run: cargo affected collect --features shell-integration-tests
 
     - name: 💾 Save coverage DB
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v5
       with:
         path: target/affected
         key: cargo-affected-db-v1-${{ runner.os }}-${{ github.sha }}
@@ -324,7 +324,7 @@ jobs:
         echo "merge-base with origin/main: $sha"
 
     - name: 💾 Restore coverage DB
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v5
       with:
         path: target/affected
         # Exact match: collect ran on the PR's merge-base → tight diff.
