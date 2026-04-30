@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.46.0
+
+### Improved
+
+- **`sanitize_db` template filter caps output at 48 chars** (was 63 — PostgreSQL's identifier limit). The new budget leaves headroom for users composing the output into longer paths or identifiers, e.g., Unix socket paths capped at 107 bytes. The 3-character hash suffix is unchanged, so collision avoidance is preserved at the new budget; only the truncated base shrinks. (Breaking: branches whose previous `sanitize_db` output exceeded 48 chars get a different identifier — most names are well under 48 and pass through unchanged.) ([#2467](https://github.com/max-sixty/worktrunk/pull/2467), thanks @yajo for [#2397](https://github.com/max-sixty/worktrunk/issues/2397))
+
+- **New `hash` template filter**: `{{ value | hash }}` produces a 3-character base36 digest of the input — useful for composing custom truncate-with-collision-avoidance recipes when `sanitize_db`'s 48-char budget still isn't tight enough. ([#2453](https://github.com/max-sixty/worktrunk/pull/2453))
+
+- **Background hook announces collapse to one line per command**: `wt merge` (with removal) previously emitted two or three separate `◎ Running …` lines for `post-remove + post-switch` and `post-merge`. Hooks across all phases of a single command now share one combined announce: `◎ Running post-remove: user:cleanup; post-switch: user:notify; post-merge: user:sync`. ([#2457](https://github.com/max-sixty/worktrunk/pull/2457))
+
+- **Picker-driven `post-switch` hooks now receive `target` / `target_worktree_path`** template variables, matching hooks fired from `wt switch <branch>`. Closes a pre-existing asymmetry where interactive switching exposed strictly fewer variables than the non-interactive path. ([#2470](https://github.com/max-sixty/worktrunk/pull/2470))
+
+### Fixed
+
+- **`wt <alias>` stdout is pipeable again**: `wt my-alias | tr …` (and any other downstream pipe) silently produced no output because the foreground executor redirected every alias body's stdout to wt's stderr — a hook-only redirect that PR [#2089](https://github.com/max-sixty/worktrunk/pull/2089) inherited uniformly. Aliases now pass stdout through; hooks and `wt step for-each` keep the merged-stderr behavior so their output stays ordered with wt's own status messages. ([#2479](https://github.com/max-sixty/worktrunk/pull/2479), thanks @davidmyersdev for reporting [#2478](https://github.com/max-sixty/worktrunk/issues/2478))
+
+- **`wt switch <symlink>` resolves to the existing worktree** instead of failing with `No branch named …`. The path-based fallback in `Repository::worktree_at_path` previously compared paths via lexical normalization only, so symlink-equivalent spellings never matched. The same symlink-aware comparison is now used everywhere the library identifies a worktree by path. ([#2466](https://github.com/max-sixty/worktrunk/pull/2466))
+
+- **Deleted-CWD recovery handles symlinked subdirectories**: When a worktree is removed while a shell sits in a subdirectory whose parents include a symlink (e.g. `~/link/repo.feature/src`), `wt` now finds the parent repository and recovers as expected. Previously the symlink-aware path compared only file names and bailed for any path deeper than the worktree root. ([#2464](https://github.com/max-sixty/worktrunk/pull/2464))
+
+- **Merge safety backups for slash branches**: `WorkingTree::create_safety_backup()` flattened `/` to `-` in the ref path, so distinct branches like `a/b` and `a-b` collided at the same `refs/wt-backup/a-b` ref — the latest backup for one could clobber the other, and the documented `refs/wt-backup/<branch>` recovery path didn't match what was actually written. Slashes are valid in git ref names; the branch name is now used as-is. ([#2463](https://github.com/max-sixty/worktrunk/pull/2463))
+
+- **Nushell wrapper migrates to function-level `@complete`**: Per fdncred's recommendation in [nushell/nushell#18128](https://github.com/nushell/nushell/issues/18128), the wrapper replaces the parameter-level `[...args: string@"nu-complete wt"]` with a function-level `@complete` attribute on an untyped `[...args]` rest, and the completer signature moves from `[context: string]` (with manual `split row " "` reconstruction) to `[spans: list<string>]`. Net deletion of seven lines of fragile token reassembly; once [nushell/nushell#18131](https://github.com/nushell/nushell/issues/18131) ships in stable nu the wrapper will automatically benefit from `--flag="value"` quote stripping and `~` expansion. ([#2458](https://github.com/max-sixty/worktrunk/pull/2458))
+
+### Internal
+
+- **Hook dispatch unified**: A single `HookAnnouncer` orchestrates per-command announces across phases, replacing scattered `CommandOrigin`-keyed dispatch with closures, and the various background-hook entry points now share one path. Switch and merge sites assemble template variables through a single `TemplateVars` builder. ([#2457](https://github.com/max-sixty/worktrunk/pull/2457), [#2470](https://github.com/max-sixty/worktrunk/pull/2470), [#2472](https://github.com/max-sixty/worktrunk/pull/2472), [#2477](https://github.com/max-sixty/worktrunk/pull/2477))
+
+- **`wt list` rendering modes collapse**: The internal `RenderTarget` enum replaces three parallel rendering paths, the JSON path skips the per-result render that the formatter never used, and dead `is_tty` plumbing is removed. ([#2469](https://github.com/max-sixty/worktrunk/pull/2469), [#2473](https://github.com/max-sixty/worktrunk/pull/2473))
+
+- **Push handling switches to a `PushKind` enum** instead of sniffing verb strings ([#2468](https://github.com/max-sixty/worktrunk/pull/2468)); `try_alias` and `step_alias` share one help-intercept implementation ([#2471](https://github.com/max-sixty/worktrunk/pull/2471)); lazy template expansion in the command executor lives in one place via `resolve_command_str` ([#2476](https://github.com/max-sixty/worktrunk/pull/2476)).
+
 ## 0.45.2
 
 ### Fixed

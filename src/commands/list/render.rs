@@ -250,16 +250,18 @@ impl LayoutConfig {
         })
     }
 
-    pub fn format_list_item_line(&self, item: &ListItem) -> String {
-        self.render_list_item_line(item).render()
+    pub fn format_list_item_line(&self, item: &ListItem, placeholder: &str) -> String {
+        self.render_list_item_line(item, placeholder).render()
     }
 
-    /// Render list item line as StyledLine (for extracting both plain and styled text)
-    pub fn render_list_item_line(&self, item: &ListItem) -> StyledLine {
-        self.render_item_with_placeholder(item, self.placeholder.get())
-    }
-
-    fn render_item_with_placeholder(&self, item: &ListItem, placeholder: &str) -> StyledLine {
+    /// Render list item line as StyledLine (for extracting both plain and styled text).
+    ///
+    /// `placeholder` is the glyph to use for cells whose data hasn't arrived
+    /// yet. The `wt list` progressive path threads in [`PLACEHOLDER_BLANK`]
+    /// for the first ~200ms (so fast commands never flash) and promotes it
+    /// to [`PLACEHOLDER`] on the reveal tick. Non-progressive callers pass
+    /// [`PLACEHOLDER`] directly.
+    pub fn render_list_item_line(&self, item: &ListItem, placeholder: &str) -> StyledLine {
         self.render_line(|column| {
             column.render_cell(
                 item,
@@ -275,8 +277,8 @@ impl LayoutConfig {
     /// Render a skeleton row showing known data (branch, path) with placeholders for other columns.
     ///
     /// Used for both worktrees and branch-only items; branch-only rows render an empty path
-    /// and a blank gutter placeholder.
-    pub fn render_skeleton_row(&self, item: &ListItem) -> StyledLine {
+    /// and a blank gutter placeholder. See [`Self::render_list_item_line`] for `placeholder` semantics.
+    pub fn render_skeleton_row(&self, item: &ListItem, placeholder: &str) -> StyledLine {
         let branch = item.branch_name();
         let wt_data = item.worktree_data();
         let shortened_path = item
@@ -285,7 +287,7 @@ impl LayoutConfig {
             .unwrap_or_default();
 
         let dim = Style::new().dimmed();
-        let spinner = self.placeholder.get();
+        let spinner = placeholder;
 
         self.render_line(|col| {
             let mut cell = StyledLine::new();
@@ -1330,12 +1332,11 @@ mod tests {
             max_summary_len: 10,
             hidden_column_count: 0,
             status_position_mask: PositionMask::FULL,
-            placeholder: std::cell::Cell::new(PLACEHOLDER),
         };
 
         let item = ListItem::new_branch("abc123".into(), "feat".into());
 
-        let line = layout.render_list_item_line(&item).render();
+        let line = layout.render_list_item_line(&item, PLACEHOLDER).render();
         assert!(line.contains('·'), "expected `·` in: {line}");
         assert!(!line.contains('⋯'), "unexpected `⋯` in: {line}");
     }

@@ -461,10 +461,10 @@ impl Drop for HookAnnouncer<'_> {
 
 /// Announce and spawn background hook pipelines.
 ///
-/// Internal primitive: sites should construct a [`HookAnnouncer`] (one per
-/// command) and `register`/`extend` into it; `flush` lands here. The function
-/// stays separate to keep the announce/spawn formatting isolated from the
-/// announcer's pending-list bookkeeping.
+/// Module-private implementation of [`HookAnnouncer::flush`] — sites construct
+/// a [`HookAnnouncer`] (one per command) and `register`/`extend` into it;
+/// `flush` lands here. The function stays separate to keep the announce/spawn
+/// formatting isolated from the announcer's pending-list bookkeeping.
 ///
 /// Emits one `Running <hook-type>: ...` line per hook type (see module-level
 /// grammar) and spawns each pipeline independently. Pipelines may carry
@@ -474,7 +474,7 @@ impl Drop for HookAnnouncer<'_> {
 /// When `show_branch` is true, the announce includes the branch name for
 /// disambiguation in batch contexts (e.g., prune removing multiple worktrees):
 /// `Running post-remove for feature: user: docs`.
-pub(crate) fn run_hooks_background(
+fn run_hooks_background(
     pipelines: Vec<(CommandContext<'_>, Vec<SourcedStep>)>,
     show_branch: bool,
 ) -> anyhow::Result<()> {
@@ -837,23 +837,6 @@ pub(crate) fn lookup_hook_configs<'a>(
         user_hooks.get(hook_type),
         project_config.and_then(|c| c.hooks.get(hook_type)),
     )
-}
-
-/// Spawn background hooks for a single hook type (post-commit, post-merge, …).
-///
-/// Symmetric to [`execute_hook`] for the background path: a one-shot
-/// convenience that constructs a single-phase [`HookAnnouncer`], registers the
-/// hook type, and flushes. Multi-phase callers should build a [`HookAnnouncer`]
-/// directly and call `register` per phase so all types share one announce line.
-pub(crate) fn spawn_background_hooks(
-    ctx: &CommandContext,
-    hook_type: HookType,
-    extra_vars: &[(&str, &str)],
-    display_path: Option<&Path>,
-) -> anyhow::Result<()> {
-    let mut announcer = HookAnnouncer::new(ctx.repo, ctx.config, false);
-    announcer.register(ctx, hook_type, extra_vars, display_path)?;
-    announcer.flush()
 }
 
 /// Run a single hook type in the foreground for an operation (merge, switch,

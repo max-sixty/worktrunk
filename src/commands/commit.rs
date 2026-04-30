@@ -8,17 +8,50 @@ use worktrunk::styling::{
 
 use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
-use super::hooks::{execute_hook, spawn_background_hooks};
+use super::hooks::{HookAnnouncer, execute_hook};
 use super::repository_ext::warn_about_untracked_files;
+use super::template_vars::TemplateVars;
 
 // Re-export StageMode from config for use by CLI
 pub use worktrunk::config::StageMode;
+
+/// Whether pre/post-commit hooks run, and — if not — whether to print the skip message.
+/// Two distinct paths disable hooks: `--no-hooks` (we own the skip message) and declined
+/// approval (the caller already printed its own message).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HookGate {
+    /// Run pre-commit and post-commit hooks normally.
+    Run,
+    /// Skip hooks because the user passed `--no-hooks`. `commit()` prints the skip message.
+    NoHooksFlag,
+    /// Skip hooks silently — caller has already explained why.
+    Silent,
+}
+
+impl HookGate {
+    /// Whether pre/post-commit hooks should execute.
+    pub(crate) fn run(self) -> bool {
+        matches!(self, Self::Run)
+    }
+
+    /// Build from an entry-point `verify` flag plus an approval-prompt result.
+    /// `verify=false` → `NoHooksFlag`; declined → `Silent`; approved → `Run`.
+    pub(crate) fn from_approval(verify: bool, approved: bool) -> Self {
+        if !verify {
+            Self::NoHooksFlag
+        } else if approved {
+            Self::Run
+        } else {
+            Self::Silent
+        }
+    }
+}
 
 /// Options for committing current changes.
 pub struct CommitOptions<'a> {
     pub ctx: &'a CommandContext<'a>,
     pub target_branch: Option<&'a str>,
-    pub verify: bool,
+    pub hooks: HookGate,
     pub stage_mode: StageMode,
     pub warn_about_untracked: bool,
     pub show_no_squash_note: bool,
@@ -30,7 +63,7 @@ impl<'a> CommitOptions<'a> {
         Self {
             ctx,
             target_branch: None,
-            verify: true,
+            hooks: HookGate::Run,
             stage_mode: StageMode::All,
             warn_about_untracked: true,
             show_no_squash_note: false,
@@ -153,9 +186,15 @@ impl<'a> CommitGenerator<'a> {
     }
 }
 
-/// Commit uncommitted changes with the shared commit pipeline.
 impl CommitOptions<'_> {
-    pub fn commit(self) -> anyhow::Result<()> {
+    /// Commit uncommitted changes with the shared commit pipeline.
+    ///
+    /// Post-commit pipelines are registered onto the caller's announcer; the
+    /// caller decides when to flush. Multi-phase callers (e.g. `wt merge
+    /// --squash` batching post-commit + post-remove + post-switch + post-merge)
+    /// share one announce line; standalone callers (e.g. `wt commit`)
+    /// construct an announcer of their own and flush right after.
+    pub fn commit(self, announcer: &mut HookAnnouncer<'_>) -> anyhow::Result<()> {
         let project_config = self.ctx.repo.load_project_config()?;
         let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_deref());
         let (user_cfg, proj_cfg) = super::hooks::lookup_hook_configs(
@@ -165,23 +204,23 @@ impl CommitOptions<'_> {
         );
         let any_hooks_exist = user_cfg.is_some() || proj_cfg.is_some();
 
-        // Show skip message
-        if !self.verify && any_hooks_exist {
+        // Only print "Skipping pre-commit hooks (--no-hooks)" when --no-hooks was actually
+        // passed. If hooks are disabled because the caller declined an approval prompt
+        // (HookGate::Silent), the caller has already printed its own message.
+        if self.hooks == HookGate::NoHooksFlag && any_hooks_exist {
             eprintln!("{}", info_message("Skipping pre-commit hooks (--no-hooks)"));
         }
 
-        if self.verify {
-            let extra_vars: Vec<(&str, &str)> = self
-                .target_branch
-                .into_iter()
-                .map(|target| ("target", target))
-                .collect();
+        let template_vars = self
+            .target_branch
+            .map_or_else(TemplateVars::new, |t| TemplateVars::new().with_target(t));
 
+        if self.hooks.run() {
             // Run pre-commit hooks (user first, then project).
             execute_hook(
                 self.ctx,
                 HookType::PreCommit,
-                &extra_vars,
+                &template_vars.as_extra_vars(),
                 FailureStrategy::FailFast,
                 crate::output::pre_hook_display_path(self.ctx.worktree_path),
             )?;
@@ -223,14 +262,10 @@ impl CommitOptions<'_> {
             self.stage_mode,
         )?;
 
-        // Spawn post-commit hooks in background (respects --no-hooks)
-        if self.verify {
-            let extra_vars: Vec<(&str, &str)> = self
-                .target_branch
-                .into_iter()
-                .map(|target| ("target", target))
-                .collect();
-            spawn_background_hooks(self.ctx, HookType::PostCommit, &extra_vars, None)?;
+        // Register post-commit hooks onto the caller's announcer (respects --no-hooks).
+        if self.hooks.run() {
+            let extra_vars = template_vars.as_extra_vars();
+            announcer.register(self.ctx, HookType::PostCommit, &extra_vars, None)?;
         }
 
         Ok(())

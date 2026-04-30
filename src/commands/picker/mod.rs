@@ -112,7 +112,7 @@ use super::command_executor::FailureStrategy;
 use super::handle_switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks,
 };
-use super::hooks::{execute_hook, spawn_background_hooks};
+use super::hooks::{HookAnnouncer, execute_hook};
 use super::list::collect;
 use super::list::progressive::RenderTarget;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
@@ -194,17 +194,15 @@ impl PickerCollector {
                     .ok()
                     .flatten()
                     .unwrap_or_default();
-                let target_path_str = worktrunk::path::to_posix_path(&main_path.to_string_lossy());
-                let extra_vars: Vec<(&str, &str)> = vec![
-                    ("target", &target_ref),
-                    ("target_worktree_path", &target_path_str),
-                ];
+                let template_vars = TemplateVars::new()
+                    .with_target(&target_ref)
+                    .with_target_worktree_path(main_path);
                 let pre_ctx =
                     CommandContext::new(&repo, config, Some(hook_branch), worktree_path, false);
                 execute_hook(
                     &pre_ctx,
                     worktrunk::HookType::PreRemove,
-                    &extra_vars,
+                    &template_vars.as_extra_vars(),
                     FailureStrategy::FailFast,
                     None, // no display path in TUI context
                 )?;
@@ -233,12 +231,14 @@ impl PickerCollector {
                     &repo,
                 );
                 let extra_vars = remove_vars.extra_vars(hook_branch);
-                spawn_background_hooks(
+                let mut announcer = HookAnnouncer::new(&repo, config, false);
+                announcer.register(
                     &post_ctx,
                     worktrunk::HookType::PostRemove,
                     &extra_vars,
                     None, // no display path in TUI context
                 )?;
+                announcer.flush()?;
             }
             RemoveResult::BranchOnly {
                 branch_name,
