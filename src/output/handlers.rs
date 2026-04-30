@@ -1445,11 +1445,10 @@ fn handle_removed_worktree_output(
 ///
 /// - `DirectivePassthrough::default()` — scrubs all directive env vars from
 ///   the child. Used by background hooks (outlive the parent shell).
-/// - `DirectivePassthrough::inherit_from_env()` — re-adds whichever directive
-///   env vars are currently set in this process. Used by aliases and
-///   foreground hooks, which may emit `cd` directives. In new-protocol mode
-///   only the CD file passes through; in legacy compat mode the single
-///   legacy file passes through to preserve pre-split behavior.
+/// - `DirectivePassthrough::inherit_from_env()` — re-adds the CD directive
+///   env var if it is currently set in this process. Used by aliases and
+///   foreground hooks, which may emit `cd` directives. The EXEC file never
+///   passes through.
 ///
 /// ## Stdout routing
 ///
@@ -1513,9 +1512,6 @@ pub fn execute_shell_command(
     if let Some(path) = directives.cd_file {
         cmd = cmd.directive_cd_file(path);
     }
-    if let Some(path) = directives.legacy_file {
-        cmd = cmd.directive_legacy_file(path);
-    }
 
     cmd.stream()?;
 
@@ -1535,25 +1531,19 @@ pub fn execute_shell_command(
 #[derive(Debug, Default, Clone)]
 pub struct DirectivePassthrough {
     pub cd_file: Option<std::path::PathBuf>,
-    pub legacy_file: Option<std::path::PathBuf>,
 }
 
 impl DirectivePassthrough {
-    /// Pass CD and legacy directive files through to the child, reading the
-    /// current process environment. Used by trusted contexts (aliases,
-    /// foreground hooks) that may legitimately emit a `cd` directive. The
-    /// EXEC file is deliberately omitted.
+    /// Pass the CD directive file through to the child, reading the current
+    /// process environment. Used by trusted contexts (aliases, foreground
+    /// hooks) that may legitimately emit a `cd` directive. The EXEC file is
+    /// deliberately omitted.
     pub fn inherit_from_env() -> Self {
-        use worktrunk::shell_exec::{DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR};
-        let read = |var: &str| {
-            std::env::var_os(var)
-                .map(std::path::PathBuf::from)
-                .filter(|p| !p.as_os_str().is_empty())
-        };
-        Self {
-            cd_file: read(DIRECTIVE_CD_FILE_ENV_VAR),
-            legacy_file: read(DIRECTIVE_FILE_ENV_VAR),
-        }
+        use worktrunk::shell_exec::DIRECTIVE_CD_FILE_ENV_VAR;
+        let cd_file = std::env::var_os(DIRECTIVE_CD_FILE_ENV_VAR)
+            .map(std::path::PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty());
+        Self { cd_file }
     }
 }
 

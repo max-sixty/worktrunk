@@ -32,16 +32,14 @@
 //! <https://github.com/max-sixty/worktrunk/issues/2101> so users can report
 //! whether to relax the restriction.
 //!
-//! # Legacy compat
+//! # Stale wrapper detection
 //!
-//! Users who upgrade wt without restarting their shell still run the previous
-//! release's shell wrapper, which only sets `WORKTRUNK_DIRECTIVE_FILE`. When
-//! only that variable is set, wt falls back to the pre-split protocol (shell
-//! commands written to the single file) silently. For bash, zsh, fish, and
-//! PowerShell a shell restart picks up the new wrapper automatically; nushell
-//! is the only shell where users have to rerun `wt config shell install`
-//! because its wrapper is a static file. Remove the legacy path in the next
-//! breaking release.
+//! Earlier wt releases used a single `WORKTRUNK_DIRECTIVE_FILE` env var that
+//! mixed cd and shell-exec directives. The split protocol replaced it. If a
+//! user upgrades wt but their shell still has the old wrapper loaded, only the
+//! legacy var will be set; wt now treats that as a non-integrated session and
+//! emits a one-time warning pointing the user at `wt config shell install` so
+//! their next shell restart picks up the new wrapper.
 
 use std::fs::OpenOptions;
 use std::io::{self, Write};
@@ -55,6 +53,7 @@ use std::sync::{Mutex, OnceLock};
 
 #[cfg(not(unix))]
 use worktrunk::git::WorktrunkError;
+use worktrunk::shell::current_shell;
 #[cfg(not(unix))]
 use worktrunk::shell_exec::Cmd;
 #[cfg(unix)]
@@ -87,8 +86,6 @@ static OUTPUT_STATE: OnceLock<Mutex<OutputState>> = OnceLock::new();
 /// Selects which directive files wt writes to based on environment.
 ///
 /// Computed once during `state()` initialization from the process environment.
-/// Legacy mode only activates when no new-protocol vars are set — a fresh
-/// wrapper always wins over any leftover legacy var.
 #[derive(Debug, Clone, Default)]
 enum DirectiveMode {
     /// Shell integration not active. `execute()` runs commands directly;
@@ -96,7 +93,7 @@ enum DirectiveMode {
     /// dir used by `execute()`.
     #[default]
     Interactive,
-    /// New split protocol. `cd_file` is always a real path; `exec_file` is
+    /// Split protocol. `cd_file` is always a real path; `exec_file` is
     /// `None` when the EXEC var was scrubbed from this process (we're
     /// running inside an alias/hook shell body). `--execute` in the scrubbed
     /// case warns and drops the command.
@@ -104,8 +101,6 @@ enum DirectiveMode {
         cd_file: PathBuf,
         exec_file: Option<PathBuf>,
     },
-    /// Legacy single-file protocol. Pre-split wrapper is still active.
-    Legacy { file: PathBuf },
 }
 
 #[derive(Default)]
@@ -256,29 +251,46 @@ fn read_env_path(var: &str) -> Option<PathBuf> {
 fn compute_directive_mode() -> DirectiveMode {
     let cd = read_env_path(DIRECTIVE_CD_FILE_ENV_VAR);
     let exec = read_env_path(DIRECTIVE_EXEC_FILE_ENV_VAR);
-    let legacy = read_env_path(DIRECTIVE_FILE_ENV_VAR);
 
-    match cd {
-        Some(cd_file) => DirectiveMode::NewProtocol {
+    if let Some(cd_file) = cd {
+        return DirectiveMode::NewProtocol {
             cd_file,
             exec_file: exec,
-        },
-        None => match legacy {
-            // Silent fallback: bash/zsh/fish/PowerShell self-update on restart,
-            // and nushell is the only shell that needs a manual reinstall. A
-            // global "your wrapper is old" warning would hit everyone else with
-            // noise they can't avoid until their next terminal restart.
-            //
-            // TODO(2026-05): emit a deprecation warning here. By then the
-            // self-healing shells (bash/zsh/fish/PowerShell) have had a
-            // release to cycle, so anything still hitting this branch is
-            // almost certainly an outdated nushell wrapper whose user needs
-            // to rerun `wt config shell install nu` before the legacy
-            // fallback is removed in the following release.
-            Some(file) => DirectiveMode::Legacy { file },
-            None => DirectiveMode::Interactive,
-        },
+        };
     }
+
+    if read_env_path(DIRECTIVE_FILE_ENV_VAR).is_some() {
+        warn_stale_wrapper_once();
+    }
+
+    DirectiveMode::Interactive
+}
+
+/// Warn that only the legacy `WORKTRUNK_DIRECTIVE_FILE` env var is set, meaning
+/// the parent shell still has a pre-split wrapper loaded. Fires at most once
+/// per process. The user's next shell restart picks up the new wrapper for
+/// bash/zsh/fish/PowerShell; nushell users have to rerun
+/// `wt config shell install nu` because its wrapper is a static file.
+fn warn_stale_wrapper_once() {
+    static WARNED: OnceLock<()> = OnceLock::new();
+    if WARNED.set(()).is_err() {
+        return;
+    }
+    eprintln!(
+        "{}",
+        warning_message(cformat!(
+            "stale shell wrapper detected — directory changes will not apply until you restart your shell"
+        ))
+    );
+    let install_target = current_shell()
+        .map(|shell| format!("wt config shell install {shell}"))
+        .unwrap_or_else(|| "wt config shell install".to_string());
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "Run <underline>{install_target}</> if the warning persists after a restart (required for nushell)"
+        ))
+    );
 }
 
 /// Warn that `--execute` was refused because we're running inside an alias or
@@ -328,31 +340,11 @@ fn write_cd_path(file: &Path, path: &Path) -> io::Result<()> {
     f.flush()
 }
 
-/// Escape a path as a POSIX-shell (or PowerShell) single-quoted string. Only
-/// used in legacy mode where we still emit shell commands.
-fn escape_legacy_cd(path: &Path) -> String {
-    let path_str = path.to_string_lossy();
-    // POSIX and PowerShell both single-quote, but escape embedded quotes
-    // differently:
-    //   POSIX: 'it'\''s'
-    //   PSH:   'it''s'
-    let is_powershell = std::env::var("WORKTRUNK_SHELL")
-        .map(|v| v.eq_ignore_ascii_case("powershell"))
-        .unwrap_or(false);
-    let escaped = if is_powershell {
-        path_str.replace('\'', "''")
-    } else {
-        path_str.replace('\'', r"'\''")
-    };
-    format!("cd '{}'", escaped)
-}
-
 /// Request directory change (for shell integration).
 ///
-/// Writes the target path to the CD directive file (new protocol) or emits
-/// a shell `cd '...'` command to the legacy file (legacy compat). In
-/// interactive mode (no wrapper), just buffers the target so that a later
-/// `execute()` can use it as the child's working directory.
+/// Writes the target path to the CD directive file. In interactive mode (no
+/// wrapper), just buffers the target so that a later `execute()` can use it as
+/// the child's working directory.
 pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
     let path = path.as_ref();
     let mode = {
@@ -366,10 +358,6 @@ pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
         DirectiveMode::NewProtocol { cd_file, .. } => {
             let directive_path = to_logical_path(path);
             write_cd_path(&cd_file, &directive_path)
-        }
-        DirectiveMode::Legacy { file } => {
-            let directive_path = to_logical_path(path);
-            append_line(&file, &escape_legacy_cd(&directive_path))
         }
     }
 }
@@ -398,13 +386,12 @@ pub fn was_cwd_removed() -> bool {
 ///
 /// Dispatches by directive mode:
 /// - Interactive: runs the command directly (replacing this process on Unix).
-/// - New protocol with EXEC file: appends the command to the EXEC file; the
-///   wrapper sources it after wt exits, so it runs in the user's interactive
-///   shell.
-/// - New protocol without EXEC file: refuses the command with a warning. We
-///   land here when running inside an alias or hook body, where `Cmd` scrubbed
-///   the EXEC var to keep arbitrary shell from reaching the parent session.
-/// - Legacy: appends the command to the single legacy directive file.
+/// - With EXEC file: appends the command to the EXEC file; the wrapper sources
+///   it after wt exits, so it runs in the user's interactive shell.
+/// - Without EXEC file (split protocol, scrubbed): refuses the command with a
+///   warning. We land here when running inside an alias or hook body, where
+///   `Cmd` scrubbed the EXEC var to keep arbitrary shell from reaching the
+///   parent session.
 pub fn execute(command: impl Into<String>) -> anyhow::Result<()> {
     let command = command.into();
 
@@ -426,10 +413,6 @@ pub fn execute(command: impl Into<String>) -> anyhow::Result<()> {
             exec_file: None, ..
         } => {
             warn_exec_scrubbed_once(&command);
-            Ok(())
-        }
-        DirectiveMode::Legacy { file } => {
-            append_line(&file, &command)?;
             Ok(())
         }
     }
@@ -727,30 +710,6 @@ mod tests {
 
         rx.recv().unwrap();
     }
-
-    // Shell escaping tests (escape_legacy_cd)
-
-    #[test]
-    fn test_escape_legacy_cd_simple_path() {
-        let result = escape_legacy_cd(Path::new("/test/path"));
-        assert_eq!(result, "cd '/test/path'");
-    }
-
-    #[test]
-    fn test_escape_legacy_cd_single_quotes() {
-        let result = escape_legacy_cd(Path::new("/test/it's/path"));
-        assert_eq!(result, r"cd '/test/it'\''s/path'");
-    }
-
-    #[test]
-    fn test_escape_legacy_cd_spaces() {
-        let result = escape_legacy_cd(Path::new("/test/my path/here"));
-        assert_eq!(result, "cd '/test/my path/here'");
-    }
-
-    // PowerShell branch of escape_legacy_cd is exercised via integration
-    // test `test_switch_legacy_directive_file_powershell` which sets
-    // WORKTRUNK_SHELL=powershell on the subprocess.
 
     /// Test that anstyle formatting is preserved
     #[test]

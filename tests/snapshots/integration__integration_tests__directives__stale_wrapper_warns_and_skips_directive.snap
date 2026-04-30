@@ -30,7 +30,6 @@ info:
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_DIRECTIVE_FILE: "[DIRECTIVE_FILE]"
-    WORKTRUNK_SHELL: powershell
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
@@ -46,4 +45,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Switched to worktree for [1mfeature[22m @ [1m_REPO_.feature[22m
+[33m▲[39m [33mstale shell wrapper detected — directory changes will not apply until you restart your shell[39m
+[2m↳[22m [2mRun [4mwt config shell install[24m if the warning persists after a restart (required for nushell)[22m
+[33m▲[39m [33mWorktree for [1mfeature[22m @ [1m_REPO_.feature[22m, but cannot change directory — shell integration not installed[39m
+[2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m

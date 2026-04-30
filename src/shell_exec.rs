@@ -310,11 +310,11 @@ pub const DIRECTIVE_CD_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_CD_FILE";
 /// the parent shell. Only trusted wt-internal callers write to it.
 pub const DIRECTIVE_EXEC_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_EXEC_FILE";
 
-/// Legacy pre-split directive file env var. Honored for one release so users
-/// who upgraded `wt` without restarting their shell still get shell integration
-/// from their current session's old wrapper. When only this is set (no new
-/// vars), wt writes shell-format directives to it. Remove in the next breaking
-/// release.
+/// Legacy pre-split directive file env var. wt no longer writes to it — the
+/// split protocol (`WORKTRUNK_DIRECTIVE_CD_FILE` + `WORKTRUNK_DIRECTIVE_EXEC_FILE`)
+/// fully replaced it. The constant survives for one release as defense in
+/// depth: `scrub_directive_env_vars` still strips it from child environments
+/// in case some long-lived shell wrapper still sets it.
 pub const DIRECTIVE_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_FILE";
 
 /// Scrub all directive file env vars from a `std::process::Command`.
@@ -623,10 +623,6 @@ pub struct Cmd {
     /// injection surface). `WORKTRUNK_DIRECTIVE_EXEC_FILE` is NEVER re-added,
     /// so alias/hook bodies cannot inject arbitrary shell into the parent.
     directive_cd_file: Option<std::path::PathBuf>,
-    /// When set, re-adds the legacy `WORKTRUNK_DIRECTIVE_FILE` env var. Used in
-    /// legacy-wrapper compat mode to preserve pre-split behavior for alias/hook
-    /// bodies running under an old shell wrapper.
-    directive_legacy_file: Option<std::path::PathBuf>,
 }
 
 struct ExternalCommandLog {
@@ -671,7 +667,6 @@ impl Cmd {
             forward_signals: false,
             external_label: None,
             directive_cd_file: None,
-            directive_legacy_file: None,
         }
     }
 
@@ -729,9 +724,9 @@ impl Cmd {
 
         // Prevent subprocesses from writing shell directives (security).
         // Applied last so it can't be re-added by user-provided envs.
-        // `stream()` selectively re-adds `WORKTRUNK_DIRECTIVE_CD_FILE` (and
-        // the legacy var, in compat mode) for trusted contexts — but never
-        // `WORKTRUNK_DIRECTIVE_EXEC_FILE`, which carries arbitrary shell.
+        // `stream()` selectively re-adds `WORKTRUNK_DIRECTIVE_CD_FILE` for
+        // trusted contexts — but never `WORKTRUNK_DIRECTIVE_EXEC_FILE`, which
+        // carries arbitrary shell.
         scrub_directive_env_vars(cmd);
     }
 
@@ -903,17 +898,6 @@ impl Cmd {
         self
     }
 
-    /// Pass the legacy (pre-split) directive file through to the child process.
-    ///
-    /// Used only in legacy-wrapper compat mode. Preserves pre-split behavior
-    /// for alias/hook bodies running under an old shell wrapper that still
-    /// sets `WORKTRUNK_DIRECTIVE_FILE`. Remove together with the legacy env
-    /// var in the next breaking release.
-    pub fn directive_legacy_file(mut self, path: impl Into<std::path::PathBuf>) -> Self {
-        self.directive_legacy_file = Some(path.into());
-        self
-    }
-
     /// Execute the command and return its output.
     ///
     /// Captures stdout/stderr and returns them in `Output`. For interactive
@@ -930,8 +914,8 @@ impl Cmd {
             "Cmd::shell() commands must use .stream(), not .run()"
         );
         debug_assert!(
-            self.directive_cd_file.is_none() && self.directive_legacy_file.is_none(),
-            "directive_*_file is only applied by .stream(), not .run()"
+            self.directive_cd_file.is_none(),
+            "directive_cd_file is only applied by .stream(), not .run()"
         );
 
         let cmd_str = self.command_string();
@@ -1035,11 +1019,8 @@ impl Cmd {
             "pipe_into does not support external() logging"
         );
         debug_assert!(
-            self.directive_cd_file.is_none()
-                && self.directive_legacy_file.is_none()
-                && next.directive_cd_file.is_none()
-                && next.directive_legacy_file.is_none(),
-            "directive_*_file is only applied by .stream(), not pipe_into"
+            self.directive_cd_file.is_none() && next.directive_cd_file.is_none(),
+            "directive_cd_file is only applied by .stream(), not pipe_into"
         );
 
         let first_cmd_str = self.command_string();
@@ -1191,9 +1172,6 @@ impl Cmd {
         // file is never re-added — alias/hook bodies must not inject shell.
         if let Some(ref path) = self.directive_cd_file {
             cmd.env(DIRECTIVE_CD_FILE_ENV_VAR, path);
-        }
-        if let Some(ref path) = self.directive_legacy_file {
-            cmd.env(DIRECTIVE_FILE_ENV_VAR, path);
         }
 
         #[cfg(not(unix))]

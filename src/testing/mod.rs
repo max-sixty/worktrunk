@@ -547,20 +547,10 @@ pub fn configure_directive_cd_only(cmd: &mut Command, cd_path: &Path) {
     cmd.env("WORKTRUNK_DIRECTIVE_CD_FILE", cd_path);
 }
 
-/// Create a temporary file for legacy single-file directive output.
+/// Configure a Command to set only the legacy single-file directive env var.
 ///
-/// Used to test the legacy fallback path where an old shell wrapper sets
-/// `WORKTRUNK_DIRECTIVE_FILE`. Returns `(path, guard)`.
-pub fn legacy_directive_file() -> (PathBuf, tempfile::TempPath) {
-    let file = tempfile::NamedTempFile::new().expect("failed to create temp file");
-    let path = file.path().to_path_buf();
-    (path, file.into_temp_path())
-}
-
-/// Configure a Command to use the legacy single-file directive protocol.
-///
-/// Sets `WORKTRUNK_DIRECTIVE_FILE` env var (no new vars) to simulate an
-/// outdated shell wrapper that hasn't been updated to the split protocol.
+/// Simulates a stale shell wrapper from before the split protocol. wt no
+/// longer writes to this file; setting it triggers the stale-wrapper warning.
 pub fn configure_legacy_directive_file(cmd: &mut Command, path: &Path) {
     cmd.env("WORKTRUNK_DIRECTIVE_FILE", path);
 }

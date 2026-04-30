@@ -43,9 +43,7 @@ use anyhow::Context;
 
 use worktrunk::command_log::log_command;
 use worktrunk::git::WorktrunkError;
-use worktrunk::shell_exec::{
-    DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR, ShellConfig, scrub_directive_env_vars,
-};
+use worktrunk::shell_exec::{DIRECTIVE_CD_FILE_ENV_VAR, ShellConfig, scrub_directive_env_vars};
 use worktrunk::styling::stderr;
 
 use super::handlers::DirectivePassthrough;
@@ -248,9 +246,6 @@ fn spawn_child(
     scrub_directive_env_vars(&mut command);
     if let Some(path) = &cmd.directives.cd_file {
         command.env(DIRECTIVE_CD_FILE_ENV_VAR, path);
-    }
-    if let Some(path) = &cmd.directives.legacy_file {
-        command.env(DIRECTIVE_FILE_ENV_VAR, path);
     }
 
     #[cfg(unix)]
@@ -457,8 +452,8 @@ mod tests {
     //! Unit tests that exercise the executor's option-bearing code paths which
     //! aren't reachable through the alias integration tests today: every child
     //! currently has `log_label=None` (aliases skip per-child logging) and the
-    //! CD/legacy directive env vars are usually unset. Driving these branches
-    //! with a direct call proves they behave correctly when a future caller
+    //! CD directive env var is usually unset. Driving these branches with a
+    //! direct call proves they behave correctly when a future caller
     //! (concurrent foreground hooks, once their deprecation completes) uses them.
     use super::*;
 
@@ -497,9 +492,9 @@ mod tests {
         // passing a log_label doesn't panic and the command still runs.
     }
 
-    /// `DirectivePassthrough` with both `cd_file` and `legacy_file` set must
-    /// propagate both env vars to the child. The child script echoes each env
-    /// var; we assert both values are delivered.
+    /// `DirectivePassthrough` with `cd_file` set must propagate the CD env var
+    /// to the child. The child script writes the env var's value to a file;
+    /// we assert it was delivered.
     ///
     /// Unix-only: the script uses POSIX `sh` redirect syntax and relies on
     /// native temp paths that don't need escaping. Git Bash on Windows would
@@ -508,26 +503,21 @@ mod tests {
     #[cfg(unix)]
     fn test_directive_env_vars_passed_through() {
         use tempfile::NamedTempFile;
+        let out = NamedTempFile::new().unwrap();
         let cd = NamedTempFile::new().unwrap();
-        let legacy = NamedTempFile::new().unwrap();
         let directives = DirectivePassthrough {
             cd_file: Some(cd.path().to_path_buf()),
-            legacy_file: Some(legacy.path().to_path_buf()),
         };
-        // Write each env var's value to its matching temp file. If the child
-        // didn't receive the env var, the redirect would fail or write an
-        // empty file.
+        // Write the env var's value to a temp file. If the child didn't
+        // receive the env var, the redirect would write an empty file.
         let script = format!(
-            "printf CD > {} && printf LEGACY > {}",
-            cd.path().display(),
-            legacy.path().display(),
+            "printf %s \"$WORKTRUNK_DIRECTIVE_CD_FILE\" > {}",
+            out.path().display(),
         );
         let outcomes = run_one_with_directives("job", &script, None, &directives);
         assert!(outcomes[0].is_ok(), "child should exit 0");
-        let cd_contents = std::fs::read_to_string(cd.path()).unwrap();
-        let legacy_contents = std::fs::read_to_string(legacy.path()).unwrap();
-        assert_eq!(cd_contents, "CD");
-        assert_eq!(legacy_contents, "LEGACY");
+        let received = std::fs::read_to_string(out.path()).unwrap();
+        assert_eq!(received, cd.path().to_string_lossy());
     }
 
     /// An empty `cmds` slice must return an empty outcomes vec without

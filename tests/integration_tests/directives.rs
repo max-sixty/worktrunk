@@ -1,8 +1,7 @@
 use crate::common::{
     TestRepo, configure_directive_cd_only, configure_directive_files,
-    configure_legacy_directive_file, directive_files, legacy_directive_file, repo,
-    repo_with_feature_worktree, repo_with_remote, repo_with_remote_and_feature,
-    setup_snapshot_settings, wt_command,
+    configure_legacy_directive_file, directive_files, repo, repo_with_feature_worktree,
+    repo_with_remote, repo_with_remote_and_feature, setup_snapshot_settings, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -21,100 +20,38 @@ use std::path::Path;
 //   The shell wrapper sources the file.
 
 // ============================================================================
-// Legacy Directive File Tests (single WORKTRUNK_DIRECTIVE_FILE)
+// Stale Wrapper Detection
 // ============================================================================
-// These tests verify the legacy single-file protocol still works for users
-// who haven't restarted their shell after upgrading.
+// The legacy single-file `WORKTRUNK_DIRECTIVE_FILE` env var is no longer
+// honored. When only that var is set, wt warns the user and runs as if shell
+// integration is not active.
 
+/// Stale shell wrapper: only the legacy `WORKTRUNK_DIRECTIVE_FILE` is set.
+/// wt should warn and run as if shell integration is not active — no cd, the
+/// legacy file is not written to, and a hint pointing at `wt config shell
+/// install` appears.
 #[rstest]
-fn test_switch_legacy_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
+fn test_stale_wrapper_warns_and_skips_directive(#[from(repo_with_remote)] mut repo: TestRepo) {
     let _feature_wt = repo.add_worktree("feature");
-    let (directive_path, _guard) = legacy_directive_file();
-
-    let mut settings = setup_snapshot_settings(&repo);
-    // Normalize the directive file cd path
-    settings.add_filter(r"cd '[^']+'", "cd '[PATH]'");
-
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        configure_legacy_directive_file(&mut cmd, &directive_path);
-        cmd.arg("switch")
-            .arg("feature")
-            .current_dir(repo.root_path());
-
-        assert_cmd_snapshot!(cmd);
-
-        // Verify directive file contains cd command (legacy format)
-        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
-        assert!(
-            directives.contains("cd '"),
-            "Legacy directive file should contain cd command, got: {}",
-            directives
-        );
-    });
-}
-
-/// Legacy directive file in PowerShell mode: single quotes are doubled
-/// instead of using POSIX escaping.
-#[rstest]
-fn test_switch_legacy_directive_file_powershell(#[from(repo_with_remote)] mut repo: TestRepo) {
-    let _feature_wt = repo.add_worktree("feature");
-    let (directive_path, _guard) = legacy_directive_file();
+    let legacy_file = tempfile::NamedTempFile::new().unwrap();
 
     let settings = setup_snapshot_settings(&repo);
-
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
-        configure_legacy_directive_file(&mut cmd, &directive_path);
-        cmd.env("WORKTRUNK_SHELL", "powershell");
+        configure_legacy_directive_file(&mut cmd, legacy_file.path());
         cmd.arg("switch")
             .arg("feature")
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
 
-        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        // The legacy file must NOT have been written to — wt no longer emits
+        // shell to it. (NamedTempFile::new() created the file empty.)
+        let contents = std::fs::read_to_string(legacy_file.path()).unwrap_or_default();
         assert!(
-            directives.contains("cd '"),
-            "Legacy directive file should contain cd command, got: {directives}",
-        );
-    });
-}
-
-/// Legacy directive file with --execute: both cd and execute commands
-/// should be written to the single file.
-#[rstest]
-fn test_switch_legacy_directive_file_with_execute(#[from(repo_with_remote)] repo: TestRepo) {
-    let (directive_path, _guard) = legacy_directive_file();
-
-    let mut settings = setup_snapshot_settings(&repo);
-    settings.add_filter(r"cd '[^']+'", "cd '[PATH]'");
-
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        configure_legacy_directive_file(&mut cmd, &directive_path);
-        cmd.args([
-            "switch",
-            "--create",
-            "exec-legacy",
-            "--execute",
-            "echo hello",
-        ])
-        .current_dir(repo.root_path());
-
-        assert_cmd_snapshot!(cmd);
-
-        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
-        assert!(
-            directives.contains("cd '"),
-            "Legacy directive file should contain cd command, got: {directives}",
-        );
-        assert!(
-            directives.contains("echo hello"),
-            "Legacy directive file should contain execute command, got: {directives}",
+            contents.is_empty(),
+            "wt must not write to the legacy directive file, got: {contents}",
         );
     });
 }

@@ -22,9 +22,10 @@
 //! - `WORKTRUNK_DIRECTIVE_CD_FILE` — raw path; the wrapper `cd`s to it.
 //! - `WORKTRUNK_DIRECTIVE_EXEC_FILE` — arbitrary shell; the wrapper sources it.
 //!
-//! The legacy single-file `WORKTRUNK_DIRECTIVE_FILE` env var is still honored
-//! for one release to bridge users who upgraded `wt` without restarting
-//! their shell. See `global` for the `DirectiveMode` selection logic.
+//! Earlier wt releases used a single `WORKTRUNK_DIRECTIVE_FILE` env var that
+//! is no longer written to. If only that legacy var is set, wt warns about
+//! the stale shell wrapper and runs without integration. See `global` for the
+//! `DirectiveMode` selection logic.
 //!
 //! When no directive env vars are set (direct binary call):
 //! - Commands execute directly.
