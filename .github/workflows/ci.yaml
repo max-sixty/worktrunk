@@ -344,9 +344,6 @@ jobs:
         git: https://github.com/max-sixty/cargo-affected
         # No rev/branch/tag → action resolves to latest default-branch sha.
 
-    - name: Install llvm-tools
-      run: rustup component add llvm-tools
-
     - name: 🎯 Run affected tests
       env:
         NEXTEST_NO_INPUT_HANDLER: 1
