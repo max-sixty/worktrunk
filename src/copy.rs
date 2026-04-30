@@ -43,7 +43,20 @@ static COPY_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
 /// when the entry was copied (reporting the source's logical byte size), or
 /// `None` if skipped because the destination already exists. When `force` is
 /// true, existing entries are removed before copying.
-pub fn copy_leaf(src: &Path, dest: &Path, force: bool) -> anyhow::Result<Option<u64>> {
+///
+/// When `root` is `Some`, refuses destination paths whose parent resolves
+/// outside `root`. The check guards the parent chain, not the final leaf, so
+/// leaf-symlink behavior is preserved (without `force` the symlink is skipped;
+/// with `force` the symlink itself is replaced).
+pub fn copy_leaf(
+    src: &Path,
+    dest: &Path,
+    root: Option<&Path>,
+    force: bool,
+) -> anyhow::Result<Option<u64>> {
+    if let Some(root) = root {
+        ensure_path_within_root(dest.parent().unwrap_or(dest), root)?;
+    }
     if force {
         remove_if_exists(dest)?;
     }
@@ -89,22 +102,6 @@ pub fn copy_leaf(src: &Path, dest: &Path, force: bool) -> anyhow::Result<Option<
     Ok(Some(bytes))
 }
 
-/// Copy a single file or symlink, refusing destination paths whose parent
-/// resolves outside `root`.
-///
-/// The check intentionally guards the parent chain, not the final leaf. Existing
-/// leaf symlinks remain idempotent: without `force` they are skipped, and with
-/// `force` the symlink itself is removed before copying.
-pub fn copy_leaf_within_root(
-    src: &Path,
-    dest: &Path,
-    root: &Path,
-    force: bool,
-) -> anyhow::Result<Option<u64>> {
-    ensure_parent_within_root(dest, root)?;
-    copy_leaf(src, dest, force)
-}
-
 fn ensure_path_within_root(path: &Path, root: &Path) -> anyhow::Result<()> {
     let canonical_root = canonicalize_with_parents(root);
     let canonical_path = canonicalize_with_parents(path);
@@ -117,11 +114,6 @@ fn ensure_path_within_root(path: &Path, root: &Path) -> anyhow::Result<()> {
     );
 
     Ok(())
-}
-
-fn ensure_parent_within_root(path: &Path, root: &Path) -> anyhow::Result<()> {
-    let parent = path.parent().unwrap_or(path);
-    ensure_path_within_root(parent, root)
 }
 
 /// A leaf item (file or symlink) collected during the directory walk.
@@ -141,29 +133,12 @@ struct CopyLeaf {
 /// removed before copying. `progress` receives per-file callbacks; pass
 /// [`Progress::disabled`] for a zero-overhead no-op.
 ///
+/// When `root` is `Some`, refuses destination directory ancestry that resolves
+/// outside `root`. Leaves inherit the guarantee because `entry.file_name()` is
+/// a single basename and cannot escape the validated parent directory.
+///
 /// Returns `(files_copied, bytes_copied)` — counts exclude skipped entries.
 pub fn copy_dir_recursive(
-    src: &Path,
-    dest: &Path,
-    force: bool,
-    progress: &Progress,
-) -> anyhow::Result<(usize, u64)> {
-    copy_dir_recursive_inner(src, dest, None, force, progress)
-}
-
-/// Copy a directory tree, refusing destination directory ancestry that resolves
-/// outside `root`.
-pub fn copy_dir_recursive_within_root(
-    src: &Path,
-    dest: &Path,
-    root: &Path,
-    force: bool,
-    progress: &Progress,
-) -> anyhow::Result<(usize, u64)> {
-    copy_dir_recursive_inner(src, dest, Some(root), force, progress)
-}
-
-fn copy_dir_recursive_inner(
     src: &Path,
     dest: &Path,
     root: Option<&Path>,
@@ -171,9 +146,6 @@ fn copy_dir_recursive_inner(
     progress: &Progress,
 ) -> anyhow::Result<(usize, u64)> {
     // Phase 1: Walk directories iteratively, creating dest dirs and collecting leaves.
-    // When `root` is set, every directory we descend into is checked against the
-    // boundary; leaves inherit that guarantee because `entry.file_name()` is a
-    // single basename and cannot escape the validated `dest_dir`.
     let mut leaves = Vec::new();
     let mut dir_stack = vec![(src.to_path_buf(), dest.to_path_buf())];
     #[cfg(unix)]
@@ -214,7 +186,7 @@ fn copy_dir_recursive_inner(
         leaves
             .par_iter()
             .try_for_each(|leaf| -> anyhow::Result<()> {
-                if let Some(bytes) = copy_leaf(&leaf.src, &leaf.dest, force)? {
+                if let Some(bytes) = copy_leaf(&leaf.src, &leaf.dest, None, force)? {
                     copied_files.fetch_add(1, Ordering::Relaxed);
                     copied_bytes.fetch_add(bytes, Ordering::Relaxed);
                     progress.record(bytes);
