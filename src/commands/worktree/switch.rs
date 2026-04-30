@@ -861,15 +861,11 @@ pub fn execute_switch(
                     if *create_branch
                         && let Some((upstream_remote, upstream_branch)) = base_pr_upstream
                     {
-                        repo.set_config(&format!("branch.{branch}.remote"), upstream_remote)
-                            .with_context(|| {
-                                format!("Failed to configure branch.{branch}.remote")
-                            })?;
+                        repo.set_config(&format!("branch.{branch}.remote"), upstream_remote)?;
                         repo.set_config(
                             &format!("branch.{branch}.merge"),
                             &format!("refs/heads/{upstream_branch}"),
-                        )
-                        .with_context(|| format!("Failed to configure branch.{branch}.merge"))?;
+                        )?;
                     }
 
                     // Report tracking info when the branch was auto-created from a remote
