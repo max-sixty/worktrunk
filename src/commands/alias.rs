@@ -562,6 +562,10 @@ fn run_alias(
                 concurrent: true,
                 announce: AnnouncePolicy::None,
                 pipe_stdin: false,
+                // Aliases pass child stdout through so `wt <alias> | …` works
+                // in scripts (#2478). Worktrunk's own messages still go to
+                // stderr.
+                redirect_stdout_to_stderr: false,
                 error_wrapper: alias_error_wrapper(alias_name.clone()),
             }
         })

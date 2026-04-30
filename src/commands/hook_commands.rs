@@ -31,6 +31,7 @@ use super::hooks::{
     HookCommandSpec, lookup_hook_configs, prepare_and_check, prepare_background_pipelines,
     run_hooks_background, run_hooks_foreground,
 };
+use super::template_vars::TemplateVars;
 
 fn run_filtered_hook(
     ctx: &CommandContext,
@@ -105,52 +106,42 @@ fn run_post_hook(
 /// Build best-effort directional vars for manual `wt hook` invocation.
 ///
 /// When hooks run during real operations (switch, merge, remove), each call site
-/// builds precise extra_vars from the actual source/destination context. When
-/// invoked manually via `wt hook <type>`, we only have the current worktree —
-/// so we provide reasonable defaults: the current branch as both base and target,
-/// and the current worktree path for directional path vars.
+/// builds precise vars from the actual source/destination context. When invoked
+/// manually via `wt hook <type>`, we only have the current worktree — so we
+/// provide reasonable defaults: the current branch as both base and target, and
+/// the current worktree path for directional path vars.
 ///
 /// This is the single source of truth for manual hook context — both `run_hook`
 /// (execution + dry-run) and `expand_command_template` (hook show --expanded)
-/// use this function.
-fn build_manual_hook_extra_vars<'a>(
-    ctx: &'a CommandContext,
+/// use this function. Returns a `TemplateVars` so callers can extend with
+/// additional bindings (e.g. CLI shorthand) before materializing.
+fn build_manual_hook_template_vars(
+    ctx: &CommandContext,
     hook_type: HookType,
-    custom_vars: &'a [(&'a str, &'a str)],
-    default_branch: Option<&'a str>,
-    worktree_path_str: &'a str,
-) -> Vec<(&'a str, &'a str)> {
+    default_branch: Option<&str>,
+) -> TemplateVars {
     let branch = ctx.branch_or_head();
-    let mut vars: Vec<(&str, &str)> = match hook_type {
+    let worktree_path = ctx.worktree_path;
+    match hook_type {
         // Merge/commit hooks: target = merge target (default branch for commit, current for merge)
         HookType::PreCommit | HookType::PostCommit => {
-            default_branch.into_iter().map(|t| ("target", t)).collect()
+            default_branch.map_or_else(TemplateVars::new, |t| TemplateVars::new().with_target(t))
         }
-        HookType::PreMerge | HookType::PostMerge => {
-            vec![
-                ("target", branch),
-                ("target_worktree_path", worktree_path_str),
-            ]
-        }
+        HookType::PreMerge | HookType::PostMerge => TemplateVars::new()
+            .with_target(branch)
+            .with_target_worktree_path(worktree_path),
         // Switch hooks: base = current (we're "switching from" here)
         HookType::PreSwitch | HookType::PreStart | HookType::PostStart | HookType::PostSwitch => {
-            vec![
-                ("base", branch),
-                ("base_worktree_path", worktree_path_str),
-                ("target", branch),
-                ("target_worktree_path", worktree_path_str),
-            ]
+            TemplateVars::new()
+                .with_base(branch, worktree_path)
+                .with_target(branch)
+                .with_target_worktree_path(worktree_path)
         }
         // Remove hooks: target = where user ends up (current worktree is the best guess)
-        HookType::PreRemove | HookType::PostRemove => {
-            vec![
-                ("target", branch),
-                ("target_worktree_path", worktree_path_str),
-            ]
-        }
-    };
-    vars.extend(custom_vars.iter().copied());
-    vars
+        HookType::PreRemove | HookType::PostRemove => TemplateVars::new()
+            .with_target(branch)
+            .with_target_worktree_path(worktree_path),
+    }
 }
 
 /// Parse a raw `KEY=VALUE` shorthand token into a canonicalized
@@ -304,20 +295,15 @@ pub fn run_hook(
 
     // Build extra vars per hook type (shared by dry-run and execution paths)
     let default_branch = repo.default_branch();
-    let worktree_path_str = worktrunk::path::to_posix_path(&ctx.worktree_path.to_string_lossy());
     // Splice `args` into the template context as a JSON-encoded sequence.
     // `expand_template` rehydrates it as `ShellArgs` so bare `{{ args }}`
     // renders space-joined with per-element shell escaping. Mirrors
     // `run_alias` at `src/commands/alias.rs`.
     let args_json =
         serde_json::to_string(&args).expect("Vec<String> serialization should never fail");
-    let mut extra_vars = build_manual_hook_extra_vars(
-        &ctx,
-        hook_type,
-        &custom_vars_refs,
-        default_branch.as_deref(),
-        &worktree_path_str,
-    );
+    let template_vars = build_manual_hook_template_vars(&ctx, hook_type, default_branch.as_deref());
+    let mut extra_vars = template_vars.as_extra_vars();
+    extra_vars.extend(custom_vars_refs.iter().copied());
     // Forward positional CLI args as `{{ args }}` (empty sequence when
     // nothing was forwarded). `expand_template` rehydrates this JSON into a
     // `ShellArgs` sequence that renders space-joined, per-element escaped.
@@ -602,14 +588,8 @@ fn expand_command_template(
     hook_name: Option<&str>,
 ) -> anyhow::Result<String> {
     let default_branch = ctx.repo.default_branch();
-    let worktree_path_str = worktrunk::path::to_posix_path(&ctx.worktree_path.to_string_lossy());
-    let extra_vars = build_manual_hook_extra_vars(
-        ctx,
-        hook_type,
-        &[],
-        default_branch.as_deref(),
-        &worktree_path_str,
-    );
+    let template_vars = build_manual_hook_template_vars(ctx, hook_type, default_branch.as_deref());
+    let extra_vars = template_vars.as_extra_vars();
     let mut template_ctx = build_hook_context(ctx, &extra_vars)?;
     template_ctx.insert("hook_type".into(), hook_type.to_string());
     if let Some(name) = hook_name {

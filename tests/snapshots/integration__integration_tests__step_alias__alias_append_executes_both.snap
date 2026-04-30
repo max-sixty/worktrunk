@@ -43,7 +43,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+USER
+PROJECT
 
 ----- stderr -----
-[0mUSER
-[0mPROJECT

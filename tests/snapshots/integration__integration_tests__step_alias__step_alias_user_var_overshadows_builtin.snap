@@ -43,6 +43,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+branch=override
 
 ----- stderr -----
-[0mbranch=override

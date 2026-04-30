@@ -43,6 +43,7 @@ use super::hooks::{
     HookAnnouncer, execute_hook, prepare_background_pipelines, run_hooks_background,
 };
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
+use super::template_vars::TemplateVars;
 use crate::output::handle_remove_output;
 use worktrunk::git::BranchDeletionMode;
 
@@ -173,6 +174,7 @@ pub fn handle_squash(
 
     // Get and validate target ref (any commit-ish for merge-base calculation)
     let integration_target = repo.require_target_ref(target)?;
+    let template_vars = TemplateVars::new().with_target(&integration_target);
 
     // Auto-stage changes before running pre-commit hooks so both beta and merge paths behave identically
     match stage_mode {
@@ -192,11 +194,10 @@ pub fn handle_squash(
 
     // Run pre-commit hooks (user first, then project).
     if verify {
-        let extra_vars = [("target", integration_target.as_str())];
         execute_hook(
             &ctx,
             HookType::PreCommit,
-            &extra_vars,
+            &template_vars.as_extra_vars(),
             FailureStrategy::FailFast,
             crate::output::pre_hook_display_path(ctx.worktree_path),
         )?;
@@ -349,7 +350,7 @@ pub fn handle_squash(
 
     // Spawn post-commit hooks in background (respects --no-hooks).
     if verify {
-        let extra_vars: Vec<(&str, &str)> = vec![("target", integration_target.as_str())];
+        let extra_vars = template_vars.as_extra_vars();
         let pipelines =
             prepare_background_pipelines(&ctx, HookType::PostCommit, &extra_vars, None)?;
         if let Some(announcer) = parent_announcer {

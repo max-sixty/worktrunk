@@ -46,12 +46,12 @@ use commands::handle_picker;
 use commands::repository_ext::RepositoryCliExt;
 use commands::worktree::{PushKind, handle_no_ff_merge, handle_push};
 use commands::{
-    HookCliArgs, MergeOptions, OperationMode, RebaseResult, RemoveTarget, SquashResult,
-    SwitchOptions, add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show,
-    handle_claude_install, handle_claude_install_statusline, handle_claude_uninstall,
-    handle_completions, handle_config_create, handle_config_show, handle_config_update,
-    handle_configure_shell, handle_custom_command, handle_hints_clear, handle_hints_get,
-    handle_hook_show, handle_init, handle_list, handle_logs_list, handle_merge,
+    HookCliArgs, MergeFlagOverrides, MergeOptions, OperationMode, RebaseResult, RemoveTarget,
+    SquashResult, SwitchOptions, add_approvals, clear_approvals, handle_alias_dry_run,
+    handle_alias_show, handle_claude_install, handle_claude_install_statusline,
+    handle_claude_uninstall, handle_completions, handle_config_create, handle_config_show,
+    handle_config_update, handle_configure_shell, handle_custom_command, handle_hints_clear,
+    handle_hints_get, handle_hook_show, handle_init, handle_list, handle_logs_list, handle_merge,
     handle_opencode_install, handle_opencode_uninstall, handle_promote, handle_rebase,
     handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
     handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
@@ -126,7 +126,7 @@ fn print_windows_picker_unavailable() {
     );
 }
 
-fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
+pub(crate) fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
     match (positive, negative) {
         (true, _) => Some(true),
         (_, true) => Some(false),
@@ -1113,12 +1113,7 @@ fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {
     }
     handle_merge(MergeOptions {
         target: args.target.as_deref(),
-        squash: flag_pair(args.squash, args.no_squash),
-        commit: flag_pair(args.commit, args.no_commit),
-        rebase: flag_pair(args.rebase, args.no_rebase),
-        remove: flag_pair(args.remove, args.no_remove),
-        ff: flag_pair(args.ff, args.no_ff),
-        verify: flag_pair(args.verify, args.no_hooks || args.no_verify),
+        flags: MergeFlagOverrides::from_cli(&args),
         yes,
         stage: args.stage,
         format: args.format,

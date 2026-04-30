@@ -1,9 +1,10 @@
-//! Canonical assembly of hook template variables for switch and merge.
+//! Canonical assembly of hook template variables.
 //!
-//! Replaces ad-hoc `Vec<(&str, &str)>` reconstructions across `handle_switch`,
-//! `worktree::switch`, and `merge`. Owns its strings — no `pr_number_buf`
-//! borrow gymnastics — and emits the deprecated `worktree` alias for
-//! `worktree_path` once, here, so call sites don't repeat that aliasing.
+//! Replaces ad-hoc `Vec<(&str, &str)>` reconstructions across the hook call
+//! sites (switch, merge, commit, squash, manual `wt hook`, picker remove).
+//! Owns its strings — no `pr_number_buf` borrow gymnastics — and emits the
+//! deprecated `worktree` alias for `worktree_path` once, here, so call sites
+//! don't repeat that aliasing.
 //!
 //! The struct carries operation-context vars (`base` / `target` directional
 //! pairs and `pr_*`) plus optional Active overrides (`worktree_path`,

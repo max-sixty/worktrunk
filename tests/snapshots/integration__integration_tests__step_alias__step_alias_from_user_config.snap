@@ -42,6 +42,6 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+Greetings from feature
 
 ----- stderr -----
-[0mGreetings from feature

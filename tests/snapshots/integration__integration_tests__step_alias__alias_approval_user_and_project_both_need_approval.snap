@@ -43,7 +43,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+user deploy
+project deploy
 
 ----- stderr -----
-[0muser deploy
-[0mproject deploy
