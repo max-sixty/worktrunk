@@ -221,7 +221,7 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
                 } else {
                     HookGate::NoHooksFlag
                 };
-                handle_squash(args.target.as_deref(), yes, hooks, args.stage).map(|result| {
+                handle_squash(args.target.as_deref(), yes, hooks, args.stage, None).map(|result| {
                     match result {
                         SquashResult::Squashed | SquashResult::NoNetChanges => {}
                         SquashResult::NoCommitsAhead(branch) => {

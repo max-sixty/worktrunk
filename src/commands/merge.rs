@@ -203,6 +203,12 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         false
     };
 
+    // One announcer for the whole command's background hooks: post-commit
+    // (from auto-commit or squash), post-remove + post-switch (from worktree
+    // removal), and post-merge share a single `◎ Running …` line flushed at
+    // the end.
+    let mut announcer = HookAnnouncer::new(repo, config, false);
+
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
     let committed = if commit && current_wt.is_dirty()? {
         if squash_enabled {
@@ -216,7 +222,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             options.warn_about_untracked = stage_mode == super::commit::StageMode::All;
             options.show_no_squash_note = true;
 
-            options.commit()?;
+            options.commit(Some(&mut announcer))?;
             true // Committed directly
         }
     } else {
@@ -232,7 +238,8 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
                 Some(&target_branch),
                 yes,
                 commit_hooks,
-                Some(stage_mode)
+                Some(stage_mode),
+                Some(&mut announcer),
             )?,
             super::step_commands::SquashResult::Squashed
         )
@@ -304,11 +311,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     if let Some(commit) = feature_commit.as_deref() {
         feature_vars = feature_vars.with_active_commit(commit);
     }
-
-    // One announcer for the whole command's background hooks: post-remove +
-    // post-switch (from worktree removal) and post-merge share a single
-    // `◎ Running …` line, flushed at the end.
-    let mut announcer = HookAnnouncer::new(repo, config, false);
 
     // Finish worktree unless removal is disabled or blocked.
     // Guards are shared with `wt remove`: is_primary_worktree (Phase 2) and

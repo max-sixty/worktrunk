@@ -16,7 +16,7 @@ use crate::cli::SwitchFormat;
 use super::command_approval::{approve_hooks, approve_or_skip};
 use super::command_executor::FailureStrategy;
 use super::command_executor::{CommandContext, build_hook_context};
-use super::hooks::{execute_hook, prepare_background_pipelines, run_hooks_background};
+use super::hooks::{HookAnnouncer, execute_hook};
 use super::template_vars::TemplateVars;
 use super::worktree::{
     SwitchBranchInfo, SwitchPlan, SwitchResult, execute_switch, offer_bare_repo_worktree_path_fix,
@@ -196,19 +196,12 @@ pub(crate) fn spawn_switch_background_hooks(
 ) -> anyhow::Result<()> {
     let ctx = CommandContext::new(repo, config, branch, result.path(), yes);
 
-    let mut pipelines =
-        prepare_background_pipelines(&ctx, HookType::PostSwitch, extra_vars, hooks_display_path)?;
-
+    let mut announcer = HookAnnouncer::new(repo, config, false);
+    announcer.register(&ctx, HookType::PostSwitch, extra_vars, hooks_display_path)?;
     if matches!(result, SwitchResult::Created { .. }) {
-        pipelines.extend(prepare_background_pipelines(
-            &ctx,
-            HookType::PostStart,
-            extra_vars,
-            hooks_display_path,
-        )?);
+        announcer.register(&ctx, HookType::PostStart, extra_vars, hooks_display_path)?;
     }
-
-    run_hooks_background(pipelines, false)
+    announcer.flush()
 }
 
 /// Handle the switch command.
