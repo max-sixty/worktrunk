@@ -41,6 +41,7 @@ pub(crate) use invocation::{
 
 pub(crate) use crate::cli::OutputFormat;
 
+use commands::commit::HookGate;
 #[cfg(unix)]
 use commands::handle_picker;
 use commands::repository_ext::RepositoryCliExt;
@@ -215,7 +216,12 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
                 commands::step_show_squash_prompt(args.target.as_deref())
             } else {
                 // Approval is handled inside handle_squash (like step_commit)
-                handle_squash(args.target.as_deref(), yes, verify, args.stage).map(|result| {
+                let hooks = if verify {
+                    HookGate::Run
+                } else {
+                    HookGate::NoHooksFlag
+                };
+                handle_squash(args.target.as_deref(), yes, hooks, args.stage).map(|result| {
                     match result {
                         SquashResult::Squashed | SquashResult::NoNetChanges => {}
                         SquashResult::NoCommitsAhead(branch) => {
