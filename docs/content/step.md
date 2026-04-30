@@ -542,7 +542,7 @@ A summary of successes and failures is shown at the end. Context JSON is piped t
 
 Arguments after `--` are the program and its arguments — run directly, no shell.
 
-{{ terminal(cmd="wt step for-each -- npm install|||wt step for-each -- python3 -c 'import sys; print(sys.argv[1:])' 'a b'") }}
+{{ terminal(cmd="wt step for-each -- git status --short|||wt step for-each -- npm install") }}
 
 For pipes, redirects, variables, or globs, wrap in `sh -c`:
 

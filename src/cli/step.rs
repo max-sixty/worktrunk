@@ -426,8 +426,8 @@ Note: This command is experimental and may change in future versions.
 Arguments after `--` are the program and its arguments — run directly, no shell.
 
 ```console
+$ wt step for-each -- git status --short
 $ wt step for-each -- npm install
-$ wt step for-each -- python3 -c 'import sys; print(sys.argv[1:])' 'a b'
 ```
 
 For pipes, redirects, variables, or globs, wrap in `sh -c`:
