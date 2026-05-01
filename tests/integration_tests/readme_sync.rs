@@ -2602,6 +2602,7 @@ fn test_docs_are_in_sync() {
     // README extraction in step 5 reads these, so they must be current first.
     let standalone_doc_files = [
         "docs/content/worktrunk.md",
+        "docs/content/codex.md",
         "docs/content/claude-code.md",
         "docs/content/tips-patterns.md",
         "docs/content/llm-commits.md",
