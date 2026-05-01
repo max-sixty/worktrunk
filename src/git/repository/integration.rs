@@ -11,6 +11,20 @@ use super::Repository;
 use crate::git::{IntegrationReason, check_integration, compute_integration_lazy};
 use crate::shell_exec::Cmd;
 
+/// Integration targets for `wt list`'s status column.
+///
+/// In the diverged case (local and upstream both have unique commits), the
+/// safety path ORs over both — so the column needs to consider both, too.
+/// Every other case collapses to a single target. See
+/// [`Repository::integration_targets`] for the resolution rules.
+#[derive(Debug, Clone)]
+pub struct IntegrationTargets {
+    /// Primary target — the only ref to check unless `secondary` is set.
+    pub primary: String,
+    /// Secondary target, only set in the diverged case.
+    pub secondary: Option<String>,
+}
+
 /// Result of the combined merge-tree + patch-id integration probe.
 ///
 /// Encapsulates the two-step sequence: first try `merge-tree --write-tree` to
@@ -503,6 +517,40 @@ impl Repository {
                 Some(self.effective_integration_target(&default_branch))
             })
             .clone()
+    }
+
+    /// Resolve the integration targets for `wt list`'s status column.
+    ///
+    /// Mirrors the local/upstream branching in
+    /// [`Self::integration_reason`] so the column's yes/no answer agrees
+    /// with the safety path in `wt remove` / `wt merge`. The relationship
+    /// determines whether a single ref or a (primary, secondary) pair is
+    /// returned:
+    ///
+    /// - No upstream / local==upstream: primary = local, secondary = None.
+    /// - Local strictly behind upstream: primary = upstream (superset).
+    /// - Upstream strictly behind local: primary = local (superset).
+    /// - Diverged: primary = local, secondary = upstream — both are checked
+    ///   so a branch merged into either side counts as integrated.
+    ///
+    /// Ancestry probes use `ref_is_ancestor` (raw git, no SHA caching) so
+    /// a just-updated local target's relationship is observed correctly,
+    /// matching [`Self::integration_reason`].
+    ///
+    /// Returns `None` when the default branch cannot be determined.
+    pub fn integration_targets(&self) -> Option<IntegrationTargets> {
+        let target = self.default_branch()?;
+        let upstream = self.branch(&target).upstream().ok().flatten();
+
+        let (primary, secondary) = match upstream {
+            None => (target, None),
+            Some(u) if self.same_commit(&target, &u).unwrap_or(false) => (target, None),
+            Some(u) if ref_is_ancestor(self, &target, &u) => (u, None),
+            Some(u) if ref_is_ancestor(self, &u, &target) => (target, None),
+            Some(u) => (target, Some(u)),
+        };
+
+        Some(IntegrationTargets { primary, secondary })
     }
 
     /// Parse a tree ref to get its SHA (cached).

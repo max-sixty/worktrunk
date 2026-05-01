@@ -778,6 +778,88 @@ fn test_copy_ignored_force_directory(mut repo: TestRepo) {
     );
 }
 
+#[cfg(unix)]
+fn setup_copy_ignored_symlinked_dest_dir(repo: &mut TestRepo) -> (PathBuf, tempfile::TempDir) {
+    let feature_path = repo.add_worktree("feature");
+
+    let target_dir = repo.root_path().join("target");
+    fs::create_dir_all(target_dir.join("debug")).unwrap();
+    fs::write(target_dir.join("debug").join("output"), "copied content").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
+    fs::write(repo.root_path().join(".worktreeinclude"), "target/\n").unwrap();
+
+    let outside = tempfile::tempdir().unwrap();
+    let outside_target = outside.path().join("target");
+    fs::create_dir_all(&outside_target).unwrap();
+    fs::write(outside_target.join("sentinel"), "keep me").unwrap();
+    std::os::unix::fs::symlink(&outside_target, feature_path.join("target")).unwrap();
+
+    (feature_path, outside)
+}
+
+#[cfg(unix)]
+fn assert_copy_ignored_rejects_symlinked_dest_dir(repo: &TestRepo, feature_path: &Path) {
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(feature_path)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "copy-ignored should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("refusing to copy outside destination worktree"),
+        "expected outside-destination error, got: {stderr}",
+    );
+}
+
+#[cfg(unix)]
+fn assert_symlinked_dest_outside_unchanged(outside: &tempfile::TempDir) {
+    let outside_target = outside.path().join("target");
+    assert_eq!(
+        fs::read_to_string(outside_target.join("sentinel")).unwrap(),
+        "keep me",
+        "sentinel outside destination worktree should remain unchanged",
+    );
+    assert!(
+        !outside_target.join("debug").join("output").exists(),
+        "copy-ignored should not write through destination directory symlink",
+    );
+}
+
+/// Refuse to copy through destination directory symlinks.
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_rejects_symlinked_destination_directory(mut repo: TestRepo) {
+    let (feature_path, outside) = setup_copy_ignored_symlinked_dest_dir(&mut repo);
+
+    assert_copy_ignored_rejects_symlinked_dest_dir(&repo, &feature_path);
+    assert_symlinked_dest_outside_unchanged(&outside);
+}
+
+/// --force must not overwrite files through destination directory symlinks.
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_force_rejects_symlinked_destination_directory(mut repo: TestRepo) {
+    let (feature_path, outside) = setup_copy_ignored_symlinked_dest_dir(&mut repo);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored", "--force"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "copy-ignored --force should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("refusing to copy outside destination worktree"),
+        "expected outside-destination error, got: {stderr}",
+    );
+    assert_symlinked_dest_outside_unchanged(&outside);
+}
+
 /// Test --verbose shows entries being copied (GitHub issue #1084)
 #[rstest]
 fn test_copy_ignored_verbose(mut repo: TestRepo) {

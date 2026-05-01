@@ -63,7 +63,8 @@ pub use remove::{
 };
 pub use repository::sha_cache;
 pub use repository::{
-    Branch, RefSnapshot, Repository, ResolvedWorktree, WorkingTree, set_base_path,
+    Branch, IntegrationTargets, RefSnapshot, Repository, ResolvedWorktree, WorkingTree,
+    set_base_path,
 };
 pub use url::GitRemoteUrl;
 pub use url::parse_owner_repo;

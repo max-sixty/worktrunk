@@ -81,4 +81,4 @@ exit_code: 0
 [107m [0m cwd                   = _REPO_.feature
 [107m [0m hook_type             = post-start
 [107m [0m hook_name             = setup
-[36m◎[39m [36mRunning post-start: [1msetup[22m ([1mproject[22m) @ [1m_REPO_.feature[22m[39m
+[36m◎[39m [36mRunning post-start: [1msetup[22m (project) @ [1m_REPO_.feature[22m[39m

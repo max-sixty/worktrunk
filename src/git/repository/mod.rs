@@ -108,8 +108,9 @@ pub mod sha_cache;
 mod working_tree;
 mod worktrees;
 
-// Re-export WorkingTree, Branch, and RefSnapshot
+// Re-export WorkingTree, Branch, IntegrationTargets, and RefSnapshot
 pub use branch::Branch;
+pub use integration::IntegrationTargets;
 pub use ref_snapshot::RefSnapshot;
 pub use working_tree::WorkingTree;
 pub(super) use working_tree::path_to_logging_context;
