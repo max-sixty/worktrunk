@@ -47,6 +47,6 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRemoving [1mfeature-a[22m worktree & branch in background (--force-delete)[39m
-[36m◎[39m [36mRunning post-remove for [1mfeature-a[22m: [1mcleanup[22m ([1muser[22m)[39m
+[36m◎[39m [36mRunning post-remove for [1mfeature-a[22m: [1mcleanup[22m (user)[39m
 [36m◎[39m [36mRemoving [1mfeature-b[22m worktree & branch in background (--force-delete)[39m
-[36m◎[39m [36mRunning post-remove for [1mfeature-b[22m: [1mcleanup[22m ([1muser[22m)[39m
+[36m◎[39m [36mRunning post-remove for [1mfeature-b[22m: [1mcleanup[22m (user)[39m
