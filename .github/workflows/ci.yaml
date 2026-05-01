@@ -347,7 +347,7 @@ jobs:
     - name: 🎯 Run affected tests
       env:
         NEXTEST_NO_INPUT_HANDLER: 1
-      run: cargo affected run --features shell-integration-tests --verbose
+      run: cargo affected run --verbose -- --features shell-integration-tests
 
   code-coverage:
     runs-on: ubuntu-24.04
