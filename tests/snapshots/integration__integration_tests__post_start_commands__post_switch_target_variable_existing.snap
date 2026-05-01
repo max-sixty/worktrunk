@@ -46,4 +46,4 @@ exit_code: 0
 ----- stderr -----
 [33m▲[39m [33mWorktree for [1mfeature[22m @ [1m_REPO_.feature[22m, but cannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
-[36m◎[39m [36mRunning post-switch: [1mproject[22m @ [1m_REPO_.feature[22m[39m
+[36m◎[39m [36mRunning post-switch: project @ [1m_REPO_.feature[22m[39m

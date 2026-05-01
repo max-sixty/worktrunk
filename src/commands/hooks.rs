@@ -319,9 +319,9 @@ fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
     // All-unnamed degenerate case: no names to list, so skip the colon.
     if !any_named {
         return if total_unnamed == 1 {
-            cformat!("<bold>{source_label}</>")
+            source_label
         } else {
-            cformat!("<bold>{source_label}</> ×{total_unnamed}")
+            format!("{source_label} ×{total_unnamed}")
         };
     }
 
@@ -336,7 +336,7 @@ fn format_pipeline_summary(steps: &[SourcedStep]) -> String {
             })
         },
     );
-    cformat!("{body} (<bold>{source_label}</>)")
+    format!("{body} ({source_label})")
 }
 
 /// Coordinates background hook announcements within a single `wt` command.

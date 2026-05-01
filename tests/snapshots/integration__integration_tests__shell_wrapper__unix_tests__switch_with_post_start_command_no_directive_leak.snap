@@ -5,4 +5,4 @@ expression: "&output.combined"
 
 [32m✓[39m [32mCreated branch [1mfeature-with-hooks[22m from [1mmain[22m and worktree @ [1m_REPO_.feature-with-hooks[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
-[36m◎[39m [36mRunning post-start: [1mproject[22m[39m
+[36m◎[39m [36mRunning post-start: project[39m
