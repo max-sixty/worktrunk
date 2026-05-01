@@ -185,6 +185,35 @@ $ wt config plugins opencode uninstall
     Uninstall,
 }
 
+// Ordering: action + inverse adjacent (install, uninstall).
+#[derive(Subcommand)]
+pub enum ConfigPluginsCodexCommand {
+    /// Configure the Worktrunk marketplace in Codex
+    #[command(
+        after_long_help = r#"Configures the Worktrunk plugin marketplace in Codex and enables Codex hooks. Equivalent to:
+
+```console
+$ codex plugin marketplace add max-sixty/worktrunk
+$ codex features enable codex_hooks
+```
+
+This does not install the plugin by itself. Afterward, open `/plugins` in Codex and install Worktrunk from the marketplace."#
+    )]
+    Install,
+
+    /// Remove the Worktrunk marketplace from Codex
+    #[command(
+        after_long_help = r#"Removes the Worktrunk plugin marketplace from Codex. Equivalent to:
+
+```console
+$ codex plugin marketplace remove worktrunk
+```
+
+This leaves any already-installed Worktrunk plugin and the global `codex_hooks` feature unchanged."#
+    )]
+    Uninstall,
+}
+
 // Ordering: action + inverse adjacent (add, clear).
 #[derive(Subcommand)]
 pub enum ApprovalsCommand {
@@ -239,6 +268,24 @@ $ wt config plugins claude install-statusline
     Claude {
         #[command(subcommand)]
         action: ConfigPluginsClaudeCommand,
+    },
+
+    /// Codex plugin
+    #[command(
+        after_long_help = r#"Activity tracking plugin — shows status markers in `wt list`:
+- 🤖 — Codex is working
+- 💬 — Codex is waiting or idle
+
+## Examples
+
+```console
+$ wt config plugins codex install
+$ wt config plugins codex uninstall
+```"#
+    )]
+    Codex {
+        #[command(subcommand)]
+        action: ConfigPluginsCodexCommand,
     },
 
     /// OpenCode plugin
@@ -514,12 +561,14 @@ $ wt config alias dry-run deploy -- --env=staging
 ## Supported tools
 
 - **claude** — Claude Code plugin (activity tracking + statusline)
+- **codex** — Codex plugin (activity tracking + Worktrunk skill)
 - **opencode** — OpenCode plugin (activity tracking)
 
 ## Examples
 
 ```console
 $ wt config plugins claude install
+$ wt config plugins codex install
 $ wt config plugins opencode install
 ```"#
     )]
@@ -872,7 +921,7 @@ wt list
 ## Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Claude Code](@/claude-code.md) plugin sets markers automatically
+- **Agent tracking** — The [Codex](@/codex.md) and [Claude Code](@/claude-code.md) plugins set markers automatically
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ## Storage

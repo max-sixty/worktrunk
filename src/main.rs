@@ -51,25 +51,26 @@ use commands::{
     HookCliArgs, MergeFlagOverrides, MergeOptions, OperationMode, RebaseResult, RemoveTarget,
     SquashResult, SwitchOptions, add_approvals, clear_approvals, handle_alias_dry_run,
     handle_alias_show, handle_claude_install, handle_claude_install_statusline,
-    handle_claude_uninstall, handle_completions, handle_config_create, handle_config_show,
-    handle_config_update, handle_configure_shell, handle_custom_command, handle_hints_clear,
-    handle_hints_get, handle_hook_show, handle_init, handle_list, handle_logs_list, handle_merge,
-    handle_opencode_install, handle_opencode_uninstall, handle_promote, handle_rebase,
-    handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
-    handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
-    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set, resolve_worktree_arg,
-    run_hook, step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune,
-    step_relocate,
+    handle_claude_uninstall, handle_codex_install, handle_codex_uninstall, handle_completions,
+    handle_config_create, handle_config_show, handle_config_update, handle_configure_shell,
+    handle_custom_command, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
+    handle_list, handle_logs_list, handle_merge, handle_opencode_install,
+    handle_opencode_uninstall, handle_promote, handle_rebase, handle_show_theme, handle_squash,
+    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
+    handle_state_show, handle_switch, handle_unconfigure_shell, handle_vars_clear, handle_vars_get,
+    handle_vars_list, handle_vars_set, resolve_worktree_arg, run_hook, step_commit,
+    step_copy_ignored, step_diff, step_eval, step_for_each, step_prune, step_relocate,
 };
 use output::handle_remove_output;
 use worktrunk::git::BranchDeletionMode;
 
 use cli::{
     ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigAliasCommand, ConfigCommand,
-    ConfigPluginsClaudeCommand, ConfigPluginsCommand, ConfigPluginsOpencodeCommand,
-    ConfigShellCommand, DefaultBranchAction, HintsAction, HookCommand, HookOptions, ListArgs,
-    ListSubcommand, LogsAction, MarkerAction, MergeArgs, PreviousBranchAction, RemoveArgs,
-    StateCommand, StepCommand, SwitchArgs, SwitchFormat, VarsAction,
+    ConfigPluginsClaudeCommand, ConfigPluginsCodexCommand, ConfigPluginsCommand,
+    ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, HintsAction,
+    HookCommand, HookOptions, ListArgs, ListSubcommand, LogsAction, MarkerAction, MergeArgs,
+    PreviousBranchAction, RemoveArgs, StateCommand, StepCommand, SwitchArgs, SwitchFormat,
+    VarsAction,
 };
 use worktrunk::HookType;
 
@@ -488,6 +489,10 @@ fn handle_plugins_command(action: ConfigPluginsCommand, yes: bool) -> anyhow::Re
             ConfigPluginsClaudeCommand::Install => handle_claude_install(yes),
             ConfigPluginsClaudeCommand::Uninstall => handle_claude_uninstall(yes),
             ConfigPluginsClaudeCommand::InstallStatusline => handle_claude_install_statusline(yes),
+        },
+        ConfigPluginsCommand::Codex { action } => match action {
+            ConfigPluginsCodexCommand::Install => handle_codex_install(yes),
+            ConfigPluginsCodexCommand::Uninstall => handle_codex_uninstall(yes),
         },
         ConfigPluginsCommand::Opencode { action } => match action {
             ConfigPluginsOpencodeCommand::Install => handle_opencode_install(yes),

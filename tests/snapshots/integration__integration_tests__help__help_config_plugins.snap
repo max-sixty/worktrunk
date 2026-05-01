@@ -4,8 +4,7 @@ info:
   program: wt
   args:
     - config
-    - state
-    - marker
+    - plugins
     - "--help"
   env:
     CLICOLOR_FORCE: "1"
@@ -32,22 +31,18 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-wt config state marker - Branch markers
+wt config plugins - Plugin management
 
-Usage: [1m[36mwt config state marker[0m [36m[OPTIONS][0m [36m[COMMAND][0m
+Usage: [1m[36mwt config plugins[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 [1m[32mCommands:[0m
-  [1m[36mget[0m    Get marker for a branch
-  [1m[36mset[0m    Set marker for a branch
-  [1m[36mclear[0m  Clear marker for a branch
+  [1m[36mclaude[0m    Claude Code plugin
+  [1m[36mcodex[0m     Codex plugin
+  [1m[36mopencode[0m  OpenCode plugin
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
-
-[1m[32mOutput:[0m
-      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
-          Output format (text, json) [default: text]
 
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m
@@ -62,26 +57,18 @@ Usage: [1m[36mwt config state marker[0m [36m[OPTIONS][0m [36m[COMMAND][0m
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-Custom status text or emoji shown in the [2mwt list[0m Status column.
+Install and manage Worktrunk plugins for AI coding tools.
 
-[1m[32mDisplay[0m
+[1m[32mSupported tools[0m
 
-Markers appear at the end of the Status column, after git symbols:
+- [1mclaude[0m — Claude Code plugin (activity tracking + statusline)
+- [1mcodex[0m — Codex plugin (activity tracking + Worktrunk skill)
+- [1mopencode[0m — OpenCode plugin (activity tracking)
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m list[0m
+[1m[32mExamples[0m
 
-[1m[32mUse cases[0m
-
-- [1mWork status[0m — [2m🚧[0m WIP, [2m✅[0m ready for review, [2m🔥[0m urgent
-- [1mAgent tracking[0m — The Codex and Claude Code plugins set markers automatically
-- [1mNotes[0m — Any short text: [2m"blocked"[0m, [2m"needs tests"[0m
-
-[1m[32mStorage[0m
-
-Stored in git config as [2mworktrunk.state.<branch>.marker[0m. Set directly with:
-
-[107m [0m [2m[0m[2m[34mgit[0m[2m config worktrunk.state.feature.marker [0m[2m[32m'{"marker":"🚧","set_at":0}'[0m[2m[0m
-
-Without a subcommand, runs [2mget[0m for the current branch. For [2m--branch[0m, use [2mget --branch=NAME[0m.
+[107m [0m [2m[0m[2m[34mwt[0m[2m config plugins claude install[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config plugins codex install[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m config plugins opencode install[0m
 
 ----- stderr -----

@@ -4,8 +4,9 @@ info:
   program: wt
   args:
     - config
-    - state
-    - marker
+    - plugins
+    - codex
+    - install
     - "--help"
   env:
     CLICOLOR_FORCE: "1"
@@ -32,22 +33,13 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-wt config state marker - Branch markers
+wt config plugins codex install - Configure the Worktrunk marketplace in Codex
 
-Usage: [1m[36mwt config state marker[0m [36m[OPTIONS][0m [36m[COMMAND][0m
-
-[1m[32mCommands:[0m
-  [1m[36mget[0m    Get marker for a branch
-  [1m[36mset[0m    Set marker for a branch
-  [1m[36mclear[0m  Clear marker for a branch
+Usage: [1m[36mwt config plugins codex install[0m [36m[OPTIONS][0m
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
-
-[1m[32mOutput:[0m
-      [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m
-          Output format (text, json) [default: text]
 
 [1m[32mGlobal Options:[0m
   [1m[36m-C[0m[36m [0m[36m<path>[0m
@@ -62,26 +54,11 @@ Usage: [1m[36mwt config state marker[0m [36m[OPTIONS][0m [36m[COMMAND][0m
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
 
-Custom status text or emoji shown in the [2mwt list[0m Status column.
+Configures the Worktrunk plugin marketplace in Codex and enables Codex hooks. Equivalent to:
 
-[1m[32mDisplay[0m
+[107m [0m [2m[0m[2m[34mcodex[0m[2m plugin marketplace add max-sixty/worktrunk[0m
+[107m [0m [2m[0m[2m[34mcodex[0m[2m features enable codex_hooks[0m
 
-Markers appear at the end of the Status column, after git symbols:
-
-[107m [0m [2m[0m[2m[34mwt[0m[2m list[0m
-
-[1m[32mUse cases[0m
-
-- [1mWork status[0m — [2m🚧[0m WIP, [2m✅[0m ready for review, [2m🔥[0m urgent
-- [1mAgent tracking[0m — The Codex and Claude Code plugins set markers automatically
-- [1mNotes[0m — Any short text: [2m"blocked"[0m, [2m"needs tests"[0m
-
-[1m[32mStorage[0m
-
-Stored in git config as [2mworktrunk.state.<branch>.marker[0m. Set directly with:
-
-[107m [0m [2m[0m[2m[34mgit[0m[2m config worktrunk.state.feature.marker [0m[2m[32m'{"marker":"🚧","set_at":0}'[0m[2m[0m
-
-Without a subcommand, runs [2mget[0m for the current branch. For [2m--branch[0m, use [2mget --branch=NAME[0m.
+This does not install the plugin by itself. Afterward, open [2m/plugins[0m in Codex and install Worktrunk from the marketplace.
 
 ----- stderr -----
