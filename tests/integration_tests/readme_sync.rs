@@ -2704,6 +2704,33 @@ fn test_no_nested_auto_generated_markers() {
     );
 }
 
+/// `terminal(cmd=...)` shortcodes must use the `__WT_QUOT__` placeholder for
+/// embedded double quotes — the terminal template substitutes that back to `"`
+/// before Syntect highlighting. Raw `&quot;` HTML entities pass through Tera
+/// untouched and render literally in the docs site (see #2495).
+#[test]
+fn test_terminal_cmd_uses_wt_quot_placeholder() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut violations = Vec::new();
+    for entry in fs::read_dir(project_root.join("docs/content")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|e| e == "md") {
+            let content = fs::read_to_string(&path).unwrap();
+            for (i, line) in content.lines().enumerate() {
+                if line.contains("terminal(cmd=") && line.contains("&quot;") {
+                    violations.push(format!("{}:{}: {}", path.display(), i + 1, line.trim()));
+                }
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "Found `&quot;` inside terminal(cmd=...) shortcodes — these render \
+         literally on the docs site. Replace with `__WT_QUOT__`.\n\n{}",
+        violations.join("\n")
+    );
+}
+
 /// The hand-authored `## Template variables` table in `src/cli/mod.rs` must
 /// match the variable constants in `src/config/expansion.rs`. Drift means the
 /// help docs lie about which vars hooks and aliases can reference.

@@ -1,8 +1,9 @@
 //! Integration tests for `wt step prune`
 
 use crate::common::{
-    BareRepoTest, TestRepo, make_snapshot_cmd, repo, setup_temp_snapshot_settings,
+    BareRepoTest, TestRepo, make_snapshot_cmd, repo, repo_with_remote, setup_temp_snapshot_settings,
 };
+use ansi_str::AnsiStr;
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -780,6 +781,188 @@ fn test_prune_json_orphan_branch(repo: TestRepo) {
     assert!(output.status.success());
 
     assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+}
+
+/// Regression: `wt step prune` ORs over local AND upstream like `wt remove` /
+/// `wt list`. A worktree merged into LOCAL `main` must still be pruned when
+/// `main` and `origin/main` have diverged. Mirrors
+/// `test_remove_merged_locally_when_upstream_diverged` in `remove.rs`.
+#[rstest]
+fn test_prune_locally_merged_when_upstream_diverged(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let remote_path = repo.remote_path().unwrap().to_path_buf();
+
+    // Advance origin/main with a remote-only commit so local and upstream diverge.
+    let github_sim = repo.home_path().join("github-sim-prune-local-merge");
+    repo.run_git_in(
+        repo.home_path(),
+        &[
+            "clone",
+            remote_path.to_str().unwrap(),
+            "github-sim-prune-local-merge",
+        ],
+    );
+    std::fs::write(github_sim.join("remote-only.txt"), "remote only").unwrap();
+    repo.run_git_in(&github_sim, &["add", "remote-only.txt"]);
+    repo.run_git_in(&github_sim, &["commit", "-m", "Remote-only main commit"]);
+    repo.run_git_in(&github_sim, &["push", "origin", "main"]);
+
+    // Merge a feature into local main so local main contains the feature commit.
+    repo.add_worktree("feature-prune-local");
+    let feature_path = repo.worktree_path("feature-prune-local");
+    std::fs::write(feature_path.join("feature.txt"), "feature").unwrap();
+    repo.run_git_in(feature_path, &["add", "feature.txt"]);
+    repo.run_git_in(feature_path, &["commit", "-m", "Add feature"]);
+    repo.run_git(&[
+        "merge",
+        "--no-ff",
+        "-m",
+        "Merge feature",
+        "feature-prune-local",
+    ]);
+
+    repo.run_git(&["fetch", "origin"]);
+
+    let local_main = repo.git_output(&["rev-parse", "main"]);
+    let origin_main = repo.git_output(&["rev-parse", "origin/main"]);
+    assert_ne!(
+        local_main, origin_main,
+        "main and origin/main should differ"
+    );
+    assert!(
+        !repo
+            .git_command()
+            .args(["merge-base", "--is-ancestor", "main", "origin/main"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "local main must not be an ancestor of origin/main",
+    );
+    assert!(
+        !repo
+            .git_command()
+            .args(["merge-base", "--is-ancestor", "origin/main", "main"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "origin/main must not be an ancestor of local main",
+    );
+
+    let output = make_snapshot_cmd(&repo, "step", &["prune", "--yes", "--min-age=0s"], None)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+
+    assert!(
+        output.status.success(),
+        "prune should succeed\nstderr:\n{stderr}",
+    );
+
+    let worktree_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("repo.feature-prune-local");
+    assert!(
+        !worktree_path.exists(),
+        "locally-merged worktree should be pruned even when origin/main has diverged\nstderr:\n{stderr}",
+    );
+
+    let branch_still_exists = repo
+        .git_command()
+        .args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "refs/heads/feature-prune-local",
+        ])
+        .run()
+        .unwrap()
+        .status
+        .success();
+    assert!(
+        !branch_still_exists,
+        "locally-merged branch should be deleted alongside its worktree\nstderr:\n{stderr}",
+    );
+}
+
+/// Regression companion: a worktree squash-merged on `origin/main` is pruned
+/// when local `main` has its own unique commits. Mirrors
+/// `test_remove_squash_merged_on_remote_when_local_main_diverged`.
+#[rstest]
+fn test_prune_squash_merged_on_remote_when_local_diverged(
+    #[from(repo_with_remote)] mut repo: TestRepo,
+) {
+    let remote_path = repo.remote_path().unwrap().to_path_buf();
+
+    // Build, push, and remote-squash-merge a feature branch.
+    repo.add_worktree("feature-prune-remote-squash");
+    let feature_path = repo.worktree_path("feature-prune-remote-squash");
+    std::fs::write(feature_path.join("feature-remote.txt"), "initial").unwrap();
+    repo.run_git_in(feature_path, &["add", "feature-remote.txt"]);
+    repo.run_git_in(feature_path, &["commit", "-m", "Add feature"]);
+    std::fs::write(feature_path.join("feature-remote.txt"), "final").unwrap();
+    repo.run_git_in(feature_path, &["add", "feature-remote.txt"]);
+    repo.run_git_in(feature_path, &["commit", "-m", "Finalize feature"]);
+    repo.run_git_in(
+        feature_path,
+        &["push", "-u", "origin", "feature-prune-remote-squash"],
+    );
+
+    let github_sim = repo.home_path().join("github-sim-prune-remote-squash");
+    repo.run_git_in(
+        repo.home_path(),
+        &[
+            "clone",
+            remote_path.to_str().unwrap(),
+            "github-sim-prune-remote-squash",
+        ],
+    );
+    repo.run_git_in(
+        &github_sim,
+        &["merge", "--squash", "origin/feature-prune-remote-squash"],
+    );
+    repo.run_git_in(&github_sim, &["commit", "-m", "Add feature (#1)"]);
+    repo.run_git_in(&github_sim, &["push", "origin", "main"]);
+
+    // Fetch the remote squash; advance local main with a unique commit so local
+    // and upstream diverge.
+    repo.run_git(&["fetch", "origin"]);
+    std::fs::write(repo.root_path().join("local-only.txt"), "local only").unwrap();
+    repo.run_git(&["add", "local-only.txt"]);
+    repo.run_git(&["commit", "-m", "Local-only main commit"]);
+
+    let local_main = repo.git_output(&["rev-parse", "main"]);
+    let origin_main = repo.git_output(&["rev-parse", "origin/main"]);
+    assert_ne!(
+        local_main, origin_main,
+        "local main should diverge from origin/main"
+    );
+
+    let output = make_snapshot_cmd(&repo, "step", &["prune", "--yes", "--min-age=0s"], None)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+
+    assert!(
+        output.status.success(),
+        "prune should succeed\nstderr:\n{stderr}",
+    );
+
+    let worktree_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("repo.feature-prune-remote-squash");
+    assert!(
+        !worktree_path.exists(),
+        "remotely-squash-merged worktree should be pruned when local main has diverged\nstderr:\n{stderr}",
+    );
 }
 
 /// Hook announcements during prune include the branch name for disambiguation

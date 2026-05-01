@@ -1445,9 +1445,8 @@ fn handle_removed_worktree_output(
 /// session — see [`DirectivePassthrough::inherit_from_env_with_exec`] for the
 /// one exception.
 ///
-/// - `DirectivePassthrough::none()` — scrubs all directive env vars from the
-///   child. Used by `for-each` (runs in other worktrees) and background hooks
-///   (outlive the parent shell).
+/// - `DirectivePassthrough::default()` — scrubs all directive env vars from
+///   the child. Used by background hooks (outlive the parent shell).
 /// - `DirectivePassthrough::inherit_from_env()` — re-adds CD (and the legacy
 ///   compat var) but scrubs EXEC. Used by project aliases and foreground hooks,
 ///   which may emit `cd` directives but must not be able to inject shell.
@@ -1534,12 +1533,12 @@ pub fn execute_shell_command(
 
 /// Selector for which directive file env vars to pass through to a child shell.
 ///
-/// Constructed by callers via [`DirectivePassthrough::none`],
-/// [`DirectivePassthrough::inherit_from_env`], or
-/// [`DirectivePassthrough::inherit_from_env_with_exec`]. The EXEC file is
-/// only included by the `_with_exec` variant — every other path scrubs it so
-/// alias/hook shell bodies cannot inject arbitrary shell into the parent
-/// session.
+/// `Default` (no fields set) scrubs all directive env vars from the child;
+/// [`DirectivePassthrough::inherit_from_env`] reads the current process
+/// environment and re-adds CD only; [`DirectivePassthrough::inherit_from_env_with_exec`]
+/// re-adds CD and EXEC. The EXEC file is only included by the `_with_exec`
+/// variant — every other path scrubs it so alias/hook shell bodies cannot
+/// inject arbitrary shell into the parent session.
 #[derive(Debug, Default, Clone)]
 pub struct DirectivePassthrough {
     pub cd_file: Option<std::path::PathBuf>,
@@ -1548,11 +1547,6 @@ pub struct DirectivePassthrough {
 }
 
 impl DirectivePassthrough {
-    /// Scrub all directive file env vars from the child process.
-    pub fn none() -> Self {
-        Self::default()
-    }
-
     /// Pass CD and legacy directive files through to the child, reading the
     /// current process environment. Used by project aliases and foreground
     /// hooks that may legitimately emit a `cd` directive. The EXEC file is

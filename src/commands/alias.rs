@@ -298,8 +298,8 @@ fn unknown_step_command_error(name: &str, alias_names: &[String]) -> anyhow::Err
 /// there is nothing beyond the alias name to announce.
 ///
 /// Returns `Some(…)` only when the alias has at least one named step, so the
-/// banner can carry a pipeline summary (e.g., `Running alias deploy: install;
-/// build, lint`). Single unnamed aliases (`ls = "wt list"`) and all-anonymous
+/// banner can carry a pipeline summary (e.g., `Running alias deploy: install,
+/// build & lint`). Single unnamed aliases (`ls = "wt list"`) and all-anonymous
 /// pipelines (`foo = ["a", "b"]`) return `None` — the banner would only echo
 /// the name the user just typed. Callers that still want a confirmation line
 /// (e.g. under `-v`) emit a bare `Running alias <name>` themselves.
@@ -955,7 +955,7 @@ test = "cargo test"
 "#,
         );
         let msg = format_alias_announcement("check", &entry).expect("summary expected");
-        insta::assert_snapshot!(msg.ansi_strip(), @"Running alias check: build, test");
+        insta::assert_snapshot!(msg.ansi_strip(), @"Running alias check: build & test");
     }
 
     #[test]
@@ -970,7 +970,7 @@ cmd = [
 "#,
         );
         let msg = format_alias_announcement("deploy", &entry).expect("summary expected");
-        insta::assert_snapshot!(msg.ansi_strip(), @"Running alias deploy: install; build, lint");
+        insta::assert_snapshot!(msg.ansi_strip(), @"Running alias deploy: install, build & lint");
     }
 
     #[test]
@@ -986,7 +986,7 @@ cmd = [
 "#,
         );
         let msg = format_alias_announcement("ci", &entry).expect("summary expected");
-        insta::assert_snapshot!(msg.ansi_strip(), @"Running alias ci: build, test");
+        insta::assert_snapshot!(msg.ansi_strip(), @"Running alias ci: build & test");
     }
 
     #[test]
@@ -1001,7 +1001,7 @@ cmd = [
             )),
         };
         let msg = format_alias_announcement("deploy", &entry).expect("summary expected");
-        insta::assert_snapshot!(msg.ansi_strip(), @"Running alias deploy: install; build; test");
+        insta::assert_snapshot!(msg.ansi_strip(), @"Running alias deploy: install, build, test");
     }
 
     #[test]
@@ -1573,7 +1573,7 @@ cmd = [
 ]
 "#,
         );
-        assert_eq!(format_alias_summary(&cfg), "install; build, lint");
+        assert_eq!(format_alias_summary(&cfg), "install, build & lint");
     }
 
     #[test]
@@ -1588,7 +1588,7 @@ build = "cargo build"
 test = "cargo test"
 "#,
         );
-        assert_eq!(format_alias_summary(&cfg), "build, test");
+        assert_eq!(format_alias_summary(&cfg), "build & test");
     }
 
     #[test]

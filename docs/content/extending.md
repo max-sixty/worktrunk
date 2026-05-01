@@ -122,7 +122,7 @@ Every step sees the same `{{ args }}` and bound variables — `wt release -- --d
 ```toml
 [aliases]
 up = '''
-git fetch --all --prune && wt step for-each -- '
+git fetch --all --prune && wt step for-each -- sh -c '
   git rev-parse --verify @{u} >/dev/null 2>&1 || exit 0
   g=$(git rev-parse --git-dir)
   test -d "$g/rebase-merge" -o -d "$g/rebase-apply" && exit 0

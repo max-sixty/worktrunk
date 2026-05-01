@@ -2,7 +2,8 @@ use crate::common::{
     TestRepo, make_snapshot_cmd, merge_scenario,
     mock_commands::{create_mock_cargo, create_mock_llm_auth},
     repo, repo_with_alternate_primary, repo_with_feature_worktree, repo_with_main_worktree,
-    repo_with_multi_commit_feature, setup_snapshot_settings, wait_for_file, wait_for_file_content,
+    repo_with_multi_commit_feature, repo_with_remote, setup_snapshot_settings, wait_for_file,
+    wait_for_file_content,
 };
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
@@ -3037,4 +3038,86 @@ fn test_merge_json(repo: TestRepo) {
       "target": "main"
     }
     "#);
+}
+
+/// Regression: post-merge integration check uses the LOCAL target ref, not the
+/// upstream. When local `main` and `origin/main` have diverged, the merge just
+/// performed lands in local `main` only — checking against `origin/main` would
+/// falsely report the branch as unmerged and skip removal.
+#[rstest]
+fn test_merge_removes_branch_when_local_main_diverged_from_upstream(
+    #[from(repo_with_remote)] mut repo: TestRepo,
+) {
+    let remote_path = repo.remote_path().unwrap().to_path_buf();
+
+    // Advance origin/main with a remote-only commit (clone bare remote, commit, push).
+    let github_sim = repo.home_path().join("github-sim");
+    repo.run_git_in(
+        repo.home_path(),
+        &["clone", remote_path.to_str().unwrap(), "github-sim"],
+    );
+    fs::write(github_sim.join("remote-only.txt"), "remote only").unwrap();
+    repo.run_git_in(&github_sim, &["add", "remote-only.txt"]);
+    repo.run_git_in(&github_sim, &["commit", "-m", "Remote-only main commit"]);
+    repo.run_git_in(&github_sim, &["push", "origin", "main"]);
+
+    // Fetch origin so the local repo knows about origin/main, then add a
+    // local-only commit so local main and origin/main diverge.
+    repo.run_git(&["fetch", "origin"]);
+    fs::write(repo.root_path().join("local-only.txt"), "local only").unwrap();
+    repo.run_git(&["add", "local-only.txt"]);
+    repo.run_git(&["commit", "-m", "Local-only main commit"]);
+
+    // Sanity: local main and origin/main have diverged (neither is ancestor).
+    assert!(
+        !repo
+            .git_command()
+            .args(["merge-base", "--is-ancestor", "main", "origin/main"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "local main should not be an ancestor of origin/main"
+    );
+    assert!(
+        !repo
+            .git_command()
+            .args(["merge-base", "--is-ancestor", "origin/main", "main"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "origin/main should not be an ancestor of local main"
+    );
+
+    // Create feature off current local main and add a commit.
+    let feature_wt = repo.add_feature();
+
+    // Merge — should detect integration against local main, not origin/main.
+    let output = repo
+        .wt_command()
+        .args(["merge", "main", "--yes"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "merge should succeed despite local/upstream divergence\nstderr:\n{stderr}",
+    );
+    assert!(
+        !stderr.contains("Branch unmerged"),
+        "post-merge integration check must use local target, not upstream\nstderr:\n{stderr}",
+    );
+
+    // Branch should be deleted as part of the safe removal path.
+    let branch_check = repo
+        .git_command()
+        .args(["rev-parse", "--verify", "--quiet", "refs/heads/feature"])
+        .run()
+        .unwrap();
+    assert!(
+        !branch_check.status.success(),
+        "feature branch should be deleted after a clean merge"
+    );
 }

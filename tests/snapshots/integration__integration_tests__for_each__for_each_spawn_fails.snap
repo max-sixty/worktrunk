@@ -48,20 +48,20 @@ exit_code: 1
 
 ----- stderr -----
 [36m◎[39m [36mRunning in [1mmain[22m...[39m
-[0msh: nonexistent-command-12345: command not found
-[31m✗[39m [31mFailed in [1m[1mmain[22m[22m (exit code 127)[39m
+[0m[31m✗[39m [31mFailed in [1m[1mmain[22m[22m (spawn failed)[39m
+[107m [0m [31m✗[39m [31mFailed to execute command (direct): [SPAWN_FAIL][39m
 [36m◎[39m [36mRunning in [1mfeature[22m...[39m
-[0msh: nonexistent-command-12345: command not found
-[31m✗[39m [31mFailed in [1m[1mfeature[22m[22m (exit code 127)[39m
+[0m[31m✗[39m [31mFailed in [1m[1mfeature[22m[22m (spawn failed)[39m
+[107m [0m [31m✗[39m [31mFailed to execute command (direct): [SPAWN_FAIL][39m
 [36m◎[39m [36mRunning in [1mfeature-a[22m...[39m
-[0msh: nonexistent-command-12345: command not found
-[31m✗[39m [31mFailed in [1m[1mfeature-a[22m[22m (exit code 127)[39m
+[0m[31m✗[39m [31mFailed in [1m[1mfeature-a[22m[22m (spawn failed)[39m
+[107m [0m [31m✗[39m [31mFailed to execute command (direct): [SPAWN_FAIL][39m
 [36m◎[39m [36mRunning in [1mfeature-b[22m...[39m
-[0msh: nonexistent-command-12345: command not found
-[31m✗[39m [31mFailed in [1m[1mfeature-b[22m[22m (exit code 127)[39m
+[0m[31m✗[39m [31mFailed in [1m[1mfeature-b[22m[22m (spawn failed)[39m
+[107m [0m [31m✗[39m [31mFailed to execute command (direct): [SPAWN_FAIL][39m
 [36m◎[39m [36mRunning in [1mfeature-c[22m...[39m
-[0msh: nonexistent-command-12345: command not found
-[31m✗[39m [31mFailed in [1m[1mfeature-c[22m[22m (exit code 127)[39m
+[0m[31m✗[39m [31mFailed in [1m[1mfeature-c[22m[22m (spawn failed)[39m
+[107m [0m [31m✗[39m [31mFailed to execute command (direct): [SPAWN_FAIL][39m
 
 [33m▲[39m [33m5 of 5 worktrees failed[39m
 [107m [0m [1mmain[22m
