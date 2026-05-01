@@ -10,7 +10,7 @@ $ wt config plugins codex install
 
 Then open `/plugins` in Codex and install Worktrunk from the Worktrunk marketplace.
 
-The install command configures the marketplace and enables Codex hooks; it does not install the plugin directly. To remove the marketplace entry later, run:
+The install command configures the marketplace; it does not install the plugin directly. To remove the marketplace entry later, run:
 
 ```console
 $ wt config plugins codex uninstall

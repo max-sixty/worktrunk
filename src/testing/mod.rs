@@ -392,6 +392,8 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env("RUST_LOG", "warn");
     // Treat Claude as not installed by default (tests can override with "1")
     cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "0");
+    // Treat Codex as not installed by default (tests can override with "1")
+    cmd.env("WORKTRUNK_TEST_CODEX_INSTALLED", "0");
     // Treat OpenCode as not installed by default (tests can override with "1")
     cmd.env("WORKTRUNK_TEST_OPENCODE_INSTALLED", "0");
 
@@ -1661,11 +1663,12 @@ impl TestRepo {
         self.claude_installed = true;
     }
 
-    /// Setup mock `codex` CLI with plugin marketplace and feature support
+    /// Setup mock `codex` CLI with plugin marketplace support
     ///
     /// Creates a mock codex binary that handles `plugin marketplace add`,
-    /// `plugin marketplace remove`, and `features enable` commands. Must call
-    /// `setup_mock_ci_tools_unauthenticated()` first to create the mock bin directory.
+    /// and `plugin marketplace remove` commands. Must call
+    /// `setup_mock_ci_tools_unauthenticated()` first to create the mock bin
+    /// directory.
     pub fn setup_mock_codex_with_plugins(&mut self) {
         let mock_bin = self
             .mock_bin_path
@@ -1675,7 +1678,6 @@ impl TestRepo {
         MockConfig::new("codex")
             .command("plugin marketplace add", MockResponse::exit(0))
             .command("plugin marketplace remove", MockResponse::exit(0))
-            .command("features enable codex_hooks", MockResponse::exit(0))
             .write(mock_bin);
 
         self.codex_installed = true;
@@ -1710,7 +1712,7 @@ impl TestRepo {
         self.claude_installed = true;
     }
 
-    /// Setup mock `codex` CLI where marketplace and feature commands fail
+    /// Setup mock `codex` CLI where marketplace commands fail
     ///
     /// Must call `setup_mock_ci_tools_unauthenticated()` first.
     pub fn setup_mock_codex_with_plugins_failing(&mut self) {
@@ -1727,10 +1729,6 @@ impl TestRepo {
             .command(
                 "plugin marketplace remove",
                 MockResponse::exit(1).with_stderr("error: marketplace remove failed\n"),
-            )
-            .command(
-                "features enable codex_hooks",
-                MockResponse::exit(1).with_stderr("error: feature enable failed\n"),
             )
             .write(mock_bin);
 

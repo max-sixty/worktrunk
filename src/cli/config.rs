@@ -190,11 +190,10 @@ $ wt config plugins opencode uninstall
 pub enum ConfigPluginsCodexCommand {
     /// Configure the Worktrunk marketplace in Codex
     #[command(
-        after_long_help = r#"Configures the Worktrunk plugin marketplace in Codex and enables Codex hooks. Equivalent to:
+        after_long_help = r#"Configures the Worktrunk plugin marketplace in Codex. Equivalent to:
 
 ```console
 $ codex plugin marketplace add max-sixty/worktrunk
-$ codex features enable codex_hooks
 ```
 
 This does not install the plugin by itself. Afterward, open `/plugins` in Codex and install Worktrunk from the marketplace."#

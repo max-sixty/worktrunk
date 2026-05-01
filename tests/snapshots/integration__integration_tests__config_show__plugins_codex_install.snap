@@ -34,7 +34,6 @@ info:
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
-    WORKTRUNK_TEST_CODEX_INSTALLED: "1"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
@@ -49,7 +48,6 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mAdding Codex plugin marketplace...[39m
-[36m◎[39m [36mEnabling Codex hooks...[39m
 [32m✓[39m [32mCodex marketplace configured[39m
 [2m↳[22m [2mNext, run /plugins in Codex and install Worktrunk from the marketplace[22m
 [2m↳[22m [2mActivity markers (🤖/💬) will appear in [4mwt list[24m[22m

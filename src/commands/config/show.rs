@@ -149,9 +149,6 @@ pub(super) fn is_codex_available() -> bool {
     if let Ok(val) = std::env::var("WORKTRUNK_TEST_CODEX_INSTALLED") {
         return val == "1";
     }
-    if std::env::var("WORKTRUNK_TEST_EPOCH").is_ok() {
-        return false;
-    }
     which::which("codex").is_ok()
 }
 

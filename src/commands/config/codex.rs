@@ -10,7 +10,6 @@ use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 
 const MARKETPLACE_SOURCE: &str = "max-sixty/worktrunk";
 const MARKETPLACE_NAME: &str = "worktrunk";
-const HOOKS_FEATURE: &str = "codex_hooks";
 
 /// Handle `wt config plugins codex install`.
 pub fn handle_codex_install(yes: bool) -> Result<()> {
@@ -20,9 +19,7 @@ pub fn handle_codex_install(yes: bool) -> Result<()> {
         match prompt_yes_no_preview(
             &cformat!("Add Worktrunk plugin marketplace to <bold>Codex</>?"),
             || {
-                let commands = cformat!(
-                    "codex plugin marketplace add {MARKETPLACE_SOURCE}\ncodex features enable {HOOKS_FEATURE}"
-                );
+                let commands = cformat!("codex plugin marketplace add {MARKETPLACE_SOURCE}");
                 eprintln!("{}", worktrunk::styling::format_bash_with_gutter(&commands));
             },
         )? {
@@ -40,17 +37,6 @@ pub fn handle_codex_install(yes: bool) -> Result<()> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("codex plugin marketplace add failed: {}", stderr.trim());
-    }
-
-    eprintln!("{}", progress_message("Enabling Codex hooks..."));
-    let output = Cmd::new("codex")
-        .args(["features", "enable", HOOKS_FEATURE])
-        .run()
-        .context("Failed to run codex CLI")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("codex features enable failed: {}", stderr.trim());
     }
 
     eprintln!("{}", success_message("Codex marketplace configured"));

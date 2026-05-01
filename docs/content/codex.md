@@ -20,11 +20,11 @@ Recommended:
 
 {{ terminal(cmd="wt config plugins codex install") }}
 
-This configures the Worktrunk marketplace and enables Codex hooks. It does not install the plugin by itself. Then open `/plugins` in Codex and install Worktrunk from the Worktrunk marketplace.
+This configures the Worktrunk marketplace. It does not install the plugin by itself. Then open `/plugins` in Codex and install Worktrunk from the Worktrunk marketplace.
 
 Manual equivalent:
 
-{{ terminal(cmd="codex plugin marketplace add max-sixty/worktrunk|||codex features enable codex_hooks") }}
+{{ terminal(cmd="codex plugin marketplace add max-sixty/worktrunk") }}
 
 To remove the marketplace entry later:
 

@@ -1025,6 +1025,7 @@ fn setup_snapshot_settings_for_paths_with_home(
     settings.add_filter(r#"    CARGO_LLVM_COV: "1"\n"#, "");
     settings.add_filter(r#"    CARGO_LLVM_COV_TARGET_DIR: "[^"]+"\n"#, "");
     settings.add_filter(r#"    LLVM_PROFILE_FILE: "[^"]+"\n"#, "");
+    settings.add_filter(r#"    WORKTRUNK_TEST_CODEX_INSTALLED: "[01]"\n"#, "");
 
     settings
 }
