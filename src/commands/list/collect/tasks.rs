@@ -7,7 +7,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
 use anyhow::Context;
-use worktrunk::git::{LineDiff, Repository};
+use worktrunk::git::{IntegrationTargets, LineDiff, Repository};
 
 use super::super::ci_status::{CiBranchName, PrStatus};
 use super::super::model::{
@@ -24,7 +24,7 @@ use super::types::{ErrorCause, TaskError, TaskKind, TaskResult};
 /// Contains all data needed by any task. The `repo` field shares its cache
 /// across all clones via `Arc<RepoCache>`, so parallel tasks benefit from
 /// cached merge-base results, ahead/behind counts, default branch, and
-/// integration target.
+/// integration targets.
 #[derive(Clone)]
 pub struct TaskContext {
     /// Shared repository handle. All clones share the same cache via Arc.
@@ -48,11 +48,14 @@ pub struct TaskContext {
     /// degrades silently (empty cells) here rather than emitting a cascade
     /// of "ambiguous argument" errors.
     pub default_branch: Option<String>,
-    /// Integration target (`default_branch`, or its upstream when ahead).
-    /// `None` when the default branch is unset or stale — keeps the same
-    /// silent-skip contract as `default_branch` for tasks that compare
-    /// against the integration target.
-    pub integration_target: Option<String>,
+    /// Integration targets for this list invocation. Carries the primary
+    /// ref the column is reported against, plus an optional secondary ref
+    /// to also check (only set when local and upstream have diverged). A
+    /// branch is treated as integrated if it is integrated against either
+    /// — same OR semantics as `Repository::integration_reason`. `None`
+    /// when the default branch is unset or stale, keeping the same
+    /// silent-skip contract as `default_branch`.
+    pub integration_targets: Option<IntegrationTargets>,
 }
 
 impl TaskContext {
@@ -85,12 +88,12 @@ impl TaskContext {
         self.default_branch.clone()
     }
 
-    /// Get the integration target resolved for this list invocation.
+    /// Get the integration targets resolved for this list invocation.
     ///
     /// Used for integration checks (status symbols, safe deletion).
     /// Returns `None` if default branch cannot be determined or is stale.
-    pub(super) fn integration_target(&self) -> Option<String> {
-        self.integration_target.clone()
+    pub(super) fn integration_targets(&self) -> Option<&IntegrationTargets> {
+        self.integration_targets.as_ref()
     }
 }
 
@@ -175,15 +178,17 @@ impl Task for AheadBehindTask {
 
 /// Task 3: Tree identity check (does the item's commit tree match integration target's tree?)
 ///
-/// Uses target for integration detection (squash merge, rebase).
+/// Uses target for integration detection (squash merge, rebase). When local
+/// and upstream have diverged, ORs across both — a tree match against either
+/// counts as integrated, matching `Repository::integration_reason`.
 pub struct CommittedTreesMatchTask;
 
 impl Task for CommittedTreesMatchTask {
     const KIND: TaskKind = TaskKind::CommittedTreesMatch;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        // When integration_target is None, return false (conservative: don't mark as integrated)
-        let Some(base) = ctx.integration_target() else {
+        // When integration_targets is None, return false (conservative: don't mark as integrated)
+        let Some(targets) = ctx.integration_targets() else {
             return Ok(TaskResult::CommittedTreesMatch {
                 item_idx: ctx.item_idx,
                 committed_trees_match: false,
@@ -198,9 +203,14 @@ impl Task for CommittedTreesMatchTask {
             .branch_ref
             .full_ref()
             .unwrap_or(&ctx.branch_ref.commit_sha);
-        let committed_trees_match = repo
-            .trees_match(ref_to_check, &base)
+        let mut committed_trees_match = repo
+            .trees_match(ref_to_check, &targets.primary)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
+        if !committed_trees_match && let Some(secondary) = targets.secondary.as_deref() {
+            committed_trees_match = repo
+                .trees_match(ref_to_check, secondary)
+                .map_err(|e| ctx.error(Self::KIND, &e))?;
+        }
         Ok(TaskResult::CommittedTreesMatch {
             item_idx: ctx.item_idx,
             committed_trees_match,
@@ -232,17 +242,25 @@ impl Task for HasFileChangesTask {
                 has_file_changes: true,
             });
         };
-        // When integration_target is None, return true (conservative: assume has changes)
-        let Some(target) = ctx.integration_target() else {
+        // When integration_targets is None, return true (conservative: assume has changes)
+        let Some(targets) = ctx.integration_targets() else {
             return Ok(TaskResult::HasFileChanges {
                 item_idx: ctx.item_idx,
                 has_file_changes: true,
             });
         };
         let repo = &ctx.repo;
-        let has_file_changes = repo
-            .has_added_changes(branch, &target)
+        // The branch is integrated (no added changes) if it has none against
+        // EITHER target. AND the per-target booleans so the combined value is
+        // false (== integrated) as soon as a single side has nothing to add.
+        let mut has_file_changes = repo
+            .has_added_changes(branch, &targets.primary)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
+        if has_file_changes && let Some(secondary) = targets.secondary.as_deref() {
+            has_file_changes = repo
+                .has_added_changes(branch, secondary)
+                .map_err(|e| ctx.error(Self::KIND, &e))?;
+        }
 
         Ok(TaskResult::HasFileChanges {
             item_idx: ctx.item_idx,
@@ -280,22 +298,39 @@ impl Task for WouldMergeAddTask {
                 is_patch_id_match: false,
             });
         };
-        // When integration_target is None, return true (conservative: assume would add)
-        let Some(base) = ctx.integration_target() else {
+        // When integration_targets is None, return true (conservative: assume would add)
+        let Some(targets) = ctx.integration_targets() else {
             return Ok(TaskResult::WouldMergeAdd {
                 item_idx: ctx.item_idx,
                 would_merge_add: true,
                 is_patch_id_match: false,
             });
         };
+        // Combine probes the same way `compute_integration_reason_uncached`
+        // ORs the two `check_integration` calls: a branch is integrated if
+        // merging would add nothing OR a patch-id matches against EITHER
+        // side. So `would_merge_add` ANDs (false on either ⇒ integrated)
+        // and `is_patch_id_match` ORs.
         let probe = ctx
             .repo
-            .merge_integration_probe(branch, &base)
+            .merge_integration_probe(branch, &targets.primary)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
+        let mut would_merge_add = probe.would_merge_add;
+        let mut is_patch_id_match = probe.is_patch_id_match;
+        if let Some(secondary) = targets.secondary.as_deref()
+            && (would_merge_add && !is_patch_id_match)
+        {
+            let alt = ctx
+                .repo
+                .merge_integration_probe(branch, secondary)
+                .map_err(|e| ctx.error(Self::KIND, &e))?;
+            would_merge_add = would_merge_add && alt.would_merge_add;
+            is_patch_id_match = is_patch_id_match || alt.is_patch_id_match;
+        }
         Ok(TaskResult::WouldMergeAdd {
             item_idx: ctx.item_idx,
-            would_merge_add: probe.would_merge_add,
-            is_patch_id_match: probe.is_patch_id_match,
+            would_merge_add,
+            is_patch_id_match,
         })
     }
 }
@@ -314,8 +349,8 @@ impl Task for IsAncestorTask {
     const KIND: TaskKind = TaskKind::IsAncestor;
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
-        // When integration_target is None, return false (conservative: don't mark as ancestor)
-        let Some(base) = ctx.integration_target() else {
+        // When integration_targets is None, return false (conservative: don't mark as ancestor)
+        let Some(targets) = ctx.integration_targets() else {
             return Ok(TaskResult::IsAncestor {
                 item_idx: ctx.item_idx,
                 is_ancestor: false,
@@ -328,9 +363,14 @@ impl Task for IsAncestorTask {
             .branch_ref
             .full_ref()
             .unwrap_or(&ctx.branch_ref.commit_sha);
-        let is_ancestor = repo
-            .is_ancestor(ref_to_check, &base)
+        let mut is_ancestor = repo
+            .is_ancestor(ref_to_check, &targets.primary)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
+        if !is_ancestor && let Some(secondary) = targets.secondary.as_deref() {
+            is_ancestor = repo
+                .is_ancestor(ref_to_check, secondary)
+                .map_err(|e| ctx.error(Self::KIND, &e))?;
+        }
 
         Ok(TaskResult::IsAncestor {
             item_idx: ctx.item_idx,

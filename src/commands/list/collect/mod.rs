@@ -310,9 +310,11 @@ pub struct CollectOptions {
     /// persisted value degrades silently (empty cells) here rather than
     /// emitting a cascade of "ambiguous argument" errors from every task.
     pub default_branch: Option<String>,
-    /// Integration target (`default_branch`, or its upstream when ahead).
-    /// `None` when the default branch is unset or stale.
-    pub integration_target: Option<String>,
+    /// Integration targets resolved for this list invocation. The diverged
+    /// case carries both local and upstream so per-branch tasks can OR
+    /// over them, matching `Repository::integration_reason`. `None` when
+    /// the default branch is unset or stale.
+    pub integration_targets: Option<worktrunk::git::IntegrationTargets>,
 }
 
 fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
@@ -870,7 +872,7 @@ pub fn collect(
     // Single-line invariant: use safe width to prevent line wrapping
     let max_width = crate::display::terminal_width();
 
-    // Create collection options from skip set. `integration_target` is
+    // Create collection options from skip set. `integration_targets` is
     // patched in after the parallel phase below extracts it — at this
     // point we haven't yet resolved it, but task spawning doesn't happen
     // until line 1090+ so late population is safe.
@@ -879,7 +881,7 @@ pub fn collect(
         url_template: url_template.clone(),
         llm_command,
         default_branch: default_branch.clone(),
-        integration_target: None,
+        integration_targets: None,
     };
 
     // Track expected results per item - populated as spawns are queued
@@ -1004,7 +1006,8 @@ pub fn collect(
     // See: https://gitlab.com/gitlab-org/git/-/merge_requests/148 (scalar's fsmonitor workaround)
     // See: https://github.com/jj-vcs/jj/issues/6440 (jj hit same fsmonitor issue)
     let previous_branch_cell: OnceCell<Option<String>> = OnceCell::new();
-    let integration_target_cell: OnceCell<Option<String>> = OnceCell::new();
+    let integration_targets_cell: OnceCell<Option<worktrunk::git::IntegrationTargets>> =
+        OnceCell::new();
 
     rayon::scope(|s| {
         // Previous branch lookup (for gutter symbol)
@@ -1012,9 +1015,10 @@ pub fn collect(
             let _ = previous_branch_cell.set(repo.switch_previous());
         });
 
-        // Integration target (upstream if ahead of local, else local)
+        // Integration targets (primary plus optional secondary in the
+        // diverged case — see `Repository::integration_targets`).
         s.spawn(|_| {
-            let _ = integration_target_cell.set(repo.integration_target());
+            let _ = integration_targets_cell.set(repo.integration_targets());
         });
 
         // Fsmonitor daemon starts (one spawn per worktree)
@@ -1027,16 +1031,16 @@ pub fn collect(
 
     // Extract results from cells
     let previous_branch = previous_branch_cell.into_inner().flatten();
-    let integration_target = integration_target_cell.into_inner().flatten();
+    let integration_targets = integration_targets_cell.into_inner().flatten();
 
-    // Patch integration_target into options now that it's resolved. When
-    // default_branch is None (unset or stale), also null it out — tasks
-    // otherwise see a target derived from the stale value and emit
+    // Patch integration_targets into options now that they're resolved.
+    // When default_branch is None (unset or stale), also null it out —
+    // tasks otherwise see a target derived from the stale value and emit
     // "ambiguous argument" noise.
-    options.integration_target = options
+    options.integration_targets = options
         .default_branch
         .as_ref()
-        .and(integration_target.clone());
+        .and(integration_targets.clone());
 
     // Update is_previous on items
     if let Some(prev) = previous_branch.as_deref() {
@@ -1203,13 +1207,15 @@ pub fn collect(
     let reveal_at = (progressive_state.is_some() || progressive_handler.is_some())
         .then_some(placeholder_reveal_at);
 
+    let primary_target = integration_targets.as_ref().map(|t| t.primary.as_str());
+
     let drain_outcome = drain_results(
         rx,
         &mut all_items,
         &mut errors,
         &expected_results,
         drain_deadline,
-        integration_target.as_deref(),
+        primary_target,
         |event| {
             let dim = Style::new().dimmed();
             let total_results = expected_results.count();
@@ -1379,7 +1385,7 @@ pub fn collect(
     // pre-seeded main_state for unborn/prunable items) still materialize.
     // The call is idempotent — already-resolved gates are skipped.
     for item in all_items.iter_mut() {
-        item.refresh_status_symbols(integration_target.as_deref());
+        item.refresh_status_symbols(primary_target);
     }
 
     // Count errors for summary
@@ -1607,11 +1613,11 @@ pub fn populate_item(
         return Ok(());
     };
 
-    // Get integration target for status symbol computation (cached in repo)
+    // Get integration targets for status symbol computation (cached in repo)
     // None if default branch cannot be determined - status symbols will be skipped
-    let target = repo.integration_target();
+    let targets = repo.integration_targets();
 
-    // Populate default_branch / integration_target if the caller didn't.
+    // Populate default_branch / integration_targets if the caller didn't.
     // Tasks read these through `TaskContext`; `None` here tells them to
     // skip (see collect()'s stale-default-branch path). Single-item callers
     // like statusline pass `CollectOptions::default()` and expect the
@@ -1619,8 +1625,8 @@ pub fn populate_item(
     if options.default_branch.is_none() {
         options.default_branch = repo.default_branch();
     }
-    if options.integration_target.is_none() {
-        options.integration_target = target.clone();
+    if options.integration_targets.is_none() {
+        options.integration_targets = targets.clone();
     }
 
     // Create channel for task results
@@ -1678,7 +1684,7 @@ pub fn populate_item(
         &mut errors,
         &expected_results,
         std::time::Instant::now() + results::DRAIN_TIMEOUT,
-        target.as_deref(),
+        targets.as_ref().map(|t| t.primary.as_str()),
         |_event| {},
         None,
     );
@@ -1707,7 +1713,7 @@ pub fn populate_item(
 
     // Ensure status symbols are refreshed even if all tasks errored
     // (the drain only calls refresh on the success path).
-    item.refresh_status_symbols(target.as_deref());
+    item.refresh_status_symbols(targets.as_ref().map(|t| t.primary.as_str()));
 
     // Populate display fields (including status_line for statusline command)
     item.finalize_display();
