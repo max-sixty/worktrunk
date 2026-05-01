@@ -16,7 +16,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
-    GIT_EDITOR: ""
+    GIT_PAGER: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -34,6 +34,7 @@ info:
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "1"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
@@ -49,4 +50,4 @@ exit_code: 0
 ----- stderr -----
 [36m◎[39m [36mRemoving Codex plugin marketplace...[39m
 [32m✓[39m [32mCodex marketplace removed[39m
-[2m↳[22m [2mInstalled plugins and the global codex_hooks feature are left unchanged[22m
+[2m↳[22m [2mInstalled plugins and global Codex hook feature flags are left unchanged[22m

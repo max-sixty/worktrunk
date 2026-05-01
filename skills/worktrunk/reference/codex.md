@@ -1,9 +1,9 @@
 # Codex Integration
 
-The Worktrunk Codex plugin provides two features:
+The Worktrunk Codex plugin packages two features:
 
 1. **Configuration skill** — Documentation Codex can read, so it can help set up LLM commits, hooks, and troubleshoot issues
-2. **Activity tracking** — Status markers in `wt list` showing which worktrees have active Codex sessions (🤖 working, 💬 waiting or idle)
+2. **Bundled activity hooks** — Codex lifecycle hooks that can set `wt list` markers for active Codex sessions (🤖 working, 💬 waiting or idle)
 
 Codex does not currently expose the Claude Code `WorktreeCreate` and `WorktreeRemove` hook events. Use `wt switch --create` and `wt remove` directly for worktree lifecycle management.
 
@@ -29,7 +29,7 @@ To remove the marketplace entry later:
 wt config plugins codex uninstall
 ```
 
-Uninstall removes the Worktrunk marketplace from Codex. It intentionally leaves any already-installed Worktrunk plugin and the global `codex_hooks` feature unchanged, because other Codex hooks may depend on that feature.
+Uninstall removes the Worktrunk marketplace from Codex. It intentionally leaves any already-installed Worktrunk plugin and global Codex hook feature flags unchanged, because other Codex hooks may depend on those settings.
 
 ## Configuration skill
 
@@ -43,7 +43,7 @@ The plugin includes a skill — documentation that Codex can read — covering W
 
 ## Activity tracking
 
-The plugin tracks Codex sessions with status markers in `wt list`:
+When Codex loads the plugin's bundled hooks, the plugin tracks Codex sessions with status markers in `wt list`:
 
 ```bash
 $ wt list
@@ -64,6 +64,20 @@ If a Codex process exits before the next `Stop` hook, the marker can remain. Cle
 ```bash
 wt config state marker clear
 ```
+
+Codex CLI releases may gate plugin-bundled hooks behind the `plugin_hooks` feature. If markers do not appear after installing the plugin, run:
+
+```bash
+codex features list
+```
+
+If `plugin_hooks` is `false`, enable it:
+
+```bash
+codex features enable plugin_hooks
+```
+
+As a stable fallback, copy this repository's `hooks/hooks.json` to a normal Codex hook location such as `~/.codex/hooks.json`.
 
 ## Worktree workflow
 

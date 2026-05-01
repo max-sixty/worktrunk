@@ -16,7 +16,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
-    GIT_EDITOR: ""
+    GIT_PAGER: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -34,6 +34,7 @@ info:
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "1"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
@@ -50,4 +51,5 @@ exit_code: 0
 [36m◎[39m [36mAdding Codex plugin marketplace...[39m
 [32m✓[39m [32mCodex marketplace configured[39m
 [2m↳[22m [2mNext, run /plugins in Codex and install Worktrunk from the marketplace[22m
-[2m↳[22m [2mActivity markers (🤖/💬) will appear in [4mwt list[24m[22m
+[2m↳[22m [2mActivity markers (🤖/💬) use Codex plugin-bundled hooks[22m
+[2m↳[22m [2mIf markers do not appear, enable Codex plugin hooks or copy hooks/hooks.json to a standard Codex hook location[22m

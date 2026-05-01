@@ -208,7 +208,7 @@ This does not install the plugin by itself. Afterward, open `/plugins` in Codex 
 $ codex plugin marketplace remove worktrunk
 ```
 
-This leaves any already-installed Worktrunk plugin and the global `codex_hooks` feature unchanged."#
+This leaves any already-installed Worktrunk plugin and global Codex hook feature flags unchanged."#
     )]
     Uninstall,
 }
@@ -271,7 +271,7 @@ $ wt config plugins claude install-statusline
 
     /// Codex plugin
     #[command(
-        after_long_help = r#"Activity tracking plugin — shows status markers in `wt list`:
+        after_long_help = r#"Bundled activity hooks — can show status markers in `wt list` when Codex loads plugin hooks:
 - 🤖 — Codex is working
 - 💬 — Codex is waiting or idle
 
@@ -560,7 +560,7 @@ $ wt config alias dry-run deploy -- --env=staging
 ## Supported tools
 
 - **claude** — Claude Code plugin (activity tracking + statusline)
-- **codex** — Codex plugin (activity tracking + Worktrunk skill)
+- **codex** — Codex plugin (Worktrunk skill + bundled activity hooks)
 - **opencode** — OpenCode plugin (activity tracking)
 
 ## Examples
@@ -920,7 +920,7 @@ wt list
 ## Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Codex](@/codex.md) and [Claude Code](@/claude-code.md) plugins set markers automatically
+- **Agent tracking** — The [Codex](@/codex.md) and [Claude Code](@/claude-code.md) plugins can set markers automatically when their hooks are active
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ## Storage

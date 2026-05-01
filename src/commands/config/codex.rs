@@ -47,8 +47,14 @@ pub fn handle_codex_install(yes: bool) -> Result<()> {
     eprintln!(
         "{}",
         hint_message(cformat!(
-            "Activity markers (🤖/💬) will appear in <underline>wt list</>"
+            "Activity markers (🤖/💬) use Codex plugin-bundled hooks"
         ))
+    );
+    eprintln!(
+        "{}",
+        hint_message(
+            "If markers do not appear, enable Codex plugin hooks or copy hooks/hooks.json to a standard Codex hook location"
+        )
     );
 
     Ok(())
@@ -92,7 +98,7 @@ pub fn handle_codex_uninstall(yes: bool) -> Result<()> {
     eprintln!("{}", success_message("Codex marketplace removed"));
     eprintln!(
         "{}",
-        hint_message("Installed plugins and the global codex_hooks feature are left unchanged")
+        hint_message("Installed plugins and global Codex hook feature flags are left unchanged")
     );
 
     Ok(())

@@ -10,7 +10,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_EDITOR: ""
+    GIT_PAGER: ""
     LANG: C
     LC_ALL: C
     NO_COLOR: ""
@@ -22,6 +22,7 @@ info:
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
@@ -73,7 +74,7 @@ Markers appear at the end of the Status column, after git symbols:
 [1m[32mUse cases[0m
 
 - [1mWork status[0m — [2m🚧[0m WIP, [2m✅[0m ready for review, [2m🔥[0m urgent
-- [1mAgent tracking[0m — The Codex and Claude Code plugins set markers automatically
+- [1mAgent tracking[0m — The Codex and Claude Code plugins can set markers automatically when their hooks are active
 - [1mNotes[0m — Any short text: [2m"blocked"[0m, [2m"needs tests"[0m
 
 [1m[32mStorage[0m

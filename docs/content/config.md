@@ -979,7 +979,7 @@ Markers appear at the end of the Status column, after git symbols:
 ### Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Codex](@/codex.md) and [Claude Code](@/claude-code.md) plugins set markers automatically
+- **Agent tracking** — The [Codex](@/codex.md) and [Claude Code](@/claude-code.md) plugins can set markers automatically when their hooks are active
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ### Storage

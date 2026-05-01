@@ -1022,7 +1022,7 @@ $ wt list
 ### Use cases
 
 - **Work status** — `🚧` WIP, `✅` ready for review, `🔥` urgent
-- **Agent tracking** — The [Codex](https://worktrunk.dev/codex/) and [Claude Code](https://worktrunk.dev/claude-code/) plugins set markers automatically
+- **Agent tracking** — The [Codex](https://worktrunk.dev/codex/) and [Claude Code](https://worktrunk.dev/claude-code/) plugins can set markers automatically when their hooks are active
 - **Notes** — Any short text: `"blocked"`, `"needs tests"`
 
 ### Storage
