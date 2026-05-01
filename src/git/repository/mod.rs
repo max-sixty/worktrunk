@@ -223,8 +223,6 @@ pub(super) struct RepoCache {
     pub(super) repo_path: OnceCell<PathBuf>,
     /// Default branch (main, master, etc.)
     pub(super) default_branch: OnceCell<Option<String>>,
-    /// Effective integration target (local default branch or upstream if ahead)
-    pub(super) integration_target: OnceCell<Option<String>>,
     /// Project identifier derived from remote URL
     pub(super) project_identifier: OnceCell<String>,
     /// Project config (loaded from .config/wt.toml in main worktree)
@@ -251,11 +249,6 @@ pub(super) struct RepoCache {
     /// Resolved refs: unresolved ref (e.g., "main") -> resolved form (e.g., "refs/heads/main")
     /// or original if not a local branch. Populated by `resolve_preferring_branch()`.
     pub(super) resolved_refs: DashMap<String, String>,
-    /// Effective integration targets: local_target -> effective ref (may be upstream).
-    /// Cached because `integration_reason()` calls `effective_integration_target()` for
-    /// every branch, but the result depends only on the target ref's relationship with
-    /// its upstream — stable for the duration of a command.
-    pub(super) effective_integration_targets: DashMap<String, String>,
     /// Integration reason cache: (branch, target) -> (effective_target, reason).
     /// Populated by `integration_reason()`, avoids redundant `compute_integration_lazy()`
     /// calls when the same branch is checked multiple times (e.g., step_prune Phase 1

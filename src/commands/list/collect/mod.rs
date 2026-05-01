@@ -65,7 +65,7 @@
 //! ├─ is_builtin_fsmonitor_enabled()             (5ms, sequential - gate)
 //! ├─ rayon::scope(
 //! │    ├─ switch_previous()                     (5ms)
-//! │    ├─ integration_target()                  (10ms)
+//! │    ├─ integration_targets()                 (10ms)
 //! │    ├─ start_fsmonitor_daemon × N worktrees  (6ms each, all parallel)
 //! │  )                                          // ~10ms total (max of all spawns)
 //! ├─ populate ListItem.commit from cache        (cache-hit lookups, sub-ms)
