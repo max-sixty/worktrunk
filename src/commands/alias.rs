@@ -534,16 +534,12 @@ fn run_alias(
     entry: &AliasEntry,
     global_yes: bool,
 ) -> anyhow::Result<()> {
-    // Surface parser advisories (e.g. `--KEY --VALUE` footgun) before
-    // announcing the run so they're visible in execution output.
     for warning in &warnings {
         eprintln!("{}", warning_message(warning));
     }
 
-    // Project-config bodies always require approval, regardless of whether
-    // user config also defines the same alias — matching hook behavior.
-    // `global_yes` is the sole source for skipping approval now that
-    // `wt <alias> --yes` (post-alias form) is unsupported.
+    // Project bodies require approval even when user config also defines the
+    // alias — same as hooks. `global_yes` is the sole skip source.
     if let Some(project_commands) = entry.project.as_ref() {
         let project_id = repo
             .project_identifier()
@@ -555,7 +551,6 @@ fn run_alias(
         }
     }
 
-    // Build hook context for template expansion
     let wt = repo.current_worktree();
     let wt_path = wt.root().context("Failed to get worktree root")?;
     let branch = wt.branch().ok().flatten();
@@ -576,7 +571,6 @@ fn run_alias(
             .expect("Vec<String> serialization should never fail"),
     );
 
-    // Build JSON context for stdin
     let context_json = serde_json::to_string(&context_map)
         .expect("HashMap<String, String> serialization should never fail");
 
@@ -595,9 +589,6 @@ fn run_alias(
         );
     }
 
-    // Source-tag every step. `sourced_steps_to_foreground` then applies the
-    // EXEC-passthrough policy per step: user-source steps relax (EXEC passes
-    // through), project-source steps stay conservative (scrub). See #2101.
     let alias_name = opts.name.clone();
     let mut sourced_steps = Vec::new();
     for (source, cfg) in entry.iter() {

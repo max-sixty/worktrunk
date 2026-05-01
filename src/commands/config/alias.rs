@@ -219,16 +219,15 @@ fn entries_for_name(
     project_config: Option<&ProjectConfig>,
     name: &str,
 ) -> Vec<(CommandConfig, AliasSource)> {
-    let mut aliases = load_aliases(Some(repo), user_config, project_config);
-    let Some(entry) = aliases.remove(name) else {
-        return Vec::new();
-    };
+    let project_id = repo.project_identifier().ok();
     let mut entries = Vec::new();
-    if let Some(cfg) = entry.user {
-        entries.push((cfg, AliasSource::User));
+    if let Some(cfg) = user_config.aliases(project_id.as_deref()).get(name) {
+        entries.push((cfg.clone(), AliasSource::User));
     }
-    if let Some(cfg) = entry.project {
-        entries.push((cfg, AliasSource::Project));
+    if let Some(pc) = project_config
+        && let Some(cfg) = pc.aliases.get(name)
+    {
+        entries.push((cfg.clone(), AliasSource::Project));
     }
     entries
 }
