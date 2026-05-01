@@ -1,16 +1,15 @@
-# Claude Code Integration
+# Claude Code & Codex Integration
 
-The worktrunk Claude Code plugin provides three features:
+Worktrunk ships plugins for Claude Code and Codex. Both bundle:
 
-1. **Configuration skill** — Documentation Claude Code can read, so it can help set up LLM commits, hooks, and troubleshoot issues
-2. **Worktree isolation** — When Claude Code agents create isolated worktrees, the plugin routes creation and removal through `wt` instead of raw `git`
-3. **Activity tracking** — Status markers in `wt list` showing which worktrees have active Claude sessions (🤖 working, 💬 waiting)
+1. **Configuration skill** — Documentation the agent can read, so it can help set up LLM commits, hooks, and troubleshoot issues
+2. **Activity tracking** — Status markers in `wt list` showing which worktrees have active agent sessions (🤖 working, 💬 waiting)
 
-Using Codex? See [Codex Integration](https://worktrunk.dev/codex/) for the Codex plugin and Worktrunk skill.
+The Claude Code plugin additionally routes agent-created isolated worktrees through `wt switch --create` / `wt remove`. Codex does not currently expose equivalent worktree-lifecycle hooks, so Codex users invoke `wt` directly for `--create` / `remove`.
 
 ## Installation
 
-Recommended:
+### Claude Code
 
 ```bash
 wt config plugins claude install
@@ -23,9 +22,25 @@ claude plugin marketplace add max-sixty/worktrunk
 claude plugin install worktrunk@worktrunk
 ```
 
+### Codex
+
+```bash
+wt config plugins codex install
+```
+
+This configures the Worktrunk marketplace in Codex. Then run `/plugins` in Codex and install Worktrunk from the marketplace. Manual equivalent:
+
+```bash
+codex plugin marketplace add max-sixty/worktrunk
+```
+
+To remove the marketplace entry, run `wt config plugins codex uninstall`. Already-installed plugins and global Codex hook feature flags are left unchanged.
+
+If activity markers do not appear after installing the plugin, Codex may be gating plugin-bundled hooks. Run `codex features list`; if `plugin_hooks` is `false`, enable it (`codex features enable plugin_hooks`), or copy this repo's `.codex-plugin/hooks/hooks.json` to `~/.codex/hooks.json`.
+
 ## Configuration skill
 
-The plugin includes a skill — documentation that Claude Code can read — covering worktrunk's configuration system. After installation, Claude Code can help with:
+The plugin includes a skill — documentation the agent can read — covering Worktrunk's configuration system. After installation, the agent can help with:
 
 - Setting up LLM-generated commit messages
 - Adding project hooks (pre-start, pre-merge, pre-commit)
@@ -36,7 +51,7 @@ Claude Code is designed to load the skill automatically when it detects worktrun
 
 ## Activity tracking
 
-The plugin tracks Claude sessions with status markers in `wt list`:
+The plugins track agent sessions with status markers in `wt list`:
 
 ```bash
 $ wt list
@@ -49,8 +64,10 @@ $ wt list
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead</span>
 ```
 
-- 🤖 — Claude is working
-- 💬 — Claude is waiting for input
+- 🤖 — agent is working
+- 💬 — agent is waiting or idle
+
+If an agent process exits without firing its stop hook, the marker can remain. Clear it manually with `wt config state marker clear`.
 
 ### Manual status markers
 
@@ -62,11 +79,13 @@ $ wt config state marker set "✅" --branch feature  # Specific branch
 $ git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Direct
 ```
 
-## Worktree isolation
+## Worktree isolation (Claude Code only)
 
 Claude Code agents can run in isolated worktrees (`isolation: "worktree"`). By default, Claude Code creates these with `git worktree add`. The plugin's `WorktreeCreate` and `WorktreeRemove` hooks route this through `wt switch --create` and `wt remove` instead, so worktrees created by agents get worktrunk's naming conventions, hooks, and lifecycle management.
 
-## Statusline
+Codex does not currently expose equivalent hook events, so Codex users should invoke `wt switch --create` and `wt remove` directly.
+
+## Statusline (Claude Code only)
 
 `wt list statusline --format=claude-code` outputs a single-line status for the Claude Code statusline. When the CI status cache is stale, this fetches from the network — typically 1–2 seconds — making it suitable for async statuslines but too slow for synchronous shell prompts. If a faster version would be helpful, please [open an issue](https://github.com/max-sixty/worktrunk/issues).
 

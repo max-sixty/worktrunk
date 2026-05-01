@@ -58,11 +58,11 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
       <td>{% rawcode() %}cd ../repo.feat{% end %}</td>
     </tr>
     <tr>
-      <td>Create + start an agent</td>
-      <td>{% rawcode() %}wt switch -c -x codex feat{% end %}</td>
+      <td>Create + start Claude</td>
+      <td>{% rawcode() %}wt switch -c -x claude feat{% end %}</td>
       <td>{% rawcode() %}git worktree add -b feat ../repo.feat && \
 cd ../repo.feat && \
-codex{% end %}</td>
+claude{% end %}</td>
     </tr>
     <tr>
       <td>Clean up</td>
@@ -99,9 +99,9 @@ A demo with some advanced features:
 <figure class="demo">
 <picture>
   <source srcset="/assets/docs/dark/wt-zellij-omnibus.gif" media="(prefers-color-scheme: dark)">
-  <img src="/assets/docs/light/wt-zellij-omnibus.gif" alt="Worktrunk omnibus demo: multiple agents in Zellij tabs with hooks, LLM commits, and merge workflow" width="1600" height="900">
+  <img src="/assets/docs/light/wt-zellij-omnibus.gif" alt="Worktrunk omnibus demo: multiple Claude agents in Zellij tabs with hooks, LLM commits, and merge workflow" width="1600" height="900">
 </picture>
-<figcaption>Multiple agents in parallel with interactive picker, hooks, LLM commits, and merge</figcaption>
+<figcaption>Multiple Claude agents in parallel with interactive picker, hooks, LLM commits, and merge</figcaption>
 </figure>
 
 ## Install
@@ -196,7 +196,7 @@ When done, either:
 
 For parallel agents, create multiple worktrees and launch an agent in each:
 
-{{ terminal(cmd="wt switch -x codex -c feature-a -- 'Add user authentication'|||wt switch -x codex -c feature-b -- 'Fix the pagination bug'|||wt switch -x codex -c feature-c -- 'Write tests for the API'") }}
+{{ terminal(cmd="wt switch -x claude -c feature-a -- 'Add user authentication'|||wt switch -x claude -c feature-b -- 'Fix the pagination bug'|||wt switch -x claude -c feature-c -- 'Write tests for the API'") }}
 
 The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](@/hook.md#hook-types) to automate setup (install deps, start dev servers).
 
@@ -205,8 +205,8 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
 - Learn the core commands: [`wt switch`](@/switch.md), [`wt list`](@/list.md), [`wt merge`](@/merge.md), [`wt remove`](@/remove.md)
 - Set up [hooks](@/hook.md) for automated setup
 - Explore [LLM commit messages](@/llm-commits.md), [interactive
-  picker](@/switch.md#interactive-picker), [Codex integration](@/codex.md), [Claude Code
-  integration](@/claude-code.md), [CI status & PR links](@/list.md#ci-status)
+  picker](@/switch.md#interactive-picker), [Claude Code integration](@/claude-code.md), [CI
+  status & PR links](@/list.md#ci-status)
 - Browse [tips & patterns](@/tips-patterns.md) for recipes: aliases, dev servers, databases, agent handoffs, and more
 - [Extending Worktrunk](@/extending.md) — customize workflows with hooks & aliases
 - Run `wt --help` or `wt <command> --help` for quick CLI reference

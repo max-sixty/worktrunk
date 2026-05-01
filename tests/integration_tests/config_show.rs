@@ -3334,13 +3334,14 @@ fn test_codex_plugin_metadata_is_valid_json() {
         &fs::read_to_string(project_root.join(".agents/plugins/marketplace.json")).unwrap(),
     )
     .unwrap();
-    let hooks: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(project_root.join("hooks/hooks.json")).unwrap())
-            .unwrap();
+    let hooks: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(project_root.join(".codex-plugin/hooks/hooks.json")).unwrap(),
+    )
+    .unwrap();
 
     assert_eq!(plugin["name"], "worktrunk");
     assert_eq!(plugin["skills"], "./skills/");
-    assert_eq!(plugin["hooks"], "./hooks/hooks.json");
+    assert_eq!(plugin["hooks"], "./.codex-plugin/hooks/hooks.json");
     assert_eq!(marketplace["plugins"][0]["name"], "worktrunk");
     assert_eq!(marketplace["plugins"][0]["source"]["path"], "./");
     assert_eq!(

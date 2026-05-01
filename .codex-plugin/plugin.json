@@ -5,12 +5,12 @@
     "name": "Worktrunk",
     "url": "https://github.com/max-sixty/worktrunk"
   },
-  "homepage": "https://worktrunk.dev/codex/",
+  "homepage": "https://worktrunk.dev/claude-code/",
   "repository": "https://github.com/max-sixty/worktrunk",
   "license": "MIT OR Apache-2.0",
   "keywords": ["git", "worktree", "codex", "agent"],
   "skills": "./skills/",
-  "hooks": "./hooks/hooks.json",
+  "hooks": "./.codex-plugin/hooks/hooks.json",
   "interface": {
     "displayName": "Worktrunk",
     "shortDescription": "Git worktree workflows for parallel Codex sessions.",
@@ -18,6 +18,6 @@
     "developerName": "Worktrunk",
     "category": "Productivity",
     "capabilities": ["Interactive", "Write"],
-    "websiteURL": "https://worktrunk.dev/codex/"
+    "websiteURL": "https://worktrunk.dev/claude-code/"
   }
 }

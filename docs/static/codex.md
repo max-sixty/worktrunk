@@ -1,1 +1,0 @@
-../../skills/worktrunk/reference/codex.md

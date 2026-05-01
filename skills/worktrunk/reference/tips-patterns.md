@@ -4,12 +4,12 @@ Practical recipes for common Worktrunk workflows.
 
 ## Shell alias for new worktree + agent
 
-Create a worktree and launch Codex in one command:
+Create a worktree and launch Claude in one command:
 
 ```bash
-alias wsc='wt switch --create --execute=codex'
-wsc new-feature                       # Creates worktree, runs hooks, launches Codex
-wsc feature -- 'Fix GH #322'          # Runs `codex 'Fix GH #322'`
+alias wsc='wt switch --create --execute=claude'
+wsc new-feature                       # Creates worktree, runs hooks, launches Claude
+wsc feature -- 'Fix GH #322'          # Runs `claude 'Fix GH #322'`
 ```
 
 ## `wt` aliases
@@ -153,7 +153,7 @@ Then `wt mc` opens an editor for the commit message while plain `wt merge` conti
 
 ## Track agent status
 
-Custom emoji markers show agent state in `wt list`. The [Codex](https://worktrunk.dev/codex/), [Claude Code](https://worktrunk.dev/claude-code/), and [OpenCode plugin](https://github.com/max-sixty/worktrunk/tree/main/dev/opencode-plugin.ts) integrations can set these automatically when their hooks are active:
+Custom emoji markers show agent state in `wt list`. The [Claude Code](https://worktrunk.dev/claude-code/) plugin and [OpenCode plugin](https://github.com/max-sixty/worktrunk/tree/main/dev/opencode-plugin.ts) set these automatically:
 
 ```
 + feature-api      ↑  🤖              ↑1      ./repo.feature-api
@@ -171,7 +171,7 @@ wt config state marker set "✅" --branch feature  # Specific branch
 git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Direct
 ```
 
-See [Codex Integration](https://worktrunk.dev/codex/#installation) and [Claude Code Integration](https://worktrunk.dev/claude-code/#installation) for plugin installation.
+See [Claude Code Integration](https://worktrunk.dev/claude-code/#installation) for plugin installation.
 
 ## Monitor CI across branches
 
@@ -273,23 +273,23 @@ wt switch --create feature-part2 --base=@
 
 ## Agent handoffs
 
-Spawn a worktree with an agent CLI running in the background. Examples below use `codex`; for Claude Code, replace `codex` with `claude`. For OpenCode, use `'opencode run'`.
+Spawn a worktree with an agent CLI running in the background. Examples below use `claude`; for OpenCode, replace `claude` with `'opencode run'`.
 
 **tmux** (new detached session):
 ```bash
-tmux new-session -d -s fix-auth-bug "wt switch --create fix-auth-bug -x codex -- \
+tmux new-session -d -s fix-auth-bug "wt switch --create fix-auth-bug -x claude -- \
   'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'"
 ```
 
 **Zellij** (new pane in current session):
 ```bash
-zellij run -- wt switch --create fix-auth-bug -x codex -- \
+zellij run -- wt switch --create fix-auth-bug -x claude -- \
   'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'
 ```
 
 This lets one agent session hand off work to another that runs in the background. Hooks run inside the multiplexer session/pane.
 
-The Worktrunk skill included with the [Codex](https://worktrunk.dev/codex/) and [Claude Code](https://worktrunk.dev/claude-code/) plugins includes guidance for agent CLIs to execute this pattern. To enable it, request it explicitly ("spawn a parallel worktree for...") or add to your project instructions (`AGENTS.md` or `CLAUDE.md`):
+The [worktrunk skill](https://worktrunk.dev/claude-code/) includes guidance for Claude Code (and other agent CLIs that load it) to execute this pattern. To enable it, request it explicitly ("spawn a parallel worktree for...") or add to your project instructions (`CLAUDE.md` or `AGENTS.md`):
 
 ```markdown
 When I ask you to spawn parallel worktrees, use the agent handoff pattern
@@ -308,14 +308,14 @@ S={{ branch | sanitize }}
 W={{ worktree_path }}
 tmux new-session -d -s "$S" -c "$W" -n dev
 
-# Create 4-pane layout: shell | backend / agent | frontend
+# Create 4-pane layout: shell | backend / claude | frontend
 tmux split-window -h -t "$S:dev" -c "$W"
 tmux split-window -v -t "$S:dev.0" -c "$W"
 tmux split-window -v -t "$S:dev.2" -c "$W"
 
 # Start services in each pane
 tmux send-keys -t "$S:dev.1" 'npm run backend' Enter
-tmux send-keys -t "$S:dev.2" 'codex' Enter
+tmux send-keys -t "$S:dev.2" 'claude' Enter
 tmux send-keys -t "$S:dev.3" 'npm run frontend' Enter
 
 tmux select-pane -t "$S:dev.0"

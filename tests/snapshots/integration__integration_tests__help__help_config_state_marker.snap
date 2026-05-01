@@ -10,7 +10,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "500"
-    GIT_PAGER: ""
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     NO_COLOR: ""
@@ -74,7 +74,7 @@ Markers appear at the end of the Status column, after git symbols:
 [1m[32mUse cases[0m
 
 - [1mWork status[0m — [2m🚧[0m WIP, [2m✅[0m ready for review, [2m🔥[0m urgent
-- [1mAgent tracking[0m — The Codex and Claude Code plugins can set markers automatically when their hooks are active
+- [1mAgent tracking[0m — The Claude Code plugin sets markers automatically
 - [1mNotes[0m — Any short text: [2m"blocked"[0m, [2m"needs tests"[0m
 
 [1m[32mStorage[0m
