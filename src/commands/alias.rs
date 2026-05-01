@@ -25,21 +25,26 @@
 //!
 //! User-config aliases are trusted (skip approval). Project-config aliases
 //! require command approval. When both define the same alias, both run — user
-//! first, then project. Steps are tagged with their source (`HookSource::User`
-//! / `Project`), and `sourced_steps_to_foreground` applies per-step
-//! `DirectivePassthrough`: the CD directive file is passed through to every
-//! step so inner `wt` invocations can redirect the parent shell's cwd; the
-//! EXEC directive file passes through user-source steps but is scrubbed for
-//! project-source steps. In a merged user+project body, the user's own steps
-//! still get the EXEC relaxation. See issue #2101.
+//! first, then project. The dispatch path keys aliases by name with each
+//! source's body kept separate (`AliasEntry { user, project }`) rather than
+//! merging into a single `CommandConfig`, so per-source policy can be applied
+//! step-by-step without un-merging. Steps are tagged with their source
+//! (`HookSource::User` / `Project`), and `sourced_steps_to_foreground`
+//! applies per-step `DirectivePassthrough`: the CD directive file is passed
+//! through to every step so inner `wt` invocations can redirect the parent
+//! shell's cwd; the EXEC directive file passes through user-source steps but
+//! is scrubbed for project-source steps. When the same name is defined in
+//! both configs, the user's own steps still get the EXEC relaxation — the
+//! decision is per-step, so the project side scrubbing doesn't bleed back
+//! into the user steps. See issue #2101.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, CommandConfig, HookStep, ProjectConfig, UserConfig, append_aliases,
-    format_alias_variables, referenced_vars_for_config,
+    ALIAS_ARGS_KEY, CommandConfig, HookStep, ProjectConfig, UserConfig, format_alias_variables,
+    referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
 use worktrunk::styling::{
@@ -268,21 +273,6 @@ impl AliasOptions {
     }
 }
 
-/// Determine whether an alias requires project-config approval.
-///
-/// Returns the project-config commands for this alias, if any exist.
-/// Project-config commands always need approval, regardless of whether
-/// user config also defines the same alias — matching hook behavior.
-fn alias_needs_approval(
-    alias_name: &str,
-    project_config: &Option<ProjectConfig>,
-) -> Option<CommandConfig> {
-    project_config
-        .as_ref()
-        .and_then(|pc| pc.aliases.get(alias_name))
-        .cloned()
-}
-
 /// Synthesize clap's native `InvalidSubcommand` error for `wt step <name>`
 /// and return it via `enhance_clap_error`, so the output matches what
 /// `wt <typo>` produces at the top level. Suggestion candidates include both
@@ -317,8 +307,11 @@ fn unknown_step_command_error(name: &str, alias_names: &[String]) -> anyhow::Err
 /// Sibling of `format_command_label` in `commands/mod.rs`, which builds the
 /// non-pipeline `Running {type} {name}` form for hooks. Both apply bold
 /// styling to the alias/command name — keep them in sync if styling evolves.
-fn format_alias_announcement(name: &str, cmd_config: &CommandConfig) -> Option<String> {
-    let step_names = step_names_from_config(cmd_config);
+fn format_alias_announcement(name: &str, entry: &AliasEntry) -> Option<String> {
+    let step_names: Vec<Vec<Option<&str>>> = entry
+        .iter()
+        .flat_map(|(_, cfg)| step_names_from_config(cfg))
+        .collect();
     let summary =
         format_pipeline_summary_from_names(&step_names, |n| cformat!("<bold>{n}</>"), |_| None);
 
@@ -329,29 +322,96 @@ fn format_alias_announcement(name: &str, cmd_config: &CommandConfig) -> Option<S
     }
 }
 
-/// Load the merged alias map (user config + project config, in runtime order).
+/// One alias entry, with each source's body kept separate.
 ///
-/// TODO(#2474): the dispatch path no longer merges *for execution* —
-/// `prepare_alias_sourced_steps` builds steps from per-source `CommandConfig`
-/// lookups directly. This merged map is now only used for orchestration:
-/// existence check (does any source define the name?), referenced-vars union
-/// (so `AliasOptions::parse` can route `--KEY=VALUE` against the union of
-/// vars across both bodies), and the announcement banner. Replace with a
-/// source-aware shape (e.g. `BTreeMap<String, Vec<(HookSource,
-/// CommandConfig)>>`) so we trigger both without ever building a merged
-/// `CommandConfig`. Same observable behavior; cleaner data flow. Keeping
-/// this PR focused on the EXEC-per-step redesign.
-fn load_merged_aliases(
-    repo: &Repository,
+/// At least one of `user` / `project` is always `Some` for entries that
+/// `load_aliases` returns (a name only appears in the map if some source
+/// defines it). When both are set, both bodies run — user first, then
+/// project — and each runs under its own trust regime: user steps skip
+/// approval and pass EXEC through (issue #2101); project steps require
+/// approval and scrub EXEC.
+pub(crate) struct AliasEntry {
+    pub user: Option<CommandConfig>,
+    pub project: Option<CommandConfig>,
+}
+
+impl AliasEntry {
+    /// Walk the configured sources in runtime execution order: user first,
+    /// then project. Skips sources that aren't configured.
+    pub fn iter(&self) -> impl Iterator<Item = (HookSource, &CommandConfig)> {
+        self.user
+            .iter()
+            .map(|c| (HookSource::User, c))
+            .chain(self.project.iter().map(|c| (HookSource::Project, c)))
+    }
+
+    /// Representative config for single-pick contexts (completion help text,
+    /// shadowed-by-builtin display). User wins over project, matching the
+    /// order each source's body would run.
+    pub fn representative(&self) -> &CommandConfig {
+        self.user
+            .as_ref()
+            .or(self.project.as_ref())
+            .expect("AliasEntry always has at least one source")
+    }
+}
+
+/// Map of alias name → both sources' bodies. The merge that
+/// `append_aliases` used to perform at this layer turns into per-source
+/// fields, so downstream code never has to reconstitute the source split.
+pub(crate) type AliasMap = BTreeMap<String, AliasEntry>;
+
+/// Load aliases from user and project config, keyed by name with sources
+/// kept separate. Per-project user-config overrides are still merged into
+/// `entry.user` by [`UserConfig::aliases`] — that's the same axis (both
+/// `HookSource::User`) and is correct. The user/project merge that produced
+/// the old `load_merged_aliases` is what this function eliminates.
+///
+/// `repo` is `None` when called outside a git repo (e.g. completion), in
+/// which case per-project user-config overrides aren't resolved and project
+/// config is ignored.
+pub(crate) fn load_aliases(
+    repo: Option<&Repository>,
     user_config: &UserConfig,
     project_config: Option<&ProjectConfig>,
-) -> BTreeMap<String, CommandConfig> {
-    let project_id = repo.project_identifier().ok();
-    let mut aliases = user_config.aliases(project_id.as_deref());
+) -> AliasMap {
+    let project_id = repo.and_then(|r| r.project_identifier().ok());
+    let mut result: AliasMap = user_config
+        .aliases(project_id.as_deref())
+        .into_iter()
+        .map(|(n, c)| {
+            (
+                n,
+                AliasEntry {
+                    user: Some(c),
+                    project: None,
+                },
+            )
+        })
+        .collect();
     if let Some(pc) = project_config {
-        append_aliases(&mut aliases, &pc.aliases);
+        for (name, cfg) in &pc.aliases {
+            result
+                .entry(name.clone())
+                .or_insert_with(|| AliasEntry {
+                    user: None,
+                    project: None,
+                })
+                .project = Some(cfg.clone());
+        }
     }
-    aliases
+    result
+}
+
+/// Union of variables referenced across both source bodies of an alias.
+/// Drives `--KEY=VALUE` routing in `AliasOptions::parse`: a flag binds to
+/// `{{ KEY }}` if KEY is referenced by *any* source's body.
+fn referenced_vars_for_entry(entry: &AliasEntry) -> anyhow::Result<BTreeSet<String>> {
+    let mut out = BTreeSet::new();
+    for (_, cfg) in entry.iter() {
+        out.extend(referenced_vars_for_config(cfg)?);
+    }
+    Ok(out)
 }
 
 /// Try to run alias `name` with `rest` as its arg vector. Returns `Ok(None)`
@@ -375,11 +435,11 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
     };
     let user_config = UserConfig::load()?;
     let project_config = ProjectConfig::load(&repo, true)?;
-    let aliases = load_merged_aliases(&repo, &user_config, project_config.as_ref());
-    let Some(cmd_config) = aliases.get(&name) else {
+    let aliases = load_aliases(Some(&repo), &user_config, project_config.as_ref());
+    let Some(entry) = aliases.get(&name) else {
         return Ok(None);
     };
-    let referenced = referenced_vars_for_config(cmd_config)?;
+    let referenced = referenced_vars_for_entry(entry)?;
     if try_intercept_alias_help(&name, &rest, &referenced) {
         return Ok(Some(()));
     }
@@ -387,16 +447,10 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
     alias_args.push(name);
     alias_args.extend(rest);
     let (opts, warnings) = AliasOptions::parse(alias_args, &referenced)?;
-    run_alias(
-        opts,
-        warnings,
-        repo,
-        user_config,
-        project_config,
-        aliases,
-        global_yes,
-    )
-    .map(Some)
+    let entry = aliases
+        .get(&opts.name)
+        .expect("entry verified above and `opts.name` matches the dispatched name");
+    run_alias(opts, warnings, repo, user_config, entry, global_yes).map(Some)
 }
 
 /// Run a configured alias from `wt step <name>`. Errors with a clap-style
@@ -418,11 +472,11 @@ pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let user_config = UserConfig::load()?;
     let project_config = ProjectConfig::load(&repo, true)?;
-    let aliases = load_merged_aliases(&repo, &user_config, project_config.as_ref());
+    let aliases = load_aliases(Some(&repo), &user_config, project_config.as_ref());
     let Some(name) = args.first().cloned() else {
         bail!("Missing alias name");
     };
-    let Some(cmd_config) = aliases.get(&name) else {
+    let Some(entry) = aliases.get(&name) else {
         // Mirror clap's native `unrecognized subcommand` error so `wt step
         // <typo>` reads the same as `wt <typo>`. Aliases are fed into the
         // `SuggestedSubcommand` list so a typo like `wt step deplyo` still
@@ -436,20 +490,15 @@ pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
             .collect();
         return Err(unknown_step_command_error(&name, &alias_names));
     };
-    let referenced = referenced_vars_for_config(cmd_config)?;
+    let referenced = referenced_vars_for_entry(entry)?;
     if try_intercept_alias_help(&name, &args[1..], &referenced) {
         return Ok(());
     }
     let (opts, warnings) = AliasOptions::parse(args, &referenced)?;
-    run_alias(
-        opts,
-        warnings,
-        repo,
-        user_config,
-        project_config,
-        aliases,
-        global_yes,
-    )
+    let entry = aliases
+        .get(&opts.name)
+        .expect("entry verified above and `opts.name` matches the dispatched name");
+    run_alias(opts, warnings, repo, user_config, entry, global_yes)
 }
 
 /// Return alias names for use as suggestions when a top-level subcommand is
@@ -466,14 +515,13 @@ pub fn alias_names_for_suggestions() -> Vec<String> {
         return Vec::new();
     };
     let project_config = ProjectConfig::load(&repo, false).ok().flatten();
-    load_merged_aliases(&repo, &user_config, project_config.as_ref())
-        .keys()
-        .cloned()
+    load_aliases(Some(&repo), &user_config, project_config.as_ref())
+        .into_keys()
         .collect()
 }
 
-/// Execute `cmd_config` for `opts.name`. Caller must have already verified
-/// `aliases.contains_key(&opts.name)`.
+/// Execute the alias body for `opts.name`. Caller must have already verified
+/// the entry exists.
 ///
 /// `global_yes` is the top-level `--yes`/`-y` flag and is the only source for
 /// skipping approval — the post-alias form (`wt deploy --yes`) is no longer
@@ -483,30 +531,25 @@ fn run_alias(
     warnings: Vec<String>,
     repo: Repository,
     user_config: UserConfig,
-    project_config: Option<ProjectConfig>,
-    aliases: BTreeMap<String, CommandConfig>,
+    entry: &AliasEntry,
     global_yes: bool,
 ) -> anyhow::Result<()> {
-    let cmd_config = aliases
-        .get(&opts.name)
-        .expect("caller verified alias is configured");
-
     // Surface parser advisories (e.g. `--KEY --VALUE` footgun) before
     // announcing the run so they're visible in execution output.
     for warning in &warnings {
         eprintln!("{}", warning_message(warning));
     }
 
-    // Check if this alias needs project-config approval. project_id is required
-    // for approval — re-derive with error propagation rather than relying on
-    // `.ok()`. `global_yes` is the sole source for skipping approval now that
+    // Project-config bodies always require approval, regardless of whether
+    // user config also defines the same alias — matching hook behavior.
+    // `global_yes` is the sole source for skipping approval now that
     // `wt <alias> --yes` (post-alias form) is unsupported.
-    if let Some(project_commands) = alias_needs_approval(&opts.name, &project_config) {
+    if let Some(project_commands) = entry.project.as_ref() {
         let project_id = repo
             .project_identifier()
             .context("Cannot determine project identifier for alias approval")?;
         let approved =
-            approve_alias_commands(&project_commands, &opts.name, &project_id, global_yes)?;
+            approve_alias_commands(project_commands, &opts.name, &project_id, global_yes)?;
         if !approved {
             return Ok(());
         }
@@ -543,7 +586,7 @@ fn run_alias(
         eprintln!("{}", format_with_gutter(&vars, None));
     }
 
-    if let Some(msg) = format_alias_announcement(&opts.name, cmd_config) {
+    if let Some(msg) = format_alias_announcement(&opts.name, entry) {
         eprintln!("{}", progress_message(msg));
     } else if verbosity() >= 1 {
         eprintln!(
@@ -552,69 +595,24 @@ fn run_alias(
         );
     }
 
-    // Build source-tagged steps from per-source CommandConfig lookups instead
-    // of the merged `cmd_config`. Same shape `prepare_sourced_steps` produces
-    // for hooks, so both flow through `sourced_steps_to_foreground` for the
-    // EXEC-passthrough policy: user-source steps relax (EXEC passes through),
-    // project-source steps stay conservative (scrub). When both configs
-    // define the alias, the user steps still get the relaxation — the
-    // decision is per-step now, not per-pipeline. See issue #2101.
-    let user_alias = user_config
-        .aliases(repo.project_identifier().ok().as_deref())
-        .get(&opts.name)
-        .cloned();
-    let project_alias = project_config
-        .as_ref()
-        .and_then(|pc| pc.aliases.get(&opts.name).cloned());
-
+    // Source-tag every step. `sourced_steps_to_foreground` then applies the
+    // EXEC-passthrough policy per step: user-source steps relax (EXEC passes
+    // through), project-source steps stay conservative (scrub). See #2101.
     let alias_name = opts.name.clone();
-    let sourced_steps = prepare_alias_sourced_steps(
-        user_alias.as_ref(),
-        project_alias.as_ref(),
-        &context_json,
-        &alias_name,
-    );
-    let foreground_steps =
-        sourced_steps_to_foreground(sourced_steps, &PipelineKind::Alias { name: alias_name });
-
-    execute_pipeline_foreground(
-        &foreground_steps,
-        &repo,
-        &wt_path,
-        FailureStrategy::FailFast,
-    )
-}
-
-/// Build source-tagged steps for an alias from per-source `CommandConfig`s.
-///
-/// User steps appear first, then project steps — matching runtime order from
-/// the previous `append_aliases` merge. Both sources use the same
-/// `context_json` and `alias_name` (the variable bindings and label are
-/// pipeline-wide, not per-source).
-fn prepare_alias_sourced_steps(
-    user_alias: Option<&CommandConfig>,
-    project_alias: Option<&CommandConfig>,
-    context_json: &str,
-    alias_name: &str,
-) -> Vec<SourcedStep> {
-    let mut result = Vec::new();
-    for (source, config) in [
-        (HookSource::User, user_alias),
-        (HookSource::Project, project_alias),
-    ] {
-        let Some(cfg) = config else { continue };
+    let mut sourced_steps = Vec::new();
+    for (source, cfg) in entry.iter() {
         for step in cfg.steps() {
             let prepared = match step {
                 HookStep::Single(cmd) => {
-                    PreparedStep::Single(alias_prepared_command(cmd, context_json, alias_name))
+                    PreparedStep::Single(alias_prepared_command(cmd, &context_json, &alias_name))
                 }
                 HookStep::Concurrent(cmds) => PreparedStep::Concurrent(
                     cmds.iter()
-                        .map(|cmd| alias_prepared_command(cmd, context_json, alias_name))
+                        .map(|cmd| alias_prepared_command(cmd, &context_json, &alias_name))
                         .collect(),
                 ),
             };
-            result.push(SourcedStep {
+            sourced_steps.push(SourcedStep {
                 step: prepared,
                 source,
                 hook_type: None,
@@ -625,7 +623,15 @@ fn prepare_alias_sourced_steps(
             });
         }
     }
-    result
+    let foreground_steps =
+        sourced_steps_to_foreground(sourced_steps, &PipelineKind::Alias { name: alias_name });
+
+    execute_pipeline_foreground(
+        &foreground_steps,
+        &repo,
+        &wt_path,
+        FailureStrategy::FailFast,
+    )
 }
 
 /// Build a PreparedCommand for an alias, deferring template expansion to execution time.
@@ -913,38 +919,49 @@ mod tests {
         toml::from_str::<Wrap>(toml_str).unwrap().cmd
     }
 
+    /// Build a user-only `AliasEntry` for announcement-formatting tests. The
+    /// announcement walks both sources, so a user-only entry exercises the
+    /// same code path as the project-only or both-sources cases for these
+    /// fixtures.
+    fn user_entry_from_toml(toml_str: &str) -> AliasEntry {
+        AliasEntry {
+            user: Some(cfg_from_toml(toml_str)),
+            project: None,
+        }
+    }
+
     #[test]
     fn test_format_alias_announcement_single_unnamed() {
         // Single unnamed alias — banner would only echo the name, so suppress.
-        let cfg = cfg_from_toml(r#"cmd = "echo hi""#);
-        assert!(format_alias_announcement("deploy", &cfg).is_none());
+        let entry = user_entry_from_toml(r#"cmd = "echo hi""#);
+        assert!(format_alias_announcement("deploy", &entry).is_none());
     }
 
     #[test]
     fn test_format_alias_announcement_pipeline_all_unnamed() {
         // Pipeline of unnamed strings — still no summary content to show.
-        let cfg = cfg_from_toml(r#"cmd = ["echo a", "echo b"]"#);
-        assert!(format_alias_announcement("deploy", &cfg).is_none());
+        let entry = user_entry_from_toml(r#"cmd = ["echo a", "echo b"]"#);
+        assert!(format_alias_announcement("deploy", &entry).is_none());
     }
 
     #[test]
     fn test_format_alias_announcement_concurrent_named() {
         // Single concurrent step (named table form).
-        let cfg = cfg_from_toml(
+        let entry = user_entry_from_toml(
             r#"
 [cmd]
 build = "cargo build"
 test = "cargo test"
 "#,
         );
-        let msg = format_alias_announcement("check", &cfg).expect("summary expected");
+        let msg = format_alias_announcement("check", &entry).expect("summary expected");
         insta::assert_snapshot!(msg.ansi_strip(), @"Running alias check: build, test");
     }
 
     #[test]
     fn test_format_alias_announcement_pipeline_named() {
         // Pipeline: serial named step then concurrent named step.
-        let cfg = cfg_from_toml(
+        let entry = user_entry_from_toml(
             r#"
 cmd = [
     { install = "npm install" },
@@ -952,7 +969,7 @@ cmd = [
 ]
 "#,
         );
-        let msg = format_alias_announcement("deploy", &cfg).expect("summary expected");
+        let msg = format_alias_announcement("deploy", &entry).expect("summary expected");
         insta::assert_snapshot!(msg.ansi_strip(), @"Running alias deploy: install; build, lint");
     }
 
@@ -960,7 +977,7 @@ cmd = [
     fn test_format_alias_announcement_mixed_named_unnamed() {
         // Pipeline mixing anonymous strings and named steps. Unnamed entries
         // are skipped from the summary (aliases have no fallback label).
-        let cfg = cfg_from_toml(
+        let entry = user_entry_from_toml(
             r#"
 cmd = [
     "echo first",
@@ -968,8 +985,23 @@ cmd = [
 ]
 "#,
         );
-        let msg = format_alias_announcement("ci", &cfg).expect("summary expected");
+        let msg = format_alias_announcement("ci", &entry).expect("summary expected");
         insta::assert_snapshot!(msg.ansi_strip(), @"Running alias ci: build, test");
+    }
+
+    #[test]
+    fn test_format_alias_announcement_concatenates_user_and_project() {
+        // When both sources define the alias, the announcement walks user
+        // steps first, then project steps — matching runtime execution
+        // order. Both summaries appear in the same banner.
+        let entry = AliasEntry {
+            user: Some(cfg_from_toml(r#"cmd = [{ install = "npm install" }]"#)),
+            project: Some(cfg_from_toml(
+                r#"cmd = [{ build = "npm build" }, { test = "npm test" }]"#,
+            )),
+        };
+        let msg = format_alias_announcement("deploy", &entry).expect("summary expected");
+        insta::assert_snapshot!(msg.ansi_strip(), @"Running alias deploy: install; build; test");
     }
 
     #[test]
