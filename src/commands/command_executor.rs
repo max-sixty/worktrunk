@@ -83,10 +83,18 @@ pub type ErrorWrapper = Box<dyn Fn(&PreparedCommand, String, Option<i32>) -> any
 /// Supplied at conversion time (`sourced_steps_to_foreground`) so a single
 /// `SourcedStep` shape can be produced by both alias and hook resolution.
 /// Drives the per-step trust model (EXEC passthrough), announce policy,
-/// stdin handling, and error wrapping.
+/// stdin handling, and error wrapping. Hook-only metadata
+/// (`hook_type`, `display_path`) lives on the `Hook` variant — it's
+/// per-pipeline, not per-step, so the per-step shape stays neutral.
+#[derive(Clone)]
 pub enum PipelineKind {
-    Hook,
-    Alias { name: String },
+    Hook {
+        hook_type: HookType,
+        display_path: Option<PathBuf>,
+    },
+    Alias {
+        name: String,
+    },
 }
 
 /// A pipeline step ready for foreground execution, with rendering / error policy.

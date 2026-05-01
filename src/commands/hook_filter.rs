@@ -4,16 +4,19 @@
 //! and `command_approval.rs` (approval flow). Re-exported from `hooks.rs`
 //! for backward compatibility.
 
-/// Distinguishes between user hooks and project hooks for command preparation.
+/// Whether a hook or alias body came from user config or project config.
 ///
-/// Approval for project hooks is handled at the gate (command entry point),
-/// not during hook execution.
+/// Drives the per-step trust model: user-source bodies skip approval and
+/// pass EXEC through (the config is the user's own); project-source bodies
+/// require approval at the gate (command entry point) and scrub EXEC.
 #[derive(
     Clone,
     Copy,
     Debug,
     PartialEq,
     Eq,
+    PartialOrd,
+    Ord,
     serde::Serialize,
     serde::Deserialize,
     strum::Display,
@@ -22,9 +25,11 @@
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum HookSource {
-    /// User hooks from ~/.config/worktrunk/config.toml (no approval required)
+    /// User config (~/.config/worktrunk/config.toml). No approval required;
+    /// EXEC directives pass through (alias steps).
     User,
-    /// Project hooks from .config/wt.toml (approval handled at gate)
+    /// Project config (.config/wt.toml). Approval is handled at the gate;
+    /// EXEC directives are scrubbed.
     Project,
 }
 

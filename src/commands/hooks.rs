@@ -118,7 +118,7 @@ fn prepare_sourced_steps(
         hook_type,
         extra_vars,
         name_filters,
-        display_path,
+        display_path: _,
     } = spec;
 
     let parsed_filters: Vec<ParsedFilter<'_>> = name_filters
@@ -126,7 +126,6 @@ fn prepare_sourced_steps(
         .map(|f| ParsedFilter::parse(f))
         .collect();
 
-    let display_path = display_path.map(|p| p.to_path_buf());
     let mut result = Vec::new();
 
     let sources = [
@@ -148,8 +147,6 @@ fn prepare_sourced_steps(
                 result.push(SourcedStep {
                     step: filtered,
                     source,
-                    hook_type: Some(hook_type),
-                    display_path: display_path.clone(),
                     is_pipeline,
                 });
             }
@@ -210,15 +207,16 @@ fn count_sourced_commands(steps: &[SourcedStep]) -> usize {
 /// A pipeline step with source information, for pipeline-aware execution.
 ///
 /// Used by both hook and alias dispatch as the source-tagged shape that feeds
-/// `sourced_steps_to_foreground`. `hook_type` and `display_path` are
-/// hook-only metadata; aliases leave them `None`. Pipeline kind (Hook vs
-/// Alias) is supplied at conversion time, so this struct stays neutral.
+/// `sourced_steps_to_foreground`. Per-pipeline metadata (`hook_type`,
+/// `display_path` for hooks; `name` for aliases) lives on `PipelineKind`,
+/// supplied at conversion time so this struct stays neutral. The two fields
+/// here are genuinely per-step: alias flows mix steps from both sources into
+/// one flat vec, and a config using `[[hook.x]]` on one side with `[hook.x]`
+/// on the other can produce mixed `is_pipeline` values within a single hook
+/// run.
 pub struct SourcedStep {
     pub step: PreparedStep,
     pub source: HookSource,
-    /// Hook type for hook pipelines; `None` for aliases.
-    pub hook_type: Option<HookType>,
-    pub display_path: Option<PathBuf>,
     /// Whether `Concurrent` steps run concurrently. For hooks: derived from
     /// `is_pipeline()` (deprecated single-table form runs serially). For
     /// aliases: always true — no deprecated form.
@@ -372,6 +370,7 @@ pub struct HookAnnouncer<'a> {
 struct PendingPipeline {
     worktree_path: PathBuf,
     branch: Option<String>,
+    kind: PipelineKind,
     steps: Vec<SourcedStep>,
 }
 
@@ -394,12 +393,13 @@ impl<'a> HookAnnouncer<'a> {
     /// already filter out empty source groups — empty `steps` is unreachable.
     pub fn extend<'b, I>(&mut self, pipelines: I)
     where
-        I: IntoIterator<Item = (CommandContext<'b>, Vec<SourcedStep>)>,
+        I: IntoIterator<Item = (CommandContext<'b>, PipelineKind, Vec<SourcedStep>)>,
     {
-        for (ctx, steps) in pipelines {
+        for (ctx, kind, steps) in pipelines {
             self.pending.push(PendingPipeline {
                 worktree_path: ctx.worktree_path.to_path_buf(),
                 branch: ctx.branch.map(String::from),
+                kind,
                 steps,
             });
         }
@@ -442,6 +442,7 @@ impl<'a> HookAnnouncer<'a> {
                         &p.worktree_path,
                         false,
                     ),
+                    p.kind.clone(),
                     std::mem::take(&mut p.steps),
                 )
             })
@@ -487,33 +488,39 @@ impl Drop for HookAnnouncer<'_> {
 /// disambiguation in batch contexts (e.g., prune removing multiple worktrees):
 /// `Running post-remove for feature: user: docs`.
 fn run_hooks_background(
-    pipelines: Vec<(CommandContext<'_>, Vec<SourcedStep>)>,
+    pipelines: Vec<(CommandContext<'_>, PipelineKind, Vec<SourcedStep>)>,
     show_branch: bool,
 ) -> anyhow::Result<()> {
     let pipelines: Vec<_> = pipelines
         .into_iter()
-        .filter(|(_, steps)| !steps.is_empty())
+        .filter(|(_, _, steps)| !steps.is_empty())
         .collect();
     if pipelines.is_empty() {
         return Ok(());
     }
-    let display_path = pipelines
-        .iter()
-        .flat_map(|(_, g)| g.iter())
-        .find_map(|s| s.display_path.as_ref());
 
     // Merge per-source summaries by hook type so user+project for the same
     // type render as one clause: `post-merge: sync, push (user); build (project)`.
+    // Pull `display_path` off the first hook kind that has one — every hook
+    // pipeline in this batch shares a path; the path slot is bundle-wide.
+    let mut display_path: Option<&Path> = None;
     let mut type_summaries: Vec<(HookType, Vec<String>)> = Vec::new();
-    for (_, group) in &pipelines {
-        let hook_type = group[0]
-            .hook_type
-            .expect("background hook pipelines always set hook_type");
+    for (_, kind, group) in &pipelines {
+        let PipelineKind::Hook {
+            hook_type,
+            display_path: dp,
+        } = kind
+        else {
+            unreachable!("background pipelines are always PipelineKind::Hook");
+        };
+        if display_path.is_none() {
+            display_path = dp.as_deref();
+        }
         let summary = format_pipeline_summary(group);
-        if let Some(entry) = type_summaries.iter_mut().find(|(ht, _)| *ht == hook_type) {
+        if let Some(entry) = type_summaries.iter_mut().find(|(ht, _)| ht == hook_type) {
             entry.1.push(summary);
         } else {
-            type_summaries.push((hook_type, vec![summary]));
+            type_summaries.push((*hook_type, vec![summary]));
         }
     }
 
@@ -523,7 +530,7 @@ fn run_hooks_background(
     let branch_suffix = if show_branch {
         pipelines
             .first()
-            .and_then(|(ctx, _)| ctx.branch)
+            .and_then(|(ctx, _, _)| ctx.branch)
             .map(|b| cformat!(" for <bold>{b}</>"))
     } else {
         None
@@ -549,8 +556,8 @@ fn run_hooks_background(
     };
     eprintln!("{}", progress_message(message));
 
-    for (ctx, group) in pipelines {
-        spawn_hook_pipeline_quiet(&ctx, group)?;
+    for (ctx, kind, group) in pipelines {
+        spawn_hook_pipeline_quiet(&ctx, &kind, group)?;
     }
 
     Ok(())
@@ -575,14 +582,15 @@ pub(crate) fn into_source_groups(flat: Vec<SourcedStep>) -> Vec<Vec<SourcedStep>
 /// Prepare a single hook type's background pipelines for one context.
 ///
 /// Looks up user/project configs, prepares + name-checks steps, and groups
-/// them by source so each source spawns as an independent pipeline. The
-/// returned Vec is ready to extend or pass to [`run_hooks_background`].
+/// them by source so each source spawns as an independent pipeline. Each
+/// group is returned with its `PipelineKind::Hook` carrying the per-pipeline
+/// metadata (`hook_type`, `display_path`).
 pub(crate) fn prepare_background_pipelines<'c>(
     ctx: &CommandContext<'c>,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
     display_path: Option<&Path>,
-) -> anyhow::Result<Vec<(CommandContext<'c>, Vec<SourcedStep>)>> {
+) -> anyhow::Result<Vec<(CommandContext<'c>, PipelineKind, Vec<SourcedStep>)>> {
     let project_config = ctx.repo.load_project_config()?;
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
     let (user_config, proj_config) =
@@ -598,53 +606,66 @@ pub(crate) fn prepare_background_pipelines<'c>(
             display_path,
         },
     )?;
+    let kind = PipelineKind::Hook {
+        hook_type,
+        display_path: display_path.map(|p| p.to_path_buf()),
+    };
     Ok(into_source_groups(flat)
         .into_iter()
-        .map(|g| (*ctx, g))
+        .map(|g| (*ctx, kind.clone(), g))
         .collect())
 }
 
 /// Emit a `template variables:` block for one hook type, using the first
-/// matching step's context.
+/// matching pipeline's first step context.
 ///
 /// Background hooks don't flow through `announce_command` (which prints the
 /// table in the foreground path), so this is the symmetric entry point.
 /// Called once per hook type from `run_hooks_background`, immediately before
 /// that hook type's `Running ...` line, so each hook type reads as one block.
 fn print_background_variable_table(
-    pipelines: &[(CommandContext<'_>, Vec<SourcedStep>)],
+    pipelines: &[(CommandContext<'_>, PipelineKind, Vec<SourcedStep>)],
     hook_type: HookType,
 ) {
-    for (_, group) in pipelines {
-        for sourced in group {
-            if sourced.hook_type != Some(hook_type) {
-                continue;
-            }
-            let cmd = match &sourced.step {
-                PreparedStep::Single(cmd) => cmd,
-                PreparedStep::Concurrent(cmds) => &cmds[0],
-            };
-            let ctx: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
-                .expect("context_json is always serialized from a HashMap<String, String>");
-            eprintln!("{}", info_message("template variables:"));
-            eprintln!(
-                "{}",
-                format_with_gutter(&format_hook_variables(hook_type, &ctx), None)
-            );
-            return;
+    for (_, kind, group) in pipelines {
+        let PipelineKind::Hook { hook_type: ht, .. } = kind else {
+            continue;
+        };
+        if *ht != hook_type {
+            continue;
         }
+        let Some(sourced) = group.first() else {
+            continue;
+        };
+        let cmd = match &sourced.step {
+            PreparedStep::Single(cmd) => cmd,
+            PreparedStep::Concurrent(cmds) => &cmds[0],
+        };
+        let ctx: HashMap<String, String> = serde_json::from_str(&cmd.context_json)
+            .expect("context_json is always serialized from a HashMap<String, String>");
+        eprintln!("{}", info_message("template variables:"));
+        eprintln!(
+            "{}",
+            format_with_gutter(&format_hook_variables(hook_type, &ctx), None)
+        );
+        return;
     }
 }
 
 /// Spawn a hook pipeline without displaying a summary line.
 ///
 /// Used by `run_hooks_background` after the combined announcement is printed.
-fn spawn_hook_pipeline_quiet(ctx: &CommandContext, steps: Vec<SourcedStep>) -> anyhow::Result<()> {
+fn spawn_hook_pipeline_quiet(
+    ctx: &CommandContext,
+    kind: &PipelineKind,
+    steps: Vec<SourcedStep>,
+) -> anyhow::Result<()> {
     use super::pipeline_spec::{PipelineCommandSpec, PipelineSpec, PipelineStepSpec};
 
-    let hook_type = steps[0]
-        .hook_type
-        .expect("background hook pipelines always set hook_type");
+    let PipelineKind::Hook { hook_type, .. } = kind else {
+        unreachable!("background pipelines are always PipelineKind::Hook");
+    };
+    let hook_type = *hook_type;
     let source = steps[0].source;
 
     // Extract base context from the first command. Both call sites
@@ -824,20 +845,18 @@ pub(crate) fn sourced_steps_to_foreground(
                 _ => DirectivePassthrough::inherit_from_env(),
             };
             let (announce, pipe_stdin, redirect_stdout_to_stderr, error_wrapper) = match kind {
-                PipelineKind::Hook => {
-                    let hook_type = sourced
-                        .hook_type
-                        .expect("hook pipelines always set hook_type");
-                    (
-                        AnnouncePolicy::Hook {
-                            hook_type,
-                            display_path: sourced.display_path,
-                        },
-                        true,
-                        true,
-                        hook_error_wrapper(hook_type),
-                    )
-                }
+                PipelineKind::Hook {
+                    hook_type,
+                    display_path,
+                } => (
+                    AnnouncePolicy::Hook {
+                        hook_type: *hook_type,
+                        display_path: display_path.clone(),
+                    },
+                    true,
+                    true,
+                    hook_error_wrapper(*hook_type),
+                ),
                 PipelineKind::Alias { name } => (
                     AnnouncePolicy::None,
                     false,
@@ -874,13 +893,17 @@ pub(crate) fn run_hooks_foreground(
     spec: HookCommandSpec<'_, '_, '_, '_>,
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
+    let kind = PipelineKind::Hook {
+        hook_type: spec.hook_type,
+        display_path: spec.display_path.map(|p| p.to_path_buf()),
+    };
     let sourced_steps = prepare_and_check(ctx, spec)?;
 
     if sourced_steps.is_empty() {
         return Ok(());
     }
 
-    let foreground_steps = sourced_steps_to_foreground(sourced_steps, &PipelineKind::Hook);
+    let foreground_steps = sourced_steps_to_foreground(sourced_steps, &kind);
 
     execute_pipeline_foreground(
         &foreground_steps,
@@ -1000,8 +1023,6 @@ mod tests {
         SourcedStep {
             step,
             source: HookSource::User,
-            hook_type: Some(worktrunk::HookType::PostStart),
-            display_path: None,
             is_pipeline: false,
         }
     }

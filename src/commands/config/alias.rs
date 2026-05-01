@@ -29,12 +29,13 @@ use worktrunk::config::{
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{format_bash_with_gutter, info_message, println};
 
-use crate::commands::alias::{AliasOptions, AliasSource, TOP_LEVEL_BUILTINS, load_aliases};
+use crate::commands::alias::{AliasOptions, TOP_LEVEL_BUILTINS, load_aliases};
 use crate::commands::build_invalid_subcommand_error;
 use crate::commands::command_executor::{
     CommandContext, build_hook_context, expand_shell_template,
 };
 use crate::commands::did_you_mean;
+use crate::commands::hooks::HookSource;
 
 /// Show the configured template(s) for an alias, tagged by source.
 ///
@@ -218,16 +219,16 @@ fn entries_for_name(
     user_config: &UserConfig,
     project_config: Option<&ProjectConfig>,
     name: &str,
-) -> Vec<(CommandConfig, AliasSource)> {
+) -> Vec<(CommandConfig, HookSource)> {
     let project_id = repo.project_identifier().ok();
     let mut entries = Vec::new();
     if let Some(cfg) = user_config.aliases(project_id.as_deref()).get(name) {
-        entries.push((cfg.clone(), AliasSource::User));
+        entries.push((cfg.clone(), HookSource::User));
     }
     if let Some(pc) = project_config
         && let Some(cfg) = pc.aliases.get(name)
     {
-        entries.push((cfg.clone(), AliasSource::Project));
+        entries.push((cfg.clone(), HookSource::Project));
     }
     entries
 }
@@ -300,7 +301,7 @@ fn unknown_alias_error(
 fn format_entry(
     name: &str,
     cfg: &CommandConfig,
-    source: AliasSource,
+    source: HookSource,
     bodies: &[String],
     verb: Option<&str>,
 ) -> String {
@@ -312,12 +313,11 @@ fn format_entry(
 fn format_entry_with_routing(
     name: &str,
     cfg: &CommandConfig,
-    source: AliasSource,
+    source: HookSource,
     bodies: &[String],
     verb: Option<&str>,
     routing: Option<&str>,
 ) -> String {
-    let label = source.label();
     let suffix = match verb {
         Some(v) => format!(" {v}:"),
         None => ":".to_string(),
@@ -336,7 +336,7 @@ fn format_entry_with_routing(
         body.push_str(rendered);
     }
     info_message(cformat!(
-        "Alias <bold>{name}</> ({label}){suffix}\n{}",
+        "Alias <bold>{name}</> ({source}){suffix}\n{}",
         format_bash_with_gutter(&body)
     ))
     .to_string()
@@ -359,7 +359,7 @@ mod tests {
     fn test_format_entry_show_single() {
         let cfg = cfg_from_toml(r#"cmd = "echo {{ branch }}""#);
         let bodies: Vec<String> = cfg.commands().map(|c| c.template.clone()).collect();
-        let out = format_entry("greet", &cfg, AliasSource::User, &bodies, None);
+        let out = format_entry("greet", &cfg, HookSource::User, &bodies, None);
         insta::assert_snapshot!(out.ansi_strip());
     }
 
@@ -374,7 +374,7 @@ cmd = [
 "#,
         );
         let bodies: Vec<String> = cfg.commands().map(|c| c.template.clone()).collect();
-        let out = format_entry("deploy", &cfg, AliasSource::Project, &bodies, None);
+        let out = format_entry("deploy", &cfg, HookSource::Project, &bodies, None);
         insta::assert_snapshot!(out.ansi_strip());
     }
 
@@ -393,7 +393,7 @@ cmd = [
         let out = format_entry(
             "deploy",
             &cfg,
-            AliasSource::Project,
+            HookSource::Project,
             &bodies,
             Some("would run"),
         );

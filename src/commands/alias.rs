@@ -606,8 +606,6 @@ fn run_alias(
             sourced_steps.push(SourcedStep {
                 step: prepared,
                 source,
-                hook_type: None,
-                display_path: None,
                 // Aliases have no deprecated single-table form, so concurrent
                 // commands always run concurrently.
                 is_pipeline: true,
@@ -638,24 +636,6 @@ fn alias_prepared_command(
         lazy_template: Some(cmd.template.clone()),
         label: alias_name.to_string(),
         log_label: None,
-    }
-}
-
-/// Where an alias came from. When the same name is defined in both configs,
-/// the listing shows both entries in runtime order (user first, then project)
-/// rather than merging them, so users see the real commands from each source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum AliasSource {
-    User,
-    Project,
-}
-
-impl AliasSource {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            AliasSource::User => "user",
-            AliasSource::Project => "project",
-        }
     }
 }
 
@@ -729,7 +709,7 @@ pub(crate) fn augment_help(help: &str, context: HelpContext) -> String {
 /// `context` controls the "shadowed by built-in" annotation — see
 /// [`HelpContext`].
 fn render_aliases_section(
-    entries: &[(String, CommandConfig, AliasSource)],
+    entries: &[(String, CommandConfig, HookSource)],
     context: HelpContext,
 ) -> String {
     use std::fmt::Write as _;
@@ -763,8 +743,8 @@ fn render_aliases_section(
             cformat!(" <yellow>(shadowed by built-in)</>")
         } else if counts.get(name.as_str()).copied().unwrap_or(0) > 1 {
             match source {
-                AliasSource::User => cformat!(" <dim>(user)</>"),
-                AliasSource::Project => cformat!(" <dim>(project)</>"),
+                HookSource::User => cformat!(" <dim>(user)</>"),
+                HookSource::Project => cformat!(" <dim>(project)</>"),
             }
         } else {
             String::new()
@@ -796,7 +776,7 @@ fn render_aliases_section(
 /// an execution surface, so we'd rather show the built-in commands than
 /// error out when a repo isn't detected or a config file is malformed.
 /// `step_alias` surfaces those errors at execution time.
-fn load_aliases_for_listing() -> Vec<(String, CommandConfig, AliasSource)> {
+fn load_aliases_for_listing() -> Vec<(String, CommandConfig, HookSource)> {
     let repo = Repository::current().ok();
     let project_id = repo.as_ref().and_then(|r| r.project_identifier().ok());
 
@@ -810,17 +790,17 @@ fn load_aliases_for_listing() -> Vec<(String, CommandConfig, AliasSource)> {
         .and_then(load_project_aliases_silent)
         .unwrap_or_default();
 
-    let mut entries: Vec<(String, CommandConfig, AliasSource)> = user_aliases
+    let mut entries: Vec<(String, CommandConfig, HookSource)> = user_aliases
         .into_iter()
-        .map(|(n, c)| (n, c, AliasSource::User))
+        .map(|(n, c)| (n, c, HookSource::User))
         .chain(
             project_aliases
                 .into_iter()
-                .map(|(n, c)| (n, c, AliasSource::Project)),
+                .map(|(n, c)| (n, c, HookSource::Project)),
         )
         .collect();
 
-    // Sort by name; for ties, user before project (derived Ord on AliasSource)
+    // Sort by name; for ties, user before project (derived Ord on HookSource)
     // so duplicates display in runtime execution order.
     entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(&b.2)));
     entries
@@ -1599,22 +1579,22 @@ test = "cargo test"
             (
                 "only-user".to_string(),
                 cfg_from_toml(r#"cmd = "echo u""#),
-                AliasSource::User,
+                HookSource::User,
             ),
             (
                 "only-project".to_string(),
                 cfg_from_toml(r#"cmd = "echo p""#),
-                AliasSource::Project,
+                HookSource::Project,
             ),
             (
                 "shared".to_string(),
                 cfg_from_toml(r#"cmd = "echo from-user""#),
-                AliasSource::User,
+                HookSource::User,
             ),
             (
                 "shared".to_string(),
                 cfg_from_toml(r#"cmd = "echo from-project""#),
-                AliasSource::Project,
+                HookSource::Project,
             ),
         ];
         // Caller passes pre-sorted entries; mirror that here.
@@ -1641,17 +1621,17 @@ test = "cargo test"
             (
                 "list".to_string(),
                 cfg_from_toml(r#"cmd = "ls""#),
-                AliasSource::User,
+                HookSource::User,
             ),
             (
                 "commit".to_string(),
                 cfg_from_toml(r#"cmd = "git commit""#),
-                AliasSource::User,
+                HookSource::User,
             ),
             (
                 "deploy".to_string(),
                 cfg_from_toml(r#"cmd = "make deploy""#),
-                AliasSource::User,
+                HookSource::User,
             ),
         ];
         let mut sorted = entries;
