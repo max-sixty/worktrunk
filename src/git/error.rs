@@ -1159,7 +1159,10 @@ fn pr_mr_switch_hint(
     };
     match platform {
         Some(ref_type) => {
-            let label = ref_type.display(branch.parse().unwrap_or(0));
+            let number = branch
+                .parse()
+                .expect("pr_mr_switch_hint requires a numeric branch name");
+            let label = ref_type.display(number);
             let cmd = make_cmd(ref_type);
             cformat!("To switch to {label}, run <underline>{cmd}</>")
         }

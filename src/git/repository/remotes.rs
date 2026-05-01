@@ -269,14 +269,19 @@ impl Repository {
     /// Detect the platform's reference type (PR for GitHub, MR for GitLab).
     ///
     /// Honors the `forge.platform` config override first, then falls back to
-    /// hostname matching on the primary remote URL. Returns `None` when the
-    /// platform can't be determined (no remote, opaque host, unknown override).
+    /// hostname matching on the primary remote's effective URL (so `url.insteadOf`
+    /// rewrites are respected). Returns `None` when the platform can't be
+    /// determined (no remote, opaque host, unknown override).
+    ///
+    /// Mirrors the detection rules used by `platform_for_repo` (case-sensitive
+    /// `forge.platform` match, effective URL hostname check) so a hint here and
+    /// a CI-status decision elsewhere agree on the same repo.
     pub fn detect_ref_type(&self) -> Option<RefType> {
         if let Some(platform) = self
             .load_project_config()
             .ok()
             .flatten()
-            .and_then(|c| c.forge_platform().map(str::to_ascii_lowercase))
+            .and_then(|c| c.forge_platform().map(str::to_string))
         {
             match platform.as_str() {
                 "github" => return Some(RefType::Pr),
@@ -284,7 +289,11 @@ impl Repository {
                 _ => {}
             }
         }
-        let parsed = self.primary_remote_parsed_url()?;
+        let url = self
+            .primary_remote()
+            .ok()
+            .and_then(|remote| self.effective_remote_url(&remote))?;
+        let parsed = GitRemoteUrl::parse(&url)?;
         if parsed.is_github() {
             Some(RefType::Pr)
         } else if parsed.is_gitlab() {
