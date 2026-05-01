@@ -68,20 +68,20 @@ impl LocalBranchInventory {
 /// in the Rust string: Rust's `Command::arg` rejects arguments containing
 /// interior NUL bytes (they can't survive the `CString` conversion to
 /// `execve`), so passing `\0` through `args()` would error before git runs.
-const FIELD_SEP: char = '\0';
+pub(super) const FIELD_SEP: char = '\0';
 
 /// Format string for the local-branch scan.
 ///
 /// Fields, in order: short name, object SHA, committer Unix timestamp,
 /// upstream short name (empty if none), upstream track (`[gone]` if the
 /// configured upstream no longer exists on the remote).
-const LOCAL_BRANCH_FORMAT: &str = "--format=%(refname:lstrip=2)%00%(objectname)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track)";
+pub(super) const LOCAL_BRANCH_FORMAT: &str = "--format=%(refname:lstrip=2)%00%(objectname)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track)";
 
 /// Format string for the remote-branch scan.
 ///
 /// Fields, in order: remote-qualified short name (e.g. `origin/feature`),
 /// object SHA, committer Unix timestamp.
-const REMOTE_BRANCH_FORMAT: &str =
+pub(super) const REMOTE_BRANCH_FORMAT: &str =
     "--format=%(refname:lstrip=2)%00%(objectname)%00%(committerdate:unix)";
 
 impl Repository {
@@ -293,7 +293,7 @@ impl Repository {
 /// Returns `None` for malformed lines — e.g. a future git format change or
 /// a control character snuck through. Callers skip those entries rather
 /// than fail the whole scan.
-fn parse_local_branch_line(line: &str) -> Option<LocalBranch> {
+pub(super) fn parse_local_branch_line(line: &str) -> Option<LocalBranch> {
     let mut parts = line.split(FIELD_SEP);
     let name = parts.next()?.to_string();
     let commit_sha = parts.next()?.to_string();
@@ -317,7 +317,7 @@ fn parse_local_branch_line(line: &str) -> Option<LocalBranch> {
 ///
 /// Skips `<remote>/HEAD` symrefs — they duplicate another ref and would
 /// confuse callers that key by local name.
-fn parse_remote_branch_line(line: &str) -> Option<RemoteBranch> {
+pub(super) fn parse_remote_branch_line(line: &str) -> Option<RemoteBranch> {
     let mut parts = line.split(FIELD_SEP);
     let short_name = parts.next()?;
     let commit_sha = parts.next()?.to_string();
