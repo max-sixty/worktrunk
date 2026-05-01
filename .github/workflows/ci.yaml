@@ -294,7 +294,11 @@ jobs:
     - name: 💾 Save coverage DB
       uses: actions/cache/save@v5
       with:
-        path: target/affected
+        # Only the SQLite DB. `target/affected/profraw-<PID>/` holds raw
+        # profile bundles (~5 GB on this repo) that aren't needed past the
+        # current collect — caching them blows past the 10 GB repo cache
+        # cap and forces eviction of every prior cache.
+        path: target/affected/coverage.db
         key: cargo-affected-db-v1-${{ runner.os }}-${{ github.sha }}
 
   affected-tests:
@@ -326,7 +330,7 @@ jobs:
     - name: 💾 Restore coverage DB
       uses: actions/cache/restore@v5
       with:
-        path: target/affected
+        path: target/affected/coverage.db
         # Exact match: collect ran on the PR's merge-base → tight diff.
         key: cargo-affected-db-v1-${{ runner.os }}-${{ steps.mb.outputs.sha }}
         # Fallback: most recent main DB. cargo-affected runs all tests when
