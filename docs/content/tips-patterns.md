@@ -1,7 +1,7 @@
 +++
 title = "Tips & Patterns"
 description = "Practical recipes for Worktrunk workflows: aliases, shell integration, Zellij layouts, and parallel agent patterns."
-weight = 24
+weight = 25
 
 [extra]
 group = "Reference"
@@ -11,9 +11,9 @@ Practical recipes for common Worktrunk workflows.
 
 ## Shell alias for new worktree + agent
 
-Create a worktree and launch Claude in one command:
+Create a worktree and launch Codex in one command:
 
-{{ terminal(cmd="alias wsc='wt switch --create --execute=claude'|||wsc new-feature                       # Creates worktree, runs hooks, launches Claude|||wsc feature -- 'Fix GH #322'          # Runs `claude 'Fix GH #322'`") }}
+{{ terminal(cmd="alias wsc='wt switch --create --execute=codex'|||wsc new-feature                       # Creates worktree, runs hooks, launches Codex|||wsc feature -- 'Fix GH #322'          # Runs `codex 'Fix GH #322'`") }}
 
 ## `wt` aliases
 
@@ -158,7 +158,7 @@ Then `wt mc` opens an editor for the commit message while plain `wt merge` conti
 
 ## Track agent status
 
-Custom emoji markers show agent state in `wt list`. The [Claude Code](@/claude-code.md) plugin and [OpenCode plugin](https://github.com/max-sixty/worktrunk/tree/main/dev/opencode-plugin.ts) set these automatically:
+Custom emoji markers show agent state in `wt list`. The [Codex](@/codex.md), [Claude Code](@/claude-code.md), and [OpenCode plugin](https://github.com/max-sixty/worktrunk/tree/main/dev/opencode-plugin.ts) integrations set these automatically:
 
 ```
 + feature-api      ↑  🤖              ↑1      ./repo.feature-api
@@ -172,7 +172,7 @@ Set status manually for any workflow:
 
 {{ terminal(cmd="wt config state marker set __WT_QUOT__🚧__WT_QUOT__                   # Current branch|||wt config state marker set __WT_QUOT__✅__WT_QUOT__ --branch feature  # Specific branch|||git config worktrunk.state.feature.marker '{__WT_QUOT__marker__WT_QUOT__:__WT_QUOT__💬__WT_QUOT__,__WT_QUOT__set_at__WT_QUOT__:0}'  # Direct") }}
 
-See [Claude Code Integration](@/claude-code.md#installation) for plugin installation.
+See [Codex Integration](@/codex.md#installation) and [Claude Code Integration](@/claude-code.md#installation) for plugin installation.
 
 ## Monitor CI across branches
 
@@ -262,17 +262,17 @@ Branch from current HEAD instead of the default branch:
 
 ## Agent handoffs
 
-Spawn a worktree with an agent CLI running in the background. Examples below use `claude`; for OpenCode, replace `claude` with `'opencode run'`.
+Spawn a worktree with an agent CLI running in the background. Examples below use `codex`; for Claude Code, replace `codex` with `claude`. For OpenCode, use `'opencode run'`.
 
 **tmux** (new detached session):
-{{ terminal(cmd="tmux new-session -d -s fix-auth-bug __WT_QUOT__wt switch --create fix-auth-bug -x claude -- \|||  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'__WT_QUOT__") }}
+{{ terminal(cmd="tmux new-session -d -s fix-auth-bug __WT_QUOT__wt switch --create fix-auth-bug -x codex -- \|||  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'__WT_QUOT__") }}
 
 **Zellij** (new pane in current session):
-{{ terminal(cmd="zellij run -- wt switch --create fix-auth-bug -x claude -- \|||  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'") }}
+{{ terminal(cmd="zellij run -- wt switch --create fix-auth-bug -x codex -- \|||  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'") }}
 
 This lets one agent session hand off work to another that runs in the background. Hooks run inside the multiplexer session/pane.
 
-The [worktrunk skill](@/claude-code.md) includes guidance for Claude Code (and other agent CLIs that load it) to execute this pattern. To enable it, request it explicitly ("spawn a parallel worktree for...") or add to your project instructions (`CLAUDE.md` or `AGENTS.md`):
+The Worktrunk skill included with the [Codex](@/codex.md) and [Claude Code](@/claude-code.md) plugins includes guidance for agent CLIs to execute this pattern. To enable it, request it explicitly ("spawn a parallel worktree for...") or add to your project instructions (`AGENTS.md` or `CLAUDE.md`):
 
 ```markdown
 When I ask you to spawn parallel worktrees, use the agent handoff pattern
@@ -291,14 +291,14 @@ S={{ branch | sanitize }}
 W={{ worktree_path }}
 tmux new-session -d -s "$S" -c "$W" -n dev
 
-# Create 4-pane layout: shell | backend / claude | frontend
+# Create 4-pane layout: shell | backend / agent | frontend
 tmux split-window -h -t "$S:dev" -c "$W"
 tmux split-window -v -t "$S:dev.0" -c "$W"
 tmux split-window -v -t "$S:dev.2" -c "$W"
 
 # Start services in each pane
 tmux send-keys -t "$S:dev.1" 'npm run backend' Enter
-tmux send-keys -t "$S:dev.2" 'claude' Enter
+tmux send-keys -t "$S:dev.2" 'codex' Enter
 tmux send-keys -t "$S:dev.3" 'npm run frontend' Enter
 
 tmux select-pane -t "$S:dev.0"

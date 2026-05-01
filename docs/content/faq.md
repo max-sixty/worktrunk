@@ -1,7 +1,7 @@
 +++
 title = "FAQ"
 description = "Common questions about Worktrunk: comparison to git worktree and branch switching, bare repos, TUI support, and more."
-weight = 25
+weight = 26
 
 [extra]
 group = "Reference"
@@ -64,14 +64,14 @@ Not natively — stacked-branch workflows are a large design space, so Worktrunk
 
 ## There's an issue with my shell setup
 
-If shell integration isn't working (auto-cd not happening, completions missing, `wt` not found as a function), the fastest path to a fix is using Claude Code with the Worktrunk plugin:
+If shell integration isn't working (auto-cd not happening, completions missing, `wt` not found as a function), the fastest path to a fix is using an agent with the Worktrunk plugin:
 
-1. Install the [Worktrunk plugin](@/claude-code.md) in Claude Code
-2. Ask Claude to debug the Worktrunk shell integration
+1. Install the Worktrunk plugin in [Codex](@/codex.md) or [Claude Code](@/claude-code.md)
+2. Ask the agent to debug the Worktrunk shell integration
 
-Claude will run `wt config show`, inspect the shell config files, and identify the issue.
+The agent will run `wt config show`, inspect the shell config files, and identify the issue.
 
-If Claude can't fix it, please [open an issue](https://github.com/max-sixty/worktrunk/issues/new?title=Shell%20setup%20issue&body=%23%23%20Shell%20and%20OS%0A%0A-%20Shell%3A%20%0A-%20OS%3A%20%0A%0A%23%23%20Output%20of%20%60wt%20config%20show%60%0A%0A%60%60%60%0A%0A%60%60%60%0A%0A%23%23%20What%20Claude%20found%20%28if%20available%29%0A%0A) with the output of `wt config show`, the shell (bash/zsh/fish), and OS. (And even if it fixes the problem, feel free to open an issue: non-standard success cases are useful for ensuring Worktrunk is easy to set up for others.)
+If the agent can't fix it, please [open an issue](https://github.com/max-sixty/worktrunk/issues/new?title=Shell%20setup%20issue&body=%23%23%20Shell%20and%20OS%0A%0A-%20Shell%3A%20%0A-%20OS%3A%20%0A%0A%23%23%20Output%20of%20%60wt%20config%20show%60%0A%0A%60%60%60%0A%0A%60%60%60%0A%0A%23%23%20What%20the%20agent%20found%20%28if%20available%29%0A%0A) with the output of `wt config show`, the shell (bash/zsh/fish), and OS. (And even if it fixes the problem, feel free to open an issue: non-standard success cases are useful for ensuring Worktrunk is easy to set up for others.)
 
 ## What files does Worktrunk create?
 

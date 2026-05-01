@@ -6,6 +6,8 @@ The worktrunk Claude Code plugin provides three features:
 2. **Worktree isolation** — When Claude Code agents create isolated worktrees, the plugin routes creation and removal through `wt` instead of raw `git`
 3. **Activity tracking** — Status markers in `wt list` showing which worktrees have active Claude sessions (🤖 working, 💬 waiting)
 
+Using Codex? See [Codex Integration](https://worktrunk.dev/codex/) for the Codex plugin and Worktrunk skill.
+
 ## Installation
 
 Recommended:

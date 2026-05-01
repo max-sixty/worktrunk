@@ -20,7 +20,7 @@ Reference files are synced from [worktrunk.dev](https://worktrunk.dev) documenta
 - **reference/llm-commits.md**: LLM commit message generation
 - **reference/tips-patterns.md**: Language-specific tips and patterns
 - **reference/shell-integration.md**: Shell integration debugging
-- **reference/troubleshooting.md**: Troubleshooting for LLM and hooks (Claude-specific)
+- **reference/troubleshooting.md**: Troubleshooting for LLM and hooks
 
 For command-specific options, run `wt <command> --help`. For configuration, follow the workflows below.
 
@@ -71,7 +71,7 @@ Most common request. See `reference/llm-commits.md` for supported tools and exac
    which claude codex llm aichat 2>/dev/null
    ```
 
-2. **If none installed, recommend Claude Code** (already available in Claude Code sessions)
+2. **If none installed, recommend Codex or Claude Code** (whichever matches the user's environment)
 
 3. **Propose config change** — Get the exact command from `reference/llm-commits.md`
    ```toml
@@ -267,7 +267,7 @@ Two resolutions exist — pick based on who the agent is running for:
 
 ## Advanced: Agent Handoffs
 
-When the user requests spawning a worktree with an agent in a background session ("spawn a worktree for...", "hand off to another agent"), use the appropriate pattern for their terminal multiplexer. Substitute `<agent-cli>` with the CLI you are running as: `claude` for Claude Code, `'opencode run'` for OpenCode.
+When the user requests spawning a worktree with an agent in a background session ("spawn a worktree for...", "hand off to another agent"), use the appropriate pattern for their terminal multiplexer. Substitute `<agent-cli>` with the CLI you are running as: `codex` for Codex, `claude` for Claude Code, or `'opencode run'` for OpenCode.
 
 **tmux** (check `$TMUX` env var):
 ```bash
@@ -289,6 +289,12 @@ zellij run -- wt switch --create <branch-name> -x <agent-cli> -- '<task descript
 Example (tmux, Claude Code):
 ```bash
 tmux new-session -d -s fix-auth-bug "wt switch --create fix-auth-bug -x claude -- \
+  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'"
+```
+
+Example (tmux, Codex):
+```bash
+tmux new-session -d -s fix-auth-bug "wt switch --create fix-auth-bug -x codex -- \
   'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'"
 ```
 

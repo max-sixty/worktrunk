@@ -43,11 +43,11 @@ Worktrees are addressed by branch name; paths are computed from a configurable t
       <td>cd ../repo.feat</td>
     </tr>
     <tr>
-      <td>Create + start Claude</td>
-      <td>wt switch -c -x claude feat</td>
+      <td>Create + start an agent</td>
+      <td>wt switch -c -x codex feat</td>
       <td>git worktree add -b feat ../repo.feat && \
 cd ../repo.feat && \
-claude</td>
+codex</td>
     </tr>
     <tr>
       <td>Clean up</td>
@@ -177,9 +177,9 @@ $ wt merge main
 For parallel agents, create multiple worktrees and launch an agent in each:
 
 ```bash
-wt switch -x claude -c feature-a -- 'Add user authentication'
-wt switch -x claude -c feature-b -- 'Fix the pagination bug'
-wt switch -x claude -c feature-c -- 'Write tests for the API'
+wt switch -x codex -c feature-a -- 'Add user authentication'
+wt switch -x codex -c feature-b -- 'Fix the pagination bug'
+wt switch -x codex -c feature-c -- 'Write tests for the API'
 ```
 
 The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](https://worktrunk.dev/hook/#hook-types) to automate setup (install deps, start dev servers).
@@ -189,8 +189,8 @@ The `-x` flag runs a command after switching; arguments after `--` are passed to
 - Learn the core commands: [`wt switch`](https://worktrunk.dev/switch/), [`wt list`](https://worktrunk.dev/list/), [`wt merge`](https://worktrunk.dev/merge/), [`wt remove`](https://worktrunk.dev/remove/)
 - Set up [hooks](https://worktrunk.dev/hook/) for automated setup
 - Explore [LLM commit messages](https://worktrunk.dev/llm-commits/), [interactive
-  picker](https://worktrunk.dev/switch/#interactive-picker), [Claude Code integration](https://worktrunk.dev/claude-code/), [CI
-  status & PR links](https://worktrunk.dev/list/#ci-status)
+  picker](https://worktrunk.dev/switch/#interactive-picker), [Codex integration](https://worktrunk.dev/codex/), [Claude Code
+  integration](https://worktrunk.dev/claude-code/), [CI status & PR links](https://worktrunk.dev/list/#ci-status)
 - Browse [tips & patterns](https://worktrunk.dev/tips-patterns/) for recipes: aliases, dev servers, databases, agent handoffs, and more
 - [Extending Worktrunk](https://worktrunk.dev/extending/) — customize workflows with hooks & aliases
 - Run `wt --help` or `wt <command> --help` for quick CLI reference
