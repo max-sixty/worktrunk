@@ -603,13 +603,23 @@ fn test_detect_ref_type() {
 
     // GitLab remote → MR
     let gitlab = TestRepo::new();
-    gitlab.run_git(&["remote", "add", "origin", "https://gitlab.com/owner/repo.git"]);
+    gitlab.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://gitlab.com/owner/repo.git",
+    ]);
     let r = Repository::at(gitlab.root_path().to_path_buf()).unwrap();
     assert_eq!(r.detect_ref_type(), Some(RefType::Mr));
 
     // Unknown host → None
     let other = TestRepo::new();
-    other.run_git(&["remote", "add", "origin", "https://example.com/owner/repo.git"]);
+    other.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://example.com/owner/repo.git",
+    ]);
     let r = Repository::at(other.root_path().to_path_buf()).unwrap();
     assert_eq!(r.detect_ref_type(), None);
 
