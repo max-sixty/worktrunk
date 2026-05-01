@@ -24,6 +24,10 @@ exclude = [
     # Zola internal links use @/ syntax (validated by `zola check`, not lychee)
     "/@/",
 
+    # New docs pages can 404 on worktrunk.dev until the PR is merged and deployed.
+    # Source links are still validated by Zola and doc sync tests.
+    "worktrunk\\.dev/codex(\\.md)?(/|#|$)",
+
     # Private or authenticated GitHub resources
     "github\\.com/anthropics/claude-code/issues",
 
