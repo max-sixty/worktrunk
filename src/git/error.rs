@@ -435,8 +435,8 @@ impl GitError {
                     }
                     let create_hint =
                         cformat!("to create a new branch, run <underline>{create_cmd}</>");
-                    if branch.parse::<u32>().is_ok() {
-                        let pr_mr_hint = pr_mr_switch_hint(branch, *pr_mr_platform, ctx);
+                    if let Ok(number) = branch.parse::<u32>() {
+                        let pr_mr_hint = pr_mr_switch_hint(number, *pr_mr_platform, ctx);
                         cformat!("{pr_mr_hint}; {create_hint}; {list_hint}")
                     } else {
                         // Existing format: capitalize the leading "to".
@@ -1142,16 +1142,17 @@ impl std::error::Error for HookErrorWithHint {
 /// chain it with `; …` follow-ups. Capitalization matches the existing hint
 /// style ("To switch …", "to create …").
 ///
-/// `branch` must already be validated as numeric (parses as `u32`); combined
-/// with the literal `pr:` / `mr:` prefix the result is shell-safe, so the
-/// command is formatted directly to avoid `shell_escape` quoting (`'pr:42'`).
+/// `number` is the same digits as the branch (the caller has already parsed
+/// the branch as `u32`); combined with the literal `pr:` / `mr:` prefix the
+/// result is shell-safe, so the command is formatted directly to avoid
+/// `shell_escape` quoting (`'pr:42'`).
 fn pr_mr_switch_hint(
-    branch: &str,
+    number: u32,
     platform: Option<RefType>,
     ctx: Option<&SwitchSuggestionCtx>,
 ) -> String {
     let make_cmd = |ref_type: RefType| {
-        let cmd = format!("wt switch {}{branch}", ref_type.syntax());
+        let cmd = format!("wt switch {}{number}", ref_type.syntax());
         match ctx {
             Some(ctx) => ctx.apply(cmd),
             None => cmd,
@@ -1159,9 +1160,6 @@ fn pr_mr_switch_hint(
     };
     match platform {
         Some(ref_type) => {
-            let number = branch
-                .parse()
-                .expect("pr_mr_switch_hint requires a numeric branch name");
             let label = ref_type.display(number);
             let cmd = make_cmd(ref_type);
             cformat!("To switch to {label}, run <underline>{cmd}</>")
@@ -1170,7 +1168,7 @@ fn pr_mr_switch_hint(
             let pr_cmd = make_cmd(RefType::Pr);
             let mr_cmd = make_cmd(RefType::Mr);
             cformat!(
-                "To switch to PR #{branch} or MR !{branch}, run <underline>{pr_cmd}</> or <underline>{mr_cmd}</>"
+                "To switch to PR #{number} or MR !{number}, run <underline>{pr_cmd}</> or <underline>{mr_cmd}</>"
             )
         }
     }
