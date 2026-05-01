@@ -250,15 +250,22 @@ jobs:
   # .cargo/config.toml), and proc-macro source edits.
   #
   # Cache strategy:
-  # - `collect-affected` (push to main) saves `target/affected/` to
-  #   actions/cache keyed on the main commit sha.
+  # - `collect-affected` (push to main) saves `target/affected/coverage.db`
+  #   to actions/cache keyed on the main commit sha. We cache only the DB,
+  #   not the parent dir — cargo-affected drops its profraw staging dir
+  #   at the end of every successful collect, but caching the path
+  #   explicitly keeps the contract obvious and ~10 GB of profile bundles
+  #   from leaking into the cache if that cleanup ever regresses.
   # - `affected-tests` (PRs) restores the cache. Primary key is the
   #   PR/main merge-base — when collect ran on that exact commit, we get a
   #   tight diff (`PR changes only`) and the smallest possible selection.
   # - Restore-keys fall back to the most recent main DB. Its `collect_sha`
-  #   may be ahead of the merge-base; cargo-affected handles that by running
-  #   all tests with a notice (no `Diverged` bail), so the fallback always
-  #   produces a useful run, just with broader selection.
+  #   is typically a sibling of the PR's HEAD, not a strict ancestor.
+  #   cargo-affected uses any sha still in the repo as a diff anchor, so
+  #   the fallback drives normal selection — over-includes tests touched
+  #   by main commits between the merge-base and collect_sha (correct
+  #   superset), but never widens to "run everything" unless the cache is
+  #   missing entirely.
   # - Cache keys include `runner.os` (fingerprint embeds `rustc -vV`) and a
   #   manual `db-v{N}` marker. Bump the marker if cargo-affected ships an
   #   on-disk schema change; the cache is otherwise version-agnostic.
