@@ -1416,6 +1416,7 @@ pub fn step_prune(
         foreground: bool,
         run_hooks: bool,
         worktrees: &[WorktreeInfo],
+        snapshot: &worktrunk::git::RefSnapshot,
     ) -> anyhow::Result<bool> {
         let target = match candidate.kind {
             CandidateKind::Current => RemoveTarget::Current,
@@ -1442,6 +1443,7 @@ pub fn step_prune(
             config,
             None,
             Some(worktrees),
+            Some(snapshot),
         ) {
             Ok(plan) => plan,
             Err(_) => {
@@ -1550,13 +1552,17 @@ pub fn step_prune(
     // integration_refs produces an empty par_iter that completes immediately.
     let repo_clone = repo.clone();
     let target = integration_target.clone();
+    // Share by Arc — main thread keeps `snapshot_arc` for `try_remove`; the
+    // rayon worker takes a refcount-bump clone. No deep snapshot copy.
     let snapshot_arc = std::sync::Arc::new(snapshot);
+    let snapshot_for_thread = std::sync::Arc::clone(&snapshot_arc);
     std::thread::spawn(move || {
         integration_refs
             .into_par_iter()
             .enumerate()
             .for_each(|(idx, ref_name)| {
-                let result = repo_clone.integration_reason(&snapshot_arc, &ref_name, &target);
+                let result =
+                    repo_clone.integration_reason(&snapshot_for_thread, &ref_name, &target);
                 let _ = tx.send((idx, result));
             });
     });
@@ -1635,7 +1641,15 @@ pub fn step_prune(
                 dry_run_info.push((candidate, info));
             } else if is_current {
                 deferred_current = Some(candidate);
-            } else if try_remove(&candidate, &repo, &config, foreground, run_hooks, worktrees)? {
+            } else if try_remove(
+                &candidate,
+                &repo,
+                &config,
+                foreground,
+                run_hooks,
+                worktrees,
+                &snapshot_arc,
+            )? {
                 removed.push(candidate);
             }
             continue;
@@ -1686,7 +1700,15 @@ pub fn step_prune(
                 suffix,
             };
             dry_run_info.push((candidate, info));
-        } else if try_remove(&candidate, &repo, &config, foreground, run_hooks, worktrees)? {
+        } else if try_remove(
+            &candidate,
+            &repo,
+            &config,
+            foreground,
+            run_hooks,
+            worktrees,
+            &snapshot_arc,
+        )? {
             removed.push(candidate);
         }
     }
@@ -1757,7 +1779,15 @@ pub fn step_prune(
 
     // Remove deferred current worktree last (cd-to-primary happens here)
     if let Some(current) = deferred_current
-        && try_remove(&current, &repo, &config, foreground, run_hooks, worktrees)?
+        && try_remove(
+            &current,
+            &repo,
+            &config,
+            foreground,
+            run_hooks,
+            worktrees,
+            &snapshot_arc,
+        )?
     {
         removed.push(current);
     }

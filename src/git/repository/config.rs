@@ -513,8 +513,8 @@ impl Repository {
         }
 
         // Batched rev-parse: asks `--is-inside-work-tree` and also pre-warms
-        // the worktree root / git-dir / branch / HEAD-SHA caches, sparing
-        // four later forks on the typical alias path.
+        // the worktree root / git-dir / branch caches, sparing three later
+        // forks on the typical alias path.
         let info = self.current_worktree().prewarm_info().unwrap_or_default();
 
         if let Some(root) = info.root {

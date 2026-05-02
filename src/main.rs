@@ -654,6 +654,12 @@ fn validate_remove_targets(
     let deletion_mode = BranchDeletionMode::from_flags(keep_branch, force_delete);
     let worktrees = repo.list_worktrees().ok();
 
+    // Capture once for the validation loop. Validation only reads — actual
+    // removals run later in `handle_remove_output`, so ref state is stable
+    // across candidates here. Errors propagate to per-candidate calls, which
+    // fall back to capturing internally when None.
+    let snapshot = repo.capture_refs().ok();
+
     let mut plans = RemovePlans {
         others: Vec::new(),
         branch_only: Vec::new(),
@@ -685,6 +691,7 @@ fn validate_remove_targets(
                         config,
                         None,
                         worktrees,
+                        snapshot.as_ref(),
                     ) {
                         Ok(result) => plans.current = Some(result),
                         Err(e) => plans.record_error(e),
@@ -706,6 +713,7 @@ fn validate_remove_targets(
                     config,
                     None,
                     worktrees,
+                    snapshot.as_ref(),
                 ) {
                     Ok(result) => plans.others.push(result),
                     Err(e) => plans.record_error(e),
@@ -719,6 +727,7 @@ fn validate_remove_targets(
                     config,
                     None,
                     worktrees,
+                    snapshot.as_ref(),
                 ) {
                     Ok(result) => plans.branch_only.push(result),
                     Err(e) => plans.record_error(e),
@@ -806,6 +815,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                         BranchDeletionMode::from_flags(!args.delete_branch, args.force_delete),
                         args.force,
                         &config,
+                        None,
                         None,
                         None,
                     )
