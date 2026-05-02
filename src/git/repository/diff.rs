@@ -149,12 +149,11 @@ impl Repository {
     ///
     /// Results are cached in the shared repo cache to avoid redundant git commands
     /// when multiple tasks need the same merge-base (e.g., parallel `wt list` tasks).
-    /// Inputs are resolved to commit SHAs (via [`Self::resolve_to_commit_sha`],
-    /// which short-circuits on hex-shaped inputs and otherwise spawns
-    /// `git rev-parse`) before keying the cache, so equivalent forms (e.g.,
-    /// `"main"` vs the SHA `main` points to) hit the same entry. The key is
-    /// also order-normalized since merge-base is symmetric:
-    /// `merge-base(A, B) == merge-base(B, A)`.
+    /// Inputs are resolved to commit SHAs (the resolver short-circuits on
+    /// hex-shaped inputs and otherwise spawns `git rev-parse`) before keying
+    /// the cache, so equivalent forms (e.g., `"main"` vs the SHA `main` points
+    /// to) hit the same entry. The key is also order-normalized since
+    /// merge-base is symmetric: `merge-base(A, B) == merge-base(B, A)`.
     pub fn merge_base(&self, commit1: &str, commit2: &str) -> anyhow::Result<Option<String>> {
         // Resolve to SHAs so different forms of the same commit dedupe in the cache.
         // `resolve_to_commit_sha` is a no-op for inputs that already look like SHAs.

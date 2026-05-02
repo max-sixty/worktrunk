@@ -108,7 +108,7 @@ impl Repository {
     /// this `Repository` instance (shared across clones via `Arc`).
     ///
     /// `commit_sha` on each entry is a snapshot at scan time. Code that
-    /// needs a current SHA for a ref must resolve through a [`RefSnapshot`]
+    /// needs a current SHA for a ref must resolve through a `RefSnapshot`
     /// captured at the moment of read, not through this inventory. The
     /// inventory itself is used for branch listing and upstream-tracking
     /// metadata, both of which are stable for the duration of a command.
