@@ -62,7 +62,9 @@ pub use remove::{
     delete_branch_if_safe, remove_worktree_with_cleanup, stage_worktree_removal,
 };
 pub use repository::sha_cache;
-pub use repository::{Branch, Repository, ResolvedWorktree, WorkingTree, set_base_path};
+pub use repository::{
+    Branch, IntegrationTargets, Repository, ResolvedWorktree, WorkingTree, set_base_path,
+};
 pub use url::GitRemoteUrl;
 pub use url::parse_owner_repo;
 /// Why branch content is considered integrated into the target branch.

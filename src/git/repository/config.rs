@@ -380,6 +380,7 @@ impl Repository {
                 branch,
                 show_create_hint: true,
                 last_fetch_ago: None,
+                pr_mr_platform: self.detect_ref_type(),
             }
             .into());
         }

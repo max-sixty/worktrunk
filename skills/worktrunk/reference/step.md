@@ -557,34 +557,36 @@ Run command in each worktree. Executes sequentially with real-time output; conti
 
 A summary of successes and failures is shown at the end. Context JSON is piped to stdin for scripts that need structured data.
 
-### Template variables
+### Arguments
 
-All variables are shell-escaped. See [`wt hook` template variables](https://worktrunk.dev/hook/#template-variables) for the complete list and filters.
-
-### Examples
-
-Check status across all worktrees:
+Arguments after `--` are the program and its arguments — run directly, no shell.
 
 ```bash
 $ wt step for-each -- git status --short
-```
-
-Run npm install in all worktrees:
-
-```bash
 $ wt step for-each -- npm install
 ```
 
-Use branch name in command:
+For pipes, redirects, variables, or globs, wrap in `sh -c`:
 
 ```bash
-$ wt step for-each -- "echo Branch: {{ branch }}"
+$ wt step for-each -- sh -c 'git status | wc -l'
+$ wt step for-each -- sh -c 'echo $HOME && git pull'
 ```
+
+### Template variables
+
+Variables substitute into each argv element before exec. See [`wt hook` template variables](https://worktrunk.dev/hook/#template-variables) for the complete list and filters.
+
+```bash
+$ wt step for-each -- echo 'Branch: {{ branch }}'
+```
+
+### Examples
 
 Pull updates in worktrees with upstreams (skips others):
 
 ```bash
-$ git fetch --prune && wt step for-each -- '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
+$ git fetch --prune && wt step for-each -- sh -c '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
 ```
 
 Note: This command is experimental and may change in future versions.

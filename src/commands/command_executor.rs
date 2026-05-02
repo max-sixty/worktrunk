@@ -78,6 +78,17 @@ pub enum AnnouncePolicy {
 /// `Send + Sync` bounds are required.
 pub type ErrorWrapper = Box<dyn Fn(&PreparedCommand, String, Option<i32>) -> anyhow::Error>;
 
+/// What kind of pipeline a sourced step belongs to.
+///
+/// Supplied at conversion time (`sourced_steps_to_foreground`) so a single
+/// `SourcedStep` shape can be produced by both alias and hook resolution.
+/// Drives the per-step trust model (EXEC passthrough), announce policy,
+/// stdin handling, and error wrapping.
+pub enum PipelineKind {
+    Hook,
+    Alias { name: String },
+}
+
 /// A pipeline step ready for foreground execution, with rendering / error policy.
 pub struct ForegroundStep {
     pub step: PreparedStep,
@@ -97,6 +108,12 @@ pub struct ForegroundStep {
     pub redirect_stdout_to_stderr: bool,
     /// Wraps a per-command failure into the final error returned to the caller.
     pub error_wrapper: ErrorWrapper,
+    /// Per-step directive passthrough. Trust differs by source — user-source
+    /// alias steps pass EXEC through (the body is the user's own config),
+    /// while project-source steps and all hook steps scrub it. Per-step rather
+    /// than per-pipeline so a merged user+project alias relaxes the user's
+    /// own steps without leaking the project's body into the parent shell.
+    pub directives: DirectivePassthrough,
 }
 
 /// Controls how foreground execution responds to command failures.
@@ -363,28 +380,20 @@ pub fn execute_pipeline_foreground(
     steps: &[ForegroundStep],
     repo: &Repository,
     wt_path: &Path,
-    directives: &DirectivePassthrough,
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
     for fg_step in steps {
         match &fg_step.step {
             PreparedStep::Single(cmd) => {
-                run_one_command(cmd, fg_step, repo, wt_path, directives, failure_strategy)?;
+                run_one_command(cmd, fg_step, repo, wt_path, failure_strategy)?;
             }
             PreparedStep::Concurrent(cmds) => {
                 if !fg_step.concurrent {
                     for cmd in cmds {
-                        run_one_command(cmd, fg_step, repo, wt_path, directives, failure_strategy)?;
+                        run_one_command(cmd, fg_step, repo, wt_path, failure_strategy)?;
                     }
                 } else {
-                    run_concurrent_group(
-                        cmds,
-                        fg_step,
-                        repo,
-                        wt_path,
-                        directives,
-                        failure_strategy,
-                    )?;
+                    run_concurrent_group(cmds, fg_step, repo, wt_path, failure_strategy)?;
                 }
             }
         }
@@ -405,9 +414,9 @@ fn run_concurrent_group(
     fg_step: &ForegroundStep,
     repo: &Repository,
     wt_path: &Path,
-    directives: &DirectivePassthrough,
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
+    let directives = &fg_step.directives;
     for cmd in cmds {
         announce_command(cmd, &fg_step.announce);
     }
@@ -467,9 +476,9 @@ fn run_one_command(
     fg_step: &ForegroundStep,
     repo: &Repository,
     wt_path: &Path,
-    directives: &DirectivePassthrough,
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
+    let directives = &fg_step.directives;
     announce_command(cmd, &fg_step.announce);
 
     let command_str = resolve_command_str(cmd, repo)?;

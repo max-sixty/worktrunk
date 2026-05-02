@@ -29,7 +29,8 @@ pub(crate) mod template_vars;
 pub(crate) mod worktree;
 
 pub(crate) use alias::{
-    HelpContext, alias_names_for_suggestions, augment_help, step_alias, try_alias,
+    AliasMap, HelpContext, alias_names_for_suggestions, augment_help, load_aliases, step_alias,
+    try_alias,
 };
 pub(crate) use config::{
     add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show, handle_claude_install,

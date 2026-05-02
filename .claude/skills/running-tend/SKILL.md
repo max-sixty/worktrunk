@@ -113,6 +113,28 @@ wait — don't open a PR.
 Apply the literal suggestion only — change the lines it covers, nothing more.
 If surrounding lines also need updating, note that in your reply.
 
+## PR Review: Don't Self-Dismiss Over Unrelated Test Flakes
+
+If a clearly-unrelated test fails after you've already approved a PR, leave
+the approval in place and post a comment noting the flake. Do **not** dismiss
+your own approval to "gate" on a rerun.
+
+GitHub blocks both `gh run rerun --failed` and per-job rerun
+(`POST /repos/{owner}/{repo}/actions/jobs/{id}/rerun`) with HTTP 403 while
+*any* job in the same workflow run is still `in_progress`. The non-required
+`benchmarks` job routinely runs 80+ minutes after `test (linux|macos|windows)`
+finish, so dismiss-then-wait-then-rerun cascades into a long session for no
+benefit — the maintainer can rerun the failed job directly once `benchmarks`
+clears, or merge regardless if the failure is clearly a flake. Past
+occurrence: PR #2512 ([run 25196909437](https://github.com/max-sixty/worktrunk/actions/runs/25196909437))
+spent ~90 min in a wait-and-rerun loop after dismissing approval over an
+unrelated `step_prune` Windows flake.
+
+The codecov-failure dismissal pattern is different and remains correct:
+`CLAUDE.md` requires explicit user approval before merging with failing
+`codecov/patch`, so dismissing the approval until the coverage gap is
+addressed is intentional.
+
 ## Issue Triage
 
 When you need more information to diagnose a reported bug, the **primary

@@ -1,6 +1,9 @@
 //! For-each command implementation
 //!
-//! Runs a command sequentially in each worktree with template expansion.
+//! Runs a command sequentially in each worktree by direct exec — no implicit
+//! shell. Each post-`--` argv element is template-expanded and passed through
+//! to the program. Users wanting shell features (pipes, redirects, `$VAR`)
+//! pass `sh -c '<snippet>'` explicitly.
 //!
 //! # Design Notes
 //!
@@ -21,25 +24,28 @@
 //!
 //! For now, we keep `for-each` under `step` as a pragmatic choice.
 
+use std::collections::HashMap;
+use std::io::{Write as _, stderr};
+use std::process::Stdio;
+
 use color_print::cformat;
-use worktrunk::config::UserConfig;
+use worktrunk::config::{UserConfig, expand_template};
 use worktrunk::git::{Repository, WorktreeInfo, WorktrunkError, interrupt_exit_code};
+use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, progress_message, success_message, warning_message,
 };
 
-use crate::commands::command_executor::{
-    CommandContext, build_hook_context, expand_shell_template,
-};
+use crate::commands::command_executor::{CommandContext, build_hook_context};
 use crate::commands::worktree_display_name;
-use crate::output::{DirectivePassthrough, execute_shell_command};
 
 /// Run a command in each worktree sequentially.
 ///
-/// Executes the given command in every worktree, streaming output
-/// in real-time. Continues on errors and reports a summary at the end.
+/// Executes the given argv directly in every worktree, streaming output in
+/// real-time. Continues on errors and reports a summary at the end.
 ///
-/// All template variables from hooks are available, and context JSON is piped to stdin.
+/// All template variables from hooks are available; values are substituted
+/// into argv elements without shell escaping. Context JSON is piped to stdin.
 pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> anyhow::Result<()> {
     let json_mode = format == crate::cli::SwitchFormat::Json;
     let repo = Repository::current()?;
@@ -59,9 +65,6 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
     let mut interrupted: Option<i32> = None;
     let total = worktrees.len();
 
-    // Join args into a template string (will be expanded per-worktree)
-    let command_template = args.join(" ");
-
     for &wt in &worktrees {
         let display_name = worktree_display_name(wt, &repo, &config);
         eprintln!(
@@ -74,30 +77,23 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
         let ctx = CommandContext::new(&repo, &config, wt.branch.as_deref(), &wt.path, false);
         let context_map = build_hook_context(&ctx, &[])?;
 
-        // Expand template with full context (shell-escaped)
-        let command =
-            expand_shell_template(&command_template, &context_map, &repo, "for-each command")?;
+        // Expand each argv element through the template engine without
+        // shell-escaping — values are interpolated directly into the argv
+        // element a program receives, not through `sh -c`.
+        let vars: HashMap<&str, &str> = context_map
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        let expanded: Vec<String> = args
+            .iter()
+            .map(|arg| expand_template(arg, &vars, false, &repo, "for-each argument"))
+            .collect::<Result<_, _>>()?;
 
         // Build JSON context for stdin
         let context_json = serde_json::to_string(&context_map)
             .expect("HashMap<String, String> serialization should never fail");
 
-        // Execute command: stream both stdout and stderr in real-time.
-        // Pipe context JSON to stdin for scripts that want structured data.
-        // Directive files are scrubbed — commands run in other worktrees should
-        // not influence the parent shell's working directory.
-        // for-each prints decorated headers/footers around child output, so
-        // we merge child stdout onto stderr to keep ordering deterministic.
-        // The structured `--format=json` output is a separate stdout write
-        // emitted after all child commands complete (see below).
-        match execute_shell_command(
-            &wt.path,
-            &command,
-            Some(&context_json),
-            None,
-            DirectivePassthrough::none(),
-            true,
-        ) {
+        match run_argv(&wt.path, expanded, &context_json) {
             Ok(()) => {
                 if json_mode {
                     json_results.push(serde_json::json!({
@@ -201,4 +197,43 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
         // Return silent error so main exits with code 1 without duplicate message
         Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into())
     }
+}
+
+/// Run argv directly (no shell) with streaming output, signal forwarding,
+/// stdout→stderr redirect, and JSON context piped on stdin.
+///
+/// Mirrors the bookkeeping in `output::execute_shell_command` (flush, ANSI
+/// reset, signal forwarding) but builds the command via `Cmd::new` so the
+/// program is exec'd directly without `sh -c` interposition. Directive env
+/// vars are scrubbed by `Cmd` for every spawn, so child commands run in
+/// other worktrees can't perturb the parent shell's CD/exec state.
+///
+/// Child stdout is merged onto stderr so it interleaves cleanly with
+/// for-each's decorated per-worktree headers and footers; the structured
+/// `--format=json` output is the only stdout write, emitted once after all
+/// children complete.
+fn run_argv(
+    working_dir: &std::path::Path,
+    argv: Vec<String>,
+    stdin_json: &str,
+) -> anyhow::Result<()> {
+    stderr().flush()?;
+    eprint!("{}", anstyle::Reset);
+    stderr().flush().ok();
+
+    let mut iter = argv.into_iter();
+    let program = iter
+        .next()
+        .expect("clap enforces at least one argv element");
+
+    Cmd::new(program)
+        .args(iter)
+        .current_dir(working_dir)
+        .stdout(Stdio::from(std::io::stderr()))
+        .forward_signals()
+        .stdin_bytes(stdin_json.as_bytes().to_vec())
+        .stream()?;
+
+    stderr().flush()?;
+    Ok(())
 }

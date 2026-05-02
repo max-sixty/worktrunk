@@ -183,6 +183,10 @@ pub enum GitError {
         /// Pre-formatted label for the last fetch time (e.g., "3h ago", "never").
         /// When present, the list-branches hint includes the fetch age as a parenthetical.
         last_fetch_ago: Option<String>,
+        /// Platform's reference type for the PR/MR hint when the branch name is
+        /// purely numeric. `None` means the platform is unknown — fall back to
+        /// suggesting both `pr:N` and `mr:N`.
+        pr_mr_platform: Option<RefType>,
     },
     /// Reference (branch, tag, commit) not found - used when any commit-ish is accepted
     ReferenceNotFound {
@@ -415,18 +419,31 @@ impl GitError {
                 branch,
                 show_create_hint,
                 last_fetch_ago,
+                pr_mr_platform,
             } => {
                 let list_cmd = suggest_command("list", &[], &["--branches", "--remotes"]);
+                let fetch_note = last_fetch_ago
+                    .as_ref()
+                    .map(|ago| cformat!(" ({ago})"))
+                    .unwrap_or_default();
+                let list_hint =
+                    cformat!("to list branches, run <underline>{list_cmd}</>{fetch_note}");
                 let hint = if *show_create_hint {
                     let mut create_cmd = suggest_command("switch", &[branch], &["--create"]);
                     if let Some(ctx) = ctx {
                         create_cmd = ctx.apply(create_cmd);
                     }
-                    let fetch_note = last_fetch_ago.as_ref().map(|ago| cformat!(" ({ago})"));
-                    cformat!(
-                        "To create a new branch, run <underline>{create_cmd}</>; to list branches, run <underline>{list_cmd}</>{note}",
-                        note = fetch_note.as_deref().unwrap_or("")
-                    )
+                    let create_hint =
+                        cformat!("to create a new branch, run <underline>{create_cmd}</>");
+                    if let Ok(number) = branch.parse::<u32>() {
+                        let pr_mr_hint = pr_mr_switch_hint(number, *pr_mr_platform, ctx);
+                        cformat!("{pr_mr_hint}; {create_hint}; {list_hint}")
+                    } else {
+                        // Existing format: capitalize the leading "to".
+                        cformat!(
+                            "To create a new branch, run <underline>{create_cmd}</>; {list_hint}"
+                        )
+                    }
                 } else {
                     cformat!("To list branches, run <underline>{list_cmd}</>")
                 };
@@ -1118,6 +1135,45 @@ impl std::error::Error for HookErrorWithHint {
     }
 }
 
+/// Build the leading "To switch to PR/MR …" hint shown when a numeric branch
+/// name doesn't exist locally.
+///
+/// Returns a sentence-cased clause without trailing punctuation so callers can
+/// chain it with `; …` follow-ups. Capitalization matches the existing hint
+/// style ("To switch …", "to create …").
+///
+/// `number` is the same digits as the branch (the caller has already parsed
+/// the branch as `u32`); combined with the literal `pr:` / `mr:` prefix the
+/// result is shell-safe, so the command is formatted directly to avoid
+/// `shell_escape` quoting (`'pr:42'`).
+fn pr_mr_switch_hint(
+    number: u32,
+    platform: Option<RefType>,
+    ctx: Option<&SwitchSuggestionCtx>,
+) -> String {
+    let make_cmd = |ref_type: RefType| {
+        let cmd = format!("wt switch {}{number}", ref_type.syntax());
+        match ctx {
+            Some(ctx) => ctx.apply(cmd),
+            None => cmd,
+        }
+    };
+    match platform {
+        Some(ref_type) => {
+            let label = ref_type.display(number);
+            let cmd = make_cmd(ref_type);
+            cformat!("To switch to {label}, run <underline>{cmd}</>")
+        }
+        None => {
+            let pr_cmd = make_cmd(RefType::Pr);
+            let mr_cmd = make_cmd(RefType::Mr);
+            cformat!(
+                "To switch to PR #{number} or MR !{number}, run <underline>{pr_cmd}</> or <underline>{mr_cmd}</>"
+            )
+        }
+    }
+}
+
 /// Format an error with header and gutter content
 fn format_error_block(header: impl Into<String>, error: &str) -> String {
     let header = header.into();
@@ -1746,6 +1802,7 @@ mod tests {
                 branch: "emails".into(),
                 show_create_hint: true,
                 last_fetch_ago: None,
+                pr_mr_platform: None,
             }),
             ctx: SwitchSuggestionCtx {
                 extra_flags: vec!["--execute=claude".into()],

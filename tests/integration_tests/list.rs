@@ -3229,3 +3229,181 @@ fn test_list_empty_repo_json() {
     assert_eq!(item["commit"]["sha"], "");
     assert_eq!(item["commit"]["short_sha"], "");
 }
+
+/// Regression: the `wt list` integration column ORs over local AND upstream,
+/// matching `Repository::integration_reason`. A branch whose content lives in
+/// LOCAL `main` (via a merge commit) must still render as integrated when
+/// `main` and `origin/main` have diverged — symmetric to the merged-on-remote
+/// case covered by `test_list_integrated_when_squash_merged_on_remote_with_local_diverged`
+/// below. Mirrors `test_remove_merged_locally_when_upstream_diverged` in
+/// `remove.rs`.
+///
+/// Uses `--no-ff` so the feature ref's HEAD differs from `main`'s HEAD: the
+/// `IsAncestor` parallel task is the load-bearing signal here, exercising the
+/// OR-over-targets fix. A `--ff-only` merge would collapse to "same commit"
+/// (`MainState::Empty`), which already worked because counts are computed
+/// against the default branch directly.
+#[rstest]
+fn test_list_integrated_when_merged_locally_with_upstream_diverged(
+    #[from(repo_with_remote)] mut repo: TestRepo,
+) {
+    let remote_path = repo.remote_path().unwrap().to_path_buf();
+
+    // Advance origin/main with a remote-only commit so local and upstream diverge.
+    let github_sim = repo.home_path().join("github-sim-list-local-merge");
+    repo.run_git_in(
+        repo.home_path(),
+        &[
+            "clone",
+            remote_path.to_str().unwrap(),
+            "github-sim-list-local-merge",
+        ],
+    );
+    std::fs::write(github_sim.join("remote-only.txt"), "remote only").unwrap();
+    repo.run_git_in(&github_sim, &["add", "remote-only.txt"]);
+    repo.run_git_in(&github_sim, &["commit", "-m", "Remote-only main commit"]);
+    repo.run_git_in(&github_sim, &["push", "origin", "main"]);
+
+    // Merge a feature into local main with --no-ff so feature HEAD is an
+    // ancestor of (but not equal to) main HEAD.
+    repo.add_worktree("feature-list-local");
+    let feature_path = repo.worktree_path("feature-list-local");
+    std::fs::write(feature_path.join("feature.txt"), "feature").unwrap();
+    repo.run_git_in(feature_path, &["add", "feature.txt"]);
+    repo.run_git_in(feature_path, &["commit", "-m", "Add feature"]);
+    repo.run_git(&[
+        "merge",
+        "--no-ff",
+        "-m",
+        "Merge feature",
+        "feature-list-local",
+    ]);
+
+    repo.run_git(&["fetch", "origin"]);
+
+    let local_main = repo.git_output(&["rev-parse", "main"]);
+    let origin_main = repo.git_output(&["rev-parse", "origin/main"]);
+    assert_ne!(
+        local_main, origin_main,
+        "main and origin/main should differ"
+    );
+    assert!(
+        !repo
+            .git_command()
+            .args(["merge-base", "--is-ancestor", "main", "origin/main"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "local main must not be an ancestor of origin/main",
+    );
+    assert!(
+        !repo
+            .git_command()
+            .args(["merge-base", "--is-ancestor", "origin/main", "main"])
+            .run()
+            .unwrap()
+            .status
+            .success(),
+        "origin/main must not be an ancestor of local main",
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let feature = json
+        .iter()
+        .find(|w| w["branch"] == "feature-list-local")
+        .expect("feature-list-local should appear in wt list output");
+
+    assert_eq!(
+        feature["main_state"], "integrated",
+        "main_state must be \"integrated\" when local main contains the feature \
+         even though origin/main has diverged — instead got entry: {feature}"
+    );
+    assert!(
+        !feature["integration_reason"].is_null(),
+        "integration_reason must be set — instead got entry: {feature}"
+    );
+}
+
+/// Regression companion to the test above: branch squash-merged on
+/// `origin/main` must still render as integrated when local `main` has its own
+/// unique commits (the diverged case where the safety path used to be the
+/// only way to spot the merge). Mirrors
+/// `test_remove_squash_merged_on_remote_when_local_main_diverged`.
+#[rstest]
+fn test_list_integrated_when_squash_merged_on_remote_with_local_diverged(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    let remote_path = repo.remote_path().unwrap().to_path_buf();
+
+    // Build, push, and remote-squash-merge a feature branch.
+    repo.run_git(&["checkout", "-b", "feature-list-remote-squash"]);
+    std::fs::write(repo.root_path().join("feature-remote.txt"), "initial").unwrap();
+    repo.run_git(&["add", "feature-remote.txt"]);
+    repo.run_git(&["commit", "-m", "Add feature"]);
+    std::fs::write(repo.root_path().join("feature-remote.txt"), "final").unwrap();
+    repo.run_git(&["add", "feature-remote.txt"]);
+    repo.run_git(&["commit", "-m", "Finalize feature"]);
+    repo.run_git(&["push", "-u", "origin", "feature-list-remote-squash"]);
+    repo.run_git(&["checkout", "main"]);
+
+    let github_sim = repo.home_path().join("github-sim-list-remote-squash");
+    repo.run_git_in(
+        repo.home_path(),
+        &[
+            "clone",
+            remote_path.to_str().unwrap(),
+            "github-sim-list-remote-squash",
+        ],
+    );
+    repo.run_git_in(
+        &github_sim,
+        &["merge", "--squash", "origin/feature-list-remote-squash"],
+    );
+    repo.run_git_in(&github_sim, &["commit", "-m", "Add feature (#1)"]);
+    repo.run_git_in(&github_sim, &["push", "origin", "main"]);
+
+    // Fetch the remote squash; then advance local main with a unique commit so
+    // local and upstream diverge.
+    repo.run_git(&["fetch", "origin"]);
+    std::fs::write(repo.root_path().join("local-only.txt"), "local only").unwrap();
+    repo.run_git(&["add", "local-only.txt"]);
+    repo.run_git(&["commit", "-m", "Local-only main commit"]);
+
+    let local_main = repo.git_output(&["rev-parse", "main"]);
+    let origin_main = repo.git_output(&["rev-parse", "origin/main"]);
+    assert_ne!(
+        local_main, origin_main,
+        "local main should diverge from origin/main"
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--branches", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let feature = json
+        .iter()
+        .find(|w| w["branch"] == "feature-list-remote-squash")
+        .expect("feature-list-remote-squash should appear in wt list output");
+
+    assert!(
+        !feature["integration_reason"].is_null(),
+        "integration_reason must be set for a remotely-squash-merged branch even when \
+         local main has diverged — instead got entry: {feature}"
+    );
+    assert_eq!(
+        feature["main_state"], "integrated",
+        "main_state must be \"integrated\" — instead got entry: {feature}"
+    );
+}

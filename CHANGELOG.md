@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.46.1
+
+### Fixed
+
+- **No spurious `Skipping pre-commit hooks (--no-hooks)` line after declined approval**: `wt step commit`, `wt step squash`, and `wt merge` collapsed two distinct hook-skip reasons — the user passing `--no-hooks` and the user declining an interactive approval prompt — into a single `verify: bool`. With hooks configured, declining produced both `○ Commands declined, committing without hooks` and `○ Skipping pre-commit hooks (--no-hooks)` back-to-back; the second line was wrong because the user never passed `--no-hooks`. The call chain now carries a `HookGate` (`Run` / `NoHooksFlag` / `Silent`), so declined-approval paths skip hooks silently while the explicit `--no-hooks` flag still prints its message exactly once. ([#2485](https://github.com/max-sixty/worktrunk/pull/2485))
+
+### Internal
+
+- **`HookAnnouncer` is the single entry point for hook dispatch**: `post-commit` and `post-switch` now route through the same announcer used by other phases, and remaining call sites adopt `TemplateVars` for variable assembly. ([#2481](https://github.com/max-sixty/worktrunk/pull/2481), [#2482](https://github.com/max-sixty/worktrunk/pull/2482), [#2484](https://github.com/max-sixty/worktrunk/pull/2484))
+
+- **Merge cleanup extracted**: The post-merge finish sequence moves into `worktree::finish_after_merge`, and `wt list` threads the placeholder explicitly instead of reaching through `Cell`. ([#2491](https://github.com/max-sixty/worktrunk/pull/2491), [#2492](https://github.com/max-sixty/worktrunk/pull/2492))
+
+- **CI consolidated onto a shared composite action**: New advisory `cargo-affected` jobs land, and the test matrix and affected-jobs setup now share one composite action. ([#2475](https://github.com/max-sixty/worktrunk/pull/2475), [#2483](https://github.com/max-sixty/worktrunk/pull/2483), [#2486](https://github.com/max-sixty/worktrunk/pull/2486))
+
 ## 0.46.0
 
 ### Improved

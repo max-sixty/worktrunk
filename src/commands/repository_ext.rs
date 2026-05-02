@@ -157,6 +157,7 @@ impl RepositoryCliExt for Repository {
                                 branch: branch.into(),
                                 show_create_hint: false,
                                 last_fetch_ago: None,
+                                pr_mr_platform: None,
                             }
                             .into());
                         }

@@ -148,7 +148,7 @@ fn bench_helper(
             b.iter(|| {
                 let dest = temp.path().join(format!("copy_p_{}", iter));
                 iter += 1;
-                copy_dir_recursive(src, &dest, false, &Progress::disabled()).unwrap();
+                copy_dir_recursive(src, &dest, None, false, &Progress::disabled()).unwrap();
                 std::fs::remove_dir_all(&dest).ok();
             });
         },

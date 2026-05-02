@@ -50,4 +50,4 @@ exit_code: 0
 ----- stderr -----
 [32m✓[39m [32mCreated branch [1mpost-hook-shell-test[22m from [1mmain[22m and worktree @ [1m_REPO_.post-hook-shell-test[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
-[36m◎[39m [36mRunning post-switch: [1mproject[22m[39m
+[36m◎[39m [36mRunning post-switch: project[39m

@@ -518,6 +518,7 @@ fn validate_worktree_creation(
             branch: branch.to_string(),
             show_create_hint: true,
             last_fetch_ago: format_last_fetch_ago(repo),
+            pr_mr_platform: repo.detect_ref_type(),
         }
         .into());
     }

@@ -820,10 +820,11 @@ pub fn step_copy_ignored(
         let dest_entry = dest_path.join(relative);
 
         if *is_dir {
-            let (n, b) = copy_dir_recursive(src_entry, &dest_entry, force, &progress)
-                .with_context(|| {
-                    format!("copying directory {}", format_path_for_display(relative))
-                })?;
+            let (n, b) =
+                copy_dir_recursive(src_entry, &dest_entry, Some(&dest_path), force, &progress)
+                    .with_context(|| {
+                        format!("copying directory {}", format_path_for_display(relative))
+                    })?;
             copied_count += n;
             copied_bytes += b;
         } else {
@@ -835,7 +836,7 @@ pub fn step_copy_ignored(
                     )
                 })?;
             }
-            if let Some(bytes) = copy_leaf(src_entry, &dest_entry, force)? {
+            if let Some(bytes) = copy_leaf(src_entry, &dest_entry, Some(&dest_path), force)? {
                 copied_count += 1;
                 copied_bytes += bytes;
                 progress.record(bytes);
@@ -919,10 +920,10 @@ fn move_entry(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
 /// Copy then delete — fallback when `rename` fails with EXDEV (cross-device).
 fn copy_and_remove(src: &Path, dest: &Path, is_dir: bool) -> anyhow::Result<()> {
     if is_dir {
-        copy_dir_recursive(src, dest, true, &Progress::disabled())?;
+        copy_dir_recursive(src, dest, None, true, &Progress::disabled())?;
         fs::remove_dir_all(src).context(format!("removing source directory {}", src.display()))?;
     } else {
-        copy_leaf(src, dest, true)?;
+        copy_leaf(src, dest, None, true)?;
 
         fs::remove_file(src).context(format!("removing source file {}", src.display()))?;
     }
@@ -1289,12 +1290,12 @@ pub fn step_prune(
     let repo = Repository::current()?;
     let config = UserConfig::load()?;
 
-    let integration_target = match repo.integration_target() {
-        Some(target) => target,
-        None => {
-            anyhow::bail!("cannot determine default branch");
-        }
-    };
+    // Pass the local default branch (e.g. "main") directly — `integration_reason`
+    // ORs over local + upstream internally, so a branch merged into either side
+    // counts as integrated.
+    let integration_target = repo
+        .default_branch()
+        .context("cannot determine default branch")?;
 
     let worktrees = repo.list_worktrees()?;
     let current_root = repo.current_worktree().root()?.to_path_buf();
