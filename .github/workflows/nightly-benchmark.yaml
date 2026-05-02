@@ -39,7 +39,13 @@ jobs:
 
     # Time-series benchmark store, owned by worktrunk-bot:
     # https://gist.github.com/worktrunk-bot/19bb23cb9658722abfe69479d0a4f9bf
+    #
+    # Skipped on forks: `WORKTRUNK_BOT_TOKEN` is not exposed to forks. This is
+    # the canonical fork guard for any step or job that references repository
+    # secrets — see also `code-coverage` (ci.yaml) and `deploy-docs`
+    # (publish-docs.yaml).
     - name: 💾 Append results to gist
+      if: github.repository_owner == 'max-sixty'
       env:
         # Bot identity for consistent attribution (per .github/CLAUDE.md).
         GITHUB_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
