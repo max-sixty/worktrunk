@@ -289,8 +289,8 @@ zellij run -- wt switch --create fix-auth-bug -x claude -- \
 
 **cmux** (new workspace):
 ```bash
-cmux new-workspace --command &quot;wt switch --create fix-auth-bug -x claude -- \
-  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'&quot;
+cmux new-workspace --command "wt switch --create fix-auth-bug -x claude -- \
+  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'"
 ```
 
 This lets one agent session hand off work to another that runs in the background. Hooks run inside the multiplexer session/pane.
