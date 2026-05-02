@@ -208,6 +208,7 @@ Hooks and aliases share a template-variable model and a smart-routing rule for `
 | Force-bind escape | `--var KEY=VALUE` (deprecated — prefer `--KEY=VALUE` — but still force-binds) | None — smart routing is the only path |
 | `--help` | `wt hook --help` lists hook types; `wt hook <type> --help` shows flags and arguments for that type | The template body is the documentation — `wt <alias> --help` redirects to `wt config alias show` / `dry-run`; `wt --help` and `wt step --help` list configured aliases alongside built-in commands |
 | Inspection | `wt hook show [type] [--expanded]` | `wt config alias show <name>` / `wt config alias dry-run <name>` |
+| Stdin | All template variables as JSON (parse with `json.load(sys.stdin)`) | Inherits parent stdin — pipes pass through; interactive TUIs (e.g. `wt switch`) keep the tty |
 | Template-context extras | `hook_type`, `hook_name`, per-type operation vars (`base`, `target`, `pr_number`, …) | `args` on top of the shared base variables |
 
 </details>
