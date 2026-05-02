@@ -26,7 +26,6 @@ use super::command_executor::build_hook_context;
 
 use super::command_executor::CommandContext;
 use super::command_executor::FailureStrategy;
-use super::command_executor::PipelineKind;
 use super::context::CommandEnv;
 use super::hooks::{
     HookAnnouncer, HookCommandSpec, lookup_hook_configs, prepare_and_check, run_hooks_foreground,
@@ -99,11 +98,7 @@ fn run_post_hook(
         if flat.is_empty() {
             return Ok(());
         }
-        let kind = PipelineKind::Hook {
-            hook_type,
-            display_path: None,
-        };
-        announcer.extend(std::iter::once((*ctx, kind, flat)));
+        announcer.extend(std::iter::once((*ctx, hook_type, None, flat)));
     }
     announcer.flush()
 }

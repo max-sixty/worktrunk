@@ -223,6 +223,17 @@ pub struct SourcedStep {
     pub is_pipeline: bool,
 }
 
+/// One background hook pipeline, carrying its source group of steps with the
+/// announce-time metadata (`hook_type`, `display_path`) already resolved.
+/// Background flow only ever sees hooks, so the metadata is unwrapped here
+/// rather than threaded through `PipelineKind`.
+pub(crate) type BackgroundPipeline<'c> = (
+    CommandContext<'c>,
+    HookType,
+    Option<PathBuf>,
+    Vec<SourcedStep>,
+);
+
 /// Extract the per-step command name lists from a `CommandConfig`.
 ///
 /// Shared by the formatters that describe alias / hook pipelines — `Single`
@@ -366,11 +377,14 @@ pub struct HookAnnouncer<'a> {
 
 /// Owned spawn data for a registered pipeline. Stores enough to rebuild a
 /// `CommandContext` at flush time so the announcer can outlive any short-lived
-/// contexts at the registration site.
+/// contexts at the registration site. Background flow only ever sees hook
+/// pipelines, so `hook_type` and `display_path` live on this struct directly
+/// rather than wrapped in a `PipelineKind` variant.
 struct PendingPipeline {
     worktree_path: PathBuf,
     branch: Option<String>,
-    kind: PipelineKind,
+    hook_type: HookType,
+    display_path: Option<PathBuf>,
     steps: Vec<SourcedStep>,
 }
 
@@ -391,15 +405,19 @@ impl<'a> HookAnnouncer<'a> {
     ///
     /// Pipelines come from `prepare_background_pipelines` / its callers, which
     /// already filter out empty source groups — empty `steps` is unreachable.
+    /// Each pipeline's hook type and display path are passed alongside the
+    /// steps; background flow doesn't need `PipelineKind` since it only ever
+    /// handles hooks (aliases run in the foreground).
     pub fn extend<'b, I>(&mut self, pipelines: I)
     where
-        I: IntoIterator<Item = (CommandContext<'b>, PipelineKind, Vec<SourcedStep>)>,
+        I: IntoIterator<Item = BackgroundPipeline<'b>>,
     {
-        for (ctx, kind, steps) in pipelines {
+        for (ctx, hook_type, display_path, steps) in pipelines {
             self.pending.push(PendingPipeline {
                 worktree_path: ctx.worktree_path.to_path_buf(),
                 branch: ctx.branch.map(String::from),
-                kind,
+                hook_type,
+                display_path,
                 steps,
             });
         }
@@ -442,7 +460,8 @@ impl<'a> HookAnnouncer<'a> {
                         &p.worktree_path,
                         false,
                     ),
-                    p.kind.clone(),
+                    p.hook_type,
+                    p.display_path.clone(),
                     std::mem::take(&mut p.steps),
                 )
             })
@@ -488,12 +507,12 @@ impl Drop for HookAnnouncer<'_> {
 /// disambiguation in batch contexts (e.g., prune removing multiple worktrees):
 /// `Running post-remove for feature: user: docs`.
 fn run_hooks_background(
-    pipelines: Vec<(CommandContext<'_>, PipelineKind, Vec<SourcedStep>)>,
+    pipelines: Vec<BackgroundPipeline<'_>>,
     show_branch: bool,
 ) -> anyhow::Result<()> {
     let pipelines: Vec<_> = pipelines
         .into_iter()
-        .filter(|(_, _, steps)| !steps.is_empty())
+        .filter(|(_, _, _, steps)| !steps.is_empty())
         .collect();
     if pipelines.is_empty() {
         return Ok(());
@@ -501,18 +520,11 @@ fn run_hooks_background(
 
     // Merge per-source summaries by hook type so user+project for the same
     // type render as one clause: `post-merge: sync, push (user); build (project)`.
-    // Pull `display_path` off the first hook kind that has one — every hook
+    // Pull `display_path` off the first pipeline that has one — every hook
     // pipeline in this batch shares a path; the path slot is bundle-wide.
     let mut display_path: Option<&Path> = None;
     let mut type_summaries: Vec<(HookType, Vec<String>)> = Vec::new();
-    for (_, kind, group) in &pipelines {
-        let PipelineKind::Hook {
-            hook_type,
-            display_path: dp,
-        } = kind
-        else {
-            unreachable!("background pipelines are always PipelineKind::Hook");
-        };
+    for (_, hook_type, dp, group) in &pipelines {
         if display_path.is_none() {
             display_path = dp.as_deref();
         }
@@ -530,7 +542,7 @@ fn run_hooks_background(
     let branch_suffix = if show_branch {
         pipelines
             .first()
-            .and_then(|(ctx, _, _)| ctx.branch)
+            .and_then(|(ctx, _, _, _)| ctx.branch)
             .map(|b| cformat!(" for <bold>{b}</>"))
     } else {
         None
@@ -556,8 +568,8 @@ fn run_hooks_background(
     };
     eprintln!("{}", progress_message(message));
 
-    for (ctx, kind, group) in pipelines {
-        spawn_hook_pipeline_quiet(&ctx, &kind, group)?;
+    for (ctx, hook_type, _, group) in pipelines {
+        spawn_hook_pipeline_quiet(&ctx, hook_type, group)?;
     }
 
     Ok(())
@@ -583,14 +595,13 @@ pub(crate) fn into_source_groups(flat: Vec<SourcedStep>) -> Vec<Vec<SourcedStep>
 ///
 /// Looks up user/project configs, prepares + name-checks steps, and groups
 /// them by source so each source spawns as an independent pipeline. Each
-/// group is returned with its `PipelineKind::Hook` carrying the per-pipeline
-/// metadata (`hook_type`, `display_path`).
+/// group is returned with its `(hook_type, display_path)` metadata.
 pub(crate) fn prepare_background_pipelines<'c>(
     ctx: &CommandContext<'c>,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
     display_path: Option<&Path>,
-) -> anyhow::Result<Vec<(CommandContext<'c>, PipelineKind, Vec<SourcedStep>)>> {
+) -> anyhow::Result<Vec<BackgroundPipeline<'c>>> {
     let project_config = ctx.repo.load_project_config()?;
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
     let (user_config, proj_config) =
@@ -606,13 +617,10 @@ pub(crate) fn prepare_background_pipelines<'c>(
             display_path,
         },
     )?;
-    let kind = PipelineKind::Hook {
-        hook_type,
-        display_path: display_path.map(|p| p.to_path_buf()),
-    };
+    let display_path_owned = display_path.map(|p| p.to_path_buf());
     Ok(into_source_groups(flat)
         .into_iter()
-        .map(|g| (*ctx, kind.clone(), g))
+        .map(|g| (*ctx, hook_type, display_path_owned.clone(), g))
         .collect())
 }
 
@@ -623,21 +631,14 @@ pub(crate) fn prepare_background_pipelines<'c>(
 /// table in the foreground path), so this is the symmetric entry point.
 /// Called once per hook type from `run_hooks_background`, immediately before
 /// that hook type's `Running ...` line, so each hook type reads as one block.
-fn print_background_variable_table(
-    pipelines: &[(CommandContext<'_>, PipelineKind, Vec<SourcedStep>)],
-    hook_type: HookType,
-) {
-    for (_, kind, group) in pipelines {
-        let PipelineKind::Hook { hook_type: ht, .. } = kind else {
-            continue;
-        };
+fn print_background_variable_table(pipelines: &[BackgroundPipeline<'_>], hook_type: HookType) {
+    for (_, ht, _, group) in pipelines {
         if *ht != hook_type {
             continue;
         }
-        let Some(sourced) = group.first() else {
-            continue;
-        };
-        let cmd = match &sourced.step {
+        // `into_source_groups` produces non-empty groups, and
+        // `run_hooks_background` filters empties — `group[0]` is safe.
+        let cmd = match &group[0].step {
             PreparedStep::Single(cmd) => cmd,
             PreparedStep::Concurrent(cmds) => &cmds[0],
         };
@@ -657,15 +658,11 @@ fn print_background_variable_table(
 /// Used by `run_hooks_background` after the combined announcement is printed.
 fn spawn_hook_pipeline_quiet(
     ctx: &CommandContext,
-    kind: &PipelineKind,
+    hook_type: HookType,
     steps: Vec<SourcedStep>,
 ) -> anyhow::Result<()> {
     use super::pipeline_spec::{PipelineCommandSpec, PipelineSpec, PipelineStepSpec};
 
-    let PipelineKind::Hook { hook_type, .. } = kind else {
-        unreachable!("background pipelines are always PipelineKind::Hook");
-    };
-    let hook_type = *hook_type;
     let source = steps[0].source;
 
     // Extract base context from the first command. Both call sites

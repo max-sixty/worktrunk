@@ -1110,6 +1110,38 @@ notify = "echo switched"
     );
 }
 
+/// Verbose variant of [`test_combined_post_remove_and_post_switch_hooks`].
+///
+/// Under `-v`, the announcer prints a `template variables:` table for each
+/// registered hook type, iterating over pipelines and skipping those whose
+/// hook type doesn't match — that filter branch needs at least two hook
+/// types in one batch to fire. Removing the current worktree's branch is
+/// the only path that registers both `post-remove` and `post-switch`.
+#[rstest]
+fn test_combined_post_remove_and_post_switch_hooks_verbose(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    repo.write_test_config(
+        r#"[post-remove]
+cleanup = "echo removed"
+
+[post-switch]
+notify = "echo switched"
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd_with_global_flags(
+            &repo,
+            "remove",
+            &["feature", "--force-delete"],
+            Some(&feature_wt),
+            &["-v"],
+        );
+        assert_cmd_snapshot!("combined_post_remove_and_post_switch_verbose", cmd);
+    });
+}
+
 // Note: The `return Ok(())` path in spawn_hooks_after_remove when UserConfig::load()
 // fails is defensive code for an extremely rare race condition where config becomes
 // invalid between command startup and hook execution. This is not easily testable
