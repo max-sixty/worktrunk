@@ -58,10 +58,20 @@ exit_code: 0
 </style>
 
 <diffstat>
+ new_file.txt | 1 +
+ 1 file changed, 1 insertion(+)
 
 </diffstat>
 
 <diff>
+diff --git a/new_file.txt b/new_file.txt
+new file mode 100644
+index 0000000..47d2739
+--- /dev/null
++++ b/new_file.txt
+@@ -0,0 +1 @@
++new content
+\ No newline at end of file
 
 </diff>
 

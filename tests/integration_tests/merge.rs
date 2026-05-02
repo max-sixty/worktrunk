@@ -2321,7 +2321,10 @@ fn test_merge_error_conflicting_changes_in_target(mut repo_with_alternate_primar
 fn test_step_commit_show_prompt(repo: TestRepo) {
     // Create some staged changes so there's a diff to include in the prompt
     fs::write(repo.root_path().join("new_file.txt"), "new content").expect("Failed to write file");
-    repo.git_command().args(["add", "new_file.txt"]);
+    repo.git_command()
+        .args(["add", "new_file.txt"])
+        .run()
+        .expect("git add failed");
 
     // The prompt should be written to stdout
     assert_cmd_snapshot!(make_snapshot_cmd(
