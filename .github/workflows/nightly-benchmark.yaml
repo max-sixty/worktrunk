@@ -36,3 +36,21 @@ jobs:
       with:
         name: benchmark-results-${{ github.run_id }}
         path: target/criterion
+
+    # Time-series benchmark store, owned by worktrunk-bot:
+    # https://gist.github.com/worktrunk-bot/19bb23cb9658722abfe69479d0a4f9bf
+    - name: 💾 Append results to gist
+      env:
+        # Bot identity for consistent attribution (per .github/CLAUDE.md).
+        GITHUB_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+        GIST_ID: 19bb23cb9658722abfe69479d0a4f9bf
+      run: |
+        set -euo pipefail
+        python3 .github/scripts/criterion-to-jsonl.py --sha "$GITHUB_SHA" > new-rows.jsonl
+        git clone "https://x-access-token:${GITHUB_TOKEN}@gist.github.com/${GIST_ID}.git" /tmp/gist
+        cat new-rows.jsonl >> /tmp/gist/results.jsonl
+        git -C /tmp/gist \
+          -c user.name=worktrunk-bot \
+          -c user.email=worktrunk-bot@users.noreply.github.com \
+          commit -am "benchmarks: ${GITHUB_SHA::7}"
+        git -C /tmp/gist push
