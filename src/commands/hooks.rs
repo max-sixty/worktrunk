@@ -79,8 +79,9 @@ use worktrunk::styling::{
 };
 
 use super::command_executor::{
-    AnnouncePolicy, CommandContext, FailureStrategy, ForegroundStep, PreparedCommand, PreparedStep,
-    execute_pipeline_foreground, hook_error_wrapper, prepare_steps,
+    AnnouncePolicy, CommandContext, FailureStrategy, ForegroundStep, PipelineKind, PreparedCommand,
+    PreparedStep, alias_error_wrapper, execute_pipeline_foreground, hook_error_wrapper,
+    prepare_steps,
 };
 use crate::commands::process::{HookLog, spawn_detached_exec};
 use crate::output::DirectivePassthrough;
@@ -147,7 +148,7 @@ fn prepare_sourced_steps(
                 result.push(SourcedStep {
                     step: filtered,
                     source,
-                    hook_type,
+                    hook_type: Some(hook_type),
                     display_path: display_path.clone(),
                     is_pipeline,
                 });
@@ -207,14 +208,20 @@ fn count_sourced_commands(steps: &[SourcedStep]) -> usize {
 }
 
 /// A pipeline step with source information, for pipeline-aware execution.
+///
+/// Used by both hook and alias dispatch as the source-tagged shape that feeds
+/// `sourced_steps_to_foreground`. `hook_type` and `display_path` are
+/// hook-only metadata; aliases leave them `None`. Pipeline kind (Hook vs
+/// Alias) is supplied at conversion time, so this struct stays neutral.
 pub struct SourcedStep {
     pub step: PreparedStep,
     pub source: HookSource,
-    pub hook_type: HookType,
+    /// Hook type for hook pipelines; `None` for aliases.
+    pub hook_type: Option<HookType>,
     pub display_path: Option<PathBuf>,
-    /// Whether this step came from a pipeline config (`[[hook]]` blocks).
-    /// Pipeline `Concurrent` steps run concurrently; non-pipeline `Concurrent`
-    /// steps (deprecated single-table form) run serially.
+    /// Whether `Concurrent` steps run concurrently. For hooks: derived from
+    /// `is_pipeline()` (deprecated single-table form runs serially). For
+    /// aliases: always true — no deprecated form.
     pub is_pipeline: bool,
 }
 
@@ -499,7 +506,9 @@ fn run_hooks_background(
     // type render as one clause: `post-merge: sync, push (user); build (project)`.
     let mut type_summaries: Vec<(HookType, Vec<String>)> = Vec::new();
     for (_, group) in &pipelines {
-        let hook_type = group[0].hook_type;
+        let hook_type = group[0]
+            .hook_type
+            .expect("background hook pipelines always set hook_type");
         let summary = format_pipeline_summary(group);
         if let Some(entry) = type_summaries.iter_mut().find(|(ht, _)| *ht == hook_type) {
             entry.1.push(summary);
@@ -608,7 +617,7 @@ fn print_background_variable_table(
 ) {
     for (_, group) in pipelines {
         for sourced in group {
-            if sourced.hook_type != hook_type {
+            if sourced.hook_type != Some(hook_type) {
                 continue;
             }
             let cmd = match &sourced.step {
@@ -633,7 +642,9 @@ fn print_background_variable_table(
 fn spawn_hook_pipeline_quiet(ctx: &CommandContext, steps: Vec<SourcedStep>) -> anyhow::Result<()> {
     use super::pipeline_spec::{PipelineCommandSpec, PipelineSpec, PipelineStepSpec};
 
-    let hook_type = steps[0].hook_type;
+    let hook_type = steps[0]
+        .hook_type
+        .expect("background hook pipelines always set hook_type");
     let source = steps[0].source;
 
     // Extract base context from the first command. Both call sites
@@ -782,6 +793,71 @@ pub(crate) fn prepare_and_check(
     Ok(sourced_steps)
 }
 
+/// Convert source-tagged steps into foreground steps with pipeline-kind policy.
+///
+/// Shared between hook and alias dispatch. The `kind` argument supplies the
+/// per-call-site policy (announce style, stdin handling, error wrapping) while
+/// the `source` field on each step drives the per-step trust model
+/// (`DirectivePassthrough`).
+///
+/// Trust model:
+/// - User-source alias steps pass EXEC through. The body lives in the user's
+///   own config, so a nested `wt switch --execute …` is no different from the
+///   user typing it at the top level. See issue #2101.
+/// - Project-source alias steps and all hook steps scrub EXEC (they can still
+///   emit CD directives via `inherit_from_env`).
+///
+/// In a merged user+project alias body, the user's steps still get the
+/// relaxation — the decision is per-step, so the project side scrubbing
+/// doesn't bleed back into the user steps.
+pub(crate) fn sourced_steps_to_foreground(
+    sourced_steps: Vec<SourcedStep>,
+    kind: &PipelineKind,
+) -> Vec<ForegroundStep> {
+    sourced_steps
+        .into_iter()
+        .map(|sourced| {
+            let directives = match (kind, sourced.source) {
+                (PipelineKind::Alias { .. }, HookSource::User) => {
+                    DirectivePassthrough::inherit_from_env_with_exec()
+                }
+                _ => DirectivePassthrough::inherit_from_env(),
+            };
+            let (announce, pipe_stdin, redirect_stdout_to_stderr, error_wrapper) = match kind {
+                PipelineKind::Hook => {
+                    let hook_type = sourced
+                        .hook_type
+                        .expect("hook pipelines always set hook_type");
+                    (
+                        AnnouncePolicy::Hook {
+                            hook_type,
+                            display_path: sourced.display_path,
+                        },
+                        true,
+                        true,
+                        hook_error_wrapper(hook_type),
+                    )
+                }
+                PipelineKind::Alias { name } => (
+                    AnnouncePolicy::None,
+                    false,
+                    false,
+                    alias_error_wrapper(name.clone()),
+                ),
+            };
+            ForegroundStep {
+                step: sourced.step,
+                concurrent: sourced.is_pipeline,
+                announce,
+                pipe_stdin,
+                redirect_stdout_to_stderr,
+                error_wrapper,
+                directives,
+            }
+        })
+        .collect()
+}
+
 /// Run user and project hooks for a given hook type in the foreground.
 ///
 /// Used directly only by the `wt hook <type>` path, which intentionally
@@ -804,34 +880,12 @@ pub(crate) fn run_hooks_foreground(
         return Ok(());
     }
 
-    let directives = DirectivePassthrough::inherit_from_env();
-
-    // Convert SourcedSteps → ForegroundSteps for the shared executor.
-    // Pipeline configs (`[[hook]]` blocks) get concurrent execution within each
-    // block. Non-pipeline configs (deprecated single-table `[hook]` form) run
-    // their commands serially.
-    let foreground_steps: Vec<ForegroundStep> = sourced_steps
-        .into_iter()
-        .map(|sourced| ForegroundStep {
-            concurrent: sourced.is_pipeline,
-            step: sourced.step,
-            announce: AnnouncePolicy::Hook {
-                hook_type: sourced.hook_type,
-                display_path: sourced.display_path,
-            },
-            pipe_stdin: true,
-            // Hooks merge stdout onto stderr so child output stays ordered
-            // with wt's own "Running …" announcement lines.
-            redirect_stdout_to_stderr: true,
-            error_wrapper: hook_error_wrapper(sourced.hook_type),
-        })
-        .collect();
+    let foreground_steps = sourced_steps_to_foreground(sourced_steps, &PipelineKind::Hook);
 
     execute_pipeline_foreground(
         &foreground_steps,
         ctx.repo,
         ctx.worktree_path,
-        &directives,
         failure_strategy,
     )
 }
@@ -946,7 +1000,7 @@ mod tests {
         SourcedStep {
             step,
             source: HookSource::User,
-            hook_type: worktrunk::HookType::PostStart,
+            hook_type: Some(worktrunk::HookType::PostStart),
             display_path: None,
             is_pipeline: false,
         }

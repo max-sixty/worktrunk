@@ -23,13 +23,13 @@ use std::io::Write;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, append_aliases,
-    referenced_vars_for_config, template_references_var, validate_template_syntax,
+    ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, referenced_vars_for_config,
+    template_references_var, validate_template_syntax,
 };
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{format_bash_with_gutter, info_message, println};
 
-use crate::commands::alias::{AliasOptions, AliasSource, TOP_LEVEL_BUILTINS};
+use crate::commands::alias::{AliasOptions, AliasSource, TOP_LEVEL_BUILTINS, load_aliases};
 use crate::commands::build_invalid_subcommand_error;
 use crate::commands::command_executor::{
     CommandContext, build_hook_context, expand_shell_template,
@@ -262,12 +262,8 @@ fn unknown_alias_error(
     name: &str,
     sub: &str,
 ) -> anyhow::Error {
-    let project_id = repo.project_identifier().ok();
-    let mut merged = user_config.aliases(project_id.as_deref());
-    if let Some(pc) = project_config {
-        append_aliases(&mut merged, &pc.aliases);
-    }
-    let suggestions = did_you_mean(name, merged.into_keys());
+    let aliases = load_aliases(Some(repo), user_config, project_config);
+    let suggestions = did_you_mean(name, aliases.into_keys());
 
     let mut top = crate::cli::build_command();
     let sub_cmd = top

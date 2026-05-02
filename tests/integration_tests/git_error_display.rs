@@ -110,6 +110,7 @@ fn branch_not_found() {
         branch: "nonexistent".into(),
         show_create_hint: true,
         last_fetch_ago: None,
+        pr_mr_platform: None,
     };
 
     assert_snapshot!("branch_not_found", err.to_string());
@@ -121,6 +122,7 @@ fn branch_not_found_with_fetch_time() {
         branch: "nonexistent".into(),
         show_create_hint: true,
         last_fetch_ago: Some("last fetched 3h ago".into()),
+        pr_mr_platform: None,
     };
 
     assert_snapshot!("branch_not_found_with_fetch_time", err.to_string());
@@ -132,9 +134,49 @@ fn branch_not_found_no_create_hint() {
         branch: "nonexistent".into(),
         show_create_hint: false,
         last_fetch_ago: None,
+        pr_mr_platform: None,
     };
 
     assert_snapshot!("branch_not_found_no_create_hint", err.to_string());
+}
+
+#[test]
+fn branch_not_found_numeric_unknown_platform() {
+    // Purely numeric name with unknown platform: hint suggests both `pr:N` and `mr:N`.
+    let err = GitError::BranchNotFound {
+        branch: "2474".into(),
+        show_create_hint: true,
+        last_fetch_ago: None,
+        pr_mr_platform: None,
+    };
+
+    assert_snapshot!("branch_not_found_numeric_unknown_platform", err.to_string());
+}
+
+#[test]
+fn branch_not_found_numeric_github() {
+    use worktrunk::git::RefType;
+    let err = GitError::BranchNotFound {
+        branch: "2474".into(),
+        show_create_hint: true,
+        last_fetch_ago: Some("last fetched 9h ago".into()),
+        pr_mr_platform: Some(RefType::Pr),
+    };
+
+    assert_snapshot!("branch_not_found_numeric_github", err.to_string());
+}
+
+#[test]
+fn branch_not_found_numeric_gitlab() {
+    use worktrunk::git::RefType;
+    let err = GitError::BranchNotFound {
+        branch: "2474".into(),
+        show_create_hint: true,
+        last_fetch_ago: None,
+        pr_mr_platform: Some(RefType::Mr),
+    };
+
+    assert_snapshot!("branch_not_found_numeric_gitlab", err.to_string());
 }
 
 #[test]

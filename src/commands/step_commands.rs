@@ -1290,17 +1290,16 @@ pub fn step_prune(
     let repo = Repository::current()?;
     let config = UserConfig::load()?;
 
-    // Capture once at command entry. Reused for the integration target
-    // resolution below and for every per-branch `integration_reason`
-    // probe later in this function.
+    // Capture once at command entry. Reused for every per-branch
+    // `integration_reason` probe later in this function.
     let snapshot = repo.capture_refs()?;
 
-    let integration_target = match repo.integration_target(&snapshot) {
-        Some(target) => target,
-        None => {
-            anyhow::bail!("cannot determine default branch");
-        }
-    };
+    // Pass the local default branch (e.g. "main") directly — `integration_reason`
+    // ORs over local + upstream internally, so a branch merged into either side
+    // counts as integrated.
+    let integration_target = repo
+        .default_branch()
+        .context("cannot determine default branch")?;
 
     let worktrees = repo.list_worktrees()?;
     let current_root = repo.current_worktree().root()?.to_path_buf();

@@ -1263,8 +1263,8 @@ fn test_remove_squash_merged_then_same_files_modified(repo: TestRepo) {
 ///   3. `git fetch` locally
 ///   4. `wt remove <branch>` — should detect integration via origin/main
 ///
-/// The integration detection must use `effective_integration_target()` to check
-/// against `origin/main` (which is ahead of local `main` after fetch).
+/// `integration_reason` ORs over local `main` and `origin/main` so the squash
+/// merge on `origin/main` (ahead of local `main` after fetch) is detected.
 #[rstest]
 fn test_remove_squash_merged_on_remote(#[from(repo_with_remote)] repo: TestRepo) {
     let remote_path = repo.remote_path().unwrap();

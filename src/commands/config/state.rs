@@ -710,6 +710,7 @@ pub fn handle_state_get(
                         branch: branch_name,
                         show_create_hint: true,
                         last_fetch_ago: None,
+                        pr_mr_platform: repo.detect_ref_type(),
                     }
                     .into());
                 }
