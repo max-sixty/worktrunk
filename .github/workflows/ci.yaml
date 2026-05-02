@@ -112,7 +112,7 @@ jobs:
         path: target/nextest/default/junit.xml
 
     - name: 📊 Upload test results to Codecov
-      if: ${{ !cancelled() && github.repository_owner == 'max-sixty' }}
+      if: ${{ !cancelled() }}
       uses: codecov/codecov-action@v6.0.0
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
@@ -409,10 +409,10 @@ jobs:
         path: cobertura.xml
 
     - name: Upload to codecov.io
-      # Codecov action raises errors on forks; allow running on PRs to main repo
-      if: github.repository_owner == 'max-sixty'
       uses: codecov/codecov-action@v6.0.0
       with:
         files: cobertura.xml
-        fail_ci_if_error: true
+        # Soft-fail on fork PRs: secrets aren't available there, so we rely on
+        # tokenless upload, which can hiccup. Keep hard-fail on the main repo.
+        fail_ci_if_error: ${{ github.repository_owner == 'max-sixty' }}
         token: ${{ secrets.CODECOV_TOKEN }}
