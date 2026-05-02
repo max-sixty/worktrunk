@@ -128,7 +128,7 @@ impl Repository {
     ///
     /// Runs `git for-each-ref refs/heads/` and `git for-each-ref
     /// refs/remotes/` (two subprocesses) and assembles the result into an
-    /// immutable value. See the [module docstring](self) for the freshness
+    /// immutable value. See the module docstring for the freshness
     /// contract.
     pub fn capture_refs(&self) -> anyhow::Result<RefSnapshot> {
         let locals = scan_locals(self)?;
@@ -171,8 +171,6 @@ fn scan_remotes(repo: &Repository) -> anyhow::Result<Vec<RemoteBranch>> {
 
 /// Best-effort ahead/behind batch via `for-each-ref %(ahead-behind:BASE)`.
 ///
-/// Mirrors [`Repository::batch_ahead_behind`] but writes into a fresh map
-/// instead of priming the (soon-to-be-deleted) `RepoCache::ahead_behind`.
 /// Failures (git < 2.36, invalid base) return an empty map — callers must
 /// tolerate missing keys.
 fn scan_ahead_behind(repo: &Repository, base: &str) -> HashMap<(String, String), (usize, usize)> {

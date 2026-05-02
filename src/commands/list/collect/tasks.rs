@@ -6,8 +6,10 @@
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
+use std::sync::Arc;
+
 use anyhow::Context;
-use worktrunk::git::{IntegrationTargets, LineDiff, Repository};
+use worktrunk::git::{IntegrationTargets, LineDiff, RefSnapshot, Repository};
 
 use super::super::ci_status::{CiBranchName, PrStatus};
 use super::super::model::{
@@ -56,6 +58,12 @@ pub struct TaskContext {
     /// when the default branch is unset or stale, keeping the same
     /// silent-skip contract as `default_branch`.
     pub integration_targets: Option<IntegrationTargets>,
+    /// Captured ref state for this list invocation. Tasks resolve ref
+    /// names to commit SHAs through this snapshot before calling
+    /// `_by_sha` methods on `Repository`, side-stepping the ambient
+    /// ref→SHA cache. `None` when snapshot capture failed (degraded
+    /// mode — tasks fall back to ref-taking methods).
+    pub snapshot: Option<Arc<RefSnapshot>>,
 }
 
 impl TaskContext {
@@ -94,6 +102,40 @@ impl TaskContext {
     /// Returns `None` if default branch cannot be determined or is stale.
     pub(super) fn integration_targets(&self) -> Option<&IntegrationTargets> {
         self.integration_targets.as_ref()
+    }
+
+    /// Captured ref state for this list invocation. Returns `None` when
+    /// snapshot capture failed during pre-skeleton.
+    pub(super) fn snapshot(&self) -> Option<&RefSnapshot> {
+        self.snapshot.as_deref()
+    }
+
+    /// Resolve a ref name to its commit SHA via the snapshot, falling back
+    /// to an uncached `git rev-parse` when the snapshot doesn't carry the
+    /// ref (e.g., HEAD, raw SHAs, tags) or when no snapshot was captured.
+    pub(super) fn resolve_sha(&self, name: &str) -> anyhow::Result<String> {
+        if let Some(snap) = self.snapshot()
+            && let Some(sha) = snap.resolve(name)
+        {
+            return Ok(sha.to_string());
+        }
+        Ok(self
+            .repo
+            .run_command(&["rev-parse", name])?
+            .trim()
+            .to_string())
+    }
+
+    /// Commit SHA used to compare the branch's content. Prefers the SHA
+    /// the branch's full ref points at (so a rebase-in-progress doesn't
+    /// compare against the transient HEAD); falls back to
+    /// `branch_ref.commit_sha` for detached-HEAD items.
+    pub(super) fn branch_check_sha(&self) -> anyhow::Result<String> {
+        if let Some(full_ref) = self.branch_ref.full_ref() {
+            self.resolve_sha(full_ref)
+        } else {
+            Ok(self.branch_ref.commit_sha.clone())
+        }
     }
 }
 
@@ -139,10 +181,18 @@ impl Task for AheadBehindTask {
         };
         let repo = &ctx.repo;
 
+        let base_sha = ctx
+            .resolve_sha(&base)
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
+        // Compare against the branch tip via its full ref when present —
+        // see `branch_check_sha` for the rebase-in-progress rationale.
+        let head_sha = ctx
+            .branch_check_sha()
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
+
         // Check for orphan branch (no common ancestor with default branch).
-        // merge_base() is cached, so this is cheap after first call.
         let is_orphan = repo
-            .merge_base(&base, &ctx.branch_ref.commit_sha)
+            .merge_base_by_sha(&base_sha, &head_sha)
             .map_err(|e| ctx.error(Self::KIND, &e))?
             .is_none();
 
@@ -154,23 +204,25 @@ impl Task for AheadBehindTask {
             });
         }
 
-        // When the ref has a branch name, compute counts against the branch — not
-        // the worktree's current HEAD sha. During rebase/merge conflicts, HEAD is
-        // transiently at a different commit than the branch tip, so using the sha
-        // would report misleading counts (e.g., `0/0 same_commit` when the branch
-        // is actually diverged). The batch path already uses branch names, so this
-        // keeps both paths consistent.
-        let head = ctx
+        // Snapshot's ahead/behind batch is keyed by ref names — try the
+        // batched answer first, fall back to a per-pair query keyed by SHA.
+        let head_ref = ctx
             .branch_ref
             .full_ref()
             .unwrap_or(&ctx.branch_ref.commit_sha);
-        let (ahead, behind) = repo
-            .ahead_behind(&base, head)
+        let counts = ctx
+            .snapshot()
+            .and_then(|s| s.ahead_behind(&base, head_ref))
+            .map(Ok)
+            .unwrap_or_else(|| repo.ahead_behind_by_sha(&base_sha, &head_sha))
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::AheadBehind {
             item_idx: ctx.item_idx,
-            counts: AheadBehind { ahead, behind },
+            counts: AheadBehind {
+                ahead: counts.0,
+                behind: counts.1,
+            },
             is_orphan: false,
         })
     }
@@ -195,20 +247,23 @@ impl Task for CommittedTreesMatchTask {
             });
         };
         let repo = &ctx.repo;
-        // Prefer the branch name when present: during a rebase-in-progress, the
-        // worktree's HEAD is at a transient replayed commit, so using commit_sha
-        // would compare the wrong tree. For branch-only items the two are
-        // equivalent; for detached HEAD, commit_sha is the only option.
-        let ref_to_check = ctx
-            .branch_ref
-            .full_ref()
-            .unwrap_or(&ctx.branch_ref.commit_sha);
+        // Resolve via snapshot — see `branch_check_sha` for the
+        // rebase-in-progress rationale.
+        let branch_sha = ctx
+            .branch_check_sha()
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
+        let primary_sha = ctx
+            .resolve_sha(&targets.primary)
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
         let mut committed_trees_match = repo
-            .trees_match(ref_to_check, &targets.primary)
+            .trees_match_by_sha(&branch_sha, &primary_sha)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         if !committed_trees_match && let Some(secondary) = targets.secondary.as_deref() {
+            let secondary_sha = ctx
+                .resolve_sha(secondary)
+                .map_err(|e| ctx.error(Self::KIND, &e))?;
             committed_trees_match = repo
-                .trees_match(ref_to_check, secondary)
+                .trees_match_by_sha(&branch_sha, &secondary_sha)
                 .map_err(|e| ctx.error(Self::KIND, &e))?;
         }
         Ok(TaskResult::CommittedTreesMatch {
@@ -236,12 +291,12 @@ impl Task for HasFileChangesTask {
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         // No branch name (detached HEAD) - return conservative default (assume has changes)
-        let Some(branch) = ctx.branch_ref.full_ref() else {
+        if ctx.branch_ref.full_ref().is_none() {
             return Ok(TaskResult::HasFileChanges {
                 item_idx: ctx.item_idx,
                 has_file_changes: true,
             });
-        };
+        }
         // When integration_targets is None, return true (conservative: assume has changes)
         let Some(targets) = ctx.integration_targets() else {
             return Ok(TaskResult::HasFileChanges {
@@ -250,15 +305,25 @@ impl Task for HasFileChangesTask {
             });
         };
         let repo = &ctx.repo;
-        // The branch is integrated (no added changes) if it has none against
-        // EITHER target. AND the per-target booleans so the combined value is
-        // false (== integrated) as soon as a single side has nothing to add.
+        // Resolve via snapshot. The branch is integrated (no added changes)
+        // if it has none against EITHER target — AND the per-target
+        // booleans so the combined value is false as soon as one side has
+        // nothing to add.
+        let branch_sha = ctx
+            .branch_check_sha()
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
+        let primary_sha = ctx
+            .resolve_sha(&targets.primary)
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
         let mut has_file_changes = repo
-            .has_added_changes(branch, &targets.primary)
+            .has_added_changes_by_sha(&branch_sha, &primary_sha)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         if has_file_changes && let Some(secondary) = targets.secondary.as_deref() {
+            let secondary_sha = ctx
+                .resolve_sha(secondary)
+                .map_err(|e| ctx.error(Self::KIND, &e))?;
             has_file_changes = repo
-                .has_added_changes(branch, secondary)
+                .has_added_changes_by_sha(&branch_sha, &secondary_sha)
                 .map_err(|e| ctx.error(Self::KIND, &e))?;
         }
 
@@ -291,13 +356,13 @@ impl Task for WouldMergeAddTask {
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         // No branch name (detached HEAD) - return conservative default (assume would add)
-        let Some(branch) = ctx.branch_ref.full_ref() else {
+        if ctx.branch_ref.full_ref().is_none() {
             return Ok(TaskResult::WouldMergeAdd {
                 item_idx: ctx.item_idx,
                 would_merge_add: true,
                 is_patch_id_match: false,
             });
-        };
+        }
         // When integration_targets is None, return true (conservative: assume would add)
         let Some(targets) = ctx.integration_targets() else {
             return Ok(TaskResult::WouldMergeAdd {
@@ -311,18 +376,27 @@ impl Task for WouldMergeAddTask {
         // merging would add nothing OR a patch-id matches against EITHER
         // side. So `would_merge_add` ANDs (false on either ⇒ integrated)
         // and `is_patch_id_match` ORs.
+        let branch_sha = ctx
+            .branch_check_sha()
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
+        let primary_sha = ctx
+            .resolve_sha(&targets.primary)
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
         let probe = ctx
             .repo
-            .merge_integration_probe(branch, &targets.primary)
+            .merge_integration_probe_by_sha(&branch_sha, &primary_sha)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         let mut would_merge_add = probe.would_merge_add;
         let mut is_patch_id_match = probe.is_patch_id_match;
         if let Some(secondary) = targets.secondary.as_deref()
             && (would_merge_add && !is_patch_id_match)
         {
+            let secondary_sha = ctx
+                .resolve_sha(secondary)
+                .map_err(|e| ctx.error(Self::KIND, &e))?;
             let alt = ctx
                 .repo
-                .merge_integration_probe(branch, secondary)
+                .merge_integration_probe_by_sha(&branch_sha, &secondary_sha)
                 .map_err(|e| ctx.error(Self::KIND, &e))?;
             would_merge_add = would_merge_add && alt.would_merge_add;
             is_patch_id_match = is_patch_id_match || alt.is_patch_id_match;
@@ -357,18 +431,23 @@ impl Task for IsAncestorTask {
             });
         };
         let repo = &ctx.repo;
-        // Prefer the branch name when present — see `CommittedTreesMatchTask`
-        // for rationale (rebase-in-progress transient HEAD).
-        let ref_to_check = ctx
-            .branch_ref
-            .full_ref()
-            .unwrap_or(&ctx.branch_ref.commit_sha);
+        // Resolve via snapshot — see `branch_check_sha` for the
+        // rebase-in-progress rationale.
+        let branch_sha = ctx
+            .branch_check_sha()
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
+        let primary_sha = ctx
+            .resolve_sha(&targets.primary)
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
         let mut is_ancestor = repo
-            .is_ancestor(ref_to_check, &targets.primary)
+            .is_ancestor_by_sha(&branch_sha, &primary_sha)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         if !is_ancestor && let Some(secondary) = targets.secondary.as_deref() {
+            let secondary_sha = ctx
+                .resolve_sha(secondary)
+                .map_err(|e| ctx.error(Self::KIND, &e))?;
             is_ancestor = repo
-                .is_ancestor(ref_to_check, secondary)
+                .is_ancestor_by_sha(&branch_sha, &secondary_sha)
                 .map_err(|e| ctx.error(Self::KIND, &e))?;
         }
 
@@ -394,14 +473,16 @@ impl Task for BranchDiffTask {
             });
         };
         let repo = &ctx.repo;
-        // Prefer the branch name when present — see `CommittedTreesMatchTask`
-        // for rationale (rebase-in-progress transient HEAD).
-        let ref_to_check = ctx
-            .branch_ref
-            .full_ref()
-            .unwrap_or(&ctx.branch_ref.commit_sha);
+        // Resolve via snapshot — see `branch_check_sha` for the
+        // rebase-in-progress rationale.
+        let base_sha = ctx
+            .resolve_sha(&base)
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
+        let head_sha = ctx
+            .branch_check_sha()
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
         let diff = repo
-            .branch_diff_stats(&base, ref_to_check)
+            .branch_diff_stats_by_sha(&base_sha, &head_sha)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::BranchDiff {
@@ -470,14 +551,16 @@ impl Task for MergeTreeConflictsTask {
             });
         };
         let repo = &ctx.repo;
-        // Prefer the branch name when present — see `CommittedTreesMatchTask`
-        // for rationale (rebase-in-progress transient HEAD).
-        let ref_to_check = ctx
-            .branch_ref
-            .full_ref()
-            .unwrap_or(&ctx.branch_ref.commit_sha);
+        // Resolve via snapshot — see `branch_check_sha` for the
+        // rebase-in-progress rationale.
+        let base_sha = ctx
+            .resolve_sha(&base)
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
+        let head_sha = ctx
+            .branch_check_sha()
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
         let has_merge_tree_conflicts = repo
-            .has_merge_conflicts(&base, ref_to_check)
+            .has_merge_conflicts_by_sha(&base_sha, &head_sha)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
         Ok(TaskResult::MergeTreeConflicts {
             item_idx: ctx.item_idx,
@@ -559,9 +642,16 @@ impl Task for WorkingTreeConflictsTask {
                 .map_err(|e| ctx.error(Self::KIND, &e))?
         };
 
+        let base_sha = ctx
+            .resolve_sha(&base)
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
         let has_conflicts = ctx
             .repo
-            .has_merge_conflicts_by_tree(&base, &ctx.branch_ref.commit_sha, &tree_sha)
+            .has_merge_conflicts_by_tree_with_base_sha(
+                &base_sha,
+                &ctx.branch_ref.commit_sha,
+                &tree_sha,
+            )
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::WorkingTreeConflicts {
@@ -683,8 +773,16 @@ impl Task for UpstreamTask {
         };
 
         let remote = upstream_branch.split_once('/').map(|(r, _)| r.to_string());
+        // Resolve upstream ref to a SHA via the snapshot, then compute
+        // ahead/behind by SHA. Branch SHA is taken from `branch_ref.commit_sha`
+        // — for the upstream comparison we want the branch's actual tip,
+        // which `branch_ref.commit_sha` carries (snapshot tracks the same
+        // value for branch items via the for-each-ref scan).
+        let upstream_sha = ctx
+            .resolve_sha(&upstream_branch)
+            .map_err(|e| ctx.error(Self::KIND, &e))?;
         let (ahead, behind) = repo
-            .ahead_behind(&upstream_branch, &ctx.branch_ref.commit_sha)
+            .ahead_behind_by_sha(&upstream_sha, &ctx.branch_ref.commit_sha)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
 
         Ok(TaskResult::Upstream {

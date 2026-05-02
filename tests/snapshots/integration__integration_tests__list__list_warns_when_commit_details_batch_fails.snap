@@ -53,7 +53,7 @@ exit_code: 0
 ----- stderr -----
 [33m▲[39m [33mFailed to batch-fetch commit details: fatal: bad object 0000000000000000000000000000000000000001[39m
 [33m▲[39m [33mSome git operations failed:
-[107m [0m [1m(detached)[22m: ahead-behind (git merge-base failed for main 0000000000000000000000000000000000000001: fatal: Not a valid commit name 0000000000000000000000000000000000000001)
+[107m [0m [1m(detached)[22m: ahead-behind (git merge-base failed for 05a4a45d0b981dad5c27db59dca482836d59f89e 0000000000000000000000000000000000000001: fatal: Not a valid commit name 0000000000000000000000000000000000000001)
 [107m [0m [1m(detached)[22m: committed-trees-match (fatal: ambiguous argument '0000000000000000000000000000000000000001^{tree}': unknown revision or path not in the working tree.)
 [107m [0m [1m(detached)[22m: working-tree-diff (fatal: bad object HEAD)
 [107m [0m [1m(detached)[22m: merge-tree-conflicts (git merge-base failed for 05a4a45d0b981dad5c27db59dca482836d59f89e 0000000000000000000000000000000000000001: fatal: Not a valid commit name 0000000000000000000000000000000000000001)

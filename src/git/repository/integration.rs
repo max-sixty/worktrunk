@@ -4,10 +4,9 @@
 //! (same commit, ancestor, trees match, etc.).
 
 use anyhow::{Context, bail};
-use dashmap::mapref::entry::Entry;
 use serde::{Deserialize, Serialize};
 
-use super::Repository;
+use super::{RefSnapshot, Repository};
 use crate::git::{IntegrationReason, check_integration, compute_integration_lazy};
 use crate::shell_exec::Cmd;
 
@@ -46,22 +45,18 @@ impl Repository {
     /// Uses git to check if `refs/heads/{ref}` exists. If so, returns the
     /// qualified form to ensure we reference the branch, not a same-named tag.
     /// Otherwise returns the original ref unchanged (for HEAD, SHAs, remote refs).
+    /// Uncached: this is only consulted by the ref-taking convenience
+    /// wrappers; hot paths go through a [`RefSnapshot`] instead.
     fn resolve_preferring_branch(&self, r: &str) -> String {
-        self.cache
-            .resolved_refs
-            .entry(r.to_string())
-            .or_insert_with(|| {
-                let qualified = format!("refs/heads/{r}");
-                if self
-                    .run_command(&["rev-parse", "--verify", "-q", &qualified])
-                    .is_ok()
-                {
-                    qualified
-                } else {
-                    r.to_string()
-                }
-            })
-            .clone()
+        let qualified = format!("refs/heads/{r}");
+        if self
+            .run_command(&["rev-parse", "--verify", "-q", &qualified])
+            .is_ok()
+        {
+            qualified
+        } else {
+            r.to_string()
+        }
     }
 
     /// Resolve a ref for integration helpers — passthrough for already-qualified
@@ -96,13 +91,23 @@ impl Repository {
         let base_sha = self.rev_parse_commit(&base)?;
         let head_sha = self.rev_parse_commit(&head)?;
 
-        if let Some(cached) = super::sha_cache::is_ancestor(self, &base_sha, &head_sha) {
+        self.is_ancestor_by_sha(&base_sha, &head_sha)
+    }
+
+    /// Check if `base_sha` is an ancestor of `head_sha`, taking commit SHAs
+    /// directly. Hits the persistent SHA-keyed cache without going through
+    /// the (stale-prone) ambient ref→SHA cache.
+    ///
+    /// Callers that hold SHAs (e.g., from a `RefSnapshot` or a
+    /// `BranchRef.commit_sha`) should prefer this form.
+    pub fn is_ancestor_by_sha(&self, base_sha: &str, head_sha: &str) -> anyhow::Result<bool> {
+        if let Some(cached) = super::sha_cache::is_ancestor(self, base_sha, head_sha) {
             return Ok(cached);
         }
 
         let result =
-            self.run_command_check(&["merge-base", "--is-ancestor", &base_sha, &head_sha])?;
-        super::sha_cache::put_is_ancestor(self, &base_sha, &head_sha, result);
+            self.run_command_check(&["merge-base", "--is-ancestor", base_sha, head_sha])?;
+        super::sha_cache::put_is_ancestor(self, base_sha, head_sha, result);
         Ok(result)
     }
 
@@ -135,20 +140,33 @@ impl Repository {
         let branch_sha = self.rev_parse_commit(&branch)?;
         let target_sha = self.rev_parse_commit(&target)?;
 
-        if let Some(cached) = super::sha_cache::has_added_changes(self, &branch_sha, &target_sha) {
+        self.has_added_changes_by_sha(&branch_sha, &target_sha)
+    }
+
+    /// SHA-keyed variant of [`Self::has_added_changes`].
+    ///
+    /// Bypasses the ambient ref→SHA cache so callers holding SHAs from a
+    /// [`RefSnapshot`] (or `BranchRef.commit_sha`) can short-circuit to the
+    /// persistent SHA-keyed cache directly.
+    pub fn has_added_changes_by_sha(
+        &self,
+        branch_sha: &str,
+        target_sha: &str,
+    ) -> anyhow::Result<bool> {
+        if let Some(cached) = super::sha_cache::has_added_changes(self, branch_sha, target_sha) {
             return Ok(cached);
         }
 
         // Orphan branches have no common ancestor, so all their changes are unique
-        let Some(merge_base) = self.merge_base(&target_sha, &branch_sha)? else {
-            super::sha_cache::put_has_added_changes(self, &branch_sha, &target_sha, true);
+        let Some(merge_base) = self.merge_base(target_sha, branch_sha)? else {
+            super::sha_cache::put_has_added_changes(self, branch_sha, target_sha, true);
             return Ok(true);
         };
 
         let range = format!("{merge_base}..{branch_sha}");
         let output = self.run_command(&["diff", "--name-only", &range])?;
         let result = !output.trim().is_empty();
-        super::sha_cache::put_has_added_changes(self, &branch_sha, &target_sha, result);
+        super::sha_cache::put_has_added_changes(self, branch_sha, target_sha, result);
         Ok(result)
     }
 
@@ -165,6 +183,27 @@ impl Repository {
             "rev-parse",
             &format!("{ref1}^{{tree}}"),
             &format!("{ref2}^{{tree}}"),
+        ])?;
+        let mut lines = output.lines();
+        let tree1 = lines.next().context("rev-parse returned no output")?.trim();
+        let tree2 = lines
+            .next()
+            .context("rev-parse returned only one line")?
+            .trim();
+        Ok(tree1 == tree2)
+    }
+
+    /// SHA-keyed variant of [`Self::trees_match`].
+    ///
+    /// Resolves each commit SHA to its tree SHA in a single `git rev-parse`
+    /// call and compares. The commit→tree resolution is itself uncached
+    /// (trees are cheap and not stale-prone), but the inputs are SHAs so
+    /// the call is immune to ref-name staleness.
+    pub fn trees_match_by_sha(&self, commit_sha1: &str, commit_sha2: &str) -> anyhow::Result<bool> {
+        let output = self.run_command(&[
+            "rev-parse",
+            &format!("{commit_sha1}^{{tree}}"),
+            &format!("{commit_sha2}^{{tree}}"),
         ])?;
         let mut lines = output.lines();
         let tree1 = lines.next().context("rev-parse returned no output")?.trim();
@@ -201,11 +240,20 @@ impl Repository {
         let base_sha = self.rev_parse_commit(&base)?;
         let head_sha = self.rev_parse_commit(&head)?;
 
-        if let Some(cached) = super::sha_cache::merge_conflicts(self, &base_sha, &head_sha) {
+        self.has_merge_conflicts_by_sha(&base_sha, &head_sha)
+    }
+
+    /// SHA-keyed variant of [`Self::has_merge_conflicts`].
+    pub fn has_merge_conflicts_by_sha(
+        &self,
+        base_sha: &str,
+        head_sha: &str,
+    ) -> anyhow::Result<bool> {
+        if let Some(cached) = super::sha_cache::merge_conflicts(self, base_sha, head_sha) {
             return Ok(cached);
         }
 
-        self.run_merge_tree(&base_sha, &head_sha, &base_sha, &head_sha)
+        self.run_merge_tree(base_sha, head_sha, base_sha, head_sha)
     }
 
     /// Check merge conflicts for a working tree represented by a tree SHA.
@@ -229,8 +277,20 @@ impl Repository {
         let base = self.resolve_ref(base);
         let base_sha = self.rev_parse_commit(&base)?;
 
+        self.has_merge_conflicts_by_tree_with_base_sha(&base_sha, branch_head_sha, tree_sha)
+    }
+
+    /// SHA-keyed variant of [`Self::has_merge_conflicts_by_tree`] —
+    /// `base_sha` is taken as a SHA (the other two arguments are already
+    /// SHA-shaped). Same composite cache key as the ref-taking form.
+    pub fn has_merge_conflicts_by_tree_with_base_sha(
+        &self,
+        base_sha: &str,
+        branch_head_sha: &str,
+        tree_sha: &str,
+    ) -> anyhow::Result<bool> {
         let cache_head = format!("{branch_head_sha}+{tree_sha}");
-        if let Some(cached) = super::sha_cache::merge_conflicts(self, &base_sha, &cache_head) {
+        if let Some(cached) = super::sha_cache::merge_conflicts(self, base_sha, &cache_head) {
             return Ok(cached);
         }
 
@@ -240,7 +300,7 @@ impl Repository {
             self.run_command(&["commit-tree", tree_sha, "-p", branch_head_sha, "-m", ""])?;
         let head_commit = head_commit.trim();
 
-        self.run_merge_tree(&base_sha, head_commit, &base_sha, &cache_head)
+        self.run_merge_tree(base_sha, head_commit, base_sha, &cache_head)
     }
 
     /// Run merge-tree and cache the result.
@@ -410,23 +470,35 @@ impl Repository {
         let branch_sha = self.rev_parse_commit(&branch)?;
         let target_sha = self.rev_parse_commit(&target)?;
 
-        if let Some(cached) = super::sha_cache::merge_add_probe(self, &branch_sha, &target_sha) {
+        self.merge_integration_probe_by_sha(&branch_sha, &target_sha)
+    }
+
+    /// SHA-keyed variant of [`Self::merge_integration_probe`].
+    ///
+    /// Asymmetric: branch first, then target — the merge-tree result is
+    /// compared against target's tree.
+    pub fn merge_integration_probe_by_sha(
+        &self,
+        branch_sha: &str,
+        target_sha: &str,
+    ) -> anyhow::Result<MergeProbeResult> {
+        if let Some(cached) = super::sha_cache::merge_add_probe(self, branch_sha, target_sha) {
             return Ok(cached);
         }
 
         // Orphan branches (no common ancestor) can't be merge-tree simulated
         // (git exits 128 with "refusing to merge unrelated histories") and have
         // no merge-base for patch-id either. Short-circuit: they always have changes.
-        if self.merge_base(&target_sha, &branch_sha)?.is_none() {
+        if self.merge_base(target_sha, branch_sha)?.is_none() {
             let result = MergeProbeResult {
                 would_merge_add: true,
                 is_patch_id_match: false,
             };
-            super::sha_cache::put_merge_add_probe(self, &branch_sha, &target_sha, result);
+            super::sha_cache::put_merge_add_probe(self, branch_sha, target_sha, result);
             return Ok(result);
         }
 
-        let merge_result = self.would_merge_add_to_target(&branch_sha, &target_sha)?;
+        let merge_result = self.would_merge_add_to_target(branch_sha, target_sha)?;
         let result = match merge_result {
             Some(would_add) => MergeProbeResult {
                 would_merge_add: would_add,
@@ -437,7 +509,7 @@ impl Repository {
                 // Patch-id errors are non-fatal: if we can't compute patch-ids,
                 // conservatively report no match (branch appears not integrated).
                 let matched = self
-                    .is_squash_merged_via_patch_id(&branch_sha, &target_sha)
+                    .is_squash_merged_via_patch_id(branch_sha, target_sha)
                     .unwrap_or(false);
                 MergeProbeResult {
                     would_merge_add: true,
@@ -445,7 +517,7 @@ impl Repository {
                 }
             }
         };
-        super::sha_cache::put_merge_add_probe(self, &branch_sha, &target_sha, result);
+        super::sha_cache::put_merge_add_probe(self, branch_sha, target_sha, result);
         Ok(result)
     }
 
@@ -463,60 +535,61 @@ impl Repository {
     /// [`Self::integration_reason()`] when deciding whether a branch is safe
     /// to delete — it ORs over both refs.
     ///
-    pub fn effective_integration_target(&self, local_target: &str) -> String {
-        self.cache
-            .effective_integration_targets
-            .entry(local_target.to_string())
-            .or_insert_with(|| {
-                // Resolve the upstream via the cached branch inventory
-                // (`Repository::local_branches`). On the first call the
-                // inventory scan primes this and every subsequent upstream
-                // lookup; on repeat calls it's a map lookup.
-                let upstream = match self.branch(local_target).upstream() {
-                    Ok(Some(upstream)) => upstream,
-                    _ => return local_target.to_string(),
-                };
+    pub fn effective_integration_target(
+        &self,
+        snapshot: &RefSnapshot,
+        local_target: &str,
+    ) -> String {
+        let upstream = match snapshot.upstream_of(local_target) {
+            Some(u) => u.to_string(),
+            None => return local_target.to_string(),
+        };
 
-                // If local and upstream are the same commit, prefer local for clearer messaging
-                if self.same_commit(local_target, &upstream).unwrap_or(false) {
-                    return local_target.to_string();
-                }
+        let local_sha = match snapshot_resolve(self, snapshot, local_target) {
+            Ok(s) => s,
+            Err(_) => return local_target.to_string(),
+        };
+        let upstream_sha = match snapshot_resolve(self, snapshot, &upstream) {
+            Ok(s) => s,
+            Err(_) => return local_target.to_string(),
+        };
 
-                // If upstream contains commits not present in local, prefer upstream so
-                // remotely merged branches still count as integrated after a fetch.
-                if self.is_ancestor(local_target, &upstream).unwrap_or(false) {
-                    return upstream;
-                }
+        // If local and upstream are the same commit, prefer local for clearer messaging
+        if local_sha == upstream_sha {
+            return local_target.to_string();
+        }
 
-                // If upstream is strictly behind local, local is more complete.
-                if self.is_ancestor(&upstream, local_target).unwrap_or(false) {
-                    return local_target.to_string();
-                }
+        // If upstream contains commits not present in local, prefer upstream so
+        // remotely merged branches still count as integrated after a fetch.
+        if self
+            .is_ancestor_by_sha(&local_sha, &upstream_sha)
+            .unwrap_or(false)
+        {
+            return upstream;
+        }
 
-                // Local and upstream have diverged (neither is ancestor of the other).
-                // Prefer upstream so remote merges are still visible to integration
-                // checks even while local has extra commits.
-                upstream
-            })
-            .clone()
+        // If upstream is strictly behind local, local is more complete.
+        if self
+            .is_ancestor_by_sha(&upstream_sha, &local_sha)
+            .unwrap_or(false)
+        {
+            return local_target.to_string();
+        }
+
+        // Local and upstream have diverged (neither is ancestor of the other).
+        // Prefer upstream so remote merges are still visible to integration
+        // checks even while local has extra commits.
+        upstream
     }
 
-    /// Get the cached integration target for this repository.
+    /// Resolve the effective integration target through the snapshot.
     ///
-    /// This is the effective target for integration checks (status symbols, safe deletion).
-    /// May be upstream (e.g., "origin/main") if it's ahead of local, catching remotely-merged branches.
-    ///
-    /// Returns None if the default branch cannot be determined.
-    ///
-    /// Result is cached in the shared repo cache (shared across all worktrees).
-    pub fn integration_target(&self) -> Option<String> {
-        self.cache
-            .integration_target
-            .get_or_init(|| {
-                let default_branch = self.default_branch()?;
-                Some(self.effective_integration_target(&default_branch))
-            })
-            .clone()
+    /// Returns the ref name (e.g. `"main"` or `"origin/main"`) callers
+    /// should compare against. Returns `None` when the default branch
+    /// cannot be determined.
+    pub fn integration_target(&self, snapshot: &RefSnapshot) -> Option<String> {
+        let default_branch = self.default_branch()?;
+        Some(self.effective_integration_target(snapshot, &default_branch))
     }
 
     /// Resolve the integration targets for `wt list`'s status column.
@@ -533,61 +606,58 @@ impl Repository {
     /// - Diverged: primary = local, secondary = upstream — both are checked
     ///   so a branch merged into either side counts as integrated.
     ///
-    /// Ancestry probes use `ref_is_ancestor` (raw git, no SHA caching) so
-    /// a just-updated local target's relationship is observed correctly,
-    /// matching [`Self::integration_reason`].
+    /// Ancestry probes resolve through the snapshot so a just-updated
+    /// local target's relationship is observed correctly, matching
+    /// [`Self::integration_reason`].
     ///
     /// Returns `None` when the default branch cannot be determined.
-    pub fn integration_targets(&self) -> Option<IntegrationTargets> {
+    pub fn integration_targets(&self, snapshot: &RefSnapshot) -> Option<IntegrationTargets> {
         let target = self.default_branch()?;
-        let upstream = self.branch(&target).upstream().ok().flatten();
+        let upstream = snapshot.upstream_of(&target).map(str::to_string);
+
+        let target_sha = snapshot_resolve(self, snapshot, &target).ok()?;
 
         let (primary, secondary) = match upstream {
             None => (target, None),
-            Some(u) if self.same_commit(&target, &u).unwrap_or(false) => (target, None),
-            Some(u) if ref_is_ancestor(self, &target, &u) => (u, None),
-            Some(u) if ref_is_ancestor(self, &u, &target) => (target, None),
-            Some(u) => (target, Some(u)),
+            Some(u) => {
+                let upstream_sha = snapshot_resolve(self, snapshot, &u).ok()?;
+                if target_sha == upstream_sha {
+                    (target, None)
+                } else if self
+                    .is_ancestor_by_sha(&target_sha, &upstream_sha)
+                    .unwrap_or(false)
+                {
+                    (u, None)
+                } else if self
+                    .is_ancestor_by_sha(&upstream_sha, &target_sha)
+                    .unwrap_or(false)
+                {
+                    (target, None)
+                } else {
+                    (target, Some(u))
+                }
+            }
         };
 
         Some(IntegrationTargets { primary, secondary })
     }
 
-    /// Parse a tree ref to get its SHA (cached).
+    /// Resolve a tree spec (e.g. `"refs/heads/main^{tree}"`) to its tree SHA.
+    /// Uncached — tree resolution is cheap (~1 ms) and stale-prone if memoized
+    /// against a moving ref name.
     pub(super) fn rev_parse_tree(&self, spec: &str) -> anyhow::Result<String> {
-        match self.cache.tree_shas.entry(spec.to_string()) {
-            Entry::Occupied(e) => Ok(e.get().clone()),
-            Entry::Vacant(e) => {
-                let sha = self
-                    .run_command(&["rev-parse", spec])
-                    .map(|output| output.trim().to_string())?;
-                Ok(e.insert(sha).clone())
-            }
-        }
+        Ok(self.run_command(&["rev-parse", spec])?.trim().to_string())
     }
 
-    /// Resolve a ref to its commit SHA (cached).
-    ///
-    /// Unlike [`Self::rev_parse_tree`], this returns the commit SHA rather than the
-    /// tree SHA. Used by the persistent `sha_cache` to convert ref names into
-    /// stable SHA-based cache keys before looking up cached merge-tree results.
+    /// Resolve a ref to its commit SHA. Uncached — callers that want
+    /// SHA-stable lookups for an entire command should capture a
+    /// [`RefSnapshot`] up front and resolve through it.
     pub(super) fn rev_parse_commit(&self, r: &str) -> anyhow::Result<String> {
-        match self.cache.commit_shas.entry(r.to_string()) {
-            Entry::Occupied(e) => Ok(e.get().clone()),
-            Entry::Vacant(e) => {
-                let sha = self
-                    .run_command(&["rev-parse", r])
-                    .map(|output| output.trim().to_string())?;
-                Ok(e.insert(sha).clone())
-            }
-        }
+        Ok(self.run_command(&["rev-parse", r])?.trim().to_string())
     }
 
     /// Resolve a ref to its commit SHA, skipping git when the input already
     /// looks like a 40-char hex SHA.
-    ///
-    /// Used at cache boundaries (e.g. [`Self::merge_base`]) to normalize keys
-    /// without spawning `git rev-parse` for inputs that are already SHAs.
     pub(super) fn resolve_to_commit_sha(&self, r: &str) -> anyhow::Result<String> {
         if is_hex_commit_sha(r) {
             return Ok(r.to_string());
@@ -633,7 +703,8 @@ impl Repository {
     /// use worktrunk::git::Repository;
     ///
     /// let repo = Repository::current()?;
-    /// let (effective_target, reason) = repo.integration_reason("feature", "main")?;
+    /// let snapshot = repo.capture_refs()?;
+    /// let (effective_target, reason) = repo.integration_reason(&snapshot, "feature", "main")?;
     /// if let Some(r) = reason {
     ///     println!("Branch integrated into {}: {}", effective_target, r.description());
     /// }
@@ -641,66 +712,64 @@ impl Repository {
     /// ```
     pub fn integration_reason(
         &self,
+        snapshot: &RefSnapshot,
         branch: &str,
         target: &str,
     ) -> anyhow::Result<(String, Option<IntegrationReason>)> {
-        use dashmap::mapref::entry::Entry;
-        match self
-            .cache
-            .integration_reasons
-            .entry((branch.to_string(), target.to_string()))
-        {
-            Entry::Occupied(e) => Ok(e.get().clone()),
-            Entry::Vacant(e) => {
-                let result = self.compute_integration_reason_uncached(branch, target)?;
-                Ok(e.insert(result).clone())
-            }
-        }
+        self.compute_integration_reason_uncached(snapshot, branch, target)
     }
 
     fn compute_integration_reason_uncached(
         &self,
+        snapshot: &RefSnapshot,
         branch: &str,
         target: &str,
     ) -> anyhow::Result<(String, Option<IntegrationReason>)> {
         // Resolve upstream once. Errors and "no upstream" both collapse to None.
-        let upstream = self.branch(target).upstream().ok().flatten();
+        let upstream = snapshot
+            .upstream_of(target)
+            .map(str::to_string)
+            .or_else(|| self.branch(target).upstream().ok().flatten());
 
-        // Decide whether to check local, upstream, or both.
-        //
-        // The ancestor checks here run git directly with ref names rather than
-        // going through cached `is_ancestor`/`rev_parse_commit`, because the
-        // local target may have just been updated (e.g. by `wt merge`'s ref
-        // update). Cached SHAs would be stale and could misclassify the
-        // local/upstream relationship.
+        // Decide whether to check local, upstream, or both. All ancestor
+        // probes go through SHAs resolved at the snapshot — by construction,
+        // the snapshot reflects ref state at capture time, so a freshly
+        // captured snapshot post-`update-ref` observes the new local target
+        // SHA correctly. (PR #2507's `ref_is_ancestor` workaround dissolves
+        // here.)
+        let target_sha = snapshot_resolve(self, snapshot, target)?;
+
         let (check_local, fallback_upstream) = match upstream {
             None => (true, None),
-            Some(u) if self.same_commit(target, &u).unwrap_or(false) => (true, None),
-            Some(u) if ref_is_ancestor(self, target, &u) => {
-                // Local strictly behind upstream — upstream is the superset.
-                let signals = compute_integration_lazy(self, branch, &u)?;
-                return Ok((u, check_integration(&signals)));
-            }
-            Some(u) if ref_is_ancestor(self, &u, target) => {
-                // Upstream strictly behind local — local is the superset.
-                (true, None)
-            }
             Some(u) => {
-                // Diverged — check local first, fall back to upstream.
-                (true, Some(u))
+                let upstream_sha = snapshot_resolve(self, snapshot, &u)?;
+                if target_sha == upstream_sha {
+                    (true, None)
+                } else if self.is_ancestor_by_sha(&target_sha, &upstream_sha)? {
+                    // Local strictly behind upstream — upstream is the superset.
+                    let signals = compute_integration_lazy(self, snapshot, branch, &u)?;
+                    return Ok((u, check_integration(&signals)));
+                } else if self.is_ancestor_by_sha(&upstream_sha, &target_sha)? {
+                    // Upstream strictly behind local — local is the superset.
+                    (true, None)
+                } else {
+                    // Diverged — check local first, fall back to upstream.
+                    (true, Some(u))
+                }
             }
         };
 
         if check_local
             && let Some(reason) =
-                check_integration(&compute_integration_lazy(self, branch, target)?)
+                check_integration(&compute_integration_lazy(self, snapshot, branch, target)?)
         {
             return Ok((target.to_string(), Some(reason)));
         }
 
         if let Some(upstream) = fallback_upstream
-            && let Some(reason) =
-                check_integration(&compute_integration_lazy(self, branch, &upstream)?)
+            && let Some(reason) = check_integration(&compute_integration_lazy(
+                self, snapshot, branch, &upstream,
+            )?)
         {
             return Ok((upstream, Some(reason)));
         }
@@ -709,17 +778,17 @@ impl Repository {
     }
 }
 
-/// Run `git merge-base --is-ancestor` directly with ref names, bypassing
-/// `Repository::is_ancestor`'s SHA cache.
-///
-/// `is_ancestor` resolves both refs through the cached `rev_parse_commit`,
-/// so a ref that was updated mid-command (e.g. `wt merge` rewriting local
-/// `main`) returns its old SHA. For relationships where freshness matters —
-/// in particular comparing a just-updated local target against its upstream —
-/// running git directly with ref names dodges that staleness.
-fn ref_is_ancestor(repo: &Repository, base: &str, head: &str) -> bool {
-    repo.run_command_check(&["merge-base", "--is-ancestor", base, head])
-        .unwrap_or(false)
+/// Resolve a ref name through `snapshot`, falling back to an uncached
+/// `git rev-parse` for refs the snapshot doesn't carry.
+fn snapshot_resolve(
+    repo: &Repository,
+    snapshot: &RefSnapshot,
+    name: &str,
+) -> anyhow::Result<String> {
+    if let Some(sha) = snapshot.resolve(name) {
+        return Ok(sha.to_string());
+    }
+    Ok(repo.run_command(&["rev-parse", name])?.trim().to_string())
 }
 
 /// Returns true when `s` is a 40-character hex string — the canonical form

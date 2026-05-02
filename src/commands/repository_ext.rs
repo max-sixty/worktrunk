@@ -97,6 +97,10 @@ impl RepositoryCliExt for Repository {
         // worktree, then repo base for bare repos with no worktrees.
         let primary_path = self.home_path()?;
 
+        // Capture ref state once for this preparation pass — both
+        // `compute_integration_reason` calls below resolve through it.
+        let snapshot = self.capture_refs()?;
+
         // Phase 1: Resolve target to branch name and worktree disposition.
         // BranchOnly variants don't early-return — they go through shared validation below.
         enum Resolved {
@@ -223,8 +227,13 @@ impl RepositoryCliExt for Repository {
             Resolved::BranchOnly { branch, pruned } => {
                 let default_branch = self.default_branch();
                 let target = default_branch.as_deref().or(Some("HEAD"));
-                let (integration_reason, target_branch) =
-                    compute_integration_reason(self, Some(&branch), target, deletion_mode);
+                let (integration_reason, target_branch) = compute_integration_reason(
+                    self,
+                    &snapshot,
+                    Some(&branch),
+                    target,
+                    deletion_mode,
+                );
                 return Ok(RemoveResult::BranchOnly {
                     branch_name: branch,
                     deletion_mode,
@@ -272,6 +281,7 @@ impl RepositoryCliExt for Repository {
         // display (e.g., origin/main when upstream is ahead).
         let (integration_reason, effective_target) = compute_integration_reason(
             self,
+            &snapshot,
             branch_name.as_deref(),
             target_branch.as_deref(),
             deletion_mode,
@@ -444,6 +454,7 @@ pub(crate) fn is_primary_worktree(repo: &Repository) -> anyhow::Result<bool> {
 /// if the flag had an effect (branch was integrated) or not (branch was unmerged).
 pub(crate) fn compute_integration_reason(
     repo: &Repository,
+    snapshot: &worktrunk::git::RefSnapshot,
     branch_name: Option<&str>,
     target_branch: Option<&str>,
     deletion_mode: BranchDeletionMode,
@@ -458,7 +469,7 @@ pub(crate) fn compute_integration_reason(
         None => return (None, None),
     };
     // On error, return None (informational only)
-    match repo.integration_reason(branch, target) {
+    match repo.integration_reason(snapshot, branch, target) {
         Ok((effective_target, reason)) => (reason, Some(effective_target)),
         Err(_) => (None, None),
     }

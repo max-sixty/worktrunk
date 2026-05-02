@@ -1249,8 +1249,10 @@ fn handle_detached_removed_worktree_output(
                 format_path_for_display(ctx.worktree_path)
             ))
         );
+        let snapshot = repo.capture_refs()?;
         let output = remove_worktree_with_cleanup(
             repo,
+            &snapshot,
             ctx.worktree_path,
             RemoveOptions {
                 branch: None,
@@ -1323,8 +1325,10 @@ fn handle_named_removed_worktree_foreground(
         );
     }
 
+    let snapshot = repo.capture_refs()?;
     let output = remove_worktree_with_cleanup(
         repo,
+        &snapshot,
         ctx.worktree_path,
         RemoveOptions {
             branch: Some(branch_name.to_string()),

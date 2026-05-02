@@ -1290,7 +1290,12 @@ pub fn step_prune(
     let repo = Repository::current()?;
     let config = UserConfig::load()?;
 
-    let integration_target = match repo.integration_target() {
+    // Capture once at command entry. Reused for the integration target
+    // resolution below and for every per-branch `integration_reason`
+    // probe later in this function.
+    let snapshot = repo.capture_refs()?;
+
+    let integration_target = match repo.integration_target(&snapshot) {
         Some(target) => target,
         None => {
             anyhow::bail!("cannot determine default branch");
@@ -1547,12 +1552,13 @@ pub fn step_prune(
     // integration_refs produces an empty par_iter that completes immediately.
     let repo_clone = repo.clone();
     let target = integration_target.clone();
+    let snapshot_arc = std::sync::Arc::new(snapshot.clone());
     std::thread::spawn(move || {
         integration_refs
             .into_par_iter()
             .enumerate()
             .for_each(|(idx, ref_name)| {
-                let result = repo_clone.integration_reason(&ref_name, &target);
+                let result = repo_clone.integration_reason(&snapshot_arc, &ref_name, &target);
                 let _ = tx.send((idx, result));
             });
     });

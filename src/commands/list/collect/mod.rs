@@ -315,6 +315,16 @@ pub struct CollectOptions {
     /// over them, matching `Repository::integration_reason`. `None` when
     /// the default branch is unset or stale.
     pub integration_targets: Option<worktrunk::git::IntegrationTargets>,
+
+    /// Captured ref state for this list invocation.
+    ///
+    /// Built once during the pre-skeleton phase by
+    /// [`Repository::capture_refs_with_ahead_behind`] and shared (cheaply,
+    /// behind `Arc`) into every task. Tasks resolve target ref names to
+    /// commit SHAs through this snapshot, then call the `_by_sha` variants
+    /// of cached methods — bypassing the ambient ref→SHA cache entirely.
+    /// `None` when capture failed (degraded mode).
+    pub snapshot: Option<std::sync::Arc<worktrunk::git::RefSnapshot>>,
 }
 
 fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
@@ -882,6 +892,7 @@ pub fn collect(
         llm_command,
         default_branch: default_branch.clone(),
         integration_targets: None,
+        snapshot: None,
     };
 
     // Track expected results per item - populated as spawns are queued
@@ -1006,8 +1017,7 @@ pub fn collect(
     // See: https://gitlab.com/gitlab-org/git/-/merge_requests/148 (scalar's fsmonitor workaround)
     // See: https://github.com/jj-vcs/jj/issues/6440 (jj hit same fsmonitor issue)
     let previous_branch_cell: OnceCell<Option<String>> = OnceCell::new();
-    let integration_targets_cell: OnceCell<Option<worktrunk::git::IntegrationTargets>> =
-        OnceCell::new();
+    let snapshot_cell: OnceCell<Option<worktrunk::git::RefSnapshot>> = OnceCell::new();
 
     rayon::scope(|s| {
         // Previous branch lookup (for gutter symbol)
@@ -1015,10 +1025,17 @@ pub fn collect(
             let _ = previous_branch_cell.set(repo.switch_previous());
         });
 
-        // Integration targets (primary plus optional secondary in the
-        // diverged case — see `Repository::integration_targets`).
+        // Capture ref state. One `for-each-ref refs/heads/ refs/remotes/`
+        // plus (when default_branch is known) one `for-each-ref
+        // %(ahead-behind:BASE)` batch. The snapshot replaces the prior
+        // `commit_shas` priming + `batch_ahead_behind` pair: tasks consume
+        // it by SHA, dodging ref→SHA cache staleness.
         s.spawn(|_| {
-            let _ = integration_targets_cell.set(repo.integration_targets());
+            let snap = match default_branch.as_deref() {
+                Some(db) => repo.capture_refs_with_ahead_behind(db).ok(),
+                None => repo.capture_refs().ok(),
+            };
+            let _ = snapshot_cell.set(snap);
         });
 
         // Fsmonitor daemon starts (one spawn per worktree)
@@ -1031,16 +1048,27 @@ pub fn collect(
 
     // Extract results from cells
     let previous_branch = previous_branch_cell.into_inner().flatten();
-    let integration_targets = integration_targets_cell.into_inner().flatten();
+    let snapshot = snapshot_cell
+        .into_inner()
+        .flatten()
+        .map(std::sync::Arc::new);
 
-    // Patch integration_targets into options now that they're resolved.
-    // When default_branch is None (unset or stale), also null it out —
-    // tasks otherwise see a target derived from the stale value and emit
-    // "ambiguous argument" noise.
+    // Resolve integration targets from the snapshot. Same OR semantics
+    // as `Repository::integration_reason` (`primary` + optional
+    // `secondary` only in the diverged case).
+    let integration_targets = snapshot
+        .as_deref()
+        .and_then(|s| repo.integration_targets(s));
+
+    // Patch integration_targets and snapshot into options. When
+    // default_branch is None (unset or stale), null integration_targets
+    // out — tasks otherwise see a target derived from the stale value
+    // and emit "ambiguous argument" noise.
     options.integration_targets = options
         .default_branch
         .as_ref()
         .and(integration_targets.clone());
+    options.snapshot = snapshot;
 
     // Update is_previous on items
     if let Some(prev) = previous_branch.as_deref() {
@@ -1071,20 +1099,10 @@ pub fn collect(
         }
     }
 
-    // Batch-fetch ahead/behind counts for all local branches in a single
-    // `git for-each-ref` call. Primes the Repository cache so each
-    // `AheadBehindTask` hits the cache instead of spawning its own
-    // `git rev-list --count`. One git call replaces N.
-    //
-    // Note: `resolved_refs`, `commit_shas`, and upstream tracking info are
-    // already primed by `local_branches()` (called during pre-skeleton
-    // phase), so `Branch::upstream()` is an in-memory lookup from here on.
-    //
-    // On git < 2.36 (no `%(ahead-behind:)` support) or if default_branch is
-    // unknown, skip the batch — individual tasks fall back to direct calls.
-    if let Some(ref db) = default_branch {
-        repo.batch_ahead_behind(db);
-    }
+    // No need to prime the ambient `cache.ahead_behind` here: the
+    // snapshot captured above carries the same batched data, and all
+    // tasks consume it by SHA. (Step 5 deletes `cache.ahead_behind`
+    // entirely.)
 
     // Note: URL template expansion is deferred to task spawning (in collect_worktree_progressive
     // and collect_branch_progressive). This parallelizes the work and minimizes time-to-skeleton.
@@ -1207,7 +1225,10 @@ pub fn collect(
     let reveal_at = (progressive_state.is_some() || progressive_handler.is_some())
         .then_some(placeholder_reveal_at);
 
-    let primary_target = integration_targets.as_ref().map(|t| t.primary.as_str());
+    let primary_target = options
+        .integration_targets
+        .as_ref()
+        .map(|t| t.primary.as_str());
 
     let drain_outcome = drain_results(
         rx,
@@ -1613,20 +1634,26 @@ pub fn populate_item(
         return Ok(());
     };
 
-    // Get integration targets for status symbol computation (cached in repo)
-    // None if default branch cannot be determined - status symbols will be skipped
-    let targets = repo.integration_targets();
-
-    // Populate default_branch / integration_targets if the caller didn't.
-    // Tasks read these through `TaskContext`; `None` here tells them to
-    // skip (see collect()'s stale-default-branch path). Single-item callers
-    // like statusline pass `CollectOptions::default()` and expect the
-    // repo-derived values.
+    // Populate default_branch / snapshot / integration_targets if the
+    // caller didn't. Tasks read these through `TaskContext`; `None`
+    // values tell them to skip (see collect()'s stale-default-branch
+    // path). Single-item callers like statusline pass
+    // `CollectOptions::default()` and expect the repo-derived values.
     if options.default_branch.is_none() {
         options.default_branch = repo.default_branch();
     }
+    if options.snapshot.is_none() {
+        options.snapshot = match options.default_branch.as_deref() {
+            Some(db) => repo.capture_refs_with_ahead_behind(db).ok(),
+            None => repo.capture_refs().ok(),
+        }
+        .map(std::sync::Arc::new);
+    }
     if options.integration_targets.is_none() {
-        options.integration_targets = targets.clone();
+        options.integration_targets = options
+            .snapshot
+            .as_deref()
+            .and_then(|s| repo.integration_targets(s));
     }
 
     // Create channel for task results
@@ -1684,7 +1711,10 @@ pub fn populate_item(
         &mut errors,
         &expected_results,
         std::time::Instant::now() + results::DRAIN_TIMEOUT,
-        targets.as_ref().map(|t| t.primary.as_str()),
+        options
+            .integration_targets
+            .as_ref()
+            .map(|t| t.primary.as_str()),
         |_event| {},
         None,
     );
@@ -1713,7 +1743,12 @@ pub fn populate_item(
 
     // Ensure status symbols are refreshed even if all tasks errored
     // (the drain only calls refresh on the success path).
-    item.refresh_status_symbols(targets.as_ref().map(|t| t.primary.as_str()));
+    item.refresh_status_symbols(
+        options
+            .integration_targets
+            .as_ref()
+            .map(|t| t.primary.as_str()),
+    );
 
     // Populate display fields (including status_line for statusline command)
     item.finalize_display();

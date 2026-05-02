@@ -144,27 +144,18 @@ impl Repository {
             .map(Vec::as_slice)
     }
 
-    /// Run the local-branch scan and prime SHA/ref caches.
+    /// Run the local-branch scan.
+    ///
+    /// The inventory's `commit_sha` fields are a snapshot at scan time —
+    /// callers that need a current SHA must resolve through a
+    /// [`crate::git::RefSnapshot`] captured at the moment of the read,
+    /// not through this inventory.
     fn scan_local_branches(&self) -> anyhow::Result<LocalBranchInventory> {
         let output = self.run_command(&["for-each-ref", LOCAL_BRANCH_FORMAT, "refs/heads/"])?;
 
         let mut branches: Vec<LocalBranch> =
             output.lines().filter_map(parse_local_branch_line).collect();
         branches.sort_by_key(|b| std::cmp::Reverse(b.committer_ts));
-
-        for branch in &branches {
-            let qualified = format!("refs/heads/{}", branch.name);
-            self.cache
-                .resolved_refs
-                .insert(branch.name.clone(), qualified.clone());
-            self.cache
-                .commit_shas
-                .insert(qualified, branch.commit_sha.clone());
-            self.cache
-                .commit_shas
-                .insert(branch.name.clone(), branch.commit_sha.clone());
-        }
-
         Ok(LocalBranchInventory::new(branches))
     }
 

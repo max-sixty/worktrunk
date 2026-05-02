@@ -89,7 +89,7 @@ use dunce::canonicalize;
 use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
-use super::{DefaultBranchName, GitError, IntegrationReason, LineDiff, WorktreeInfo};
+use super::{DefaultBranchName, GitError, LineDiff, WorktreeInfo};
 
 // Re-export types needed by submodules
 pub(super) use super::{
@@ -225,8 +225,6 @@ pub(super) struct RepoCache {
     pub(super) repo_path: OnceCell<PathBuf>,
     /// Default branch (main, master, etc.)
     pub(super) default_branch: OnceCell<Option<String>>,
-    /// Effective integration target (local default branch or upstream if ahead)
-    pub(super) integration_target: OnceCell<Option<String>>,
     /// Project identifier derived from remote URL
     pub(super) project_identifier: OnceCell<String>,
     /// Project config (loaded from .config/wt.toml in main worktree)
@@ -239,52 +237,33 @@ pub(super) struct RepoCache {
     pub(super) resolved_config: OnceCell<ResolvedConfig>,
     /// Sparse checkout paths (empty if not a sparse checkout)
     pub(super) sparse_checkout_paths: OnceCell<Vec<String>>,
-    /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
+    /// Merge-base cache: (sha1, sha2) -> merge_base_sha (None = no common ancestor).
+    /// Keys are commit SHAs by contract — callers must resolve refs through
+    /// a [`RefSnapshot`] before consulting. The key order is normalized
+    /// (`(min, max)`) since merge-base is symmetric.
     pub(super) merge_base: DashMap<(String, String), Option<String>>,
-    /// Ahead/behind cache: (base_ref, head) -> (ahead, behind).
-    /// Primed in bulk by `batch_ahead_behind()`; populated on demand by
-    /// `ahead_behind()` for keys the batch didn't cover (e.g., HEAD SHAs
-    /// during rebase/merge, or git < 2.36 where the batch is a no-op).
-    pub(super) ahead_behind: DashMap<(String, String), (usize, usize)>,
     /// Effective remote URLs: remote_name -> effective URL (with `url.insteadOf` applied).
     /// Separate from `all_config` because `git remote get-url` applies
     /// `url.insteadOf` rewrites that aren't visible in raw config.
     pub(super) effective_remote_urls: DashMap<String, Option<String>>,
-    /// Resolved refs: unresolved ref (e.g., "main") -> resolved form (e.g., "refs/heads/main")
-    /// or original if not a local branch. Populated by `resolve_preferring_branch()`.
-    pub(super) resolved_refs: DashMap<String, String>,
-    /// Effective integration targets: local_target -> effective ref (may be upstream).
-    /// Cached because `integration_reason()` calls `effective_integration_target()` for
-    /// every branch, but the result depends only on the target ref's relationship with
-    /// its upstream — stable for the duration of a command.
-    pub(super) effective_integration_targets: DashMap<String, String>,
-    /// Integration reason cache: (branch, target) -> (effective_target, reason).
-    /// Populated by `integration_reason()`, avoids redundant `compute_integration_lazy()`
-    /// calls when the same branch is checked multiple times (e.g., step_prune Phase 1
-    /// followed by prepare_worktree_removal).
-    pub(super) integration_reasons: DashMap<(String, String), (String, Option<IntegrationReason>)>,
-
-    /// Tree SHA cache: tree spec (e.g., "refs/heads/main^{tree}") -> SHA.
-    /// The tree SHA for a given ref doesn't change during a command.
-    pub(super) tree_shas: DashMap<String, String>,
-
-    /// Commit SHA cache: ref (e.g., "main", "refs/heads/main") -> commit SHA.
-    /// The commit SHA for a given ref doesn't change during a command.
-    /// Used by `rev_parse_commit()` to key the persistent `sha_cache` by SHA.
-    pub(super) commit_shas: DashMap<String, String>,
 
     /// Local branch inventory: one `git for-each-ref refs/heads/` scan, cached
     /// for the lifetime of the repository. Entries are sorted by most recent
     /// commit first; the inventory also holds a name → index map for O(1)
     /// single-branch lookups. Populated lazily via
-    /// [`Repository::local_branches`] — the first call runs the scan and
-    /// primes `resolved_refs`/`commit_shas` so subsequent ref resolution and
-    /// SHA lookups hit memory.
+    /// [`Repository::local_branches`].
+    ///
+    /// **The `commit_sha` field on each entry is a snapshot at scan time.**
+    /// Code that needs a current SHA must resolve through a [`RefSnapshot`]
+    /// captured at the moment the read happens — not through this inventory.
+    /// The inventory is used for branch-name listing and upstream-tracking
+    /// metadata, both of which are stable for the duration of a command.
     pub(super) local_branches: OnceCell<branches::LocalBranchInventory>,
     /// Remote-tracking branch inventory: one `git for-each-ref refs/remotes/`
     /// scan, cached for the lifetime of the repository. Sorted by most recent
     /// commit first. Populated lazily via [`Repository::remote_branches`].
-    /// Excludes `<remote>/HEAD` symrefs.
+    /// Excludes `<remote>/HEAD` symrefs. Same snapshot-at-scan-time contract
+    /// as [`Self::local_branches`] applies to `commit_sha`.
     pub(super) remote_branches: OnceCell<Vec<RemoteBranch>>,
     /// Worktree inventory: one `git worktree list --porcelain` scan, cached
     /// for the lifetime of the repository. Populated lazily via

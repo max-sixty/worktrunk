@@ -158,19 +158,26 @@ impl Repository {
         // `resolve_to_commit_sha` is a no-op for inputs that already look like SHAs.
         let sha1 = self.resolve_to_commit_sha(commit1)?;
         let sha2 = self.resolve_to_commit_sha(commit2)?;
+        self.merge_base_by_sha(&sha1, &sha2)
+    }
 
+    /// SHA-keyed variant of [`Self::merge_base`].
+    ///
+    /// Inputs are commit SHAs. Skips the ambient ref→SHA conversion
+    /// entirely; cache key is `(min(sha1, sha2), max(sha1, sha2))`.
+    pub fn merge_base_by_sha(&self, sha1: &str, sha2: &str) -> anyhow::Result<Option<String>> {
         // Normalize key order since merge-base is symmetric.
         let key = if sha1 <= sha2 {
-            (sha1.clone(), sha2.clone())
+            (sha1.to_string(), sha2.to_string())
         } else {
-            (sha2.clone(), sha1.clone())
+            (sha2.to_string(), sha1.to_string())
         };
 
         match self.cache.merge_base.entry(key) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
                 // Exit codes: 0 = found, 1 = no common ancestor, 128+ = invalid ref
-                let output = self.run_command_output(&["merge-base", &sha1, &sha2])?;
+                let output = self.run_command_output(&["merge-base", sha1, sha2])?;
 
                 let result = if output.status.success() {
                     Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
@@ -178,10 +185,7 @@ impl Repository {
                     None
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    bail!(
-                        "git merge-base failed for {commit1} {commit2}: {}",
-                        stderr.trim()
-                    );
+                    bail!("git merge-base failed for {sha1} {sha2}: {}", stderr.trim());
                 };
 
                 Ok(e.insert(result).clone())
@@ -189,27 +193,20 @@ impl Repository {
         }
     }
 
-    /// Calculate commits ahead and behind between two refs.
+    /// SHA-keyed ahead/behind counts.
     ///
-    /// Returns (ahead, behind) where ahead is commits in head not in base,
-    /// and behind is commits in base not in head.
-    ///
-    /// For orphan branches with no common ancestor, returns `(0, 0)`.
-    /// Caller should check for orphan status separately via `merge_base()`.
-    ///
-    /// Results are cached in the shared repo cache. `batch_ahead_behind()`
-    /// primes the cache for all local branches at once via a single
-    /// `for-each-ref`; subsequent calls here hit the cache. On a miss, falls
-    /// back to `merge_base()` + `rev-list --count`, also cached on insert.
-    pub fn ahead_behind(&self, base: &str, head: &str) -> anyhow::Result<(usize, usize)> {
-        let key = (base.to_string(), head.to_string());
-        match self.cache.ahead_behind.entry(key) {
-            Entry::Occupied(e) => Ok(*e.get()),
-            Entry::Vacant(e) => {
-                let counts = self.compute_ahead_behind(base, head)?;
-                Ok(*e.insert(counts))
-            }
-        }
+    /// Inputs are commit SHAs. Uncached — counts are typically primed in
+    /// bulk by [`crate::git::RefSnapshot`]'s ahead/behind batch; this is
+    /// the per-pair fallback for snapshot misses or callers that already
+    /// hold SHAs. Returns `(ahead, behind)` where ahead is commits in
+    /// head not in base; orphan branches (no common ancestor) yield
+    /// `(0, 0)` — caller should distinguish via [`Self::merge_base_by_sha`].
+    pub fn ahead_behind_by_sha(
+        &self,
+        base_sha: &str,
+        head_sha: &str,
+    ) -> anyhow::Result<(usize, usize)> {
+        self.compute_ahead_behind(base_sha, head_sha)
     }
 
     fn compute_ahead_behind(&self, base: &str, head: &str) -> anyhow::Result<(usize, usize)> {
@@ -247,51 +244,6 @@ impl Repository {
         Ok((ahead, behind))
     }
 
-    /// Prime `cache.ahead_behind` for all local branches vs a base ref.
-    ///
-    /// Uses `git for-each-ref --format='%(ahead-behind:BASE)'` (git 2.36+) to
-    /// compute all counts in a single command, so subsequent `ahead_behind()`
-    /// calls hit the cache.
-    ///
-    /// On git < 2.36 or if the command fails, this is a no-op and
-    /// `ahead_behind()` falls back to per-branch computation.
-    pub fn batch_ahead_behind(&self, base: &str) {
-        // Uses `%(refname)` (full ref) rather than `%(refname:lstrip=2)` so the
-        // cache key matches what `AheadBehindTask` queries — that task passes
-        // `BranchRef::full_ref()` (e.g., `refs/heads/feature`). Keying by short
-        // names would force every row to miss the batch cache and fall back to
-        // per-branch `rev-list --count`.
-        let format = format!("%(refname) %(ahead-behind:{})", base);
-        let output = match self.run_command(&[
-            "for-each-ref",
-            &format!("--format={}", format),
-            "refs/heads/",
-        ]) {
-            Ok(output) => output,
-            Err(e) => {
-                // Fails on git < 2.36 (no %(ahead-behind:) support), invalid base ref, etc.
-                log::debug!("batch_ahead_behind({base}): git for-each-ref failed: {e}");
-                return;
-            }
-        };
-
-        output
-            .lines()
-            .filter_map(|line| {
-                // Format: "refs/heads/branch-name ahead behind"
-                let mut parts = line.rsplitn(3, ' ');
-                let behind: usize = parts.next()?.parse().ok()?;
-                let ahead: usize = parts.next()?.parse().ok()?;
-                let full_ref = parts.next()?;
-                Some((full_ref, ahead, behind))
-            })
-            .for_each(|(full_ref, ahead, behind)| {
-                self.cache
-                    .ahead_behind
-                    .insert((base.to_string(), full_ref.to_string()), (ahead, behind));
-            });
-    }
-
     /// Get line diff statistics between two refs.
     ///
     /// Uses merge-base (cached) to find common ancestor, then two-dot diff
@@ -300,10 +252,20 @@ impl Repository {
     ///
     /// For orphan branches with no common ancestor, returns zeros.
     pub fn branch_diff_stats(&self, base: &str, head: &str) -> anyhow::Result<LineDiff> {
-        use dashmap::mapref::entry::Entry;
-
         let base_sha = self.rev_parse_commit(base)?;
         let head_sha = self.rev_parse_commit(head)?;
+        self.branch_diff_stats_by_sha(&base_sha, &head_sha)
+    }
+
+    /// SHA-keyed variant of [`Self::branch_diff_stats`].
+    ///
+    /// Inputs are commit SHAs. Bypasses the ambient ref→SHA cache.
+    pub fn branch_diff_stats_by_sha(
+        &self,
+        base_sha: &str,
+        head_sha: &str,
+    ) -> anyhow::Result<LineDiff> {
+        use dashmap::mapref::entry::Entry;
 
         // Sparse checkout filters the diff by path, making the result
         // environment-dependent rather than purely SHA-determined. Skip
@@ -317,18 +279,18 @@ impl Repository {
             match self
                 .cache
                 .diff_stats
-                .entry((base_sha.clone(), head_sha.clone()))
+                .entry((base_sha.to_string(), head_sha.to_string()))
             {
                 Entry::Occupied(e) => return Ok(*e.get()),
                 Entry::Vacant(e) => {
                     let result =
-                        self.compute_branch_diff_stats(&base_sha, &head_sha, sparse_paths)?;
+                        self.compute_branch_diff_stats(base_sha, head_sha, sparse_paths)?;
                     return Ok(*e.insert(result));
                 }
             }
         }
 
-        self.compute_branch_diff_stats(&base_sha, &head_sha, sparse_paths)
+        self.compute_branch_diff_stats(base_sha, head_sha, sparse_paths)
     }
 
     fn compute_branch_diff_stats(
@@ -382,46 +344,5 @@ impl Repository {
             .ok()
             .map(|output| DiffStats::from_shortstat(&output).format_summary())
             .unwrap_or_default()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::git::Repository;
-    use crate::testing::TestRepo;
-
-    #[test]
-    fn batch_ahead_behind_keys_cache_by_full_ref() {
-        // Callers in `wt list` pass `BranchRef::full_ref()` (`refs/heads/<name>`)
-        // into `ahead_behind`. This test pins the batch cache to the same key
-        // shape — short-name keys would force every row to miss the batch and
-        // fall back to per-branch `rev-list --count`.
-        let test = TestRepo::with_initial_commit();
-        let repo = Repository::at(test.path()).unwrap();
-
-        test.create_branch("feature");
-        test.run_git(&["checkout", "feature"]);
-        std::fs::write(test.path().join("f.txt"), "x").unwrap();
-        test.run_git(&["add", "."]);
-        test.run_git(&["commit", "-m", "feature"]);
-        test.run_git(&["checkout", "main"]);
-
-        repo.batch_ahead_behind("main");
-
-        assert_eq!(
-            repo.cache
-                .ahead_behind
-                .get(&("main".to_string(), "refs/heads/feature".to_string()))
-                .map(|v| *v),
-            Some((1, 0)),
-            "batch must prime cache under the full ref key"
-        );
-        assert!(
-            repo.cache
-                .ahead_behind
-                .get(&("main".to_string(), "feature".to_string()))
-                .is_none(),
-            "short-name key must not be used",
-        );
     }
 }

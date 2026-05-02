@@ -228,40 +228,51 @@ pub fn check_integration(signals: &IntegrationSignals) -> Option<IntegrationReas
 ///
 /// Used by `wt remove` and `wt merge` for single-branch checks.
 /// For batch operations, use parallel tasks to build [`IntegrationSignals`] directly.
+///
+/// Resolves both `branch` and `target` to commit SHAs via `snapshot` so the
+/// integration probes are immune to ambient ref→SHA cache staleness — this
+/// is the safety contract that lets `wt merge`'s post-update-ref check
+/// observe the new local target SHA instead of the pre-merge value.
+/// Refs not in the snapshot (typically transient HEAD commits during a
+/// rebase, or raw SHAs) fall back to uncached `git rev-parse`.
 #[allow(clippy::field_reassign_with_default)] // Intentional: short-circuit populates fields incrementally
 pub fn compute_integration_lazy(
     repo: &Repository,
+    snapshot: &RefSnapshot,
     branch: &str,
     target: &str,
 ) -> anyhow::Result<IntegrationSignals> {
     let mut signals = IntegrationSignals::default();
 
+    let branch_sha = resolve_via_snapshot(repo, snapshot, branch)?;
+    let target_sha = resolve_via_snapshot(repo, snapshot, target)?;
+
     // Priority 1: Same commit
-    signals.is_same_commit = Some(repo.same_commit(branch, target)?);
+    signals.is_same_commit = Some(branch_sha == target_sha);
     if signals.is_same_commit == Some(true) {
         return Ok(signals);
     }
 
     // Priority 2: Ancestor
-    signals.is_ancestor = Some(repo.is_ancestor(branch, target)?);
+    signals.is_ancestor = Some(repo.is_ancestor_by_sha(&branch_sha, &target_sha)?);
     if signals.is_ancestor == Some(true) {
         return Ok(signals);
     }
 
     // Priority 3: No added changes
-    signals.has_added_changes = Some(repo.has_added_changes(branch, target)?);
+    signals.has_added_changes = Some(repo.has_added_changes_by_sha(&branch_sha, &target_sha)?);
     if signals.has_added_changes == Some(false) {
         return Ok(signals);
     }
 
     // Priority 4: Trees match
-    signals.trees_match = Some(repo.trees_match(branch, target)?);
+    signals.trees_match = Some(repo.trees_match_by_sha(&branch_sha, &target_sha)?);
     if signals.trees_match == Some(true) {
         return Ok(signals);
     }
 
     // Priority 5+6: Merge-tree simulation + patch-id fallback
-    let probe = repo.merge_integration_probe(branch, target)?;
+    let probe = repo.merge_integration_probe_by_sha(&branch_sha, &target_sha)?;
     signals.would_merge_add = Some(probe.would_merge_add);
     if !probe.would_merge_add {
         return Ok(signals);
@@ -269,6 +280,21 @@ pub fn compute_integration_lazy(
     signals.is_patch_id_match = Some(probe.is_patch_id_match);
 
     Ok(signals)
+}
+
+/// Resolve a ref name through the snapshot, falling back to an uncached
+/// `git rev-parse` for refs the snapshot doesn't carry (HEAD, raw SHAs,
+/// tags, transient rebase commits). Used by [`compute_integration_lazy`]
+/// at the boundary into SHA-keyed integration probes.
+fn resolve_via_snapshot(
+    repo: &Repository,
+    snapshot: &RefSnapshot,
+    name: &str,
+) -> anyhow::Result<String> {
+    if let Some(sha) = snapshot.resolve(name) {
+        return Ok(sha.to_string());
+    }
+    Ok(repo.run_command(&["rev-parse", name])?.trim().to_string())
 }
 
 /// Category of branch for completion display

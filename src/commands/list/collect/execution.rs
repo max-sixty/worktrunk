@@ -357,6 +357,7 @@ pub fn work_items_for_worktree(
         llm_command: options.llm_command.clone(),
         default_branch: options.default_branch.clone(),
         integration_targets: options.integration_targets.clone(),
+        snapshot: options.snapshot.clone(),
     };
 
     let has_commits = wt.has_commits();
@@ -469,6 +470,7 @@ pub fn work_items_for_branch(
         llm_command: options.llm_command.clone(),
         default_branch: options.default_branch.clone(),
         integration_targets: options.integration_targets.clone(),
+        snapshot: options.snapshot.clone(),
     };
 
     let mut items = Vec::with_capacity(11);
@@ -546,6 +548,7 @@ mod tests {
             llm_command: None,
             default_branch: None,
             integration_targets: None,
+            snapshot: None,
         };
 
         let expected_results = Arc::new(ExpectedResults::default());
@@ -590,6 +593,7 @@ mod tests {
             url_template: None,
             default_branch: None,
             integration_targets: None,
+            snapshot: None,
         };
 
         let expected_results = Arc::new(ExpectedResults::default());

@@ -207,8 +207,10 @@ impl PickerCollector {
                     None, // no display path in TUI context
                 )?;
 
+                let snapshot = repo.capture_refs()?;
                 let output = remove_worktree_with_cleanup(
                     &repo,
+                    &snapshot,
                     worktree_path,
                     RemoveOptions {
                         branch: branch_name.clone(),
@@ -248,8 +250,15 @@ impl PickerCollector {
                 if !deletion_mode.should_keep() {
                     let default_branch = repo.default_branch();
                     let target = default_branch.as_deref().unwrap_or("HEAD");
-                    let _ =
-                        delete_branch_if_safe(repo, branch_name, target, deletion_mode.is_force());
+                    if let Ok(snapshot) = repo.capture_refs() {
+                        let _ = delete_branch_if_safe(
+                            repo,
+                            &snapshot,
+                            branch_name,
+                            target,
+                            deletion_mode.is_force(),
+                        );
+                    }
                 }
             }
         }
