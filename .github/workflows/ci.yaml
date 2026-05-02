@@ -346,7 +346,27 @@ jobs:
         restore-keys: |
           cargo-affected-db-v1-${{ runner.os }}-
 
+    - name: DEBUG — coverage.db state pre-test-setup
+      if: always()
+      run: |
+        echo "=== before test-setup ==="
+        ls -la target/affected/ 2>&1 || echo "no target/affected"
+        if [ -f target/affected/coverage.db ]; then
+          stat target/affected/coverage.db
+          echo "size=$(wc -c <target/affected/coverage.db)"
+        fi
+
     - uses: ./.github/actions/test-setup
+
+    - name: DEBUG — coverage.db state post-test-setup
+      if: always()
+      run: |
+        echo "=== after test-setup ==="
+        ls -la target/affected/ 2>&1 || echo "no target/affected"
+        if [ -f target/affected/coverage.db ]; then
+          stat target/affected/coverage.db
+          echo "size=$(wc -c <target/affected/coverage.db)"
+        fi
 
     - name: Install cargo-affected
       uses: baptiste0928/cargo-install@v3
