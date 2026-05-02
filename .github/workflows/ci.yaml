@@ -334,6 +334,14 @@ jobs:
         echo "sha=$sha" >> "$GITHUB_OUTPUT"
         echo "merge-base with origin/main: $sha"
 
+    - uses: ./.github/actions/test-setup
+
+    # Restore AFTER test-setup so we land on top of rust-cache's tar
+    # extraction. rust-cache's restore step calls `cleanTargetDir` on a
+    # partial cache hit (`full match: false`), which deletes file children
+    # of `target/affected/` — including a `coverage.db` we'd just dropped
+    # there. Order: rust-cache populates `target/` first; we then drop the
+    # DB on top, where nothing else touches it.
     - name: 💾 Restore coverage DB
       uses: actions/cache/restore@v5
       with:
@@ -341,32 +349,11 @@ jobs:
         # Exact match: collect ran on the PR's merge-base → tight diff.
         key: cargo-affected-db-v1-${{ runner.os }}-${{ steps.mb.outputs.sha }}
         # Fallback: most recent main DB. cargo-affected runs all tests when
-        # collect_sha isn't an ancestor of HEAD; with no DB at all it does
-        # the same. Either way the run produces a useful signal.
+        # the cached `collect_sha` is missing from the repo (rebased and
+        # pruned, beyond a shallow clone boundary). Sibling shas — including
+        # PR-vs-main-tip — drive normal selection.
         restore-keys: |
           cargo-affected-db-v1-${{ runner.os }}-
-
-    - name: DEBUG — coverage.db state pre-test-setup
-      if: always()
-      run: |
-        echo "=== before test-setup ==="
-        ls -la target/affected/ 2>&1 || echo "no target/affected"
-        if [ -f target/affected/coverage.db ]; then
-          stat target/affected/coverage.db
-          echo "size=$(wc -c <target/affected/coverage.db)"
-        fi
-
-    - uses: ./.github/actions/test-setup
-
-    - name: DEBUG — coverage.db state post-test-setup
-      if: always()
-      run: |
-        echo "=== after test-setup ==="
-        ls -la target/affected/ 2>&1 || echo "no target/affected"
-        if [ -f target/affected/coverage.db ]; then
-          stat target/affected/coverage.db
-          echo "size=$(wc -c <target/affected/coverage.db)"
-        fi
 
     - name: Install cargo-affected
       uses: baptiste0928/cargo-install@v3
