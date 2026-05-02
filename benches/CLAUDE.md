@@ -85,6 +85,15 @@ Default-branch cache contribution is ~17ms per iteration on a typical-8 syntheti
 (measured: 166ms with default-branch cached → 183ms fully cold). Small enough that
 always clearing it is simpler than introducing a "warm default-branch" bench mode.
 
+**Bench fixtures don't exercise the wire path.** `setup_fake_remote` writes
+`refs/remotes/origin/HEAD` directly into every repo, so a cold-cache iteration
+falls through to the local `<r>/HEAD` lookup (~17 ms above), never to
+`git ls-remote` (100 ms–2 s in the wild). The cold cost we benchmark is the
+*configured-remote* cold cost, not the *fresh-clone* cold cost. A
+`cold_no_remote` mode (extending `invalidate_caches_auto` to also wipe
+`refs/remotes/origin/HEAD`) would close the gap if the wire-path cost is
+worth measuring at CI cadence.
+
 ## Expected Performance
 
 **Modest repos** (500 commits, 100 files):

@@ -270,21 +270,27 @@ impl Repository {
 
     /// Get the default branch name for the repository.
     ///
-    /// **Performance note:** This method may trigger a network call on first invocation
-    /// if the remote HEAD is not cached locally. The result is then cached in git's
-    /// config for subsequent calls. To minimize latency:
-    /// - Defer calling this until after fast, local checks (see e497f0f for example)
-    /// - Consider passing the result as a parameter if needed multiple times
-    /// - For optional operations, provide a fallback (e.g., `.unwrap_or("main")`)
+    /// **Network contract — this is the sole "look it up if missing" helper
+    /// in worktrunk that is allowed to fall through to the wire.** The first
+    /// call per repo may run `git ls-remote` (100 ms–2 s); the result is
+    /// then persisted to `worktrunk.default-branch` and every subsequent
+    /// call is a local cache hit. No other detection helper may add a
+    /// similar fallback. See `CLAUDE.md` → "Network Access" for the policy.
     ///
     /// Detection strategy:
     /// 1. Check worktrunk cache (`git config worktrunk.default-branch`)
     /// 2. Try primary remote's local cache (e.g., `origin/HEAD`)
-    /// 3. Query remote (`git ls-remote`) — may take 100ms-2s
+    /// 3. Query remote (`git ls-remote`) — may take 100 ms–2 s (sole wire fallback)
     /// 4. Infer from local branches if no remote
     ///
-    /// Detection results are cached to `worktrunk.default-branch` for future calls.
-    /// Result is also cached in the shared repo cache (shared across all worktrees).
+    /// Detection results are cached to `worktrunk.default-branch` for future
+    /// calls. Result is also cached in the shared repo cache (shared across
+    /// all worktrees).
+    ///
+    /// To minimize latency on the rare cold-clone case:
+    /// - Defer calling this until after fast, local checks (see e497f0f for an example).
+    /// - Consider passing the result as a parameter if needed multiple times.
+    /// - For optional operations, provide a fallback (e.g., `.unwrap_or("main")`).
     ///
     /// Returns `None` if the default branch cannot be determined.
     pub fn default_branch(&self) -> Option<String> {

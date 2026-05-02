@@ -242,6 +242,14 @@ if msg.contains("no merge base") { return Ok(true); }
 
 When no structured alternative exists, document the fragility inline.
 
+### Network Access
+
+**Policy:** worktrunk is local-first. The network is touched only when the user asked for it. The single exception is the *first* call to `Repository::default_branch()` per repo, which may fall through to `git ls-remote` to discover the default branch name; the result caches in `worktrunk.default-branch` and every subsequent call is local. No other detection helper may add a similar fallback.
+
+**Why:** "lookup" paths that silently walk to the wire (alias dispatch, hook context build, `wt statusline`, recovery) stall commands the user wouldn't expect to do network work — most painfully on a fresh clone. Allowing the `default_branch()` bootstrap keeps worktrunk usable on a fresh clone while bounding the exception to one helper that fires at most once per repo.
+
+**Implementation:** before adding a new accessor that could fall through to the wire (`gh`, `glab`, `git fetch`, `git ls-remote`, HTTP), confirm the call site is one the user explicitly invoked. Background polling driven by a TTL cache counts — a CI-status check on every shell prompt is invisible to the user but still hits the wire, and is therefore not allowed.
+
 ### Signal Handling: Ctrl-C Cancels the Current Command
 
 **Policy:** when a child process exits from a signal (SIGINT, SIGTERM), every loop in the foreground execution path MUST abort rather than continue to the next iteration. This applies to worktree loops (`wt step for-each`), hook pipelines, alias steps, concurrent groups, and any future code that runs multiple child processes in sequence.
