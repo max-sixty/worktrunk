@@ -107,10 +107,11 @@ impl Repository {
     /// timestamp, most recent first. Result is cached for the lifetime of
     /// this `Repository` instance (shared across clones via `Arc`).
     ///
-    /// The initial scan also primes `resolved_refs` (`name` →
-    /// `refs/heads/name`) and `commit_shas` (both keys → commit SHA) so
-    /// later `resolve_preferring_branch()` and `rev_parse_commit()` calls
-    /// hit memory instead of spawning per-branch `git rev-parse`.
+    /// `commit_sha` on each entry is a snapshot at scan time. Code that
+    /// needs a current SHA for a ref must resolve through a [`RefSnapshot`]
+    /// captured at the moment of read, not through this inventory. The
+    /// inventory itself is used for branch listing and upstream-tracking
+    /// metadata, both of which are stable for the duration of a command.
     pub fn local_branches(&self) -> anyhow::Result<&[LocalBranch]> {
         Ok(self.local_branch_inventory()?.entries())
     }

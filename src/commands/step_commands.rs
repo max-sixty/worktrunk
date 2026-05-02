@@ -1551,7 +1551,7 @@ pub fn step_prune(
     // integration_refs produces an empty par_iter that completes immediately.
     let repo_clone = repo.clone();
     let target = integration_target.clone();
-    let snapshot_arc = std::sync::Arc::new(snapshot.clone());
+    let snapshot_arc = std::sync::Arc::new(snapshot);
     std::thread::spawn(move || {
         integration_refs
             .into_par_iter()
