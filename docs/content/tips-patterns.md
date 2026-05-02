@@ -348,8 +348,6 @@ WS=$(cmux --json list-workspaces 2>/dev/null \\
 
 **Why `pre-*` instead of `post-*`?** cmux restricts socket access to processes spawned inside a cmux terminal. `post-*` hooks run as detached background processes, breaking the process ancestry chain. `pre-*` hooks run in the foreground and inherit the terminal's process lineage.
 
-**Why `cmux --json` and not `cmux list-workspaces --json`?** cmux parses `--json` as a pre-command flag, before the subcommand — placed after the subcommand it falls through to the command's argument list and is silently ignored, leaving you with text output. Exact-matching on `.title` then avoids the substring bleed that `grep -F` would cause for sibling workspaces sharing a prefix (e.g., `demo` vs `demo2`).
-
 ## Xcode DerivedData cleanup
 
 Clean up Xcode's DerivedData when removing a worktree. Each DerivedData directory contains an `info.plist` recording its project path — grep for the worktree path to find and remove the matching build cache:
