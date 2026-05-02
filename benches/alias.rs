@@ -8,7 +8,7 @@
 //
 // One group (`dispatch`), five variants:
 //   - wt_version:  `wt --version` startup floor (no repo discovery)
-//   - warm/1, warm/100, cold/1, cold/100: noop alias at 1 and 100 worktrees,
+//   - warm/1, warm/100, cold/1, cold/100: stub alias at 1 and 100 worktrees,
 //     warm and cold caches. Each worktree has its own branch, so 100
 //     worktrees ≈ 101 branches — this doubles as the regression guard for
 //     the O(1) upstream lookup from 4f9bd575a. The cold/100 variant is
@@ -27,7 +27,7 @@ use wt_perf::{RepoConfig, create_repo, invalidate_caches_auto, isolate_cmd};
 
 /// Alias body is a shell builtin so the wall-clock is dominated by the
 /// parent's dispatch — not by running a real subcommand.
-const NOOP_CONFIG: &str = "[aliases]\nnoop = \"echo hello\"\n";
+const STUB_CONFIG: &str = "[aliases]\nstub = \"echo hello\"\n";
 
 /// Lean repo config for the scaling rows — alias dispatch doesn't care
 /// about commit history depth, so minimal everything keeps setup under
@@ -82,7 +82,7 @@ fn bench_dispatch(c: &mut Criterion) {
         let temp = create_repo(&lean_worktrees(worktrees));
         let repo_path = temp.path().join("repo");
         let user_config = temp.path().join("user-config.toml");
-        std::fs::write(&user_config, NOOP_CONFIG).unwrap();
+        std::fs::write(&user_config, STUB_CONFIG).unwrap();
 
         for cold in [false, true] {
             let label = if cold { "cold" } else { "warm" };
@@ -90,7 +90,7 @@ fn bench_dispatch(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new(label, worktrees), &worktrees, |b, _| {
                 let run = || {
                     run_and_check(
-                        wt_cmd(binary, &repo_path, &user_config, &["noop"]),
+                        wt_cmd(binary, &repo_path, &user_config, &["stub"]),
                         "dispatch",
                     );
                 };
