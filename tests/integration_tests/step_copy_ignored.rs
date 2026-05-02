@@ -139,9 +139,9 @@ fn test_copy_ignored_excludes_user_config(mut repo: TestRepo) {
 #[rstest]
 fn test_copy_ignored_skips_built_in_excluded_dirs(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
-    let ignored_entries = ".conductor/\n.entire/\n.pi/\n.env\n";
+    let ignored_entries = ".conductor/\n.entire/\n.env\n";
 
-    for dir in [".conductor", ".entire", ".pi"] {
+    for dir in [".conductor", ".entire"] {
         fs::create_dir_all(repo.root_path().join(dir)).unwrap();
         fs::write(repo.root_path().join(dir).join("state.json"), dir).unwrap();
     }
@@ -153,7 +153,7 @@ fn test_copy_ignored_skips_built_in_excluded_dirs(mut repo: TestRepo) {
 
     assert_copy_ignored_excluded(
         &feature_path,
-        &[".conductor", ".entire", ".pi"],
+        &[".conductor", ".entire"],
         "built-in excludes",
     );
 }

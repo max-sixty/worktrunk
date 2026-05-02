@@ -566,7 +566,6 @@ const BUILTIN_COPY_IGNORED_EXCLUDES: &[&str] = &[
     ".entire/",
     ".hg/",
     ".jj/",
-    ".pi/",
     ".pijul/",
     ".sl/",
     ".svn/",

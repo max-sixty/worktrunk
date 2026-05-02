@@ -232,7 +232,7 @@ Most flags are on by default. Set to false to change default behavior.
 [107m [0m [2m[36m[step.copy-ignored][0m
 [107m [0m [2mexclude = []   [0m[2m# Additional excludes (e.g., [".cache/", ".turbo/"])[0m
 
-Built-in excludes always apply: VCS metadata directories ([2m.bzr/[0m, [2m.hg/[0m, [2m.jj/[0m, [2m.pijul/[0m, [2m.sl/[0m, [2m.svn/[0m) and tool-state directories ([2m.conductor/[0m, [2m.entire/[0m, [2m.pi/[0m, [2m.worktrees/[0m). User config and project config exclusions are combined.
+Built-in excludes always apply: VCS metadata directories ([2m.bzr/[0m, [2m.hg/[0m, [2m.jj/[0m, [2m.pijul/[0m, [2m.sl/[0m, [2m.svn/[0m) and tool-state directories ([2m.conductor/[0m, [2m.entire/[0m, [2m.worktrees/[0m). User config and project config exclusions are combined.
 
 [32mAliases[0m
 
@@ -387,7 +387,7 @@ Additional excludes for [2mwt step copy-ignored[0m:
 [107m [0m [2m[36m[step.copy-ignored][0m
 [107m [0m [2mexclude = [[0m[2m[32m".cache/"[0m[2m, [0m[2m[32m".turbo/"[0m[2m][0m
 
-Built-in excludes always apply: VCS metadata directories ([2m.bzr/[0m, [2m.hg/[0m, [2m.jj/[0m, [2m.pijul/[0m, [2m.sl/[0m, [2m.svn/[0m) and tool-state directories ([2m.conductor/[0m, [2m.entire/[0m, [2m.pi/[0m, [2m.worktrees/[0m). User config and project config exclusions are combined.
+Built-in excludes always apply: VCS metadata directories ([2m.bzr/[0m, [2m.hg/[0m, [2m.jj/[0m, [2m.pijul/[0m, [2m.sl/[0m, [2m.svn/[0m) and tool-state directories ([2m.conductor/[0m, [2m.entire/[0m, [2m.worktrees/[0m). User config and project config exclusions are combined.
 
 [1m[32mAliases[0m
 
