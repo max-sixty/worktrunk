@@ -52,20 +52,20 @@ hello world
 
 ----- stderr -----
 [2m○[22m template variables:
-[107m [0m [2mbranch                = (unused)[22m
-[107m [0m [2mworktree_path         = (unused)[22m
-[107m [0m [2mworktree_name         = (unused)[22m
+[107m [0m branch                = feature
+[107m [0m worktree_path         = _REPO_.feature
+[107m [0m worktree_name         = repo.feature
 [107m [0m [2mcommit                = (unused)[22m
 [107m [0m [2mshort_commit          = (unused)[22m
 [107m [0m [2mupstream              = (unused)[22m
-[107m [0m [2mrepo                  = (unused)[22m
-[107m [0m [2mrepo_path             = (unused)[22m
+[107m [0m repo                  = repo
+[107m [0m repo_path             = _REPO_
 [107m [0m [2mowner                 = (unused)[22m
 [107m [0m [2mprimary_worktree_path = (unused)[22m
 [107m [0m [2mdefault_branch        = (unused)[22m
 [107m [0m [2mremote                = (unused)[22m
 [107m [0m [2mremote_url            = (unused)[22m
-[107m [0m [2mcwd                   = (unused)[22m
+[107m [0m cwd                   = _REPO_.feature
 [107m [0m args                  = world
 [36m◎[39m [36mRunning alias [1mgreet[22m[39m
 [2m○[22m Expanding [1mgreet[22m

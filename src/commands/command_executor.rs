@@ -230,39 +230,22 @@ pub fn build_hook_context(
 
     let want = |key: &str| referenced.is_none_or(|r| r.contains(key));
 
+    // Cheap vars (already in scope, no I/O) are populated unconditionally —
+    // skipping them saves no work and would just turn the verbose table's
+    // `(unused)` label into noise. Only the expensive blocks below
+    // (subprocesses, git config / remote lookups) honor `want`.
     let mut map = HashMap::new();
-    if want("repo") {
-        map.insert("repo".into(), repo_name.into());
-    }
-    if want("branch") {
-        map.insert("branch".into(), ctx.branch_or_head().into());
-    }
-    if want("worktree_name") {
-        map.insert("worktree_name".into(), worktree_name.into());
-    }
-
-    // Canonical path variables
-    if want("repo_path") {
-        map.insert("repo_path".into(), repo_path.clone());
-    }
-    if want("worktree_path") {
-        map.insert("worktree_path".into(), worktree.clone());
-    }
-
+    map.insert("repo".into(), repo_name.into());
+    map.insert("branch".into(), ctx.branch_or_head().into());
+    map.insert("worktree_name".into(), worktree_name.into());
+    map.insert("repo_path".into(), repo_path.clone());
+    map.insert("worktree_path".into(), worktree.clone());
     // Deprecated aliases (kept for backward compatibility)
-    if want("main_worktree") {
-        map.insert("main_worktree".into(), repo_name.into());
-    }
-    if want("repo_root") {
-        map.insert("repo_root".into(), repo_path);
-    }
-    if want("worktree") {
-        map.insert("worktree".into(), worktree);
-    }
+    map.insert("main_worktree".into(), repo_name.into());
+    map.insert("repo_root".into(), repo_path);
+    map.insert("worktree".into(), worktree);
 
-    if want("owner")
-        && let Some(parsed_remote) = ctx.repo.primary_remote_parsed_url()
-    {
+    if let Some(parsed_remote) = ctx.repo.primary_remote_parsed_url() {
         map.insert("owner".into(), parsed_remote.owner().to_string());
     }
 
@@ -345,22 +328,16 @@ pub fn build_hook_context(
 
     // Execution directory — always where the hook command runs, even when
     // worktree_path points to an Active identity that doesn't exist on disk.
-    if want("cwd") {
-        map.insert(
-            "cwd".into(),
-            to_posix_path(&ctx.worktree_path.to_string_lossy()),
-        );
-    }
+    map.insert(
+        "cwd".into(),
+        to_posix_path(&ctx.worktree_path.to_string_lossy()),
+    );
 
-    // Add extra vars (e.g., target branch for merge, base for switch).
-    // `extra_vars` keys are explicit caller-set bindings; aliases route them
-    // through `AliasOptions::parse`, which only emits keys present in
-    // `referenced`. The `want` gate is therefore a no-op for that path —
-    // kept for symmetry so all inserts read the same.
+    // Caller-set bindings (e.g., merge target, switch base, alias args).
+    // Aliases pre-filter via `AliasOptions::parse`, hooks pass everything;
+    // either way the value is already computed, so insert unconditionally.
     for (k, v) in extra_vars {
-        if want(k) {
-            map.insert((*k).into(), (*v).into());
-        }
+        map.insert((*k).into(), (*v).into());
     }
 
     Ok(map)

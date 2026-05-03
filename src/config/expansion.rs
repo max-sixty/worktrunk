@@ -196,9 +196,12 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
 /// `(unset)`, surfacing operation-specific gaps (e.g., `target_worktree_path`
 /// during `wt switch -`, `upstream` when the branch doesn't track a remote).
 ///
-/// When `referenced` is `Some`, vars not in the set render as dim `(unused)` —
-/// distinguishes "skipped because the body never references it" from
-/// "referenced but the operation didn't supply it" (`(unset)`).
+/// When `referenced` is `Some`, vars absent from `ctx` *and* not in the set
+/// render as dim `(unused)` — `build_hook_context` only skips computation for
+/// expensive vars, so this fires precisely when the gate saved real work.
+/// Cheap vars are populated unconditionally and always show their value, even
+/// when the body doesn't reference them. `(unset)` is reserved for the
+/// distinct case of a referenced var the operation couldn't supply.
 ///
 /// `(unset)` relies on an invariant in `build_hook_context`: optional vars
 /// are omitted from the map rather than inserted as empty strings. If a
@@ -211,16 +214,12 @@ fn format_variables_table(
 ) -> String {
     let max_name = vars.iter().map(|v| v.len()).max().unwrap_or(0);
     vars.iter()
-        .map(|var| {
-            if referenced.is_some_and(|r| !r.contains(*var)) {
+        .map(|var| match ctx.get(*var) {
+            Some(value) => format!("{var:<max_name$} = {value}"),
+            None if referenced.is_some_and(|r| !r.contains(*var)) => {
                 cformat!("<dim>{var:<max_name$} = (unused)</>")
-            } else {
-                let value = match ctx.get(*var) {
-                    Some(v) => v.as_str(),
-                    None => "(unset)",
-                };
-                format!("{var:<max_name$} = {value}")
             }
+            None => format!("{var:<max_name$} = (unset)"),
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -254,9 +253,10 @@ pub fn format_hook_variables(hook_type: HookType, ctx: &HashMap<String, String>)
 /// contract; the table displays it space-joined and shell-escaped so it
 /// matches what `{{ args }}` substitutes in templates.
 ///
-/// `referenced` is forwarded to [`format_variables_table`] — vars not in the
-/// set render as dim `(unused)` so the reader sees what's reachable without
-/// computing values that won't be substituted.
+/// `referenced` (the set of vars the body actually substitutes) controls
+/// the dim `(unused)` marker for vars the operation skipped computing —
+/// the reader sees what's reachable without paying for values the body
+/// won't substitute.
 pub fn format_alias_variables(
     ctx: &HashMap<String, String>,
     referenced: Option<&BTreeSet<String>>,

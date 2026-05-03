@@ -463,7 +463,16 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
     let entry = aliases
         .get(&opts.name)
         .expect("entry verified above and `opts.name` matches the dispatched name");
-    run_alias(opts, warnings, &repo, user_config, entry, referenced, global_yes).map(Some)
+    run_alias(
+        opts,
+        warnings,
+        &repo,
+        user_config,
+        entry,
+        referenced,
+        global_yes,
+    )
+    .map(Some)
 }
 
 /// Run a configured alias from `wt step <name>`. Errors with a clap-style
@@ -513,7 +522,15 @@ pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
     let entry = aliases
         .get(&opts.name)
         .expect("entry verified above and `opts.name` matches the dispatched name");
-    run_alias(opts, warnings, &repo, user_config, entry, referenced, global_yes)
+    run_alias(
+        opts,
+        warnings,
+        &repo,
+        user_config,
+        entry,
+        referenced,
+        global_yes,
+    )
 }
 
 /// Return alias names for use as suggestions when a top-level subcommand is
