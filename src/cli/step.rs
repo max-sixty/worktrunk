@@ -18,10 +18,12 @@ pub struct CommitArgs {
     #[arg(long)]
     pub(crate) stage: Option<crate::commands::commit::StageMode>,
 
-    /// Show prompt without running LLM
-    ///
-    /// Outputs the rendered prompt to stdout for debugging or manual piping.
-    #[arg(long)]
+    /// Preview prompt, command, and generated message without committing
+    #[arg(long, conflicts_with = "show_prompt")]
+    pub(crate) dry_run: bool,
+
+    /// Render prompt to stdout without running LLM
+    #[arg(long, hide = true)]
     pub(crate) show_prompt: bool,
 }
 
@@ -45,10 +47,12 @@ pub struct SquashArgs {
     #[arg(long)]
     pub(crate) stage: Option<crate::commands::commit::StageMode>,
 
-    /// Show prompt without running LLM
-    ///
-    /// Outputs the rendered prompt to stdout for debugging or manual piping.
-    #[arg(long)]
+    /// Preview prompt, command, and generated message without squashing
+    #[arg(long, conflicts_with = "show_prompt")]
+    pub(crate) dry_run: bool,
+
+    /// Render prompt to stdout without running LLM
+    #[arg(long, hide = true)]
     pub(crate) show_prompt: bool,
 }
 
@@ -88,17 +92,15 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-### `--show-prompt`
+### `--dry-run`
 
-Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+Render the prompt, print the LLM command, generate the message, and exit without staging, running hooks, or committing:
 
 ```console
-# Inspect the rendered prompt
-$ wt step commit --show-prompt | less
-
-# Pipe to a different LLM
-$ wt step commit --show-prompt | llm -m gpt-5-nano
+$ wt step commit --dry-run
 ```
+
+Three sections are printed: the rendered prompt, the shell command that would invoke the LLM, and the message returned. The LLM call still happens — only the commit is skipped.
 "#
     )]
     Commit(CommitArgs),
@@ -132,13 +134,15 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-### `--show-prompt`
+### `--dry-run`
 
-Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+Render the prompt, print the LLM command, generate the squash message, and exit without resetting, running hooks, or committing:
 
 ```console
-$ wt step squash --show-prompt | less
+$ wt step squash --dry-run
 ```
+
+Three sections are printed: the rendered prompt, the shell command that would invoke the LLM, and the message returned. The LLM call still happens — only the squash and commit are skipped.
 "#
     )]
     Squash(SquashArgs),

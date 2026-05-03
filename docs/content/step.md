@@ -116,11 +116,13 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-#### `--show-prompt`
+#### `--dry-run`
 
-Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+Render the prompt, print the LLM command, generate the message, and exit without staging, running hooks, or committing:
 
-{{ terminal(cmd="# Inspect the rendered prompt|||wt step commit --show-prompt | less||||||# Pipe to a different LLM|||wt step commit --show-prompt | llm -m gpt-5-nano") }}
+{{ terminal(cmd="wt step commit --dry-run") }}
+
+Three sections are printed: the rendered prompt, the shell command that would invoke the LLM, and the message returned. The LLM call still happens — only the commit is skipped.
 
 ### Command reference
 
@@ -144,10 +146,8 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
           - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
           - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
 
-      <b><span class=c>--show-prompt</span></b>
-          Show prompt without running LLM
-
-          Outputs the rendered prompt to stdout for debugging or manual piping.
+      <b><span class=c>--dry-run</span></b>
+          Preview prompt, command, and generated message without committing
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
@@ -194,11 +194,13 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-#### `--show-prompt`
+#### `--dry-run`
 
-Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+Render the prompt, print the LLM command, generate the squash message, and exit without resetting, running hooks, or committing:
 
-{{ terminal(cmd="wt step squash --show-prompt | less") }}
+{{ terminal(cmd="wt step squash --dry-run") }}
+
+Three sections are printed: the rendered prompt, the shell command that would invoke the LLM, and the message returned. The LLM call still happens — only the squash and commit are skipped.
 
 ### Command reference
 
@@ -227,10 +229,8 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
           - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
           - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
 
-      <b><span class=c>--show-prompt</span></b>
-          Show prompt without running LLM
-
-          Outputs the rendered prompt to stdout for debugging or manual piping.
+      <b><span class=c>--dry-run</span></b>
+          Preview prompt, command, and generated message without squashing
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)

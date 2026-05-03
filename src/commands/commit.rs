@@ -164,7 +164,7 @@ impl<'a> CommitGenerator<'a> {
         }
 
         self.emit_hint_if_needed();
-        let commit_message = crate::llm::generate_commit_message(self.config)?;
+        let commit_message = crate::llm::generate_commit_message(self.config, None)?;
 
         let formatted_message = self.format_message_for_display(&commit_message);
         eprintln!("{}", format_with_gutter(&formatted_message, None));

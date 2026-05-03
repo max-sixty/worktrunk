@@ -2363,6 +2363,143 @@ fn test_step_squash_show_prompt(repo_with_multi_commit_feature: TestRepo) {
 }
 
 // =============================================================================
+// --dry-run tests
+// =============================================================================
+
+#[rstest]
+fn test_step_commit_dry_run(repo: TestRepo) {
+    // Stage a change so the prompt has a diff to describe
+    fs::write(repo.root_path().join("new_file.txt"), "new content").expect("Failed to write file");
+    repo.git_command()
+        .args(["add", "new_file.txt"])
+        .run()
+        .expect("git add failed");
+
+    // Stub the LLM with a command that consumes stdin and prints a fixed message
+    let worktrunk_config = r#"
+[commit.generation]
+command = "cat >/dev/null && echo 'feat: add new_file'"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    // PROMPT/COMMAND/MESSAGE sections render to stdout; nothing is committed.
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["commit", "--dry-run"],
+        None
+    ));
+
+    // Confirm no commit was created — HEAD must still be the fixture's initial commit.
+    let log = repo
+        .git_command()
+        .args(["log", "--oneline"])
+        .run()
+        .expect("git log failed");
+    let log_text = String::from_utf8(log.stdout).unwrap();
+    assert_eq!(
+        log_text.lines().count(),
+        1,
+        "--dry-run must not create a commit; got log:\n{log_text}"
+    );
+}
+
+/// `--dry-run` should mirror `--stage` against a temp index so the prompt reflects what a
+/// real run would send the LLM — including untracked files that aren't yet in the index.
+#[rstest]
+fn test_step_commit_dry_run_stages_untracked(repo: TestRepo) {
+    // Untracked, never `git add`'d. Default --stage=all would pick this up at commit time.
+    fs::write(repo.root_path().join("untracked.txt"), "untracked content")
+        .expect("Failed to write file");
+
+    let worktrunk_config = r#"
+[commit.generation]
+command = "cat >/dev/null && echo 'feat: add untracked'"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    let output = make_snapshot_cmd(&repo, "step", &["commit", "--dry-run"], None)
+        .output()
+        .expect("wt step commit --dry-run failed");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("untracked.txt"),
+        "--dry-run with default --stage=all should include untracked files in the prompt; \
+         got stdout:\n{stdout}"
+    );
+
+    // The user's real index must not have absorbed the untracked file.
+    let status = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .run()
+        .expect("git status failed");
+    let status_text = String::from_utf8(status.stdout).unwrap();
+    assert!(
+        status_text.contains("?? untracked.txt"),
+        "untracked.txt should remain untracked after --dry-run; got status:\n{status_text}"
+    );
+}
+
+/// `--stage=none` overrides the default — `--dry-run` should respect the override and
+/// preview against only what's already in the index, ignoring untracked changes.
+#[rstest]
+fn test_step_commit_dry_run_stage_none(repo: TestRepo) {
+    fs::write(repo.root_path().join("untracked.txt"), "untracked content")
+        .expect("Failed to write file");
+
+    let worktrunk_config = r#"
+[commit.generation]
+command = "cat >/dev/null && echo 'fallback'"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    let output = make_snapshot_cmd(
+        &repo,
+        "step",
+        &["commit", "--dry-run", "--stage=none"],
+        None,
+    )
+    .output()
+    .expect("wt step commit --dry-run --stage=none failed");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        !stdout.contains("untracked.txt"),
+        "--stage=none should skip untracked files in the dry-run prompt; got stdout:\n{stdout}"
+    );
+}
+
+#[rstest]
+fn test_step_squash_dry_run(repo_with_multi_commit_feature: TestRepo) {
+    let repo = repo_with_multi_commit_feature;
+    let feature_wt = repo.worktree_path("feature");
+
+    let worktrunk_config = r#"
+[commit.generation]
+command = "cat >/dev/null && echo 'feat: combined feature work'"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["squash", "--dry-run"],
+        Some(feature_wt)
+    ));
+
+    // The feature branch must still have its multiple commits — squash didn't run.
+    let log = std::process::Command::new("git")
+        .args(["-C", feature_wt.to_str().unwrap(), "log", "--oneline"])
+        .output()
+        .expect("git log failed");
+    let log_text = String::from_utf8(log.stdout).unwrap();
+    assert!(
+        log_text.lines().count() > 1,
+        "--dry-run must not squash; got log:\n{log_text}"
+    );
+}
+
+// =============================================================================
 // step rebase tests
 // =============================================================================
 

@@ -208,13 +208,22 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
     match action {
         StepCommand::Commit(args) => {
             let verify = resolve_verify(args.verify, args.no_verify_deprecated);
-            step_commit(args.branch, yes, verify, args.stage, args.show_prompt)
+            step_commit(
+                args.branch,
+                yes,
+                verify,
+                args.stage,
+                args.show_prompt,
+                args.dry_run,
+            )
         }
         StepCommand::Squash(args) => {
             let verify = resolve_verify(args.verify, args.no_verify_deprecated);
-            // Handle --show-prompt early: just build and output the prompt
+            // --show-prompt and --dry-run skip the squash and exit after preview output.
             if args.show_prompt {
                 commands::step_show_squash_prompt(args.target.as_deref())
+            } else if args.dry_run {
+                commands::step_dry_run_squash(args.target.as_deref())
             } else {
                 // Approval is handled inside handle_squash (like step_commit).
                 let repo = Repository::current()?;

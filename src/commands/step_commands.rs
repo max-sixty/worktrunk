@@ -31,8 +31,8 @@ use worktrunk::path::format_path_for_display;
 use worktrunk::progress::{Progress, format_bytes};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
-    eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
-    verbosity, warning_message,
+    eprintln, format_bash_with_gutter, format_heading, format_with_gutter, hint_message,
+    info_message, println, progress_message, success_message, verbosity, warning_message,
 };
 
 use super::command_approval::approve_or_skip;
@@ -54,16 +54,13 @@ pub fn step_commit(
     verify: bool,
     stage: Option<StageMode>,
     show_prompt: bool,
+    dry_run: bool,
 ) -> anyhow::Result<()> {
-    // Handle --show-prompt early: just build and output the prompt
-    if show_prompt {
-        let repo = worktrunk::git::Repository::current()?;
-        let config = UserConfig::load().context("Failed to load config")?;
-        let project_id = repo.project_identifier().ok();
-        let commit_config = config.commit_generation(project_id.as_deref());
-        let prompt = crate::llm::build_commit_prompt(&commit_config)?;
-        println!("{}", prompt);
-        return Ok(());
+    // --show-prompt and --dry-run skip hooks and the commit itself; --dry-run still
+    // mirrors --stage against a temp index so the previewed prompt matches what a real
+    // run would send the LLM.
+    if show_prompt || dry_run {
+        return preview_commit(stage, dry_run);
     }
 
     // Load config once, run LLM setup prompt, then reuse config
@@ -100,6 +97,105 @@ pub fn step_commit(
     let mut announcer = HookAnnouncer::new(ctx.repo, ctx.config, false);
     options.commit(&mut announcer)?;
     announcer.flush()
+}
+
+/// Handle `wt step commit` in `--show-prompt` or `--dry-run` mode.
+///
+/// Both modes skip hooks and the commit itself. `--show-prompt` outputs only the
+/// rendered prompt against the existing index (cheap, pipeable). `--dry-run` mirrors
+/// `--stage` against a temp index — so the previewed prompt matches what a real run
+/// would send — then calls the LLM and prints the command and message in three labeled
+/// sections. The user's real index is never modified.
+fn preview_commit(stage: Option<StageMode>, dry_run: bool) -> anyhow::Result<()> {
+    let env = CommandEnv::for_action(UserConfig::load().context("Failed to load config")?)?;
+    let commit_config = env.resolved().commit_generation.clone();
+
+    // For --dry-run, stage to a copy of the index so the preview reflects what a real
+    // run would send. --show-prompt skips this — it's the cheap "what's already staged"
+    // path. StageMode::None has nothing to stage, so the override is unnecessary.
+    let temp_index = if dry_run {
+        let stage_mode = stage.unwrap_or(env.resolved().commit.stage());
+        if stage_mode != StageMode::None {
+            Some(stage_to_temp_index(&env.repo, stage_mode)?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let index_override = temp_index.as_ref().map(|t| t.path());
+
+    let prompt = crate::llm::build_commit_prompt(&commit_config, index_override)?;
+    if !dry_run {
+        println!("{}", prompt);
+        return Ok(());
+    }
+    let message = crate::llm::generate_commit_message(&commit_config, index_override)?;
+    print_dry_run(&prompt, &commit_config, &message)
+}
+
+/// Copy the current worktree's index to a temp file and stage into it per `mode`.
+///
+/// Returns the [`tempfile::NamedTempFile`] so the caller controls its lifetime — when
+/// dropped, the temp file is removed without ever touching the user's real index.
+fn stage_to_temp_index(
+    repo: &Repository,
+    mode: StageMode,
+) -> anyhow::Result<tempfile::NamedTempFile> {
+    let wt = repo.current_worktree();
+    let real_index = wt.git_dir()?.join("index");
+    let temp = tempfile::NamedTempFile::new().context("Failed to create temporary index")?;
+    fs::copy(&real_index, temp.path()).context("Failed to copy index file")?;
+
+    let add_args: &[&str] = match mode {
+        StageMode::All => &["add", "-A"],
+        StageMode::Tracked => &["add", "-u"],
+        // The caller skips this branch.
+        StageMode::None => return Ok(temp),
+    };
+    Cmd::new("git")
+        .args(add_args.iter().copied())
+        .current_dir(wt.root()?)
+        .env("GIT_INDEX_FILE", temp.path())
+        .run()
+        .context("Failed to stage changes into temp index")?;
+    Ok(temp)
+}
+
+/// Print the three dry-run sections: rendered prompt, LLM command, generated message.
+///
+/// The COMMAND and MESSAGE sections use the same gutter treatment as the regular commit
+/// flow — `format_bash_with_gutter` for the shell invocation, and the bold-first-line
+/// commit message format wrapped in `format_with_gutter`. The PROMPT is left ungutter'd
+/// to keep `--dry-run`'s output visually aligned with `--show-prompt`.
+fn print_dry_run(
+    prompt: &str,
+    commit_config: &worktrunk::config::CommitGenerationConfig,
+    message: &str,
+) -> anyhow::Result<()> {
+    println!("{}", format_heading("PROMPT", None));
+    println!("{}", prompt);
+    println!();
+    println!("{}", format_heading("COMMAND", None));
+    match commit_config
+        .command
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        Some(cmd) => println!(
+            "{}",
+            format_bash_with_gutter(&crate::llm::render_llm_invocation(cmd)?)
+        ),
+        None => println!(
+            "{}",
+            format_with_gutter("(LLM not configured — using built-in fallback)", None)
+        ),
+    }
+    println!();
+    println!("{}", format_heading("MESSAGE", None));
+    let formatted = CommitGenerator::new(commit_config).format_message_for_display(message);
+    println!("{}", format_with_gutter(&formatted, None));
+    Ok(())
 }
 
 /// Result of a squash operation
@@ -374,28 +470,38 @@ pub fn handle_squash(
 ///
 /// Builds and outputs the squash prompt without running the LLM or squashing.
 pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
+    preview_squash(target, false)
+}
+
+/// Handle `wt step squash --dry-run`
+///
+/// Renders the squash prompt, prints the LLM command, generates the message, and prints
+/// it without resetting, running hooks, or committing.
+pub fn step_dry_run_squash(target: Option<&str>) -> anyhow::Result<()> {
+    preview_squash(target, true)
+}
+
+/// Shared implementation for `--show-prompt` and `--dry-run` on squash. `--show-prompt`
+/// (`dry_run = false`) outputs only the rendered prompt; `--dry-run` additionally calls
+/// the LLM and prints the command and the generated message.
+fn preview_squash(target: Option<&str>, dry_run: bool) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let config = UserConfig::load().context("Failed to load config")?;
     let project_id = repo.project_identifier().ok();
-    let effective_config = config.commit_generation(project_id.as_deref());
+    let commit_config = config.commit_generation(project_id.as_deref());
 
-    // Get and validate target ref (any commit-ish for merge-base calculation)
     let integration_target = repo.require_target_ref(target)?;
 
-    // Get current branch
     let wt = repo.current_worktree();
     let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
 
-    // Get merge base with target branch (required for generating squash message)
     let merge_base = repo
         .merge_base("HEAD", &integration_target)?
         .context("Cannot generate squash message: no common ancestor with target branch")?;
 
-    // Get commit subjects for the squash message
     let range = format!("{}..HEAD", merge_base);
     let subjects = repo.commit_subjects(&range)?;
 
-    // Get repo name from directory
     let repo_root = wt.root()?;
     let repo_name = repo_root
         .file_name()
@@ -408,10 +514,21 @@ pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
         &subjects,
         &current_branch,
         repo_name,
-        &effective_config,
+        &commit_config,
     )?;
-    println!("{}", prompt);
-    Ok(())
+    if !dry_run {
+        println!("{}", prompt);
+        return Ok(());
+    }
+    let message = crate::llm::generate_squash_message(
+        &integration_target,
+        &merge_base,
+        &subjects,
+        &current_branch,
+        repo_name,
+        &commit_config,
+    )?;
+    print_dry_run(&prompt, &commit_config, &message)
 }
 
 /// Result of a rebase operation
