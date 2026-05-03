@@ -12,13 +12,13 @@
 //       - warm_worktrees_only: no branch enumeration (~600ms)
 //   - timeout_effect: Compare with/without 500ms command timeout on rust repo / GH #461 fix
 //
-// Run examples:
+// Run examples (Criterion takes a positional substring FILTER; no --skip):
 //   cargo bench --bench list                         # All benchmarks
 //   cargo bench --bench list skeleton                # Progressive rendering
 //   cargo bench --bench list real_repo_many_branches # GH #461 scenario (large repo + many branches)
 //   cargo bench --bench list timeout_effect          # Test timeout fix for GH #461
-//   cargo bench --bench list -- --skip cold          # Skip cold cache variants
-//   cargo bench --bench list -- --skip real          # Skip rust repo clone
+//   cargo bench --bench list warm                    # Warm-cache variants (every group's warm rows)
+//   cargo bench --bench list skeleton/warm           # Skeleton group, warm only
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::path::{Path, PathBuf};

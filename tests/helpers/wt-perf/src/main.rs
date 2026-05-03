@@ -243,7 +243,7 @@ fn resolve_wt_binary() -> PathBuf {
     candidate
 }
 
-/// Run a `wt` command with `WORKTRUNK_TRACE=1`, capture stderr, and render.
+/// Run a `wt` command with `RUST_LOG=debug`, capture stderr, and render.
 fn run_timeline(cold: bool, repo: Option<PathBuf>, chrome: bool, wt_args: &[String]) {
     let wt = resolve_wt_binary();
 
