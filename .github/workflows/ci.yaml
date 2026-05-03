@@ -296,7 +296,7 @@ jobs:
     - name: 📊 Collect coverage data
       env:
         NEXTEST_NO_INPUT_HANDLER: 1
-      run: cargo affected collect --features shell-integration-tests
+      run: cargo affected collect -- --features shell-integration-tests
 
     - name: 💾 Save coverage DB
       uses: actions/cache/save@v5
@@ -365,7 +365,7 @@ jobs:
     - name: 🎯 Run affected tests
       env:
         NEXTEST_NO_INPUT_HANDLER: 1
-      run: cargo affected run --features shell-integration-tests
+      run: cargo affected run -- --features shell-integration-tests
 
   code-coverage:
     runs-on: ubuntu-24.04
