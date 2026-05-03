@@ -7,7 +7,7 @@ Worktrunk's three core commands make worktrees as easy as branches.
 Plus, Worktrunk has a bunch of quality-of-life features to simplify working
 with many parallel changes, including hooks to automate local workflows.
 
-Scaling agents becomes trivial. A quick demo:
+A quick demo:
 
 ## Context: git worktrees
 
@@ -79,7 +79,7 @@ git branch -d feat</td>
 - **[Aliases](https://worktrunk.dev/extending/#aliases) & [per-branch variables](https://worktrunk.dev/config/#wt-config-state-vars)** — custom `wt <name>` commands and branch-scoped state for hook templates
 - ...and **[lots more](#next-steps)**
 
-A demo with some advanced features:
+Multiple parallel agents, same simple commands:
 
 ## Install
 
