@@ -296,6 +296,8 @@ cargo llvm-cov report --show-missing-lines | grep <file>   # find uncovered line
 
 For each uncovered function/method, either write a test or document why it's intentionally untested. Integration tests (via `assert_cmd_snapshot!`) do capture subprocess coverage.
 
+`cargo llvm-cov report --show-missing-lines` is the authoritative miss list — it matches codecov line-for-line. If codecov's compare API must be queried directly, `coverage.head` is a `LineType` enum: `0=hit`, `1=miss`, `2=partial`.
+
 **Renames and moves:** File renames (`git mv`) can trigger codecov/patch failures on pre-existing uncovered lines — codecov treats changed lines in renamed files as part of the patch. If the uncovered lines are unchanged and existed before the rename, this is a false positive. Verify by checking coverage on `main` for the same lines under the old path.
 
 ### "N functions have mismatched data" Warning
