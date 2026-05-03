@@ -173,7 +173,7 @@ impl<'a> WorkingTree<'a> {
     /// would be indistinguishable from detached HEAD without the exit status.
     ///
     /// Idempotent across the whole process (for paths inside a work tree):
-    /// once [`super::WORKTREE_ROOTS`] is primed — by this method, by
+    /// once `WORKTREE_ROOTS` is primed — by this method, by
     /// [`Repository::prewarm`], or by [`Self::root`] — subsequent calls (even
     /// from other `Repository` instances) reconstruct the snapshot from the
     /// process-wide maps without spawning a subprocess. Bare-repo roots and
@@ -269,8 +269,8 @@ impl<'a> WorkingTree<'a> {
 
     /// Get the branch checked out in this worktree, or None if in detached HEAD state.
     ///
-    /// Result is cached process-wide in [`super::CURRENT_BRANCHES`] (keyed by
-    /// worktree path). Errors (e.g., permission denied, corrupted `.git`) are
+    /// Result is cached process-wide in `CURRENT_BRANCHES` (keyed by worktree
+    /// path). Errors (e.g., permission denied, corrupted `.git`) are
     /// propagated, not swallowed.
     pub fn branch(&self) -> anyhow::Result<Option<String>> {
         match super::CURRENT_BRANCHES.entry(self.path.clone()) {
@@ -349,9 +349,9 @@ impl<'a> WorkingTree<'a> {
     /// hook context building) can degrade gracefully rather than aborting.
     ///
     /// Only confirmed toplevels are cached — the fallback path is returned
-    /// but not persisted. This keeps [`super::WORKTREE_ROOTS`]
-    /// `.contains_key(path)` as a reliable "is inside a work tree" signal for
-    /// [`Self::prewarm_info`]'s short-circuit.
+    /// but not persisted. This keeps `WORKTREE_ROOTS.contains_key(path)` as a
+    /// reliable "is inside a work tree" signal for [`Self::prewarm_info`]'s
+    /// short-circuit.
     pub fn root(&self) -> anyhow::Result<PathBuf> {
         match super::WORKTREE_ROOTS.entry(self.path.clone()) {
             Entry::Occupied(e) => Ok(e.get().clone()),
@@ -371,8 +371,7 @@ impl<'a> WorkingTree<'a> {
     ///
     /// Always returns a canonicalized absolute path, resolving symlinks.
     /// This ensures consistent comparison with `git_common_dir()`.
-    /// Result is cached process-wide in [`super::GIT_DIRS`] (keyed by worktree
-    /// path).
+    /// Result is cached process-wide in `GIT_DIRS` (keyed by worktree path).
     pub fn git_dir(&self) -> anyhow::Result<PathBuf> {
         match super::GIT_DIRS.entry(self.path.clone()) {
             Entry::Occupied(e) => Ok(e.get().clone()),

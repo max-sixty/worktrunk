@@ -471,9 +471,9 @@ impl Repository {
     }
 
     /// Eagerly populate the process-wide git-discovery caches
-    /// ([`GIT_COMMON_DIR_CACHE`], [`WORKTREE_ROOTS`], [`GIT_DIRS`],
-    /// [`CURRENT_BRANCHES`]) for [`base_path`] in a single `git rev-parse`
-    /// fork.
+    /// (`GIT_COMMON_DIR_CACHE`, `WORKTREE_ROOTS`, `GIT_DIRS`,
+    /// `CURRENT_BRANCHES`) for the configured base path in a single
+    /// `git rev-parse` fork.
     ///
     /// Called once from `main` after the logger is registered, before
     /// `init_command_log` and alias dispatch. Folds the two cold-path
@@ -482,20 +482,20 @@ impl Repository {
     /// one fork so a plain `wt <alias>` pays for one rev-parse instead of two.
     ///
     /// **Best-effort.** The merged batch reuses the existing fallbacks in
-    /// [`Repository::resolve_git_common_dir`] and [`WorkingTree::prewarm_info`]:
+    /// `Repository::resolve_git_common_dir` and [`WorkingTree::prewarm_info`]:
     /// if it fails or partially fails, the on-demand callers re-fork and
     /// behave exactly as before. We never propagate the error from here.
     ///
     /// Two partial-success modes the batch handles:
     /// - **Bare repo at the bare root**: `--show-toplevel` errors but
-    ///   `--git-common-dir` prints first, so [`GIT_COMMON_DIR_CACHE`] still
+    ///   `--git-common-dir` prints first, so `GIT_COMMON_DIR_CACHE` still
     ///   lands. Per-worktree maps stay empty for that path — same as the
     ///   existing `WorkingTree::root` fallback contract — so `prewarm_info`
     ///   reforks once for the not-inside-a-worktree determination. That edge
     ///   case loses the prewarm benefit but matches the unoptimized baseline.
     /// - **Unborn HEAD**: every selector emits a line but rev-parse exits
-    ///   non-zero. We populate [`WORKTREE_ROOTS`] and [`GIT_DIRS`] but leave
-    ///   [`CURRENT_BRANCHES`] to the `symbolic-ref` fallback in
+    ///   non-zero. We populate `WORKTREE_ROOTS` and `GIT_DIRS` but leave
+    ///   `CURRENT_BRANCHES` to the `symbolic-ref` fallback in
     ///   [`WorkingTree::branch`], matching the existing `prewarm_info`
     ///   behaviour.
     ///
