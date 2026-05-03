@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -196,9 +196,20 @@ impl<'a> CommandContext<'a> {
 ///
 /// The resulting HashMap is passed to hook commands as JSON on stdin,
 /// and used directly for template variable expansion.
+///
+/// `referenced`, when `Some`, restricts the map to keys named in the set —
+/// vars the body doesn't reference are not computed. Aliases pass their
+/// `referenced_vars_for_config` set (extended via `alias_context_filter`)
+/// so unused git lookups (`var_commit` rev-parse, `var_default_branch` cold
+/// detection, `branch().upstream()`) are skipped, and the verbose
+/// `template variables:` table only lists vars the body actually references.
+/// Hooks pass `None` so every standard var stays available — the child
+/// receives the full context as JSON on stdin and may consume keys that
+/// don't appear in the inline `{{ }}` template (e.g. via `jq`).
 pub fn build_hook_context(
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
+    referenced: Option<&BTreeSet<String>>,
 ) -> Result<HashMap<String, String>> {
     let repo_root = ctx.repo.repo_path()?;
     let repo_name = repo_root
@@ -217,26 +228,46 @@ pub fn build_hook_context(
 
     let repo_path = to_posix_path(&repo_root.to_string_lossy());
 
+    let want = |key: &str| referenced.is_none_or(|r| r.contains(key));
+
     let mut map = HashMap::new();
-    map.insert("repo".into(), repo_name.into());
-    map.insert("branch".into(), ctx.branch_or_head().into());
-    map.insert("worktree_name".into(), worktree_name.into());
+    if want("repo") {
+        map.insert("repo".into(), repo_name.into());
+    }
+    if want("branch") {
+        map.insert("branch".into(), ctx.branch_or_head().into());
+    }
+    if want("worktree_name") {
+        map.insert("worktree_name".into(), worktree_name.into());
+    }
 
     // Canonical path variables
-    map.insert("repo_path".into(), repo_path.clone());
-    map.insert("worktree_path".into(), worktree.clone());
+    if want("repo_path") {
+        map.insert("repo_path".into(), repo_path.clone());
+    }
+    if want("worktree_path") {
+        map.insert("worktree_path".into(), worktree.clone());
+    }
 
     // Deprecated aliases (kept for backward compatibility)
-    map.insert("main_worktree".into(), repo_name.into());
-    map.insert("repo_root".into(), repo_path);
-    map.insert("worktree".into(), worktree);
+    if want("main_worktree") {
+        map.insert("main_worktree".into(), repo_name.into());
+    }
+    if want("repo_root") {
+        map.insert("repo_root".into(), repo_path);
+    }
+    if want("worktree") {
+        map.insert("worktree".into(), worktree);
+    }
 
-    if let Some(parsed_remote) = ctx.repo.primary_remote_parsed_url() {
+    if want("owner")
+        && let Some(parsed_remote) = ctx.repo.primary_remote_parsed_url()
+    {
         map.insert("owner".into(), parsed_remote.owner().to_string());
     }
 
     // Default branch
-    {
+    if want("default_branch") {
         let _span = Span::new("var_default_branch");
         if let Some(default_branch) = ctx.repo.default_branch() {
             map.insert("default_branch".into(), default_branch);
@@ -244,13 +275,17 @@ pub fn build_hook_context(
     }
 
     // Primary worktree path (where established files live)
-    {
+    if want("primary_worktree_path") || want("main_worktree_path") {
         let _span = Span::new("var_primary_worktree");
         if let Ok(Some(path)) = ctx.repo.primary_worktree() {
             let path_str = to_posix_path(&path.to_string_lossy());
-            map.insert("primary_worktree_path".into(), path_str.clone());
+            if want("primary_worktree_path") {
+                map.insert("primary_worktree_path".into(), path_str.clone());
+            }
             // Deprecated alias
-            map.insert("main_worktree_path".into(), path_str);
+            if want("main_worktree_path") {
+                map.insert("main_worktree_path".into(), path_str);
+            }
         }
     }
 
@@ -262,7 +297,7 @@ pub fn build_hook_context(
     // iterates over sibling worktrees, and a sibling on detached HEAD has a
     // different HEAD than the worktree `wt` runs in. Branched contexts go
     // through `rev-parse <branch>`, which is repo-wide.
-    {
+    if want("commit") || want("short_commit") {
         let _span = Span::new("var_commit");
         let commit = match ctx.branch {
             Some(branch) => ctx
@@ -278,22 +313,29 @@ pub fn build_hook_context(
                 .flatten(),
         };
         if let Some(commit) = commit {
-            if commit.len() >= 7 {
+            if want("short_commit") && commit.len() >= 7 {
                 map.insert("short_commit".into(), commit[..7].into());
             }
-            map.insert("commit".into(), commit);
+            if want("commit") {
+                map.insert("commit".into(), commit);
+            }
         }
     }
 
-    {
+    if want("remote") || want("remote_url") || want("upstream") {
         let _span = Span::new("var_remote");
         if let Ok(remote) = ctx.repo.primary_remote() {
-            map.insert("remote".into(), remote.to_string());
+            if want("remote") {
+                map.insert("remote".into(), remote.to_string());
+            }
             // Add remote URL for conditional hook execution (e.g., GitLab vs GitHub)
-            if let Some(url) = ctx.repo.remote_url(&remote) {
+            if want("remote_url")
+                && let Some(url) = ctx.repo.remote_url(&remote)
+            {
                 map.insert("remote_url".into(), url);
             }
-            if let Some(branch) = ctx.branch
+            if want("upstream")
+                && let Some(branch) = ctx.branch
                 && let Ok(Some(upstream)) = ctx.repo.branch(branch).upstream()
             {
                 map.insert("upstream".into(), upstream);
@@ -303,14 +345,22 @@ pub fn build_hook_context(
 
     // Execution directory — always where the hook command runs, even when
     // worktree_path points to an Active identity that doesn't exist on disk.
-    map.insert(
-        "cwd".into(),
-        to_posix_path(&ctx.worktree_path.to_string_lossy()),
-    );
+    if want("cwd") {
+        map.insert(
+            "cwd".into(),
+            to_posix_path(&ctx.worktree_path.to_string_lossy()),
+        );
+    }
 
-    // Add extra vars (e.g., target branch for merge, base for switch)
+    // Add extra vars (e.g., target branch for merge, base for switch).
+    // `extra_vars` keys are explicit caller-set bindings; aliases route them
+    // through `AliasOptions::parse`, which only emits keys present in
+    // `referenced`. The `want` gate is therefore a no-op for that path —
+    // kept for symmetry so all inserts read the same.
     for (k, v) in extra_vars {
-        map.insert((*k).into(), (*v).into());
+        if want(k) {
+            map.insert((*k).into(), (*v).into());
+        }
     }
 
     Ok(map)
@@ -652,7 +702,7 @@ fn expand_commands(
     source: HookSource,
     lazy_enabled: bool,
 ) -> anyhow::Result<Vec<(Command, String, Option<String>)>> {
-    let mut base_context = build_hook_context(ctx, extra_vars)?;
+    let mut base_context = build_hook_context(ctx, extra_vars, None)?;
 
     // hook_type is always available as a template variable and in JSON context
     base_context.insert("hook_type".into(), hook_type.to_string());

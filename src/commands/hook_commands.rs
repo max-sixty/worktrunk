@@ -406,14 +406,14 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
     let mut output = String::new();
 
     // Render user hooks
-    render_user_hooks(&mut output, &config, filter, ctx.as_ref())?;
+    render_user_hooks(&mut output, config, filter, ctx.as_ref())?;
     output.push('\n');
 
     // Render project hooks
     render_project_hooks(
         &mut output,
         &repo,
-        project_config.as_ref(),
+        project_config,
         &approvals,
         project_id.as_deref(),
         filter,
@@ -593,7 +593,7 @@ fn expand_command_template(
     let default_branch = ctx.repo.default_branch();
     let template_vars = build_manual_hook_template_vars(ctx, hook_type, default_branch.as_deref());
     let extra_vars = template_vars.as_extra_vars();
-    let mut template_ctx = build_hook_context(ctx, &extra_vars)?;
+    let mut template_ctx = build_hook_context(ctx, &extra_vars, None)?;
     template_ctx.insert("hook_type".into(), hook_type.to_string());
     if let Some(name) = hook_name {
         template_ctx.insert("hook_name".into(), name.into());

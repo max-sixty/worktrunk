@@ -1352,9 +1352,20 @@ impl Cmd {
             })
         })?;
 
-        // Handle signals (Unix only)
+        // Handle signals (Unix only).
+        //
+        // `seen_signal` records any signal forwarded by the listener thread,
+        // covering the case where the child caught the signal and exited with
+        // a code (no kernel `status.signal()` to read). The clean-exit gate
+        // closes the wait-vs-handle.close window: if `child.wait()` returned
+        // success and a signal then landed before `handle.close()` ran, the
+        // signal arrived too late to have killed anything — the contract on
+        // `signal: Some(_)` is "this child was killed by the signal" and
+        // `interrupt_exit_code` callers in pipeline loops break on it.
         #[cfg(unix)]
-        if let Some(sig) = seen_signal {
+        if let Some(sig) = seen_signal
+            && !status.success()
+        {
             external_log.record(Some(128 + sig));
             return Err(WorktrunkError::ChildProcessExited {
                 code: 128 + sig,
