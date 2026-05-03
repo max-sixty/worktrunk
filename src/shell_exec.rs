@@ -470,33 +470,6 @@ fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
     out
 }
 
-/// Emit a `[wt-trace]` line plus stdout/stderr for a finished command.
-fn log_command_result(
-    context: Option<&str>,
-    cmd_str: &str,
-    ts: u64,
-    tid: u64,
-    dur_us: u64,
-    result: &std::io::Result<std::process::Output>,
-) {
-    match result {
-        Ok(output) => {
-            crate::trace::emit::command_completed(
-                context,
-                cmd_str,
-                ts,
-                tid,
-                dur_us,
-                output.status.success(),
-            );
-            log_output(output);
-        }
-        Err(e) => {
-            crate::trace::emit::command_errored(context, cmd_str, ts, tid, dur_us, e);
-        }
-    }
-}
-
 /// Implementation of timeout-based command execution.
 ///
 /// Spawns reader threads to drain stdout/stderr concurrently (preventing deadlock when
@@ -653,14 +626,14 @@ impl ExternalCommandLog {
     }
 }
 
-/// Per-subprocess `[wt-trace]` recorder used by `Cmd::stream`.
+/// Per-subprocess `[wt-trace]` recorder used by `Cmd::run`, `Cmd::pipe_into`,
+/// and `Cmd::stream`.
 ///
-/// Mirrors `ExternalCommandLog`'s shape but emits to the `[wt-trace]` grammar
-/// (`crate::trace::emit`) rather than the per-command external log. Captures
-/// `ts`/`tid`/`started_at` at construction; callers invoke `completed` /
-/// `errored` at each exit point. `Cmd::run` and `Cmd::pipe_into` have a single
-/// emit site each so they call `command_completed`/`command_errored`
-/// directly — `stream` has six exit points and benefits from this helper.
+/// Captures `ts`/`tid`/`started_at` at construction; callers invoke
+/// `completed` / `errored` at each exit point. `record_result` is a
+/// convenience wrapper used by `run`/`pipe_into` (which have a single
+/// `Result<Output>` exit each, plus captured stdout/stderr to surface).
+/// `stream` has multiple exit points and uses the lower-level methods.
 struct WtTraceLog<'a> {
     context: Option<&'a str>,
     cmd_str: &'a str,
@@ -707,6 +680,20 @@ impl<'a> WtTraceLog<'a> {
             dur_us,
             err,
         );
+    }
+
+    /// Emit a trace record for a finished `run`/`pipe_into` invocation and
+    /// surface the captured stdout/stderr to the debug log. `stream` doesn't
+    /// capture output (it inherits stdio), so it uses `completed`/`errored`
+    /// directly.
+    fn record_result(&self, result: &std::io::Result<std::process::Output>) {
+        match result {
+            Ok(output) => {
+                self.completed(output.status.success());
+                log_output(output);
+            }
+            Err(e) => self.errored(e),
+        }
     }
 }
 
@@ -1011,12 +998,7 @@ impl Cmd {
         // Acquire semaphore to limit concurrent commands
         let _guard = semaphore().acquire();
 
-        // Capture timing for tracing
-        let t0 = Instant::now();
-        let ts = t0
-            .duration_since(crate::trace::emit::trace_epoch())
-            .as_micros() as u64;
-        let tid = crate::trace::emit::thread_id();
+        let trace_log = WtTraceLog::new(self.context.as_deref(), &cmd_str);
 
         let mut cmd = self.direct_command();
         self.apply_common_settings(&mut cmd);
@@ -1051,9 +1033,7 @@ impl Cmd {
             cmd.output()
         };
 
-        // Log trace
-        let dur_us = t0.elapsed().as_micros() as u64;
-        log_command_result(self.context.as_deref(), &cmd_str, ts, tid, dur_us, &result);
+        trace_log.record_result(&result);
 
         let exit_code = result.as_ref().ok().and_then(|output| output.status.code());
         external_log.record(exit_code);
@@ -1121,11 +1101,8 @@ impl Cmd {
 
         let _guard = semaphore().acquire();
 
-        let t0 = Instant::now();
-        let ts = t0
-            .duration_since(crate::trace::emit::trace_epoch())
-            .as_micros() as u64;
-        let tid = crate::trace::emit::thread_id();
+        let first_log = WtTraceLog::new(self.context.as_deref(), &first_cmd_str);
+        let second_log = WtTraceLog::new(next.context.as_deref(), &second_cmd_str);
 
         let mut first = self.direct_command();
         self.apply_common_settings(&mut first);
@@ -1168,7 +1145,7 @@ impl Cmd {
             .take()
             .expect("stderr was configured as piped");
 
-        let (first_result, second_result, first_dur_us, second_dur_us) = std::thread::scope(|s| {
+        let (first_result, second_result) = std::thread::scope(|s| {
             let stderr_thread = s.spawn(move || {
                 let mut buf = Vec::new();
                 first_stderr_pipe.read_to_end(&mut buf).map(|_| buf)
@@ -1177,13 +1154,12 @@ impl Cmd {
             // Drain `next` first (its `wait_with_output` reads its own
             // stdout/stderr), so `first`'s writes can complete.
             let second_result = second_child.wait_with_output();
-            let second_dur_us = t0.elapsed().as_micros() as u64;
+            second_log.record_result(&second_result);
 
             // Reap `first`. Its stderr is already being drained; combine
             // the captured stderr with the exit status into an Output.
             let first_status = first_child.wait();
             let first_stderr = stderr_thread.join().unwrap();
-            let first_dur_us = t0.elapsed().as_micros() as u64;
 
             let first_result = first_status.and_then(|status| {
                 first_stderr.map(|stderr| std::process::Output {
@@ -1192,26 +1168,10 @@ impl Cmd {
                     stderr,
                 })
             });
+            first_log.record_result(&first_result);
 
-            (first_result, second_result, first_dur_us, second_dur_us)
+            (first_result, second_result)
         });
-
-        log_command_result(
-            self.context.as_deref(),
-            &first_cmd_str,
-            ts,
-            tid,
-            first_dur_us,
-            &first_result,
-        );
-        log_command_result(
-            next.context.as_deref(),
-            &second_cmd_str,
-            ts,
-            tid,
-            second_dur_us,
-            &second_result,
-        );
 
         Ok((first_result?, second_result?))
     }
