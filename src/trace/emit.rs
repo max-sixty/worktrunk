@@ -13,7 +13,14 @@
 //! [wt-trace] ts=1234567 tid=3 cmd="gh pr list" dur_us=45200 ok=false
 //! [wt-trace] ts=1234567 tid=3 context=main cmd="git merge-base" dur_us=100000 err="fatal: ..."
 //! [wt-trace] ts=1234567 tid=3 event="Showed skeleton"
+//! [wt-trace] ts=1234567 tid=3 span="build_hook_context" dur_us=8200
 //! ```
+//!
+//! In-process spans (everything that isn't a subprocess) use [`Span`], an
+//! RAII guard that captures `ts` at construction and emits the completed
+//! record on drop with the elapsed duration. Use it to attribute time spent
+//! in code paths subprocess records can't see (config load, repo open,
+//! template render).
 //!
 //! Records are emitted at `log::debug!`, so `-vv` or `RUST_LOG=debug` makes
 //! them visible. Subprocess stdout/stderr continuations are emitted via
@@ -122,4 +129,58 @@ pub fn instant(event: &str) {
         thread_id(),
         event
     );
+}
+
+/// Emit a completed in-process span (a named region of code that ran).
+///
+/// Spans are the in-process counterpart to `command_completed`: subprocess
+/// records cover work in child processes; spans cover everything between and
+/// around them (config load, repo open, template render, etc.).
+pub fn span_completed(name: &str, ts: u64, tid: u64, dur_us: u64) {
+    log::debug!(
+        r#"[wt-trace] ts={} tid={} span="{}" dur_us={}"#,
+        ts,
+        tid,
+        name,
+        dur_us
+    );
+}
+
+/// RAII guard that times its enclosing scope and emits a span record on drop.
+///
+/// Construct at the top of a block — `let _span = Span::new("config_load");` —
+/// and the span fires when `_span` goes out of scope.
+///
+/// `name` is `&'static str` to keep construction allocation-free; for dynamic
+/// names, call [`span_completed`] directly.
+///
+/// The `log_enabled!` check happens on drop, not construction. A span
+/// constructed before `init_logging` (e.g. wrapping the logger init itself)
+/// still fires correctly as long as the logger is up by the time the span
+/// goes out of scope. Construction always pays two `Instant::now()` calls;
+/// they're vDSO-fast and the overhead is below noise.
+pub struct Span {
+    name: &'static str,
+    start_ts_us: u64,
+    start: Instant,
+}
+
+impl Span {
+    pub fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            start_ts_us: now_us(),
+            start: Instant::now(),
+        }
+    }
+}
+
+impl Drop for Span {
+    fn drop(&mut self) {
+        if !log::log_enabled!(log::Level::Debug) {
+            return;
+        }
+        let dur_us = self.start.elapsed().as_micros() as u64;
+        span_completed(self.name, self.start_ts_us, thread_id(), dur_us);
+    }
 }

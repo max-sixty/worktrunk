@@ -14,6 +14,7 @@ use worktrunk::styling::{
     eprintln, error_message, format_bash_with_gutter, format_with_gutter, info_message,
     progress_message, verbosity,
 };
+use worktrunk::trace::Span;
 
 use super::format_command_label;
 use super::hook_filter::HookSource;
@@ -235,16 +236,22 @@ pub fn build_hook_context(
     }
 
     // Default branch
-    if let Some(default_branch) = ctx.repo.default_branch() {
-        map.insert("default_branch".into(), default_branch);
+    {
+        let _span = Span::new("var_default_branch");
+        if let Some(default_branch) = ctx.repo.default_branch() {
+            map.insert("default_branch".into(), default_branch);
+        }
     }
 
     // Primary worktree path (where established files live)
-    if let Ok(Some(path)) = ctx.repo.primary_worktree() {
-        let path_str = to_posix_path(&path.to_string_lossy());
-        map.insert("primary_worktree_path".into(), path_str.clone());
-        // Deprecated alias
-        map.insert("main_worktree_path".into(), path_str);
+    {
+        let _span = Span::new("var_primary_worktree");
+        if let Ok(Some(path)) = ctx.repo.primary_worktree() {
+            let path_str = to_posix_path(&path.to_string_lossy());
+            map.insert("primary_worktree_path".into(), path_str.clone());
+            // Deprecated alias
+            map.insert("main_worktree_path".into(), path_str);
+        }
     }
 
     // Resolve commit from the Active branch, not HEAD at discovery path.
@@ -255,36 +262,42 @@ pub fn build_hook_context(
     // iterates over sibling worktrees, and a sibling on detached HEAD has a
     // different HEAD than the worktree `wt` runs in. Branched contexts go
     // through `rev-parse <branch>`, which is repo-wide.
-    let commit = match ctx.branch {
-        Some(branch) => ctx
-            .repo
-            .run_command(&["rev-parse", branch])
-            .ok()
-            .map(|s| s.trim().to_owned()),
-        None => ctx
-            .repo
-            .worktree_at(ctx.worktree_path)
-            .head_sha()
-            .ok()
-            .flatten(),
-    };
-    if let Some(commit) = commit {
-        if commit.len() >= 7 {
-            map.insert("short_commit".into(), commit[..7].into());
+    {
+        let _span = Span::new("var_commit");
+        let commit = match ctx.branch {
+            Some(branch) => ctx
+                .repo
+                .run_command(&["rev-parse", branch])
+                .ok()
+                .map(|s| s.trim().to_owned()),
+            None => ctx
+                .repo
+                .worktree_at(ctx.worktree_path)
+                .head_sha()
+                .ok()
+                .flatten(),
+        };
+        if let Some(commit) = commit {
+            if commit.len() >= 7 {
+                map.insert("short_commit".into(), commit[..7].into());
+            }
+            map.insert("commit".into(), commit);
         }
-        map.insert("commit".into(), commit);
     }
 
-    if let Ok(remote) = ctx.repo.primary_remote() {
-        map.insert("remote".into(), remote.to_string());
-        // Add remote URL for conditional hook execution (e.g., GitLab vs GitHub)
-        if let Some(url) = ctx.repo.remote_url(&remote) {
-            map.insert("remote_url".into(), url);
-        }
-        if let Some(branch) = ctx.branch
-            && let Ok(Some(upstream)) = ctx.repo.branch(branch).upstream()
-        {
-            map.insert("upstream".into(), upstream);
+    {
+        let _span = Span::new("var_remote");
+        if let Ok(remote) = ctx.repo.primary_remote() {
+            map.insert("remote".into(), remote.to_string());
+            // Add remote URL for conditional hook execution (e.g., GitLab vs GitHub)
+            if let Some(url) = ctx.repo.remote_url(&remote) {
+                map.insert("remote_url".into(), url);
+            }
+            if let Some(branch) = ctx.branch
+                && let Ok(Some(upstream)) = ctx.repo.branch(branch).upstream()
+            {
+                map.insert("upstream".into(), upstream);
+            }
         }
     }
 
@@ -424,10 +437,12 @@ fn run_concurrent_group(
         announce_command(cmd, &fg_step.announce);
     }
 
-    let expanded: Vec<String> = cmds
-        .iter()
-        .map(|cmd| resolve_command_str(cmd, repo))
-        .collect::<Result<_>>()?;
+    let expanded: Vec<String> = {
+        let _span = Span::new("template_render");
+        cmds.iter()
+            .map(|cmd| resolve_command_str(cmd, repo))
+            .collect::<Result<_>>()?
+    };
 
     // Both alias tables and hook tables produce named commands (TOML keys
     // become `name`), so `cmd.name` is always `Some` here.
@@ -484,7 +499,10 @@ fn run_one_command(
     let directives = &fg_step.directives;
     announce_command(cmd, &fg_step.announce);
 
-    let command_str = resolve_command_str(cmd, repo)?;
+    let command_str = {
+        let _span = Span::new("template_render");
+        resolve_command_str(cmd, repo)?
+    };
 
     // Hooks get a documented JSON context on stdin; aliases inherit stdin so
     // interactive children (e.g. `wt switch`'s picker) keep their controlling
@@ -494,14 +512,21 @@ fn run_one_command(
     } else {
         None
     };
-    let result = execute_shell_command(
-        wt_path,
-        &command_str,
-        stdin_json,
-        cmd.log_label.as_deref(),
-        directives.clone(),
-        fg_step.redirect_stdout_to_stderr,
-    );
+    // `execute_shell_command` ultimately calls `Cmd::stream()`, which does not
+    // emit a per-subprocess `[wt-trace]` record (unlike `Cmd::run()`). Wrap it
+    // in a span so foreground hook/alias step time is attributable in the
+    // trace output.
+    let result = {
+        let _span = Span::new("execute_shell_command");
+        execute_shell_command(
+            wt_path,
+            &command_str,
+            stdin_json,
+            cmd.log_label.as_deref(),
+            directives.clone(),
+            fg_step.redirect_stdout_to_stderr,
+        )
+    };
 
     match result {
         Ok(()) => Ok(()),

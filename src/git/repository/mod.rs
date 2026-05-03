@@ -511,6 +511,11 @@ impl Repository {
             return Ok(cached.clone());
         }
 
+        // Span attribution for the cold path: the rev-parse subprocess gets
+        // its own `[wt-trace] cmd=` record from `Cmd::run`, and this span
+        // captures the surrounding canonicalize + cache-insert work too.
+        let _span = crate::trace::Span::new("resolve_git_common_dir");
+
         let output = Cmd::new("git")
             .args(["rev-parse", "--git-common-dir"])
             .current_dir(discovery_path)

@@ -5,7 +5,7 @@
 //!
 //! # Event Types
 //!
-//! - **Complete events** (`ph: "X"`): Command executions with duration
+//! - **Complete events** (`ph: "X"`): Command executions and in-process spans, both with duration
 //! - **Instant events** (`ph: "I"`): Milestones without duration (e.g., "Showed skeleton")
 //!
 //! See [`crate::trace`] for the capture pipeline and SQL query examples.
@@ -84,8 +84,9 @@ struct ChromeTrace {
 ///
 /// # Event Types
 ///
-/// - Command entries become Complete events (`"ph": "X"`) with duration
-/// - Instant entries become Instant events (`"ph": "I"`) with global scope
+/// - Command entries become Complete events (`"ph": "X"`) with duration; categorized as `git`/`network`/none.
+/// - Span entries become Complete events with category `wt` so subprocess and in-process work render distinctly.
+/// - Instant entries become Instant events (`"ph": "I"`) with global scope.
 pub fn to_chrome_trace(entries: &[TraceEntry]) -> String {
     let trace_events: Vec<TraceEvent> = entries
         .iter()
@@ -139,6 +140,21 @@ pub fn to_chrome_trace(entries: &[TraceEntry]) -> String {
                         }),
                     }
                 }
+                TraceEntryKind::Span { name, duration } => TraceEvent {
+                    name: name.clone(),
+                    ph: "X", // Complete event (has duration)
+                    ts,
+                    dur: Some(duration.as_micros() as u64),
+                    s: None,
+                    pid: 1,
+                    tid,
+                    cat: Some("wt".to_string()),
+                    args: Some(TraceEventArgs {
+                        context: entry.context.clone(),
+                        success: true,
+                        duration_ms: Some(duration.as_secs_f64() * 1000.0),
+                    }),
+                },
             }
         })
         .collect();
@@ -186,6 +202,23 @@ mod tests {
             context: None,
             kind: TraceEntryKind::Instant {
                 name: name.to_string(),
+            },
+            start_time_us,
+            thread_id,
+        }
+    }
+
+    fn make_span_entry(
+        name: &str,
+        duration_us: u64,
+        start_time_us: Option<u64>,
+        thread_id: Option<u64>,
+    ) -> TraceEntry {
+        TraceEntry {
+            context: None,
+            kind: TraceEntryKind::Span {
+                name: name.to_string(),
+                duration: Duration::from_micros(duration_us),
             },
             start_time_us,
             thread_id,
@@ -299,6 +332,26 @@ mod tests {
         assert!(events[0]["dur"].is_null()); // No duration for instant events
         assert_eq!(events[0]["args"]["success"], true);
         assert!(events[0]["args"]["duration_ms"].is_null());
+    }
+
+    #[test]
+    fn test_span_event() {
+        // 8000 µs (= 8 ms exactly) avoids float-precision noise in duration_ms.
+        let entries = vec![make_span_entry("config_load", 8000, Some(1000000), Some(1))];
+
+        let json = to_chrome_trace(&entries);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let events = parsed["traceEvents"].as_array().unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["name"], "config_load");
+        assert_eq!(events[0]["ph"], "X"); // Complete event
+        assert_eq!(events[0]["ts"], 1000000);
+        assert_eq!(events[0]["dur"], 8000);
+        assert_eq!(events[0]["cat"], "wt");
+        assert!(events[0]["s"].is_null());
+        assert_eq!(events[0]["args"]["success"], true);
+        assert_eq!(events[0]["args"]["duration_ms"], 8.0);
     }
 
     #[test]

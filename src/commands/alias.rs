@@ -51,6 +51,7 @@ use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, verbosity,
     warning_message,
 };
+use worktrunk::trace::Span;
 
 use crate::commands::command_approval::approve_alias_commands;
 use crate::commands::command_executor::{
@@ -430,23 +431,39 @@ fn referenced_vars_for_entry(entry: &AliasEntry) -> anyhow::Result<BTreeSet<Stri
 /// rather than silently turning into an "unrecognized subcommand" once we
 /// fall through to PATH lookup.
 pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::Result<Option<()>> {
+    let _span = Span::new("try_alias");
     let Ok(repo) = Repository::current() else {
         return Ok(None);
     };
-    let user_config = UserConfig::load()?;
-    let project_config = ProjectConfig::load(&repo, true)?;
-    let aliases = load_aliases(Some(&repo), &user_config, project_config.as_ref());
+    let user_config = {
+        let _span = Span::new("user_config_load");
+        UserConfig::load()?
+    };
+    let project_config = {
+        let _span = Span::new("project_config_load");
+        ProjectConfig::load(&repo, true)?
+    };
+    let aliases = {
+        let _span = Span::new("load_aliases");
+        load_aliases(Some(&repo), &user_config, project_config.as_ref())
+    };
     let Some(entry) = aliases.get(&name) else {
         return Ok(None);
     };
-    let referenced = referenced_vars_for_entry(entry)?;
+    let referenced = {
+        let _span = Span::new("referenced_vars");
+        referenced_vars_for_entry(entry)?
+    };
     if try_intercept_alias_help(&name, &rest, &referenced) {
         return Ok(Some(()));
     }
     let mut alias_args = Vec::with_capacity(1 + rest.len());
     alias_args.push(name);
     alias_args.extend(rest);
-    let (opts, warnings) = AliasOptions::parse(alias_args, &referenced)?;
+    let (opts, warnings) = {
+        let _span = Span::new("parse_alias_args");
+        AliasOptions::parse(alias_args, &referenced)?
+    };
     let entry = aliases
         .get(&opts.name)
         .expect("entry verified above and `opts.name` matches the dispatched name");
@@ -534,6 +551,7 @@ fn run_alias(
     entry: &AliasEntry,
     global_yes: bool,
 ) -> anyhow::Result<()> {
+    let _span = Span::new("run_alias");
     for warning in &warnings {
         eprintln!("{}", warning_message(warning));
     }
@@ -541,6 +559,7 @@ fn run_alias(
     // Project bodies require approval even when user config also defines the
     // alias — same as hooks. `global_yes` is the sole skip source.
     if let Some(project_commands) = entry.project.as_ref() {
+        let _span = Span::new("alias_approve");
         let project_id = repo
             .project_identifier()
             .context("Cannot determine project identifier for alias approval")?;
@@ -561,7 +580,10 @@ fn run_alias(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    let mut context_map = build_hook_context(&ctx, &extra_refs)?;
+    let mut context_map = {
+        let _span = Span::new("build_hook_context");
+        build_hook_context(&ctx, &extra_refs)?
+    };
     // Forward positional CLI args to templates as `{{ args }}`. Encoded as a
     // JSON list so it flows through the stable `HashMap<String, String>`
     // context — `expand_template` rehydrates it into a `ShellArgs` sequence.
@@ -590,30 +612,34 @@ fn run_alias(
     }
 
     let alias_name = opts.name.clone();
-    let mut sourced_steps = Vec::new();
-    for (source, cfg) in entry.iter() {
-        for step in cfg.steps() {
-            let prepared = match step {
-                HookStep::Single(cmd) => {
-                    PreparedStep::Single(alias_prepared_command(cmd, &context_json, &alias_name))
-                }
-                HookStep::Concurrent(cmds) => PreparedStep::Concurrent(
-                    cmds.iter()
-                        .map(|cmd| alias_prepared_command(cmd, &context_json, &alias_name))
-                        .collect(),
-                ),
-            };
-            sourced_steps.push(SourcedStep {
-                step: prepared,
-                source,
-                // Aliases have no deprecated single-table form, so concurrent
-                // commands always run concurrently.
-                is_pipeline: true,
-            });
+    let foreground_steps = {
+        let _span = Span::new("prepare_steps");
+        let mut sourced_steps = Vec::new();
+        for (source, cfg) in entry.iter() {
+            for step in cfg.steps() {
+                let prepared = match step {
+                    HookStep::Single(cmd) => PreparedStep::Single(alias_prepared_command(
+                        cmd,
+                        &context_json,
+                        &alias_name,
+                    )),
+                    HookStep::Concurrent(cmds) => PreparedStep::Concurrent(
+                        cmds.iter()
+                            .map(|cmd| alias_prepared_command(cmd, &context_json, &alias_name))
+                            .collect(),
+                    ),
+                };
+                sourced_steps.push(SourcedStep {
+                    step: prepared,
+                    source,
+                    // Aliases have no deprecated single-table form, so concurrent
+                    // commands always run concurrently.
+                    is_pipeline: true,
+                });
+            }
         }
-    }
-    let foreground_steps =
-        sourced_steps_to_foreground(sourced_steps, &PipelineKind::Alias { name: alias_name });
+        sourced_steps_to_foreground(sourced_steps, &PipelineKind::Alias { name: alias_name })
+    };
 
     execute_pipeline_foreground(
         &foreground_steps,

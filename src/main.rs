@@ -1054,11 +1054,11 @@ fn init_logging(verbose_level: u8) {
     // capped). At -vv, `.git/wt/logs/trace.log` mirrors stderr and
     // `.git/wt/logs/output.log` receives the uncapped subprocess bodies
     // routed via `shell_exec::SUBPROCESS_FULL_TARGET`.
-    if verbose_level >= 2 {
-        log_files::init();
-    }
-
-    // Set global verbosity level for styled verbose output
+    //
+    // env_logger registers the logger via `.init()` at the bottom of this
+    // function. `log_files::init()` runs after that so the
+    // `Repository::current()` it triggers (cold cache: 4ms `git rev-parse
+    // --git-common-dir`) is visible in `[wt-trace]` output.
     output::set_verbosity(verbose_level);
 
     let mut builder = match verbose_level {
@@ -1121,6 +1121,13 @@ fn init_logging(verbose_level: u8) {
             }
         })
         .init();
+
+    // Open per-file log sinks AFTER env_logger is registered so the
+    // `Repository::current()` rev-parse fired by `try_create` is captured
+    // in the trace.
+    if verbose_level >= 2 {
+        log_files::init();
+    }
 }
 
 fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {
@@ -1244,6 +1251,12 @@ fn main() {
     // from a parent `git` (e.g. when invoked via `git wt ...` with
     // `alias.wt = "!wt"`) against a stable reference, rather than against
     // each child command's `current_dir`. See issue #1914.
+    //
+    // `[wt-trace]` spans before the logger is registered would silently
+    // no-op, so the prelude up to `init_logging` — `init_startup_cwd`,
+    // `init_rayon_thread_pool`, `force_color_output`, `parse_cli` — isn't
+    // attributed. If startup itself becomes the suspect, capture it as
+    // wall-clock minus the sum of post-init spans.
     worktrunk::shell_exec::init_startup_cwd();
 
     init_rayon_thread_pool();
@@ -1267,9 +1280,22 @@ fn main() {
     // existing destructure pattern.
     apply_global_options(directory.clone(), config);
 
+    // `init_logging` registers the logger. Run it before `init_command_log`
+    // so the latter's `Repository::current()` → `git rev-parse
+    // --git-common-dir` subprocess is visible in `[wt-trace]` output. With
+    // the previous order the rev-parse fired before any logger was
+    // registered, leaving a 4ms hole in the trace where the subprocess
+    // actually ran. Same reason `init_logging` itself reorders to
+    // register env_logger before opening per-file log sinks.
+    {
+        let _span = worktrunk::trace::Span::new("init_logging");
+        init_logging(verbose);
+    }
     let command_line = std::env::args().collect::<Vec<_>>().join(" ");
-    init_command_log(&command_line);
-    init_logging(verbose);
+    {
+        let _span = worktrunk::trace::Span::new("init_command_log");
+        init_command_log(&command_line);
+    }
 
     let Some(command) = command else {
         print_help_to_stderr();
