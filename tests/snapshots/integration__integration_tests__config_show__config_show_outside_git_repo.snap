@@ -51,6 +51,7 @@ exit_code: 0
 [2m○[22m [2mzsh: Skipped; ~/.zshrc not found[22m
 [2m○[22m [2mfish: Skipped; ~/.config/fish/functions not found[22m
 [2m○[22m [2mnu: Skipped; ~/.config/nushell/vendor/autoload not found[22m
+[2m↳[22m [2mTo configure, run [4mwt config shell install[24m[22m
 
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m
