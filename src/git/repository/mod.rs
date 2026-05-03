@@ -48,6 +48,8 @@
 //! **What is NOT cached.** Values that change during command execution are intentionally
 //! excluded:
 //! - `WorkingTree::is_dirty()` — changes as we stage and commit
+//! - `WorkingTree::head_sha()` — HEAD moves on commit, rebase, or merge; a stale SHA
+//!   would surface in template variables (`{{ commit }}`) for hooks that fire after the move
 //!
 //! [`Repository::list_worktrees`] is cached despite mutating commands adding or
 //! removing worktrees. The cache is safe because no caller reads the list
