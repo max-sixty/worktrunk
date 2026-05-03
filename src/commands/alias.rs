@@ -43,8 +43,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, CommandConfig, HookStep, ProjectConfig, UserConfig, format_alias_variables,
-    referenced_vars_for_config,
+    ALIAS_ARGS_KEY, CommandConfig, HookStep, LoadedConfigs, ProjectConfig, UserConfig,
+    format_alias_variables, referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
 use worktrunk::styling::{
@@ -435,14 +435,10 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
     let Ok(repo) = Repository::current() else {
         return Ok(None);
     };
-    let user_config = {
-        let _span = Span::new("user_config_load");
-        UserConfig::load()?
-    };
-    let project_config = {
-        let _span = Span::new("project_config_load");
-        ProjectConfig::load(&repo, true)?
-    };
+    let LoadedConfigs {
+        user: user_config,
+        project: project_config,
+    } = LoadedConfigs::load(&repo)?;
     let aliases = {
         let _span = Span::new("load_aliases");
         load_aliases(Some(&repo), &user_config, project_config.as_ref())
@@ -487,8 +483,10 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
 /// be handled with a dedicated error hint.
 pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
     let repo = Repository::current()?;
-    let user_config = UserConfig::load()?;
-    let project_config = ProjectConfig::load(&repo, true)?;
+    let LoadedConfigs {
+        user: user_config,
+        project: project_config,
+    } = LoadedConfigs::load(&repo)?;
     let aliases = load_aliases(Some(&repo), &user_config, project_config.as_ref());
     let Some(name) = args.first().cloned() else {
         bail!("Missing alias name");

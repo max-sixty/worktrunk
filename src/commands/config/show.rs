@@ -396,9 +396,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
 
     // Test commit generation - use effective config for current project
     let config = UserConfig::load()?;
-    let project_id = Repository::current()
-        .ok()
-        .and_then(|r| r.project_identifier().ok());
+    let project_id = repo.project_identifier().ok();
     let commit_config = config.commit_generation(project_id.as_deref());
 
     if !commit_config.is_configured() {

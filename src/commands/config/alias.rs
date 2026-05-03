@@ -23,8 +23,8 @@ use std::io::Write;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, referenced_vars_for_config,
-    template_references_var, validate_template_syntax,
+    ALIAS_ARGS_KEY, CommandConfig, LoadedConfigs, ProjectConfig, UserConfig,
+    referenced_vars_for_config, template_references_var, validate_template_syntax,
 };
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{format_bash_with_gutter, info_message, println};
@@ -43,8 +43,10 @@ use crate::commands::hooks::HookSource;
 /// entries are printed (user first, matching runtime execution order).
 pub fn handle_alias_show(name: String) -> anyhow::Result<()> {
     let repo = Repository::current()?;
-    let user_config = UserConfig::load()?;
-    let project_config = ProjectConfig::load(&repo, true)?;
+    let LoadedConfigs {
+        user: user_config,
+        project: project_config,
+    } = LoadedConfigs::load(&repo)?;
     let entries = entries_for_name(&repo, &user_config, project_config.as_ref(), &name);
 
     if entries.is_empty() {
@@ -94,8 +96,10 @@ fn warn_if_shadowed(name: &str) {
 /// Other templates expand against the current context.
 pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<()> {
     let repo = Repository::current()?;
-    let user_config = UserConfig::load()?;
-    let project_config = ProjectConfig::load(&repo, true)?;
+    let LoadedConfigs {
+        user: user_config,
+        project: project_config,
+    } = LoadedConfigs::load(&repo)?;
     let entries = entries_for_name(&repo, &user_config, project_config.as_ref(), &name);
 
     if entries.is_empty() {

@@ -1,6 +1,6 @@
 use anyhow::Context;
 use std::path::PathBuf;
-use worktrunk::config::UserConfig;
+use worktrunk::config::{LoadedConfigs, UserConfig};
 use worktrunk::git::Repository;
 
 use super::command_executor::CommandContext;
@@ -76,7 +76,13 @@ impl CommandEnv {
         let branch = current_wt
             .branch()
             .context("Failed to determine current branch")?;
-        let config = UserConfig::load().context("Failed to load config")?;
+        // `wt hook`-style callers always read project config downstream
+        // (`repo.load_project_config()`); use the bundle loader to warm
+        // both in parallel. `CommandEnv` only carries `UserConfig` —
+        // downstream picks up project from the cache.
+        let config = LoadedConfigs::load(&repo)
+            .context("Failed to load config")?
+            .user;
 
         Ok(Self {
             repo,
