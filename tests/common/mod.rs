@@ -905,8 +905,10 @@ fn setup_snapshot_settings_for_paths_with_home(
 
     // Normalize the platform shell basename so cross-platform snapshots match.
     // `wt step {commit,squash} --dry-run` renders the LLM shell invocation,
-    // which is `sh` on Unix and `bash.exe` on Windows (Git Bash).
-    settings.add_filter(r"\bbash\.exe\b", "sh");
+    // which is `sh` on Unix and `bash.exe` on Windows (Git Bash). No `\b`: the
+    // syntax-highlighted output puts an ANSI code (`...m`) immediately before
+    // `bash`, and `m` is a word char so `\bbash` wouldn't see a word boundary.
+    settings.add_filter(r"bash\.exe", "sh");
 
     // Filter out Git hint messages that vary across Git versions
     // These hints appear during rebase conflicts and can differ between versions

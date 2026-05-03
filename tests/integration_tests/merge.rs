@@ -2469,6 +2469,76 @@ command = "cat >/dev/null && echo 'fallback'"
     );
 }
 
+/// `--stage=tracked` should mirror `git add -u` against the temp index — modifications
+/// to tracked files appear in the prompt, but untracked files do not.
+#[rstest]
+fn test_step_commit_dry_run_stage_tracked(repo: TestRepo) {
+    // Create and commit a tracked file first
+    fs::write(repo.root_path().join("tracked.txt"), "original").expect("Failed to write");
+    repo.git_command()
+        .args(["add", "tracked.txt"])
+        .run()
+        .expect("git add failed");
+    repo.git_command()
+        .args(["commit", "-m", "add tracked"])
+        .run()
+        .expect("git commit failed");
+
+    // Modify the tracked file (unstaged) and create a new untracked file
+    fs::write(repo.root_path().join("tracked.txt"), "modified").expect("Failed to write");
+    fs::write(repo.root_path().join("untracked.txt"), "new").expect("Failed to write");
+
+    let worktrunk_config = r#"
+[commit.generation]
+command = "cat >/dev/null && echo 'feat: tweak'"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    let output = make_snapshot_cmd(
+        &repo,
+        "step",
+        &["commit", "--dry-run", "--stage=tracked"],
+        None,
+    )
+    .output()
+    .expect("wt step commit --dry-run --stage=tracked failed");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("tracked.txt") && stdout.contains("modified"),
+        "--stage=tracked should include modified tracked files; got stdout:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("untracked.txt"),
+        "--stage=tracked should skip untracked files; got stdout:\n{stdout}"
+    );
+}
+
+/// `--dry-run` without an LLM configured falls back to the deterministic message
+/// generator and prints `(LLM not configured — using built-in fallback)` for COMMAND.
+#[rstest]
+fn test_step_commit_dry_run_no_llm_configured(repo: TestRepo) {
+    fs::write(repo.root_path().join("new.txt"), "x").expect("Failed to write");
+    repo.git_command()
+        .args(["add", "new.txt"])
+        .run()
+        .expect("git add failed");
+    // Empty config: no [commit.generation] section.
+    fs::write(repo.test_config_path(), "").unwrap();
+
+    let output = make_snapshot_cmd(&repo, "step", &["commit", "--dry-run"], None)
+        .output()
+        .expect("wt step commit --dry-run failed");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("LLM not configured"),
+        "fallback notice should appear in the COMMAND section; got stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Changes to new.txt"),
+        "fallback message generator should describe the staged file; got stdout:\n{stdout}"
+    );
+}
+
 #[rstest]
 fn test_step_squash_dry_run(repo_with_multi_commit_feature: TestRepo) {
     let repo = repo_with_multi_commit_feature;

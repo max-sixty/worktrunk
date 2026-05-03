@@ -112,14 +112,16 @@ fn preview_commit(stage: Option<StageMode>, dry_run: bool) -> anyhow::Result<()>
 
     // For --dry-run, stage to a copy of the index so the preview reflects what a real
     // run would send. --show-prompt skips this — it's the cheap "what's already staged"
-    // path. StageMode::None has nothing to stage, so the override is unnecessary.
+    // path. StageMode::None has nothing to stage, so we use the existing index as-is.
     let temp_index = if dry_run {
-        let stage_mode = stage.unwrap_or(env.resolved().commit.stage());
-        if stage_mode != StageMode::None {
-            Some(stage_to_temp_index(&env.repo, stage_mode)?)
-        } else {
-            None
-        }
+        let add_args: Option<&[&str]> = match stage.unwrap_or(env.resolved().commit.stage()) {
+            StageMode::All => Some(&["add", "-A"]),
+            StageMode::Tracked => Some(&["add", "-u"]),
+            StageMode::None => None,
+        };
+        add_args
+            .map(|args| stage_to_temp_index(&env.repo, args))
+            .transpose()?
     } else {
         None
     };
@@ -134,25 +136,19 @@ fn preview_commit(stage: Option<StageMode>, dry_run: bool) -> anyhow::Result<()>
     print_dry_run(&prompt, &commit_config, &message)
 }
 
-/// Copy the current worktree's index to a temp file and stage into it per `mode`.
+/// Copy the current worktree's index to a temp file and run `git <add_args>` against it.
 ///
 /// Returns the [`tempfile::NamedTempFile`] so the caller controls its lifetime — when
 /// dropped, the temp file is removed without ever touching the user's real index.
 fn stage_to_temp_index(
     repo: &Repository,
-    mode: StageMode,
+    add_args: &[&str],
 ) -> anyhow::Result<tempfile::NamedTempFile> {
     let wt = repo.current_worktree();
     let real_index = wt.git_dir()?.join("index");
     let temp = tempfile::NamedTempFile::new().context("Failed to create temporary index")?;
     fs::copy(&real_index, temp.path()).context("Failed to copy index file")?;
 
-    let add_args: &[&str] = match mode {
-        StageMode::All => &["add", "-A"],
-        StageMode::Tracked => &["add", "-u"],
-        // The caller skips this branch.
-        StageMode::None => return Ok(temp),
-    };
     let output = Cmd::new("git")
         .args(add_args.iter().copied())
         .current_dir(wt.root()?)
