@@ -343,9 +343,9 @@ pub fn isolate_subprocess_env(cmd: &mut Command, user_config: Option<&Path>) {
 /// relative `GIT_DIR=.git` (from a git alias, hook, etc.) doesn't
 /// redirect discovery away from the path you set.
 ///
-/// Strictly defensive when used downstream of [`scrub_host_env`] (which
-/// already stripped these). Required when there's no upstream scrub —
-/// e.g. wt-perf shells out to `git` directly without a `wt` parent.
+/// Strictly defensive when used downstream of [`isolate_subprocess_env`]
+/// (which already stripped these). Required when there's no upstream
+/// scrub — e.g. wt-perf shells out to `git` directly without a `wt` parent.
 pub fn scrub_git_path_vars(cmd: &mut Command) {
     for var in GIT_PATH_VARS {
         cmd.env_remove(var);
@@ -495,9 +495,9 @@ pub fn configure_cli_command(cmd: &mut Command) {
 /// * `git_config_path` - Path to git config file (use `/dev/null` or `NULL_DEVICE` for none)
 pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
     // Defensive: every existing caller is downstream of `configure_cli_command`
-    // (which already stripped these via `scrub_host_env`), but a future test
-    // that spawns `git` from an unprepared parent shouldn't be vulnerable to
-    // an inherited relative `GIT_DIR` redirecting discovery.
+    // (which already stripped these via `isolate_subprocess_env`), but a future
+    // test that spawns `git` from an unprepared parent shouldn't be vulnerable
+    // to an inherited relative `GIT_DIR` redirecting discovery.
     scrub_git_path_vars(cmd);
     cmd.env("GIT_CONFIG_GLOBAL", git_config_path);
     cmd.env("GIT_CONFIG_SYSTEM", NULL_DEVICE);
