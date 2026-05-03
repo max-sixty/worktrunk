@@ -460,6 +460,7 @@ Most data is stable for the duration of a command. `Repository` caches read-only
 
 **Not cached (changes during command execution):**
 - `is_dirty()` — changes as we stage/commit
+- `head_sha()` — HEAD moves on commit/rebase/merge; a stale SHA would surface in `{{ commit }}` for hooks that fire after the move
 
 `list_worktrees()` *is* cached, even though `wt switch --create` / `wt remove` mutate the underlying list. The invariant is that mutating paths must not read the list through the same `Repository` after their own mutation: either read once up front and thread the slice through, or call `Repository::at(...)` again to get a fresh cache before any post-mutation probe.
 
