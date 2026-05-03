@@ -46,5 +46,8 @@ command = [
 ]
 
 [[profile.default.scripts]]
-filter = "all()"
+# Only the `integration` test binary calls `workspace_bin()` (via MockConfig
+# and analyze_trace.rs), so don't pay the helper-build cost on `--lib`,
+# `--bin wt`, doctest, or bench runs.
+filter = "binary(integration)"
 setup = "build-bins"
