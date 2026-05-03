@@ -76,10 +76,8 @@ impl CommandEnv {
         let branch = current_wt
             .branch()
             .context("Failed to determine current branch")?;
-        // `wt hook`-style callers always read project config downstream
-        // (`repo.load_project_config()`); use the bundle loader to warm
-        // both in parallel. `CommandEnv` carries an owned `UserConfig` —
-        // clone from the cache so downstream `repo.user_config()` is a hit.
+        // Warm both configs in parallel; downstream hook code reads project
+        // from the cache. Clone user out — `CommandEnv` owns its config.
         let config = LoadedConfigs::load(&repo)
             .context("Failed to load config")?
             .user

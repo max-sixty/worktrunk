@@ -463,7 +463,7 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
     let entry = aliases
         .get(&opts.name)
         .expect("entry verified above and `opts.name` matches the dispatched name");
-    run_alias(opts, warnings, &repo, user_config, entry, global_yes).map(Some)
+    run_alias(opts, warnings, &repo, user_config, entry, referenced, global_yes).map(Some)
 }
 
 /// Run a configured alias from `wt step <name>`. Errors with a clap-style
@@ -513,7 +513,7 @@ pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
     let entry = aliases
         .get(&opts.name)
         .expect("entry verified above and `opts.name` matches the dispatched name");
-    run_alias(opts, warnings, &repo, user_config, entry, global_yes)
+    run_alias(opts, warnings, &repo, user_config, entry, referenced, global_yes)
 }
 
 /// Return alias names for use as suggestions when a top-level subcommand is
@@ -547,6 +547,7 @@ fn run_alias(
     repo: &Repository,
     user_config: &UserConfig,
     entry: &AliasEntry,
+    referenced: BTreeSet<String>,
     global_yes: bool,
 ) -> anyhow::Result<()> {
     let _span = Span::new("run_alias");
@@ -578,13 +579,9 @@ fn run_alias(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    // Skip computing standard vars the body doesn't reference — avoids
-    // git lookups (commit resolution, upstream tracking, default-branch
-    // detection on cold cache) that would never be substituted, and trims
-    // the verbose `template variables:` table to what's actually used.
-    // `extra_refs` only contains keys already in `referenced` (per
-    // `AliasOptions::parse` routing), so no extra entries needed there.
-    let referenced = alias_context_filter(&referenced_vars_for_entry(entry)?);
+    // Filter to vars the body references — skips git lookups (commit, upstream,
+    // default-branch on cold cache) that would never be substituted.
+    let referenced = alias_context_filter(referenced);
     let mut context_map = {
         let _span = Span::new("build_hook_context");
         build_hook_context(&ctx, &extra_refs, Some(&referenced))?

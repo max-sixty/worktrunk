@@ -196,19 +196,31 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
 /// `(unset)`, surfacing operation-specific gaps (e.g., `target_worktree_path`
 /// during `wt switch -`, `upstream` when the branch doesn't track a remote).
 ///
+/// When `referenced` is `Some`, vars not in the set render as dim `(unused)` —
+/// distinguishes "skipped because the body never references it" from
+/// "referenced but the operation didn't supply it" (`(unset)`).
+///
 /// `(unset)` relies on an invariant in `build_hook_context`: optional vars
 /// are omitted from the map rather than inserted as empty strings. If a
 /// future caller starts inserting `""`, revisit the empty-vs-absent
 /// distinction here.
-fn format_variables_table(vars: &[&'static str], ctx: &HashMap<String, String>) -> String {
+fn format_variables_table(
+    vars: &[&'static str],
+    ctx: &HashMap<String, String>,
+    referenced: Option<&BTreeSet<String>>,
+) -> String {
     let max_name = vars.iter().map(|v| v.len()).max().unwrap_or(0);
     vars.iter()
         .map(|var| {
-            let value = match ctx.get(*var) {
-                Some(v) => v.as_str(),
-                None => "(unset)",
-            };
-            format!("{var:<max_name$} = {value}")
+            if referenced.is_some_and(|r| !r.contains(*var)) {
+                cformat!("<dim>{var:<max_name$} = (unused)</>")
+            } else {
+                let value = match ctx.get(*var) {
+                    Some(v) => v.as_str(),
+                    None => "(unset)",
+                };
+                format!("{var:<max_name$} = {value}")
+            }
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -229,7 +241,7 @@ pub fn format_hook_variables(hook_type: HookType, ctx: &HashMap<String, String>)
         .chain(HOOK_INFRASTRUCTURE_VARS)
         .copied()
         .collect();
-    format_variables_table(&vars, ctx)
+    format_variables_table(&vars, ctx, None)
 }
 
 /// Format the resolved template variables for an alias invocation.
@@ -242,17 +254,14 @@ pub fn format_hook_variables(hook_type: HookType, ctx: &HashMap<String, String>)
 /// contract; the table displays it space-joined and shell-escaped so it
 /// matches what `{{ args }}` substitutes in templates.
 ///
-/// `referenced`, when `Some`, marks rows the alias body doesn't reference as
-/// dim `(unused)`, so the user can still see what's reachable without
-/// computing values that won't be substituted. Vars that ARE referenced but
-/// missing from `ctx` (e.g. `upstream` when no tracking is configured)
-/// render as `(unset)`. Same paren shape; the dim styling distinguishes
-/// "skipped because unreferenced" from "referenced but missing".
+/// `referenced` is forwarded to [`format_variables_table`] — vars not in the
+/// set render as dim `(unused)` so the reader sees what's reachable without
+/// computing values that won't be substituted.
 pub fn format_alias_variables(
     ctx: &HashMap<String, String>,
     referenced: Option<&BTreeSet<String>>,
 ) -> String {
-    let all_vars: Vec<&'static str> = ACTIVE_VARS
+    let vars: Vec<&'static str> = ACTIVE_VARS
         .iter()
         .copied()
         .chain(REPO_VARS.iter().copied())
@@ -265,27 +274,11 @@ pub fn format_alias_variables(
             .expect("ALIAS_ARGS_KEY is always serialized from a Vec<String>");
         display_ctx.insert(ALIAS_ARGS_KEY.into(), shell_join(&args));
     }
-    let max_name = all_vars.iter().map(|v| v.len()).max().unwrap_or(0);
-    all_vars
-        .iter()
-        .map(|var| {
-            let unreferenced = referenced.is_some_and(|r| !r.contains(*var));
-            if unreferenced {
-                cformat!("<dim>{var:<max_name$} = (unused)</>")
-            } else {
-                let value = match display_ctx.get(*var) {
-                    Some(v) => v.as_str(),
-                    None => "(unset)",
-                };
-                format!("{var:<max_name$} = {value}")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    format_variables_table(&vars, &display_ctx, referenced)
 }
 
-/// Expand `referenced` into the keys `build_hook_context` should populate for
-/// an alias invocation. Adds:
+/// Extend `referenced` with the implicit context-map keys an alias dispatch
+/// needs:
 ///
 /// - [`ALIAS_ARGS_KEY`] (`args`) — always present in alias scope (`run_alias`
 ///   inserts it after `build_hook_context`), so include it so the verbose
@@ -297,13 +290,13 @@ pub fn format_alias_variables(
 ///
 /// New implicit dependencies (template-level reads from the context map that
 /// `undeclared_variables` doesn't see) belong here, not at each call site.
-pub fn alias_context_filter(referenced: &BTreeSet<String>) -> BTreeSet<String> {
-    let mut out = referenced.clone();
-    out.insert(ALIAS_ARGS_KEY.to_string());
-    if referenced.contains("vars") {
-        out.insert("branch".to_string());
+pub fn alias_context_filter(mut referenced: BTreeSet<String>) -> BTreeSet<String> {
+    let needs_branch = referenced.contains("vars");
+    referenced.insert(ALIAS_ARGS_KEY.to_string());
+    if needs_branch {
+        referenced.insert("branch".to_string());
     }
-    out
+    referenced
 }
 
 /// Positional CLI args forwarded from `wt <alias> a b c` into the alias's

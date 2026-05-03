@@ -80,7 +80,7 @@ impl<'r> LoadedConfigs<'r> {
         });
         Ok(Self {
             user: repo.user_config(),
-            project: repo.project_config()?.as_ref(),
+            project: repo.project_config()?,
         })
     }
 }
