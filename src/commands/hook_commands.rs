@@ -375,10 +375,9 @@ pub fn handle_hook_show(
     use crate::help_pager::show_help_in_pager;
 
     let repo = Repository::current().context("Failed to show hooks")?;
-    let LoadedConfigs {
-        user: config,
-        project: project_config,
-    } = LoadedConfigs::load(&repo).context("Failed to load configs")?;
+    let configs = LoadedConfigs::load(&repo).context("Failed to load configs")?;
+    let config: &UserConfig = &configs.user;
+    let project_config: Option<&ProjectConfig> = configs.project.as_ref();
     let approvals = Approvals::load().context("Failed to load approvals")?;
     let project_id = repo.project_identifier().ok();
 
@@ -409,8 +408,8 @@ pub fn handle_hook_show(
 
     if format == crate::cli::SwitchFormat::Json {
         return emit_hook_show_json(
-            &config,
-            project_config.as_ref(),
+            config,
+            project_config,
             &approvals,
             project_id.as_deref(),
             filter,
@@ -422,14 +421,14 @@ pub fn handle_hook_show(
     let mut output = String::new();
 
     // Render user hooks
-    render_user_hooks(&mut output, &config, filter, ctx.as_ref())?;
+    render_user_hooks(&mut output, config, filter, ctx.as_ref())?;
     output.push('\n');
 
     // Render project hooks
     render_project_hooks(
         &mut output,
         &repo,
-        project_config.as_ref(),
+        project_config,
         &approvals,
         project_id.as_deref(),
         filter,
