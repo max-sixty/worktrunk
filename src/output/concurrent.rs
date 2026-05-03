@@ -24,9 +24,10 @@
 //!    a shared channel. A single consumer writes to stderr — one writer
 //!    preserves line atomicity so readers never mix bytes mid-line.
 //!
-//! The main thread drains the channel. A lightweight ticker thread polls
-//! `signal_hook::Signals` for SIGINT/SIGTERM and forwards with escalation
-//! to every live child's process group.
+//! The main thread drains the channel. A signal-listener thread blocks
+//! on `signal_hook::Signals::forever()` for SIGINT/SIGTERM and forwards
+//! with escalation to every live child's process group; closing the
+//! signal-hook handle on shutdown unblocks the listener.
 //!
 //! All children always run to completion. Per-child exit status is returned
 //! for the caller to fold into a failure, matching alias `thread::scope` and
@@ -405,15 +406,17 @@ fn render_prefix(index: usize, label: &str, width: usize) -> String {
 
 #[cfg(unix)]
 struct SignalForwarder {
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    handle: thread::JoinHandle<()>,
+    handle: signal_hook::iterator::Handle,
+    listener: thread::JoinHandle<()>,
 }
 
 #[cfg(unix)]
 impl SignalForwarder {
     fn stop(self) {
-        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-        let _ = self.handle.join();
+        // Closing the signal-hook handle unblocks `Signals::forever()` so
+        // the listener thread returns; join it to avoid a leak.
+        self.handle.close();
+        let _ = self.listener.join();
     }
 }
 
@@ -422,38 +425,31 @@ fn spawn_signal_forwarder(
     mut signals: signal_hook::iterator::Signals,
     pgids: Vec<i32>,
 ) -> SignalForwarder {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    let stop = std::sync::Arc::new(AtomicBool::new(false));
-    let stop_clone = stop.clone();
-
-    let handle = thread::spawn(move || {
+    let handle = signals.handle();
+    let listener = thread::spawn(move || {
         let mut seen_once = false;
-        while !stop_clone.load(Ordering::Relaxed) {
-            for sig in signals.pending() {
-                if !seen_once {
-                    // First signal: graceful escalation per child
-                    // (SIGINT → SIGTERM → SIGKILL with grace windows).
-                    seen_once = true;
-                    for &pgid in &pgids {
-                        worktrunk::shell_exec::forward_signal_with_escalation(pgid, sig);
-                    }
-                } else {
-                    // Subsequent signals: user is impatient — SIGKILL every
-                    // still-live process group without waiting.
-                    for &pgid in &pgids {
-                        let _ = nix::sys::signal::killpg(
-                            nix::unistd::Pid::from_raw(pgid),
-                            nix::sys::signal::Signal::SIGKILL,
-                        );
-                    }
+        for sig in signals.forever() {
+            if !seen_once {
+                // First signal: graceful escalation per child
+                // (SIGINT → SIGTERM → SIGKILL with grace windows).
+                seen_once = true;
+                for &pgid in &pgids {
+                    worktrunk::shell_exec::forward_signal_with_escalation(pgid, sig);
+                }
+            } else {
+                // Subsequent signals: user is impatient — SIGKILL every
+                // still-live process group without waiting.
+                for &pgid in &pgids {
+                    let _ = nix::sys::signal::killpg(
+                        nix::unistd::Pid::from_raw(pgid),
+                        nix::sys::signal::Signal::SIGKILL,
+                    );
                 }
             }
-            thread::sleep(std::time::Duration::from_millis(25));
         }
     });
 
-    SignalForwarder { stop, handle }
+    SignalForwarder { handle, listener }
 }
 
 #[cfg(test)]
