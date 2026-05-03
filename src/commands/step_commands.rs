@@ -168,33 +168,45 @@ fn stage_to_temp_index(
 /// flow — `format_bash_with_gutter` for the shell invocation, and the bold-first-line
 /// commit message format wrapped in `format_with_gutter`. The PROMPT is left ungutter'd
 /// to keep `--dry-run`'s output visually aligned with `--show-prompt`.
+///
+/// Output is routed through the pager when stdout is a TTY (see writing-user-outputs →
+/// "When to page output"). The helper falls back to direct stdout when piped.
 fn print_dry_run(
     prompt: &str,
     commit_config: &worktrunk::config::CommitGenerationConfig,
     message: &str,
 ) -> anyhow::Result<()> {
-    println!("{}", format_heading("PROMPT", None));
-    println!("{}", prompt);
-    println!();
-    println!("{}", format_heading("COMMAND", None));
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    writeln!(out, "{}", format_heading("PROMPT", None))?;
+    writeln!(out, "{}", prompt)?;
+    writeln!(out)?;
+    writeln!(out, "{}", format_heading("COMMAND", None))?;
     match commit_config
         .command
         .as_deref()
         .filter(|s| !s.trim().is_empty())
     {
-        Some(cmd) => println!(
+        Some(cmd) => writeln!(
+            out,
             "{}",
             format_bash_with_gutter(&crate::llm::render_llm_invocation(cmd)?)
-        ),
-        None => println!(
+        )?,
+        None => writeln!(
+            out,
             "{}",
             format_with_gutter("(LLM not configured — using built-in fallback)", None)
-        ),
+        )?,
     }
-    println!();
-    println!("{}", format_heading("MESSAGE", None));
+    writeln!(out)?;
+    writeln!(out, "{}", format_heading("MESSAGE", None))?;
     let formatted = CommitGenerator::new(commit_config).format_message_for_display(message);
-    println!("{}", format_with_gutter(&formatted, None));
+    writeln!(out, "{}", format_with_gutter(&formatted, None))?;
+
+    if let Err(e) = crate::help_pager::show_help_in_pager(&out, true) {
+        log::debug!("Pager failed, falling back to stdout: {}", e);
+        println!("{}", out);
+    }
     Ok(())
 }
 
