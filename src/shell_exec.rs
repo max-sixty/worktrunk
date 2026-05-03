@@ -1283,9 +1283,9 @@ impl Cmd {
         // on `Signals::forever()` and forwards SIGINT/SIGTERM to the child;
         // the main thread blocks on `child.wait()`. After wait returns we
         // close the signal handle (which unblocks `forever()`) and join
-        // the listener. Without forwarding, just wait.
+        // the listener.
         #[cfg(unix)]
-        let (status, seen_signal) = if let Some(mut signals) = signals {
+        let listener_state = signals.map(|mut signals| {
             let child_pid = child.id() as i32;
             let share_parent_pgroup = self.share_parent_pgroup;
             let handle = signals.handle();
@@ -1327,29 +1327,22 @@ impl Cmd {
                     }
                 })
             };
-            let wait_result = child.wait();
-            // Always tear down the listener, even on wait error, so the
-            // signal-hook handle is released and the thread doesn't leak.
+            (handle, listener, seen)
+        });
+
+        let wait_result = child.wait();
+
+        // Always tear down the listener, even on wait error, so the
+        // signal-hook handle is released and the thread doesn't leak.
+        #[cfg(unix)]
+        let seen_signal = listener_state.and_then(|(handle, listener, seen)| {
             handle.close();
             let _ = listener.join();
-            let status = wait_result.map_err(|e| {
-                anyhow::Error::from(GitError::Other {
-                    message: format!("Failed to wait for command: {}", e),
-                })
-            })?;
             let sig = seen.load(std::sync::atomic::Ordering::Relaxed);
-            (status, (sig != 0).then_some(sig))
-        } else {
-            let status = child.wait().map_err(|e| {
-                anyhow::Error::from(GitError::Other {
-                    message: format!("Failed to wait for command: {}", e),
-                })
-            })?;
-            (status, None)
-        };
+            (sig != 0).then_some(sig)
+        });
 
-        #[cfg(not(unix))]
-        let status = child.wait().map_err(|e| {
+        let status = wait_result.map_err(|e| {
             anyhow::Error::from(GitError::Other {
                 message: format!("Failed to wait for command: {}", e),
             })
