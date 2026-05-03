@@ -67,7 +67,11 @@ static STARTUP_CWD: OnceLock<Option<PathBuf>> = OnceLock::new();
 /// then resolve against whatever `current_dir` a child process happens to
 /// run in — not the directory where `wt` was invoked. Normalizing them to
 /// absolute paths keeps git's alias context without breaking discovery.
-const INHERITED_GIT_PATH_VARS: &[&str] = &[
+///
+/// Also consumed by [`crate::testing::scrub_git_path_vars`] so test/bench
+/// helpers strip the same list before spawning a `git` subprocess that
+/// targets an explicit path.
+pub const INHERITED_GIT_PATH_VARS: &[&str] = &[
     "GIT_DIR",
     "GIT_WORK_TREE",
     "GIT_COMMON_DIR",

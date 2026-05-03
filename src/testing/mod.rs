@@ -38,7 +38,7 @@ use std::process::Command;
 
 use crate::config::sanitize_branch_name;
 use crate::git::Repository;
-use crate::shell_exec::Cmd;
+use crate::shell_exec::{Cmd, INHERITED_GIT_PATH_VARS};
 
 use self::mock_commands::{MockConfig, MockResponse};
 
@@ -268,22 +268,6 @@ pub const NULL_DEVICE: &str = "NUL";
 #[cfg(not(windows))]
 pub const NULL_DEVICE: &str = "/dev/null";
 
-/// `GIT_*` path variables that, if inherited as relative paths from the
-/// parent process (e.g. `GIT_DIR=.git` set by a git alias), redirect
-/// git's repository discovery away from a child's `current_dir`.
-///
-/// Stripped by [`scrub_git_path_vars`] before spawning a `git` subprocess
-/// that targets an explicit path. The same list backs the inherited-path
-/// normalization in [`crate::shell_exec`] (issue #1914) — keep it in sync
-/// with `INHERITED_GIT_PATH_VARS` there.
-pub const GIT_PATH_VARS: &[&str] = &[
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_COMMON_DIR",
-    "GIT_INDEX_FILE",
-    "GIT_OBJECT_DIRECTORY",
-];
-
 /// Default user-config path for isolated subprocesses — points at a
 /// nonexistent file so wt treats it as "no config." Callers can override
 /// via the `user_config` parameter to [`isolate_subprocess_env`].
@@ -316,7 +300,18 @@ const DEFAULT_ISOLATED_SYSTEM_CONFIG: &str = "/etc/xdg/worktrunk/config.toml";
 /// Use on any wt subprocess that must not see host context. For `git`
 /// subprocesses, use [`configure_git_cmd`] instead.
 pub fn isolate_subprocess_env(cmd: &mut Command, user_config: Option<&Path>) {
-    for (key, _) in std::env::vars() {
+    isolate_subprocess_env_from(cmd, user_config, std::env::vars().map(|(k, _)| k));
+}
+
+/// Inner form of [`isolate_subprocess_env`] that takes the parent-env keys
+/// as an iterator instead of reading [`std::env::vars`]. Lets tests exercise
+/// the GIT_*/WORKTRUNK_* scrub branch with synthetic input — `set_var` is
+/// `unsafe` and races with parallel tests, so we don't mutate process env.
+fn isolate_subprocess_env_from<I>(cmd: &mut Command, user_config: Option<&Path>, env_keys: I)
+where
+    I: IntoIterator<Item = String>,
+{
+    for key in env_keys {
         if key.starts_with("GIT_") || key.starts_with("WORKTRUNK_") {
             cmd.env_remove(&key);
         }
@@ -338,16 +333,16 @@ pub fn isolate_subprocess_env(cmd: &mut Command, user_config: Option<&Path>) {
     cmd.env("WORKTRUNK_APPROVALS_PATH", DEFAULT_ISOLATED_APPROVALS);
 }
 
-/// `env_remove` the [`GIT_PATH_VARS`] from `cmd`. Call this on any `git`
-/// subprocess spawned with an explicit `current_dir`, so an inherited
-/// relative `GIT_DIR=.git` (from a git alias, hook, etc.) doesn't
-/// redirect discovery away from the path you set.
+/// `env_remove` the [`INHERITED_GIT_PATH_VARS`] from `cmd`. Call this on
+/// any `git` subprocess spawned with an explicit `current_dir`, so an
+/// inherited relative `GIT_DIR=.git` (from a git alias, hook, etc.)
+/// doesn't redirect discovery away from the path you set.
 ///
 /// Strictly defensive when used downstream of [`isolate_subprocess_env`]
 /// (which already stripped these). Required when there's no upstream
 /// scrub — e.g. wt-perf shells out to `git` directly without a `wt` parent.
 pub fn scrub_git_path_vars(cmd: &mut Command) {
-    for var in GIT_PATH_VARS {
+    for var in INHERITED_GIT_PATH_VARS {
         cmd.env_remove(var);
     }
 }
@@ -516,7 +511,7 @@ pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
 /// git commands via the builder pattern (`Cmd::new("git")`).
 pub fn configure_git_env(cmd: Cmd, git_config_path: &Path) -> Cmd {
     // Defensive `GIT_*` path-var strip — see `configure_git_cmd` for rationale.
-    let cmd = GIT_PATH_VARS
+    let cmd = INHERITED_GIT_PATH_VARS
         .iter()
         .fold(cmd, |acc, var| acc.env_remove(var));
     cmd.env("GIT_CONFIG_GLOBAL", git_config_path)
@@ -2574,5 +2569,59 @@ mod tests {
         let warnings = validate_ansi_codes(output);
         // Should not warn about ")" since it's just punctuation
         assert!(warnings.is_empty() || !warnings[0].contains("loses"));
+    }
+
+    #[test]
+    fn isolate_subprocess_env_scrubs_git_and_worktrunk_keys() {
+        let mut cmd = Command::new("true");
+        let synthetic_env = [
+            "GIT_DIR".to_string(),
+            "GIT_AUTHOR_DATE".to_string(),
+            "WORKTRUNK_CONFIG_PATH".to_string(),
+            "WORKTRUNK_HISTORY".to_string(),
+            "PATH".to_string(),
+            "HOME".to_string(),
+            "GIT".to_string(),       // No underscore — should not match
+            "WORKTRUNK".to_string(), // No underscore — should not match
+        ];
+        isolate_subprocess_env_from(&mut cmd, None, synthetic_env);
+
+        let removed: HashMap<String, Option<String>> = cmd
+            .get_envs()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.map(|v| v.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+
+        // Scrubbed: GIT_*, WORKTRUNK_* (overwritten path vars also appear here),
+        // NO_COLOR, SHELL, PSModulePath.
+        assert_eq!(removed.get("GIT_DIR"), Some(&None));
+        assert_eq!(removed.get("GIT_AUTHOR_DATE"), Some(&None));
+        assert_eq!(removed.get("WORKTRUNK_HISTORY"), Some(&None));
+        assert_eq!(removed.get("NO_COLOR"), Some(&None));
+
+        // Not scrubbed: vars that don't match either prefix.
+        assert!(!removed.contains_key("PATH"));
+        assert!(!removed.contains_key("HOME"));
+        // No underscore — prefix check requires `GIT_`/`WORKTRUNK_`.
+        assert!(!removed.contains_key("GIT"));
+        assert!(!removed.contains_key("WORKTRUNK"));
+
+        // Path vars get set explicitly to known values.
+        assert_eq!(
+            removed.get("WORKTRUNK_CONFIG_PATH"),
+            Some(&Some(DEFAULT_ISOLATED_USER_CONFIG.to_string()))
+        );
+        assert_eq!(
+            removed.get("WORKTRUNK_SYSTEM_CONFIG_PATH"),
+            Some(&Some(DEFAULT_ISOLATED_SYSTEM_CONFIG.to_string()))
+        );
+        assert_eq!(
+            removed.get("WORKTRUNK_APPROVALS_PATH"),
+            Some(&Some(DEFAULT_ISOLATED_APPROVALS.to_string()))
+        );
     }
 }
