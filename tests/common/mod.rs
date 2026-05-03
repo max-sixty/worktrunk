@@ -903,6 +903,11 @@ fn setup_snapshot_settings_for_paths_with_home(
 
     add_remove_stats_byte_filter(&mut settings);
 
+    // Normalize the platform shell basename so cross-platform snapshots match.
+    // `wt step {commit,squash} --dry-run` renders the LLM shell invocation,
+    // which is `sh` on Unix and `bash.exe` on Windows (Git Bash).
+    settings.add_filter(r"\bbash\.exe\b", "sh");
+
     // Filter out Git hint messages that vary across Git versions
     // These hints appear during rebase conflicts and can differ between versions
     // Pattern matches lines with gutter formatting + "hint:" + message + newline

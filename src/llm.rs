@@ -24,9 +24,17 @@ const SHELL_METACHARACTERS: &[char] = &[
 /// Mirrors the wrapping done by [`execute_llm_command`]: every LLM command is passed as
 /// a single argument to the platform shell, so the displayed form is always
 /// `<shell> <shell-args> <quoted-command>` (e.g. `sh -c 'claude -p'`).
+///
+/// Uses the shell's basename rather than the full path so the displayed command stays
+/// short and doesn't leak the user's install path (`C:\Program Files\Git\bin\bash.exe`
+/// becomes `bash.exe`).
 pub(crate) fn render_llm_invocation(command: &str) -> anyhow::Result<String> {
     let shell = ShellConfig::get()?;
-    let mut rendered = shell.executable.to_string_lossy().into_owned();
+    let mut rendered = shell
+        .executable
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| shell.executable.to_string_lossy().into_owned());
     for arg in &shell.args {
         rendered.push(' ');
         rendered.push_str(arg);
@@ -524,8 +532,7 @@ pub(crate) fn generate_commit_message(
     if let Some(path) = index_override {
         name_only = name_only.env("GIT_INDEX_FILE", path);
     }
-    let output = name_only.run()?;
-    let file_list = String::from_utf8_lossy(&output.stdout);
+    let file_list = run_git_capture(name_only, "diff --staged --name-only")?;
     let staged_files = file_list
         .split('\0')
         .map(|s| s.trim())
@@ -561,10 +568,27 @@ fn try_generate_commit_message(
     execute_llm_command(command, &prompt)
 }
 
+/// Run a git `Cmd` and bail on non-zero exit, mirroring [`Repository::run_command`].
+///
+/// Used by call sites that need to set `GIT_INDEX_FILE` (`--dry-run`) and so can't go
+/// through `Repository::run_command`. Without this check, a failing `git diff` would
+/// silently feed an empty diff to the LLM.
+fn run_git_capture(cmd: Cmd, what: &str) -> anyhow::Result<String> {
+    let output = cmd
+        .run()
+        .with_context(|| format!("Failed to execute git {what}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git {what} failed: {}", stderr.trim());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 /// Build the commit prompt from staged changes.
 ///
 /// Gathers the staged diff, branch name, repo name, and recent commits, then renders
-/// the prompt template. Used by both normal commit generation and `--show-prompt`.
+/// the prompt template. Used by normal commit generation, `--show-prompt`, and
+/// `--dry-run`.
 ///
 /// `index_override` points git at an alternate index via `GIT_INDEX_FILE` — used by
 /// `--dry-run` to preview what `git add` per the user's `--stage` flag would produce
@@ -596,8 +620,8 @@ pub(crate) fn build_commit_prompt(
         diff_cmd = diff_cmd.env("GIT_INDEX_FILE", index);
         diff_stat_cmd = diff_stat_cmd.env("GIT_INDEX_FILE", index);
     }
-    let diff_output = String::from_utf8_lossy(&diff_cmd.run()?.stdout).into_owned();
-    let diff_stat = String::from_utf8_lossy(&diff_stat_cmd.run()?.stdout).into_owned();
+    let diff_output = run_git_capture(diff_cmd, "diff --staged")?;
+    let diff_stat = run_git_capture(diff_stat_cmd, "diff --staged --stat")?;
 
     // Prepare diff (may filter if too large)
     let prepared = prepare_diff(diff_output, diff_stat);
@@ -777,6 +801,35 @@ pub(crate) fn test_commit_generation(
 mod tests {
     use super::*;
     use insta::assert_snapshot;
+
+    /// `render_llm_invocation` should wrap the command through the platform shell with
+    /// the shell's basename (no full install path) and shell-escape the command argument
+    /// so paths/quotes survive the round-trip.
+    #[test]
+    fn test_render_llm_invocation_basics() {
+        let rendered = render_llm_invocation("llm -m haiku").unwrap();
+        // Linux: "sh -c 'llm -m haiku'" — Windows: "bash.exe -c 'llm -m haiku'"
+        assert!(
+            rendered.ends_with(" -c 'llm -m haiku'"),
+            "expected '<shell> -c <quoted-command>', got: {rendered}"
+        );
+        // Basename only — no install-path leakage.
+        assert!(
+            !rendered.contains('/') && !rendered.contains('\\'),
+            "shell rendered with directory components: {rendered}"
+        );
+    }
+
+    /// Single-quotes in the user's command must be escaped so the displayed string is a
+    /// faithful, copy-pasteable shell invocation.
+    #[test]
+    fn test_render_llm_invocation_escapes_quotes() {
+        let rendered = render_llm_invocation("echo 'hi'").unwrap();
+        assert!(
+            rendered.contains(r#"'echo '\''hi'\'''"#),
+            "single quotes not escaped: {rendered}"
+        );
+    }
 
     /// Helper to create a commit context (no squash-specific fields)
     fn commit_context<'a>(

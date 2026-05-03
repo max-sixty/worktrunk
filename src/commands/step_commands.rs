@@ -153,12 +153,16 @@ fn stage_to_temp_index(
         // The caller skips this branch.
         StageMode::None => return Ok(temp),
     };
-    Cmd::new("git")
+    let output = Cmd::new("git")
         .args(add_args.iter().copied())
         .current_dir(wt.root()?)
         .env("GIT_INDEX_FILE", temp.path())
         .run()
         .context("Failed to stage changes into temp index")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git {} failed: {}", add_args.join(" "), stderr.trim());
+    }
     Ok(temp)
 }
 
