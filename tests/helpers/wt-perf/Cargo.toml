@@ -21,12 +21,18 @@ clap = { version = "4", features = ["derive"] }
 # For JSON output
 serde_json = "1"
 
+# For column-aligned timeline tables (elastic tabstops)
+tabwriter = "1"
+
 # For trace parsing (reuse worktrunk's trace module).
 # `default-features = false` avoids leaking the `cli` feature into the
 # workspace-unified resolution of worktrunk; without it, `cargo check
 # --no-default-features` on the worktrunk lib silently inherits `cli`,
 # masking gating bugs in lib code that uses `cli`-gated dependencies.
 worktrunk = { path = "../../..", default-features = false }
+
+[dev-dependencies]
+insta = "1.47"
 
 [lib]
 name = "wt_perf"

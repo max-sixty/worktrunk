@@ -12,11 +12,16 @@
 //! # Usage
 //!
 //! ```bash
-//! # Generate Chrome Trace Format (--progressive forces TTY-gated events
-//! # like `Skeleton rendered` to fire even when stdout is piped)
-//! RUST_LOG=debug wt list --progressive 2>&1 | cargo run -p wt-perf -- trace > trace.json
+//! # Text timeline of one wt invocation
+//! cargo run -p wt-perf -- timeline -- list --progressive
 //!
-//! # Visualize: open trace.json in chrome://tracing or https://ui.perfetto.dev
+//! # Chrome Trace Format JSON for Perfetto/chrome://tracing
+//! # (--progressive forces TTY-gated events like `Skeleton rendered` to
+//! # fire even though wt-perf pipes wt's stdout to /dev/null)
+//! cargo run -p wt-perf -- timeline --chrome -- list --progressive > trace.json
+//!
+//! # From a log already captured to disk
+//! cargo run -p wt-perf -- trace < captured.log > trace.json
 //!
 //! # Analyze with SQL (requires: curl -LO https://get.perfetto.dev/trace_processor)
 //! trace_processor trace.json -Q 'SELECT name, COUNT(*), SUM(dur)/1e6 as ms FROM slice GROUP BY name'

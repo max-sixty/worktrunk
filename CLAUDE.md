@@ -304,14 +304,28 @@ For each uncovered function/method, either write a test or document why it's int
 
 ## Benchmarks
 
-Benchmarks measure `wt list` performance across worktree counts and repository sizes.
+Benchmarks measure `wt list` performance across worktree counts and repository sizes. Criterion takes a positional `FILTER` (substring inclusion) — there's no `--skip`. Pick a filter that *includes* what you want.
 
 ```bash
-cargo bench --bench list -- --skip cold --skip real   # fast synthetic benchmarks
-cargo bench --bench list bench_list_by_worktree_count # specific benchmark
+cargo bench --bench list skeleton          # fast synthetic group only
+cargo bench --bench list scaling/warm      # one variant
+cargo bench --bench alias                  # alias-dispatch overhead
 ```
 
-Real repo benchmarks clone rust-lang/rust (~2-5 min first run, cached thereafter). Skip with `--skip real`. See `benches/CLAUDE.md` for methodology and adding new benchmarks.
+Real-repo benchmarks (`real_repo`, `real_repo_many_branches`) clone rust-lang/rust on first run (~2–5 min, cached at `target/bench-repos/rust/`). To skip them, name a synthetic group instead. See `benches/CLAUDE.md` for the full filter map, expected numbers, and adding new benchmarks.
+
+## Traces
+
+To trace a single `wt` invocation, use `wt-perf timeline` (text timeline by default; `--chrome` emits Chrome Trace Format JSON for Perfetto/chrome://tracing):
+
+```bash
+cargo run -p wt-perf -- timeline -- list --progressive
+cargo run -p wt-perf -- timeline --cold --repo /tmp/wt-perf-typical-8 -- \
+  -C /tmp/wt-perf-typical-8 list --progressive
+cargo run -p wt-perf -- timeline --chrome -- list --progressive > trace.json
+```
+
+The summary distinguishes `traced` (first → last `[wt-trace]` record) from `wall` (externally-measured spawn → wait); the gap between them is prelude/epilogue not visible to the trace. See `benches/CLAUDE.md` → "Generating traces" for the SQL-query path via `trace_processor`.
 
 ### Don't wait for CI `benchmarks` before merging
 
