@@ -1291,6 +1291,13 @@ fn main() {
         let _span = worktrunk::trace::Span::new("init_logging");
         init_logging(verbose);
     }
+
+    // Fold the two cold-path rev-parses (`--git-common-dir` from
+    // `init_command_log`, the `prewarm_info` batch from `try_alias` →
+    // `project_config_path`) into one fork. Best-effort — failure leaves both
+    // on-demand callers unchanged.
+    Repository::prewarm();
+
     let command_line = std::env::args().collect::<Vec<_>>().join(" ");
     {
         let _span = worktrunk::trace::Span::new("init_command_log");

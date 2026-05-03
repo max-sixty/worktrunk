@@ -22,13 +22,28 @@
 //! for the duration of a single CLI command. [`RepoCache`] exploits this by caching
 //! read-only values so repeated queries hit memory instead of spawning git processes.
 //!
-//! **Lifetime.** A cache is created once per `Repository::at()` call and never
-//! invalidated. There is no expiry, no dirty-tracking, no
-//! manual flush — the cache lives exactly as long as the command.
+//! **Two layers, two scopes.** Cached state lives in either of:
+//! - `RepoCache` — per-`Repository::at()` instance. Most repo-wide values
+//!   (config, branches, worktree inventory) live here.
+//! - Process-wide `LazyLock<DashMap>` statics — `GIT_COMMON_DIR_CACHE`,
+//!   `WORKTREE_ROOTS`, `GIT_DIRS`, `CURRENT_BRANCHES`. The git-discovery
+//!   data they hold is keyed by canonicalized filesystem path, so two
+//!   `Repository` instances pointed at the same path see the same answer.
+//!   This lets [`Repository::prewarm`] populate the maps once at the start
+//!   of `main` and have every later `Repository::current()` (each builds a
+//!   fresh `RepoCache`) reuse the result.
+//!
+//! **Lifetime.** Neither layer is ever invalidated. `RepoCache` lives as
+//! long as the `Repository` it's attached to (typically the command).
+//! Process-wide statics live for the process. For the CLI that's the same
+//! thing — one command per process — but tests run many commands in one
+//! process, so they may observe state from prior test cases (in practice
+//! safe: tests use unique tempdir paths, and the maps are filesystem-keyed).
 //!
 //! **Sharing.** `Repository` holds an `Arc<RepoCache>`, so cloning a `Repository`
 //! (e.g., to pass into parallel worktree operations in `wt list`) shares the same
-//! cache. Callers that need a *separate* cache must call `Repository::at()` again.
+//! cache. Callers that need a *separate* cache must call `Repository::at()` again
+//! — but the process-wide maps are still shared in either case.
 //!
 //! **What is NOT cached.** Values that change during command execution are intentionally
 //! excluded:
@@ -52,18 +67,15 @@
 //!   its own mutations through the cache. Use direct git commands for post-mutation
 //!   state.
 //!
-//! **Process-level singletons.** Outside `RepoCache`, several modules use `OnceLock`/`LazyLock`
-//! for process-global singletons that are computed once and never change:
+//! **Other process-level singletons.** Outside `RepoCache` and the
+//! git-discovery caches above, several modules use `OnceLock`/`LazyLock` for
+//! process-global singletons that are *lazy initialization, not caches* —
+//! the container is initialized once and never replaced, with no underlying
+//! external state that could go stale:
 //! - Resource limiters: `CMD_SEMAPHORE` (shell_exec), `HEAVY_OPS_SEMAPHORE` (git),
 //!   `LLM_SEMAPHORE` (summary), `COPY_POOL` (copy)
 //! - Global state: `OUTPUT_STATE` (output), `TRACE` and `OUTPUT` (log_files), `COMMAND_LOG`
 //! - Config: `CONFIG_PATH` (config/user/path), `SHELL_CONFIG`, `GIT_ENV_OVERRIDES` (shell_exec)
-//! - Git discovery: `GIT_COMMON_DIR_CACHE` (below) — memoizes `git rev-parse --git-common-dir`
-//!   across `Repository::at()` calls
-//!
-//! These are lazy initialization, not caches — they have no invalidation concerns
-//! because the container is initialized once and never replaced — unlike `RepoCache`,
-//! there is no risk of reading stale external state.
 //!
 //! The picker also maintains a `PreviewCache` (`Arc<DashMap>` in `commands/picker/items.rs`)
 //! for rendered preview output, scoped to a single picker session.
@@ -169,7 +181,14 @@ fn stream_exit_result(
 ///
 /// Contains:
 /// - Repo-wide values (same for all worktrees): is_bare, default_branch, etc.
-/// - Per-worktree values keyed by path: worktree_root, current_branch
+/// - Per-worktree values keyed by path: status_porcelain
+///
+/// Per-worktree git-discovery values that used to live here
+/// (`worktree_roots`, `git_dirs`, `current_branches`) are now process-wide
+/// statics ([`WORKTREE_ROOTS`], [`GIT_DIRS`], [`CURRENT_BRANCHES`]) next to
+/// [`GIT_COMMON_DIR_CACHE`]. Same staleness contract — populated once, never
+/// invalidated — but they survive across `Repository::current()` calls so a
+/// single eager [`Repository::prewarm`] in `main` warms every later instance.
 ///
 /// Wrapped in Arc to allow releasing the outer HashMap lock before accessing
 /// cached values, avoiding deadlocks when cached methods call each other.
@@ -278,13 +297,15 @@ pub(super) struct RepoCache {
     pub(super) diff_stats: DashMap<(String, String), LineDiff>,
 
     // ========== Per-worktree values (keyed by path) ==========
-    /// Per-worktree git directory: worktree_path -> canonicalized git dir
-    /// (e.g., `.git/worktrees/<name>` for linked worktrees, `.git` for main)
-    pub(super) git_dirs: DashMap<PathBuf, PathBuf>,
-    /// Worktree root paths: worktree_path -> canonicalized root
-    pub(super) worktree_roots: DashMap<PathBuf, PathBuf>,
-    /// Current branch per worktree: worktree_path -> branch name (None = detached HEAD)
-    pub(super) current_branches: DashMap<PathBuf, Option<String>>,
+    //
+    // Earlier per-worktree git-discovery maps (`worktree_roots`, `git_dirs`,
+    // `current_branches`) lived here too. They moved out to the process-wide
+    // statics next to [`GIT_COMMON_DIR_CACHE`] so [`Repository::prewarm`] can
+    // populate them once for the cold path and have every later
+    // `Repository::current()` (which builds a fresh `RepoCache`) reuse the
+    // result. The data is filesystem-keyed and process-invariant, so per-Repo
+    // scoping never bought anything.
+    //
     /// Cached `git status --porcelain` output per worktree: worktree_path -> raw porcelain.
     /// Populated by `WorkingTree::status_porcelain_cached()` so parallel tasks
     /// (working-tree diff + conflict detection) share one subprocess per worktree
@@ -333,6 +354,38 @@ static DEFAULT_BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("."
 /// callers go through `base_path()`) always passes the same `PathBuf`, so
 /// equality on the raw path is sufficient.
 static GIT_COMMON_DIR_CACHE: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new(DashMap::new);
+
+/// Process-wide map of `worktree_path -> canonicalized worktree root`,
+/// keyed by the canonicalized path used as the cache key (same convention as
+/// [`Repository::worktree_at`] / [`WorkingTree`]).
+///
+/// **Invariant:** `WORKTREE_ROOTS.contains_key(path)` ⇔ `path` is inside a git
+/// work tree. The fallback path `WorkingTree::root` returns when `rev-parse
+/// --show-toplevel` fails (deleted CWD, bare repo root, non-repo dir) is
+/// **not** persisted, which keeps the membership check usable as a
+/// "is-inside-worktree" signal — see [`WorkingTree::prewarm_info`]'s fast path.
+///
+/// Populated by [`Repository::prewarm`] (eager, one fork on the cold path),
+/// [`WorkingTree::prewarm_info`] (lazy via the `rev-parse` batch), and
+/// [`WorkingTree::root`] (per-field on demand).
+pub(super) static WORKTREE_ROOTS: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new(DashMap::new);
+
+/// Process-wide map of `worktree_path -> canonicalized git directory` (e.g.
+/// `.git/worktrees/<name>` for linked worktrees, `.git` for the main worktree).
+///
+/// Populated by [`Repository::prewarm`], [`WorkingTree::prewarm_info`], and
+/// [`WorkingTree::git_dir`].
+pub(super) static GIT_DIRS: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new(DashMap::new);
+
+/// Process-wide map of `worktree_path -> current branch` (`None` = detached
+/// HEAD; missing entry = unborn HEAD or never resolved).
+///
+/// Populated by [`Repository::prewarm`], [`WorkingTree::prewarm_info`], and
+/// [`WorkingTree::branch`]. The cached value is a snapshot at first read; if a
+/// hook checks out a different branch mid-command, the entry stays stale —
+/// same contract that the per-`RepoCache` map carried before consolidation.
+pub(super) static CURRENT_BRANCHES: LazyLock<DashMap<PathBuf, Option<String>>> =
+    LazyLock::new(DashMap::new);
 
 /// Initialize the global base path for repository operations.
 ///
@@ -415,6 +468,150 @@ impl Repository {
             git_common_dir,
             cache: Arc::new(RepoCache::default()),
         })
+    }
+
+    /// Eagerly populate the process-wide git-discovery caches
+    /// ([`GIT_COMMON_DIR_CACHE`], [`WORKTREE_ROOTS`], [`GIT_DIRS`],
+    /// [`CURRENT_BRANCHES`]) for [`base_path`] in a single `git rev-parse`
+    /// fork.
+    ///
+    /// Called once from `main` after the logger is registered, before
+    /// `init_command_log` and alias dispatch. Folds the two cold-path
+    /// rev-parses (`--git-common-dir` from [`Repository::at`], the
+    /// `prewarm_info` batch from [`Repository::project_config_path`]) into
+    /// one fork so a plain `wt <alias>` pays for one rev-parse instead of two.
+    ///
+    /// **Best-effort.** The merged batch reuses the existing fallbacks in
+    /// [`Repository::resolve_git_common_dir`] and [`WorkingTree::prewarm_info`]:
+    /// if it fails or partially fails, the on-demand callers re-fork and
+    /// behave exactly as before. We never propagate the error from here.
+    ///
+    /// Two partial-success modes the batch handles:
+    /// - **Bare repo at the bare root**: `--show-toplevel` errors but
+    ///   `--git-common-dir` prints first, so [`GIT_COMMON_DIR_CACHE`] still
+    ///   lands. Per-worktree maps stay empty for that path — same as the
+    ///   existing `WorkingTree::root` fallback contract — so `prewarm_info`
+    ///   reforks once for the not-inside-a-worktree determination. That edge
+    ///   case loses the prewarm benefit but matches the unoptimized baseline.
+    /// - **Unborn HEAD**: every selector emits a line but rev-parse exits
+    ///   non-zero. We populate [`WORKTREE_ROOTS`] and [`GIT_DIRS`] but leave
+    ///   [`CURRENT_BRANCHES`] to the `symbolic-ref` fallback in
+    ///   [`WorkingTree::branch`], matching the existing `prewarm_info`
+    ///   behaviour.
+    ///
+    /// Outside any work tree (`wt` invoked from a non-repo directory) the
+    /// merged batch fails entirely and we cache nothing — [`Repository::at`]
+    /// later runs its own rev-parse and surfaces the discovery error.
+    pub fn prewarm() {
+        Self::prewarm_at(base_path());
+    }
+
+    /// Path-explicit form of [`Self::prewarm`], factored out so tests can
+    /// drive prewarm against a specific repo without mutating the global
+    /// `BASE_PATH` `OnceLock`.
+    pub(super) fn prewarm_at(discovery_path: &Path) {
+        // Fast path: another caller already ran prewarm (or `Repository::at`
+        // populated GIT_COMMON_DIR_CACHE via the on-demand path). Skip the
+        // fork — the per-worktree maps either have what we need from a prior
+        // prewarm/prewarm_info run, or `prewarm_info` will refork on first use.
+        if GIT_COMMON_DIR_CACHE.contains_key(discovery_path) {
+            return;
+        }
+
+        let _span = crate::trace::Span::new("prewarm");
+
+        // Order matters: `git rev-parse` emits one stdout line per selector in
+        // argument order, and we parse positionally. `--git-common-dir` first
+        // so even when later selectors fail (bare repo at the bare root, no
+        // worktree, …) the common dir still lands.
+        let Ok(output) = Cmd::new("git")
+            .args([
+                "rev-parse",
+                "--git-common-dir",
+                "--is-inside-work-tree",
+                "--show-toplevel",
+                "--git-dir",
+                "--symbolic-full-name",
+                "HEAD",
+            ])
+            .current_dir(discovery_path)
+            .context(path_to_logging_context(discovery_path))
+            .run()
+        else {
+            return;
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut lines = stdout.lines();
+
+        // Line 1: --git-common-dir. Cache even on non-zero exit — git emits
+        // this line before bailing out of `--show-toplevel` in a bare repo.
+        let Some(common_raw) = lines.next() else {
+            return;
+        };
+        let common_path = PathBuf::from(common_raw.trim());
+        let common_absolute = if common_path.is_relative() {
+            discovery_path.join(&common_path)
+        } else {
+            common_path
+        };
+        let Ok(common_resolved) = canonicalize(&common_absolute) else {
+            return;
+        };
+        GIT_COMMON_DIR_CACHE.insert(discovery_path.to_path_buf(), common_resolved);
+
+        // Per-worktree maps key on the canonicalized form of `discovery_path`,
+        // matching what `worktree_at` derives. Use the same fallback as
+        // `worktree_at` so the keys line up (canonicalize when the path
+        // exists, raw otherwise).
+        let worktree_key =
+            canonicalize(discovery_path).unwrap_or_else(|_| discovery_path.to_path_buf());
+
+        // Line 2: --is-inside-work-tree. "false" or missing → leave the
+        // per-worktree maps untouched. The membership invariant on
+        // `WORKTREE_ROOTS` ("contains_key ⇔ inside a worktree") forbids
+        // recording a sentinel here; `WorkingTree::root` and `prewarm_info`
+        // would misclassify the path as inside a worktree on the next call.
+        let is_inside = lines.next().is_some_and(|s| s.trim() == "true");
+        if !is_inside {
+            return;
+        }
+
+        // Line 3: --show-toplevel. Always emits when is_inside=true; mirror
+        // `prewarm_info`'s `self.path` fallback when canonicalize fails.
+        let raw_toplevel = lines.next().unwrap_or("").trim();
+        let canonical_root =
+            canonicalize(PathBuf::from(raw_toplevel)).unwrap_or_else(|_| worktree_key.clone());
+        WORKTREE_ROOTS
+            .entry(worktree_key.clone())
+            .or_insert(canonical_root);
+
+        // Line 4: --git-dir. Resolve relative-to-discovery and canonicalize;
+        // only land it when canonicalize succeeds, matching `prewarm_info`.
+        if let Some(git_dir) = lines.next().and_then(|raw| {
+            let path = PathBuf::from(raw.trim());
+            let absolute = if path.is_relative() {
+                discovery_path.join(&path)
+            } else {
+                path
+            };
+            canonicalize(&absolute).ok()
+        }) {
+            GIT_DIRS.entry(worktree_key.clone()).or_insert(git_dir);
+        }
+
+        // Line 5: --symbolic-full-name HEAD. Only trustworthy when the whole
+        // batch succeeded — on unborn HEAD this lands as the literal string
+        // "HEAD" (indistinguishable from detached HEAD without exit status).
+        // On unborn HEAD we leave `CURRENT_BRANCHES` empty so the
+        // `symbolic-ref --short HEAD` fallback in `WorkingTree::branch`
+        // resolves the unborn branch name.
+        if output.status.success()
+            && let Some(raw) = lines.next()
+        {
+            let branch = raw.trim().strip_prefix("refs/heads/").map(str::to_owned);
+            CURRENT_BRANCHES.entry(worktree_key).or_insert(branch);
+        }
     }
 
     /// Resolved user config (global merged with per-project overrides, defaults applied).

@@ -172,39 +172,31 @@ impl<'a> WorkingTree<'a> {
     /// the symbolic-full-name line lands as a fallback literal "HEAD", which
     /// would be indistinguishable from detached HEAD without the exit status.
     ///
-    /// Idempotent within a single command (for paths inside a work tree):
-    /// once `worktree_roots` is primed — by this method or by [`Self::root`]
-    /// — subsequent calls reconstruct the snapshot from the primed caches
-    /// without spawning a subprocess. Bare-repo roots and paths outside any
-    /// work tree intentionally aren't memoized; repeat calls there re-run the
-    /// batch, but such callers typically invoke `prewarm_info` only once.
+    /// Idempotent across the whole process (for paths inside a work tree):
+    /// once [`super::WORKTREE_ROOTS`] is primed — by this method, by
+    /// [`Repository::prewarm`], or by [`Self::root`] — subsequent calls (even
+    /// from other `Repository` instances) reconstruct the snapshot from the
+    /// process-wide maps without spawning a subprocess. Bare-repo roots and
+    /// paths outside any work tree intentionally aren't memoized; repeat
+    /// calls there re-run the batch, but such callers typically invoke
+    /// `prewarm_info` only once.
     ///
     /// [`Repository::project_config_path`]: super::Repository::project_config_path
+    /// [`Repository::prewarm`]: super::Repository::prewarm
     pub fn prewarm_info(&self) -> anyhow::Result<WorkingTreeGitInfo> {
-        // Fast path: `worktree_roots` only lands on confirmed toplevels (both
+        // Fast path: `WORKTREE_ROOTS` only lands on confirmed toplevels (both
         // `root()` and this method skip the cache on failure), so its presence
         // means we've already resolved this path as inside a work tree —
         // reconstruct the snapshot from the caches instead of spawning another
         // `git rev-parse`. Fields with no cache entry stay `None`, matching
         // the semantics of a freshly-run batch on unborn HEAD (where
         // `current_branch` never lands).
-        if let Some(root) = self
-            .repo
-            .cache
-            .worktree_roots
-            .get(&self.path)
-            .map(|e| e.clone())
-        {
+        if let Some(root) = super::WORKTREE_ROOTS.get(&self.path).map(|e| e.clone()) {
             return Ok(WorkingTreeGitInfo {
                 is_inside: true,
                 root: Some(root),
-                git_dir: self.repo.cache.git_dirs.get(&self.path).map(|e| e.clone()),
-                current_branch: self
-                    .repo
-                    .cache
-                    .current_branches
-                    .get(&self.path)
-                    .map(|e| e.clone()),
+                git_dir: super::GIT_DIRS.get(&self.path).map(|e| e.clone()),
+                current_branch: super::CURRENT_BRANCHES.get(&self.path).map(|e| e.clone()),
             });
         }
 
@@ -232,9 +224,7 @@ impl<'a> WorkingTree<'a> {
         // `worktree_at` and guaranteed inside the work tree.
         let raw_toplevel = lines.next().unwrap_or("").trim();
         let canonical = canonicalize(PathBuf::from(raw_toplevel)).unwrap_or(self.path.clone());
-        self.repo
-            .cache
-            .worktree_roots
+        super::WORKTREE_ROOTS
             .entry(self.path.clone())
             .or_insert_with(|| canonical.clone());
         let root = Some(canonical);
@@ -247,9 +237,7 @@ impl<'a> WorkingTree<'a> {
                 path
             };
             let resolved = canonicalize(&absolute).ok()?;
-            self.repo
-                .cache
-                .git_dirs
+            super::GIT_DIRS
                 .entry(self.path.clone())
                 .or_insert_with(|| resolved.clone());
             Some(resolved)
@@ -262,9 +250,7 @@ impl<'a> WorkingTree<'a> {
         let current_branch = if output.status.success() {
             lines.next().map(|raw| {
                 let branch = raw.trim().strip_prefix("refs/heads/").map(str::to_owned);
-                self.repo
-                    .cache
-                    .current_branches
+                super::CURRENT_BRANCHES
                     .entry(self.path.clone())
                     .or_insert_with(|| branch.clone());
                 branch
@@ -283,10 +269,11 @@ impl<'a> WorkingTree<'a> {
 
     /// Get the branch checked out in this worktree, or None if in detached HEAD state.
     ///
-    /// Result is cached in the repository's shared cache (keyed by worktree path).
-    /// Errors (e.g., permission denied, corrupted `.git`) are propagated, not swallowed.
+    /// Result is cached process-wide in [`super::CURRENT_BRANCHES`] (keyed by
+    /// worktree path). Errors (e.g., permission denied, corrupted `.git`) are
+    /// propagated, not swallowed.
     pub fn branch(&self) -> anyhow::Result<Option<String>> {
-        match self.repo.cache.current_branches.entry(self.path.clone()) {
+        match super::CURRENT_BRANCHES.entry(self.path.clone()) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
                 // rev-parse --symbolic-full-name returns "refs/heads/<branch>" on a branch,
@@ -362,11 +349,11 @@ impl<'a> WorkingTree<'a> {
     /// hook context building) can degrade gracefully rather than aborting.
     ///
     /// Only confirmed toplevels are cached — the fallback path is returned
-    /// but not persisted. This keeps `worktree_roots.contains_key(path)` as a
-    /// reliable "is inside a work tree" signal for [`Self::prewarm_info`]'s
-    /// short-circuit.
+    /// but not persisted. This keeps [`super::WORKTREE_ROOTS`]
+    /// `.contains_key(path)` as a reliable "is inside a work tree" signal for
+    /// [`Self::prewarm_info`]'s short-circuit.
     pub fn root(&self) -> anyhow::Result<PathBuf> {
-        match self.repo.cache.worktree_roots.entry(self.path.clone()) {
+        match super::WORKTREE_ROOTS.entry(self.path.clone()) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => match self
                 .run_command(&["rev-parse", "--show-toplevel"])
@@ -384,9 +371,10 @@ impl<'a> WorkingTree<'a> {
     ///
     /// Always returns a canonicalized absolute path, resolving symlinks.
     /// This ensures consistent comparison with `git_common_dir()`.
-    /// Result is cached in the repository's shared cache (keyed by worktree path).
+    /// Result is cached process-wide in [`super::GIT_DIRS`] (keyed by worktree
+    /// path).
     pub fn git_dir(&self) -> anyhow::Result<PathBuf> {
-        match self.repo.cache.git_dirs.entry(self.path.clone()) {
+        match super::GIT_DIRS.entry(self.path.clone()) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
                 let stdout = self.run_command(&["rev-parse", "--git-dir"])?;
@@ -633,9 +621,7 @@ mod tests {
 
         let first = wt.prewarm_info().unwrap();
         let sentinel_root = std::path::PathBuf::from("/nonexistent/sentinel");
-        repo.cache
-            .worktree_roots
-            .insert(wt.path().to_path_buf(), sentinel_root.clone());
+        super::super::WORKTREE_ROOTS.insert(wt.path().to_path_buf(), sentinel_root.clone());
 
         let second = wt.prewarm_info().unwrap();
         assert_eq!(second.root.as_deref(), Some(sentinel_root.as_path()));
@@ -645,7 +631,7 @@ mod tests {
 
     #[test]
     fn root_fallback_outside_work_tree_does_not_pollute_cache() {
-        // Invariant: `worktree_roots.contains_key(path)` ⇔ `path` is inside a
+        // Invariant: `WORKTREE_ROOTS.contains_key(path)` ⇔ `path` is inside a
         // work tree. `root()` still returns `self.path` as a fallback for
         // graceful degradation (bare-repo aliases, deleted-CWD recovery), but
         // that fallback must never be cached — otherwise `prewarm_info`'s
@@ -658,7 +644,7 @@ mod tests {
         let fallback = wt.root().expect("root() returns fallback, never errors");
         assert_eq!(fallback, wt.path());
         assert!(
-            !repo.cache.worktree_roots.contains_key(wt.path()),
+            !super::super::WORKTREE_ROOTS.contains_key(wt.path()),
             "fallback must not populate the cache"
         );
 
@@ -693,6 +679,30 @@ mod tests {
             vec!["refs/wt-backup/a-b", "refs/wt-backup/a/b"],
             "expected distinct backup refs for `a/b` and `a-b`, got: {refs}"
         );
+    }
+
+    #[test]
+    fn prewarm_at_populates_global_caches_for_a_fresh_repository() {
+        // `Repository::prewarm_at` is the eager merge: one rev-parse fills
+        // `GIT_COMMON_DIR_CACHE` (so the next `Repository::at` is free) and
+        // the process-wide worktree maps (`WORKTREE_ROOTS`, `GIT_DIRS`,
+        // `CURRENT_BRANCHES`) so a `prewarm_info` call from a fresh
+        // Repository hits memory.
+        let test = TestRepo::with_initial_commit();
+        Repository::prewarm_at(test.root_path());
+
+        // Sentinel-based check: a freshly-built `Repository` has nothing of
+        // its own to short-circuit `prewarm_info`. Mutating the process-wide
+        // entry — which `prewarm_at` just populated — and observing that
+        // `prewarm_info` returns the sentinel proves the fast path consults
+        // the global map (no refork).
+        let repo = Repository::at(test.root_path()).unwrap();
+        let wt = repo.worktree_at(test.root_path());
+        let sentinel = std::path::PathBuf::from("/nonexistent/prewarm-at-sentinel");
+        super::super::WORKTREE_ROOTS.insert(wt.path().to_path_buf(), sentinel.clone());
+
+        let info = wt.prewarm_info().unwrap();
+        assert_eq!(info.root.as_deref(), Some(sentinel.as_path()));
     }
 
     #[test]
