@@ -1,13 +1,14 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::Path;
 use std::process::Command;
-use wt_perf::{RepoConfig, create_repo, isolate_cmd};
+use worktrunk::testing::isolate_subprocess_env;
+use wt_perf::{RepoConfig, create_repo};
 
 fn run_completion(binary: &Path, repo_path: &Path, words: &[&str]) {
     let index = words.len().saturating_sub(1);
     let mut cmd = Command::new(binary);
     cmd.arg("--").args(words).current_dir(repo_path);
-    isolate_cmd(&mut cmd, None);
+    isolate_subprocess_env(&mut cmd, None);
     cmd.env("COMPLETE", "bash")
         .env("_CLAP_COMPLETE_INDEX", index.to_string())
         .env("_CLAP_COMPLETE_COMP_TYPE", "9")

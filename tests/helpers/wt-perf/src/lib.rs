@@ -4,7 +4,10 @@
 //! - Benchmark repository setup (used by `benches/list.rs`, `benches/time_to_first_output.rs`)
 //! - Cache invalidation for cold benchmark runs
 //! - Trace analysis utilities
-//! - Shared benchmark helpers (`isolate_cmd`, `run_git_ok`)
+//! - Shared benchmark helpers (`run_git`, `run_git_ok`, …)
+//!
+//! For wt-subprocess isolation, benches use
+//! [`worktrunk::testing::isolate_subprocess_env`] directly.
 //!
 //! # Library Usage
 //!
@@ -22,9 +25,10 @@
 //! See `wt-perf --help` for CLI usage.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::OnceLock;
 use tempfile::TempDir;
-use worktrunk::shell_exec::Cmd;
+use worktrunk::testing::{NULL_DEVICE, configure_git_cmd};
 
 /// Lazy-initialized rust repo path.
 static RUST_REPO: OnceLock<PathBuf> = OnceLock::new();
@@ -104,15 +108,20 @@ impl RepoConfig {
     }
 }
 
+/// Build a `git` command isolated from host context, with config
+/// redirected to `NULL_DEVICE`. Thin call-site wrapper around
+/// [`configure_git_cmd`] — every git invocation in this crate goes
+/// through here. Doesn't set `current_dir`; callers do that explicitly
+/// when they have a target.
+fn git_command() -> Command {
+    let mut cmd = Command::new("git");
+    configure_git_cmd(&mut cmd, Path::new(NULL_DEVICE));
+    cmd
+}
+
 /// Run a git command in the given directory. Panics on failure.
 pub fn run_git(path: &Path, args: &[&str]) {
-    let output = Cmd::new("git")
-        .args(args.iter().copied())
-        .current_dir(path)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .run()
-        .unwrap();
+    let output = git_command().args(args).current_dir(path).output().unwrap();
     assert!(
         output.status.success(),
         "Git command failed: {:?}\nstderr: {}\nstdout: {}\npath: {}",
@@ -125,45 +134,11 @@ pub fn run_git(path: &Path, args: &[&str]) {
 
 /// Run a git command, returning whether it succeeded. Does not panic.
 pub fn run_git_ok(path: &Path, args: &[&str]) -> bool {
-    Cmd::new("git")
-        .args(args.iter().copied())
+    git_command()
+        .args(args)
         .current_dir(path)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .run()
+        .output()
         .is_ok_and(|o| o.status.success())
-}
-
-/// Strip host environment from a benchmark command for isolation.
-///
-/// Removes `GIT_*`, `WORKTRUNK_*`, `SHELL`, and `NO_COLOR` env vars, then sets
-/// config/system/approvals paths. Pass a `user_config_path` to use a real config
-/// file (e.g., with hooks); `None` points at a nonexistent path (defaults only).
-///
-/// This is intentionally minimal compared to `tests/common::configure_cli_command()`:
-/// benchmarks need realistic timing without host config interference, while
-/// integration tests need full determinism (timestamps, locale, mock commands,
-/// snapshot filters). Coupling them would make benchmarks slower or tests flaky.
-pub fn isolate_cmd(cmd: &mut std::process::Command, user_config_path: Option<&Path>) {
-    for (key, _) in std::env::vars() {
-        if key.starts_with("GIT_") || key.starts_with("WORKTRUNK_") {
-            cmd.env_remove(&key);
-        }
-    }
-    cmd.env_remove("NO_COLOR");
-    cmd.env(
-        "WORKTRUNK_CONFIG_PATH",
-        user_config_path.unwrap_or(Path::new("/nonexistent/bench/config.toml")),
-    );
-    cmd.env(
-        "WORKTRUNK_SYSTEM_CONFIG_PATH",
-        "/nonexistent/bench/system-config.toml",
-    );
-    cmd.env(
-        "WORKTRUNK_APPROVALS_PATH",
-        "/nonexistent/bench/approvals.toml",
-    );
-    cmd.env_remove("SHELL");
 }
 
 /// Create a test repository from config.
@@ -270,10 +245,10 @@ pub fn add_worktrees(config: &RepoConfig, repo_path: &Path) {
         let branch = format!("feature-wt-{wt_num}");
         let wt_path = parent_dir.join(format!("{repo_name}.{branch}"));
 
-        let head_output = Cmd::new("git")
+        let head_output = git_command()
             .args(["rev-parse", "HEAD"])
             .current_dir(repo_path)
-            .run()
+            .output()
             .unwrap();
         let base_commit = String::from_utf8_lossy(&head_output.stdout)
             .trim()
@@ -313,15 +288,20 @@ pub fn setup_fake_remote(repo_path: &Path) {
     let refs_dir = repo_path.join(".git/refs/remotes/origin");
     std::fs::create_dir_all(&refs_dir).unwrap();
     std::fs::write(refs_dir.join("HEAD"), "ref: refs/remotes/origin/main\n").unwrap();
-    let head_sha = Cmd::new("git")
+    let head_sha = git_command()
         .args(["rev-parse", "HEAD"])
         .current_dir(repo_path)
-        .run()
+        .output()
         .unwrap();
     std::fs::write(refs_dir.join("main"), head_sha.stdout).unwrap();
 }
 
 /// Invalidate caches for any repo (auto-detects worktrees).
+///
+/// Resolves the git common directory from `repo_path/.git` — handling
+/// linked worktrees, where `.git` is a file holding a gitdir pointer
+/// rather than a directory — so the same cache is cleared regardless
+/// of which worktree of a repo `repo_path` names.
 ///
 /// Clears:
 /// - Git's index (main + linked worktrees) — fsmonitor/stat warmup
@@ -339,42 +319,79 @@ pub fn setup_fake_remote(repo_path: &Path) {
 /// `.git/wt/trash/`. These don't affect read-path performance, and benches
 /// may rely on them (e.g., branch markers set during setup).
 pub fn invalidate_caches_auto(repo_path: &Path) {
-    let git_dir = repo_path.join(".git");
+    let Some(git_dir) = resolve_git_common_dir(repo_path) else {
+        return;
+    };
 
-    // Remove main index
+    // Remove main index + every linked worktree's index.
     let _ = std::fs::remove_file(git_dir.join("index"));
-
-    // Remove all worktree indexes
-    let worktrees_dir = git_dir.join("worktrees");
-    if worktrees_dir.exists()
-        && let Ok(entries) = std::fs::read_dir(&worktrees_dir)
-    {
+    if let Ok(entries) = std::fs::read_dir(git_dir.join("worktrees")) {
         for entry in entries.flatten() {
-            let index = entry.path().join("index");
-            let _ = std::fs::remove_file(index);
+            let _ = std::fs::remove_file(entry.path().join("index"));
         }
     }
 
-    // Remove commit graph
+    // Commit graph: legacy single-file plus chained-graph dir.
     let _ = std::fs::remove_file(git_dir.join("objects/info/commit-graph"));
     let _ = std::fs::remove_dir_all(git_dir.join("objects/info/commit-graphs"));
 
-    // Remove packed refs
     let _ = std::fs::remove_file(git_dir.join("packed-refs"));
 
-    // Remove worktrunk's persistent SHA-keyed caches (diff-stats, is-ancestor, etc.)
+    // All worktrunk persistent caches: every kind dir under wt/cache/.
     let _ = std::fs::remove_dir_all(git_dir.join("wt/cache"));
 
-    // Unset worktrunk's default-branch cache (git config). Uses `Cmd` to stay
-    // consistent with how `Repository::clear_default_branch_cache` clears it.
-    // Exit code 5 = key didn't exist (harmless); any other failure is ignored
-    // because invalidation is best-effort.
-    let _ = Cmd::new("git")
+    // Worktrunk's default-branch cache lives in git config; we have no
+    // safe way to edit that file ourselves (escaping rules), so shell
+    // out. Exit 5 = key absent (harmless); anything else is a real
+    // failure and we want it loud, since the bench's cold-cache
+    // invariant depends on this succeeding.
+    let result = git_command()
         .args(["config", "--unset", "worktrunk.default-branch"])
         .current_dir(repo_path)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .run();
+        .output();
+    match result {
+        Ok(o) if o.status.success() => {}
+        Ok(o) if o.status.code() == Some(5) => {}
+        Ok(o) => eprintln!(
+            "wt-perf invalidate: `git config --unset worktrunk.default-branch` failed (exit {:?}): {}",
+            o.status.code(),
+            String::from_utf8_lossy(&o.stderr).trim()
+        ),
+        Err(e) => eprintln!("wt-perf invalidate: failed to spawn git: {e}"),
+    }
+}
+
+/// Resolve git's common directory for `repo_path` from the filesystem.
+///
+/// - Normal repo: `<repo>/.git` is a directory — use it directly.
+/// - Linked worktree: `<repo>/.git` is a file containing
+///   `gitdir: <main>/.git/worktrees/<name>`. The common dir is the
+///   parent of that worktree-private dir's parent.
+///
+/// Returns `None` for bare repos (no `.git` entry) or non-repo paths;
+/// the caller treats that as "nothing to invalidate."
+fn resolve_git_common_dir(repo_path: &Path) -> Option<PathBuf> {
+    let dot_git = repo_path.join(".git");
+    let file_type = std::fs::symlink_metadata(&dot_git).ok()?.file_type();
+
+    if file_type.is_dir() {
+        return Some(dot_git);
+    }
+    if !file_type.is_file() {
+        return None;
+    }
+
+    // `.git` is a gitdir pointer: `gitdir: <path>` (path may be relative
+    // to repo_path). Strip `worktrees/<name>` to reach the common dir.
+    let content = std::fs::read_to_string(&dot_git).ok()?;
+    let gitdir = content.lines().find_map(|l| l.strip_prefix("gitdir: "))?;
+    let pointed = PathBuf::from(gitdir.trim());
+    let pointed = if pointed.is_absolute() {
+        pointed
+    } else {
+        repo_path.join(pointed)
+    };
+    pointed.parent()?.parent().map(Path::to_path_buf)
 }
 
 /// Get or clone the rust-lang/rust repository for real-world benchmarks.
@@ -387,10 +404,10 @@ pub fn ensure_rust_repo() -> PathBuf {
             let rust_repo = cache_dir.join("rust");
 
             if rust_repo.exists() {
-                let output = Cmd::new("git")
+                let output = git_command()
                     .args(["rev-parse", "HEAD"])
                     .current_dir(&rust_repo)
-                    .run();
+                    .output();
 
                 if output.is_ok_and(|o| o.status.success()) {
                     eprintln!("Using cached rust repo at {}", rust_repo.display());
@@ -403,13 +420,13 @@ pub fn ensure_rust_repo() -> PathBuf {
             std::fs::create_dir_all(&cache_dir).unwrap();
             eprintln!("Cloning rust-lang/rust (this will take several minutes)...");
 
-            let clone_output = Cmd::new("git")
+            let clone_output = git_command()
                 .args([
                     "clone",
                     "https://github.com/rust-lang/rust.git",
                     rust_repo.to_str().unwrap(),
                 ])
-                .run()
+                .output()
                 .unwrap();
 
             assert!(clone_output.status.success(), "Failed to clone rust repo");
@@ -427,14 +444,14 @@ pub fn clone_rust_repo(temp: &TempDir) -> PathBuf {
     let rust_repo = ensure_rust_repo();
     let workspace_main = temp.path().join("repo");
 
-    let clone_output = Cmd::new("git")
+    let clone_output = git_command()
         .args([
             "clone",
             "--local",
             rust_repo.to_str().unwrap(),
             workspace_main.to_str().unwrap(),
         ])
-        .run()
+        .output()
         .unwrap();
     assert!(
         clone_output.status.success(),
@@ -453,10 +470,10 @@ pub fn clone_rust_repo(temp: &TempDir) -> PathBuf {
 /// creates `feature-NNN` branches pointing at them. This reproduces the
 /// GH #461 scenario where branch divergence depth (not count) drives cost.
 pub fn add_history_spread_branches(repo_path: &Path, count: usize) {
-    let log_output = Cmd::new("git")
+    let log_output = git_command()
         .args(["log", "--oneline", "-n", "5000", "--format=%H"])
         .current_dir(repo_path)
-        .run()
+        .output()
         .unwrap();
     let log_str = String::from_utf8_lossy(&log_output.stdout);
     let step = 5000 / count;

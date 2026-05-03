@@ -16,7 +16,8 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::Path;
 use std::process::Command;
-use wt_perf::{RepoConfig, create_repo, invalidate_caches_auto, isolate_cmd, setup_fake_remote};
+use worktrunk::testing::isolate_subprocess_env;
+use wt_perf::{RepoConfig, create_repo, invalidate_caches_auto, setup_fake_remote};
 
 fn bench_first_output(c: &mut Criterion) {
     let mut group = c.benchmark_group("first_output");
@@ -30,7 +31,7 @@ fn bench_first_output(c: &mut Criterion) {
     let make_cmd = |args: &[&str]| {
         let mut cmd = Command::new(binary);
         cmd.args(args).current_dir(&repo_path);
-        isolate_cmd(&mut cmd, None);
+        isolate_subprocess_env(&mut cmd, None);
         cmd.env("WORKTRUNK_FIRST_OUTPUT", "1");
         cmd
     };

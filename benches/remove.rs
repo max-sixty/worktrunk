@@ -15,9 +15,8 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use wt_perf::{
-    RepoConfig, invalidate_caches_auto, isolate_cmd, run_git, run_git_ok, setup_fake_remote,
-};
+use worktrunk::testing::isolate_subprocess_env;
+use wt_perf::{RepoConfig, invalidate_caches_auto, run_git, run_git_ok, setup_fake_remote};
 
 /// Create a benchmark repo at a specific path with optional hooks.
 fn create_bench_repo(base_path: &Path, with_hooks: bool) -> PathBuf {
@@ -123,7 +122,7 @@ fn bench_remove_e2e(c: &mut Criterion) {
                 let mut cmd = Command::new(binary);
                 cmd.args(["remove", "--yes", "--no-hooks", "--force", "feature-wt-1"]);
                 cmd.current_dir(&repo_no_hooks);
-                isolate_cmd(&mut cmd, Some(&user_config_no_hooks));
+                isolate_subprocess_env(&mut cmd, Some(&user_config_no_hooks));
                 cmd.env("WORKTRUNK_FIRST_OUTPUT", "1");
                 let output = cmd.output().unwrap();
                 assert!(
@@ -145,7 +144,7 @@ fn bench_remove_e2e(c: &mut Criterion) {
                 let mut cmd = Command::new(binary);
                 cmd.args(["remove", "--yes", "--no-hooks", "--force"]);
                 cmd.current_dir(&wt_path);
-                isolate_cmd(&mut cmd, Some(&user_config_no_hooks));
+                isolate_subprocess_env(&mut cmd, Some(&user_config_no_hooks));
                 let output = cmd.output().unwrap();
                 assert!(
                     output.status.success(),
@@ -166,7 +165,7 @@ fn bench_remove_e2e(c: &mut Criterion) {
                 let mut cmd = Command::new(binary);
                 cmd.args(["remove", "--yes", "--force"]);
                 cmd.current_dir(&wt_path);
-                isolate_cmd(&mut cmd, Some(&user_config_with_hooks));
+                isolate_subprocess_env(&mut cmd, Some(&user_config_with_hooks));
                 let output = cmd.output().unwrap();
                 assert!(
                     output.status.success(),

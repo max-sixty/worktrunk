@@ -23,7 +23,8 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::path::Path;
 use std::process::Command;
-use wt_perf::{RepoConfig, create_repo, invalidate_caches_auto, isolate_cmd};
+use worktrunk::testing::isolate_subprocess_env;
+use wt_perf::{RepoConfig, create_repo, invalidate_caches_auto};
 
 /// Alias body is a shell builtin so the wall-clock is dominated by the
 /// parent's dispatch — not by running a real subcommand.
@@ -48,7 +49,7 @@ const fn lean_worktrees(worktrees: usize) -> RepoConfig {
 fn wt_cmd(binary: &Path, repo: &Path, user_config: &Path, args: &[&str]) -> Command {
     let mut cmd = Command::new(binary);
     cmd.args(args).current_dir(repo);
-    isolate_cmd(&mut cmd, Some(user_config));
+    isolate_subprocess_env(&mut cmd, Some(user_config));
     cmd
 }
 
@@ -73,7 +74,7 @@ fn bench_dispatch(c: &mut Criterion) {
         b.iter(|| {
             let mut cmd = Command::new(binary);
             cmd.arg("--version");
-            isolate_cmd(&mut cmd, None);
+            isolate_subprocess_env(&mut cmd, None);
             run_and_check(cmd, "wt_version");
         });
     });
