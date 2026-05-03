@@ -87,6 +87,17 @@ Notable changes to document:
 
 Skip: internal refactors, test additions (unless user-facing like shell completion tests).
 
+### Length and tone
+
+**Combine related bullets.** Several PRs that share a theme — e.g. three perf changes that together account for one user-visible speedup — belong in one bullet, not three. The reader cares about the net change, not the PR boundaries. Cite all the PRs in the trailing `([#a](...), [#b](...), [#c](...))` list.
+
+**Be brief.** Each bullet should communicate the user-visible change in 1–3 sentences. Internal-section bullets in particular should be terse — usually one sentence. Drop the "why we did it this way" details unless they materially affect how the user thinks about the change. Code examples and exhaustive `Cmd::stream` / `OnceCell` / `DashMap`-style internals usually don't belong; they live in the PR description.
+
+**No editorial framing.** Describe what changed, not what was wrong with the previous decision in subjective terms. Avoid words like "sledgehammer", "ugly", "noisy", "wrong" applied to past code. State the prior behavior neutrally and the new behavior plainly.
+
+**Good:** "Removed `.pi/` from the default excludes list; users who need it can add it via `[step.copy-ignored]`."
+**Bad:** "Removed `.pi/` — a sledgehammer fix from an unrelated debugging session that has no place as a project-agnostic default."
+
 ### Credit External Contributors
 
 For any changelog entry where an external contributor (not the repo owner) authored the commit, add credit with their GitHub username:
