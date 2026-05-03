@@ -1236,7 +1236,7 @@ impl Cmd {
         };
 
         #[cfg(unix)]
-        let mut signals = if self.forward_signals {
+        let signals = if self.forward_signals {
             Some(Signals::new([SIGINT, SIGTERM])?)
         } else {
             None
@@ -1279,24 +1279,36 @@ impl Cmd {
         }
         // stdin handle is dropped here, closing the pipe
 
-        // Wait for child with optional signal forwarding
+        // Wait for child. With signal forwarding, a listener thread blocks
+        // on `Signals::forever()` and forwards SIGINT/SIGTERM to the child;
+        // the main thread blocks on `child.wait()`. After wait returns we
+        // close the signal handle (which unblocks `forever()`) and join
+        // the listener. Without forwarding, just wait.
         #[cfg(unix)]
-        let (status, seen_signal) = if self.forward_signals {
+        let (status, seen_signal) = if let Some(mut signals) = signals {
             let child_pid = child.id() as i32;
-            let mut seen_signal: Option<i32> = None;
-            loop {
-                if let Some(status) = child.try_wait().map_err(|e| {
-                    anyhow::Error::from(GitError::Other {
-                        message: format!("Failed to wait for command: {}", e),
-                    })
-                })? {
-                    break (status, seen_signal);
-                }
-                if let Some(signals) = signals.as_mut() {
-                    for sig in signals.pending() {
-                        if seen_signal.is_none() {
-                            seen_signal = Some(sig);
-                            if self.share_parent_pgroup {
+            let share_parent_pgroup = self.share_parent_pgroup;
+            let handle = signals.handle();
+            // Sentinel 0 = no signal yet (POSIX signals are >= 1). First
+            // signal wins via compare_exchange; subsequent signals are
+            // dropped, matching the prior loop's first-signal-only semantics.
+            // Re-press escalation lives inside `forward_signal_with_escalation`
+            // (SIGINT → SIGTERM → SIGKILL with grace windows).
+            let seen = std::sync::Arc::new(std::sync::atomic::AtomicI32::new(0));
+            let listener = {
+                let seen = std::sync::Arc::clone(&seen);
+                std::thread::spawn(move || {
+                    for sig in signals.forever() {
+                        if seen
+                            .compare_exchange(
+                                0,
+                                sig,
+                                std::sync::atomic::Ordering::Relaxed,
+                                std::sync::atomic::Ordering::Relaxed,
+                            )
+                            .is_ok()
+                        {
+                            if share_parent_pgroup {
                                 // Shared-pgroup mode: tty-initiated signals
                                 // (Ctrl-C, hangup) already hit the child via
                                 // kernel fg-pgroup delivery. Forward by PID
@@ -1313,9 +1325,20 @@ impl Cmd {
                             }
                         }
                     }
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
+                })
+            };
+            let wait_result = child.wait();
+            // Always tear down the listener, even on wait error, so the
+            // signal-hook handle is released and the thread doesn't leak.
+            handle.close();
+            let _ = listener.join();
+            let status = wait_result.map_err(|e| {
+                anyhow::Error::from(GitError::Other {
+                    message: format!("Failed to wait for command: {}", e),
+                })
+            })?;
+            let sig = seen.load(std::sync::atomic::Ordering::Relaxed);
+            (status, (sig != 0).then_some(sig))
         } else {
             let status = child.wait().map_err(|e| {
                 anyhow::Error::from(GitError::Other {
