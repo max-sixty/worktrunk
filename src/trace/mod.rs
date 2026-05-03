@@ -38,5 +38,5 @@ pub mod parse;
 
 // Re-export main types for convenience
 pub use chrome::to_chrome_trace;
-pub use emit::Span;
+pub use emit::{Span, instant};
 pub use parse::{TraceEntry, TraceEntryKind, TraceResult, parse_lines};

@@ -72,8 +72,8 @@ use worktrunk::styling::{eprintln, format_with_gutter};
 /// Format command execution label with optional command name.
 ///
 /// Examples:
-/// - `format_command_label("post-create", Some("install"))` → `"Running post-create install"` (with bold)
-/// - `format_command_label("post-create", None)` → `"Running post-create"`
+/// - `format_command_label("post-start", Some("install"))` → `"Running post-start install"` (with bold)
+/// - `format_command_label("post-start", None)` → `"Running post-start"`
 pub(crate) fn format_command_label(command_type: &str, name: Option<&str>) -> String {
     match name {
         Some(name) => cformat!("Running {command_type} <bold>{name}</>"),
@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn test_format_command_label() {
         use insta::assert_snapshot;
-        assert_snapshot!(format_command_label("post-create", Some("install")), @"Running post-create [1minstall[22m");
+        assert_snapshot!(format_command_label("post-start", Some("install")), @"Running post-start [1minstall[22m");
         assert_snapshot!(format_command_label("pre-merge", None), @"Running pre-merge");
         assert_snapshot!(format_command_label("post-start", Some("build")), @"Running post-start [1mbuild[22m");
         assert_snapshot!(format_command_label("pre-commit", None), @"Running pre-commit");

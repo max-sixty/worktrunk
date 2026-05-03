@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.47.0
+
+### Improved
+
+- **`wt switch <number>` suggests `pr:N` / `mr:N` first**: When `wt switch 2474` fails because no branch by that name exists, the hint now leads with how to switch to the matching PR/MR before mentioning `--create`. Platform is detected by hostname-matching the primary remote's effective URL (so `url.insteadOf` rewrites are respected): GitHub → `wt switch pr:N`, GitLab → `wt switch mr:N`, unknown host → both. Non-numeric branch names keep the original hint unchanged. ([#2516](https://github.com/max-sixty/worktrunk/pull/2516))
+
+- **Faster alias and hook dispatch**: Trivial-alias wall time drops 30.4ms → 20.4ms (1.49× via hyperfine) from three changes — replacing the 10ms `try_wait`+sleep poll in `Cmd::stream` with an event-driven `Signals::forever()` listener (and the matching 25ms poll in `spawn_signal_forwarder`), merging the two cold-path `git rev-parse` forks (`--git-common-dir` and the `prewarm_info` batch) into one, and loading user and project config on scoped threads instead of sequentially. Ctrl-C latency on concurrent steps drops from "up to 25 ms" to "as soon as signal-hook delivers". ([#2537](https://github.com/max-sixty/worktrunk/pull/2537), [#2538](https://github.com/max-sixty/worktrunk/pull/2538), [#2541](https://github.com/max-sixty/worktrunk/pull/2541), [#2543](https://github.com/max-sixty/worktrunk/pull/2543))
+
+- **`Running …` hook announce uses one canonical grammar**: Replaces the overloaded `Running <hook>: ...` punctuation with a layered grammar where each separator carries one meaning — `&` joins concurrent commands within a step, `,` joins serial steps within a pipeline, `;` joins source pipelines and hook-type clauses. Source label moves to a per-pipeline suffix annotation (`sync, push (user)`), so multi-source events no longer double-colon, and multi-hook-type events bundle onto a single line: `Running post-commit: mark (user); post-remove: cleanup (user); post-switch: notify (user); post-merge: sync (user) @ ~/repo`. ([#2504](https://github.com/max-sixty/worktrunk/pull/2504))
+
+- **`(user)` / `(project)` source labels no longer rendered bold**: The `Running …` background-hook announce wrapped each pipeline's source label in `<bold>`, producing visually noisy bold inner text against parens that weren't bold. Source labels render as plain inner text now; named command names (`sync`, `push`, …) stay bold as before. ([#2514](https://github.com/max-sixty/worktrunk/pull/2514))
+
+### Fixed
+
+- **Integration detection now ORs local + upstream**: `wt list`, `wt remove`, `wt merge`, and `wt step prune` previously checked a single integration target picked by `effective_integration_target`, so a branch merged into local `main` while `origin/main` had unique commits (or vice versa) was misreported as unintegrated and skipped. `integration_reason` now considers both — integrated if either matches. ([#2507](https://github.com/max-sixty/worktrunk/pull/2507), [#2513](https://github.com/max-sixty/worktrunk/pull/2513), [#2515](https://github.com/max-sixty/worktrunk/pull/2515))
+
+- **`wt step copy-ignored` no longer writes outside the destination through symlinked directories**: A symlinked destination directory (e.g. `target -> /tmp/outside`) let `copy-ignored` create files outside the worktree; `--force` made it riskier still by overwriting outside files. New guarded entry points reject paths whose resolved parent chain escapes the destination root. Leaf-symlink behavior is unchanged. ([#2501](https://github.com/max-sixty/worktrunk/pull/2501), thanks @douglas)
+
+- **`wt step copy-ignored` no longer hardcodes `.pi/` in built-in excludes**: Removed from the default excludes list; users who need it can add it via the `[step.copy-ignored]` config. ([#2527](https://github.com/max-sixty/worktrunk/pull/2527), thanks @indigoviolet for reporting [#2526](https://github.com/max-sixty/worktrunk/issues/2526))
+
+- **`wt step for-each -- <argv>` preserves quoting and argument boundaries**: The post-`--` argv was rebuilt with `args.join(" ")` and passed through `sh -c`, breaking anything with spaces, `;`, or shell metacharacters inside an argv element. It's now exec'd directly with no implicit shell. Users wanting shell features (pipes, redirects, `$VAR`, globs) write `sh -c '<snippet>'` explicitly — same pattern as `xargs`, `find -exec`. (Breaking: previously `wt step for-each -- <snippet>` accepted shell snippets without `sh -c`; `for-each` is `[experimental]`.) ([#2465](https://github.com/max-sixty/worktrunk/pull/2465))
+
+### Documentation
+
+- **`extending.md` hooks-vs-aliases comparison gains a stdin row**: The comparison table covered invocation, positional handling, approval flags, source filters, and template-context extras, but never said anything about stdin. Hooks have always received the template context as JSON on stdin; aliases inherit the parent's stdin so pipes pass through and interactive TUIs (`wt switch`) keep the tty. ([#2529](https://github.com/max-sixty/worktrunk/pull/2529))
+
+- **`bench` command help cites the positional `FILTER` instead of `--skip`**: Criterion's CLI takes filter as a positional argument; `--skip` exists but the documented form was misleading. ([#2547](https://github.com/max-sixty/worktrunk/pull/2547))
+
+- **CLAUDE.md codifies the local-first network access policy**: Adds a Network Access subsection under Command Execution Principles. Worktrunk is local-first; the only fall-through-to-the-wire helper is the first `Repository::default_branch()` call per repo. A TTL cache does not authorize background polling. ([#2536](https://github.com/max-sixty/worktrunk/pull/2536))
+
+### Internal
+
+- **`RefSnapshot` replaces ambient ref-keyed caches**: Callers now capture a point-in-time `RefSnapshot` and thread it through read paths instead of reading through cached `commit_shas`/`integration_reasons`/etc., which could go stale when wt itself moved a ref (e.g. `wt merge` advancing the local target). The `head_shas` per-worktree cache is also dropped so `{{ commit }}` reflects post-rebase HEAD movement. (Breaking library API: `Repository::ahead_behind`, `batch_ahead_behind`, `effective_integration_target`, `integration_target` removed; `Repository::integration_reason`, `worktrunk::copy::copy_dir_recursive`, `copy_leaf`, `worktrunk::git::compute_integration_lazy`, `remove_worktree_with_cleanup`, and `delete_branch_if_safe` each gained a parameter.) ([#2528](https://github.com/max-sixty/worktrunk/pull/2528), [#2530](https://github.com/max-sixty/worktrunk/pull/2530))
+
+- **Aliases keyed by (name, source) and EXEC decided per step**: Same-name user+project alias collisions used to scrub EXEC for the whole merged pipeline; per-step decisions now keep the EXEC relaxation on user steps and scrub only project steps. Strictly more permissive than before. ([#2474](https://github.com/max-sixty/worktrunk/pull/2474), [#2521](https://github.com/max-sixty/worktrunk/pull/2521))
+
+- **`Span` RAII guard for in-process `[wt-trace]` attribution**: Records `[wt-trace] span="name" dur_us=…` on drop, parsed by the existing chrome-trace renderer. Wired through alias dispatch, config load, `build_hook_context`, `template_render`, and `execute_shell_command`, so cold-cache attribution down to ~µs lands in `trace.json` for https://ui.perfetto.dev. ([#2539](https://github.com/max-sixty/worktrunk/pull/2539))
+
+- **Codecov uploads enabled on fork PRs**: Drops the `github.repository_owner == 'max-sixty'` guards on both Codecov upload steps; the action falls back to tokenless when `CODECOV_TOKEN` is empty. ([#2535](https://github.com/max-sixty/worktrunk/pull/2535))
+
+- **Nightly benchmark results append to a public gist** as JSONL (timestamp, commit SHA, mean_ns, stddev_ns) so results are queryable across runs. ([#2531](https://github.com/max-sixty/worktrunk/pull/2531), [#2532](https://github.com/max-sixty/worktrunk/pull/2532))
+
 ## 0.46.1
 
 ### Fixed

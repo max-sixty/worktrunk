@@ -26,7 +26,8 @@ fn has_initialized_submodules_from_status(status: &str) -> bool {
 ///
 /// Mirrors what the batched `git rev-parse` actually resolved so callers can
 /// read the data directly instead of round-tripping through the per-field
-/// cache accessors. `prewarm_info` still primes [`RepoCache`] so later calls
+/// cache accessors. `prewarm_info` still primes the process-wide
+/// `WORKTREE_ROOTS`, `GIT_DIRS`, and `CURRENT_BRANCHES` maps so later calls
 /// to [`WorkingTree::branch`], [`WorkingTree::root`], and
 /// [`WorkingTree::git_dir`] remain single cache hits. HEAD SHA is not cached:
 /// `wt merge` and similar commands move HEAD mid-run, and a stale cached SHA
@@ -38,8 +39,6 @@ fn has_initialized_submodules_from_status(status: &str) -> bool {
 /// unless canonicalization failed. `current_branch` is only populated when
 /// the whole batch succeeded; on unborn HEAD it stays `None` and the
 /// per-accessor fallback paths handle the symbolic-ref lookup.
-///
-/// [`RepoCache`]: super::RepoCache
 #[derive(Debug, Clone, Default)]
 #[must_use]
 pub struct WorkingTreeGitInfo {
