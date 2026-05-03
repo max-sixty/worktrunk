@@ -22,10 +22,11 @@
 //     context build to referenced vars only — until then with_vars tracks
 //     stub within noise, since context build is unconditional.
 //
-// Run examples:
+// Run examples (Criterion takes a positional substring FILTER; no --skip):
 //   cargo bench --bench alias                          # All variants
-//   cargo bench --bench alias -- --skip cold           # Warm only, faster
-//   cargo bench --bench alias -- --skip with_vars      # Stub only
+//   cargo bench --bench alias warm                     # Warm only (incl. with_vars/warm)
+//   cargo bench --bench alias dispatch/warm            # Stub-warm only (excludes with_vars)
+//   cargo bench --bench alias dispatch/cold            # Stub-cold only (excludes with_vars)
 //   cargo bench --bench alias -- --sample-size 10      # Fast iteration
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};

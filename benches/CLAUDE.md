@@ -4,11 +4,13 @@ See `list.rs` and `time_to_first_output.rs` headers for benchmark groups and run
 
 ## Quick Start
 
-```bash
-# Fast iteration (skip slow benchmarks)
-cargo bench --bench list -- --skip cold --skip real --skip divergent_branches
+Criterion's CLI takes a positional `FILTER` (substring inclusion) and `--exact`. There's no `--skip`; pick a filter that *includes* what you want instead.
 
-# Run specific group
+```bash
+# Fast iteration (one synthetic group, warm cache only)
+cargo bench --bench list skeleton/warm
+
+# Run specific group (all variants)
 cargo bench --bench list many_branches
 
 # GH #461 scenario (200 branches on rust-lang/rust)
@@ -18,8 +20,8 @@ cargo bench --bench list real_repo_many_branches
 cargo bench --bench list
 
 # Time-to-first-output benchmarks
-cargo bench --bench time_to_first_output            # all commands
-cargo bench --bench time_to_first_output -- remove  # just remove
+cargo bench --bench time_to_first_output         # all commands
+cargo bench --bench time_to_first_output remove  # just remove
 ```
 
 ## Rust Repo Caching
@@ -28,16 +30,17 @@ Real repo benchmarks clone rust-lang/rust on first run (~2-5 minutes). The clone
 
 ## Faster Iteration
 
-**Skip slow benchmarks:**
+Criterion has no exclusion flag — narrow the run by picking a substring that matches only the variants you want. Benchmark IDs look like `<group>/<label>/<param>`, e.g. `skeleton/cold/4`, `worktree_scaling/warm/8`, `real_repo_many_branches/warm`.
+
+**Pattern matching (positional `FILTER`):**
 ```bash
-cargo bench --bench list -- --skip cold --skip real
+cargo bench --bench list scaling             # All worktree_scaling/* variants
+cargo bench --bench list warm                # Every benchmark whose ID contains "warm"
+cargo bench --bench list skeleton/warm       # Just skeleton's warm variants
+cargo bench --bench list -- --exact full/cold/4   # One exact ID
 ```
 
-**Pattern matching:**
-```bash
-cargo bench --bench list scaling    # All scaling benchmarks
-cargo bench --bench list -- --skip cold  # Warm cache only
-```
+To skip the slow real-repo and divergent groups, target the synthetic groups directly: `cargo bench --bench list skeleton`, `cargo bench --bench list full`, or `cargo bench --bench list worktree_scaling`. Run them sequentially if you want more than one.
 
 ## WORKTRUNK_FIRST_OUTPUT
 
