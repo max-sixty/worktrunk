@@ -360,16 +360,6 @@ pub fn set_command_timeout(timeout: Option<Duration>) {
     COMMAND_TIMEOUT.with(|t| t.set(timeout));
 }
 
-/// Emit an instant trace event (a milestone marker with no duration).
-///
-/// Re-exported from [`crate::trace::emit::instant`] for convenience at the
-/// call sites that already import from `shell_exec`. Instant events appear as
-/// vertical lines in Chrome Trace Format visualization tools
-/// (chrome://tracing, Perfetto).
-pub fn trace_instant(event: &str) {
-    crate::trace::emit::instant(event);
-}
-
 /// Maximum lines of captured stdout/stderr emitted to stderr per stream.
 /// Exceeded content is elided with a `… (N more lines, M bytes elided)` marker;
 /// the full output is still written to `output.log` via
@@ -660,6 +650,63 @@ impl ExternalCommandLog {
             let duration = self.started_at.as_ref().map(Instant::elapsed);
             crate::command_log::log_command(label, &self.cmd_str, exit_code, duration);
         }
+    }
+}
+
+/// Per-subprocess `[wt-trace]` recorder used by `Cmd::stream`.
+///
+/// Mirrors `ExternalCommandLog`'s shape but emits to the `[wt-trace]` grammar
+/// (`crate::trace::emit`) rather than the per-command external log. Captures
+/// `ts`/`tid`/`started_at` at construction; callers invoke `completed` /
+/// `errored` at each exit point. `Cmd::run` and `Cmd::pipe_into` have a single
+/// emit site each so they call `command_completed`/`command_errored`
+/// directly — `stream` has six exit points and benefits from this helper.
+struct WtTraceLog<'a> {
+    context: Option<&'a str>,
+    cmd_str: &'a str,
+    started_at: Instant,
+    ts: u64,
+    tid: u64,
+}
+
+impl<'a> WtTraceLog<'a> {
+    fn new(context: Option<&'a str>, cmd_str: &'a str) -> Self {
+        let started_at = Instant::now();
+        let ts = started_at
+            .duration_since(crate::trace::emit::trace_epoch())
+            .as_micros() as u64;
+        let tid = crate::trace::emit::thread_id();
+        Self {
+            context,
+            cmd_str,
+            started_at,
+            ts,
+            tid,
+        }
+    }
+
+    fn completed(&self, success: bool) {
+        let dur_us = self.started_at.elapsed().as_micros() as u64;
+        crate::trace::emit::command_completed(
+            self.context,
+            self.cmd_str,
+            self.ts,
+            self.tid,
+            dur_us,
+            success,
+        );
+    }
+
+    fn errored(&self, err: impl std::fmt::Display) {
+        let dur_us = self.started_at.elapsed().as_micros() as u64;
+        crate::trace::emit::command_errored(
+            self.context,
+            self.cmd_str,
+            self.ts,
+            self.tid,
+            dur_us,
+            err,
+        );
     }
 }
 
@@ -1267,11 +1314,17 @@ impl Cmd {
             // Prevent vergen "overridden" warning in nested cargo builds
             .env_remove("VERGEN_GIT_DESCRIBE");
 
-        let mut child = cmd.spawn().map_err(|e| {
-            anyhow::Error::from(GitError::Other {
-                message: format!("Failed to execute command ({}): {}", exec_mode, e),
-            })
-        })?;
+        let trace_log = WtTraceLog::new(self.context.as_deref(), &cmd_str);
+
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                trace_log.errored(&e);
+                return Err(anyhow::Error::from(GitError::Other {
+                    message: format!("Failed to execute command ({}): {}", exec_mode, e),
+                }));
+            }
+        };
 
         // Write stdin content if provided (ignore BrokenPipe - child may exit early)
         if let Some(ref content) = self.stdin_data
@@ -1279,6 +1332,7 @@ impl Cmd {
             && let Err(e) = stdin.write_all(content)
             && e.kind() != std::io::ErrorKind::BrokenPipe
         {
+            trace_log.errored(&e);
             return Err(e.into());
         }
         // stdin handle is dropped here, closing the pipe
@@ -1346,15 +1400,20 @@ impl Cmd {
             (sig != 0).then_some(sig)
         });
 
-        let status = wait_result.map_err(|e| {
-            anyhow::Error::from(GitError::Other {
-                message: format!("Failed to wait for command: {}", e),
-            })
-        })?;
+        let status = match wait_result {
+            Ok(status) => status,
+            Err(e) => {
+                trace_log.errored(&e);
+                return Err(anyhow::Error::from(GitError::Other {
+                    message: format!("Failed to wait for command: {}", e),
+                }));
+            }
+        };
 
         // Handle signals (Unix only)
         #[cfg(unix)]
         if let Some(sig) = seen_signal {
+            trace_log.completed(false);
             external_log.record(Some(128 + sig));
             return Err(WorktrunkError::ChildProcessExited {
                 code: 128 + sig,
@@ -1369,9 +1428,11 @@ impl Cmd {
             // SIGPIPE (13) is expected when a pager (less, bat) exits before the
             // child finishes writing — not an error from the user's perspective.
             if sig == SIGPIPE {
+                trace_log.completed(true);
                 external_log.record(Some(0));
                 return Ok(());
             }
+            trace_log.completed(false);
             external_log.record(Some(128 + sig));
             return Err(WorktrunkError::ChildProcessExited {
                 code: 128 + sig,
@@ -1383,6 +1444,7 @@ impl Cmd {
 
         if !status.success() {
             let code = status.code().unwrap_or(1);
+            trace_log.completed(false);
             external_log.record(status.code());
             return Err(WorktrunkError::ChildProcessExited {
                 code,
@@ -1392,6 +1454,7 @@ impl Cmd {
             .into());
         }
 
+        trace_log.completed(true);
         external_log.record(Some(0));
 
         Ok(())

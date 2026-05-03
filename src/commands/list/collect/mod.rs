@@ -469,7 +469,7 @@ pub fn collect(
 ) -> anyhow::Result<Option<super::model::ListData>> {
     let show_progress = matches!(render_target, RenderTarget::Table { progressive: true });
     let render_table = matches!(render_target, RenderTarget::Table { .. });
-    worktrunk::shell_exec::trace_instant("List collect started");
+    worktrunk::trace::instant("List collect started");
 
     // Determine what to fetch speculatively in the parallel phase.
     //
@@ -953,7 +953,7 @@ pub fn collect(
             max_width,
         );
         table.render_skeleton()?;
-        worktrunk::shell_exec::trace_instant("Skeleton rendered");
+        worktrunk::trace::instant("Skeleton rendered");
         Some(table)
     } else {
         None
@@ -970,7 +970,7 @@ pub fn collect(
         handler.on_skeleton(all_items.clone(), skeletons, layout.render_header_line());
         // Mirror the `wt list` progressive-table marker so `wt-perf phases`
         // sees the same boundary across both commands.
-        worktrunk::shell_exec::trace_instant("Skeleton rendered");
+        worktrunk::trace::instant("Skeleton rendered");
     }
 
     /// Delay before the `·` loading indicator replaces blank placeholders.
@@ -1177,9 +1177,9 @@ pub fn collect(
     // worker-thread split lets the drain loop start consuming results on
     // the main thread immediately.
     let tx_worker = tx.clone();
-    worktrunk::shell_exec::trace_instant("Spawning worker thread");
+    worktrunk::trace::instant("Spawning worker thread");
     std::thread::spawn(move || {
-        worktrunk::shell_exec::trace_instant("Parallel execution started");
+        worktrunk::trace::instant("Parallel execution started");
         all_work_items.into_par_iter().for_each(|item| {
             worktrunk::shell_exec::set_command_timeout(command_timeout);
             let result = item.execute();
@@ -1261,7 +1261,7 @@ pub fn collect(
                         let mut s = state_cell.borrow_mut();
                         if !s.first_result_traced {
                             s.first_result_traced = true;
-                            worktrunk::shell_exec::trace_instant("First result received");
+                            worktrunk::trace::instant("First result received");
                         }
 
                         s.completed_results += 1;
@@ -1340,7 +1340,7 @@ pub fn collect(
         },
         reveal_at,
     );
-    worktrunk::shell_exec::trace_instant("All results drained");
+    worktrunk::trace::instant("All results drained");
 
     // Extract progressive state back out. `progressive_table` is re-bound so
     // post-drain code (finalize / error rendering) works unchanged.
@@ -1490,7 +1490,7 @@ pub fn collect(
     // - `RenderTarget::Json`: no stdout rendering; data returned for the
     //   caller to serialize (`wt list --format=json`) or feed into its own
     //   UI (picker via `progressive_handler`)
-    worktrunk::shell_exec::trace_instant("List collect complete");
+    worktrunk::trace::instant("List collect complete");
 
     Ok(Some(super::model::ListData { items }))
 }

@@ -512,21 +512,14 @@ fn run_one_command(
     } else {
         None
     };
-    // `execute_shell_command` ultimately calls `Cmd::stream()`, which does not
-    // emit a per-subprocess `[wt-trace]` record (unlike `Cmd::run()`). Wrap it
-    // in a span so foreground hook/alias step time is attributable in the
-    // trace output.
-    let result = {
-        let _span = Span::new("execute_shell_command");
-        execute_shell_command(
-            wt_path,
-            &command_str,
-            stdin_json,
-            cmd.log_label.as_deref(),
-            directives.clone(),
-            fg_step.redirect_stdout_to_stderr,
-        )
-    };
+    let result = execute_shell_command(
+        wt_path,
+        &command_str,
+        stdin_json,
+        cmd.log_label.as_deref(),
+        directives.clone(),
+        fg_step.redirect_stdout_to_stderr,
+    );
 
     match result {
         Ok(()) => Ok(()),
