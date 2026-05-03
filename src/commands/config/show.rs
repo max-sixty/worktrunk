@@ -871,8 +871,11 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                     }
                 }
 
-                // When configured but not active, show how to verify the wrapper loaded
-                if !shell_active {
+                // When configured but not active, show how to verify the wrapper loaded.
+                // Only meaningful for the user's current shell — `type wt` probes the
+                // running shell, so a hint under bash while $SHELL=zsh would tell the
+                // user nothing about the bash wrapper.
+                if !shell_active && Some(shell) == worktrunk::shell::current_shell() {
                     let verify_cmd = match shell {
                         Shell::PowerShell => format!("Get-Command {cmd}"),
                         _ => format!("type {cmd}"),
@@ -942,7 +945,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                     writeln!(
                         out,
                         "{}",
-                        hint_message(format!("{shell}: Not configured {what}"))
+                        info_message(cformat!("<bold>{shell}</>: Not configured {what}"))
                     )?;
                 }
             }
