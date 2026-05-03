@@ -1882,6 +1882,20 @@ mod tests {
     }
 
     #[test]
+    fn test_cmd_stream_spawn_failure_is_errored() {
+        // Spawning a non-existent binary fails inside `cmd.spawn()`, exercising
+        // the `Err` arm of the new spawn-match in `stream()` (and the
+        // `WtTraceLog::errored` path that fires alongside it).
+        let result = Cmd::new("/no/such/binary-7f3a9b2c").stream();
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("Failed to execute command"),
+            "expected spawn-failure message, got: {msg}"
+        );
+    }
+
+    #[test]
     #[cfg(unix)]
     fn test_cmd_shell_stream_with_stdin() {
         // cat should echo stdin content (output goes to inherited stdout, we can't capture it,
