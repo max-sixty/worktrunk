@@ -151,8 +151,7 @@ Automation:
       --format <FORMAT>
           Output format
 
-          JSON prints {commit, message, stage_mode} after the commit completes. Designed for tool
-          integration.
+          JSON prints structured result to stdout after the commit completes.
 
           Possible values:
           - text: Human-readable text output
@@ -251,8 +250,7 @@ Automation:
       --format <FORMAT>
           Output format
 
-          JSON prints {outcome, commit?, message?, stage_mode?, target?} after the squash. outcome
-          is one of squashed, no_commits_ahead, already_single_commit, no_net_changes.
+          JSON prints structured result to stdout after the squash completes.
 
           Possible values:
           - text: Human-readable text output
@@ -476,8 +474,7 @@ Automation:
       --format <FORMAT>
           Output format
 
-          JSON prints {outcome, dry_run, from, to, entries, files, bytes}. entries lists the
-          top-level units selected for copy; files / bytes count the leaves actually written.
+          JSON prints structured result to stdout after the copy completes.
 
           Possible values:
           - text: Human-readable text output
@@ -918,9 +915,7 @@ Automation:
       --format <FORMAT>
           Output format
 
-          JSON prints {dry_run, entries, skipped} after the relocate. entries lists {branch, from,
-          to} per move; skipped lists {branch, reason} (reason ∈ template_error, locked, uncommitted
-          , target_blocked, target_is_worktree, target_occupied).
+          JSON prints structured result to stdout after the relocate completes.
 
           Possible values:
           - text: Human-readable text output

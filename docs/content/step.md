@@ -156,8 +156,7 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
           Output format
 
-          JSON prints <b>{commit, message, stage_mode}</b> after the commit completes. Designed for tool
-          integration.
+          JSON prints structured result to stdout after the commit completes.
 
           Possible values:
           - <b><span class=c>text</span></b>: Human-readable text output
@@ -252,8 +251,7 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
           Output format
 
-          JSON prints <b>{outcome, commit?, message?, stage_mode?, target?}</b> after the squash. <b>outcome</b>
-          is one of <b>squashed</b>, <b>no_commits_ahead</b>, <b>already_single_commit</b>, <b>no_net_changes</b>.
+          JSON prints structured result to stdout after the squash completes.
 
           Possible values:
           - <b><span class=c>text</span></b>: Human-readable text output
@@ -467,8 +465,7 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
           Output format
 
-          JSON prints <b>{outcome, dry_run, from, to, entries, files, bytes}</b>. <b>entries</b> lists the
-          top-level units selected for copy; <b>files</b> / <b>bytes</b> count the leaves actually written.
+          JSON prints structured result to stdout after the copy completes.
 
           Possible values:
           - <b><span class=c>text</span></b>: Human-readable text output
@@ -875,9 +872,7 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
           Output format
 
-          JSON prints <b>{dry_run, entries, skipped}</b> after the relocate. <b>entries</b> lists <b>{branch, from,</b>
-<b>          to}</b> per move; <b>skipped</b> lists <b>{branch, reason}</b> (<b>reason</b> ∈ <b>template_error</b>, <b>locked</b>, <b>uncommitted</b>
-          , <b>target_blocked</b>, <b>target_is_worktree</b>, <b>target_occupied</b>).
+          JSON prints structured result to stdout after the relocate completes.
 
           Possible values:
           - <b><span class=c>text</span></b>: Human-readable text output

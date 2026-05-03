@@ -28,8 +28,7 @@ pub struct CommitArgs {
 
     /// Output format
     ///
-    /// JSON prints `{commit, message, stage_mode}` after the commit completes.
-    /// Designed for tool integration.
+    /// JSON prints structured result to stdout after the commit completes.
     #[arg(long, default_value = "text", help_heading = "Automation")]
     pub(crate) format: crate::cli::SwitchFormat,
 }
@@ -64,9 +63,7 @@ pub struct SquashArgs {
 
     /// Output format
     ///
-    /// JSON prints `{outcome, commit?, message?, stage_mode?, target?}` after
-    /// the squash. `outcome` is one of `squashed`, `no_commits_ahead`,
-    /// `already_single_commit`, `no_net_changes`.
+    /// JSON prints structured result to stdout after the squash completes.
     #[arg(long, default_value = "text", help_heading = "Automation")]
     pub(crate) format: crate::cli::SwitchFormat,
 }
@@ -183,8 +180,7 @@ $ wt step rebase develop    # Rebase onto develop
 
         /// Output format
         ///
-        /// JSON prints `{target, outcome}` after the rebase. `outcome` is one
-        /// of `rebased`, `fast_forwarded`, `up_to_date`.
+        /// JSON prints structured result to stdout after the rebase completes.
         #[arg(long, default_value = "text", help_heading = "Automation")]
         format: crate::cli::SwitchFormat,
     },
@@ -220,9 +216,7 @@ Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updat
 
         /// Output format
         ///
-        /// JSON prints `{target, outcome, commits, merge_sha?}` after the push.
-        /// `outcome` is one of `fast_forwarded`, `up_to_date`, `merge_commit`;
-        /// `merge_sha` is set only when `--no-ff` created a merge commit.
+        /// JSON prints structured result to stdout after the push completes.
         #[arg(long, default_value = "text", help_heading = "Automation")]
         format: crate::cli::SwitchFormat,
     },
@@ -393,9 +387,7 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
 
         /// Output format
         ///
-        /// JSON prints `{outcome, dry_run, from, to, entries, files, bytes}`.
-        /// `entries` lists the top-level units selected for copy; `files` /
-        /// `bytes` count the leaves actually written.
+        /// JSON prints structured result to stdout after the copy completes.
         #[arg(long, default_value = "text", help_heading = "Automation")]
         format: crate::cli::SwitchFormat,
     },
@@ -687,11 +679,7 @@ Note: This command is experimental and may change in future versions.
 
         /// Output format
         ///
-        /// JSON prints `{dry_run, entries, skipped}` after the relocate.
-        /// `entries` lists `{branch, from, to}` per move; `skipped` lists
-        /// `{branch, reason}` (`reason` ∈ `template_error`, `locked`,
-        /// `uncommitted`, `target_blocked`, `target_is_worktree`,
-        /// `target_occupied`).
+        /// JSON prints structured result to stdout after the relocate completes.
         #[arg(long, default_value = "text", help_heading = "Automation")]
         format: crate::cli::SwitchFormat,
     },
