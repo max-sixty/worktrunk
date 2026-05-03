@@ -151,6 +151,16 @@ Options:
   -h, --help
           Print help (see a summary with '-h')
 
+Automation:
+      --format <FORMAT>
+          Output format (text, json)
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
+
 Global Options:
   -C <path>
           Working directory for this command
@@ -237,6 +247,16 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+
+Automation:
+      --format <FORMAT>
+          Output format (text, json)
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
 
 Global Options:
   -C <path>
@@ -449,6 +469,16 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+
+Automation:
+      --format <FORMAT>
+          Output format (text, json)
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
 
 Global Options:
   -C <path>
@@ -878,6 +908,16 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+
+Automation:
+      --format <FORMAT>
+          Output format (text, json)
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
 
 Global Options:
   -C <path>

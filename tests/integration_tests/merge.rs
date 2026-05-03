@@ -2424,6 +2424,175 @@ fn test_step_rebase_already_up_to_date(mut repo: TestRepo) {
 }
 
 // =============================================================================
+// JSON output tests
+// =============================================================================
+
+/// `step rebase --format=json` reports `up_to_date` when nothing to do.
+#[rstest]
+fn test_step_rebase_up_to_date_json(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    let output = repo
+        .wt_command()
+        .args(["step", "rebase", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "up_to_date");
+    assert_eq!(parsed["target"], "main");
+}
+
+/// `step rebase --format=json` reports `fast_forwarded` when target advanced cleanly.
+#[rstest]
+fn test_step_rebase_fast_forwarded_json(mut repo: TestRepo) {
+    // feature created BEFORE main advances → main is ahead, feature has no new commits
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(repo.root_path().join("main-update.txt"), "x").unwrap();
+    repo.run_git(&["add", "main-update.txt"]);
+    repo.run_git(&["commit", "-m", "Update main"]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "rebase", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "fast_forwarded");
+    assert_eq!(parsed["target"], "main");
+}
+
+/// `step push --format=json` reports `fast_forwarded` plus commit count.
+#[rstest]
+fn test_step_push_fast_forwarded_json(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree_with_commit("feature", "f.txt", "x", "feat: x");
+
+    let output = repo
+        .wt_command()
+        .args(["step", "push", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "fast_forwarded");
+    assert_eq!(parsed["target"], "main");
+    assert_eq!(parsed["commits"], 1);
+}
+
+/// `step push --format=json` reports `up_to_date` when target already contains HEAD.
+#[rstest]
+fn test_step_push_up_to_date_json(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    let output = repo
+        .wt_command()
+        .args(["step", "push", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "up_to_date");
+    assert_eq!(parsed["commits"], 0);
+}
+
+/// `step commit --format=json` reports the new commit's SHA + message + stage_mode.
+#[rstest]
+fn test_step_commit_json(repo: TestRepo) {
+    fs::write(repo.root_path().join("file1.txt"), "content").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "commit", "--no-hooks", "--format=json"])
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: add file'",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "step commit failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let sha = parsed["commit"].as_str().expect("commit SHA");
+    assert_eq!(sha.len(), 40, "expected full 40-char SHA, got {sha}");
+    assert_eq!(parsed["message"], "feat: add file");
+    // Without --stage on the CLI, the resolved default ("all") is emitted —
+    // not null. Scripters get a stable identifier for what was applied.
+    assert_eq!(parsed["stage_mode"], "all");
+}
+
+/// `step squash --format=json` reports `no_commits_ahead` cleanly.
+#[rstest]
+fn test_step_squash_no_commits_json(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "no_commits_ahead");
+    assert_eq!(parsed["target"], "main");
+}
+
+/// `step squash --format=json` reports `already_single_commit` when nothing to squash.
+#[rstest]
+fn test_step_squash_already_single_commit_json(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree_with_commit("feature", "f.txt", "x", "feat: single");
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "already_single_commit");
+}
+
+/// `step commit --show-prompt --format=json` is rejected — show-prompt emits
+/// raw text that would corrupt JSON output.
+#[rstest]
+fn test_step_commit_show_prompt_with_json_rejected(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args(["step", "commit", "--show-prompt", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--show-prompt cannot be combined with --format=json"),
+        "stderr: {stderr}"
+    );
+}
+
+/// Same guard for squash.
+#[rstest]
+fn test_step_squash_show_prompt_with_json_rejected(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--show-prompt", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--show-prompt cannot be combined with --format=json"),
+        "stderr: {stderr}"
+    );
+}
+
+// =============================================================================
 // Target validation tests
 // =============================================================================
 

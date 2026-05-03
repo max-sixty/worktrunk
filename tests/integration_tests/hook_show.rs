@@ -388,6 +388,74 @@ optional-var = "echo {{ base }}"
     });
 }
 
+/// `hook show --format=json` emits one record per configured command, with
+/// type / source / template / approval status, plus `expanded` when requested.
+#[rstest]
+fn test_hook_show_json(repo: TestRepo, temp_home: TempDir) {
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+
+[pre-commit]
+user-lint = "pre-commit run --all-files"
+"#,
+    )
+    .unwrap();
+
+    repo.write_project_config(
+        r#"pre-merge = [
+    {build = "cargo build"},
+]
+
+[post-start]
+deps = "npm install"
+"#,
+    );
+    repo.commit("Add project config");
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    cmd.env(
+        "WORKTRUNK_CONFIG_PATH",
+        global_config_dir.join("config.toml"),
+    );
+    cmd.args(["hook", "show", "--format=json"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "hook show --format=json failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let entries = parsed.as_array().expect("array");
+    assert_eq!(
+        entries.len(),
+        3,
+        "user pre-commit + project pre-merge + project post-start"
+    );
+
+    // User entry
+    let user_lint = entries
+        .iter()
+        .find(|e| e["name"] == "user-lint")
+        .expect("user-lint present");
+    assert_eq!(user_lint["type"], "pre-commit");
+    assert_eq!(user_lint["source"], "user");
+    assert_eq!(user_lint["template"], "pre-commit run --all-files");
+    assert_eq!(user_lint["needs_approval"], false);
+
+    // Project entry — project hooks need approval until approved
+    let build = entries
+        .iter()
+        .find(|e| e["name"] == "build")
+        .expect("build present");
+    assert_eq!(build["type"], "pre-merge");
+    assert_eq!(build["source"], "project");
+    assert_eq!(build["needs_approval"], true);
+}
+
 /// Test that valid templates expand correctly with --expanded.
 #[rstest]
 fn test_hook_show_expanded_valid_template(repo: TestRepo, temp_home: TempDir) {

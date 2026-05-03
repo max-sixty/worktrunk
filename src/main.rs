@@ -46,7 +46,7 @@ use commands::commit::HookGate;
 #[cfg(unix)]
 use commands::handle_picker;
 use commands::repository_ext::RepositoryCliExt;
-use commands::worktree::{PushKind, handle_no_ff_merge, handle_push};
+use commands::worktree::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, handle_push};
 use commands::{
     HookCliArgs, MergeFlagOverrides, MergeOptions, OperationMode, RebaseResult, RemoveTarget,
     SquashResult, SwitchOptions, add_approvals, clear_approvals, handle_alias_dry_run,
@@ -162,7 +162,8 @@ fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
         HookCommand::Show {
             hook_type,
             expanded,
-        } => handle_hook_show(hook_type.as_deref(), expanded),
+            format,
+        } => handle_hook_show(hook_type.as_deref(), expanded, format),
         HookCommand::RunPipeline => commands::run_pipeline(),
         HookCommand::Approvals { action } => {
             eprintln!(
@@ -208,10 +209,31 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
     match action {
         StepCommand::Commit(args) => {
             let verify = resolve_verify(args.verify, args.no_verify_deprecated);
-            step_commit(args.branch, yes, verify, args.stage, args.show_prompt)
+            let format = args.format;
+            // `--show-prompt` returns the LLM prompt as raw text, which would
+            // corrupt a JSON consumer's stdout. Refuse the combination rather
+            // than silently emit non-JSON.
+            if format == SwitchFormat::Json && args.show_prompt {
+                anyhow::bail!("--show-prompt cannot be combined with --format=json");
+            }
+            let outcome = step_commit(args.branch, yes, verify, args.stage, args.show_prompt)?;
+            if format == SwitchFormat::Json
+                && let Some(outcome) = outcome
+            {
+                let payload = serde_json::json!({
+                    "commit": outcome.sha,
+                    "message": outcome.message,
+                    "stage_mode": outcome.stage_mode,
+                });
+                println!("{}", serde_json::to_string_pretty(&payload)?);
+            }
+            Ok(())
         }
         StepCommand::Squash(args) => {
             let verify = resolve_verify(args.verify, args.no_verify_deprecated);
+            if args.format == SwitchFormat::Json && args.show_prompt {
+                anyhow::bail!("--show-prompt cannot be combined with --format=json");
+            }
             // Handle --show-prompt early: just build and output the prompt
             if args.show_prompt {
                 commands::step_show_squash_prompt(args.target.as_deref())
@@ -225,6 +247,7 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
                     HookGate::NoHooksFlag
                 };
                 let mut announcer = HookAnnouncer::new(&repo, &config, false);
+                let format = args.format;
                 let result = handle_squash(
                     args.target.as_deref(),
                     yes,
@@ -233,45 +256,111 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
                     &mut announcer,
                 )?;
                 announcer.flush()?;
-                match result {
-                    SquashResult::Squashed | SquashResult::NoNetChanges => {}
-                    SquashResult::NoCommitsAhead(branch) => {
-                        eprintln!(
-                            "{}",
-                            info_message(format!(
-                                "Nothing to squash; no commits ahead of {branch}"
-                            ))
-                        );
-                    }
-                    SquashResult::AlreadySingleCommit => {
-                        eprintln!(
-                            "{}",
-                            info_message("Nothing to squash; already a single commit")
-                        );
+                if format == SwitchFormat::Json {
+                    let payload = match &result {
+                        SquashResult::Squashed {
+                            sha,
+                            message,
+                            stage_mode,
+                        } => serde_json::json!({
+                            "outcome": "squashed",
+                            "commit": sha,
+                            "message": message,
+                            "stage_mode": stage_mode,
+                        }),
+                        SquashResult::NoCommitsAhead(target) => serde_json::json!({
+                            "outcome": "no_commits_ahead",
+                            "target": target,
+                        }),
+                        SquashResult::AlreadySingleCommit => serde_json::json!({
+                            "outcome": "already_single_commit",
+                        }),
+                        SquashResult::NoNetChanges => serde_json::json!({
+                            "outcome": "no_net_changes",
+                        }),
+                    };
+                    println!("{}", serde_json::to_string_pretty(&payload)?);
+                } else {
+                    match result {
+                        SquashResult::Squashed { .. } | SquashResult::NoNetChanges => {}
+                        SquashResult::NoCommitsAhead(branch) => {
+                            eprintln!(
+                                "{}",
+                                info_message(format!(
+                                    "Nothing to squash; no commits ahead of {branch}"
+                                ))
+                            );
+                        }
+                        SquashResult::AlreadySingleCommit => {
+                            eprintln!(
+                                "{}",
+                                info_message("Nothing to squash; already a single commit")
+                            );
+                        }
                     }
                 }
                 Ok(())
             }
         }
-        StepCommand::Push { target, no_ff, .. } => {
-            if no_ff {
+        StepCommand::Push {
+            target,
+            no_ff,
+            format,
+            ..
+        } => {
+            let result = if no_ff {
                 let repo = Repository::current()?;
                 let current_branch = repo.require_current_branch("step push --no-ff")?;
-                handle_no_ff_merge(target.as_deref(), None, &current_branch)
+                handle_no_ff_merge(target.as_deref(), None, &current_branch)?
             } else {
-                handle_push(target.as_deref(), PushKind::Standalone, None)
-            }
-        }
-        StepCommand::Rebase { target } => {
-            handle_rebase(target.as_deref()).map(|result| match result {
-                RebaseResult::Rebased => (),
-                RebaseResult::UpToDate(branch) => {
-                    eprintln!(
-                        "{}",
-                        info_message(cformat!("Already up to date with <bold>{branch}</>"))
-                    );
+                handle_push(target.as_deref(), PushKind::Standalone, None)?
+            };
+            if format == SwitchFormat::Json {
+                let PushResult {
+                    target,
+                    commit_count,
+                    outcome,
+                } = result;
+                let mut payload = serde_json::json!({
+                    "target": target,
+                    "outcome": match outcome {
+                        PushOutcome::FastForwarded => "fast_forwarded",
+                        PushOutcome::UpToDate => "up_to_date",
+                        PushOutcome::MergeCommit { .. } => "merge_commit",
+                    },
+                    "commits": commit_count,
+                });
+                if let PushOutcome::MergeCommit { merge_sha } = outcome {
+                    payload["merge_sha"] = serde_json::Value::String(merge_sha);
                 }
-            })
+                println!("{}", serde_json::to_string_pretty(&payload)?);
+            }
+            Ok(())
+        }
+        StepCommand::Rebase { target, format } => {
+            let result = handle_rebase(target.as_deref())?;
+            if format == SwitchFormat::Json {
+                let output = match &result {
+                    RebaseResult::Rebased {
+                        target,
+                        fast_forward,
+                    } => serde_json::json!({
+                        "target": target,
+                        "outcome": if *fast_forward { "fast_forwarded" } else { "rebased" },
+                    }),
+                    RebaseResult::UpToDate(target) => serde_json::json!({
+                        "target": target,
+                        "outcome": "up_to_date",
+                    }),
+                };
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else if let RebaseResult::UpToDate(branch) = &result {
+                eprintln!(
+                    "{}",
+                    info_message(cformat!("Already up to date with <bold>{branch}</>"))
+                );
+            }
+            Ok(())
         }
         StepCommand::Diff { target, extra_args } => step_diff(target.as_deref(), &extra_args),
         StepCommand::CopyIgnored {
@@ -279,7 +368,8 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             to,
             dry_run,
             force,
-        } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force),
+            format,
+        } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force, format),
         StepCommand::Eval { template, dry_run } => step_eval(&template, dry_run),
         StepCommand::ForEach { format, args } => step_for_each(args, format),
         StepCommand::Promote { branch } => {
@@ -306,7 +396,8 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             dry_run,
             commit,
             clobber,
-        } => step_relocate(branches, dry_run, commit, clobber),
+            format,
+        } => step_relocate(branches, dry_run, commit, clobber, format),
         StepCommand::External(args) => commands::step_alias(args, yes),
     }
 }

@@ -23,6 +23,10 @@ pub struct CommitArgs {
     /// Outputs the rendered prompt to stdout for debugging or manual piping.
     #[arg(long)]
     pub(crate) show_prompt: bool,
+
+    /// Output format (text, json)
+    #[arg(long, default_value = "text", help_heading = "Automation")]
+    pub(crate) format: crate::cli::SwitchFormat,
 }
 
 #[derive(Args)]
@@ -50,6 +54,10 @@ pub struct SquashArgs {
     /// Outputs the rendered prompt to stdout for debugging or manual piping.
     #[arg(long)]
     pub(crate) show_prompt: bool,
+
+    /// Output format (text, json)
+    #[arg(long, default_value = "text", help_heading = "Automation")]
+    pub(crate) format: crate::cli::SwitchFormat,
 }
 
 // Ordering: `wt merge` pipeline steps first (commit → squash → rebase → push),
@@ -161,6 +169,10 @@ $ wt step rebase develop    # Rebase onto develop
         /// Defaults to default branch.
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// Fast-forward target to current branch
@@ -191,6 +203,10 @@ Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updat
         /// Allow fast-forward (default)
         #[arg(long, overrides_with = "no_ff", hide = true)]
         ff: bool,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// Show all changes since branching
@@ -356,6 +372,10 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
         /// Overwrite existing files in destination
         #[arg(long)]
         force: bool,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// \[experimental\] Evaluate a template expression
@@ -642,6 +662,10 @@ Note: This command is experimental and may change in future versions.
         /// Moves blocking paths to `<path>.bak-<timestamp>`.
         #[arg(long)]
         clobber: bool,
+
+        /// Output format (text, json)
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// Catch-all for alias lookup
