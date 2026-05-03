@@ -2793,6 +2793,73 @@ fn test_step_squash_already_single_commit_json(mut repo: TestRepo) {
     assert_eq!(parsed["outcome"], "already_single_commit");
 }
 
+/// `step squash --format=json` reports `squashed` with the new commit's full
+/// SHA and the LLM-generated message when there are multiple commits to squash.
+#[rstest]
+fn test_step_squash_squashed_json(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree_with_commit("feature", "a.txt", "1", "feat: a");
+    fs::write(feature_wt.join("b.txt"), "2").unwrap();
+    repo.git_command()
+        .current_dir(&feature_wt)
+        .args(["add", "b.txt"])
+        .run()
+        .unwrap();
+    repo.git_command()
+        .current_dir(&feature_wt)
+        .args(["commit", "-m", "feat: b"])
+        .run()
+        .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--no-hooks", "--format=json"])
+        .current_dir(&feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: combined ab'",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "step squash failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "squashed");
+    let sha = parsed["commit"].as_str().expect("commit SHA");
+    assert_eq!(sha.len(), 40);
+    assert_eq!(parsed["message"], "feat: combined ab");
+    assert_eq!(parsed["stage_mode"], "all");
+}
+
+/// `step rebase --format=json` reports `rebased` (not `fast_forwarded`) when
+/// the feature branch has its own commits that need to be replayed onto a
+/// moved target.
+#[rstest]
+fn test_step_rebase_rebased_json(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree_with_commit("feature", "f.txt", "x", "feat: f");
+    // Advance main with an unrelated commit so feature must be rebased.
+    fs::write(repo.root_path().join("main-update.txt"), "y").unwrap();
+    repo.run_git(&["add", "main-update.txt"]);
+    repo.run_git(&["commit", "-m", "update main"]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "rebase", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "step rebase failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "rebased");
+    assert_eq!(parsed["target"], "main");
+}
+
 /// `step commit --show-prompt --format=json` is rejected — show-prompt emits
 /// raw text that would corrupt JSON output.
 #[rstest]
