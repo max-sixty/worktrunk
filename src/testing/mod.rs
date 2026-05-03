@@ -421,9 +421,10 @@ pub fn configure_completion_invocation_for_shell(cmd: &mut Command, words: &[&st
 /// and is intended for cases where tests need to construct the command manually
 /// (e.g., to execute shell pipelines).
 ///
-/// This is intentionally more thorough than `wt_perf::isolate_cmd()`:
-/// integration tests need full determinism (timestamps, locale, mock commands,
-/// wide COLUMNS for path display) while benchmarks only need host config stripped.
+/// Layers on top of [`isolate_subprocess_env`] (the env-strip + path
+/// baseline that benches use directly): tests additionally pin
+/// timestamps, locale, mock-command flags, and wide COLUMNS for
+/// deterministic snapshots, where benches want realism.
 ///
 /// ## Related: `TestRepo::test_env_vars()`
 ///
