@@ -38,6 +38,20 @@ path = "junit.xml"
 # LLVM_PROFILE_FILE (cargo-llvm-cov sets it to a path inside its target dir)
 # and pass it through with --target-dir. Worktrunk already requires bash for
 # shell-integration tests on every platform, so bash here is fine.
+#
+# TODO: collapse this whole layer once cargo-dist supports per-binary
+# exclusion. The chain — separate `tests/helpers/{mock-stub,wt-perf}`
+# packages, the dummy `tests/builds.rs` trick that makes `default-members`
+# build them, this setup-script, and `workspace_bin()` in src/testing/mod.rs
+# — exists only because cargo-dist (≤ 0.30.x at time of writing) ships every
+# `[[bin]]` in the main crate and offers no per-binary opt-out. PR #127
+# (commit d21925692) documented the failure modes: `required-features` on
+# `[[bin]]` still trips cargo-dist's "bin not found", and
+# `[package.metadata.dist] dist = false` excludes the entire package, not
+# individual binaries. When cargo-dist gains per-binary exclusion (or we
+# move off cargo-dist), pull mock-stub and wt-perf back into the worktrunk
+# crate as `[[bin]]` targets, use `CARGO_BIN_EXE_<name>`, and delete this
+# script along with `workspace_bin()` and the helper packages.
 [scripts.setup.build-bins]
 command = [
     "bash",
