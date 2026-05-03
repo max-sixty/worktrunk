@@ -108,6 +108,32 @@ failure, not a broken link:
 When in doubt, post a comment on the failed run summarizing the diagnosis and
 wait — don't open a PR.
 
+## CI Fix: Check for Maintainer Fixes in Flight
+
+The bundled tend-ci-fix skill's example dedup query
+(`gh pr list --state open --head "fix/ci-"`) only catches the bot's own
+prior fix attempts. It misses an open maintainer-authored PR fixing the
+same failure under a different branch name. Past occurrence:
+[PR #2548](https://github.com/max-sixty/worktrunk/pull/2548) was opened
+~22 min after maintainer [PR #2546](https://github.com/max-sixty/worktrunk/pull/2546)
+(branch `fix-affected-verbose`) addressed the same `cargo-affected --features` regression;
+the bot self-closed once the maintainer's PR merged seconds later, but the
+duplicate creation churned tokens and added review noise.
+
+After running the bundled `--head "fix/ci-"` queries, also run an open-PR
+sweep keyed on the failing workflow file:
+
+```bash
+# Identify the failing workflow file from the run, e.g. .github/workflows/ci.yaml
+gh pr list --state open --json number,title,author,headRefName,files \
+  --jq '.[] | select([.files[].path] | index("<failing-workflow-file>")) |
+        {number, title, author: .author.login, headRefName}'
+```
+
+Cross-check by failure shape (read the PR body / diff). If a hit references
+the same root cause, comment on it linking the new run and exit without
+opening a PR.
+
 ## Applying GitHub Suggestions
 
 Apply the literal suggestion only — change the lines it covers, nothing more.
