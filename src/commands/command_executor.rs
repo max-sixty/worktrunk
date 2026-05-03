@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -196,9 +196,20 @@ impl<'a> CommandContext<'a> {
 ///
 /// The resulting HashMap is passed to hook commands as JSON on stdin,
 /// and used directly for template variable expansion.
+///
+/// `referenced`, when `Some`, restricts the map to keys named in the set —
+/// vars the body doesn't reference are not computed. Aliases pass their
+/// `referenced_vars_for_config` set (extended via `alias_context_filter`)
+/// so unused git lookups (`var_commit` rev-parse, `var_default_branch` cold
+/// detection, `branch().upstream()`) are skipped, and the verbose
+/// `template variables:` table only lists vars the body actually references.
+/// Hooks pass `None` so every standard var stays available — the child
+/// receives the full context as JSON on stdin and may consume keys that
+/// don't appear in the inline `{{ }}` template (e.g. via `jq`).
 pub fn build_hook_context(
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
+    referenced: Option<&BTreeSet<String>>,
 ) -> Result<HashMap<String, String>> {
     let repo_root = ctx.repo.repo_path()?;
     let repo_name = repo_root
@@ -217,15 +228,18 @@ pub fn build_hook_context(
 
     let repo_path = to_posix_path(&repo_root.to_string_lossy());
 
+    let want = |key: &str| referenced.is_none_or(|r| r.contains(key));
+
+    // Cheap vars (already in scope, no I/O) are populated unconditionally —
+    // skipping them saves no work and would just turn the verbose table's
+    // `(unused)` label into noise. Only the expensive blocks below
+    // (subprocesses, git config / remote lookups) honor `want`.
     let mut map = HashMap::new();
     map.insert("repo".into(), repo_name.into());
     map.insert("branch".into(), ctx.branch_or_head().into());
     map.insert("worktree_name".into(), worktree_name.into());
-
-    // Canonical path variables
     map.insert("repo_path".into(), repo_path.clone());
     map.insert("worktree_path".into(), worktree.clone());
-
     // Deprecated aliases (kept for backward compatibility)
     map.insert("main_worktree".into(), repo_name.into());
     map.insert("repo_root".into(), repo_path);
@@ -236,7 +250,7 @@ pub fn build_hook_context(
     }
 
     // Default branch
-    {
+    if want("default_branch") {
         let _span = Span::new("var_default_branch");
         if let Some(default_branch) = ctx.repo.default_branch() {
             map.insert("default_branch".into(), default_branch);
@@ -244,13 +258,17 @@ pub fn build_hook_context(
     }
 
     // Primary worktree path (where established files live)
-    {
+    if want("primary_worktree_path") || want("main_worktree_path") {
         let _span = Span::new("var_primary_worktree");
         if let Ok(Some(path)) = ctx.repo.primary_worktree() {
             let path_str = to_posix_path(&path.to_string_lossy());
-            map.insert("primary_worktree_path".into(), path_str.clone());
+            if want("primary_worktree_path") {
+                map.insert("primary_worktree_path".into(), path_str.clone());
+            }
             // Deprecated alias
-            map.insert("main_worktree_path".into(), path_str);
+            if want("main_worktree_path") {
+                map.insert("main_worktree_path".into(), path_str);
+            }
         }
     }
 
@@ -262,7 +280,7 @@ pub fn build_hook_context(
     // iterates over sibling worktrees, and a sibling on detached HEAD has a
     // different HEAD than the worktree `wt` runs in. Branched contexts go
     // through `rev-parse <branch>`, which is repo-wide.
-    {
+    if want("commit") || want("short_commit") {
         let _span = Span::new("var_commit");
         let commit = match ctx.branch {
             Some(branch) => ctx
@@ -278,22 +296,29 @@ pub fn build_hook_context(
                 .flatten(),
         };
         if let Some(commit) = commit {
-            if commit.len() >= 7 {
+            if want("short_commit") && commit.len() >= 7 {
                 map.insert("short_commit".into(), commit[..7].into());
             }
-            map.insert("commit".into(), commit);
+            if want("commit") {
+                map.insert("commit".into(), commit);
+            }
         }
     }
 
-    {
+    if want("remote") || want("remote_url") || want("upstream") {
         let _span = Span::new("var_remote");
         if let Ok(remote) = ctx.repo.primary_remote() {
-            map.insert("remote".into(), remote.to_string());
+            if want("remote") {
+                map.insert("remote".into(), remote.to_string());
+            }
             // Add remote URL for conditional hook execution (e.g., GitLab vs GitHub)
-            if let Some(url) = ctx.repo.remote_url(&remote) {
+            if want("remote_url")
+                && let Some(url) = ctx.repo.remote_url(&remote)
+            {
                 map.insert("remote_url".into(), url);
             }
-            if let Some(branch) = ctx.branch
+            if want("upstream")
+                && let Some(branch) = ctx.branch
                 && let Ok(Some(upstream)) = ctx.repo.branch(branch).upstream()
             {
                 map.insert("upstream".into(), upstream);
@@ -308,7 +333,9 @@ pub fn build_hook_context(
         to_posix_path(&ctx.worktree_path.to_string_lossy()),
     );
 
-    // Add extra vars (e.g., target branch for merge, base for switch)
+    // Caller-set bindings (e.g., merge target, switch base, alias args).
+    // Aliases pre-filter via `AliasOptions::parse`, hooks pass everything;
+    // either way the value is already computed, so insert unconditionally.
     for (k, v) in extra_vars {
         map.insert((*k).into(), (*v).into());
     }
@@ -437,12 +464,13 @@ fn run_concurrent_group(
         announce_command(cmd, &fg_step.announce);
     }
 
-    let expanded: Vec<String> = {
-        let _span = Span::new("template_render");
-        cmds.iter()
-            .map(|cmd| resolve_command_str(cmd, repo))
-            .collect::<Result<_>>()?
-    };
+    let expanded: Vec<String> = cmds
+        .iter()
+        .map(|cmd| {
+            let _span = Span::new(format!("template_render:{}", cmd.label));
+            resolve_command_str(cmd, repo)
+        })
+        .collect::<Result<_>>()?;
 
     // Both alias tables and hook tables produce named commands (TOML keys
     // become `name`), so `cmd.name` is always `Some` here.
@@ -500,7 +528,7 @@ fn run_one_command(
     announce_command(cmd, &fg_step.announce);
 
     let command_str = {
-        let _span = Span::new("template_render");
+        let _span = Span::new(format!("template_render:{}", cmd.label));
         resolve_command_str(cmd, repo)?
     };
 
@@ -512,21 +540,14 @@ fn run_one_command(
     } else {
         None
     };
-    // `execute_shell_command` ultimately calls `Cmd::stream()`, which does not
-    // emit a per-subprocess `[wt-trace]` record (unlike `Cmd::run()`). Wrap it
-    // in a span so foreground hook/alias step time is attributable in the
-    // trace output.
-    let result = {
-        let _span = Span::new("execute_shell_command");
-        execute_shell_command(
-            wt_path,
-            &command_str,
-            stdin_json,
-            cmd.log_label.as_deref(),
-            directives.clone(),
-            fg_step.redirect_stdout_to_stderr,
-        )
-    };
+    let result = execute_shell_command(
+        wt_path,
+        &command_str,
+        stdin_json,
+        cmd.log_label.as_deref(),
+        directives.clone(),
+        fg_step.redirect_stdout_to_stderr,
+    );
 
     match result {
         Ok(()) => Ok(()),
@@ -652,7 +673,7 @@ fn expand_commands(
     source: HookSource,
     lazy_enabled: bool,
 ) -> anyhow::Result<Vec<(Command, String, Option<String>)>> {
-    let mut base_context = build_hook_context(ctx, extra_vars)?;
+    let mut base_context = build_hook_context(ctx, extra_vars, None)?;
 
     // hook_type is always available as a template variable and in JSON context
     base_context.insert("hook_type".into(), hook_type.to_string());

@@ -44,7 +44,7 @@ use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::{
     ALIAS_ARGS_KEY, CommandConfig, HookStep, LoadedConfigs, ProjectConfig, UserConfig,
-    format_alias_variables, referenced_vars_for_config,
+    alias_context_filter, format_alias_variables, referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
 use worktrunk::styling::{
@@ -431,7 +431,7 @@ fn referenced_vars_for_entry(entry: &AliasEntry) -> anyhow::Result<BTreeSet<Stri
 /// rather than silently turning into an "unrecognized subcommand" once we
 /// fall through to PATH lookup.
 pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::Result<Option<()>> {
-    let _span = Span::new("try_alias");
+    let _span = Span::new(format!("try_alias:{}", name));
     let Ok(repo) = Repository::current() else {
         return Ok(None);
     };
@@ -441,7 +441,7 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
     } = LoadedConfigs::load(&repo)?;
     let aliases = {
         let _span = Span::new("load_aliases");
-        load_aliases(Some(&repo), &user_config, project_config.as_ref())
+        load_aliases(Some(&repo), user_config, project_config)
     };
     let Some(entry) = aliases.get(&name) else {
         return Ok(None);
@@ -463,7 +463,16 @@ pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::R
     let entry = aliases
         .get(&opts.name)
         .expect("entry verified above and `opts.name` matches the dispatched name");
-    run_alias(opts, warnings, repo, user_config, entry, global_yes).map(Some)
+    run_alias(
+        opts,
+        warnings,
+        &repo,
+        user_config,
+        entry,
+        referenced,
+        global_yes,
+    )
+    .map(Some)
 }
 
 /// Run a configured alias from `wt step <name>`. Errors with a clap-style
@@ -487,7 +496,7 @@ pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
         user: user_config,
         project: project_config,
     } = LoadedConfigs::load(&repo)?;
-    let aliases = load_aliases(Some(&repo), &user_config, project_config.as_ref());
+    let aliases = load_aliases(Some(&repo), user_config, project_config);
     let Some(name) = args.first().cloned() else {
         bail!("Missing alias name");
     };
@@ -513,7 +522,15 @@ pub fn step_alias(args: Vec<String>, global_yes: bool) -> anyhow::Result<()> {
     let entry = aliases
         .get(&opts.name)
         .expect("entry verified above and `opts.name` matches the dispatched name");
-    run_alias(opts, warnings, repo, user_config, entry, global_yes)
+    run_alias(
+        opts,
+        warnings,
+        &repo,
+        user_config,
+        entry,
+        referenced,
+        global_yes,
+    )
 }
 
 /// Return alias names for use as suggestions when a top-level subcommand is
@@ -544,12 +561,13 @@ pub fn alias_names_for_suggestions() -> Vec<String> {
 fn run_alias(
     opts: AliasOptions,
     warnings: Vec<String>,
-    repo: Repository,
-    user_config: UserConfig,
+    repo: &Repository,
+    user_config: &UserConfig,
     entry: &AliasEntry,
+    referenced: BTreeSet<String>,
     global_yes: bool,
 ) -> anyhow::Result<()> {
-    let _span = Span::new("run_alias");
+    let _span = Span::new(format!("run_alias:{}", opts.name));
     for warning in &warnings {
         eprintln!("{}", warning_message(warning));
     }
@@ -571,16 +589,19 @@ fn run_alias(
     let wt = repo.current_worktree();
     let wt_path = wt.root().context("Failed to get worktree root")?;
     let branch = wt.branch().ok().flatten();
-    let ctx = CommandContext::new(&repo, &user_config, branch.as_deref(), &wt_path, false);
+    let ctx = CommandContext::new(repo, user_config, branch.as_deref(), &wt_path, false);
 
     let extra_refs: Vec<(&str, &str)> = opts
         .vars
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
+    // Filter to vars the body references — skips git lookups (commit, upstream,
+    // default-branch on cold cache) that would never be substituted.
+    let referenced = alias_context_filter(referenced);
     let mut context_map = {
         let _span = Span::new("build_hook_context");
-        build_hook_context(&ctx, &extra_refs)?
+        build_hook_context(&ctx, &extra_refs, Some(&referenced))?
     };
     // Forward positional CLI args to templates as `{{ args }}`. Encoded as a
     // JSON list so it flows through the stable `HashMap<String, String>`
@@ -595,7 +616,7 @@ fn run_alias(
         .expect("HashMap<String, String> serialization should never fail");
 
     if verbosity() >= 1 {
-        let vars = format_alias_variables(&context_map);
+        let vars = format_alias_variables(&context_map, Some(&referenced));
         eprintln!("{}", info_message("template variables:"));
         eprintln!("{}", format_with_gutter(&vars, None));
     }
@@ -611,7 +632,7 @@ fn run_alias(
 
     let alias_name = opts.name.clone();
     let foreground_steps = {
-        let _span = Span::new("prepare_steps");
+        let _span = Span::new(format!("prepare_steps:{}", alias_name));
         let mut sourced_steps = Vec::new();
         for (source, cfg) in entry.iter() {
             for step in cfg.steps() {
@@ -639,12 +660,7 @@ fn run_alias(
         sourced_steps_to_foreground(sourced_steps, &PipelineKind::Alias { name: alias_name })
     };
 
-    execute_pipeline_foreground(
-        &foreground_steps,
-        &repo,
-        &wt_path,
-        FailureStrategy::FailFast,
-    )
+    execute_pipeline_foreground(&foreground_steps, repo, &wt_path, FailureStrategy::FailFast)
 }
 
 /// Build a PreparedCommand for an alias, deferring template expansion to execution time.

@@ -1,11 +1,11 @@
 ---
-source: tests/integration_tests/step_alias.rs
+source: tests/integration_tests/merge.rs
 info:
   program: wt
   args:
-    - "-v"
-    - greet
-    - world
+    - step
+    - commit
+    - "--dry-run"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -48,27 +48,50 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-hello world
+[36mPROMPT[39m
+<task>Write a commit message for the staged changes below.</task>
+
+<format>
+- Subject line under 50 chars
+- For material changes, add a blank line then a body paragraph explaining the change
+- Output only the commit message, no quotes or code blocks
+</format>
+
+<style>
+- Imperative mood: "Add feature" not "Added feature"
+- Match recent commit style (conventional commits if used)
+- Describe the change, not the intent or benefit
+</style>
+
+<diffstat>
+ new_file.txt | 1 +
+ 1 file changed, 1 insertion(+)
+
+</diffstat>
+
+<diff>
+diff --git a/new_file.txt b/new_file.txt
+new file mode 100644
+index 0000000..47d2739
+--- /dev/null
++++ b/new_file.txt
+@@ -0,0 +1 @@
++new content
+\ No newline at end of file
+
+</diff>
+
+<context>
+Branch: main
+<recent_commits>
+- Initial commit
+</recent_commits>
+</context>
+
+[36mCOMMAND[39m
+[107m [0m [2m[0m[2m[34msh[0m[2m [0m[2m[36m-c[0m[2m [0m[2m[32m'cat >/dev/null && echo '[0m[2m\'[0m[2m[32m'feat: add new_file'[0m[2m\'[0m[2m[32m''[0m[2m
+
+[36mMESSAGE[39m
+[107m [0m [1mfeat: add new_file[22m
 
 ----- stderr -----
-[2m○[22m template variables:
-[107m [0m branch                = feature
-[107m [0m worktree_path         = _REPO_.feature
-[107m [0m worktree_name         = repo.feature
-[107m [0m [2mcommit                = (unused)[22m
-[107m [0m [2mshort_commit          = (unused)[22m
-[107m [0m [2mupstream              = (unused)[22m
-[107m [0m repo                  = repo
-[107m [0m repo_path             = _REPO_
-[107m [0m [2mowner                 = (unused)[22m
-[107m [0m [2mprimary_worktree_path = (unused)[22m
-[107m [0m [2mdefault_branch        = (unused)[22m
-[107m [0m [2mremote                = (unused)[22m
-[107m [0m [2mremote_url            = (unused)[22m
-[107m [0m cwd                   = _REPO_.feature
-[107m [0m args                  = world
-[36m◎[39m [36mRunning alias [1mgreet[22m[39m
-[2m○[22m Expanding [1mgreet[22m
-[107m [0m [2m[0m[2m[34mecho[0m[2m hello [0m[2m[32m{{[0m[2m args [0m[2m[32m}}[0m[2m
-[107m [0m [2m→[22m
-[107m [0m [2m[0m[2m[34mecho[0m[2m hello world

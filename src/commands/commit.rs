@@ -175,7 +175,7 @@ impl<'a> CommitGenerator<'a> {
         }
 
         self.emit_hint_if_needed();
-        let commit_message = crate::llm::generate_commit_message(self.config)?;
+        let commit_message = crate::llm::generate_commit_message(self.config, None)?;
 
         let formatted_message = self.format_message_for_display(&commit_message);
         eprintln!("{}", format_with_gutter(&formatted_message, None));
@@ -184,7 +184,10 @@ impl<'a> CommitGenerator<'a> {
             .context("Failed to commit")?;
 
         let commit_sha = wt.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
-        let commit_hash = &commit_sha[..commit_sha.len().min(7)];
+        // Display uses `--short` to honor `core.abbrev` and auto-extend for
+        // ambiguous prefixes; the JSON payload carries the full SHA.
+        let commit_hash = wt.run_command(&["rev-parse", "--short", "HEAD"])?;
+        let commit_hash = commit_hash.trim();
 
         eprintln!(
             "{}",

@@ -360,16 +360,6 @@ pub fn set_command_timeout(timeout: Option<Duration>) {
     COMMAND_TIMEOUT.with(|t| t.set(timeout));
 }
 
-/// Emit an instant trace event (a milestone marker with no duration).
-///
-/// Re-exported from [`crate::trace::emit::instant`] for convenience at the
-/// call sites that already import from `shell_exec`. Instant events appear as
-/// vertical lines in Chrome Trace Format visualization tools
-/// (chrome://tracing, Perfetto).
-pub fn trace_instant(event: &str) {
-    crate::trace::emit::instant(event);
-}
-
 /// Maximum lines of captured stdout/stderr emitted to stderr per stream.
 /// Exceeded content is elided with a `… (N more lines, M bytes elided)` marker;
 /// the full output is still written to `output.log` via
@@ -478,33 +468,6 @@ fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
         bytes_emitted += line.len() + 1;
     }
     out
-}
-
-/// Emit a `[wt-trace]` line plus stdout/stderr for a finished command.
-fn log_command_result(
-    context: Option<&str>,
-    cmd_str: &str,
-    ts: u64,
-    tid: u64,
-    dur_us: u64,
-    result: &std::io::Result<std::process::Output>,
-) {
-    match result {
-        Ok(output) => {
-            crate::trace::emit::command_completed(
-                context,
-                cmd_str,
-                ts,
-                tid,
-                dur_us,
-                output.status.success(),
-            );
-            log_output(output);
-        }
-        Err(e) => {
-            crate::trace::emit::command_errored(context, cmd_str, ts, tid, dur_us, e);
-        }
-    }
 }
 
 /// Implementation of timeout-based command execution.
@@ -659,6 +622,77 @@ impl ExternalCommandLog {
         if let Some(label) = &self.label {
             let duration = self.started_at.as_ref().map(Instant::elapsed);
             crate::command_log::log_command(label, &self.cmd_str, exit_code, duration);
+        }
+    }
+}
+
+/// Per-subprocess `[wt-trace]` recorder used by `Cmd::run`, `Cmd::pipe_into`,
+/// and `Cmd::stream`.
+///
+/// Captures `ts`/`tid`/`started_at` at construction; callers invoke
+/// `completed` / `errored` at each exit point. `record_result` is a
+/// convenience wrapper used by `run`/`pipe_into` (which have a single
+/// `Result<Output>` exit each, plus captured stdout/stderr to surface).
+/// `stream` has multiple exit points and uses the lower-level methods.
+struct WtTraceLog<'a> {
+    context: Option<&'a str>,
+    cmd_str: &'a str,
+    started_at: Instant,
+    ts: u64,
+    tid: u64,
+}
+
+impl<'a> WtTraceLog<'a> {
+    fn new(context: Option<&'a str>, cmd_str: &'a str) -> Self {
+        let started_at = Instant::now();
+        let ts = started_at
+            .duration_since(crate::trace::emit::trace_epoch())
+            .as_micros() as u64;
+        let tid = crate::trace::emit::thread_id();
+        Self {
+            context,
+            cmd_str,
+            started_at,
+            ts,
+            tid,
+        }
+    }
+
+    fn completed(&self, success: bool) {
+        let dur_us = self.started_at.elapsed().as_micros() as u64;
+        crate::trace::emit::command_completed(
+            self.context,
+            self.cmd_str,
+            self.ts,
+            self.tid,
+            dur_us,
+            success,
+        );
+    }
+
+    fn errored(&self, err: impl std::fmt::Display) {
+        let dur_us = self.started_at.elapsed().as_micros() as u64;
+        crate::trace::emit::command_errored(
+            self.context,
+            self.cmd_str,
+            self.ts,
+            self.tid,
+            dur_us,
+            err,
+        );
+    }
+
+    /// Emit a trace record for a finished `run`/`pipe_into` invocation and
+    /// surface the captured stdout/stderr to the debug log. `stream` doesn't
+    /// capture output (it inherits stdio), so it uses `completed`/`errored`
+    /// directly.
+    fn record_result(&self, result: &std::io::Result<std::process::Output>) {
+        match result {
+            Ok(output) => {
+                self.completed(output.status.success());
+                log_output(output);
+            }
+            Err(e) => self.errored(e),
         }
     }
 }
@@ -964,12 +998,7 @@ impl Cmd {
         // Acquire semaphore to limit concurrent commands
         let _guard = semaphore().acquire();
 
-        // Capture timing for tracing
-        let t0 = Instant::now();
-        let ts = t0
-            .duration_since(crate::trace::emit::trace_epoch())
-            .as_micros() as u64;
-        let tid = crate::trace::emit::thread_id();
+        let trace_log = WtTraceLog::new(self.context.as_deref(), &cmd_str);
 
         let mut cmd = self.direct_command();
         self.apply_common_settings(&mut cmd);
@@ -1004,9 +1033,7 @@ impl Cmd {
             cmd.output()
         };
 
-        // Log trace
-        let dur_us = t0.elapsed().as_micros() as u64;
-        log_command_result(self.context.as_deref(), &cmd_str, ts, tid, dur_us, &result);
+        trace_log.record_result(&result);
 
         let exit_code = result.as_ref().ok().and_then(|output| output.status.code());
         external_log.record(exit_code);
@@ -1074,11 +1101,8 @@ impl Cmd {
 
         let _guard = semaphore().acquire();
 
-        let t0 = Instant::now();
-        let ts = t0
-            .duration_since(crate::trace::emit::trace_epoch())
-            .as_micros() as u64;
-        let tid = crate::trace::emit::thread_id();
+        let first_log = WtTraceLog::new(self.context.as_deref(), &first_cmd_str);
+        let second_log = WtTraceLog::new(next.context.as_deref(), &second_cmd_str);
 
         let mut first = self.direct_command();
         self.apply_common_settings(&mut first);
@@ -1121,7 +1145,7 @@ impl Cmd {
             .take()
             .expect("stderr was configured as piped");
 
-        let (first_result, second_result, first_dur_us, second_dur_us) = std::thread::scope(|s| {
+        let (first_result, second_result) = std::thread::scope(|s| {
             let stderr_thread = s.spawn(move || {
                 let mut buf = Vec::new();
                 first_stderr_pipe.read_to_end(&mut buf).map(|_| buf)
@@ -1130,13 +1154,12 @@ impl Cmd {
             // Drain `next` first (its `wait_with_output` reads its own
             // stdout/stderr), so `first`'s writes can complete.
             let second_result = second_child.wait_with_output();
-            let second_dur_us = t0.elapsed().as_micros() as u64;
+            second_log.record_result(&second_result);
 
             // Reap `first`. Its stderr is already being drained; combine
             // the captured stderr with the exit status into an Output.
             let first_status = first_child.wait();
             let first_stderr = stderr_thread.join().unwrap();
-            let first_dur_us = t0.elapsed().as_micros() as u64;
 
             let first_result = first_status.and_then(|status| {
                 first_stderr.map(|stderr| std::process::Output {
@@ -1145,26 +1168,10 @@ impl Cmd {
                     stderr,
                 })
             });
+            first_log.record_result(&first_result);
 
-            (first_result, second_result, first_dur_us, second_dur_us)
+            (first_result, second_result)
         });
-
-        log_command_result(
-            self.context.as_deref(),
-            &first_cmd_str,
-            ts,
-            tid,
-            first_dur_us,
-            &first_result,
-        );
-        log_command_result(
-            next.context.as_deref(),
-            &second_cmd_str,
-            ts,
-            tid,
-            second_dur_us,
-            &second_result,
-        );
 
         Ok((first_result?, second_result?))
     }
@@ -1267,11 +1274,17 @@ impl Cmd {
             // Prevent vergen "overridden" warning in nested cargo builds
             .env_remove("VERGEN_GIT_DESCRIBE");
 
-        let mut child = cmd.spawn().map_err(|e| {
-            anyhow::Error::from(GitError::Other {
-                message: format!("Failed to execute command ({}): {}", exec_mode, e),
-            })
-        })?;
+        let trace_log = WtTraceLog::new(self.context.as_deref(), &cmd_str);
+
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                trace_log.errored(&e);
+                return Err(anyhow::Error::from(GitError::Other {
+                    message: format!("Failed to execute command ({}): {}", exec_mode, e),
+                }));
+            }
+        };
 
         // Write stdin content if provided (ignore BrokenPipe - child may exit early)
         if let Some(ref content) = self.stdin_data
@@ -1279,6 +1292,7 @@ impl Cmd {
             && let Err(e) = stdin.write_all(content)
             && e.kind() != std::io::ErrorKind::BrokenPipe
         {
+            trace_log.errored(&e);
             return Err(e.into());
         }
         // stdin handle is dropped here, closing the pipe
@@ -1346,15 +1360,31 @@ impl Cmd {
             (sig != 0).then_some(sig)
         });
 
-        let status = wait_result.map_err(|e| {
-            anyhow::Error::from(GitError::Other {
-                message: format!("Failed to wait for command: {}", e),
-            })
-        })?;
+        let status = match wait_result {
+            Ok(status) => status,
+            Err(e) => {
+                trace_log.errored(&e);
+                return Err(anyhow::Error::from(GitError::Other {
+                    message: format!("Failed to wait for command: {}", e),
+                }));
+            }
+        };
 
-        // Handle signals (Unix only)
+        // Handle signals (Unix only).
+        //
+        // `seen_signal` records any signal forwarded by the listener thread,
+        // covering the case where the child caught the signal and exited with
+        // a code (no kernel `status.signal()` to read). The clean-exit gate
+        // closes the wait-vs-handle.close window: if `child.wait()` returned
+        // success and a signal then landed before `handle.close()` ran, the
+        // signal arrived too late to have killed anything — the contract on
+        // `signal: Some(_)` is "this child was killed by the signal" and
+        // `interrupt_exit_code` callers in pipeline loops break on it.
         #[cfg(unix)]
-        if let Some(sig) = seen_signal {
+        if let Some(sig) = seen_signal
+            && !status.success()
+        {
+            trace_log.completed(false);
             external_log.record(Some(128 + sig));
             return Err(WorktrunkError::ChildProcessExited {
                 code: 128 + sig,
@@ -1369,9 +1399,11 @@ impl Cmd {
             // SIGPIPE (13) is expected when a pager (less, bat) exits before the
             // child finishes writing — not an error from the user's perspective.
             if sig == SIGPIPE {
+                trace_log.completed(true);
                 external_log.record(Some(0));
                 return Ok(());
             }
+            trace_log.completed(false);
             external_log.record(Some(128 + sig));
             return Err(WorktrunkError::ChildProcessExited {
                 code: 128 + sig,
@@ -1383,6 +1415,7 @@ impl Cmd {
 
         if !status.success() {
             let code = status.code().unwrap_or(1);
+            trace_log.completed(false);
             external_log.record(status.code());
             return Err(WorktrunkError::ChildProcessExited {
                 code,
@@ -1392,6 +1425,7 @@ impl Cmd {
             .into());
         }
 
+        trace_log.completed(true);
         external_log.record(Some(0));
 
         Ok(())
@@ -1816,6 +1850,20 @@ mod tests {
             }
             _ => panic!("Expected ChildProcessExited error"),
         }
+    }
+
+    #[test]
+    fn test_cmd_stream_spawn_failure_is_errored() {
+        // Spawning a non-existent binary fails inside `cmd.spawn()`, exercising
+        // the `Err` arm of the new spawn-match in `stream()` (and the
+        // `WtTraceLog::errored` path that fires alongside it).
+        let result = Cmd::new("/no/such/binary-7f3a9b2c").stream();
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("Failed to execute command"),
+            "expected spawn-failure message, got: {msg}"
+        );
     }
 
     #[test]

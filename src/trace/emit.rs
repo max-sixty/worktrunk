@@ -27,6 +27,7 @@
 //! separate log targets: the full output goes to `output.log`, and a bounded
 //! preview goes to stderr + `trace.log` — so raw bodies don't spam `-vv`.
 
+use std::borrow::Cow;
 use std::fmt::Display;
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -151,8 +152,10 @@ pub fn span_completed(name: &str, ts: u64, tid: u64, dur_us: u64) {
 /// Construct at the top of a block — `let _span = Span::new("config_load");` —
 /// and the span fires when `_span` goes out of scope.
 ///
-/// `name` is `&'static str` to keep construction allocation-free; for dynamic
-/// names, call [`span_completed`] directly.
+/// `name` accepts anything that converts into `Cow<'static, str>`: string
+/// literals stay borrowed (allocation-free), and `String` becomes owned —
+/// useful when the span name carries dynamic context, e.g.
+/// `Span::new(format!("prepare_steps:{}", alias))`.
 ///
 /// The `log_enabled!` check happens on drop, not construction. A span
 /// constructed before `init_logging` (e.g. wrapping the logger init itself)
@@ -160,15 +163,15 @@ pub fn span_completed(name: &str, ts: u64, tid: u64, dur_us: u64) {
 /// goes out of scope. Construction always pays two `Instant::now()` calls;
 /// they're vDSO-fast and the overhead is below noise.
 pub struct Span {
-    name: &'static str,
+    name: Cow<'static, str>,
     start_ts_us: u64,
     start: Instant,
 }
 
 impl Span {
-    pub fn new(name: &'static str) -> Self {
+    pub fn new(name: impl Into<Cow<'static, str>>) -> Self {
         Self {
-            name,
+            name: name.into(),
             start_ts_us: now_us(),
             start: Instant::now(),
         }
@@ -181,6 +184,6 @@ impl Drop for Span {
             return;
         }
         let dur_us = self.start.elapsed().as_micros() as u64;
-        span_completed(self.name, self.start_ts_us, thread_id(), dur_us);
+        span_completed(&self.name, self.start_ts_us, thread_id(), dur_us);
     }
 }

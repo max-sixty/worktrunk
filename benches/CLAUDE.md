@@ -136,15 +136,42 @@ cargo run -p wt-perf -- invalidate /tmp/wt-perf-typical-8/main
 
 ### Generating traces
 
-```bash
-# Generate trace.json for Perfetto/Chrome. `--progressive` forces TTY-gated
-# events (Skeleton rendered, First result received) to fire even when stdout
-# is piped.
-RUST_LOG=debug wt list --progressive --branches 2>&1 \
-  | cargo run -p wt-perf -- trace > trace.json
+`wt-perf timeline` runs a `wt` invocation, captures `[wt-trace]` records,
+and renders. Default mode is a sorted text timeline; `--chrome` emits
+Chrome Trace Format JSON for Perfetto/chrome://tracing. `--cold`
+invalidates caches first.
 
+```bash
+# Text timeline of one wt invocation
+cargo run -p wt-perf -- timeline -- list --progressive
+
+# Cold-cache run
+cargo run -p wt-perf -- timeline --cold --repo /tmp/wt-perf-typical-8 -- \
+  -C /tmp/wt-perf-typical-8 list --progressive
+
+# Chrome Trace Format JSON for Perfetto
+cargo run -p wt-perf -- timeline --chrome -- list --progressive > trace.json
 # Open in https://ui.perfetto.dev or chrome://tracing
 ```
+
+`--progressive` is still required: `wt-perf timeline` runs wt with stdout
+piped to /dev/null, so TTY-gated events (`Skeleton rendered`, `First
+result received`) won't fire without it.
+
+For Chrome JSON from a log already captured to disk (e.g. a CI artifact),
+pipe through `wt-perf trace` instead:
+
+```bash
+RUST_LOG=debug wt list --progressive --branches 2> captured.log
+cargo run -p wt-perf -- trace < captured.log > trace.json
+```
+
+The text-timeline summary reports `traced` (first → last `[wt-trace]`
+record, what the spans actually cover) and `wall` (externally-measured
+spawn → wait, the true process duration). The gap between them is
+prelude/epilogue not visible to the trace — process spawn, dyld, code
+that runs before `init_logging` registers the trace epoch, and the exit
+path after the last span drops.
 
 ### Querying with trace_processor
 

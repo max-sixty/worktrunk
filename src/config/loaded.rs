@@ -1,22 +1,19 @@
 //! Bundle type for loading user and project config together.
 //!
-//! [`LoadedConfigs::load`] runs the user-config disk load, the project-config
-//! disk load, and a `project_identifier` cache warm-up on three scoped
-//! threads. All three share `Repository`'s `Arc<RepoCache>` — clones are
-//! cheap, and the `OnceCell`/`DashMap` entries each thread populates are
-//! visible to every other clone (and to subsequent cache reads).
+//! [`LoadedConfigs::load`] warms the user-config and project-config caches in
+//! parallel on scoped threads, then returns borrows into the per-`Repository`
+//! cache. Both fields go through the same caching path, so subsequent
+//! `Repository::user_config` / `Repository::project_config` calls are pure
+//! cache hits — no second disk read, no asymmetry.
 //!
 //! ## When to use
 //!
 //! Call [`LoadedConfigs::load`] from command handlers that consume both
 //! configs — alias dispatch, `wt config alias show`/`dry-run`,
-//! `wt hook show`, hook execution, and any path whose downstream code calls
-//! `Repository::load_project_config`.
-//!
-//! Sites that only consume `UserConfig` should call [`UserConfig::load`]
-//! directly. The bundle loader reads `.config/wt.toml` and would emit
-//! deprecation/unknown-field warnings from project config in commands that
-//! never use it.
+//! `wt hook show`, hook execution, picker post-switch. Sites that only
+//! consume `UserConfig` (e.g. `wt step eval`, `for-each`, `prune`,
+//! `relocate`) call [`UserConfig::load`] directly so they don't trigger
+//! `.config/wt.toml` reads or project-config deprecation warnings.
 //!
 //! ## Why not return a merged config?
 //!
@@ -24,7 +21,8 @@
 //! project config requires command approval. Downstream merges
 //! (`load_aliases`, hook resolution) keep the source distinction so
 //! per-source policy can be applied. A flattened merged struct would erase
-//! that.
+//! that. Methods that walk both sources with the right precedence belong on
+//! `LoadedConfigs` itself as the bundle grows.
 //!
 //! ## Warning ordering
 //!
@@ -41,48 +39,48 @@ use crate::trace::Span;
 
 use super::{ProjectConfig, UserConfig};
 
-/// User and project configs loaded together.
+/// User and project configs borrowed together from `repo`'s cache.
 ///
-/// `project` is `None` when the repo has no `.config/wt.toml`.
-pub struct LoadedConfigs {
-    pub user: UserConfig,
-    pub project: Option<ProjectConfig>,
+/// `project` is `None` when the repo has no `.config/wt.toml`. Lifetime
+/// `'r` is tied to the `Repository` whose cache the references point into.
+pub struct LoadedConfigs<'r> {
+    pub user: &'r UserConfig,
+    pub project: Option<&'r ProjectConfig>,
 }
 
-impl LoadedConfigs {
-    /// Load user config and project config in parallel; warm
-    /// `project_identifier` alongside.
+impl<'r> LoadedConfigs<'r> {
+    /// Warm the user- and project-config caches in parallel; warm
+    /// `project_identifier` alongside the project load.
     ///
     /// On a cold cache the wall-clock cost is the longest pole rather than
-    /// the sum (~5ms vs ~13ms sequential on a typical project). On a warm
-    /// cache every thread is a no-op.
-    pub fn load(repo: &Repository) -> Result<Self> {
+    /// the sum (~6ms vs ~13ms sequential on a typical project). On a warm
+    /// cache both threads are no-ops.
+    ///
+    /// `project_identifier` shares its thread with the project-config load
+    /// because both touch the same `Repository` and have no warning
+    /// interleave concern; combining them saves a spawn/join for the same
+    /// wall pole (the identifier's `git config --list -z` dominates either
+    /// way).
+    pub fn load(repo: &'r Repository) -> Result<Self> {
         std::thread::scope(|s| {
-            let user_handle = s.spawn(|| {
+            s.spawn(|| {
                 let _span = Span::new("user_config_load");
-                UserConfig::load().map_err(anyhow::Error::from)
+                let _ = repo.user_config();
             });
-            let project_repo = repo.clone();
-            let project_handle = s.spawn(move || {
-                let _span = Span::new("project_config_load");
-                project_repo.load_project_config()
+            s.spawn(|| {
+                {
+                    let _span = Span::new("project_config_load");
+                    let _ = repo.project_config();
+                }
+                {
+                    let _span = Span::new("project_identifier_warm");
+                    let _ = repo.project_identifier();
+                }
             });
-            let id_repo = repo.clone();
-            let id_handle = s.spawn(move || {
-                let _span = Span::new("project_identifier_warm");
-                let _ = id_repo.project_identifier();
-            });
-
-            let user = user_handle
-                .join()
-                .map_err(|_| anyhow::anyhow!("user_config thread panicked"))??;
-            let project = project_handle
-                .join()
-                .map_err(|_| anyhow::anyhow!("project_config thread panicked"))??;
-            id_handle
-                .join()
-                .map_err(|_| anyhow::anyhow!("project_identifier thread panicked"))?;
-            Ok(Self { user, project })
+        });
+        Ok(Self {
+            user: repo.user_config(),
+            project: repo.project_config()?,
         })
     }
 }

@@ -210,13 +210,20 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
         StepCommand::Commit(args) => {
             let verify = resolve_verify(args.verify, args.no_verify_deprecated);
             let format = args.format;
-            // `--show-prompt` returns the LLM prompt as raw text, which would
-            // corrupt a JSON consumer's stdout. Refuse the combination rather
-            // than silently emit non-JSON.
-            if format == SwitchFormat::Json && args.show_prompt {
-                anyhow::bail!("--show-prompt cannot be combined with --format=json");
+            // `--show-prompt` and `--dry-run` emit raw text (rendered prompt or LLM
+            // preview), which would corrupt a JSON consumer's stdout. Refuse the
+            // combination rather than silently emit non-JSON.
+            if format == SwitchFormat::Json && (args.show_prompt || args.dry_run) {
+                anyhow::bail!("--show-prompt / --dry-run cannot be combined with --format=json");
             }
-            let outcome = step_commit(args.branch, yes, verify, args.stage, args.show_prompt)?;
+            let outcome = step_commit(
+                args.branch,
+                yes,
+                verify,
+                args.stage,
+                args.show_prompt,
+                args.dry_run,
+            )?;
             if format == SwitchFormat::Json
                 && let Some(outcome) = outcome
             {
@@ -231,12 +238,16 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
         }
         StepCommand::Squash(args) => {
             let verify = resolve_verify(args.verify, args.no_verify_deprecated);
-            if args.format == SwitchFormat::Json && args.show_prompt {
-                anyhow::bail!("--show-prompt cannot be combined with --format=json");
+            // `--show-prompt` and `--dry-run` emit raw text (rendered prompt or LLM
+            // preview), which would corrupt a JSON consumer's stdout.
+            if args.format == SwitchFormat::Json && (args.show_prompt || args.dry_run) {
+                anyhow::bail!("--show-prompt / --dry-run cannot be combined with --format=json");
             }
-            // Handle --show-prompt early: just build and output the prompt
+            // --show-prompt and --dry-run skip the squash and exit after preview output.
             if args.show_prompt {
                 commands::step_show_squash_prompt(args.target.as_deref())
+            } else if args.dry_run {
+                commands::step_dry_run_squash(args.target.as_deref())
             } else {
                 // Approval is handled inside handle_squash (like step_commit).
                 let repo = Repository::current()?;

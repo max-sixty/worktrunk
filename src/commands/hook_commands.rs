@@ -376,8 +376,8 @@ pub fn handle_hook_show(
 
     let repo = Repository::current().context("Failed to show hooks")?;
     let configs = LoadedConfigs::load(&repo).context("Failed to load configs")?;
-    let config: &UserConfig = &configs.user;
-    let project_config: Option<&ProjectConfig> = configs.project.as_ref();
+    let config: &UserConfig = configs.user;
+    let project_config: Option<&ProjectConfig> = configs.project;
     let approvals = Approvals::load().context("Failed to load approvals")?;
     let project_id = repo.project_identifier().ok();
 
@@ -691,7 +691,7 @@ fn expand_command_template(
     let default_branch = ctx.repo.default_branch();
     let template_vars = build_manual_hook_template_vars(ctx, hook_type, default_branch.as_deref());
     let extra_vars = template_vars.as_extra_vars();
-    let mut template_ctx = build_hook_context(ctx, &extra_vars)?;
+    let mut template_ctx = build_hook_context(ctx, &extra_vars, None)?;
     template_ctx.insert("hook_type".into(), hook_type.to_string());
     if let Some(name) = hook_name {
         template_ctx.insert("hook_name".into(), name.into());

@@ -47,13 +47,13 @@ pub fn handle_alias_show(name: String) -> anyhow::Result<()> {
         user: user_config,
         project: project_config,
     } = LoadedConfigs::load(&repo)?;
-    let entries = entries_for_name(&repo, &user_config, project_config.as_ref(), &name);
+    let entries = entries_for_name(&repo, user_config, project_config, &name);
 
     if entries.is_empty() {
         return Err(unknown_alias_error(
             &repo,
-            &user_config,
-            project_config.as_ref(),
+            user_config,
+            project_config,
             &name,
             "show",
         ));
@@ -100,13 +100,13 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
         user: user_config,
         project: project_config,
     } = LoadedConfigs::load(&repo)?;
-    let entries = entries_for_name(&repo, &user_config, project_config.as_ref(), &name);
+    let entries = entries_for_name(&repo, user_config, project_config, &name);
 
     if entries.is_empty() {
         return Err(unknown_alias_error(
             &repo,
-            &user_config,
-            project_config.as_ref(),
+            user_config,
+            project_config,
             &name,
             "dry-run",
         ));
@@ -132,13 +132,13 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
     let wt = repo.current_worktree();
     let wt_path = wt.root().context("Failed to get worktree root")?;
     let branch = wt.branch().ok().flatten();
-    let ctx = CommandContext::new(&repo, &user_config, branch.as_deref(), &wt_path, false);
+    let ctx = CommandContext::new(&repo, user_config, branch.as_deref(), &wt_path, false);
     let extra_refs: Vec<(&str, &str)> = opts
         .vars
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    let mut context_map = build_hook_context(&ctx, &extra_refs)?;
+    let mut context_map = build_hook_context(&ctx, &extra_refs, None)?;
     context_map.insert(
         ALIAS_ARGS_KEY.to_string(),
         serde_json::to_string(&opts.positional_args)

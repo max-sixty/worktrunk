@@ -544,18 +544,28 @@ impl Repository {
     ///
     /// Result is cached in the repository's shared cache (same for all clones).
     /// Returns `None` if not in a worktree or if no config file exists.
+    ///
+    /// Returns an owned clone — use [`project_config`](Self::project_config)
+    /// when a borrow suffices, to avoid the clone.
     pub fn load_project_config(&self) -> anyhow::Result<Option<ProjectConfig>> {
+        Ok(self.project_config()?.cloned())
+    }
+
+    /// Borrow the cached project configuration.
+    ///
+    /// Same caching semantics as [`load_project_config`](Self::load_project_config),
+    /// but returns a reference into the cache. Mirrors [`user_config`](Self::user_config)
+    /// so callers that need both configs (e.g. via
+    /// [`LoadedConfigs`](crate::config::LoadedConfigs)) can read them through
+    /// the same borrow-from-cache shape.
+    pub fn project_config(&self) -> anyhow::Result<Option<&ProjectConfig>> {
         self.cache
             .project_config
-            .get_or_try_init(|| {
-                match self.current_worktree().root() {
-                    Ok(_) => {
-                        ProjectConfig::load(self, true).context("Failed to load project config")
-                    }
-                    Err(_) => Ok(None), // Not in a worktree, no project config
-                }
+            .get_or_try_init(|| match self.current_worktree().root() {
+                Ok(_) => ProjectConfig::load(self, true).context("Failed to load project config"),
+                Err(_) => Ok(None), // Not in a worktree, no project config
             })
-            .cloned()
+            .map(Option::as_ref)
     }
 }
 

@@ -82,7 +82,11 @@ pub enum HookCommand {
         #[arg(long)]
         expanded: bool,
 
-        /// Output format (text, json)
+        /// Output format
+        ///
+        /// JSON prints an array of `{type, source, name, template,
+        /// needs_approval, expanded?}` records — one per configured command.
+        /// `expanded` is included only with `--expanded`.
         #[arg(long, default_value = "text", help_heading = "Automation")]
         format: crate::cli::SwitchFormat,
     },

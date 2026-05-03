@@ -116,11 +116,13 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-#### `--show-prompt`
+#### `--dry-run`
 
-Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+Render the prompt, print the LLM command, generate the message, and exit without staging, running hooks, or committing:
 
-{{ terminal(cmd="# Inspect the rendered prompt|||wt step commit --show-prompt | less||||||# Pipe to a different LLM|||wt step commit --show-prompt | llm -m gpt-5-nano") }}
+{{ terminal(cmd="wt step commit --dry-run") }}
+
+Three sections are printed: the rendered prompt, the shell command that would invoke the LLM, and the message returned. The LLM call still happens — only the commit is skipped.
 
 ### Command reference
 
@@ -144,17 +146,18 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
           - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
           - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
 
-      <b><span class=c>--show-prompt</span></b>
-          Show prompt without running LLM
-
-          Outputs the rendered prompt to stdout for debugging or manual piping.
+      <b><span class=c>--dry-run</span></b>
+          Preview prompt, command, and generated message without committing
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 
 <b><span class=g>Automation:</span></b>
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
-          Output format (text, json)
+          Output format
+
+          JSON prints <b>{commit, message, stage_mode}</b> after the commit completes. Designed for tool
+          integration.
 
           Possible values:
           - <b><span class=c>text</span></b>: Human-readable text output
@@ -204,11 +207,13 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-#### `--show-prompt`
+#### `--dry-run`
 
-Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+Render the prompt, print the LLM command, generate the squash message, and exit without resetting, running hooks, or committing:
 
-{{ terminal(cmd="wt step squash --show-prompt | less") }}
+{{ terminal(cmd="wt step squash --dry-run") }}
+
+Three sections are printed: the rendered prompt, the shell command that would invoke the LLM, and the message returned. The LLM call still happens — only the squash and commit are skipped.
 
 ### Command reference
 
@@ -237,17 +242,18 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
           - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
           - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
 
-      <b><span class=c>--show-prompt</span></b>
-          Show prompt without running LLM
-
-          Outputs the rendered prompt to stdout for debugging or manual piping.
+      <b><span class=c>--dry-run</span></b>
+          Preview prompt, command, and generated message without squashing
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 
 <b><span class=g>Automation:</span></b>
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
-          Output format (text, json)
+          Output format
+
+          JSON prints <b>{outcome, commit?, message?, stage_mode?, target?}</b> after the squash. <b>outcome</b>
+          is one of <b>squashed</b>, <b>no_commits_ahead</b>, <b>already_single_commit</b>, <b>no_net_changes</b>.
 
           Possible values:
           - <b><span class=c>text</span></b>: Human-readable text output
@@ -459,7 +465,10 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
 
 <b><span class=g>Automation:</span></b>
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
-          Output format (text, json)
+          Output format
+
+          JSON prints <b>{outcome, dry_run, from, to, entries, files, bytes}</b>. <b>entries</b> lists the
+          top-level units selected for copy; <b>files</b> / <b>bytes</b> count the leaves actually written.
 
           Possible values:
           - <b><span class=c>text</span></b>: Human-readable text output
@@ -864,7 +873,11 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
 
 <b><span class=g>Automation:</span></b>
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
-          Output format (text, json)
+          Output format
+
+          JSON prints <b>{dry_run, entries, skipped}</b> after the relocate. <b>entries</b> lists <b>{branch, from,</b>
+<b>          to}</b> per move; <b>skipped</b> lists <b>{branch, reason}</b> (<b>reason</b> ∈ <b>template_error</b>, <b>locked</b>, <b>uncommitted</b>
+          , <b>target_blocked</b>, <b>target_is_worktree</b>, <b>target_occupied</b>).
 
           Possible values:
           - <b><span class=c>text</span></b>: Human-readable text output

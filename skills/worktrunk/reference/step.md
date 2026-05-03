@@ -109,17 +109,15 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-#### `--show-prompt`
+#### `--dry-run`
 
-Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+Render the prompt, print the LLM command, generate the message, and exit without staging, running hooks, or committing:
 
 ```bash
-# Inspect the rendered prompt
-$ wt step commit --show-prompt | less
-
-# Pipe to a different LLM
-$ wt step commit --show-prompt | llm -m gpt-5-nano
+$ wt step commit --dry-run
 ```
+
+Three sections are printed: the rendered prompt, the shell command that would invoke the LLM, and the message returned. The LLM call still happens — only the commit is skipped.
 
 ### Command reference
 
@@ -143,17 +141,18 @@ Options:
           - tracked: Stage tracked changes only (like git add -u)
           - none:    Stage nothing, commit only what's already in the index
 
-      --show-prompt
-          Show prompt without running LLM
-
-          Outputs the rendered prompt to stdout for debugging or manual piping.
+      --dry-run
+          Preview prompt, command, and generated message without committing
 
   -h, --help
           Print help (see a summary with '-h')
 
 Automation:
       --format <FORMAT>
-          Output format (text, json)
+          Output format
+
+          JSON prints {commit, message, stage_mode} after the commit completes. Designed for tool
+          integration.
 
           Possible values:
           - text: Human-readable text output
@@ -205,13 +204,15 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-#### `--show-prompt`
+#### `--dry-run`
 
-Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+Render the prompt, print the LLM command, generate the squash message, and exit without resetting, running hooks, or committing:
 
 ```bash
-$ wt step squash --show-prompt | less
+$ wt step squash --dry-run
 ```
+
+Three sections are printed: the rendered prompt, the shell command that would invoke the LLM, and the message returned. The LLM call still happens — only the squash and commit are skipped.
 
 ### Command reference
 
@@ -240,17 +241,18 @@ Options:
           - tracked: Stage tracked changes only (like git add -u)
           - none:    Stage nothing, commit only what's already in the index
 
-      --show-prompt
-          Show prompt without running LLM
-
-          Outputs the rendered prompt to stdout for debugging or manual piping.
+      --dry-run
+          Preview prompt, command, and generated message without squashing
 
   -h, --help
           Print help (see a summary with '-h')
 
 Automation:
       --format <FORMAT>
-          Output format (text, json)
+          Output format
+
+          JSON prints {outcome, commit?, message?, stage_mode?, target?} after the squash. outcome
+          is one of squashed, no_commits_ahead, already_single_commit, no_net_changes.
 
           Possible values:
           - text: Human-readable text output
@@ -472,7 +474,10 @@ Options:
 
 Automation:
       --format <FORMAT>
-          Output format (text, json)
+          Output format
+
+          JSON prints {outcome, dry_run, from, to, entries, files, bytes}. entries lists the
+          top-level units selected for copy; files / bytes count the leaves actually written.
 
           Possible values:
           - text: Human-readable text output
@@ -911,7 +916,11 @@ Options:
 
 Automation:
       --format <FORMAT>
-          Output format (text, json)
+          Output format
+
+          JSON prints {dry_run, entries, skipped} after the relocate. entries lists {branch, from,
+          to} per move; skipped lists {branch, reason} (reason ∈ template_error, locked, uncommitted
+          , target_blocked, target_is_worktree, target_occupied).
 
           Possible values:
           - text: Human-readable text output

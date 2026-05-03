@@ -16,7 +16,7 @@ Worktrunk is a CLI for git worktree management, designed for running AI agents i
 
 Worktrunk's three core commands make worktrees as easy as branches. Plus, Worktrunk has a bunch of quality-of-life features to simplify working with many parallel changes, including hooks to automate local workflows.
 
-Scaling agents becomes trivial. A quick demo:
+A quick demo:
 
 ![Worktrunk Demo](https://cdn.jsdelivr.net/gh/max-sixty/worktrunk-assets@main/assets/docs/light/wt-core.gif)
 
@@ -94,7 +94,7 @@ git branch -d feat</pre></td>
 - **[Aliases](https://worktrunk.dev/extending/#aliases) & [per-branch variables](https://worktrunk.dev/config/#wt-config-state-vars)** — custom `wt <name>` commands and branch-scoped state for hook templates
 - ...and **[lots more](#next-steps)**
 
-A demo with some advanced features:
+Multiple parallel agents, same simple commands:
 
 ![Worktrunk omnibus demo: multiple Claude agents in Zellij tabs with hooks, LLM commits, and merge workflow](https://raw.githubusercontent.com/max-sixty/worktrunk-assets/main/assets/docs/light/wt-zellij-omnibus.gif)
 
