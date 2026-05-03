@@ -40,6 +40,7 @@ use std::ffi::OsString;
 
 use anyhow::{Context, bail};
 use clap::Subcommand;
+use clap::builder::PossibleValuesParser;
 use worktrunk::HookType;
 
 use super::config::ApprovalsCommand;
@@ -74,7 +75,7 @@ pub enum HookCommand {
     /// Lists user and project hooks. Project hooks show approval status (❓ = needs approval).
     Show {
         /// Hook type to show (default: all)
-        #[arg(value_parser = ["pre-switch", "post-switch", "pre-start", "post-start", "pre-commit", "post-commit", "pre-merge", "post-merge", "pre-remove", "post-remove"])]
+        #[arg(value_parser = PossibleValuesParser::new(HOOK_TYPE_NAMES))]
         hook_type: Option<String>,
 
         /// Show expanded commands with current variables
