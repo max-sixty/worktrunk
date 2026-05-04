@@ -2822,7 +2822,7 @@ fn test_config_update_print_on_clean_config_is_silent(repo: TestRepo) {
 }
 
 /// `wt config update --print` emits the migrated TOML to stdout without
-/// touching the config file. Warnings still go to stderr.
+/// touching the config file. Stderr stays empty so the output is pipeable.
 #[rstest]
 fn test_config_update_print_emits_migrated_without_writing(repo: TestRepo) {
     let config_path = repo.test_config_path();
@@ -2839,6 +2839,11 @@ fn test_config_update_print_emits_migrated_without_writing(repo: TestRepo) {
     assert!(
         output.status.success(),
         "config update --print should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "--print must keep stderr empty for pipe-friendliness, got: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);

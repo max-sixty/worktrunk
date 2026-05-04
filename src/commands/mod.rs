@@ -8,7 +8,7 @@ pub(crate) mod context;
 pub(crate) mod custom;
 mod eval;
 mod for_each;
-mod handle_switch;
+mod hook_announcement;
 mod hook_commands;
 mod hook_filter;
 pub(crate) mod hooks;
@@ -24,7 +24,7 @@ mod relocate;
 pub(crate) mod repository_ext;
 mod run_pipeline;
 pub(crate) mod statusline;
-pub(crate) mod step_commands;
+pub(crate) mod step;
 pub(crate) mod template_vars;
 pub(crate) mod worktree;
 
@@ -46,7 +46,6 @@ pub(crate) use configure_shell::{
 pub(crate) use custom::handle_custom_command;
 pub(crate) use eval::step_eval;
 pub(crate) use for_each::step_for_each;
-pub(crate) use handle_switch::{SwitchOptions, handle_switch};
 pub(crate) use hook_commands::{HookCliArgs, handle_hook_show, run_hook};
 pub(crate) use init::{handle_completions, handle_init};
 pub(crate) use list::handle_list;
@@ -55,13 +54,14 @@ pub(crate) use merge::{MergeFlagOverrides, MergeOptions, handle_merge};
 pub(crate) use picker::handle_picker;
 pub(crate) use repository_ext::RemoveTarget;
 pub(crate) use run_pipeline::run_pipeline;
-pub(crate) use step_commands::{
+pub(crate) use step::{
     PromoteResult, RebaseResult, SquashResult, handle_promote, handle_rebase, handle_squash,
     step_commit, step_copy_ignored, step_diff, step_dry_run_squash, step_prune, step_relocate,
     step_show_squash_prompt,
 };
 pub(crate) use worktree::{
-    OperationMode, is_worktree_at_expected_path, resolve_worktree_arg, worktree_display_name,
+    OperationMode, SwitchOptions, is_worktree_at_expected_path, resolve_worktree_arg, run_switch,
+    worktree_display_name,
 };
 
 // Re-export Shell from the canonical location

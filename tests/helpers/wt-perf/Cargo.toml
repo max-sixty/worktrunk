@@ -41,3 +41,12 @@ path = "src/lib.rs"
 [[bin]]
 name = "wt-perf"
 path = "src/main.rs"
+# The `[lib]` and `[[bin]]` artifact basenames both normalize to `wt_perf`
+# (cargo turns `wt-perf` → `wt_perf`). cargo-affected's runner shim can't
+# disambiguate same-basename test binaries when neither carries a marker
+# (markers only fire for `kind = "test" | "bench" | "example"`), so when
+# both candidates appear in its binary map and cargo's hash suffix drifts
+# between list and run, the shim aborts with "basename fallback ambiguous".
+# Excluding the bin from test compilation removes it from the map; the
+# binary still gets compiled because `tests/builds.rs` depends on it.
+test = false

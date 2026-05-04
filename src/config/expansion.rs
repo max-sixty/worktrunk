@@ -613,6 +613,18 @@ fn setup_template_env(repo: &Repository) -> Environment<'static> {
         short_hash(value.as_str().unwrap_or_default())
     });
     env.add_filter("hash_port", |value: String| string_to_port(&value));
+    env.add_filter("dirname", |value: Value| -> String {
+        std::path::Path::new(value.as_str().unwrap_or_default())
+            .parent()
+            .map(|p| to_posix_path(&p.to_string_lossy()))
+            .unwrap_or_default()
+    });
+    env.add_filter("basename", |value: Value| -> String {
+        std::path::Path::new(value.as_str().unwrap_or_default())
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    });
 
     // Register worktree_path_of_branch function for looking up branch worktree paths.
     // Returns raw paths — shell escaping is applied by the formatter at output time.
@@ -751,6 +763,8 @@ pub fn validate_template(
 /// - `sanitize_hash` — Filesystem-safe name with hash suffix so distinct inputs never collide
 /// - `hash` — 3-character base36 hash digest of the input
 /// - `hash_port` — Hash to deterministic port number (10000-19999)
+/// - `dirname` — Strip the last path component (e.g., `/a/b/c` → `/a/b`)
+/// - `basename` — Keep only the last path component (e.g., `/a/b/c` → `c`)
 ///
 /// # Functions
 /// - `worktree_path_of_branch(branch)` — Look up the filesystem path of a branch's worktree
@@ -1483,6 +1497,85 @@ mod tests {
         assert!((10000..20000).contains(&r2_port));
 
         assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn test_dirname_and_basename_filters() {
+        let test = test_repo();
+        let mut vars = HashMap::new();
+
+        // Bare repo wrapped in a hidden dir: `dirname | basename` recovers the wrapper name
+        // (the case from #1279 — `{{ repo }}` resolves to `.git`, but the user wants `myrepo`)
+        vars.insert("repo_path", "/projects/myrepo/.git");
+        let result = expand_template(
+            "{{ repo_path | dirname | basename }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(result, "myrepo");
+
+        // Composing into a worktree-path template
+        vars.insert("branch", "feature-auth");
+        let result = expand_template(
+            "{{ repo_path }}/../{{ repo_path | dirname | basename }}.{{ branch | sanitize }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(result, "/projects/myrepo/.git/../myrepo.feature-auth");
+
+        // `dirname` strips the last component
+        vars.insert("repo_path", "/a/b/c");
+        let dirname = expand_template(
+            "{{ repo_path | dirname }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(dirname, "/a/b");
+
+        // `basename` keeps only the last component
+        let basename = expand_template(
+            "{{ repo_path | basename }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(basename, "c");
+
+        // No separator: dirname is empty, basename is the whole input
+        vars.insert("repo_path", "myrepo");
+        assert_eq!(
+            expand_template(
+                "{{ repo_path | dirname }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            ""
+        );
+        assert_eq!(
+            expand_template(
+                "{{ repo_path | basename }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "myrepo"
+        );
     }
 
     #[test]

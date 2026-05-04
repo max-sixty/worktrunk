@@ -106,8 +106,11 @@
 //! 1. `is_main == true` (metadata) → `^`. Always immediate for the main
 //!    worktree, regardless of any other field.
 //! 2. `is_orphan == Some(true)` → orphan display.
-//! 3. `has_merge_tree_conflicts == Some(true)` or
-//!    `has_working_tree_conflicts == Some(Some(true))` → `✗`.
+//! 3. `has_working_tree_conflicts == Some(Some(true))` (dirty-tree probe
+//!    is authoritative when present) or `has_merge_tree_conflicts == Some(true)`
+//!    → `✗`. When the dirty-tree probe says `Some(Some(false))` it rules
+//!    out tier 3 even if the HEAD probe was skipped (see
+//!    [`tier_would_conflict`](super::state::tier_would_conflict)).
 //! 4. Distinguish Empty / SameCommitDirty / Integrated — requires `counts`,
 //!    `is_clean` (from `working_tree_diff` + `working_tree_status` for
 //!    worktrees; trivially clean for branches), and the integration signals.

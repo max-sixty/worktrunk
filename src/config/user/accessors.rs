@@ -12,8 +12,8 @@ use crate::config::expansion::expand_template;
 use super::UserConfig;
 use super::merge::Merge;
 use super::sections::{
-    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig, StepConfig,
-    SwitchConfig, SwitchPickerConfig,
+    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig, RemoveConfig,
+    StepConfig, SwitchConfig, SwitchPickerConfig,
 };
 
 /// Default worktree path template
@@ -111,6 +111,14 @@ impl UserConfig {
     /// settings take precedence for fields that are set.
     pub fn merge(&self, project: Option<&str>) -> MergeConfig {
         self.merged_project_config(project, &self.merge, |config| &config.merge)
+    }
+
+    /// Returns the remove config for a specific project.
+    ///
+    /// Merges project-specific settings with global settings, where project
+    /// settings take precedence for fields that are set.
+    pub fn remove(&self, project: Option<&str>) -> RemoveConfig {
+        self.merged_project_config(project, &self.remove, |config| &config.remove)
     }
 
     /// Returns the switch config for a specific project.

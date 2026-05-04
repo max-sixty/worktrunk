@@ -298,7 +298,8 @@ pub fn tier_orphan(is_orphan: Option<bool>) -> Tier<MainState> {
     }
 }
 
-/// Tier 3: `WouldConflict`. Requires *both* conflict probes to be loaded.
+/// Tier 3: `WouldConflict`. Authoritative source depends on which probe
+/// landed.
 ///
 /// `has_merge_tree_conflicts` is the committed-HEAD probe (from
 /// `MergeTreeConflicts`). `has_working_tree_conflicts` is the dirty-tree
@@ -307,37 +308,42 @@ pub fn tier_orphan(is_orphan: Option<bool>) -> Tier<MainState> {
 /// dirty-tree result, fall back to the HEAD probe), `Some(Some(b))` =
 /// dirty-tree result.
 ///
+/// **The working-tree probe is authoritative when present.** A dirty
+/// worktree's tree includes HEAD's content plus any uncommitted changes,
+/// so its merge-tree result reflects the user's current state better than
+/// the HEAD-only probe. When `has_working_tree_conflicts` is
+/// `Some(Some(b))`, fire/rule out on `b` and ignore the HEAD probe.
+/// `MergeTreeConflictsTask` skips its merge-tree call in that case to
+/// avoid a redundant subprocess (returning a sentinel `false` that this
+/// gate ignores).
+///
 /// Behavior:
-/// - If either probe reports `true`, fire `WouldConflict` — no need to
-///   wait for the other.
-/// - If the HEAD probe is `None`, wait (we can't rule out a conflict
-///   without it).
-/// - If the HEAD probe is `Some(false)` and the working-tree probe is
-///   `None`, wait — the working-tree result could still flip us to
-///   `WouldConflict`.
-/// - If both report "no conflict" (HEAD probe `Some(false)` and
-///   working-tree probe either `Some(None)` or `Some(Some(false))`), rule
-///   out.
+/// - `has_working_tree_conflicts == Some(Some(true))` → fire (dirty
+///   conflict, authoritative).
+/// - `has_working_tree_conflicts == Some(Some(false))` → rule out (dirty
+///   no-conflict, authoritative).
+/// - Otherwise consult the HEAD probe:
+///   - `Some(true)` → fire.
+///   - `Some(false)` and working-tree probe loaded (`Some(None)`, i.e.,
+///     clean or unmerged) → rule out.
+///   - `Some(false)` and working-tree probe still `None` → wait (the
+///     working-tree probe could still flip us).
+///   - `None` → wait.
 pub fn tier_would_conflict(
     has_merge_tree_conflicts: Option<bool>,
     has_working_tree_conflicts: Option<Option<bool>>,
 ) -> Tier<MainState> {
-    // Working-tree probe short-circuit: if it reports a dirty conflict,
-    // fire regardless of the HEAD probe.
-    if let Some(Some(true)) = has_working_tree_conflicts {
-        return Tier::Fired(MainState::WouldConflict);
-    }
-    // HEAD probe short-circuit.
-    match has_merge_tree_conflicts {
-        Some(true) => return Tier::Fired(MainState::WouldConflict),
-        Some(false) => {}
-        None => return Tier::Wait,
-    }
-    // HEAD probe says "no conflict" — still need the working-tree probe
-    // to complete (unless it's already reported a non-dirty result).
-    match has_working_tree_conflicts {
-        Some(_) => Tier::RuledOut,
-        None => Tier::Wait,
+    use Tier::*;
+    match (has_merge_tree_conflicts, has_working_tree_conflicts) {
+        // Working-tree probe is authoritative when it reports a dirty result.
+        (_, Some(Some(true))) => Fired(MainState::WouldConflict),
+        (_, Some(Some(false))) => RuledOut,
+        // Otherwise consult HEAD probe.
+        (Some(true), _) => Fired(MainState::WouldConflict),
+        (Some(false), Some(None)) => RuledOut,
+        // HEAD says "no conflict" but WT hasn't reported — wait.
+        (Some(false), None) => Wait,
+        (None, _) => Wait,
     }
 }
 
@@ -781,10 +787,30 @@ mod tests {
         // Some(None) meaning "working tree is clean, no dirty-tree
         // result") → rule out.
         assert_eq!(tier_would_conflict(Some(false), Some(None)), Tier::RuledOut);
-        // HEAD probe says "no conflict" and WT probe reports a clean
-        // dirty-tree result (Some(Some(false))) → rule out.
+        // WT probe reports a clean dirty-tree result (Some(Some(false)))
+        // → rule out, regardless of HEAD probe.
         assert_eq!(
             tier_would_conflict(Some(false), Some(Some(false))),
+            Tier::RuledOut
+        );
+        // WT probe is authoritative: rule out even when HEAD probe was
+        // skipped (None) because MergeTreeConflictsTask deferred to it.
+        assert_eq!(tier_would_conflict(None, Some(Some(false))), Tier::RuledOut);
+        // WT probe is authoritative: fire even when HEAD probe says no
+        // conflict (the dirty tree's merge result wins).
+        assert_eq!(
+            tier_would_conflict(Some(false), Some(Some(true))),
+            Tier::Fired(MainState::WouldConflict)
+        );
+        // WT probe is authoritative: rule out even when HEAD probe says
+        // "would conflict" (uncommitted changes resolve it). This
+        // combination shouldn't arise in production — the
+        // `MergeTreeConflictsTask` skip-when-dirty path keeps HEAD as a
+        // sentinel `false` whenever WT is `Some(Some(_))` — but pin the
+        // contract so a future refactor that reorders the matches
+        // doesn't silently regress.
+        assert_eq!(
+            tier_would_conflict(Some(true), Some(Some(false))),
             Tier::RuledOut
         );
         // HEAD probe hasn't reported → wait (could flip us to conflict).

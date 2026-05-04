@@ -56,10 +56,9 @@ use commands::{
     handle_hints_get, handle_hook_show, handle_init, handle_list, handle_logs_list, handle_merge,
     handle_opencode_install, handle_opencode_uninstall, handle_promote, handle_rebase,
     handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
-    handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
-    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set, resolve_worktree_arg,
-    run_hook, step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune,
-    step_relocate,
+    handle_state_set, handle_state_show, handle_unconfigure_shell, handle_vars_clear,
+    handle_vars_get, handle_vars_list, handle_vars_set, resolve_worktree_arg, run_hook, run_switch,
+    step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune, step_relocate,
 };
 use output::handle_remove_output;
 use worktrunk::git::BranchDeletionMode;
@@ -684,7 +683,7 @@ fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> {
                 }
             };
 
-            handle_switch(
+            run_switch(
                 SwitchOptions {
                     branch: &branch,
                     create: args.create,
@@ -869,15 +868,22 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
     UserConfig::load()
         .context("Failed to load config")
         .and_then(|config| {
+            let repo = Repository::current().context("Failed to remove worktree")?;
+
+            // CLI flags override config; otherwise fall through to [remove] delete-branch
+            // (defaults to true).
+            let project = repo.project_identifier().ok();
+            let cli_override = flag_pair(args.delete_branch, args.no_delete_branch);
+            let delete_branch =
+                cli_override.unwrap_or_else(|| config.remove(project.as_deref()).delete_branch());
+
             // Validate conflicting flags
-            if !args.delete_branch && args.force_delete {
+            if !delete_branch && args.force_delete {
                 return Err(worktrunk::git::GitError::Other {
-                    message: "Cannot use --force-delete with --no-delete-branch".into(),
+                    message: "Cannot use --force-delete with delete-branch=false (set via --no-delete-branch or [remove] delete-branch = false)".into(),
                 }
                 .into());
             }
-
-            let repo = Repository::current().context("Failed to remove worktree")?;
 
             // Resolve current worktree context for hook approval
             let current_wt = repo.current_worktree();
@@ -914,7 +920,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 let result = repo
                     .prepare_worktree_removal(
                         RemoveTarget::Current,
-                        BranchDeletionMode::from_flags(!args.delete_branch, args.force_delete),
+                        BranchDeletionMode::from_flags(!delete_branch, args.force_delete),
                         args.force,
                         &config,
                         None,
@@ -949,7 +955,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     &repo,
                     branches,
                     &config,
-                    !args.delete_branch,
+                    !delete_branch,
                     args.force_delete,
                     args.force,
                 );
@@ -1248,9 +1254,15 @@ fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {
     })
 }
 
-/// True when the parsed command renders a TUI or stderr-sensitive output
-/// (a picker, statusline-on-prompt) and would be visually broken by config
-/// deprecation warnings landing on stderr above it.
+/// True when the parsed command should silence prewarm-time deprecation
+/// warnings. Two reasons qualify:
+///
+/// - **TUI / stderr-sensitive output** (`select`, `switch` picker mode,
+///   `list statusline`) — warnings on stderr would land above the picker
+///   or shell prompt and visually break it.
+/// - **`config update`** — the handler renders the deprecations and a diff
+///   itself, so the prewarm-time warning + `wt config update` hint is
+///   redundant noise above its own UI.
 ///
 /// Read from `Cli::command` before `Repository::prewarm` so the suppress
 /// latch beats `prewarm_user_config`'s warning-emission path. The handler
@@ -1263,6 +1275,9 @@ fn command_suppresses_warnings(command: Option<&Commands>) -> bool {
         Some(Commands::List(args)) => {
             matches!(args.subcommand, Some(ListSubcommand::Statusline { .. }))
         }
+        Some(Commands::Config {
+            action: ConfigCommand::Update { .. },
+        }) => true,
         _ => false,
     }
 }
