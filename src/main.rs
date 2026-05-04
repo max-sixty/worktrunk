@@ -1248,6 +1248,25 @@ fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {
     })
 }
 
+/// True when the parsed command renders a TUI or stderr-sensitive output
+/// (a picker, statusline-on-prompt) and would be visually broken by config
+/// deprecation warnings landing on stderr above it.
+///
+/// Read from `Cli::command` before `Repository::prewarm` so the suppress
+/// latch beats `prewarm_user_config`'s warning-emission path. The handler
+/// for each of these commands also calls `suppress_warnings()` locally;
+/// both calls hit the same `OnceLock` so the second is a no-op.
+fn command_suppresses_warnings(command: Option<&Commands>) -> bool {
+    match command {
+        Some(Commands::Select { .. }) => true,
+        Some(Commands::Switch(args)) => args.branch.is_none(),
+        Some(Commands::List(args)) => {
+            matches!(args.subcommand, Some(ListSubcommand::Statusline { .. }))
+        }
+        _ => false,
+    }
+}
+
 fn dispatch_command(
     command: Commands,
     working_dir: Option<std::path::PathBuf>,
@@ -1381,6 +1400,18 @@ fn main() {
     // OnceLock makes this call a no-op, but keeping it avoids touching the
     // existing destructure pattern.
     apply_global_options(directory.clone(), config);
+
+    // Latch warning suppression for commands whose UX is broken by stderr
+    // noise — TUI pickers (`switch` without a branch, `select`) and
+    // statusline output rendered above each shell prompt. Must fire before
+    // `Repository::prewarm` since `prewarm_user_config` loads `UserConfig`
+    // eagerly and would otherwise emit deprecation warnings before the
+    // command handler's own `suppress_warnings()` call could latch.
+    // Handlers keep their `suppress_warnings()` calls — `OnceLock` is
+    // idempotent and the local call documents the intent at the use site.
+    if command_suppresses_warnings(command.as_ref()) {
+        worktrunk::config::suppress_warnings();
+    }
 
     // `init_logging` registers the logger. Run it before `init_command_log`
     // so the latter's `Repository::current()` → `git rev-parse
