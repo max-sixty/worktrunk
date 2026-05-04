@@ -19,13 +19,17 @@ info:
     WORKTRUNK_APPROVALS_PATH: /nonexistent/wt/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml
     WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
 success: true
 exit_code: 0
@@ -235,29 +239,29 @@ Query structured data with [2m--format=json[0m:
 
 [1mFields:[0m
 
-       Field           Type                                  Description                               
- ────────────────── ─────────── ────────────────────────────────────────────────────────────────────── 
- [2mbranch[0m             string/null Branch name (null for detached HEAD)                                   
- [2mpath[0m               string      Worktree path (absent for branches without worktrees)                  
- [2mkind[0m               string      [2m"worktree"[0m or [2m"branch"[0m                                                 
- [2mcommit[0m             object      Commit info (see below)                                                
- [2mworking_tree[0m       object      Working tree state (see below)                                         
- [2mmain_state[0m         string      Relation to the default branch (see below)                             
- [2mintegration_reason[0m string      Why branch is integrated (see below)                                   
- [2moperation_state[0m    string      [2m"conflicts"[0m, [2m"rebase"[0m, or [2m"merge"[0m; absent when clean                   
- [2mmain[0m               object      Relationship to the default branch (see below); absent when is_main    
- [2mremote[0m             object      Tracking branch info (see below); absent when no tracking              
- [2mworktree[0m           object      Worktree metadata (see below)                                          
- [2mis_main[0m            boolean     Is the main worktree                                                   
- [2mis_current[0m         boolean     Is the current worktree                                                
- [2mis_previous[0m        boolean     Previous worktree from wt switch                                       
- [2mci[0m                 object      CI status (see below); absent when no CI                               
- [2murl[0m                string      Dev server URL from project config; absent when not configured         
- [2murl_active[0m         boolean     Whether the URL's port is listening; absent when not configured        
- [2msummary[0m            string      LLM-generated branch summary; absent when not configured or no summary 
- [2mstatusline[0m         string      Pre-formatted status with ANSI colors                                  
- [2msymbols[0m            string      Raw status symbols without colors (e.g., [2m"!?↓"[0m)                        
- [2mvars[0m               object      Per-branch variables from [2mwt config state vars[0m (absent when empty)     
+       Field           Type                                                     Description                                                  
+ ────────────────── ─────────── ──────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+ [2mbranch[0m             string/null Branch name (null for detached HEAD)                                                                         
+ [2mpath[0m               string      Worktree path (absent for branches without worktrees)                                                        
+ [2mkind[0m               string      [2m"worktree"[0m or [2m"branch"[0m                                                                                       
+ [2mcommit[0m             object      Commit info (see below)                                                                                      
+ [2mworking_tree[0m       object      Working tree state (see below)                                                                               
+ [2mmain_state[0m         string      Relation to the default branch (see below)                                                                   
+ [2mintegration_reason[0m string      Why branch is integrated (see below)                                                                         
+ [2moperation_state[0m    string      [2m"conflicts"[0m, [2m"rebase"[0m, or [2m"merge"[0m; absent when clean                                                         
+ [2mmain[0m               object      Relationship to the default branch (see below); always present (inner fields are [2mnull[0m for the main worktree) 
+ [2mremote[0m             object      Tracking branch info (see below); always present (inner fields are [2mnull[0m when no tracking branch)             
+ [2mworktree[0m           object      Worktree metadata (see below)                                                                                
+ [2mis_main[0m            boolean     Is the main worktree                                                                                         
+ [2mis_current[0m         boolean     Is the current worktree                                                                                      
+ [2mis_previous[0m        boolean     Previous worktree from wt switch                                                                             
+ [2mci[0m                 object      CI status (see below); absent when no CI                                                                     
+ [2murl[0m                string      Dev server URL from project config; absent when not configured                                               
+ [2murl_active[0m         boolean     Whether the URL's port is listening; absent when not configured                                              
+ [2msummary[0m            string      LLM-generated branch summary; absent when not configured or no summary                                       
+ [2mstatusline[0m         string      Pre-formatted status with ANSI colors                                                                        
+ [2msymbols[0m            string      Raw status symbols without colors (e.g., [2m"!?↓"[0m)                                                              
+ [2mvars[0m               object      Per-branch variables from [2mwt config state vars[0m (absent when empty)                                           
 
 [32mCommit object[0m
 
@@ -281,20 +285,24 @@ Query structured data with [2m--format=json[0m:
 
 [32mmain object[0m
 
- Field   Type                       Description                      
- ────── ────── ───────────────────────────────────────────────────── 
- [2mahead[0m  number Commits ahead of the default branch                   
- [2mbehind[0m number Commits behind the default branch                     
- [2mdiff[0m   object Lines changed vs the default branch: [2m{added, deleted}[0m 
+Always emitted. Inner fields are [2mnull[0m for the main worktree (which has nothing to compare to itself) and while counts haven't been computed yet.
+
+ Field     Type                          Description                      
+ ────── ─────────── ───────────────────────────────────────────────────── 
+ [2mahead[0m  number/null Commits ahead of the default branch                   
+ [2mbehind[0m number/null Commits behind the default branch                     
+ [2mdiff[0m   object/null Lines changed vs the default branch: [2m{added, deleted}[0m 
 
 [32mremote object[0m
 
- Field   Type          Description          
- ────── ────── ──────────────────────────── 
- [2mname[0m   string Remote name (e.g., [2m"origin"[0m) 
- [2mbranch[0m string Remote branch name           
- [2mahead[0m  number Commits ahead of remote      
- [2mbehind[0m number Commits behind remote        
+Always emitted. Inner fields are [2mnull[0m when no tracking branch is configured (and while upstream data hasn't loaded yet).
+
+ Field     Type             Description          
+ ────── ─────────── ──────────────────────────── 
+ [2mname[0m   string/null Remote name (e.g., [2m"origin"[0m) 
+ [2mbranch[0m string/null Remote branch name           
+ [2mahead[0m  number/null Commits ahead of remote      
+ [2mbehind[0m number/null Commits behind remote        
 
 [32mworktree object[0m
 

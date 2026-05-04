@@ -828,8 +828,8 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | `main_state` | string | Relation to the default branch (see below) |
 | `integration_reason` | string | Why branch is integrated (see below) |
 | `operation_state` | string | `"conflicts"`, `"rebase"`, or `"merge"`; absent when clean |
-| `main` | object | Relationship to the default branch (see below); absent when is_main |
-| `remote` | object | Tracking branch info (see below); absent when no tracking |
+| `main` | object | Relationship to the default branch (see below); always present (inner fields are `null` for the main worktree) |
+| `remote` | object | Tracking branch info (see below); always present (inner fields are `null` when no tracking branch) |
 | `worktree` | object | Worktree metadata (see below) |
 | `is_main` | boolean | Is the main worktree |
 | `is_current` | boolean | Is the current worktree |
@@ -864,20 +864,24 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 
 ### main object
 
+Always emitted. Inner fields are `null` for the main worktree (which has nothing to compare to itself) and while counts haven't been computed yet.
+
 | Field | Type | Description |
 |-------|------|-------------|
-| `ahead` | number | Commits ahead of the default branch |
-| `behind` | number | Commits behind the default branch |
-| `diff` | object | Lines changed vs the default branch: `{added, deleted}` |
+| `ahead` | number/null | Commits ahead of the default branch |
+| `behind` | number/null | Commits behind the default branch |
+| `diff` | object/null | Lines changed vs the default branch: `{added, deleted}` |
 
 ### remote object
 
+Always emitted. Inner fields are `null` when no tracking branch is configured (and while upstream data hasn't loaded yet).
+
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | string | Remote name (e.g., `"origin"`) |
-| `branch` | string | Remote branch name |
-| `ahead` | number | Commits ahead of remote |
-| `behind` | number | Commits behind remote |
+| `name` | string/null | Remote name (e.g., `"origin"`) |
+| `branch` | string/null | Remote branch name |
+| `ahead` | number/null | Commits ahead of remote |
+| `behind` | number/null | Commits behind remote |
 
 ### worktree object
 

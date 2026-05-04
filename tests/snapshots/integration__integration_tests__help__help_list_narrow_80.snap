@@ -19,13 +19,17 @@ info:
     WORKTRUNK_APPROVALS_PATH: /nonexistent/wt/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml
     WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
 success: true
 exit_code: 0
@@ -290,9 +294,11 @@ Query structured data with [2m--format=json[0m:
  [2moperation_state[0m    string      [2m"conflicts"[0m, [2m"rebase"[0m, or [2m"merge"[0m; absent when  
                                 clean                                           
  [2mmain[0m               object      Relationship to the default branch (see below); 
-                                absent when is_main                             
- [2mremote[0m             object      Tracking branch info (see below); absent when   
-                                no tracking                                     
+                                always present (inner fields are [2mnull[0m for the   
+                                main worktree)                                  
+ [2mremote[0m             object      Tracking branch info (see below); always        
+                                present (inner fields are [2mnull[0m when no tracking 
+                                branch)                                         
  [2mworktree[0m           object      Worktree metadata (see below)                   
  [2mis_main[0m            boolean     Is the main worktree                            
  [2mis_current[0m         boolean     Is the current worktree                         
@@ -332,20 +338,26 @@ Query structured data with [2m--format=json[0m:
 
 [32mmain object[0m
 
- Field   Type                       Description                      
- ────── ────── ───────────────────────────────────────────────────── 
- [2mahead[0m  number Commits ahead of the default branch                   
- [2mbehind[0m number Commits behind the default branch                     
- [2mdiff[0m   object Lines changed vs the default branch: [2m{added, deleted}[0m 
+Always emitted. Inner fields are [2mnull[0m for the main worktree (which has nothing 
+to compare to itself) and while counts haven't been computed yet.
+
+ Field     Type                          Description                      
+ ────── ─────────── ───────────────────────────────────────────────────── 
+ [2mahead[0m  number/null Commits ahead of the default branch                   
+ [2mbehind[0m number/null Commits behind the default branch                     
+ [2mdiff[0m   object/null Lines changed vs the default branch: [2m{added, deleted}[0m 
 
 [32mremote object[0m
 
- Field   Type          Description          
- ────── ────── ──────────────────────────── 
- [2mname[0m   string Remote name (e.g., [2m"origin"[0m) 
- [2mbranch[0m string Remote branch name           
- [2mahead[0m  number Commits ahead of remote      
- [2mbehind[0m number Commits behind remote        
+Always emitted. Inner fields are [2mnull[0m when no tracking branch is configured (and
+ while upstream data hasn't loaded yet).
+
+ Field     Type             Description          
+ ────── ─────────── ──────────────────────────── 
+ [2mname[0m   string/null Remote name (e.g., [2m"origin"[0m) 
+ [2mbranch[0m string/null Remote branch name           
+ [2mahead[0m  number/null Commits ahead of remote      
+ [2mbehind[0m number/null Commits behind remote        
 
 [32mworktree object[0m
 

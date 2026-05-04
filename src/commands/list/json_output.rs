@@ -59,13 +59,15 @@ pub struct JsonItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_state: Option<&'static str>,
 
-    /// Relationship to default branch (absent when is_main == true)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub main: Option<JsonMain>,
+    /// Relationship to default branch. Always present; inner fields are
+    /// `null` when the data isn't applicable (the main worktree doesn't
+    /// compare to itself) or hasn't been computed yet.
+    pub main: JsonMain,
 
-    /// Relationship to remote tracking branch (absent when no tracking branch)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub remote: Option<JsonRemote>,
+    /// Relationship to remote tracking branch. Always present; inner
+    /// fields are `null` when no tracking branch is configured or the
+    /// data hasn't been computed yet.
+    pub remote: JsonRemote,
 
     /// Worktree-specific state
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -165,34 +167,39 @@ impl From<LineDiff> for JsonDiff {
     }
 }
 
-/// Relationship to default branch
+/// Relationship to default branch.
+///
+/// Every field is `null` for the main worktree (which doesn't compare to
+/// itself) and while counts are still being computed.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JsonMain {
     /// Commits ahead of default branch
-    pub ahead: usize,
+    pub ahead: Option<usize>,
 
     /// Commits behind default branch
-    pub behind: usize,
+    pub behind: Option<usize>,
 
     /// Lines added/deleted vs default branch
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub diff: Option<JsonDiff>,
 }
 
-/// Relationship to remote tracking branch
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+/// Relationship to remote tracking branch.
+///
+/// Every field is `null` when no tracking branch is configured and while
+/// upstream data is still being fetched.
+#[derive(Debug, Clone, Default, Serialize, JsonSchema)]
 pub struct JsonRemote {
     /// Remote name (e.g., "origin")
-    pub name: String,
+    pub name: Option<String>,
 
     /// Remote branch name (e.g., "feature-login")
-    pub branch: String,
+    pub branch: Option<String>,
 
     /// Commits ahead of remote
-    pub ahead: usize,
+    pub ahead: Option<usize>,
 
     /// Commits behind remote
-    pub behind: usize,
+    pub behind: Option<usize>,
 }
 
 /// Worktree-specific state
@@ -301,22 +308,31 @@ impl JsonItem {
             .operation_state
             .and_then(|s| s.as_json_str());
 
-        // Main relationship (absent when is_main)
+        // Main relationship — always emit the field; inner values are
+        // `null` for the main worktree (which has nothing to compare to)
+        // and while counts haven't been computed yet.
         let main = if is_main {
-            None
+            JsonMain {
+                ahead: None,
+                behind: None,
+                diff: None,
+            }
         } else {
-            item.counts.map(|counts| JsonMain {
-                ahead: counts.ahead,
-                behind: counts.behind,
+            JsonMain {
+                ahead: item.counts.map(|c| c.ahead),
+                behind: item.counts.map(|c| c.behind),
                 diff: item.branch_diff.map(|bd| JsonDiff::from(bd.diff)),
-            })
+            }
         };
 
-        // Remote relationship
+        // Remote relationship — always emit the field; inner values are
+        // `null` when no tracking branch is configured (or upstream data
+        // hasn't loaded yet).
         let remote = item
             .upstream
             .as_ref()
-            .and_then(|u| upstream_to_json(u, &item.branch));
+            .map(|u| upstream_to_json(u, &item.branch))
+            .unwrap_or_default();
 
         // Worktree state
         let worktree = worktree_data.map(|data| {
@@ -378,18 +394,21 @@ impl JsonItem {
     }
 }
 
-/// Convert UpstreamStatus to JsonRemote
-fn upstream_to_json(upstream: &UpstreamStatus, branch: &Option<String>) -> Option<JsonRemote> {
-    upstream.active().map(|active| {
+/// Convert UpstreamStatus to JsonRemote. When no remote tracking branch is
+/// configured, returns a `JsonRemote` with all fields `None` so the field is
+/// always present in JSON output with consistent shape.
+fn upstream_to_json(upstream: &UpstreamStatus, branch: &Option<String>) -> JsonRemote {
+    match upstream.active() {
         // Use local branch name since UpstreamStatus only stores the remote name,
         // not the full tracking refspec. In most cases these match (e.g., feature -> origin/feature).
-        JsonRemote {
-            name: active.remote.to_string(),
-            branch: branch.clone().unwrap_or_default(),
-            ahead: active.ahead,
-            behind: active.behind,
-        }
-    })
+        Some(active) => JsonRemote {
+            name: Some(active.remote.to_string()),
+            branch: branch.clone(),
+            ahead: Some(active.ahead),
+            behind: Some(active.behind),
+        },
+        None => JsonRemote::default(),
+    }
 }
 
 /// Extract worktree state and reason from WorktreeData
@@ -597,12 +616,10 @@ mod tests {
         };
         let branch = Some("feature".to_string());
         let json = upstream_to_json(&upstream, &branch);
-        assert!(json.is_some());
-        let json = json.unwrap();
-        assert_eq!(json.name, "origin");
-        assert_eq!(json.branch, "feature");
-        assert_eq!(json.ahead, 3);
-        assert_eq!(json.behind, 2);
+        assert_eq!(json.name.as_deref(), Some("origin"));
+        assert_eq!(json.branch.as_deref(), Some("feature"));
+        assert_eq!(json.ahead, Some(3));
+        assert_eq!(json.behind, Some(2));
     }
 
     #[test]
@@ -614,7 +631,12 @@ mod tests {
         };
         let branch = Some("feature".to_string());
         let json = upstream_to_json(&upstream, &branch);
-        assert!(json.is_none());
+        // No tracking branch → all fields null, but the field itself is
+        // still emitted.
+        assert!(json.name.is_none());
+        assert!(json.branch.is_none());
+        assert!(json.ahead.is_none());
+        assert!(json.behind.is_none());
     }
 
     #[test]
@@ -626,9 +648,8 @@ mod tests {
         };
         let branch = None;
         let json = upstream_to_json(&upstream, &branch);
-        assert!(json.is_some());
-        let json = json.unwrap();
-        assert_eq!(json.branch, ""); // Empty string when branch is None
+        assert_eq!(json.name.as_deref(), Some("origin"));
+        assert!(json.branch.is_none()); // null when branch is None
     }
 
     // ============================================================================
@@ -849,8 +870,8 @@ mod tests {
         "#);
 
         let main = serde_json::to_string_pretty(&JsonMain {
-            ahead: 3,
-            behind: 1,
+            ahead: Some(3),
+            behind: Some(1),
             diff: Some(JsonDiff {
                 added: 50,
                 deleted: 20,
@@ -868,11 +889,27 @@ mod tests {
         }
         "#);
 
+        // Main worktree (or pre-load): inner fields are null, outer field
+        // is still emitted.
+        let main_null = serde_json::to_string_pretty(&JsonMain {
+            ahead: None,
+            behind: None,
+            diff: None,
+        })
+        .unwrap();
+        assert_snapshot!(main_null, @r#"
+        {
+          "ahead": null,
+          "behind": null,
+          "diff": null
+        }
+        "#);
+
         let remote = serde_json::to_string_pretty(&JsonRemote {
-            name: "origin".to_string(),
-            branch: "feature".to_string(),
-            ahead: 2,
-            behind: 0,
+            name: Some("origin".to_string()),
+            branch: Some("feature".to_string()),
+            ahead: Some(2),
+            behind: Some(0),
         })
         .unwrap();
         assert_snapshot!(remote, @r#"
@@ -881,6 +918,17 @@ mod tests {
           "branch": "feature",
           "ahead": 2,
           "behind": 0
+        }
+        "#);
+
+        // No tracking branch: all fields null, outer field is still emitted.
+        let remote_null = serde_json::to_string_pretty(&JsonRemote::default()).unwrap();
+        assert_snapshot!(remote_null, @r#"
+        {
+          "name": null,
+          "branch": null,
+          "ahead": null,
+          "behind": null
         }
         "#);
 

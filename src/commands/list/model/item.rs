@@ -208,10 +208,10 @@ pub struct ListItem {
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub commit: Option<CommitDetails>,
 
-    // TODO: Evaluate if skipping these fields in JSON when None is correct behavior.
-    // Currently, main worktree omits counts/branch_diff (since it doesn't compare to itself),
-    // but consumers may expect these fields to always be present (even if zero).
-    // Consider: always include with default values vs current "omit when not computed" approach.
+    // `counts` and `branch_diff` carry "not yet computed / not applicable"
+    // (the main worktree has nothing to compare to). The user-visible JSON
+    // shape lives in `JsonItem` (see `json_output.rs`), which always emits
+    // the `main` object with `null` inner values for these cases.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub counts: Option<AheadBehind>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
@@ -245,7 +245,9 @@ pub struct ListItem {
     #[serde(skip)]
     pub is_orphan: Option<bool>,
 
-    // TODO: Same concern as counts/branch_diff above - should upstream fields always be present?
+    // Same as `counts`/`branch_diff`: the user-visible JSON shape lives in
+    // `JsonItem`, which always emits the `remote` object with `null` inner
+    // values when no tracking branch is configured.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub upstream: Option<UpstreamStatus>,
 
