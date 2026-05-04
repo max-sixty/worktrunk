@@ -263,6 +263,10 @@ pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("WORKTRUNK_TEST_FISH_INSTALLED", "0"),
     ("WORKTRUNK_TEST_NUSHELL_ENV", "0"),
     ("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "0"),
+    // Disable PowerShell auto-detection (PSModulePath / SHELL signal). Orthogonal
+    // to _INSTALLED above: this gates whether PS is iterated at all in
+    // scan_shell_configs; _INSTALLED gates the Skipped path once it is iterated.
+    ("WORKTRUNK_TEST_POWERSHELL_ENV", "0"),
 ];
 
 // NOTE: TERM is intentionally NOT in STATIC_TEST_ENV_VARS because:
@@ -448,10 +452,6 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // own test repo via the default lookup; host leakage is prevented
     // by the env-strip above.
     isolate_subprocess_env(cmd, None);
-    // Disable auto PowerShell detection (tests that need it should set to "1").
-    // Other shell-installed defaults live in STATIC_TEST_ENV_VARS so PTY tests
-    // (which use TestRepo::test_env_vars) inherit them too.
-    cmd.env("WORKTRUNK_TEST_POWERSHELL_ENV", "0");
     cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
     // Enable warn-level logging so diagnostics show up in test failures
     cmd.env("RUST_LOG", "warn");
