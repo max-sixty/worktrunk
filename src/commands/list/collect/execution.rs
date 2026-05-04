@@ -375,11 +375,9 @@ pub fn work_items_for_worktree(
         TaskKind::UserMarker,
         TaskKind::WorkingTreeConflicts,
         TaskKind::BranchDiff,
-        // TODO: For dirty worktrees, WorkingTreeConflicts already runs merge-tree
-        // (via stash-create + merge-tree). MergeTreeConflicts duplicates that call
-        // against HEAD. Could skip MergeTreeConflicts when WorkingTreeConflicts
-        // produces a non-None answer, but needs result-ordering changes since both
-        // tasks run in parallel today.
+        // MergeTreeConflictsTask peeks the shared porcelain cache and
+        // skips its own merge-tree call when WorkingTreeConflictsTask
+        // will produce an authoritative dirty-tree result.
         TaskKind::MergeTreeConflicts,
         TaskKind::CiStatus,
         TaskKind::WouldMergeAdd,
