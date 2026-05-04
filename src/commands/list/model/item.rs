@@ -196,6 +196,13 @@ pub struct ListItem {
     // Common fields (present for both worktrees and branches)
     #[serde(rename = "head_sha")]
     pub head: String,
+    /// Abbreviated form of `head`, honoring `core.abbrev` and auto-extending
+    /// for ambiguous prefixes. Always populated when there is a HEAD commit
+    /// to abbreviate (the `git log` batch in `collect()` emits `%h` for every
+    /// row, including prunable worktrees). Empty for null OIDs (unborn
+    /// branches) or when the batch failed for this row.
+    #[serde(skip)]
+    pub short_sha: String,
     /// Branch name - None for detached worktrees
     pub branch: Option<String>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
@@ -296,6 +303,7 @@ impl ListItem {
     pub(crate) fn new_branch(head: String, branch: String) -> Self {
         Self {
             head,
+            short_sha: String::new(),
             branch: Some(branch),
             commit: None,
             counts: None,

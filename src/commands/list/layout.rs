@@ -1303,9 +1303,9 @@ mod tests {
         // Create test data with specific widths to verify position calculation
         let item = ListItem {
             head: "abc12345".to_string(),
+            short_sha: "abc1234".to_string(),
             branch: Some("feature".to_string()),
             commit: Some(CommitDetails {
-                short_sha: "abc1234".to_string(),
                 timestamp: 1234567890,
                 commit_message: "Test commit message".to_string(),
             }),
@@ -1413,9 +1413,9 @@ mod tests {
         // Create minimal data - most columns will be empty
         let item = ListItem {
             head: "abc12345".to_string(),
+            short_sha: "abc1234".to_string(),
             branch: Some("main".to_string()),
             commit: Some(CommitDetails {
-                short_sha: "abc1234".to_string(),
                 timestamp: 1234567890,
                 commit_message: "Test".to_string(),
             }),
@@ -1541,6 +1541,7 @@ mod tests {
         };
         super::super::model::ListItem {
             head: "abc12345".to_string(),
+            short_sha: "abc1234".to_string(),
             branch: Some(branch.to_string()),
             commit: None,
             counts: None,
@@ -1788,6 +1789,7 @@ mod tests {
         };
         super::super::model::ListItem {
             head: "abc12345".to_string(),
+            short_sha: "abc1234".to_string(),
             branch: Some(branch.to_string()),
             commit: None,
             counts: None,
@@ -1916,9 +1918,9 @@ mod tests {
             });
             super::super::model::ListItem {
                 head: "a620bcfe".to_string(),
+                short_sha: "a620bcf".to_string(),
                 branch: Some(branch.to_string()),
                 commit: Some(CommitDetails {
-                    short_sha: "a620bcf".to_string(),
                     timestamp: ts,
                     commit_message: "Some commit message".to_string(),
                 }),

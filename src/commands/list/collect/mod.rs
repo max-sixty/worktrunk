@@ -808,6 +808,7 @@ pub fn collect(
             // URL expanded post-skeleton to minimize time-to-skeleton
             ListItem {
                 head: wt.head.clone(),
+                short_sha: String::new(),
                 branch: wt.branch.clone(),
                 commit: None,
                 counts: None,
@@ -1081,23 +1082,27 @@ pub fn collect(
         }
     }
 
-    // Populate commit details (timestamp + subject) on every item directly
-    // from the pre-skeleton batch map. No per-SHA recovery — if the batch
-    // failed, the warning printed above is the user-visible signal and
-    // Age/Message cells render their placeholder. Prunable worktrees are
-    // skipped because their directory is missing from disk; leaving these
-    // rows at the placeholder matches the old task-queue UX.
+    // Populate commit data on every item directly from the pre-skeleton batch
+    // map. No per-SHA recovery — if the batch failed, the warning printed above
+    // is the user-visible signal and Age/Message cells render their placeholder.
+    //
+    // `short_sha` is populated for every row (including prunable), since it's a
+    // pure SHA derivation that doesn't need the worktree directory. The
+    // timestamp/message bundle is skipped for prunable rows to match the old
+    // task-queue UX where probes against a missing worktree dir failed.
     for item in &mut all_items {
+        let Some((short_sha, timestamp, commit_message)) = commit_details_map.get(&item.head)
+        else {
+            continue;
+        };
+        item.short_sha = short_sha.clone();
         if item.worktree_data().is_some_and(|d| d.is_prunable()) {
             continue;
         }
-        if let Some((short_sha, timestamp, commit_message)) = commit_details_map.get(&item.head) {
-            item.commit = Some(CommitDetails {
-                short_sha: short_sha.clone(),
-                timestamp: *timestamp,
-                commit_message: commit_message.clone(),
-            });
-        }
+        item.commit = Some(CommitDetails {
+            timestamp: *timestamp,
+            commit_message: commit_message.clone(),
+        });
     }
 
     // No need to prime the ambient `cache.ahead_behind` here: the
@@ -1570,6 +1575,7 @@ pub fn build_worktree_item(
 ) -> ListItem {
     ListItem {
         head: wt.head.clone(),
+        short_sha: String::new(),
         branch: wt.branch.clone(),
         commit: None,
         counts: None,
@@ -1613,24 +1619,28 @@ pub fn populate_item(
     item: &mut ListItem,
     mut options: CollectOptions,
 ) -> anyhow::Result<()> {
-    // Populate commit details (timestamp + subject) directly. The main
-    // `collect()` path batches this across all items pre-skeleton; the
-    // single-item statusline path has no such batch, so fetch the one SHA
-    // here. Skip null OIDs (unborn branches) and prunable worktrees —
-    // matches the behavior in `collect()`. Silent on batch failure: the
-    // statusline is a compact prompt element with no room for warnings, and
-    // `commit.message` / `commit.timestamp` fall through to their defaults.
+    // Populate commit data directly. The main `collect()` path batches this
+    // across all items pre-skeleton; the single-item statusline path has no
+    // such batch, so fetch the one SHA here. Skip null OIDs (unborn branches).
+    // Silent on batch failure: the statusline is a compact prompt element with
+    // no room for warnings, and `commit.message` / `commit.timestamp` fall
+    // through to their defaults.
+    //
+    // `short_sha` populates for every row (including prunable). The
+    // timestamp/message bundle is skipped for prunable rows to match the old
+    // task-queue UX where probes against a missing worktree dir failed.
     let is_prunable = item.worktree_data().is_some_and(|d| d.is_prunable());
     if item.head != worktrunk::git::NULL_OID
-        && !is_prunable
         && let Ok(map) = repo.commit_details_many(&[&item.head])
         && let Some((short_sha, timestamp, commit_message)) = map.get(&item.head)
     {
-        item.commit = Some(CommitDetails {
-            short_sha: short_sha.clone(),
-            timestamp: *timestamp,
-            commit_message: commit_message.clone(),
-        });
+        item.short_sha = short_sha.clone();
+        if !is_prunable {
+            item.commit = Some(CommitDetails {
+                timestamp: *timestamp,
+                commit_message: commit_message.clone(),
+            });
+        }
     }
 
     // Extract worktree data (skip if not a worktree item)

@@ -248,24 +248,17 @@ impl JsonItem {
         // Commit info — empty strings for null OID (unborn branches). The
         // short form is fetched in the same `git log --no-walk` batch as the
         // subject and timestamp (see `commit_details_many`), so it honors
-        // `core.abbrev` and disambiguates without an extra subprocess. Prunable
-        // worktrees and rows whose batch failed have no `commit` populated;
-        // fall back to a 7-char prefix slice so the JSON field stays a "short"
-        // SHA rather than leaking the full 40 chars.
-        let (sha, short_sha) = if item.head == worktrunk::git::NULL_OID {
-            (String::new(), String::new())
+        // `core.abbrev` and disambiguates without an extra subprocess. Lives on
+        // `ListItem` directly so prunable worktrees still carry it even though
+        // their `commit` (timestamp + message) is intentionally left empty.
+        let sha = if item.head == worktrunk::git::NULL_OID {
+            String::new()
         } else {
-            let sha = item.head.clone();
-            let short_sha = item
-                .commit
-                .as_ref()
-                .map(|c| c.short_sha.clone())
-                .unwrap_or_else(|| sha[..7.min(sha.len())].to_string());
-            (sha, short_sha)
+            item.head.clone()
         };
         let commit = JsonCommit {
             sha,
-            short_sha,
+            short_sha: item.short_sha.clone(),
             message: item
                 .commit
                 .as_ref()
