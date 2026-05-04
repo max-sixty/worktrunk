@@ -591,10 +591,11 @@ fn test_configure_shell_skipped_lists_only_installed_shells(repo: TestRepo, temp
     // Skipped lines). Together they cover both arms of the
     // `Shell::is_installed()` guard in `scan_shell_configs`.
     //
-    // Here bash, fish, and pwsh are flagged installed but their rc/profile
-    // files don't exist; they should appear as Skipped. zsh and nu remain
-    // "not installed" and must not appear at all. PowerShell is iterated
-    // unconditionally now and surfaces via `is_installed()` like the others.
+    // Here bash and fish are flagged installed but their rc files don't exist;
+    // they should appear as Skipped. zsh and nu remain "not installed" and
+    // must not appear at all. PowerShell coverage lives in
+    // `test_powershell_skipped_when_installed_no_profile` (Unix-only because
+    // the profile path differs on Windows).
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
@@ -603,7 +604,6 @@ fn test_configure_shell_skipped_lists_only_installed_shells(repo: TestRepo, temp
         cmd.env("SHELL", "/bin/zsh");
         cmd.env("WORKTRUNK_TEST_BASH_INSTALLED", "1");
         cmd.env("WORKTRUNK_TEST_FISH_INSTALLED", "1");
-        cmd.env("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "1");
         cmd.arg("config")
             .arg("shell")
             .arg("install")
@@ -618,6 +618,36 @@ fn test_configure_shell_skipped_lists_only_installed_shells(repo: TestRepo, temp
         ----- stderr -----
         [2m↳[22m [2mSkipped [4mbash[24m; [4m~/.bashrc[24m not found[22m
         [2m↳[22m [2mSkipped [4mfish[24m; [4m~/.config/fish/functions[24m not found[22m
+        [31m✗[39m [31mNo shell config files found[39m
+        ");
+    });
+}
+
+/// PowerShell now iterates unconditionally and surfaces in `Skipped` via
+/// `is_installed()`, just like bash/zsh/fish/nushell. Unix-only because the
+/// profile path differs on Windows (`~/Documents/PowerShell/...`).
+#[rstest]
+#[cfg(unix)]
+fn test_powershell_skipped_when_installed_no_profile(repo: TestRepo, temp_home: TempDir) {
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.env("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "1");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("install")
+            .arg("--yes")
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd, @"
+        success: false
+        exit_code: 1
+        ----- stdout -----
+
+        ----- stderr -----
         [2m↳[22m [2mSkipped [4mpowershell[24m; [4m~/.config/powershell/Microsoft.PowerShell_profile.ps1[24m not found[22m
         [31m✗[39m [31mNo shell config files found[39m
         ");
