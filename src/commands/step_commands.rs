@@ -24,7 +24,7 @@ use ignore::gitignore::GitignoreBuilder;
 use path_slash::PathExt as _;
 use rayon::prelude::*;
 use worktrunk::HookType;
-use worktrunk::config::{CopyIgnoredConfig, LoadedConfigs, UserConfig};
+use worktrunk::config::{CopyIgnoredConfig, UserConfig};
 use worktrunk::copy::{copy_dir_recursive, copy_leaf};
 use worktrunk::git::{Repository, WorktreeInfo};
 use worktrunk::path::format_path_for_display;
@@ -736,11 +736,11 @@ fn resolve_copy_ignored_config(repo: &Repository) -> anyhow::Result<CopyIgnoredC
     let mut config = CopyIgnoredConfig {
         exclude: default_copy_ignored_excludes(),
     };
-    let LoadedConfigs {
-        user: user_config,
-        project: project_config,
-    } = LoadedConfigs::load(repo).context("Failed to load configs")?;
-    if let Some(project_config) = project_config.as_ref()
+    let user_config = repo.user_config();
+    let project_config = repo
+        .project_config()
+        .context("Failed to load project config")?;
+    if let Some(project_config) = project_config
         && let Some(project_copy_ignored) = project_config.copy_ignored()
     {
         config = config.merged_with(project_copy_ignored);

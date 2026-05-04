@@ -554,10 +554,22 @@ impl Repository {
     /// Borrow the cached project configuration.
     ///
     /// Same caching semantics as [`load_project_config`](Self::load_project_config),
-    /// but returns a reference into the cache. Mirrors [`user_config`](Self::user_config)
-    /// so callers that need both configs (e.g. via
-    /// [`LoadedConfigs`](crate::config::LoadedConfigs)) can read them through
-    /// the same borrow-from-cache shape.
+    /// but returns a reference into the cache. Mirrors
+    /// [`user_config`](Self::user_config) so callers that consume both can
+    /// pull them through the same borrow-from-cache shape.
+    ///
+    /// Unlike `user_config`, this does **not** participate in
+    /// [`Repository::prewarm`] — `.config/wt.toml` lives inside the
+    /// worktree, so the read can't fire until git discovery finishes.
+    /// Callers pay a few-tens-of-µs sequential file read on first access.
+    /// Deprecation warnings emit on that first call, so handlers that
+    /// produce ordered output (hooks, picker) typically warm this from
+    /// the entry point rather than letting it interleave with their own
+    /// stderr later.
+    ///
+    /// User and project configs are kept distinct rather than merged
+    /// because downstream consumers (alias loading, hook resolution,
+    /// approval policy) apply per-source rules.
     pub fn project_config(&self) -> anyhow::Result<Option<&ProjectConfig>> {
         self.cache
             .project_config

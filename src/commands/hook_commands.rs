@@ -12,8 +12,7 @@ use color_print::cformat;
 use strum::IntoEnumIterator;
 use worktrunk::HookType;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, Approvals, CommandConfig, LoadedConfigs, ProjectConfig, UserConfig,
-    referenced_vars_for_config,
+    ALIAS_ARGS_KEY, Approvals, CommandConfig, ProjectConfig, UserConfig, referenced_vars_for_config,
 };
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
@@ -375,9 +374,10 @@ pub fn handle_hook_show(
     use crate::help_pager::show_help_in_pager;
 
     let repo = Repository::current().context("Failed to show hooks")?;
-    let configs = LoadedConfigs::load(&repo).context("Failed to load configs")?;
-    let config: &UserConfig = configs.user;
-    let project_config: Option<&ProjectConfig> = configs.project;
+    let config: &UserConfig = repo.user_config();
+    let project_config: Option<&ProjectConfig> = repo
+        .project_config()
+        .context("Failed to load project config")?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
     let project_id = repo.project_identifier().ok();
 

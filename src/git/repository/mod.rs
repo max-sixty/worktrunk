@@ -549,7 +549,7 @@ impl Repository {
     ///   [`Repository::project_config_path`]) into one.
     /// - **git-config thread**: a single `git config --list -z` fork that the
     ///   bulk config map (`Repository::all_config`) would otherwise spawn
-    ///   on first read inside [`crate::config::LoadedConfigs::load`].
+    ///   on first read.
     /// - **user-config thread**: pure file I/O on `$WORKTRUNK_CONFIG_PATH` /
     ///   XDG paths, parsing worktrunk's user `wt.toml`. No git or
     ///   `Repository` involvement, so it overlaps cleanly with both git
@@ -779,11 +779,11 @@ impl Repository {
     ///
     /// Warnings (parse failures, env-var rejections, validation issues) are
     /// emitted to stderr inline by [`emit_user_config_warnings`], matching
-    /// the on-demand path in [`Repository::user_config`]. Because prewarm
-    /// runs in `main` before alias dispatch, these warnings now appear
-    /// earlier in the output than they did under the old pre-dispatch
-    /// `LoadedConfigs::load` path — but they still emerge before any
-    /// command-specific output, so user-visible ordering is unchanged.
+    /// the on-demand path in [`Repository::user_config`]. Prewarm runs in
+    /// `main` before alias dispatch, so these warnings emerge before any
+    /// command-specific output and before the per-handler
+    /// [`Repository::project_config`] reads that surface project-config
+    /// warnings.
     ///
     /// Best-effort: if `OnceLock::set` races (a second prewarm reentry, or
     /// a test that already populated the lock) we drop the second value.

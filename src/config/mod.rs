@@ -18,7 +18,6 @@ mod commands;
 pub(crate) mod deprecation;
 mod expansion;
 mod hooks;
-mod loaded;
 mod project;
 #[cfg(test)]
 mod test;
@@ -129,7 +128,6 @@ pub use expansion::{
     validate_template_syntax, vars_available_in,
 };
 pub use hooks::HooksConfig;
-pub use loaded::LoadedConfigs;
 pub use project::{ProjectCiConfig, ProjectConfig, ProjectListConfig, valid_project_config_keys};
 pub use unknown_tree::{
     UnknownAnalysis, UnknownTree, UnknownWarning, collect_unknown_warnings, compute_unknown_tree,

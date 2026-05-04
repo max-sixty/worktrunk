@@ -1,6 +1,6 @@
 use anyhow::Context;
 use std::path::PathBuf;
-use worktrunk::config::{LoadedConfigs, UserConfig};
+use worktrunk::config::UserConfig;
 use worktrunk::git::Repository;
 
 use super::command_executor::CommandContext;
@@ -76,12 +76,11 @@ impl CommandEnv {
         let branch = current_wt
             .branch()
             .context("Failed to determine current branch")?;
-        // Warm both configs in parallel; downstream hook code reads project
-        // from the cache. Clone user out — `CommandEnv` owns its config.
-        let config = LoadedConfigs::load(&repo)
-            .context("Failed to load config")?
-            .user
-            .clone();
+        // Warm the project config so downstream hook code reads it from the
+        // cache and any deprecation warnings surface here, before hook output.
+        // Clone user out — `CommandEnv` owns its config.
+        repo.project_config().context("Failed to load config")?;
+        let config = repo.user_config().clone();
 
         Ok(Self {
             repo,
