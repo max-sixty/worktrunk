@@ -202,7 +202,7 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | Field | Type | Description |
 |-------|------|-------------|
 | `sha` | string | Full commit SHA (40 chars) |
-| `short_sha` | string | Short commit SHA (7 chars) |
+| `short_sha` | string | Short commit SHA, abbreviated per `core.abbrev` (auto-extends for ambiguous prefixes) |
 | `message` | string | Commit message (first line) |
 | `timestamp` | number | Unix timestamp |
 

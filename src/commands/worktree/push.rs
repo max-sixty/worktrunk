@@ -160,8 +160,8 @@ impl MergeContext {
         } else {
             "commits"
         };
-        let head_sha = self.repo.run_command(&["rev-parse", "--short", "HEAD"])?;
-        let head_sha = head_sha.trim();
+        let full_sha = self.repo.run_command(&["rev-parse", "HEAD"])?;
+        let head_sha = self.repo.short_sha(full_sha.trim())?;
 
         let operations_note = format_operations_note(operations);
 
