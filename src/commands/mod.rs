@@ -9,6 +9,7 @@ pub(crate) mod custom;
 mod eval;
 mod for_each;
 mod handle_switch;
+mod hook_announcement;
 mod hook_commands;
 mod hook_filter;
 pub(crate) mod hooks;

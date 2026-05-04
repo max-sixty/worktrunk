@@ -58,10 +58,10 @@ use crate::commands::command_executor::{
     CommandContext, FailureStrategy, PipelineKind, PreparedCommand, PreparedStep,
     build_hook_context, execute_pipeline_foreground,
 };
-use crate::commands::hooks::{
-    HookSource, SourcedStep, format_pipeline_summary_from_names, sourced_steps_to_foreground,
-    step_names_from_config,
+use crate::commands::hook_announcement::{
+    SourcedStep, format_pipeline_summary_from_names, step_names_from_config,
 };
+use crate::commands::hooks::{HookSource, sourced_steps_to_foreground};
 use crate::commands::{build_invalid_subcommand_error, similar_subcommands};
 
 /// Built-in `wt step` subcommand names. Aliases with these names are
