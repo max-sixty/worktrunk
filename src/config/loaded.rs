@@ -49,18 +49,17 @@ pub struct LoadedConfigs<'r> {
 }
 
 impl<'r> LoadedConfigs<'r> {
-    /// Warm the user- and project-config caches in parallel; warm
-    /// `project_identifier` alongside the project load.
+    /// Warm the user- and project-config caches in parallel.
     ///
-    /// On a cold cache the wall-clock cost is the longest pole rather than
-    /// the sum (~6ms vs ~13ms sequential on a typical project). On a warm
-    /// cache both threads are no-ops.
+    /// On a cold cache the wall-clock cost is the longest pole (the
+    /// user-config TOML parse, ~4 ms on a typical project) rather than the
+    /// sum. On a warm cache both threads are no-ops.
     ///
-    /// `project_identifier` shares its thread with the project-config load
-    /// because both touch the same `Repository` and have no warning
-    /// interleave concern; combining them saves a spawn/join for the same
-    /// wall pole (the identifier's `git config --list -z` dominates either
-    /// way).
+    /// `project_identifier` is no longer warmed inside the scope: the bulk
+    /// `git config --list -z` it depended on now runs in
+    /// [`Repository::prewarm`] in parallel with the rev-parse fork, so
+    /// `project_identifier()` is memory-only by the time anything reaches
+    /// it (it just walks the preloaded config map).
     pub fn load(repo: &'r Repository) -> Result<Self> {
         std::thread::scope(|s| {
             s.spawn(|| {
@@ -68,14 +67,8 @@ impl<'r> LoadedConfigs<'r> {
                 let _ = repo.user_config();
             });
             s.spawn(|| {
-                {
-                    let _span = Span::new("project_config_load");
-                    let _ = repo.project_config();
-                }
-                {
-                    let _span = Span::new("project_identifier_warm");
-                    let _ = repo.project_identifier();
-                }
+                let _span = Span::new("project_config_load");
+                let _ = repo.project_config();
             });
         });
         Ok(Self {
