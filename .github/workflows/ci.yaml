@@ -216,7 +216,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Install shells (zsh, fish)
-      uses: awalsh128/cache-apt-pkgs-action@latest
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.0
       with:
         packages: zsh fish
         version: 1.0
@@ -384,7 +384,7 @@ jobs:
         save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Install shells (zsh, fish)
-      uses: awalsh128/cache-apt-pkgs-action@latest
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.0
       with:
         packages: zsh fish
         version: 1.0
