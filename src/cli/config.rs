@@ -782,7 +782,7 @@ $ wt config state logs clear
     /// One-time hints shown in this repo
     #[command(
         after_long_help = r#"Some hints show once per repo on first use, then are recorded in git config
-as `worktrunk.hints.<name> = true`.
+as `worktrunk.hints.<name>`, an integer count of times the hint has been shown.
 
 ## Current hints
 
