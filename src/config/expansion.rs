@@ -613,13 +613,13 @@ fn setup_template_env(repo: &Repository) -> Environment<'static> {
         short_hash(value.as_str().unwrap_or_default())
     });
     env.add_filter("hash_port", |value: String| string_to_port(&value));
-    env.add_filter("parent", |value: Value| -> String {
+    env.add_filter("dirname", |value: Value| -> String {
         std::path::Path::new(value.as_str().unwrap_or_default())
             .parent()
             .map(|p| to_posix_path(&p.to_string_lossy()))
             .unwrap_or_default()
     });
-    env.add_filter("name", |value: Value| -> String {
+    env.add_filter("basename", |value: Value| -> String {
         std::path::Path::new(value.as_str().unwrap_or_default())
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -763,8 +763,8 @@ pub fn validate_template(
 /// - `sanitize_hash` — Filesystem-safe name with hash suffix so distinct inputs never collide
 /// - `hash` — 3-character base36 hash digest of the input
 /// - `hash_port` — Hash to deterministic port number (10000-19999)
-/// - `parent` — Strip the last path component (e.g., `/a/b/c` → `/a/b`)
-/// - `name` — Keep only the last path component (e.g., `/a/b/c` → `c`)
+/// - `dirname` — Strip the last path component (e.g., `/a/b/c` → `/a/b`)
+/// - `basename` — Keep only the last path component (e.g., `/a/b/c` → `c`)
 ///
 /// # Functions
 /// - `worktree_path_of_branch(branch)` — Look up the filesystem path of a branch's worktree
@@ -1500,15 +1500,15 @@ mod tests {
     }
 
     #[test]
-    fn test_path_parent_and_name_filters() {
+    fn test_dirname_and_basename_filters() {
         let test = test_repo();
         let mut vars = HashMap::new();
 
-        // Bare repo wrapped in a hidden dir: `parent | name` recovers the wrapper name
+        // Bare repo wrapped in a hidden dir: `dirname | basename` recovers the wrapper name
         // (the case from #1279 — `{{ repo }}` resolves to `.git`, but the user wants `myrepo`)
         vars.insert("repo_path", "/projects/myrepo/.git");
         let result = expand_template(
-            "{{ repo_path | parent | name }}",
+            "{{ repo_path | dirname | basename }}",
             &vars,
             false,
             &test.repo,
@@ -1520,7 +1520,7 @@ mod tests {
         // Composing into a worktree-path template
         vars.insert("branch", "feature-auth");
         let result = expand_template(
-            "{{ repo_path }}/../{{ repo_path | parent | name }}.{{ branch | sanitize }}",
+            "{{ repo_path }}/../{{ repo_path | dirname | basename }}.{{ branch | sanitize }}",
             &vars,
             false,
             &test.repo,
@@ -1529,25 +1529,51 @@ mod tests {
         .unwrap();
         assert_eq!(result, "/projects/myrepo/.git/../myrepo.feature-auth");
 
-        // `parent` strips the last component
+        // `dirname` strips the last component
         vars.insert("repo_path", "/a/b/c");
-        let parent =
-            expand_template("{{ repo_path | parent }}", &vars, false, &test.repo, "test").unwrap();
-        assert_eq!(parent, "/a/b");
+        let dirname = expand_template(
+            "{{ repo_path | dirname }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(dirname, "/a/b");
 
-        // `name` keeps only the last component
-        let name =
-            expand_template("{{ repo_path | name }}", &vars, false, &test.repo, "test").unwrap();
-        assert_eq!(name, "c");
+        // `basename` keeps only the last component
+        let basename = expand_template(
+            "{{ repo_path | basename }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(basename, "c");
 
-        // No separator: parent is empty, name is the whole input
+        // No separator: dirname is empty, basename is the whole input
         vars.insert("repo_path", "myrepo");
         assert_eq!(
-            expand_template("{{ repo_path | parent }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ repo_path | dirname }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             ""
         );
         assert_eq!(
-            expand_template("{{ repo_path | name }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ repo_path | basename }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "myrepo"
         );
     }
