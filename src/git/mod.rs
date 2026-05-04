@@ -43,9 +43,9 @@ pub use error::{
     // Trait for typed errors that produce a rich, styled diagnostic block
     // distinct from their short single-line `Display`
     Diagnostic,
-    // Extension methods on `anyhow::Error` (find_command_error,
-    // render_diagnostic, display_message, exit_code, interrupt_exit_code,
-    // add_hook_skip_hint). Bring into scope to call them via method syntax.
+    // Extension methods on `anyhow::Error` (render_diagnostic,
+    // display_message, exit_code, interrupt_exit_code). Bring into scope
+    // to call them via method syntax.
     ErrorExt,
     // Structured command failure info
     FailedCommand,
@@ -59,6 +59,8 @@ pub use error::{
     // CLI context for enriching switch suggestions in error hints
     SwitchSuggestionCtx,
     WorktrunkError,
+    // Wrap a HookCommandFailed-bearing error with a --no-hooks hint
+    add_hook_skip_hint,
     // Render a single error via Diagnostic if it implements one
     try_render_diagnostic,
 };

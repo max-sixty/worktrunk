@@ -127,13 +127,6 @@ pub trait Diagnostic {
 /// let rendered = err.render_diagnostic().unwrap_or_else(|| err.to_string());
 /// ```
 pub trait ErrorExt {
-    /// Walk the chain for a [`CommandError`].
-    ///
-    /// Returns the first match. Useful for renderers and callers that
-    /// need the raw stderr regardless of how many `.context(...)` layers
-    /// wrap it.
-    fn find_command_error(&self) -> Option<&CommandError>;
-
     /// Render the first [`Diagnostic`]-implementing error in the chain.
     ///
     /// Returns `None` when the chain has no typed diagnostic — callers
@@ -172,23 +165,6 @@ pub trait ErrorExt {
     /// See the "Signal Handling" section of the project `CLAUDE.md` for
     /// the rationale and the full list of loops that apply this policy.
     fn interrupt_exit_code(&self) -> Option<i32>;
-
-    /// If the error wraps a [`WorktrunkError::HookCommandFailed`], wrap
-    /// it to add a `--no-hooks` hint.
-    ///
-    /// ## When to use
-    ///
-    /// Use this for commands where a hook runs as a side effect of the
-    /// user's intent:
-    /// - `wt merge` — user wants to merge, hooks run as part of that
-    /// - `wt commit` — user wants to commit, pre-commit hooks run
-    /// - `wt switch --create` — user wants a worktree, post-create hooks run
-    ///
-    /// ## When NOT to use
-    ///
-    /// Don't use for `wt hook <type>` — the user explicitly asked to run
-    /// hooks, so suggesting `--no-hooks` makes no sense.
-    fn add_hook_skip_hint(self) -> Self;
 }
 
 /// Information about a failed command, for display in error messages.
@@ -263,6 +239,15 @@ impl CommandError {
         } else {
             format!("{} {}", self.program, self.args.join(" "))
         }
+    }
+
+    /// Walk an [`anyhow::Error`] chain for a [`CommandError`].
+    ///
+    /// Returns the first match. Useful for renderers and callers that
+    /// need the raw stderr regardless of how many `.context(...)` layers
+    /// wrap it.
+    pub fn find_in(error: &anyhow::Error) -> Option<&CommandError> {
+        error.chain().find_map(|e| e.downcast_ref::<CommandError>())
     }
 
     /// stderr + stdout, trimmed and joined by `\n`, with empty pieces
@@ -1467,6 +1452,18 @@ impl std::fmt::Display for WorktrunkError {
     }
 }
 
+impl WorktrunkError {
+    /// Exit code carried by this variant, if any.
+    pub fn exit_code(&self) -> Option<i32> {
+        match self {
+            WorktrunkError::ChildProcessExited { code, .. } => Some(*code),
+            WorktrunkError::HookCommandFailed { exit_code, .. } => *exit_code,
+            WorktrunkError::AlreadyDisplayed { exit_code } => Some(*exit_code),
+            WorktrunkError::CommandNotApproved => None,
+        }
+    }
+}
+
 impl Diagnostic for WorktrunkError {
     fn render(&self) -> String {
         match self {
@@ -1499,31 +1496,22 @@ impl Diagnostic for WorktrunkError {
 impl std::error::Error for WorktrunkError {}
 
 impl ErrorExt for anyhow::Error {
-    fn find_command_error(&self) -> Option<&CommandError> {
-        self.chain().find_map(|e| e.downcast_ref::<CommandError>())
-    }
-
     fn render_diagnostic(&self) -> Option<String> {
         self.chain().find_map(try_render_diagnostic)
     }
 
     fn display_message(&self) -> String {
-        self.find_command_error()
+        CommandError::find_in(self)
             .map(|cmd_err| cmd_err.combined_output())
             .unwrap_or_else(|| self.to_string())
     }
 
     fn exit_code(&self) -> Option<i32> {
-        // Look through HookErrorWithHint to its inner error.
-        if let Some(wrapper) = self.downcast_ref::<HookErrorWithHint>() {
-            return wrapper.inner.exit_code();
-        }
-        self.downcast_ref::<WorktrunkError>().and_then(|e| match e {
-            WorktrunkError::ChildProcessExited { code, .. } => Some(*code),
-            WorktrunkError::HookCommandFailed { exit_code, .. } => *exit_code,
-            WorktrunkError::CommandNotApproved => None,
-            WorktrunkError::AlreadyDisplayed { exit_code } => Some(*exit_code),
-        })
+        // Walks past `HookErrorWithHint` (whose `Error::source` exposes
+        // the inner `WorktrunkError`) without a special case here.
+        self.chain()
+            .find_map(|e| e.downcast_ref::<WorktrunkError>())
+            .and_then(WorktrunkError::exit_code)
     }
 
     fn interrupt_exit_code(&self) -> Option<i32> {
@@ -1536,54 +1524,63 @@ impl ErrorExt for anyhow::Error {
             None
         }
     }
-
-    fn add_hook_skip_hint(self) -> Self {
-        // Extract hook_type first (if applicable), then decide whether to wrap
-        let hook_type = self
-            .downcast_ref::<WorktrunkError>()
-            .and_then(|wt_err| match wt_err {
-                WorktrunkError::HookCommandFailed { hook_type, .. } => Some(*hook_type),
-                _ => None,
-            });
-
-        match hook_type {
-            Some(hook_type) => HookErrorWithHint {
-                inner: self,
-                hook_type,
-            }
-            .into(),
-            None => self,
-        }
-    }
 }
 
-/// Wrapper that displays a HookCommandFailed error with the --no-hooks hint.
-/// Created by `add_hook_skip_hint()` for commands that support `--no-hooks`.
+/// If the error wraps a [`WorktrunkError::HookCommandFailed`], wrap it
+/// with [`HookErrorWithHint`] to surface a `--no-hooks` hint when
+/// rendered. Pass-through for any other error.
+///
+/// Domain behavior, not a general property of an error — kept as a free
+/// function so it stays out of [`ErrorExt`].
+///
+/// ## When to use
+///
+/// Use this for commands where a hook runs as a side effect of the
+/// user's intent:
+/// - `wt merge` — user wants to merge, hooks run as part of that
+/// - `wt commit` — user wants to commit, pre-commit hooks run
+/// - `wt switch --create` — user wants a worktree, post-create hooks run
+///
+/// ## When NOT to use
+///
+/// Don't use for `wt hook <type>` — the user explicitly asked to run
+/// hooks, so suggesting `--no-hooks` makes no sense.
+pub fn add_hook_skip_hint(err: anyhow::Error) -> anyhow::Error {
+    // Peek before consuming: only `HookCommandFailed` triggers the
+    // wrapper, and we need ownership of the typed leaf to store it.
+    let Some(hook_type) = err.downcast_ref::<WorktrunkError>().and_then(|e| match e {
+        WorktrunkError::HookCommandFailed { hook_type, .. } => Some(*hook_type),
+        _ => None,
+    }) else {
+        return err;
+    };
+    let inner = err
+        .downcast::<WorktrunkError>()
+        .expect("downcast_ref above already confirmed the type");
+    HookErrorWithHint { inner, hook_type }.into()
+}
+
+/// Wrapper that displays a [`WorktrunkError::HookCommandFailed`] with a
+/// `--no-hooks` hint. Created by [`add_hook_skip_hint`] for commands that
+/// support `--no-hooks`.
+///
+/// The typed inner field captures the invariant that this only ever wraps
+/// a hook failure — no runtime downcast or fallback in `render`.
 #[derive(Debug)]
 pub struct HookErrorWithHint {
-    inner: anyhow::Error,
+    inner: WorktrunkError,
     hook_type: HookType,
 }
 
 impl std::fmt::Display for HookErrorWithHint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Single-line label: delegate to the inner error's short Display
-        // (always HookCommandFailed — validated by add_hook_skip_hint).
         write!(f, "{}", self.inner)
     }
 }
 
 impl Diagnostic for HookErrorWithHint {
     fn render(&self) -> String {
-        // Render the wrapped error's diagnostic block, then append the
-        // --no-hooks hint. The wrapped error is always
-        // HookCommandFailed-bearing (validated by add_hook_skip_hint), and
-        // its Diagnostic impl is on `WorktrunkError`.
-        let mut body = self
-            .inner
-            .downcast_ref::<WorktrunkError>()
-            .map(Diagnostic::render)
-            .unwrap_or_else(|| self.inner.to_string());
+        let body = self.inner.render();
         // Can't derive command from hook type (e.g., PreRemove is used by both `wt remove` and `wt merge`)
         let hint = hint_message(cformat!(
             "To skip {} hooks, re-run with <underline>--no-hooks</>",
@@ -1593,16 +1590,17 @@ impl Diagnostic for HookErrorWithHint {
         if body.is_empty() {
             hint
         } else {
-            body.push('\n');
-            body.push_str(&hint);
-            body
+            format!("{body}\n{hint}")
         }
     }
 }
 
 impl std::error::Error for HookErrorWithHint {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.inner.source()
+        // Expose the typed leaf so chain walks (e.g., `ErrorExt::exit_code`)
+        // can find the underlying `WorktrunkError` without knowing about
+        // this wrapper.
+        Some(&self.inner)
     }
 }
 
@@ -1781,7 +1779,7 @@ mod tests {
             exit_code: Some(7),
         }
         .into();
-        assert_eq!(inner.add_hook_skip_hint().exit_code(), Some(7));
+        assert_eq!(add_hook_skip_hint(inner).exit_code(), Some(7));
     }
 
     #[test]
@@ -1840,7 +1838,7 @@ mod tests {
             exit_code: Some(1),
         }
         .into();
-        assert_snapshot!(render_anyhow(&inner.add_hook_skip_hint()), @"
+        assert_snapshot!(render_anyhow(&add_hook_skip_hint(inner)), @"
         [31m✗[39m [31mpre-merge command failed: [1mtest[22m: failed[39m
         [2m↳[22m [2mTo skip pre-merge hooks, re-run with [4m--no-hooks[24m[22m
         ");
@@ -1853,7 +1851,7 @@ mod tests {
             exit_code: Some(1),
         }
         .into();
-        assert_snapshot!(render_anyhow(&inner.add_hook_skip_hint()), @"
+        assert_snapshot!(render_anyhow(&add_hook_skip_hint(inner)), @"
         [31m✗[39m [31mpre-commit command failed: [1mbuild[22m: Build failed[39m
         [2m↳[22m [2mTo skip pre-commit hooks, re-run with [4m--no-hooks[24m[22m
         ");
@@ -1865,16 +1863,16 @@ mod tests {
             signal: None,
         }
         .into();
-        assert!(!render_anyhow(&err.add_hook_skip_hint()).contains("--no-hooks"));
+        assert!(!render_anyhow(&add_hook_skip_hint(err)).contains("--no-hooks"));
 
         let err: anyhow::Error = GitError::DetachedHead { action: None }.into();
-        assert!(!render_anyhow(&err.add_hook_skip_hint()).contains("--no-hooks"));
+        assert!(!render_anyhow(&add_hook_skip_hint(err)).contains("--no-hooks"));
 
         let err: anyhow::Error = GitError::Other {
             message: "some error".into(),
         }
         .into();
-        assert!(!render_anyhow(&err.add_hook_skip_hint()).contains("--no-hooks"));
+        assert!(!render_anyhow(&add_hook_skip_hint(err)).contains("--no-hooks"));
     }
 
     /// `Display` is the short single-line label per variant — no symbol,
@@ -2481,7 +2479,7 @@ mod tests {
     }
 
     #[test]
-    fn find_command_error_walks_anyhow_chain() {
+    fn command_error_find_in_walks_anyhow_chain() {
         // Wrapping with `.context(...)` must not hide the typed leaf — the
         // helper should pull it out regardless of how many layers wrap.
         let err: anyhow::Error = Err::<(), _>(sample_command_error())
@@ -2489,9 +2487,7 @@ mod tests {
             .context("running prune")
             .unwrap_err();
 
-        let cmd_err = err
-            .find_command_error()
-            .expect("CommandError should be found in chain");
+        let cmd_err = CommandError::find_in(&err).expect("CommandError should be found in chain");
         assert_eq!(cmd_err.program, "git");
         assert_eq!(
             cmd_err.args,
@@ -2501,8 +2497,8 @@ mod tests {
     }
 
     #[test]
-    fn find_command_error_returns_none_for_unrelated_error() {
+    fn command_error_find_in_returns_none_for_unrelated_error() {
         let err = anyhow::anyhow!("some other failure");
-        assert!(err.find_command_error().is_none());
+        assert!(CommandError::find_in(&err).is_none());
     }
 }

@@ -10,7 +10,7 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{CommandConfig, UserConfig, format_hook_variables};
-use worktrunk::git::{ErrorExt, Repository};
+use worktrunk::git::{Repository, add_hook_skip_hint};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     eprintln, format_with_gutter, info_message, progress_message, verbosity, warning_message,
@@ -752,7 +752,7 @@ pub(crate) fn execute_hook(
         },
         failure_strategy,
     )
-    .map_err(|e| e.add_hook_skip_hint())
+    .map_err(add_hook_skip_hint)
 }
 
 #[cfg(test)]

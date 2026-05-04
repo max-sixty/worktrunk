@@ -103,7 +103,7 @@ use dunce::canonicalize;
 use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
-use super::{DefaultBranchName, ErrorExt, GitError, LineDiff, WorktreeInfo};
+use super::{CommandError, DefaultBranchName, GitError, LineDiff, WorktreeInfo};
 
 // Re-export types needed by submodules
 pub(super) use super::{
@@ -1489,7 +1489,7 @@ impl Repository {
                 }),
             );
         }
-        if let Some(cmd_err) = err.find_command_error() {
+        if let Some(cmd_err) = CommandError::find_in(err) {
             let exit_info = match cmd_err.exit_code {
                 Some(code) => format!("exit code {code}"),
                 None => "killed by signal".to_string(),
