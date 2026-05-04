@@ -785,6 +785,50 @@ fn test_relocate_json_with_skip(repo: TestRepo) {
     assert_eq!(skipped[0]["reason"], "uncommitted");
 }
 
+/// `step relocate --format=json` after a successful execution emits the
+/// per-branch `entries` array with `from` / `to` paths.
+#[rstest]
+fn test_relocate_executes_json(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+    let wrong_path = parent.join("wrong-location");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        wrong_path.to_str().unwrap(),
+    ]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "relocate", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "relocate JSON should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+
+    assert_eq!(parsed["dry_run"], false);
+    let entries = parsed["entries"].as_array().expect("entries array");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["branch"], "feature");
+    assert!(
+        entries[0]["from"]
+            .as_str()
+            .unwrap()
+            .ends_with("wrong-location")
+    );
+    assert!(entries[0]["to"].as_str().unwrap().ends_with("repo.feature"));
+
+    // The actual move should have happened.
+    assert!(!wrong_path.exists());
+    assert!(parent.join("repo.feature").exists());
+}
+
 /// `step relocate --format=json` surfaces template-expansion failures as
 /// `skipped` entries with `reason: "template_error"` rather than silently
 /// reporting an empty success — automation needs to detect a broken config.

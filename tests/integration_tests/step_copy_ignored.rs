@@ -1678,3 +1678,69 @@ fn test_copy_ignored_json_summary(mut repo: TestRepo) {
     assert_eq!(entries[0]["path"], ".env");
     assert!(feature_path.join(".env").exists());
 }
+
+/// `copy-ignored --format=json` reports `same_worktree` when source and
+/// destination resolve to the same path, with empty entries.
+#[rstest]
+fn test_copy_ignored_same_worktree_json(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "copy-ignored",
+            "--from=feature",
+            "--to=feature",
+            "--format=json",
+        ])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "copy-ignored same-worktree should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+
+    assert_eq!(parsed["outcome"], "same_worktree");
+    assert_eq!(parsed["files"], 0);
+    assert_eq!(parsed["bytes"], 0);
+    assert_eq!(
+        parsed["entries"].as_array().expect("entries array").len(),
+        0
+    );
+}
+
+/// `copy-ignored --format=json` reports `copied` with zero counts when no
+/// ignored files match — distinct from the same-worktree case.
+#[rstest]
+fn test_copy_ignored_no_matches_json(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    // No .gitignore / .worktreeinclude — nothing to copy.
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored", "--format=json"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "copy-ignored should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+
+    assert_eq!(parsed["outcome"], "copied");
+    assert_eq!(parsed["dry_run"], false);
+    assert_eq!(parsed["files"], 0);
+    assert_eq!(parsed["bytes"], 0);
+    assert_eq!(
+        parsed["entries"].as_array().expect("entries array").len(),
+        0
+    );
+}

@@ -2833,6 +2833,33 @@ fn test_step_squash_squashed_json(mut repo: TestRepo) {
     assert_eq!(parsed["stage_mode"], "all");
 }
 
+/// `step squash --format=json` reports `no_net_changes` when commits cancel
+/// each other out so the squash produces an empty diff.
+#[rstest]
+fn test_step_squash_no_net_changes_json(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    let file_path = feature_wt.join("file.txt");
+    let initial = std::fs::read_to_string(&file_path).unwrap();
+
+    repo.commit_in_worktree(&feature_wt, "file.txt", "change1", "change 1");
+    repo.commit_in_worktree(&feature_wt, "file.txt", "change2", "change 2");
+    repo.commit_in_worktree(&feature_wt, "file.txt", &initial, "revert to initial");
+
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--no-hooks", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "step squash failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "no_net_changes");
+}
+
 /// `step rebase --format=json` reports `rebased` (not `fast_forwarded`) when
 /// the feature branch has its own commits that need to be replayed onto a
 /// moved target.
