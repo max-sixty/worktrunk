@@ -333,25 +333,17 @@ pub fn tier_would_conflict(
     has_merge_tree_conflicts: Option<bool>,
     has_working_tree_conflicts: Option<Option<bool>>,
 ) -> Tier<MainState> {
-    // Working-tree probe is authoritative when it reports a dirty result.
-    match has_working_tree_conflicts {
-        Some(Some(true)) => return Tier::Fired(MainState::WouldConflict),
-        Some(Some(false)) => return Tier::RuledOut,
-        Some(None) | None => {}
-    }
-    // HEAD probe.
-    match has_merge_tree_conflicts {
-        Some(true) => return Tier::Fired(MainState::WouldConflict),
-        Some(false) => {}
-        None => return Tier::Wait,
-    }
-    // HEAD probe says "no conflict" — still need the working-tree probe
-    // to load (clean / unmerged path returns `Some(None)`).
-    match has_working_tree_conflicts {
-        Some(None) => Tier::RuledOut,
-        // Some(Some(_)) handled above.
-        Some(Some(_)) => unreachable!(),
-        None => Tier::Wait,
+    use Tier::*;
+    match (has_merge_tree_conflicts, has_working_tree_conflicts) {
+        // Working-tree probe is authoritative when it reports a dirty result.
+        (_, Some(Some(true))) => Fired(MainState::WouldConflict),
+        (_, Some(Some(false))) => RuledOut,
+        // Otherwise consult HEAD probe.
+        (Some(true), _) => Fired(MainState::WouldConflict),
+        (Some(false), Some(None)) => RuledOut,
+        // HEAD says "no conflict" but WT hasn't reported — wait.
+        (Some(false), None) => Wait,
+        (None, _) => Wait,
     }
 }
 
@@ -809,6 +801,17 @@ mod tests {
         assert_eq!(
             tier_would_conflict(Some(false), Some(Some(true))),
             Tier::Fired(MainState::WouldConflict)
+        );
+        // WT probe is authoritative: rule out even when HEAD probe says
+        // "would conflict" (uncommitted changes resolve it). This
+        // combination shouldn't arise in production — the
+        // `MergeTreeConflictsTask` skip-when-dirty path keeps HEAD as a
+        // sentinel `false` whenever WT is `Some(Some(_))` — but pin the
+        // contract so a future refactor that reorders the matches
+        // doesn't silently regress.
+        assert_eq!(
+            tier_would_conflict(Some(true), Some(Some(false))),
+            Tier::RuledOut
         );
         // HEAD probe hasn't reported → wait (could flip us to conflict).
         assert_eq!(tier_would_conflict(None, None), Tier::Wait);
