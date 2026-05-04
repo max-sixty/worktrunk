@@ -8,9 +8,6 @@ expression: "&output"
 
 [36m❯[39m Install shell integration? [1m[y/N/?][22m y
 [32m✓[39m [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
-[2m↳[22m [2mSkipped [4mzsh[24m; [4m~/.zshrc[24m not found[22m
-[2m↳[22m [2mSkipped [4mfish[24m; [4m~/.config/fish/functions[24m not found[22m
-[2m↳[22m [2mSkipped [4mnu[24m; [4m~/.config/nushell/vendor/autoload[24m not found[22m
 
 [32m✓[39m [32mConfigured 1 shell[39m
 [2m↳[22m [2mRestart shell to activate shell integration[22m

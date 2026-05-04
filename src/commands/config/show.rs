@@ -77,10 +77,7 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     render_runtime_info(&mut show_output)?;
 
     // Display through pager (config show is always long-form output)
-    if let Err(e) = show_help_in_pager(&show_output, true) {
-        log::debug!("Pager invocation failed: {}", e);
-        worktrunk::styling::println!("{}", show_output);
-    }
+    show_help_in_pager(&show_output, true);
 
     Ok(())
 }
@@ -792,7 +789,14 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         }
         writeln!(out, "{}", format_with_gutter(&debug_lines.join("\n"), None))?;
     }
-    writeln!(out)?;
+
+    // Blank line separates the active/not-active status from the per-shell list.
+    // Only emit when there's a list to render — otherwise the trailing hint
+    // ("To configure, run …") would float behind a stray blank, breaking the
+    // hint-attaches-to-subject formatting rule.
+    if !scan_result.configured.is_empty() || !scan_result.skipped.is_empty() {
+        writeln!(out)?;
+    }
 
     let mut any_not_configured = false;
     let mut has_any_unmatched = false;

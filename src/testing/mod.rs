@@ -254,6 +254,15 @@ pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     // Disable delayed streaming for deterministic output across platforms.
     // Without this, slow CI triggers progress messages that don't appear on faster systems.
     ("WORKTRUNK_TEST_DELAYED_STREAM_MS", "-1"),
+    // Treat shells as not installed by default so the "Skipped …; rc not found"
+    // filter in scan_shell_configs is deterministic across hosts. Tests that need
+    // a shell to count as installed (e.g., to assert the Skipped path) set "1".
+    // Nushell uses the historical env-var name `_ENV` (see Shell::is_installed).
+    ("WORKTRUNK_TEST_BASH_INSTALLED", "0"),
+    ("WORKTRUNK_TEST_ZSH_INSTALLED", "0"),
+    ("WORKTRUNK_TEST_FISH_INSTALLED", "0"),
+    ("WORKTRUNK_TEST_NUSHELL_ENV", "0"),
+    ("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "0"),
 ];
 
 // NOTE: TERM is intentionally NOT in STATIC_TEST_ENV_VARS because:
@@ -439,10 +448,10 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // own test repo via the default lookup; host leakage is prevented
     // by the env-strip above.
     isolate_subprocess_env(cmd, None);
-    // Disable auto PowerShell detection (tests that need it should set to "1")
+    // Disable auto PowerShell detection (tests that need it should set to "1").
+    // Other shell-installed defaults live in STATIC_TEST_ENV_VARS so PTY tests
+    // (which use TestRepo::test_env_vars) inherit them too.
     cmd.env("WORKTRUNK_TEST_POWERSHELL_ENV", "0");
-    // Disable auto nushell detection (tests that need it should set to "1")
-    cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
     cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
     // Enable warn-level logging so diagnostics show up in test failures
     cmd.env("RUST_LOG", "warn");

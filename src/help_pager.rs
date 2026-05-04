@@ -76,22 +76,23 @@ fn detect_help_pager() -> Option<String> {
 /// - No pager configured (prints to stdout)
 /// - stdout is not a TTY (prints to stdout)
 /// - Pager spawn fails (prints to stdout)
+/// - Pager closes stdin early or wait fails (prints to stdout)
 ///
 /// Help text goes to stdout — POSIX convention (`wt --help | less` should work
 /// without redirection), matching `cargo`, `curl`, `python`, `git <cmd> -h`,
 /// and `--version` (see #2072).
-pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) -> std::io::Result<()> {
+pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) {
     // Short help (-h) never uses a pager
     if !use_pager {
         log::debug!("Short help (-h) requested, printing directly to stdout");
         print!("{}", help_text);
-        return Ok(());
+        return;
     }
 
     let Some(pager_cmd) = detect_help_pager() else {
         log::debug!("No pager configured, printing help directly to stdout");
         print!("{}", help_text);
-        return Ok(());
+        return;
     };
 
     // Only page when our output destination is a terminal.
@@ -99,45 +100,32 @@ pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) -> std::io::R
     if !std::io::stdout().is_terminal() {
         log::debug!("stdout is not a TTY, skipping pager");
         print!("{}", help_text);
-        return Ok(());
+        return;
     }
 
     log::debug!("Invoking pager: {}", pager_cmd);
+    if let Err(e) = pipe_through_pager(&pager_cmd, help_text) {
+        log::debug!("Pager failed, falling back to stdout: {}", e);
+        print!("{}", help_text);
+    }
+}
 
+/// Pipe `help_text` to the given pager command and wait for it to exit.
+///
+/// Spawn / write / wait failures all surface as `Err` so the caller can fall back
+/// to direct stdout. Extracted from `show_help_in_pager` so the failure paths can
+/// be exercised by unit tests with stand-in commands (`true`, `cat > /dev/null`)
+/// that don't depend on a real TTY.
+fn pipe_through_pager(pager_cmd: &str, help_text: &str) -> std::io::Result<()> {
     let less_flags = compute_less_flags(std::env::var("LESS").ok().as_deref());
-
-    // Spawn pager with TTY access (interactive, unlike detached diff renderer).
-    // Pager output inherits our stdout — no redirection needed.
-    // Falls back to direct output if pager unavailable (e.g., less not installed)
-    let shell = match ShellConfig::get() {
-        Ok(shell) => shell,
-        Err(e) => {
-            log::debug!("Shell unavailable for pager: {}", e);
-            print!("{}", help_text);
-            return Ok(());
-        }
-    };
+    let shell = ShellConfig::get().map_err(std::io::Error::other)?;
     log::debug!("$ {} (pager)", pager_cmd);
-    let mut cmd = shell.command(&pager_cmd);
+    let mut cmd = shell.command(pager_cmd);
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
-    let mut child = match cmd.stdin(Stdio::piped()).env("LESS", &less_flags).spawn() {
-        Ok(child) => child,
-        Err(e) => {
-            log::debug!(
-                "Failed to spawn pager '{}' with {}: {}",
-                pager_cmd,
-                shell.name,
-                e
-            );
-            print!("{}", help_text);
-            return Ok(());
-        }
-    };
-
+    let mut child = cmd.stdin(Stdio::piped()).env("LESS", &less_flags).spawn()?;
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(help_text.as_bytes())?;
     }
-
     child.wait()?;
     Ok(())
 }
@@ -153,6 +141,16 @@ fn compute_less_flags(user_less: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::{compute_less_flags, parse_pager_value};
+
+    /// `cat > /dev/null` exercises the full spawn → write → wait path with a
+    /// stand-in pager that always succeeds. Covers every line of
+    /// `pipe_through_pager`'s body; the `?` propagations are line-hit even on
+    /// the Ok branch.
+    #[cfg(unix)]
+    #[test]
+    fn test_pipe_through_pager_pipes_to_real_command() {
+        super::pipe_through_pager("cat > /dev/null", "help text").expect("cat should succeed");
+    }
 
     #[test]
     fn test_validate_excludes_cat() {

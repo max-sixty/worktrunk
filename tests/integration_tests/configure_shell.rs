@@ -34,9 +34,6 @@ fn test_configure_shell_with_yes(repo: TestRepo, temp_home: TempDir) {
 
         ----- stderr -----
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        [2m↳[22m [2mSkipped [4mbash[24m; [4m~/.bashrc[24m not found[22m
-        [2m↳[22m [2mSkipped [4mfish[24m; [4m~/.config/fish/functions[24m not found[22m
-        [2m↳[22m [2mSkipped [4mnu[24m; [4m~/.config/nushell/vendor/autoload[24m not found[22m
 
         [32m✓[39m [32mConfigured 1 shell[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
@@ -589,6 +586,46 @@ fn test_config_show_fish_legacy_with_functions_dir(mut repo: TestRepo, temp_home
 }
 
 #[rstest]
+fn test_configure_shell_skipped_lists_only_installed_shells(repo: TestRepo, temp_home: TempDir) {
+    // Pairs with `test_configure_shell_no_files` (no shells installed → no
+    // Skipped lines). Together they cover both arms of the
+    // `Shell::is_installed()` guard in `scan_shell_configs`.
+    //
+    // Here bash and fish are flagged installed but their rc files don't exist;
+    // they should appear as Skipped. zsh and nu remain "not installed" and
+    // must not appear at all.
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.env("WORKTRUNK_TEST_BASH_INSTALLED", "1");
+        cmd.env("WORKTRUNK_TEST_FISH_INSTALLED", "1");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("install")
+            .arg("--yes")
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd, @"
+        success: false
+        exit_code: 1
+        ----- stdout -----
+
+        ----- stderr -----
+        [2m↳[22m [2mSkipped [4mbash[24m; [4m~/.bashrc[24m not found[22m
+        [2m↳[22m [2mSkipped [4mfish[24m; [4m~/.config/fish/functions[24m not found[22m
+        [31m✗[39m [31mNo shell config files found[39m
+        ");
+    });
+}
+
+/// No shells installed and no rc files — clean error, no Skipped lines.
+///
+/// Pairs with `test_configure_shell_skipped_lists_only_installed_shells`,
+/// which exercises the other arm (binary on PATH, rc absent → Skipped).
+#[rstest]
 fn test_configure_shell_no_files(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
@@ -608,10 +645,6 @@ fn test_configure_shell_no_files(repo: TestRepo, temp_home: TempDir) {
         ----- stdout -----
 
         ----- stderr -----
-        [2m↳[22m [2mSkipped [4mbash[24m; [4m~/.bashrc[24m not found[22m
-        [2m↳[22m [2mSkipped [4mzsh[24m; [4m~/.zshrc[24m not found[22m
-        [2m↳[22m [2mSkipped [4mfish[24m; [4m~/.config/fish/functions[24m not found[22m
-        [2m↳[22m [2mSkipped [4mnu[24m; [4m~/.config/nushell/vendor/autoload[24m not found[22m
         [31m✗[39m [31mNo shell config files found[39m
         ");
     });
@@ -647,8 +680,6 @@ fn test_configure_shell_multiple_configs(repo: TestRepo, temp_home: TempDir) {
         ----- stderr -----
         [32m✓[39m [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        [2m↳[22m [2mSkipped [4mfish[24m; [4m~/.config/fish/functions[24m not found[22m
-        [2m↳[22m [2mSkipped [4mnu[24m; [4m~/.config/nushell/vendor/autoload[24m not found[22m
 
         [32m✓[39m [32mConfigured 2 shells[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
@@ -707,8 +738,6 @@ fn test_configure_shell_mixed_states(repo: TestRepo, temp_home: TempDir) {
         ----- stderr -----
         [2m○[22m Already configured shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        [2m↳[22m [2mSkipped [4mfish[24m; [4m~/.config/fish/functions[24m not found[22m
-        [2m↳[22m [2mSkipped [4mnu[24m; [4m~/.config/nushell/vendor/autoload[24m not found[22m
 
         [32m✓[39m [32mConfigured 1 shell[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
@@ -1118,8 +1147,6 @@ fn test_configure_shell_no_warning_for_bash_user(repo: TestRepo, temp_home: Temp
         ----- stderr -----
         [32m✓[39m [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        [2m↳[22m [2mSkipped [4mfish[24m; [4m~/.config/fish/functions[24m not found[22m
-        [2m↳[22m [2mSkipped [4mnu[24m; [4m~/.config/nushell/vendor/autoload[24m not found[22m
 
         [32m✓[39m [32mConfigured 2 shells[39m
         [2m↳[22m [2mRestart shell to activate shell integration[22m
@@ -1274,8 +1301,6 @@ fn test_configure_shell_no_warning_when_shell_unset(repo: TestRepo, temp_home: T
         ----- stderr -----
         [32m✓[39m [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        [2m↳[22m [2mSkipped [4mfish[24m; [4m~/.config/fish/functions[24m not found[22m
-        [2m↳[22m [2mSkipped [4mnu[24m; [4m~/.config/nushell/vendor/autoload[24m not found[22m
 
         [32m✓[39m [32mConfigured 2 shells[39m
         ");
@@ -1567,6 +1592,14 @@ mod pty_tests {
         configure_pty_command(&mut cmd);
         cmd.env("HOME", temp_home.path());
         cmd.env("XDG_CONFIG_HOME", temp_home.path().join(".config"));
+        // Treat shells as not installed by default; the test exercises the
+        // single-zsh path. Mirrors the STATIC_TEST_ENV_VARS values used by
+        // Command-based tests, applied explicitly here because
+        // configure_pty_command intentionally keeps the PTY env minimal.
+        cmd.env("WORKTRUNK_TEST_BASH_INSTALLED", "0");
+        cmd.env("WORKTRUNK_TEST_ZSH_INSTALLED", "0");
+        cmd.env("WORKTRUNK_TEST_FISH_INSTALLED", "0");
+        cmd.env("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "0");
         cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
         cmd.env("SHELL", "/bin/zsh");
         // Skip the compinit probe and force the advisory to appear. The probe spawns

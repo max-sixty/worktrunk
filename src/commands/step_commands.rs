@@ -178,20 +178,6 @@ fn print_dry_run(
     commit_config: &worktrunk::config::CommitGenerationConfig,
     message: &str,
 ) -> anyhow::Result<()> {
-    print_dry_run_with(prompt, commit_config, message, |s| {
-        crate::help_pager::show_help_in_pager(s, true)
-    })
-}
-
-/// Inner form taking an injectable pager so the fallback path is unit-testable
-/// (mid-write or wait failures from `show_help_in_pager` only happen against a
-/// real TTY + a misbehaving pager, which is impractical to set up in a test).
-fn print_dry_run_with(
-    prompt: &str,
-    commit_config: &worktrunk::config::CommitGenerationConfig,
-    message: &str,
-    pager: impl FnOnce(&str) -> std::io::Result<()>,
-) -> anyhow::Result<()> {
     let command_block = match commit_config
         .command
         .as_deref()
@@ -209,10 +195,7 @@ fn print_dry_run_with(
         message_block = format_with_gutter(&formatted, None),
     );
 
-    if let Err(e) = pager(&out) {
-        log::debug!("Pager failed, falling back to stdout: {}", e);
-        println!("{}", out);
-    }
+    crate::help_pager::show_help_in_pager(&out, true);
     Ok(())
 }
 
@@ -2283,22 +2266,6 @@ mod tests {
 
         assert!(!src.exists());
         assert_eq!(fs::read_to_string(&dest).unwrap(), "content");
-    }
-
-    /// `print_dry_run` falls back to direct stdout when the pager errors mid-write
-    /// (e.g. a misbehaving pager that closes stdin before reading). The fallback path
-    /// only fires against a real TTY in production; the inner form lets us drive it
-    /// with a stand-in pager that always returns Err.
-    #[test]
-    fn test_print_dry_run_falls_back_when_pager_errors() {
-        let config = worktrunk::config::CommitGenerationConfig::default();
-        let result = print_dry_run_with("the prompt", &config, "the message", |_| {
-            Err(std::io::Error::other("simulated pager failure"))
-        });
-        assert!(
-            result.is_ok(),
-            "fallback should swallow pager errors, got: {result:?}"
-        );
     }
 
     #[test]

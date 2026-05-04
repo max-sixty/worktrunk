@@ -435,10 +435,7 @@ pub fn handle_hook_show(
         ctx.as_ref(),
     )?;
 
-    // Display through pager; fall back to direct stdout if pager unavailable
-    if show_help_in_pager(&output, true).is_err() {
-        worktrunk::styling::println!("{}", output);
-    }
+    show_help_in_pager(&output, true);
 
     Ok(())
 }
