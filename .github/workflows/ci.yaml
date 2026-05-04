@@ -1,7 +1,8 @@
 name: ci
 
 # Runner versions are pinned to avoid surprise breaking changes from -latest migrations.
-# The tend-renovate workflow checks weekly for updates and creates PRs.
+# The tend-weekly workflow checks for updates and opens bump PRs (see
+# .claude/skills/running-tend/SKILL.md → "Weekly Maintenance: CI Pin Bumps").
 # - windows-2022: Pinned because windows-2025 lacks D: drive (actions/runner-images#12677)
 # - ubuntu-24.04, macos-15: Pinned to current -latest equivalents
 
