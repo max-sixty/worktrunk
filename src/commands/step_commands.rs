@@ -178,34 +178,38 @@ fn print_dry_run(
     commit_config: &worktrunk::config::CommitGenerationConfig,
     message: &str,
 ) -> anyhow::Result<()> {
-    use std::fmt::Write as _;
-    let mut out = String::new();
-    writeln!(out, "{}", format_heading("PROMPT", None))?;
-    writeln!(out, "{}", prompt)?;
-    writeln!(out)?;
-    writeln!(out, "{}", format_heading("COMMAND", None))?;
-    match commit_config
+    print_dry_run_with(prompt, commit_config, message, |s| {
+        crate::help_pager::show_help_in_pager(s, true)
+    })
+}
+
+/// Inner form taking an injectable pager so the fallback path is unit-testable
+/// (mid-write or wait failures from `show_help_in_pager` only happen against a
+/// real TTY + a misbehaving pager, which is impractical to set up in a test).
+fn print_dry_run_with(
+    prompt: &str,
+    commit_config: &worktrunk::config::CommitGenerationConfig,
+    message: &str,
+    pager: impl FnOnce(&str) -> std::io::Result<()>,
+) -> anyhow::Result<()> {
+    let command_block = match commit_config
         .command
         .as_deref()
         .filter(|s| !s.trim().is_empty())
     {
-        Some(cmd) => writeln!(
-            out,
-            "{}",
-            format_bash_with_gutter(&crate::llm::render_llm_invocation(cmd)?)
-        )?,
-        None => writeln!(
-            out,
-            "{}",
-            format_with_gutter("(LLM not configured — using built-in fallback)", None)
-        )?,
-    }
-    writeln!(out)?;
-    writeln!(out, "{}", format_heading("MESSAGE", None))?;
+        Some(cmd) => format_bash_with_gutter(&crate::llm::render_llm_invocation(cmd)?),
+        None => format_with_gutter("(LLM not configured — using built-in fallback)", None),
+    };
     let formatted = CommitGenerator::new(commit_config).format_message_for_display(message);
-    writeln!(out, "{}", format_with_gutter(&formatted, None))?;
+    let out = format!(
+        "{prompt_heading}\n{prompt}\n\n{command_heading}\n{command_block}\n\n{message_heading}\n{message_block}\n",
+        prompt_heading = format_heading("PROMPT", None),
+        command_heading = format_heading("COMMAND", None),
+        message_heading = format_heading("MESSAGE", None),
+        message_block = format_with_gutter(&formatted, None),
+    );
 
-    if let Err(e) = crate::help_pager::show_help_in_pager(&out, true) {
+    if let Err(e) = pager(&out) {
         log::debug!("Pager failed, falling back to stdout: {}", e);
         println!("{}", out);
     }
@@ -2269,6 +2273,22 @@ mod tests {
 
         assert!(!src.exists());
         assert_eq!(fs::read_to_string(&dest).unwrap(), "content");
+    }
+
+    /// `print_dry_run` falls back to direct stdout when the pager errors mid-write
+    /// (e.g. a misbehaving pager that closes stdin before reading). The fallback path
+    /// only fires against a real TTY in production; the inner form lets us drive it
+    /// with a stand-in pager that always returns Err.
+    #[test]
+    fn test_print_dry_run_falls_back_when_pager_errors() {
+        let config = worktrunk::config::CommitGenerationConfig::default();
+        let result = print_dry_run_with("the prompt", &config, "the message", |_| {
+            Err(std::io::Error::other("simulated pager failure"))
+        });
+        assert!(
+            result.is_ok(),
+            "fallback should swallow pager errors, got: {result:?}"
+        );
     }
 
     #[test]
