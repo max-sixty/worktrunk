@@ -580,6 +580,11 @@ fn add_snapshot_path_prelude_filters(settings: &mut insta::Settings) {
     // Normalize llvm-cov-target to target for coverage builds (cargo-llvm-cov)
     settings.add_filter(r"/target/llvm-cov-target/", "/target/");
 
+    // Normalize cargo-affected's instrumented build dir to target/. cargo-affected
+    // routes its instrumented build to target/affected/build/ to avoid invalidating
+    // the project's normal target/ — see max-sixty/cargo-affected#12.
+    settings.add_filter(r"/target/affected/build/", "/target/");
+
     // Deliberately no global `\\` → `/` normalization here: it corrupts
     // intentional backslashes (JSON `\u001b` ANSI escapes, shell line
     // continuations) and worktrunk already emits forward-slash paths via
@@ -1191,9 +1196,10 @@ pub fn add_pty_filters(settings: &mut insta::Settings) {
 /// Test binaries are run from the cargo target directory, which varies.
 pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
     // Match paths ending in target/debug/wt or target/release/wt
-    // Also handles llvm-cov-target used by cargo-llvm-cov
+    // Also handles llvm-cov-target used by cargo-llvm-cov and affected/build/
+    // used by cargo-affected (max-sixty/cargo-affected#12)
     settings.add_filter(
-        r"[^\s]+/target/(?:llvm-cov-target/)?(?:debug|release)/wt",
+        r"[^\s]+/target/(?:llvm-cov-target/|affected/build/)?(?:debug|release)/wt",
         "[BIN]",
     );
 }
