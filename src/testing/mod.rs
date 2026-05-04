@@ -263,9 +263,10 @@ pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     ("WORKTRUNK_TEST_FISH_INSTALLED", "0"),
     ("WORKTRUNK_TEST_NUSHELL_ENV", "0"),
     ("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "0"),
-    // Disable PowerShell auto-detection (PSModulePath / SHELL signal). Orthogonal
-    // to _INSTALLED above: this gates whether PS is iterated at all in
-    // scan_shell_configs; _INSTALLED gates the Skipped path once it is iterated.
+    // Disable PowerShell auto-detection (PSModulePath / SHELL signal).
+    // Iteration is unconditional (matches the other shells); this var only
+    // controls `allow_create` via `should_auto_configure_powershell()` so we
+    // don't write a profile in tests that aren't asserting that path.
     ("WORKTRUNK_TEST_POWERSHELL_ENV", "0"),
 ];
 
