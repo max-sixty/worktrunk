@@ -223,9 +223,8 @@ fn resolve_fork_ref(
                     ref_type.display(number)
                 )
             })?;
-            // TODO(gitlab-protocol): We only try the URL based on glab's git_protocol setting.
-            // If the user's remote uses the other protocol (ssh vs https), we'll fail to find it.
-            // Consider trying both ssh and https URLs before erroring.
+            // find_remote_by_url matches by (host, owner, repo); ssh vs https
+            // doesn't matter (test_find_remote_by_url_cross_protocol).
             let remote = repo.find_remote_by_url(&target_url).ok_or_else(|| {
                 anyhow::anyhow!(
                     "No remote found for target project; \
