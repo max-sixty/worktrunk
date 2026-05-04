@@ -60,14 +60,14 @@ exit_code: 0
 [2m↳[22m [2mNot found[22m
 
 [36mSHELL INTEGRATION[39m
-[33m▲[39m [33mShell integration not active[39m
+[33m▲[39m [33mShell integration not configured[39m
+[2m↳[22m [2mTo configure, run [4mwt config shell install[24m[22m
 [107m [0m Invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
 
 [2m○[22m [2mbash: Skipped; ~/.bashrc not found[22m
 [2m○[22m [2mzsh: Skipped; ~/.zshrc not found[22m
 [2m○[22m [2mfish: Skipped; ~/.config/fish/functions not found[22m
 [2m○[22m [2mnu: Skipped; ~/.config/nushell/vendor/autoload not found[22m
-[2m↳[22m [2mTo configure, run [4mwt config shell install[24m[22m
 
 [36mDIAGNOSTICS[39m
 [2m↳[22m [2mCI status requires GitHub or GitLab remote[22m

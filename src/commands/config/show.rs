@@ -702,12 +702,68 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
 fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("SHELL INTEGRATION", None))?;
 
+    // Use the same detection logic as `wt config shell install`. Hoisted above the
+    // active/inactive warning so the warning text can distinguish "installed but
+    // not loaded" (▲ not active) from "never installed" (▲ not configured).
+    let cmd = crate::binary_name();
+    let scan_result = match scan_shell_configs(None, true, &cmd) {
+        Ok(r) => r,
+        Err(e) => {
+            writeln!(
+                out,
+                "{}",
+                hint_message(format!("Could not determine shell status: {e}"))
+            )?;
+            return Ok(());
+        }
+    };
+
+    // Get detection details to show matched lines inline
+    let detection_results = scan_for_detection_details(&cmd).unwrap_or_default();
+
+    // Check for legacy fish conf.d path (deprecated location from before #566)
+    // We need this early to handle the case where fish shows "Not configured" at the
+    // new location but has valid integration at the legacy location.
+    let legacy_fish_conf_d = Shell::legacy_fish_conf_d_path(&cmd).ok();
+    let legacy_fish_has_integration = legacy_fish_conf_d.as_ref().is_some_and(|legacy_path| {
+        detection_results
+            .iter()
+            .any(|d| d.path == *legacy_path && !d.matched_lines.is_empty())
+    });
+
+    // "Configured somewhere" means any rc file already has the init line, any
+    // wrapper-based shell has its wrapper file (WouldAdd on a wrapper means
+    // the file exists but content differs — i.e. outdated, still installed),
+    // or fish has integration at the legacy conf.d path.
+    let any_configured_somewhere = scan_result.configured.iter().any(|r| {
+        matches!(r.action, ConfigAction::AlreadyExists)
+            || (r.shell.is_wrapper_based() && matches!(r.action, ConfigAction::WouldAdd))
+    }) || legacy_fish_has_integration;
+
     // Shell integration runtime status (moved from RUNTIME section)
     let shell_active = output::is_shell_integration_active();
+    // When the user has no working integration anywhere, the install hint goes
+    // directly under the warning so cause and remedy stay together. The trailing
+    // hint at the bottom of the section is suppressed in this case.
+    let hint_under_warning = !shell_active && !any_configured_somewhere;
     if shell_active {
         writeln!(out, "{}", info_message("Shell integration active"))?;
     } else {
-        writeln!(out, "{}", warning_message("Shell integration not active"))?;
+        let warning_text = if any_configured_somewhere {
+            "Shell integration not active"
+        } else {
+            "Shell integration not configured"
+        };
+        writeln!(out, "{}", warning_message(warning_text))?;
+        if hint_under_warning {
+            writeln!(
+                out,
+                "{}",
+                hint_message(cformat!(
+                    "To configure, run <underline>{cmd} config shell install</>"
+                ))
+            )?;
+        }
         // Show invocation details to help diagnose
         let invocation = crate::invocation_path();
         let is_git_subcommand = crate::is_git_subcommand();
@@ -740,33 +796,6 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         writeln!(out, "{}", format_with_gutter(&debug_lines.join("\n"), None))?;
     }
     writeln!(out)?;
-
-    // Use the same detection logic as `wt config shell install`
-    let cmd = crate::binary_name();
-    let scan_result = match scan_shell_configs(None, true, &cmd) {
-        Ok(r) => r,
-        Err(e) => {
-            writeln!(
-                out,
-                "{}",
-                hint_message(format!("Could not determine shell status: {e}"))
-            )?;
-            return Ok(());
-        }
-    };
-
-    // Get detection details to show matched lines inline
-    let detection_results = scan_for_detection_details(&cmd).unwrap_or_default();
-
-    // Check for legacy fish conf.d path (deprecated location from before #566)
-    // We need this early to handle the case where fish shows "Not configured" at the
-    // new location but has valid integration at the legacy location.
-    let legacy_fish_conf_d = Shell::legacy_fish_conf_d_path(&cmd).ok();
-    let legacy_fish_has_integration = legacy_fish_conf_d.as_ref().is_some_and(|legacy_path| {
-        detection_results
-            .iter()
-            .any(|d| d.path == *legacy_path && !d.matched_lines.is_empty())
-    });
 
     let mut any_not_configured = false;
     let mut has_any_unmatched = false;
@@ -992,15 +1021,14 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         )?;
     }
 
-    // Summary hint when the user has no working integration and could install some.
-    // Fires when any shell is in the plain "Not configured" state (rc file present,
-    // no init line) AND in the fresh-user case where every shell falls into `skipped`
-    // because no rc file exists. Without this second arm, a brand-new user runs
-    // `wt config show` and sees only "▲ not active" + four "Skipped" lines with no
-    // next step. The `!shell_active` gate avoids firing for the dotfile-manager
-    // case (wrapper sourced from a non-standard path so no rc file has the init line).
+    // Summary hint pointing at `wt config shell install`. The fresh-user and
+    // nothing-configured-anywhere cases are already covered by the hint emitted
+    // directly under the warning, so this trailing emit is suppressed when
+    // `hint_under_warning` fired. It still fires for the partial-config case
+    // (some shells configured, some not) and for fish-legacy (working
+    // integration via the legacy path, other shells unconfigured).
     let nothing_configured_yet = !shell_active && scan_result.configured.is_empty();
-    if any_not_configured || nothing_configured_yet {
+    if !hint_under_warning && (any_not_configured || nothing_configured_yet) {
         writeln!(
             out,
             "{}",
