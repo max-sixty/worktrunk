@@ -332,13 +332,11 @@ impl ListItem {
     }
 
     /// Short display name for this item — the branch if present, otherwise
-    /// a truncated HEAD SHA. Use when reporting which item is pending,
-    /// stuck, or missing: `branch_name()`'s `"(detached)"` fallback collapses
-    /// distinct detached items into one label.
+    /// the short SHA. Use when reporting which item is pending, stuck, or
+    /// missing: `branch_name()`'s `"(detached)"` fallback collapses distinct
+    /// detached items into one label.
     pub fn display_name(&self) -> &str {
-        self.branch
-            .as_deref()
-            .unwrap_or_else(|| &self.head[..8.min(self.head.len())])
+        self.branch.as_deref().unwrap_or(&self.short_sha)
     }
 
     pub fn is_main(&self) -> bool {
