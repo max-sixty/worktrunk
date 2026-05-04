@@ -53,12 +53,15 @@ impl Repository {
         Ok(files)
     }
 
-    /// Get commit timestamp and subject for multiple commits in a single git command.
+    /// Get short SHA, commit timestamp and subject for multiple commits in a
+    /// single git command.
     ///
-    /// Returns a map from commit SHA to `(timestamp, subject)`. Uses NUL
-    /// separators between fields so subjects containing spaces or other
-    /// whitespace parse unambiguously. `%s` is the subject line only, so no
-    /// multi-line handling is needed.
+    /// Returns a map from full commit SHA to `(short_sha, timestamp, subject)`.
+    /// `%h` is the abbreviated SHA — same machinery as `git rev-parse --short`,
+    /// so it honors `core.abbrev` and auto-extends for ambiguous prefixes.
+    /// Uses NUL separators between fields so subjects containing spaces or
+    /// other whitespace parse unambiguously. `%s` is the subject line only, so
+    /// no multi-line handling is needed.
     ///
     /// Fails if any SHA is invalid — `git log --no-walk` refuses the whole
     /// batch on a single bad ref. Callers should surface the error rather
@@ -68,7 +71,7 @@ impl Repository {
     pub fn commit_details_many(
         &self,
         commits: &[&str],
-    ) -> anyhow::Result<HashMap<String, (i64, String)>> {
+    ) -> anyhow::Result<HashMap<String, (String, i64, String)>> {
         if commits.is_empty() {
             return Ok(HashMap::new());
         }
@@ -80,7 +83,7 @@ impl Repository {
             "log",
             "--no-walk",
             "--no-show-signature",
-            "--format=%H%x00%ct%x00%s",
+            "--format=%H%x00%h%x00%ct%x00%s",
         ];
         args.extend(commits);
 
@@ -88,18 +91,21 @@ impl Repository {
 
         let mut result = HashMap::with_capacity(commits.len());
         for line in stdout.lines() {
-            let mut parts = line.splitn(3, '\0');
-            let (Some(sha), Some(timestamp_str), Some(subject)) =
-                (parts.next(), parts.next(), parts.next())
+            let mut parts = line.splitn(4, '\0');
+            let (Some(sha), Some(short_sha), Some(timestamp_str), Some(subject)) =
+                (parts.next(), parts.next(), parts.next(), parts.next())
             else {
                 bail!(
-                    "Malformed git log output: expected '<sha>\\0<ts>\\0<subject>', got {line:?}"
+                    "Malformed git log output: expected '<sha>\\0<short>\\0<ts>\\0<subject>', got {line:?}"
                 );
             };
             let timestamp: i64 = timestamp_str
                 .parse()
                 .with_context(|| format!("Failed to parse timestamp {timestamp_str:?}"))?;
-            result.insert(sha.to_string(), (timestamp, subject.to_owned()));
+            result.insert(
+                sha.to_string(),
+                (short_sha.to_owned(), timestamp, subject.to_owned()),
+            );
         }
 
         Ok(result)

@@ -311,12 +311,13 @@ Query structured data with [2m--format=json[0m:
 
 [32mCommit object[0m
 
-   Field    Type          Description         
- ───────── ────── ─────────────────────────── 
- [2msha[0m       string Full commit SHA (40 chars)  
- [2mshort_sha[0m string Short commit SHA (7 chars)  
- [2mmessage[0m   string Commit message (first line) 
- [2mtimestamp[0m number Unix timestamp              
+   Field    Type                           Description                          
+ ───────── ────── ───────────────────────────────────────────────────────────── 
+ [2msha[0m       string Full commit SHA (40 chars)                                    
+ [2mshort_sha[0m string Short commit SHA, abbreviated per [2mcore.abbrev[0m (auto-extends   
+                  for ambiguous prefixes)                                       
+ [2mmessage[0m   string Commit message (first line)                                   
+ [2mtimestamp[0m number Unix timestamp                                                
 
 [32mworking_tree object[0m
 

@@ -756,13 +756,10 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         };
         writeln!(out, "{}", warning_message(warning_text))?;
         if hint_under_warning {
-            writeln!(
-                out,
-                "{}",
-                hint_message(cformat!(
-                    "To configure, run <underline>{cmd} config shell install</>"
-                ))
-            )?;
+            let hint = hint_message(cformat!(
+                "To configure, run <underline>{cmd} config shell install</>"
+            ));
+            writeln!(out, "{hint}")?;
         }
         // Show invocation details to help diagnose
         let invocation = crate::invocation_path();

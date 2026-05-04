@@ -178,34 +178,38 @@ fn print_dry_run(
     commit_config: &worktrunk::config::CommitGenerationConfig,
     message: &str,
 ) -> anyhow::Result<()> {
-    use std::fmt::Write as _;
-    let mut out = String::new();
-    writeln!(out, "{}", format_heading("PROMPT", None))?;
-    writeln!(out, "{}", prompt)?;
-    writeln!(out)?;
-    writeln!(out, "{}", format_heading("COMMAND", None))?;
-    match commit_config
+    print_dry_run_with(prompt, commit_config, message, |s| {
+        crate::help_pager::show_help_in_pager(s, true)
+    })
+}
+
+/// Inner form taking an injectable pager so the fallback path is unit-testable
+/// (mid-write or wait failures from `show_help_in_pager` only happen against a
+/// real TTY + a misbehaving pager, which is impractical to set up in a test).
+fn print_dry_run_with(
+    prompt: &str,
+    commit_config: &worktrunk::config::CommitGenerationConfig,
+    message: &str,
+    pager: impl FnOnce(&str) -> std::io::Result<()>,
+) -> anyhow::Result<()> {
+    let command_block = match commit_config
         .command
         .as_deref()
         .filter(|s| !s.trim().is_empty())
     {
-        Some(cmd) => writeln!(
-            out,
-            "{}",
-            format_bash_with_gutter(&crate::llm::render_llm_invocation(cmd)?)
-        )?,
-        None => writeln!(
-            out,
-            "{}",
-            format_with_gutter("(LLM not configured — using built-in fallback)", None)
-        )?,
-    }
-    writeln!(out)?;
-    writeln!(out, "{}", format_heading("MESSAGE", None))?;
+        Some(cmd) => format_bash_with_gutter(&crate::llm::render_llm_invocation(cmd)?),
+        None => format_with_gutter("(LLM not configured — using built-in fallback)", None),
+    };
     let formatted = CommitGenerator::new(commit_config).format_message_for_display(message);
-    writeln!(out, "{}", format_with_gutter(&formatted, None))?;
+    let out = format!(
+        "{prompt_heading}\n{prompt}\n\n{command_heading}\n{command_block}\n\n{message_heading}\n{message_block}\n",
+        prompt_heading = format_heading("PROMPT", None),
+        command_heading = format_heading("COMMAND", None),
+        message_heading = format_heading("MESSAGE", None),
+        message_block = format_with_gutter(&formatted, None),
+    );
 
-    if let Err(e) = crate::help_pager::show_help_in_pager(&out, true) {
+    if let Err(e) = pager(&out) {
         log::debug!("Pager failed, falling back to stdout: {}", e);
         println!("{}", out);
     }
@@ -472,11 +476,9 @@ pub fn handle_squash(
     repo.run_command(&["commit", "-m", &commit_message])
         .context("Failed to create squash commit")?;
 
-    // Full SHA for the JSON payload, plus a `--short`-rendered hash for the
-    // success line (honors `core.abbrev` and auto-extends for ambiguous prefixes).
+    // Full SHA for the JSON payload, abbreviated form for the success line.
     let commit_sha = repo.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
-    let commit_hash = repo.run_command(&["rev-parse", "--short", "HEAD"])?;
-    let commit_hash = commit_hash.trim();
+    let commit_hash = repo.short_sha(&commit_sha)?;
 
     // Show success immediately after completing the squash
     eprintln!(
@@ -1543,7 +1545,7 @@ pub fn step_prune(
 
     // Capture once at command entry. Reused for every per-branch
     // `integration_reason` probe later in this function.
-    let snapshot = repo.capture_refs()?;
+    let snapshot = repo.capture_refs().context("capturing repository refs")?;
 
     // Pass the local default branch (e.g. "main") directly — `integration_reason`
     // ORs over local + upstream internally, so a branch merged into either side
@@ -1552,8 +1554,12 @@ pub fn step_prune(
         .default_branch()
         .context("cannot determine default branch")?;
 
-    let worktrees = repo.list_worktrees()?;
-    let current_root = repo.current_worktree().root()?.to_path_buf();
+    let worktrees = repo.list_worktrees().context("listing worktrees")?;
+    let current_root = repo
+        .current_worktree()
+        .root()
+        .context("resolving current worktree root")?
+        .to_path_buf();
     let current_root = dunce::canonicalize(&current_root).unwrap_or(current_root);
     let now_secs = worktrunk::utils::epoch_now();
 
@@ -1756,7 +1762,10 @@ pub fn step_prune(
         // Skip main worktree (non-linked); in bare repos all are linked,
         // so the default-branch check above is the primary guard.
         let wt_tree = repo.worktree_at(&wt.path);
-        if !wt_tree.is_linked()? {
+        if !wt_tree
+            .is_linked()
+            .context("checking whether worktree is linked")?
+        {
             continue;
         }
 
@@ -1771,7 +1780,7 @@ pub fn step_prune(
         });
     }
 
-    for branch in repo.all_branches()? {
+    for branch in repo.all_branches().context("listing branches")? {
         if seen_branches.contains(&branch) {
             continue;
         }
@@ -1829,7 +1838,7 @@ pub fn step_prune(
 
     // Process results as they arrive from the channel.
     for (idx, result) in rx {
-        let (effective_target, reason) = result?;
+        let (effective_target, reason) = result.context("checking branch integration")?;
         let Some(reason) = reason else {
             continue;
         };
@@ -1840,16 +1849,16 @@ pub fn step_prune(
         // metadata, current-worktree deferral, and path-based candidates.
         if let CheckSource::Linked { wt_idx } = &item.source {
             let wt = &worktrees[*wt_idx];
-            let label = wt
-                .branch
-                .clone()
-                .unwrap_or_else(|| format!("(detached {})", &wt.head[..7.min(wt.head.len())]));
+            let label = wt.branch.clone().unwrap_or_else(|| {
+                let short = repo.short_sha(&wt.head).unwrap_or_else(|_| wt.head.clone());
+                format!("(detached {short})")
+            });
 
             // Skip recently-created worktrees that look "merged" because
             // they were just created from the default branch
             if min_age_duration > Duration::ZERO {
                 let wt_tree = repo.worktree_at(&wt.path);
-                let git_dir = wt_tree.git_dir()?;
+                let git_dir = wt_tree.git_dir().context("resolving worktree git dir")?;
                 let metadata = fs::metadata(&git_dir).context("Failed to read worktree git dir")?;
                 let created = metadata.created().or_else(|_| {
                     fs::metadata(git_dir.join("commondir")).and_then(|m| m.modified())
@@ -1901,7 +1910,9 @@ pub fn step_prune(
                 run_hooks,
                 worktrees,
                 &snapshot_arc,
-            )? {
+            )
+            .with_context(|| format!("removing worktree for {}", candidate.label))?
+            {
                 removed.push(candidate);
             }
             continue;
@@ -1960,7 +1971,9 @@ pub fn step_prune(
             run_hooks,
             worktrees,
             &snapshot_arc,
-        )? {
+        )
+        .with_context(|| format!("removing worktree for {}", candidate.label))?
+        {
             removed.push(candidate);
         }
     }
@@ -2039,7 +2052,8 @@ pub fn step_prune(
             run_hooks,
             worktrees,
             &snapshot_arc,
-        )?
+        )
+        .with_context(|| format!("removing worktree for {}", current.label))?
     {
         removed.push(current);
     }
@@ -2269,6 +2283,22 @@ mod tests {
 
         assert!(!src.exists());
         assert_eq!(fs::read_to_string(&dest).unwrap(), "content");
+    }
+
+    /// `print_dry_run` falls back to direct stdout when the pager errors mid-write
+    /// (e.g. a misbehaving pager that closes stdin before reading). The fallback path
+    /// only fires against a real TTY in production; the inner form lets us drive it
+    /// with a stand-in pager that always returns Err.
+    #[test]
+    fn test_print_dry_run_falls_back_when_pager_errors() {
+        let config = worktrunk::config::CommitGenerationConfig::default();
+        let result = print_dry_run_with("the prompt", &config, "the message", |_| {
+            Err(std::io::Error::other("simulated pager failure"))
+        });
+        assert!(
+            result.is_ok(),
+            "fallback should swallow pager errors, got: {result:?}"
+        );
     }
 
     #[test]

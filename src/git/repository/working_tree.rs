@@ -531,7 +531,7 @@ impl<'a> WorkingTree<'a> {
         ])
         .context("Failed to create backup ref")?;
 
-        Ok(backup_sha[..7].to_string())
+        self.repo().short_sha(&backup_sha)
     }
 }
 

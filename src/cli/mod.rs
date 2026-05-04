@@ -847,7 +847,7 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | Field | Type | Description |
 |-------|------|-------------|
 | `sha` | string | Full commit SHA (40 chars) |
-| `short_sha` | string | Short commit SHA (7 chars) |
+| `short_sha` | string | Short commit SHA, abbreviated per `core.abbrev` (auto-extends for ambiguous prefixes) |
 | `message` | string | Commit message (first line) |
 | `timestamp` | number | Unix timestamp |
 
@@ -1303,7 +1303,7 @@ Hooks can use template variables that expand at runtime:
 |           | `{{ worktree_path }}`         | Worktree path |
 |           | `{{ worktree_name }}`         | Worktree directory name |
 |           | `{{ commit }}`                | Branch HEAD SHA |
-|           | `{{ short_commit }}`          | Branch HEAD SHA (7 chars) |
+|           | `{{ short_commit }}`          | Branch HEAD SHA, abbreviated per `core.abbrev` |
 |           | `{{ upstream }}`              | Branch upstream (if tracking a remote) |
 | operation | `{{ base }}`                  | Base branch name |
 |           | `{{ base_worktree_path }}`    | Base worktree path |

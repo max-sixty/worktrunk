@@ -2569,6 +2569,91 @@ command = "cat >/dev/null && echo 'feat: combined feature work'"
     );
 }
 
+/// `--dry-run` mirrors `--stage` against a temp index by running `git add` with
+/// `GIT_INDEX_FILE` pointed at the copy. If that `git add` exits non-zero, the
+/// error must propagate (not silently feed an empty diff to the LLM). We
+/// reproduce a non-zero exit by replacing `.git/index` with garbage — the temp
+/// copy succeeds, but `git add -A` rejects the corrupt index.
+#[rstest]
+fn test_step_commit_dry_run_propagates_git_add_failure(repo: TestRepo) {
+    fs::write(repo.root_path().join("new.txt"), "x").expect("Failed to write file");
+
+    let index_path = repo.root_path().join(".git").join("index");
+    fs::write(&index_path, b"not-a-valid-git-index").expect("Failed to corrupt index");
+
+    let output = make_snapshot_cmd(&repo, "step", &["commit", "--dry-run"], None)
+        .output()
+        .expect("wt step commit --dry-run failed to spawn");
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit when git add fails; stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("git add -A failed"),
+        "expected bail! to surface 'git add -A failed'; got stderr:\n{stderr}"
+    );
+}
+
+/// `wt step squash --show-prompt` propagates template errors from
+/// `build_squash_prompt`. A malformed jinja template must surface the failure
+/// rather than producing an empty prompt.
+#[rstest]
+fn test_step_squash_show_prompt_malformed_template(repo_with_multi_commit_feature: TestRepo) {
+    let repo = repo_with_multi_commit_feature;
+    let feature_wt = repo.worktree_path("feature");
+
+    let worktrunk_config = r#"
+[commit.generation]
+squash-template = "{% if commits"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    let output = make_snapshot_cmd(
+        &repo,
+        "step",
+        &["squash", "--show-prompt"],
+        Some(feature_wt),
+    )
+    .output()
+    .expect("wt step squash --show-prompt failed to spawn");
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit on malformed template; stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+/// `wt step squash --dry-run` propagates LLM-command failures from
+/// `generate_squash_message`. The prompt renders fine, but a non-zero exit
+/// from the configured command must be surfaced rather than swallowed.
+#[rstest]
+fn test_step_squash_dry_run_llm_failure(repo_with_multi_commit_feature: TestRepo) {
+    let repo = repo_with_multi_commit_feature;
+    let feature_wt = repo.worktree_path("feature");
+
+    // `cat >/dev/null` consumes stdin first to avoid a broken-pipe race; the
+    // command then exits non-zero so generate_squash_message bubbles the failure up.
+    let worktrunk_config = r#"
+[commit.generation]
+command = "cat >/dev/null; echo 'simulated LLM failure' >&2 && exit 1"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    let output = make_snapshot_cmd(&repo, "step", &["squash", "--dry-run"], Some(feature_wt))
+        .output()
+        .expect("wt step squash --dry-run failed to spawn");
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit when LLM command fails; stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
 // =============================================================================
 // step rebase tests
 // =============================================================================

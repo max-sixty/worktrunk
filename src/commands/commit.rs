@@ -184,10 +184,8 @@ impl<'a> CommitGenerator<'a> {
             .context("Failed to commit")?;
 
         let commit_sha = wt.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
-        // Display uses `--short` to honor `core.abbrev` and auto-extend for
-        // ambiguous prefixes; the JSON payload carries the full SHA.
-        let commit_hash = wt.run_command(&["rev-parse", "--short", "HEAD"])?;
-        let commit_hash = commit_hash.trim();
+        // Display uses `Repository::short_sha`; the JSON payload carries the full SHA.
+        let commit_hash = wt.repo().short_sha(&commit_sha)?;
 
         eprintln!(
             "{}",

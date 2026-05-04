@@ -160,8 +160,8 @@ impl MergeContext {
         } else {
             "commits"
         };
-        let head_sha = self.repo.run_command(&["rev-parse", "--short", "HEAD"])?;
-        let head_sha = head_sha.trim();
+        let full_sha = self.repo.run_command(&["rev-parse", "HEAD"])?;
+        let head_sha = self.repo.short_sha(full_sha.trim())?;
 
         let operations_note = format_operations_note(operations);
 
@@ -441,7 +441,8 @@ pub fn handle_no_ff_merge(
 
     ctx.restore_stash();
 
-    let merge_sha_short = &merge_sha[..merge_sha.len().min(7)];
+    // Display uses `Repository::short_sha`; the JSON payload carries the full SHA.
+    let merge_sha_short = ctx.repo.short_sha(&merge_sha)?;
     let sha_suffix = cformat!(" @ <dim>{merge_sha_short}</>");
     ctx.show_success("Merged to", &sha_suffix, ", --no-ff");
 

@@ -820,6 +820,20 @@ mod tests {
         );
     }
 
+    /// `run_git_capture` must surface a non-zero exit as an error that names the `what`
+    /// label and includes the captured stderr — without that, the dry-run path would
+    /// feed an empty diff to the LLM on a `git` failure.
+    #[test]
+    fn test_run_git_capture_bails_on_nonzero_exit() {
+        let cmd = Cmd::new("git").args(["frobnicate-nonexistent"]);
+        let err = run_git_capture(cmd, "frobnicate").unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("git frobnicate failed:"),
+            "error message should name the `what` label; got: {msg}"
+        );
+    }
+
     /// Single-quotes in the user's command must be escaped so the displayed string is a
     /// faithful, copy-pasteable shell invocation.
     #[test]

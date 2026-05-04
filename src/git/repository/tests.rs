@@ -628,10 +628,16 @@ fn commit_details_many_returns_subject_with_spaces() {
         .unwrap();
 
     assert_eq!(result.len(), 2);
-    assert_eq!(result[&sha1].1, "first commit with spaces");
-    assert_eq!(result[&sha2].1, "second commit");
-    assert!(result[&sha1].0 > 0);
-    assert!(result[&sha2].0 > 0);
+    let (short1, ts1, subject1) = &result[&sha1];
+    let (short2, ts2, subject2) = &result[&sha2];
+    assert_eq!(subject1, "first commit with spaces");
+    assert_eq!(subject2, "second commit");
+    assert!(*ts1 > 0);
+    assert!(*ts2 > 0);
+    // Short SHAs are a prefix of the full SHA; default `core.abbrev` is 7,
+    // and a fresh test repo never needs more than that.
+    assert!(sha1.starts_with(short1.as_str()));
+    assert!(sha2.starts_with(short2.as_str()));
 }
 
 #[test]
@@ -680,7 +686,7 @@ fn commit_details_many_preserves_multibyte_utf8_subject() {
 
     let result = test.repo.commit_details_many(&[sha.as_str()]).unwrap();
 
-    assert_eq!(result[&sha].1, subject);
+    assert_eq!(result[&sha].2, subject);
 }
 
 #[test]
@@ -704,7 +710,7 @@ fn commit_details_many_deduplicates_repeated_sha() {
         .unwrap();
 
     assert_eq!(result.len(), 1);
-    assert_eq!(result[&sha].1, "only commit");
+    assert_eq!(result[&sha].2, "only commit");
 }
 
 #[test]

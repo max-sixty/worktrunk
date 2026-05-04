@@ -8,6 +8,10 @@ use worktrunk::git::LineDiff;
 /// Commit metadata for a branch or worktree HEAD.
 #[derive(serde::Serialize, Clone, Default, Debug)]
 pub struct CommitDetails {
+    /// Abbreviated form of the HEAD SHA, honoring `core.abbrev` and
+    /// auto-extending for ambiguous prefixes. Fetched in the same `git log`
+    /// batch as `timestamp` and `commit_message`.
+    pub short_sha: String,
     pub timestamp: i64,
     pub commit_message: String,
 }

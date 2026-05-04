@@ -1183,6 +1183,24 @@ impl Repository {
         Ok(self.run_command_output(args)?.status.success())
     }
 
+    /// Abbreviate a commit SHA for display, honoring `core.abbrev` and
+    /// auto-extending for ambiguous prefixes.
+    ///
+    /// Wraps `git rev-parse --short <sha>`. Use this anywhere a short SHA is
+    /// shown to the user or passed to a hook template — never slice
+    /// `&sha[..7]` directly, since 7 chars regularly collides in large repos
+    /// and ignores the user's `core.abbrev` setting.
+    ///
+    /// For batches (e.g., abbreviating many worktree heads at once), prefer
+    /// folding `%h` into an existing `git log --format` call rather than
+    /// looping this helper. See [`commit_details_many`](Self::commit_details_many).
+    pub fn short_sha(&self, sha: &str) -> anyhow::Result<String> {
+        Ok(self
+            .run_command(&["rev-parse", "--short", sha])?
+            .trim()
+            .to_string())
+    }
+
     /// Delay before showing progress output for slow operations.
     /// See .claude/rules/cli-output-formatting.md: "Progress messages apply only to slow operations (>400ms)"
     pub const SLOW_OPERATION_DELAY_MS: i64 = 400;
