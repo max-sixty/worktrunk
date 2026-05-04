@@ -1359,7 +1359,7 @@ pub fn run_switch(
     // Best-effort: don't fail switch if offer fails
     if change_dir && !is_shell_integration_active() {
         let skip_prompt = execute.is_some();
-        let _ = prompt_shell_integration(config, binary_name, skip_prompt);
+        let _ = prompt_shell_integration(&repo, config, binary_name, skip_prompt);
     }
 
     // Build template vars for base/target context (used by both hooks and
