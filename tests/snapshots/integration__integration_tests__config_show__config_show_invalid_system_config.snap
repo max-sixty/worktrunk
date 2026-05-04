@@ -78,3 +78,9 @@ exit_code: 0
 [2m○[22m Hyperlinks: [1minactive[22m
 
 ----- stderr -----
+[33m▲[39m [33mSystem config at [PROJECT_ID] failed to parse, skipping[39m
+[107m [0m TOML parse error at line 1, column 16
+[107m [0m   |
+[107m [0m 1 | invalid = [toml
+[107m [0m   |                ^
+[107m [0m unclosed array, expected `]`

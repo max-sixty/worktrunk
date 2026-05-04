@@ -251,7 +251,9 @@ pub(super) struct RepoCache {
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
     /// User config (raw, as loaded from disk).
-    /// Lazily loaded on first access.
+    /// Populated by [`Repository::at`] from the
+    /// [`WORKTRUNK_USER_CONFIG_PRELOAD`] preload when prewarm ran; otherwise
+    /// loaded on first access via [`Repository::user_config`].
     pub(super) user_config: OnceCell<UserConfig>,
     /// Resolved user config (global merged with per-project overrides, defaults applied).
     /// Lazily loaded on first access via `Repository::config()`.
@@ -407,9 +409,25 @@ pub(super) static CURRENT_BRANCHES: LazyLock<DashMap<PathBuf, Option<String>>> =
 /// [`Repository::at`] holds the same `PathBuf` value the prewarm thread
 /// stored — both originate from `base_path()`. Test paths (`Repository::at`
 /// against tempdirs) bypass prewarm and never collide with this map.
-pub(super) static GLOBAL_CONFIG_PRELOAD: LazyLock<
+pub(super) static GIT_CONFIG_PRELOAD: LazyLock<
     DashMap<PathBuf, indexmap::IndexMap<String, Vec<String>>>,
 > = LazyLock::new(DashMap::new);
+
+/// Process-wide preloaded `UserConfig` (worktrunk's user `wt.toml`),
+/// populated by [`Repository::prewarm_user_config`] from `main`.
+///
+/// [`Repository::at`] clones it into `cache.user_config` so the first
+/// `repo.user_config()` call is a memory hit, removing the ~4 ms TOML parse
+/// from the alias-dispatch critical path.
+///
+/// `OnceLock` (not `DashMap`) because `UserConfig` is process-scoped, not
+/// path-scoped: the path-derivation rule (XDG / `$WORKTRUNK_CONFIG_PATH`)
+/// doesn't change during a process lifetime.
+///
+/// Best-effort: a failed prewarm leaves the lock empty and the on-demand
+/// path inside [`Repository::user_config`] reloads from disk exactly as
+/// before.
+pub(super) static WORKTRUNK_USER_CONFIG_PRELOAD: OnceLock<UserConfig> = OnceLock::new();
 
 /// Initialize the global base path for repository operations.
 ///
@@ -494,10 +512,19 @@ impl Repository {
         // prewarm stashed under (both originate from `base_path()`); a miss
         // (different path, no prewarm, test repo) leaves the OnceCell empty
         // and the on-demand fork inside `all_config` runs as before.
-        if let Some(entry) = GLOBAL_CONFIG_PRELOAD.get(&discovery_path) {
+        if let Some(entry) = GIT_CONFIG_PRELOAD.get(&discovery_path) {
             let _ = cache
                 .all_config
                 .set(std::sync::RwLock::new(entry.value().clone()));
+        }
+
+        // Same idea for the worktrunk-side `UserConfig`: if the prewarm
+        // thread loaded it already, clone it into the per-Repository cache so
+        // the first `repo.user_config()` call is a memory hit. A miss (no
+        // prewarm, test repo) leaves the OnceCell empty and the on-demand
+        // path in `user_config()` reloads from disk.
+        if let Some(preloaded) = WORKTRUNK_USER_CONFIG_PRELOAD.get() {
+            let _ = cache.user_config.set(preloaded.clone());
         }
 
         Ok(Self {
@@ -509,33 +536,40 @@ impl Repository {
 
     /// Eagerly populate the process-wide git-discovery caches
     /// (`GIT_COMMON_DIR_CACHE`, `WORKTREE_ROOTS`, `GIT_DIRS`,
-    /// `CURRENT_BRANCHES`) and the bulk-config preload
-    /// (`GLOBAL_CONFIG_PRELOAD`) for the configured base path.
+    /// `CURRENT_BRANCHES`), the git bulk-config preload
+    /// (`GIT_CONFIG_PRELOAD`), and the worktrunk user-config preload
+    /// (`WORKTRUNK_USER_CONFIG_PRELOAD`) for the configured base path.
     ///
     /// Called once from `main` after the logger is registered, before
-    /// `init_command_log` and alias dispatch. Two threads run concurrently:
+    /// `init_command_log` and alias dispatch. Three threads run concurrently:
     ///
     /// - **rev-parse thread**: a single `git rev-parse` fork that folds the
     ///   two cold-path rev-parses (`--git-common-dir` from
     ///   [`Repository::at`] and the `prewarm_info` batch from
     ///   [`Repository::project_config_path`]) into one.
-    /// - **config thread**: a single `git config --list -z` fork that the
+    /// - **git-config thread**: a single `git config --list -z` fork that the
     ///   bulk config map (`Repository::all_config`) would otherwise spawn
     ///   on first read inside [`crate::config::LoadedConfigs::load`].
+    /// - **user-config thread**: pure file I/O on `$WORKTRUNK_CONFIG_PATH` /
+    ///   XDG paths, parsing worktrunk's user `wt.toml`. No git or
+    ///   `Repository` involvement, so it overlaps cleanly with both git
+    ///   forks and removes the ~4 ms TOML parse from the alias-dispatch
+    ///   critical path.
     ///
-    /// The two reads are independent (the config thread starts from
-    /// `discovery_path`; git auto-discovers the repo and reads the same merged
-    /// system + global + local config that `git_common_dir` would produce
-    /// from a normal worktree or a linked worktree of a bare repo). Running
-    /// them in parallel saves the second git startup (~7 ms warm, ~10 ms
-    /// cold) on the alias-dispatch critical path.
+    /// The three reads are independent: the git threads start from
+    /// `discovery_path` and let git auto-discover the repo; the user-config
+    /// thread depends only on env vars and XDG paths. Running them in
+    /// parallel saves both the second git startup (~7 ms warm, ~10 ms cold)
+    /// and the user-config TOML parse (~4 ms cold) on the alias-dispatch
+    /// critical path.
     ///
-    /// **Best-effort.** Both threads reuse the existing fallbacks: a failed
-    /// rev-parse leaves the discovery caches empty (later
+    /// **Best-effort.** All three threads reuse the existing fallbacks: a
+    /// failed rev-parse leaves the discovery caches empty (later
     /// `Repository::resolve_git_common_dir` and `WorkingTree::prewarm_info`
-    /// reforks restore behaviour); a failed config read leaves the preload
-    /// empty (later `Repository::all_config` reforks). We never propagate
-    /// errors from here.
+    /// reforks restore behaviour); a failed git-config read leaves the
+    /// preload empty (later `Repository::all_config` reforks); a failed
+    /// user-config read leaves the preload empty (later `Repository::user_config`
+    /// reloads from disk). We never propagate errors from here.
     ///
     /// Two partial-success modes the rev-parse batch handles:
     /// - **Bare repo at the bare root**: `--show-toplevel` errors but
@@ -551,9 +585,10 @@ impl Repository {
     ///   behaviour.
     ///
     /// Outside any work tree (`wt` invoked from a non-repo directory) the
-    /// rev-parse batch and the config read both fail and we cache nothing —
-    /// [`Repository::at`] later runs its own rev-parse and surfaces the
-    /// discovery error.
+    /// rev-parse batch and the git-config read both fail and we cache
+    /// nothing for them — [`Repository::at`] later runs its own rev-parse
+    /// and surfaces the discovery error. The user-config preload still
+    /// succeeds (it doesn't depend on the repo).
     pub fn prewarm() {
         Self::prewarm_at(base_path());
     }
@@ -566,20 +601,25 @@ impl Repository {
         // populated GIT_COMMON_DIR_CACHE via the on-demand path). Skip the
         // fork — the per-worktree maps either have what we need from a prior
         // prewarm/prewarm_info run, or `prewarm_info` will refork on first use.
-        // The config preload is gated on the same key: if the rev-parse
-        // result is already cached, the config read either ran in a prior
-        // prewarm or will be re-forked on first `all_config` access.
+        // The config preloads are gated on the same key: if the rev-parse
+        // result is already cached, the git-config read either ran in a prior
+        // prewarm or will be re-forked on first `all_config` access, and the
+        // user-config preload either landed in a prior prewarm or
+        // `Repository::user_config` will reload it on demand.
         if GIT_COMMON_DIR_CACHE.contains_key(discovery_path) {
             return;
         }
 
         let _span = crate::trace::Span::new("prewarm");
 
-        // Run the rev-parse and config reads concurrently on scoped threads.
-        // Both target the same repo and don't depend on each other's output;
-        // overlapping them removes ~one git startup (~7 ms warm, ~10 ms cold)
-        // from the alias-dispatch critical path. Failures in either branch
-        // leave the caches empty and the on-demand callers re-fork — same
+        // Run the rev-parse, git-config, and user-config reads concurrently
+        // on scoped threads. The two git threads target the same repo and
+        // don't depend on each other's output; the user-config thread is
+        // pure file I/O on XDG paths and doesn't touch git at all.
+        // Overlapping them removes ~one git startup (~7 ms warm, ~10 ms
+        // cold) plus the ~4 ms user-config TOML parse from the
+        // alias-dispatch critical path. Failures in any branch leave the
+        // caches empty and the on-demand callers re-fork — same
         // best-effort contract `prewarm` always had.
         std::thread::scope(|s| {
             s.spawn(|| {
@@ -587,8 +627,12 @@ impl Repository {
                 Self::prewarm_rev_parse(discovery_path);
             });
             s.spawn(|| {
-                let _span = crate::trace::Span::new("prewarm_all_config");
-                Self::prewarm_all_config(discovery_path);
+                let _span = crate::trace::Span::new("prewarm_git_config");
+                Self::prewarm_git_config(discovery_path);
+            });
+            s.spawn(|| {
+                let _span = crate::trace::Span::new("prewarm_user_config");
+                Self::prewarm_user_config();
             });
         });
     }
@@ -692,9 +736,9 @@ impl Repository {
         }
     }
 
-    /// Bulk-config half of [`Self::prewarm_at`] — runs `git config --list -z`
+    /// Git-config half of [`Self::prewarm_at`] — runs `git config --list -z`
     /// from `discovery_path` and stashes the parsed map in
-    /// [`GLOBAL_CONFIG_PRELOAD`] for [`Repository::at`] to consume.
+    /// [`GIT_CONFIG_PRELOAD`] for [`Repository::at`] to consume.
     ///
     /// Runs from `discovery_path` rather than `git_common_dir` (which we
     /// don't know yet — the rev-parse thread is racing in parallel). Git's
@@ -707,7 +751,7 @@ impl Repository {
     /// Failures (non-repo directory, corrupted config) are swallowed; the
     /// on-demand path inside `all_config` re-forks the same subprocess and
     /// surfaces the error there.
-    fn prewarm_all_config(discovery_path: &Path) {
+    fn prewarm_git_config(discovery_path: &Path) {
         let Ok(output) = Cmd::new("git")
             .args(["config", "--list", "-z"])
             .current_dir(discovery_path)
@@ -720,7 +764,33 @@ impl Repository {
             return;
         }
         let parsed = parse_config_list_z(&output.stdout);
-        GLOBAL_CONFIG_PRELOAD.insert(discovery_path.to_path_buf(), parsed);
+        GIT_CONFIG_PRELOAD.insert(discovery_path.to_path_buf(), parsed);
+    }
+
+    /// User-config half of [`Self::prewarm_at`] — loads worktrunk's user
+    /// `wt.toml` (and system + env-var layers) and stashes the result in
+    /// [`WORKTRUNK_USER_CONFIG_PRELOAD`] for [`Repository::at`] to clone
+    /// into per-Repository caches.
+    ///
+    /// Pure file I/O on `$WORKTRUNK_CONFIG_PATH` / XDG paths — no git, no
+    /// `Repository`, no dependence on `discovery_path`. Runs as a sibling
+    /// thread to the two git forks so the ~4 ms TOML parse overlaps with
+    /// them instead of falling on the alias-dispatch critical path.
+    ///
+    /// Warnings (parse failures, env-var rejections, validation issues) are
+    /// emitted to stderr inline by [`emit_user_config_warnings`], matching
+    /// the on-demand path in [`Repository::user_config`]. Because prewarm
+    /// runs in `main` before alias dispatch, these warnings now appear
+    /// earlier in the output than they did under the old pre-dispatch
+    /// `LoadedConfigs::load` path — but they still emerge before any
+    /// command-specific output, so user-visible ordering is unchanged.
+    ///
+    /// Best-effort: if `OnceLock::set` races (a second prewarm reentry, or
+    /// a test that already populated the lock) we drop the second value.
+    fn prewarm_user_config() {
+        let (config, warnings) = UserConfig::load_with_warnings();
+        emit_user_config_warnings(&warnings);
+        let _ = WORKTRUNK_USER_CONFIG_PRELOAD.set(config);
     }
 
     /// Resolved user config (global merged with per-project overrides, defaults applied).
@@ -745,51 +815,15 @@ impl Repository {
     /// Each config layer (system file, user file, env vars) degrades
     /// independently — a failure in one preserves data from earlier layers.
     /// Issues are surfaced on stderr so they're visible without `RUST_LOG`.
+    ///
+    /// Typically a memory hit: [`Repository::prewarm`] populates the cache
+    /// from `main` before any command runs. Tests and other callers that
+    /// bypass prewarm fall through to a fresh `UserConfig::load_with_warnings`
+    /// here.
     pub fn user_config(&self) -> &UserConfig {
         self.cache.user_config.get_or_init(|| {
             let (config, warnings) = UserConfig::load_with_warnings();
-            for warning in &warnings {
-                match warning {
-                    LoadError::File { path, label, err } => {
-                        crate::styling::eprintln!(
-                            "{}",
-                            crate::styling::warning_message(format!(
-                                "{label} at {} failed to parse, skipping",
-                                crate::path::format_path_for_display(path),
-                            ))
-                        );
-                        crate::styling::eprintln!(
-                            "{}",
-                            crate::styling::format_with_gutter(&err.to_string(), None)
-                        );
-                    }
-                    LoadError::Env { err, vars } => {
-                        let var_list: Vec<_> = vars
-                            .iter()
-                            .map(|(name, value)| format!("{name}={value}"))
-                            .collect();
-                        crate::styling::eprintln!(
-                            "{}",
-                            crate::styling::warning_message(format!(
-                                "Ignoring env var overrides: {}",
-                                var_list.join(", ")
-                            ))
-                        );
-                        crate::styling::eprintln!(
-                            "{}",
-                            crate::styling::format_with_gutter(err.trim(), None)
-                        );
-                    }
-                    LoadError::Validation(err) => {
-                        crate::styling::eprintln!(
-                            "{}",
-                            crate::styling::warning_message(format!(
-                                "Config validation warning: {err}"
-                            ))
-                        );
-                    }
-                }
-            }
+            emit_user_config_warnings(&warnings);
             config
         })
     }
@@ -1504,6 +1538,55 @@ fn parse_config_list_z(stdout: &[u8]) -> indexmap::IndexMap<String, Vec<String>>
             .push(value.to_string());
     }
     map
+}
+
+/// Emit `UserConfig::load_with_warnings` warnings to stderr.
+///
+/// Shared by [`Repository::prewarm_user_config`] (preload thread on `main`)
+/// and [`Repository::user_config`] (on-demand path for tests and callers
+/// that bypass prewarm). Both routes go through the same formatting so the
+/// stderr output is byte-identical regardless of which path runs.
+fn emit_user_config_warnings(warnings: &[LoadError]) {
+    for warning in warnings {
+        match warning {
+            LoadError::File { path, label, err } => {
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::warning_message(format!(
+                        "{label} at {} failed to parse, skipping",
+                        crate::path::format_path_for_display(path),
+                    ))
+                );
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::format_with_gutter(&err.to_string(), None)
+                );
+            }
+            LoadError::Env { err, vars } => {
+                let var_list: Vec<_> = vars
+                    .iter()
+                    .map(|(name, value)| format!("{name}={value}"))
+                    .collect();
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::warning_message(format!(
+                        "Ignoring env var overrides: {}",
+                        var_list.join(", ")
+                    ))
+                );
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::format_with_gutter(err.trim(), None)
+                );
+            }
+            LoadError::Validation(err) => {
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::warning_message(format!("Config validation warning: {err}"))
+                );
+            }
+        }
+    }
 }
 
 /// Parse a git boolean config value.

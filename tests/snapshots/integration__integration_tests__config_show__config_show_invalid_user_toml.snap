@@ -76,3 +76,9 @@ exit_code: 0
 [2m○[22m Hyperlinks: [1minactive[22m
 
 ----- stderr -----
+[33m▲[39m [33mUser config at ~/.config/worktrunk/config.toml failed to parse, skipping[39m
+[107m [0m TOML parse error at line 1, column 6
+[107m [0m   |
+[107m [0m 1 | this is not valid toml {{{
+[107m [0m   |      ^
+[107m [0m key with no value, expected `=`

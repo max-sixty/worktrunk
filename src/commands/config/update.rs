@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 use worktrunk::config::{
     DeprecationInfo, compute_migrated_content, config_path,
-    copy_approved_commands_to_approvals_file, format_deprecation_warnings, format_migration_diff,
+    copy_approved_commands_to_approvals_file, format_migration_diff,
 };
 use worktrunk::git::Repository;
 use worktrunk::styling::{
@@ -54,11 +54,11 @@ pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
 
     if print {
         // Emit migrated content to stdout. Multiple configs → separate with a
-        // labeled header so the output is still parseable. Warnings still go
-        // to stderr so stdout stays clean for piping.
+        // labeled header so the output is still parseable. Deprecation
+        // warnings already went to stderr from `Repository::prewarm`'s
+        // user-config preload, so we don't re-emit them here.
         let multi = candidates.len() > 1;
         for (idx, candidate) in candidates.iter().enumerate() {
-            eprint!("{}", format_deprecation_warnings(&candidate.info));
             if multi {
                 if idx > 0 {
                     println!();
@@ -118,10 +118,11 @@ pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
 
 /// Format update preview for display.
 ///
-/// Shows deprecation warnings and diff, but omits the "To apply" hint
-/// since `config update` will apply automatically.
+/// Shows the diff. Deprecation warnings already went to stderr from
+/// `Repository::prewarm`'s user-config preload, so we don't re-emit them
+/// here.
 fn format_update_preview(candidate: &UpdateCandidate) -> String {
-    let mut out = format_deprecation_warnings(&candidate.info);
+    let mut out = String::new();
 
     let label = candidate
         .config_path

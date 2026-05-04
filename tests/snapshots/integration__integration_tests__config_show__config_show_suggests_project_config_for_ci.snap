@@ -85,3 +85,6 @@ exit_code: 0
 [2m○[22m Hyperlinks: [1minactive[22m
 
 ----- stderr -----
+[33m▲[39m [33mUser config: [1m[ci][22m is deprecated in favor of [1m[forge][22m[39m
+[2m↳[22m [2mTo see details, run [4mwt config show[24m; to apply updates, run [4mwt config update[24m[22m
+[33m▲[39m [33mUser config has key [1mci[22m which belongs in project config as [forge][39m

@@ -82,3 +82,6 @@ exit_code: 0
 [2m○[22m Hyperlinks: [1minactive[22m
 
 ----- stderr -----
+[33m▲[39m [33mUser config: template variable [1mrepo_root[22m is deprecated in favor of [1mrepo_path[22m[39m
+[33m▲[39m [33mUser config: template variable [1mmain_worktree[22m is deprecated in favor of [1mrepo[22m[39m
+[2m↳[22m [2mTo see details, run [4mwt config show[24m; to apply updates, run [4mwt config update[24m[22m

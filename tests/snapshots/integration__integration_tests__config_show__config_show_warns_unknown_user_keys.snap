@@ -74,3 +74,4 @@ exit_code: 0
 [2m○[22m Hyperlinks: [1minactive[22m
 
 ----- stderr -----
+[33m▲[39m [33mUser config has unknown field [1mcommit-gen[22m (will be ignored)[39m

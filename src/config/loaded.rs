@@ -1,10 +1,11 @@
 //! Bundle type for loading user and project config together.
 //!
-//! [`LoadedConfigs::load`] warms the user-config and project-config caches in
-//! parallel on scoped threads, then returns borrows into the per-`Repository`
-//! cache. Both fields go through the same caching path, so subsequent
-//! `Repository::user_config` / `Repository::project_config` calls are pure
-//! cache hits — no second disk read, no asymmetry.
+//! [`LoadedConfigs::load`] returns borrows into the per-`Repository` cache
+//! for both fields. By the time anything reaches it, the user-config and
+//! `git config --list -z` reads have both completed in
+//! [`Repository::prewarm`]'s parallel scope, and `project_identifier()` is
+//! a memory-only walk over the preloaded git-config map. Only the small
+//! `.config/wt.toml` read (~30 µs) still happens here, sequentially.
 //!
 //! ## When to use
 //!
@@ -26,16 +27,15 @@
 //!
 //! ## Warning ordering
 //!
-//! Both loads emit deprecation/unknown-field warnings to stderr inline.
-//! Running them on sibling threads makes warning order nondeterministic
-//! when both files have warnings. No existing test fixture exercises both
-//! at once. Acceptable trade-off for the parallel savings; revisit with
-//! a buffer-and-replay design if the ordering becomes a problem.
+//! `UserConfig` warnings (parse failures, env-var rejections) emit from the
+//! prewarm thread that runs before alias dispatch. Project-config warnings
+//! emit sequentially from `repo.project_config()` here. Both routes funnel
+//! to the same stderr in deterministic order — user-config warnings first
+//! (prewarm joined before any command runs), then project-config warnings.
 
 use anyhow::Result;
 
 use crate::git::Repository;
-use crate::trace::Span;
 
 use super::{ProjectConfig, UserConfig};
 
@@ -49,28 +49,12 @@ pub struct LoadedConfigs<'r> {
 }
 
 impl<'r> LoadedConfigs<'r> {
-    /// Warm the user- and project-config caches in parallel.
+    /// Returns user- and project-config references, both pre-warmed.
     ///
-    /// On a cold cache the wall-clock cost is the longest pole (the
-    /// user-config TOML parse, ~4 ms on a typical project) rather than the
-    /// sum. On a warm cache both threads are no-ops.
-    ///
-    /// `project_identifier` is no longer warmed inside the scope: the bulk
-    /// `git config --list -z` it depended on now runs in
-    /// [`Repository::prewarm`] in parallel with the rev-parse fork, so
-    /// `project_identifier()` is memory-only by the time anything reaches
-    /// it (it just walks the preloaded config map).
+    /// `user_config` is preloaded by [`Repository::prewarm`] in parallel
+    /// with the two git forks, so it's a memory-only hit here. The
+    /// `project_config` file read is a few-tens-of-µs sequential step.
     pub fn load(repo: &'r Repository) -> Result<Self> {
-        std::thread::scope(|s| {
-            s.spawn(|| {
-                let _span = Span::new("user_config_load");
-                let _ = repo.user_config();
-            });
-            s.spawn(|| {
-                let _span = Span::new("project_config_load");
-                let _ = repo.project_config();
-            });
-        });
         Ok(Self {
             user: repo.user_config(),
             project: repo.project_config()?,
