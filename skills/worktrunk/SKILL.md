@@ -303,7 +303,7 @@ zellij run -- wt switch --create fix-auth-bug -x 'opencode run' -- \
 To spawn multiple sub-Agents that each work in their own worktree from one Claude Code session — no terminal multiplexer, no human in the other pane — pre-create each worktree from the parent and pass the path into the sub-Agent prompt:
 
 ```bash
-wt switch --create <branch> --base main --no-cd --no-hooks
+wt switch --create <branch> --no-cd --no-hooks
 ```
 
 Then call the `Agent` tool **without** `isolation: "worktree"`, naming the path in the prompt:
