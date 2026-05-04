@@ -2841,6 +2841,11 @@ fn test_config_update_print_emits_migrated_without_writing(repo: TestRepo) {
         "config update --print should succeed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(
+        output.stderr.is_empty(),
+        "--print must keep stderr empty for pipe-friendliness, got: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("{{ repo }}") && !stdout.contains("{{ main_worktree }}"),
