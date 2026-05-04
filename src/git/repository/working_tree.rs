@@ -2,13 +2,14 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use dashmap::mapref::entry::Entry;
 
 use crate::shell_exec::Cmd;
 use dunce::canonicalize;
 
 use super::{GitError, LineDiff, Repository};
+use crate::git::CommandError;
 
 /// Parse `git submodule status` output and detect whether any submodule is initialized.
 ///
@@ -120,15 +121,7 @@ impl<'a> WorkingTree<'a> {
         let output = self.run_command_output(args)?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stderr = stderr.replace('\r', "\n");
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let error_msg = [stderr.trim(), stdout.trim()]
-                .into_iter()
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n");
-            bail!("{}", error_msg);
+            return Err(CommandError::from_failed_output("git", args, &output).into());
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();

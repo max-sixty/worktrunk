@@ -563,6 +563,33 @@ fn extract_failed_command_from_other_error() {
 }
 
 #[test]
+fn extract_failed_command_from_command_error() {
+    // A buffered `git` failure (Repository::run_command,
+    // WorkingTree::run_command) surfaces as a typed CommandError, possibly
+    // wrapped by `.context(...)`. extract_failed_command must walk the
+    // chain so callers like switch::worktree_creation_error keep working.
+    use crate::git::CommandError;
+    use anyhow::Context;
+
+    let inner = CommandError {
+        program: "git".into(),
+        args: vec!["worktree".into(), "add".into(), "/path".into()],
+        stderr: "fatal: invalid reference: foo".into(),
+        stdout: String::new(),
+        exit_code: Some(128),
+    };
+    let err: anyhow::Error = Err::<(), _>(inner)
+        .context("creating worktree")
+        .unwrap_err();
+
+    let (output, cmd) = super::Repository::extract_failed_command(&err);
+    assert_eq!(output, "fatal: invalid reference: foo");
+    let cmd = cmd.unwrap();
+    assert_eq!(cmd.command, "git worktree add /path");
+    assert_eq!(cmd.exit_info, "exit code 128");
+}
+
+#[test]
 fn is_builtin_fsmonitor_enabled_variants() {
     use super::RepoCache;
     use indexmap::IndexMap;
