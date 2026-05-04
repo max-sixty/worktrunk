@@ -1402,7 +1402,7 @@ fn test_copy_ignored_preserves_file_executable_permissions(mut repo: TestRepo) {
     fs::write(bin_dir.join("config.json"), r#"{"key": "value"}"#).unwrap();
 
     // Create a top-level ignored executable file (exercises the individual file copy
-    // path in step_commands.rs, separate from the recursive directory copy in copy.rs)
+    // path in step/copy_ignored.rs, separate from the recursive directory copy in copy.rs)
     fs::write(
         repo.root_path().join("run-tests.sh"),
         "#!/bin/sh\necho running tests",
@@ -1454,7 +1454,7 @@ fn test_copy_ignored_preserves_file_executable_permissions(mut repo: TestRepo) {
     );
 
     // Verify top-level executable file was copied with permissions preserved
-    // (exercises step_commands.rs individual file copy path)
+    // (exercises step/copy_ignored.rs individual file copy path)
     let dest_script = feature_path.join("run-tests.sh");
     assert!(
         dest_script.exists(),
