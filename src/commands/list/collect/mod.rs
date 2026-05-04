@@ -234,7 +234,7 @@ use crossbeam_channel as chan;
 use dunce::canonicalize;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use worktrunk::git::{LocalBranch, Repository, WorktreeInfo};
+use worktrunk::git::{ErrorExt, LocalBranch, Repository, WorktreeInfo};
 use worktrunk::styling::{
     INFO_SYMBOL, eprintln, format_with_gutter, hint_message, warning_message,
 };
@@ -750,7 +750,7 @@ pub fn collect(
     let commit_details_map = repo.commit_details_many(&all_shas).unwrap_or_else(|err| {
         // Surface git's actual stderr (when available via the typed leaf)
         // rather than our `CommandError` summary.
-        let detail = worktrunk::git::display_message(&err);
+        let detail = err.display_message();
         eprintln!(
             "{}",
             warning_message(cformat!("Failed to batch-fetch commit details: {detail}"))

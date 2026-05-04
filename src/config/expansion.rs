@@ -21,7 +21,7 @@ use minijinja::{Environment, ErrorKind, UndefinedBehavior, Value};
 use regex::Regex;
 use shell_escape::escape;
 
-use crate::git::{HookType, Repository};
+use crate::git::{Diagnostic, HookType, Repository};
 use crate::path::to_posix_path;
 use crate::styling::{
     eprintln, error_message, format_bash_with_gutter, format_with_gutter, hint_message,
@@ -514,6 +514,12 @@ pub struct TemplateExpandError {
 
 impl std::fmt::Display for TemplateExpandError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl Diagnostic for TemplateExpandError {
+    fn render(&self) -> String {
         let mut parts = vec![error_message(&self.message).to_string()];
         if let Some(ref line) = self.source_line {
             parts.push(format_with_gutter(line, None));
@@ -532,7 +538,7 @@ impl std::fmt::Display for TemplateExpandError {
                 .to_string(),
             );
         }
-        write!(f, "{}", parts.join("\n"))
+        parts.join("\n")
     }
 }
 
@@ -1098,8 +1104,8 @@ mod tests {
         assert!(err.message.contains("syntax error"), "got: {}", err.message);
         assert!(expand_template("{{ 1 + }}", &vars, false, &test.repo, "test").is_err());
 
-        // Display impl renders source line but no available vars hint for syntax errors
-        assert_snapshot!(err, @"
+        // Diagnostic::render produces source line but no available vars hint for syntax errors
+        assert_snapshot!(crate::git::Diagnostic::render(&err), @"
         [31m✗[39m [31mFailed to expand test: syntax error: unexpected end of input, expected end of variable block @ line 1[39m
         [107m [0m {{ unclosed
         ");
@@ -1123,8 +1129,8 @@ mod tests {
         assert!(err.available_vars.contains(&"remote".to_string()));
         assert_eq!(err.source_line.as_deref(), Some("echo {{ target }}"));
 
-        // Display impl renders source line and available vars hint
-        assert_snapshot!(err, @"
+        // Diagnostic::render produces source line and available vars hint
+        assert_snapshot!(crate::git::Diagnostic::render(&err), @"
         [31m✗[39m [31mFailed to expand test: undefined value @ line 1[39m
         [107m [0m echo {{ target }}
         [2m↳[22m [2mAvailable variables: [4mbranch[24m, [4mremote[24m[22m

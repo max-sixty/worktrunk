@@ -8,7 +8,7 @@ use worktrunk::config::{
     Command, CommandConfig, HookStep, UserConfig, expand_template, format_hook_variables,
     template_references_var, validate_template_syntax,
 };
-use worktrunk::git::{Repository, WorktrunkError, interrupt_exit_code};
+use worktrunk::git::{ErrorExt, Repository, WorktrunkError};
 use worktrunk::path::{format_path_for_display, to_posix_path};
 use worktrunk::styling::{
     eprintln, error_message, format_bash_with_gutter, format_with_gutter, info_message,
@@ -634,7 +634,7 @@ fn handle_command_error(
     error_wrapper: &ErrorWrapper,
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
-    if let Some(exit_code) = interrupt_exit_code(&err) {
+    if let Some(exit_code) = err.interrupt_exit_code() {
         return Err(WorktrunkError::AlreadyDisplayed { exit_code }.into());
     }
 

@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{Repository, WorktreeInfo};
+use worktrunk::git::{ErrorExt, Repository, WorktreeInfo};
 use worktrunk::path::{format_path_for_display, paths_match};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
@@ -197,7 +197,9 @@ pub fn gather_candidates(
                         "Skipping <bold>{branch}</> due to template error:"
                     ))
                 );
-                eprintln!("{}", e);
+                // Render the styled diagnostic block (Display is just the short label).
+                let rendered = e.render_diagnostic().unwrap_or_else(|| e.to_string());
+                eprintln!("{rendered}");
                 template_error_branches.push(branch.to_string());
             }
         }

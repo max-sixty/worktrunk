@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use color_print::cformat;
-use worktrunk::git::{GitError, Repository};
+use worktrunk::git::{ErrorExt, GitError, Repository};
 use worktrunk::styling::{
     eprintln, format_with_gutter, info_message, progress_message, success_message, warning_message,
 };
@@ -315,7 +315,7 @@ pub fn handle_push(
         ])
         .map_err(|e| GitError::PushFailed {
             target_branch: ctx.target_branch.clone(),
-            error: worktrunk::git::display_message(&e),
+            error: e.display_message(),
         })?;
 
     ctx.restore_stash();
@@ -411,10 +411,7 @@ pub fn handle_no_ff_merge(
         .run_command(&["update-ref", &target_ref, &merge_sha, &ctx.target_tip])
         .map_err(|e| GitError::PushFailed {
             target_branch: ctx.target_branch.clone(),
-            error: format!(
-                "Failed to update ref: {}",
-                worktrunk::git::display_message(&e)
-            ),
+            error: format!("Failed to update ref: {}", e.display_message()),
         })?;
 
     // Sync the target worktree's working tree if it exists.

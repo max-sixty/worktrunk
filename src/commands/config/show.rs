@@ -12,7 +12,7 @@ use color_print::cformat;
 use worktrunk::config::{
     ProjectConfig, UserConfig, default_system_config_path, system_config_path,
 };
-use worktrunk::git::Repository;
+use worktrunk::git::{ErrorExt, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{Shell, scan_for_detection_details};
 use worktrunk::shell_exec::Cmd;
@@ -420,7 +420,10 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
                         "Commit generation failed (<bold>{command_display}</>)"
                     ))
                 )?;
-                writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
+                // Use the typed diagnostic block (with hint, gutter, etc.)
+                // when present; otherwise fall back to the short Display label.
+                let body = e.render_diagnostic().unwrap_or_else(|| e.to_string());
+                writeln!(out, "{}", format_with_gutter(&body, None))?;
             }
         }
     }

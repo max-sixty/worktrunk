@@ -18,6 +18,7 @@ use crate::commands::process::{
 use crate::commands::worktree::hooks::PostRemoveContext;
 use crate::commands::worktree::{RemoveResult, SwitchBranchInfo, SwitchResult};
 use worktrunk::config::UserConfig;
+use worktrunk::git::ErrorExt;
 use worktrunk::git::GitError;
 use worktrunk::git::IntegrationReason;
 use worktrunk::git::Repository;
@@ -449,10 +450,7 @@ fn handle_branch_deletion_result(
                 "{}",
                 error_message(cformat!("Failed to delete branch <bold>{branch_name}</>"))
             );
-            eprintln!(
-                "{}",
-                format_with_gutter(&worktrunk::git::display_message(&e), None)
-            );
+            eprintln!("{}", format_with_gutter(&e.display_message(), None));
             Err(e)
         }
     }
@@ -1268,7 +1266,7 @@ fn handle_detached_removed_worktree_output(
             branch: path_dir_name(ctx.worktree_path).to_string(),
             path: ctx.worktree_path.to_path_buf(),
             remaining_entries: list_remaining_entries(ctx.worktree_path),
-            error: worktrunk::git::display_message(&err),
+            error: err.display_message(),
         })?;
         let (files, bytes) = output
             .staged_path
@@ -1344,7 +1342,7 @@ fn handle_named_removed_worktree_foreground(
         branch: branch_name.into(),
         path: ctx.worktree_path.to_path_buf(),
         remaining_entries: list_remaining_entries(ctx.worktree_path),
-        error: worktrunk::git::display_message(&err),
+        error: err.display_message(),
     })?;
     let stats = output
         .staged_path

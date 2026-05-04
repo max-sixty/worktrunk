@@ -9,7 +9,7 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use anyhow::Context;
-use worktrunk::git::{IntegrationTargets, LineDiff, RefSnapshot, Repository};
+use worktrunk::git::{ErrorExt, IntegrationTargets, LineDiff, RefSnapshot, Repository};
 
 use super::super::ci_status::{CiBranchName, PrStatus};
 use super::super::model::{
@@ -88,7 +88,7 @@ impl TaskContext {
         // user sees git's actual error message (e.g., "fatal: bad object
         // HEAD") rather than our single-line `CommandError` summary
         // ("git status --porcelain failed (exit 128)").
-        let message = worktrunk::git::display_message(err);
+        let message = err.display_message();
         TaskError::new(self.item_idx, kind, message, cause)
     }
 

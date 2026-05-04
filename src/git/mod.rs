@@ -40,11 +40,18 @@ pub use diff::{LineDiff, parse_numstat_line};
 pub use error::{
     // Typed leaf error for buffered command-runner failures (downcast target)
     CommandError,
+    // Trait for typed errors that produce a rich, styled diagnostic block
+    // distinct from their short single-line `Display`
+    Diagnostic,
+    // Extension methods on `anyhow::Error` (find_command_error,
+    // render_diagnostic, display_message, exit_code, interrupt_exit_code,
+    // add_hook_skip_hint). Bring into scope to call them via method syntax.
+    ErrorExt,
     // Structured command failure info
     FailedCommand,
-    // Typed error enum (Display produces styled output)
+    // Typed error enum
     GitError,
-    // Special-handling error enum (Display produces styled output)
+    // Special-handling error enum
     HookErrorWithHint,
     // Platform-specific reference type (PR vs MR)
     RefContext,
@@ -52,14 +59,8 @@ pub use error::{
     // CLI context for enriching switch suggestions in error hints
     SwitchSuggestionCtx,
     WorktrunkError,
-    // Error inspection functions
-    add_hook_skip_hint,
-    // User-facing detail string (prefers CommandError stderr)
-    display_message,
-    exit_code,
-    // Walk an anyhow chain for the first CommandError
-    find_command_error,
-    interrupt_exit_code,
+    // Render a single error via Diagnostic if it implements one
+    try_render_diagnostic,
 };
 pub use parse::{parse_porcelain_z, parse_untracked_files};
 pub use recover::{current_or_recover, cwd_removed_hint};

@@ -1029,7 +1029,7 @@ mod tests {
         };
         let context = commit_context("diff", "main", None, "repo");
         let result = build_prompt(&config, TemplateType::Commit, &context);
-        assert_snapshot!(result.unwrap_err().to_string(), @"[31m✗[39m [31mTemplate is empty[39m");
+        assert_snapshot!(result.unwrap_err().to_string(), @"Template is empty");
     }
 
     #[test]
@@ -1147,7 +1147,7 @@ mod tests {
         let commits: Vec<String> = vec![];
         let context = squash_context("diff", "feature", None, "repo", &commits, "main");
         let result = build_prompt(&config, TemplateType::Squash, &context);
-        assert_snapshot!(result.unwrap_err().to_string(), @"[31m✗[39m [31mSquash template is empty[39m");
+        assert_snapshot!(result.unwrap_err().to_string(), @"Squash template is empty");
     }
 
     #[test]

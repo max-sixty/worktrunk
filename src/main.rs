@@ -8,7 +8,7 @@ use color_print::{ceprintln, cformat};
 use std::process;
 use worktrunk::config::{UserConfig, set_config_path};
 use worktrunk::git::{
-    Repository, ResolvedWorktree, WorktrunkError, current_or_recover, cwd_removed_hint, exit_code,
+    ErrorExt, Repository, ResolvedWorktree, WorktrunkError, current_or_recover, cwd_removed_hint,
     set_base_path,
 };
 use worktrunk::styling::{
@@ -720,7 +720,14 @@ impl RemovePlans {
     }
 
     fn record_error(&mut self, e: anyhow::Error) {
-        eprintln!("{}", e);
+        // The remove command collects per-target errors and surfaces each
+        // individually (partial-success path). Render the typed
+        // diagnostic block when present so locked/dirty/etc. errors
+        // carry their hint, falling back to the short label otherwise.
+        let rendered = e.render_diagnostic().unwrap_or_else(|| e.to_string());
+        if !rendered.is_empty() {
+            eprintln!("{rendered}");
+        }
         self.errors.push(e);
     }
 }
@@ -1305,96 +1312,96 @@ fn print_command_error(error: &anyhow::Error) {
 fn format_command_error(error: &anyhow::Error) -> String {
     use std::fmt::Write;
     let mut out = String::new();
-    // GitError, WorktrunkError, and HookErrorWithHint produce styled output via Display.
-    // Some variants (AlreadyDisplayed, CommandNotApproved) have empty Display impls —
-    // skip writes for those to avoid phantom blank lines.
-    if let Some(err) = error.downcast_ref::<worktrunk::git::GitError>() {
-        let _ = writeln!(out, "{err}");
-    } else if let Some(err) = error.downcast_ref::<worktrunk::git::WorktrunkError>() {
-        let display = err.to_string();
-        if !display.is_empty() {
-            let _ = writeln!(out, "{display}");
-        }
-    } else if let Some(err) = error.downcast_ref::<worktrunk::git::HookErrorWithHint>() {
-        let _ = writeln!(out, "{err}");
-    } else if let Some(err) = error.downcast_ref::<worktrunk::config::TemplateExpandError>() {
-        let _ = writeln!(out, "{err}");
-    } else if worktrunk::git::find_command_error(error).is_some() {
-        // Captured stderr/stdout from a buffered command (Repository::run_command,
-        // WorkingTree::run_command). The header is the top-level message
-        // (the outermost `.context(...)` if any, else the CommandError's
-        // single-line summary). The gutter shows intermediate context
-        // entries followed by the captured output, so wrapped failures
-        // like `.context("listing worktrees").context("running prune")`
-        // keep their diagnostic context while still surfacing git's
-        // actual stderr.
-        let _ = writeln!(out, "{}", error_message(error.to_string()));
 
-        let mut gutter_parts: Vec<String> = Vec::new();
-        let mut command_handled = false;
-        for cause in error.chain().skip(1) {
-            if !command_handled
-                && let Some(cmd_err) = cause.downcast_ref::<worktrunk::git::CommandError>()
-            {
-                let body = cmd_err.combined_output();
-                gutter_parts.push(if body.is_empty() {
-                    cmd_err.to_string()
-                } else {
-                    body
-                });
-                command_handled = true;
-            } else {
-                gutter_parts.push(cause.to_string());
+    // Locate the first error in the chain that implements `Diagnostic`.
+    // Most typed errors render directly even when wrapped in
+    // `.context(...)`: their styled block is self-contained and the
+    // wrapping context (if any) was added to enrich logs, not the
+    // user-facing message. The exception is `CommandError`: its captured
+    // stderr/stdout pairs naturally with the wrapping context to form a
+    // header + body block (e.g., header `"running prune"`, body git's
+    // actual error).
+    let diagnostic_hit = error.chain().enumerate().find_map(|(i, cause)| {
+        worktrunk::git::try_render_diagnostic(cause)
+            .map(|r| (i, r, cause.is::<worktrunk::git::CommandError>()))
+    });
+
+    match diagnostic_hit {
+        Some((_, rendered, false)) | Some((0, rendered, true)) => {
+            // Either a non-`CommandError` Diagnostic anywhere in the
+            // chain, or a top-level `CommandError`. Either way the
+            // type's `render()` produces a complete styled block — emit
+            // it directly. Empty rendering (AlreadyDisplayed,
+            // CommandNotApproved) is a signal to skip output entirely.
+            if !rendered.is_empty() {
+                let _ = writeln!(out, "{rendered}");
             }
         }
-        if !command_handled {
-            // Top-level error itself was the CommandError — header is its
-            // single-line summary; put the captured body in the gutter.
-            if let Some(cmd_err) = error.downcast_ref::<worktrunk::git::CommandError>() {
-                let body = cmd_err.combined_output();
-                if !body.is_empty() {
-                    gutter_parts.push(body);
+        Some((_, _, true)) => {
+            // Wrapped `CommandError`: outermost context becomes the
+            // header, intermediate contexts plus the captured
+            // stderr/stdout join the gutter so wrapped failures like
+            // `.context("listing worktrees").context("running prune")`
+            // keep their diagnostic context while still surfacing git's
+            // actual stderr.
+            let _ = writeln!(out, "{}", error_message(error.to_string()));
+            let mut gutter_parts: Vec<String> = Vec::new();
+            let mut command_handled = false;
+            for cause in error.chain().skip(1) {
+                if !command_handled
+                    && let Some(cmd_err) = cause.downcast_ref::<worktrunk::git::CommandError>()
+                {
+                    let body = cmd_err.combined_output();
+                    gutter_parts.push(if body.is_empty() {
+                        cmd_err.to_string()
+                    } else {
+                        body
+                    });
+                    command_handled = true;
+                } else {
+                    gutter_parts.push(cause.to_string());
                 }
             }
-        }
-        if !gutter_parts.is_empty() {
-            let _ = writeln!(
-                out,
-                "{}",
-                format_with_gutter(&gutter_parts.join("\n"), None)
-            );
-        }
-    } else {
-        // Anyhow error formatting:
-        // - With context: show context as header, root cause in gutter
-        // - Simple error: inline with emoji
-        // - Empty error: skip (errors already printed elsewhere)
-        let msg = error.to_string();
-        if !msg.is_empty() {
-            let chain: Vec<String> = error.chain().skip(1).map(|e| e.to_string()).collect();
-            if !chain.is_empty() {
-                let _ = writeln!(out, "{}", error_message(&msg));
-                let chain_text = chain.join("\n");
-                let _ = writeln!(out, "{}", format_with_gutter(&chain_text, None));
-            } else if msg.contains('\n') || msg.contains('\r') {
-                // A multi-line error reached this branch without being wrapped
-                // in a typed `CommandError` and without `.context(...)` on top.
-                // Buffered command failures should always surface as
-                // `CommandError`; if you hit this assert, route the failing
-                // path through `Repository::run_command` /
-                // `WorkingTree::run_command` (or construct a
-                // `worktrunk::git::CommandError` directly) instead of
-                // `bail!("{stderr}")`.
-                debug_assert!(
-                    false,
-                    "Multiline error without CommandError or context: {msg}"
+            if !gutter_parts.is_empty() {
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    format_with_gutter(&gutter_parts.join("\n"), None)
                 );
-                log::warn!("Multiline error without CommandError or context: {msg}");
-                let normalized = msg.replace("\r\n", "\n").replace('\r', "\n");
-                let _ = writeln!(out, "{}", error_message("Command failed"));
-                let _ = writeln!(out, "{}", format_with_gutter(&normalized, None));
-            } else {
-                let _ = writeln!(out, "{}", error_message(&msg));
+            }
+        }
+        None => {
+            // Anyhow error formatting:
+            // - With context: show context as header, root cause in gutter
+            // - Simple error: inline with emoji
+            // - Empty error: skip (errors already printed elsewhere)
+            let msg = error.to_string();
+            if !msg.is_empty() {
+                let chain: Vec<String> = error.chain().skip(1).map(|e| e.to_string()).collect();
+                if !chain.is_empty() {
+                    let _ = writeln!(out, "{}", error_message(&msg));
+                    let chain_text = chain.join("\n");
+                    let _ = writeln!(out, "{}", format_with_gutter(&chain_text, None));
+                } else if msg.contains('\n') || msg.contains('\r') {
+                    // A multi-line error reached this branch without being wrapped
+                    // in a typed `CommandError` and without `.context(...)` on top.
+                    // Buffered command failures should always surface as
+                    // `CommandError`; if you hit this assert, route the failing
+                    // path through `Repository::run_command` /
+                    // `WorkingTree::run_command` (or construct a
+                    // `worktrunk::git::CommandError` directly) instead of
+                    // `bail!("{stderr}")`.
+                    debug_assert!(
+                        false,
+                        "Multiline error without CommandError or context: {msg}"
+                    );
+                    log::warn!("Multiline error without CommandError or context: {msg}");
+                    let normalized = msg.replace("\r\n", "\n").replace('\r', "\n");
+                    let _ = writeln!(out, "{}", error_message("Command failed"));
+                    let _ = writeln!(out, "{}", format_with_gutter(&normalized, None));
+                } else {
+                    let _ = writeln!(out, "{}", error_message(&msg));
+                }
             }
         }
     }
@@ -1427,7 +1434,7 @@ fn handle_command_failure(error: anyhow::Error, verbose_level: u8, command_line:
     print_cwd_removed_hint_if_needed();
 
     // Preserve exit code from child processes (especially for signals like SIGINT)
-    let code = exit_code(&error).unwrap_or(1);
+    let code = error.exit_code().unwrap_or(1);
     finish_command(verbose_level, command_line, Some(&error));
     process::exit(code);
 }
@@ -1626,7 +1633,7 @@ mod tests {
         let err: anyhow::Error = Err::<(), _>(permission_denied_command_error())
             .context("creating worktree")
             .unwrap_err();
-        let detail = worktrunk::git::display_message(&err);
+        let detail = err.display_message();
         assert!(detail.contains("Permission denied"));
         assert!(detail.contains("unknown error occurred while reading"));
         // Without find_command_error this would be "creating worktree".

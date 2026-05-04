@@ -30,7 +30,7 @@ use std::process::Stdio;
 
 use color_print::cformat;
 use worktrunk::config::{UserConfig, expand_template};
-use worktrunk::git::{Repository, WorktreeInfo, WorktrunkError, interrupt_exit_code};
+use worktrunk::git::{ErrorExt, Repository, WorktreeInfo, WorktrunkError};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, progress_message, success_message, warning_message,
@@ -105,7 +105,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                 }
             }
             Err(err) => {
-                let signal_exit = interrupt_exit_code(&err);
+                let signal_exit = err.interrupt_exit_code();
                 let (exit_info, exit_code, error_msg, show_detail) =
                     if let Some(WorktrunkError::ChildProcessExited { code, message, .. }) =
                         err.downcast_ref::<WorktrunkError>()
@@ -117,7 +117,11 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
                             false,
                         )
                     } else {
-                        let msg = err.to_string();
+                        // Spawn / template / other non-child failure. Use
+                        // the typed diagnostic block when present so the
+                        // gutter carries any styling and hints, otherwise
+                        // fall back to the short Display label.
+                        let msg = err.render_diagnostic().unwrap_or_else(|| err.to_string());
                         (
                             " (spawn failed)".to_string(),
                             serde_json::json!(null),

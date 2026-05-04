@@ -4,10 +4,22 @@
 //!
 //! - **`GitError`** - A typed enum for domain errors that can be pattern-matched
 //!   and tested. Use `.into()` to convert to `anyhow::Error` while preserving the
-//!   type for pattern matching. Display produces styled output for users.
+//!   type for pattern matching.
 //!
 //! - **`WorktrunkError`** - A minimal enum for semantic errors that need
 //!   special handling (exit codes, silent errors).
+//!
+//! ## Display vs. Diagnostic
+//!
+//! Each typed error has two faces:
+//!
+//! - [`Display`](std::fmt::Display) is a single-line label suitable for
+//!   embedding in another error's message field (e.g.,
+//!   `GitError::Other.message: format!("…: {e}")`).
+//! - [`Diagnostic::render`] is the rich terminal block — emoji, color,
+//!   gutter, follow-up hints. The renderer in `main.rs` walks the anyhow
+//!   chain looking for the first type that implements `Diagnostic` and
+//!   emits its rendered output.
 
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -91,6 +103,92 @@ pub trait RefContext {
     /// For same-repo PRs/MRs: just the branch name (e.g., `feature-auth`)
     /// For fork PRs/MRs: `owner:branch` format (e.g., `contributor:feature-fix`)
     fn source_ref(&self) -> String;
+}
+
+/// Multi-line styled rendering for terminal display.
+///
+/// See the module docstring for the contract: types implementing
+/// `Diagnostic` keep [`Display`](std::fmt::Display) as a short single-line
+/// label and place the styled multi-line output (emoji, color, gutter,
+/// follow-up hints) here.
+pub trait Diagnostic {
+    /// Render the full styled block. Returned string has no trailing newline.
+    fn render(&self) -> String;
+}
+
+/// Worktrunk-specific extension methods on [`anyhow::Error`].
+///
+/// Bring this trait into scope (`use worktrunk::git::ErrorExt;`) to use
+/// method syntax on anyhow errors:
+///
+/// ```text
+/// if let Some(code) = err.exit_code() { ... }
+/// let detail = err.display_message();
+/// let rendered = err.render_diagnostic().unwrap_or_else(|| err.to_string());
+/// ```
+pub trait ErrorExt {
+    /// Walk the chain for a [`CommandError`].
+    ///
+    /// Returns the first match. Useful for renderers and callers that
+    /// need the raw stderr regardless of how many `.context(...)` layers
+    /// wrap it.
+    fn find_command_error(&self) -> Option<&CommandError>;
+
+    /// Render the first [`Diagnostic`]-implementing error in the chain.
+    ///
+    /// Returns `None` when the chain has no typed diagnostic — callers
+    /// typically fall back to `error.to_string()`.
+    fn render_diagnostic(&self) -> Option<String>;
+
+    /// User-facing detail string for an error that may carry a [`CommandError`].
+    ///
+    /// When a [`CommandError`] is anywhere in the chain, returns its captured
+    /// stderr/stdout via [`CommandError::combined_output`] — that's git's actual
+    /// error message, often multi-line. Otherwise falls back to the top-level
+    /// `Display`, which under the [`Diagnostic`] split is the typed error's
+    /// short single-line label.
+    ///
+    /// Use this when embedding a sub-error's text inside another typed error's
+    /// message field (e.g., `GitError::WorktreeRemovalFailed::error`,
+    /// `GitError::PushFailed::error`) so the user sees git's real reason
+    /// rather than just the [`CommandError`] single-line summary.
+    fn display_message(&self) -> String;
+
+    /// Extract a propagatable exit code from the error.
+    ///
+    /// Looks through [`HookErrorWithHint`] wrappers and matches on
+    /// [`WorktrunkError`] variants that carry an exit code.
+    fn exit_code(&self) -> Option<i32>;
+
+    /// If the error is signal-derived, return the equivalent shell exit
+    /// code (`128 + signal`).
+    ///
+    /// Implements the Ctrl-C cancellation policy: command loops call this
+    /// on every per-iteration failure and, when it returns `Some`, abort
+    /// the loop rather than continuing. The returned code preserves the
+    /// standard `128 + sig` shell convention (130 for SIGINT, 143 for
+    /// SIGTERM).
+    ///
+    /// See the "Signal Handling" section of the project `CLAUDE.md` for
+    /// the rationale and the full list of loops that apply this policy.
+    fn interrupt_exit_code(&self) -> Option<i32>;
+
+    /// If the error wraps a [`WorktrunkError::HookCommandFailed`], wrap
+    /// it to add a `--no-hooks` hint.
+    ///
+    /// ## When to use
+    ///
+    /// Use this for commands where a hook runs as a side effect of the
+    /// user's intent:
+    /// - `wt merge` — user wants to merge, hooks run as part of that
+    /// - `wt commit` — user wants to commit, pre-commit hooks run
+    /// - `wt switch --create` — user wants a worktree, post-create hooks run
+    ///
+    /// ## When NOT to use
+    ///
+    /// Don't use for `wt hook <type>` — the user explicitly asked to run
+    /// hooks, so suggesting `--no-hooks` makes no sense.
+    fn add_hook_skip_hint(self) -> Self;
 }
 
 /// Information about a failed command, for display in error messages.
@@ -191,28 +289,47 @@ impl std::fmt::Display for CommandError {
 
 impl std::error::Error for CommandError {}
 
-/// Walk an anyhow chain looking for a [`CommandError`].
-///
-/// Returns the first match. Useful for renderers and callers that need the
-/// raw stderr regardless of how many `.context(...)` layers wrap it.
-pub fn find_command_error(error: &anyhow::Error) -> Option<&CommandError> {
-    error.chain().find_map(|e| e.downcast_ref::<CommandError>())
+impl Diagnostic for CommandError {
+    fn render(&self) -> String {
+        let header = error_message(self.to_string()).to_string();
+        let body = self.combined_output();
+        if body.is_empty() {
+            header
+        } else {
+            format!("{header}\n{}", format_with_gutter(&body, None))
+        }
+    }
 }
 
-/// User-facing detail string for an error that may carry a [`CommandError`].
+/// Render `err` via [`Diagnostic`] if it's a typed diagnostic, else `None`.
 ///
-/// When a [`CommandError`] is anywhere in the chain, returns its captured
-/// stderr/stdout via [`CommandError::combined_output`] — that's git's actual
-/// error message. Otherwise falls back to the rendered top-level string.
+/// Rust trait objects can't be trait-downcast (you can't ask `&dyn Error`
+/// "do you implement `Diagnostic`?"), so this helper enumerates every
+/// known type with a `Diagnostic` impl. Add new types here when they
+/// grow one.
 ///
-/// Use this when embedding a sub-error's text inside another typed error's
-/// message field (e.g., `GitError::WorktreeRemovalFailed::error`,
-/// `GitError::PushFailed::error`) so the user sees git's real reason rather
-/// than the [`CommandError`] single-line summary.
-pub fn display_message(error: &anyhow::Error) -> String {
-    find_command_error(error)
-        .map(|cmd_err| cmd_err.combined_output())
-        .unwrap_or_else(|| error.to_string())
+/// Order matters only inasmuch as we want the most specific wrapper
+/// first ([`HookErrorWithHint`] before its [`WorktrunkError`] source).
+///
+/// To render the first typed diagnostic anywhere in an [`anyhow::Error`]'s
+/// chain, use [`ErrorExt::render_diagnostic`].
+pub fn try_render_diagnostic(err: &(dyn std::error::Error + 'static)) -> Option<String> {
+    if let Some(e) = err.downcast_ref::<GitError>() {
+        return Some(e.render());
+    }
+    if let Some(e) = err.downcast_ref::<HookErrorWithHint>() {
+        return Some(e.render());
+    }
+    if let Some(e) = err.downcast_ref::<WorktrunkError>() {
+        return Some(e.render());
+    }
+    if let Some(e) = err.downcast_ref::<crate::config::TemplateExpandError>() {
+        return Some(e.render());
+    }
+    if let Some(e) = err.downcast_ref::<CommandError>() {
+        return Some(e.render());
+    }
+    None
 }
 
 /// Extra CLI context for enriching `wt switch` suggestions in error hints.
@@ -256,12 +373,16 @@ impl SwitchSuggestionCtx {
 ///
 /// This enum provides structured error data that can be pattern-matched and tested.
 /// Each variant stores the data needed to construct a user-facing error message.
-/// Display produces styled output with emoji and colors.
+///
+/// [`Display`](std::fmt::Display) is a short single-line label per variant
+/// suitable for embedding in another error's message field;
+/// [`Diagnostic::render`] produces the rich styled block (emoji, color,
+/// gutter, follow-up hints).
 ///
 /// # Usage
 ///
 /// ```ignore
-/// // Return a typed error (Display produces styled output)
+/// // Return a typed error
 /// return Err(GitError::DetachedHead { action: Some("merge".into()) }.into());
 ///
 /// // Pattern match on errors
@@ -452,18 +573,24 @@ pub enum GitError {
 impl std::error::Error for GitError {}
 
 impl GitError {
-    /// Format with optional switch suggestion context.
+    /// Render the styled diagnostic block with optional switch suggestion context.
     ///
     /// Most variants ignore `ctx`. The three that render `wt switch` suggestions
     /// (`BranchAlreadyExists`, `BranchNotFound`, `WorktreePathExists`) use it
     /// to append extra flags and trailing args for a copy-pasteable command.
-    fn fmt_with_ctx(
+    ///
+    /// Generic over the writer so the same body can drive both
+    /// `String`-building (via [`render_with_ctx`](Self::render_with_ctx)) and
+    /// any other [`std::fmt::Write`] sink.
+    fn write_render_with_ctx<W: std::fmt::Write>(
         &self,
-        f: &mut std::fmt::Formatter<'_>,
+        f: &mut W,
         ctx: Option<&SwitchSuggestionCtx>,
     ) -> std::fmt::Result {
         match self {
-            GitError::WithSwitchSuggestion { source, ctx } => source.fmt_with_ctx(f, Some(ctx)),
+            GitError::WithSwitchSuggestion { source, ctx } => {
+                source.write_render_with_ctx(f, Some(ctx))
+            }
 
             GitError::DetachedHead { action } => {
                 let message = match action {
@@ -1070,9 +1197,223 @@ impl GitError {
     }
 }
 
+impl GitError {
+    /// Return the styled diagnostic block as an owned `String`.
+    ///
+    /// The `ctx` form is internal — the public API is [`Diagnostic::render`],
+    /// which calls this with `None`. Renderers that have a
+    /// [`SwitchSuggestionCtx`] in hand (e.g., the alias dispatch path) can
+    /// pass it directly without going through `WithSwitchSuggestion`.
+    pub(crate) fn render_with_ctx(&self, ctx: Option<&SwitchSuggestionCtx>) -> String {
+        let mut out = String::new();
+        self.write_render_with_ctx(&mut out, ctx)
+            .expect("writing to a String never fails");
+        out
+    }
+}
+
+impl Diagnostic for GitError {
+    fn render(&self) -> String {
+        self.render_with_ctx(None)
+    }
+}
+
 impl std::fmt::Display for GitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.fmt_with_ctx(f, None)
+        match self {
+            GitError::WithSwitchSuggestion { source, .. } => source.fmt(f),
+
+            GitError::DetachedHead { action } => match action {
+                Some(action) => write!(f, "Cannot {action}: not on a branch (detached HEAD)"),
+                None => f.write_str("Not on a branch (detached HEAD)"),
+            },
+
+            GitError::UncommittedChanges { action, branch, .. } => match (action, branch) {
+                (Some(action), Some(b)) => {
+                    write!(f, "Cannot {action}: {b} has uncommitted changes")
+                }
+                (Some(action), None) => {
+                    write!(f, "Cannot {action}: working tree has uncommitted changes")
+                }
+                (None, Some(b)) => write!(f, "{b} has uncommitted changes"),
+                (None, None) => f.write_str("Working tree has uncommitted changes"),
+            },
+
+            GitError::BranchAlreadyExists { branch } => {
+                write!(f, "Branch {branch} already exists")
+            }
+
+            GitError::BranchNotFound { branch, .. } => {
+                write!(f, "No branch named {branch}")
+            }
+
+            GitError::ReferenceNotFound { reference } => {
+                write!(f, "No branch, tag, or commit named {reference}")
+            }
+
+            GitError::StaleDefaultBranch { branch } => {
+                write!(f, "Default branch {branch} does not exist locally")
+            }
+
+            GitError::NotInWorktree { action } => match action {
+                Some(action) => write!(f, "Cannot {action}: not in a worktree"),
+                None => f.write_str("Not in a worktree"),
+            },
+
+            GitError::WorktreeMissing { branch } => {
+                write!(f, "Worktree directory missing for {branch}")
+            }
+
+            GitError::RemoteOnlyBranch { branch, remote } => {
+                write!(
+                    f,
+                    "Branch {branch} exists only on remote ({remote}/{branch})"
+                )
+            }
+
+            GitError::WorktreePathOccupied {
+                branch,
+                path,
+                occupant,
+            } => {
+                let path_display = format_path_for_display(path);
+                match occupant {
+                    Some(occupant_branch) => write!(
+                        f,
+                        "Cannot switch to {branch} — there's a worktree at the expected path {path_display} on branch {occupant_branch}"
+                    ),
+                    None => write!(
+                        f,
+                        "Cannot switch to {branch} — there's a detached worktree at the expected path {path_display}"
+                    ),
+                }
+            }
+
+            GitError::WorktreePathExists { path, .. } => {
+                let path_display = format_path_for_display(path);
+                write!(f, "Directory already exists: {path_display}")
+            }
+
+            GitError::WorktreeCreationFailed {
+                branch,
+                base_branch,
+                ..
+            } => match base_branch {
+                Some(base) => {
+                    write!(f, "Failed to create worktree for {branch} from base {base}")
+                }
+                None => write!(f, "Failed to create worktree for {branch}"),
+            },
+
+            GitError::WorktreeRemovalFailed { branch, path, .. } => {
+                let path_display = format_path_for_display(path);
+                write!(f, "Failed to remove worktree for {branch} @ {path_display}")
+            }
+
+            GitError::CannotRemoveMainWorktree => {
+                f.write_str("The main worktree cannot be removed")
+            }
+
+            GitError::CannotRemoveDefaultBranch { branch } => {
+                write!(f, "Cannot remove the default branch {branch}")
+            }
+
+            GitError::WorktreeLocked { branch, reason, .. } => {
+                let reason_text = match reason {
+                    Some(r) if !r.is_empty() => format!(" ({r})"),
+                    _ => String::new(),
+                };
+                write!(f, "Cannot remove {branch}, worktree is locked{reason_text}")
+            }
+
+            GitError::ConflictingChanges { target_branch, .. } => write!(
+                f,
+                "Can't push to local {target_branch} branch: conflicting uncommitted changes"
+            ),
+
+            GitError::NotFastForward { target_branch, .. } => write!(
+                f,
+                "Can't push to local {target_branch} branch: it has newer commits"
+            ),
+
+            GitError::RebaseConflict { target_branch, .. } => {
+                write!(f, "Rebase onto {target_branch} incomplete")
+            }
+
+            GitError::NotRebased { target_branch } => {
+                write!(f, "Branch not rebased onto {target_branch}")
+            }
+
+            GitError::PushFailed { target_branch, .. } => {
+                write!(f, "Can't push to local {target_branch} branch")
+            }
+
+            GitError::NotInteractive => {
+                f.write_str("Cannot prompt for approval in non-interactive environment")
+            }
+
+            GitError::HookCommandNotFound { name, available } => {
+                if available.is_empty() {
+                    write!(f, "No command named {name} (hook has no named commands)")
+                } else {
+                    let available_str = available.join(", ");
+                    write!(f, "No command named {name} (available: {available_str})")
+                }
+            }
+
+            GitError::LlmCommandFailed { .. } => f.write_str("Commit generation command failed"),
+
+            GitError::ProjectConfigNotFound { .. } => f.write_str("No project configuration found"),
+
+            GitError::ParseError { message } => f.write_str(message),
+
+            GitError::WorktreeIncludeParseError { .. } => {
+                f.write_str("Error parsing .worktreeinclude")
+            }
+
+            GitError::WorktreeNotFound { branch } => {
+                write!(f, "Branch {branch} has no worktree")
+            }
+
+            GitError::RefCreateConflict {
+                ref_type,
+                number,
+                branch,
+            } => {
+                let name = ref_type.name();
+                let syntax = ref_type.syntax();
+                write!(
+                    f,
+                    "Cannot create branch for {syntax}{number} — {name} already has branch {branch}"
+                )
+            }
+
+            GitError::RefBaseConflict { ref_type, number } => {
+                let syntax = ref_type.syntax();
+                write!(f, "Cannot use --base with {syntax}{number}")
+            }
+
+            GitError::BranchTracksDifferentRef {
+                branch,
+                ref_type,
+                number,
+            } => {
+                let name = ref_type.name();
+                let symbol = ref_type.symbol();
+                write!(
+                    f,
+                    "Branch {branch} exists but doesn't track {name} {symbol}{number}"
+                )
+            }
+
+            GitError::NoRemoteForRepo { owner, repo, .. } => {
+                write!(f, "No remote found for {owner}/{repo}")
+            }
+
+            GitError::CliApiError { message, .. } => f.write_str(message),
+
+            GitError::Other { message } => f.write_str(message),
+        }
     }
 }
 
@@ -1109,8 +1450,28 @@ pub enum WorktrunkError {
 impl std::fmt::Display for WorktrunkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            WorktrunkError::ChildProcessExited { message, .. } => f.write_str(message),
+            WorktrunkError::HookCommandFailed {
+                hook_type,
+                command_name,
+                error,
+                ..
+            } => match command_name {
+                Some(name) => write!(f, "{hook_type} command failed: {name}: {error}"),
+                None => write!(f, "{hook_type} command failed: {error}"),
+            },
+            // on_skip callback handles the printing for CommandNotApproved;
+            // AlreadyDisplayed has already shown its error via output functions.
+            WorktrunkError::CommandNotApproved | WorktrunkError::AlreadyDisplayed { .. } => Ok(()),
+        }
+    }
+}
+
+impl Diagnostic for WorktrunkError {
+    fn render(&self) -> String {
+        match self {
             WorktrunkError::ChildProcessExited { message, .. } => {
-                write!(f, "{}", error_message(message))
+                error_message(message).to_string()
             }
             WorktrunkError::HookCommandFailed {
                 hook_type,
@@ -1118,28 +1479,18 @@ impl std::fmt::Display for WorktrunkError {
                 error,
                 ..
             } => {
-                // Note: Callers that support --no-hooks should add the hint themselves
                 if let Some(name) = command_name {
-                    write!(
-                        f,
-                        "{}",
-                        error_message(cformat!(
-                            "{hook_type} command failed: <bold>{name}</>: {error}"
-                        ))
-                    )
+                    error_message(cformat!(
+                        "{hook_type} command failed: <bold>{name}</>: {error}"
+                    ))
+                    .to_string()
                 } else {
-                    write!(
-                        f,
-                        "{}",
-                        error_message(format!("{hook_type} command failed: {error}"))
-                    )
+                    error_message(format!("{hook_type} command failed: {error}")).to_string()
                 }
             }
-            WorktrunkError::CommandNotApproved => {
-                Ok(()) // on_skip callback handles the printing
-            }
-            WorktrunkError::AlreadyDisplayed { .. } => {
-                Ok(()) // error already shown via output functions
+            // Silent — caller already handled display; render is empty.
+            WorktrunkError::CommandNotApproved | WorktrunkError::AlreadyDisplayed { .. } => {
+                String::new()
             }
         }
     }
@@ -1147,71 +1498,62 @@ impl std::fmt::Display for WorktrunkError {
 
 impl std::error::Error for WorktrunkError {}
 
-/// Extract exit code from WorktrunkError, if applicable
-pub fn exit_code(err: &anyhow::Error) -> Option<i32> {
-    // Check for wrapped HookErrorWithHint first
-    if let Some(wrapper) = err.downcast_ref::<HookErrorWithHint>() {
-        return exit_code(&wrapper.inner);
+impl ErrorExt for anyhow::Error {
+    fn find_command_error(&self) -> Option<&CommandError> {
+        self.chain().find_map(|e| e.downcast_ref::<CommandError>())
     }
-    err.downcast_ref::<WorktrunkError>().and_then(|e| match e {
-        WorktrunkError::ChildProcessExited { code, .. } => Some(*code),
-        WorktrunkError::HookCommandFailed { exit_code, .. } => *exit_code,
-        WorktrunkError::CommandNotApproved => None,
-        WorktrunkError::AlreadyDisplayed { exit_code } => Some(*exit_code),
-    })
-}
 
-/// If `err` is a signal-derived child exit, return the equivalent shell exit
-/// code (`128 + signal`).
-///
-/// Implements the Ctrl-C cancellation policy: command loops call this on every
-/// per-iteration failure and, when it returns `Some`, abort the loop rather
-/// than continuing to the next iteration. The returned code is what wt itself
-/// should exit with, preserving the standard `128 + sig` shell convention
-/// (130 for SIGINT, 143 for SIGTERM).
-///
-/// See the "Signal Handling" section of the project `CLAUDE.md` for the
-/// rationale and the full list of loops that apply this policy.
-pub fn interrupt_exit_code(err: &anyhow::Error) -> Option<i32> {
-    if let Some(WorktrunkError::ChildProcessExited {
-        signal: Some(sig), ..
-    }) = err.downcast_ref::<WorktrunkError>()
-    {
-        Some(128 + sig)
-    } else {
-        None
+    fn render_diagnostic(&self) -> Option<String> {
+        self.chain().find_map(try_render_diagnostic)
     }
-}
 
-/// If the error is a HookCommandFailed, wrap it to add a hint about using --no-hooks.
-///
-/// ## When to use
-///
-/// Use this for commands where a hook runs as a side effect of the user's intent:
-/// - `wt merge` - user wants to merge, hooks run as part of that
-/// - `wt commit` - user wants to commit, pre-commit hooks run
-/// - `wt switch --create` - user wants a worktree, post-create hooks run
-///
-/// ## When NOT to use
-///
-/// Don't use for `wt hook <type>` - the user explicitly asked to run hooks,
-/// so suggesting `--no-hooks` makes no sense.
-pub fn add_hook_skip_hint(err: anyhow::Error) -> anyhow::Error {
-    // Extract hook_type first (if applicable), then decide whether to wrap
-    let hook_type = err
-        .downcast_ref::<WorktrunkError>()
-        .and_then(|wt_err| match wt_err {
-            WorktrunkError::HookCommandFailed { hook_type, .. } => Some(*hook_type),
-            _ => None,
-        });
+    fn display_message(&self) -> String {
+        self.find_command_error()
+            .map(|cmd_err| cmd_err.combined_output())
+            .unwrap_or_else(|| self.to_string())
+    }
 
-    match hook_type {
-        Some(hook_type) => HookErrorWithHint {
-            inner: err,
-            hook_type,
+    fn exit_code(&self) -> Option<i32> {
+        // Look through HookErrorWithHint to its inner error.
+        if let Some(wrapper) = self.downcast_ref::<HookErrorWithHint>() {
+            return wrapper.inner.exit_code();
         }
-        .into(),
-        None => err,
+        self.downcast_ref::<WorktrunkError>().and_then(|e| match e {
+            WorktrunkError::ChildProcessExited { code, .. } => Some(*code),
+            WorktrunkError::HookCommandFailed { exit_code, .. } => *exit_code,
+            WorktrunkError::CommandNotApproved => None,
+            WorktrunkError::AlreadyDisplayed { exit_code } => Some(*exit_code),
+        })
+    }
+
+    fn interrupt_exit_code(&self) -> Option<i32> {
+        if let Some(WorktrunkError::ChildProcessExited {
+            signal: Some(sig), ..
+        }) = self.downcast_ref::<WorktrunkError>()
+        {
+            Some(128 + sig)
+        } else {
+            None
+        }
+    }
+
+    fn add_hook_skip_hint(self) -> Self {
+        // Extract hook_type first (if applicable), then decide whether to wrap
+        let hook_type = self
+            .downcast_ref::<WorktrunkError>()
+            .and_then(|wt_err| match wt_err {
+                WorktrunkError::HookCommandFailed { hook_type, .. } => Some(*hook_type),
+                _ => None,
+            });
+
+        match hook_type {
+            Some(hook_type) => HookErrorWithHint {
+                inner: self,
+                hook_type,
+            }
+            .into(),
+            None => self,
+        }
     }
 }
 
@@ -1225,17 +1567,36 @@ pub struct HookErrorWithHint {
 
 impl std::fmt::Display for HookErrorWithHint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Display the original error (always HookCommandFailed - validated by add_hook_skip_hint)
-        write!(f, "{}", self.inner)?;
+        // Single-line label: delegate to the inner error's short Display
+        // (always HookCommandFailed — validated by add_hook_skip_hint).
+        write!(f, "{}", self.inner)
+    }
+}
+
+impl Diagnostic for HookErrorWithHint {
+    fn render(&self) -> String {
+        // Render the wrapped error's diagnostic block, then append the
+        // --no-hooks hint. The wrapped error is always
+        // HookCommandFailed-bearing (validated by add_hook_skip_hint), and
+        // its Diagnostic impl is on `WorktrunkError`.
+        let mut body = self
+            .inner
+            .downcast_ref::<WorktrunkError>()
+            .map(Diagnostic::render)
+            .unwrap_or_else(|| self.inner.to_string());
         // Can't derive command from hook type (e.g., PreRemove is used by both `wt remove` and `wt merge`)
-        write!(
-            f,
-            "\n{}",
-            hint_message(cformat!(
-                "To skip {} hooks, re-run with <underline>--no-hooks</>",
-                self.hook_type
-            ))
-        )
+        let hint = hint_message(cformat!(
+            "To skip {} hooks, re-run with <underline>--no-hooks</>",
+            self.hook_type
+        ))
+        .to_string();
+        if body.is_empty() {
+            hint
+        } else {
+            body.push('\n');
+            body.push_str(&hint);
+            body
+        }
     }
 }
 
@@ -1301,6 +1662,27 @@ mod tests {
     use anyhow::Context;
     use insta::assert_snapshot;
 
+    /// Render the first `Diagnostic`-implementing error in `err`'s chain,
+    /// or fall back to the top-level `Display`. Mirrors what
+    /// `format_command_error` in `main.rs` does for the chain-walk case.
+    fn render_anyhow(err: &anyhow::Error) -> String {
+        for cause in err.chain() {
+            if let Some(e) = cause.downcast_ref::<GitError>() {
+                return e.render();
+            }
+            if let Some(e) = cause.downcast_ref::<HookErrorWithHint>() {
+                return e.render();
+            }
+            if let Some(e) = cause.downcast_ref::<WorktrunkError>() {
+                return e.render();
+            }
+            if let Some(e) = cause.downcast_ref::<CommandError>() {
+                return e.render();
+            }
+        }
+        err.to_string()
+    }
+
     #[test]
     fn snapshot_into_preserves_type_for_display() {
         // .into() preserves type so we can downcast and use Display
@@ -1310,7 +1692,10 @@ mod tests {
         .into();
 
         let downcast = err.downcast_ref::<GitError>().expect("Should downcast");
-        assert_snapshot!(downcast.to_string(), @"
+        // Display is the short single-line label
+        assert_snapshot!(downcast.to_string(), @"Branch main already exists");
+        // Diagnostic::render produces the full styled block
+        assert_snapshot!(downcast.render(), @"
         [31m✗[39m [31mBranch [1mmain[22m already exists[39m
         [2m↳[22m [2mTo switch to the existing branch, run without [4m--create[24m: [4mwt switch main[24m[22m
         ");
@@ -1337,7 +1722,7 @@ mod tests {
             path: PathBuf::from("/some/path"),
             create: true,
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mDirectory already exists: [1m/some/path[22m[39m
         [2m↳[22m [2mTo remove manually, run [4mrm -rf /some/path[24m; to overwrite (with backup), run [4mwt switch --create --clobber feature[24m[22m
         ");
@@ -1352,7 +1737,7 @@ mod tests {
             signal: None,
         }
         .into();
-        assert_eq!(exit_code(&err), Some(42));
+        assert_eq!(err.exit_code(), Some(42));
 
         // HookCommandFailed with code
         let err: anyhow::Error = WorktrunkError::HookCommandFailed {
@@ -1362,7 +1747,7 @@ mod tests {
             exit_code: Some(1),
         }
         .into();
-        assert_eq!(exit_code(&err), Some(1));
+        assert_eq!(err.exit_code(), Some(1));
 
         // HookCommandFailed without code
         let err: anyhow::Error = WorktrunkError::HookCommandFailed {
@@ -1372,16 +1757,19 @@ mod tests {
             exit_code: None,
         }
         .into();
-        assert_eq!(exit_code(&err), None);
+        assert_eq!(err.exit_code(), None);
 
         // CommandNotApproved, AlreadyDisplayed, GitError
-        assert_eq!(exit_code(&WorktrunkError::CommandNotApproved.into()), None);
         assert_eq!(
-            exit_code(&WorktrunkError::AlreadyDisplayed { exit_code: 5 }.into()),
+            anyhow::Error::from(WorktrunkError::CommandNotApproved).exit_code(),
+            None
+        );
+        assert_eq!(
+            anyhow::Error::from(WorktrunkError::AlreadyDisplayed { exit_code: 5 }).exit_code(),
             Some(5)
         );
         assert_eq!(
-            exit_code(&GitError::DetachedHead { action: None }.into()),
+            anyhow::Error::from(GitError::DetachedHead { action: None }).exit_code(),
             None
         );
 
@@ -1393,7 +1781,7 @@ mod tests {
             exit_code: Some(7),
         }
         .into();
-        assert_eq!(exit_code(&add_hook_skip_hint(inner)), Some(7));
+        assert_eq!(inner.add_hook_skip_hint().exit_code(), Some(7));
     }
 
     #[test]
@@ -1405,7 +1793,7 @@ mod tests {
             signal: Some(2),
         }
         .into();
-        assert_eq!(interrupt_exit_code(&err), Some(130));
+        assert_eq!(err.interrupt_exit_code(), Some(130));
 
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 143,
@@ -1413,7 +1801,7 @@ mod tests {
             signal: Some(15),
         }
         .into();
-        assert_eq!(interrupt_exit_code(&err), Some(143));
+        assert_eq!(err.interrupt_exit_code(), Some(143));
 
         // Ordinary non-zero exit → not an interrupt
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
@@ -1422,21 +1810,22 @@ mod tests {
             signal: None,
         }
         .into();
-        assert_eq!(interrupt_exit_code(&err), None);
+        assert_eq!(err.interrupt_exit_code(), None);
 
         // Other WorktrunkError variants → not an interrupt
         assert_eq!(
-            interrupt_exit_code(&WorktrunkError::AlreadyDisplayed { exit_code: 130 }.into()),
+            anyhow::Error::from(WorktrunkError::AlreadyDisplayed { exit_code: 130 })
+                .interrupt_exit_code(),
             None,
         );
         assert_eq!(
-            interrupt_exit_code(&WorktrunkError::CommandNotApproved.into()),
+            anyhow::Error::from(WorktrunkError::CommandNotApproved).interrupt_exit_code(),
             None,
         );
 
         // Plain anyhow error → not an interrupt
         assert_eq!(
-            interrupt_exit_code(&anyhow::anyhow!("some unrelated failure")),
+            anyhow::anyhow!("some unrelated failure").interrupt_exit_code(),
             None,
         );
     }
@@ -1451,7 +1840,7 @@ mod tests {
             exit_code: Some(1),
         }
         .into();
-        assert_snapshot!(add_hook_skip_hint(inner).to_string(), @"
+        assert_snapshot!(render_anyhow(&inner.add_hook_skip_hint()), @"
         [31m✗[39m [31mpre-merge command failed: [1mtest[22m: failed[39m
         [2m↳[22m [2mTo skip pre-merge hooks, re-run with [4m--no-hooks[24m[22m
         ");
@@ -1464,7 +1853,7 @@ mod tests {
             exit_code: Some(1),
         }
         .into();
-        assert_snapshot!(add_hook_skip_hint(inner).to_string(), @"
+        assert_snapshot!(render_anyhow(&inner.add_hook_skip_hint()), @"
         [31m✗[39m [31mpre-commit command failed: [1mbuild[22m: Build failed[39m
         [2m↳[22m [2mTo skip pre-commit hooks, re-run with [4m--no-hooks[24m[22m
         ");
@@ -1476,16 +1865,90 @@ mod tests {
             signal: None,
         }
         .into();
-        assert!(!add_hook_skip_hint(err).to_string().contains("--no-hooks"));
+        assert!(!render_anyhow(&err.add_hook_skip_hint()).contains("--no-hooks"));
 
         let err: anyhow::Error = GitError::DetachedHead { action: None }.into();
-        assert!(!add_hook_skip_hint(err).to_string().contains("--no-hooks"));
+        assert!(!render_anyhow(&err.add_hook_skip_hint()).contains("--no-hooks"));
 
         let err: anyhow::Error = GitError::Other {
             message: "some error".into(),
         }
         .into();
-        assert!(!add_hook_skip_hint(err).to_string().contains("--no-hooks"));
+        assert!(!render_anyhow(&err.add_hook_skip_hint()).contains("--no-hooks"));
+    }
+
+    /// `Display` is the short single-line label per variant — no symbol,
+    /// no color codes, no hint. It's what callers embed in another error's
+    /// message field (e.g., `format!("…: {e}")`).
+    #[test]
+    fn snapshot_short_display_per_variant() {
+        // GitError variants
+        assert_snapshot!(
+            GitError::BranchAlreadyExists { branch: "feature".into() }.to_string(),
+            @"Branch feature already exists"
+        );
+        assert_snapshot!(
+            GitError::WorktreeRemovalFailed {
+                branch: "feature".into(),
+                path: PathBuf::from("/tmp/repo.feature"),
+                error: "fatal: …".into(),
+                remaining_entries: None,
+            }.to_string(),
+            @"Failed to remove worktree for feature @ /tmp/repo.feature"
+        );
+        assert_snapshot!(
+            GitError::RebaseConflict {
+                target_branch: "main".into(),
+                git_output: "CONFLICT (content): …".into(),
+            }.to_string(),
+            @"Rebase onto main incomplete"
+        );
+        assert_snapshot!(
+            GitError::DetachedHead { action: Some("merge".into()) }.to_string(),
+            @"Cannot merge: not on a branch (detached HEAD)"
+        );
+        assert_snapshot!(
+            GitError::DetachedHead { action: None }.to_string(),
+            @"Not on a branch (detached HEAD)"
+        );
+
+        // WithSwitchSuggestion delegates to inner — ctx only affects render
+        let inner = GitError::BranchAlreadyExists {
+            branch: "feature".into(),
+        };
+        let wrapped = GitError::WithSwitchSuggestion {
+            source: Box::new(inner.clone()),
+            ctx: SwitchSuggestionCtx {
+                extra_flags: vec!["--execute=claude".into()],
+                trailing_args: vec![],
+            },
+        };
+        assert_eq!(inner.to_string(), wrapped.to_string());
+
+        // WorktrunkError variants
+        assert_snapshot!(
+            WorktrunkError::HookCommandFailed {
+                hook_type: HookType::PreMerge,
+                command_name: Some("lint".into()),
+                error: "lint failed".into(),
+                exit_code: Some(1),
+            }.to_string(),
+            @"pre-merge command failed: lint: lint failed"
+        );
+        assert_snapshot!(
+            WorktrunkError::ChildProcessExited {
+                code: 1,
+                message: "exit status: 1".into(),
+                signal: None,
+            }.to_string(),
+            @"exit status: 1"
+        );
+        // Silent variants
+        assert_eq!(WorktrunkError::CommandNotApproved.to_string(), "");
+        assert_eq!(
+            WorktrunkError::AlreadyDisplayed { exit_code: 1 }.to_string(),
+            ""
+        );
     }
 
     #[test]
@@ -1508,7 +1971,7 @@ mod tests {
             message: "Command failed".into(),
             signal: None,
         };
-        assert_snapshot!(err.to_string(), @"[31m✗[39m [31mCommand failed[39m");
+        assert_snapshot!(err.render(), @"[31m✗[39m [31mCommand failed[39m");
 
         let err = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreMerge,
@@ -1516,7 +1979,7 @@ mod tests {
             error: "lint failed".into(),
             exit_code: Some(1),
         };
-        assert_snapshot!(err.to_string(), @"[31m✗[39m [31mpre-merge command failed: [1mlint[22m: lint failed[39m");
+        assert_snapshot!(err.render(), @"[31m✗[39m [31mpre-merge command failed: [1mlint[22m: lint failed[39m");
 
         let err = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreStart,
@@ -1524,7 +1987,7 @@ mod tests {
             error: "setup failed".into(),
             exit_code: None,
         };
-        assert_snapshot!(err.to_string(), @"[31m✗[39m [31mpre-start command failed: setup failed[39m");
+        assert_snapshot!(err.render(), @"[31m✗[39m [31mpre-start command failed: setup failed[39m");
 
         // Silent errors produce empty output
         assert_eq!(format!("{}", WorktrunkError::CommandNotApproved), "");
@@ -1539,13 +2002,13 @@ mod tests {
         let err = GitError::NotInWorktree {
             action: Some("resolve @".into()),
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mCannot resolve @: not in a worktree[39m
         [2m↳[22m [2mRun from inside a worktree, or specify a branch name[22m
         ");
 
         let err = GitError::NotInWorktree { action: None };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mNot in a worktree[39m
         [2m↳[22m [2mRun from inside a worktree, or specify a branch name[22m
         ");
@@ -1558,7 +2021,7 @@ mod tests {
             path: PathBuf::from("/tmp/repo"),
             occupant: Some("main".into()),
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mCannot switch to [1mfeature[22m — there's a worktree at the expected path [1m/tmp/repo[22m on branch [1mmain[22m[39m
         [2m↳[22m [2mTo switch the worktree at [4m/tmp/repo[24m to [4mfeature[24m, run [4mcd /tmp/repo && git switch feature[24m[22m
         ");
@@ -1568,7 +2031,7 @@ mod tests {
             path: PathBuf::from("/tmp/repo"),
             occupant: None,
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mCannot switch to [1mfeature[22m — there's a detached worktree at the expected path [1m/tmp/repo[22m[39m
         [2m↳[22m [2mTo switch the worktree at [4m/tmp/repo[24m to [4mfeature[24m, run [4mcd /tmp/repo && git switch feature[24m[22m
         ");
@@ -1582,7 +2045,7 @@ mod tests {
             path: PathBuf::from("/tmp/my repo"),
             occupant: Some("main".into()),
         };
-        let output = err.to_string();
+        let output = err.render();
         // The hint command must quote the path and branch for safe shell execution
         assert!(
             output.contains("cd '/tmp/my repo' && git switch 'feature/my branch'"),
@@ -1598,7 +2061,7 @@ mod tests {
             error: "git error".into(),
             command: None,
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mFailed to create worktree for [1mfeature[22m from base [1mmain[22m[39m
         [107m [0m git error
         ");
@@ -1609,7 +2072,7 @@ mod tests {
             error: "git error".into(),
             command: None,
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mFailed to create worktree for [1mfeature[22m[39m
         [107m [0m git error
         ");
@@ -1623,7 +2086,7 @@ mod tests {
                 exit_info: "exit code 128".into(),
             }),
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mFailed to create worktree for [1mfeature[22m from base [1mmain[22m[39m
         [107m [0m fatal: ref exists
         [2m↳[22m [2mFailed command, [4mexit code 128[24m:[22m
@@ -1638,7 +2101,7 @@ mod tests {
             path: PathBuf::from("/tmp/repo.feature"),
             reason: Some("Testing lock".into()),
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mCannot remove [1mfeature[22m, worktree is locked (Testing lock)[39m
         [2m↳[22m [2mTo unlock, run [4mgit worktree unlock /tmp/repo.feature[24m[22m
         ");
@@ -1649,7 +2112,7 @@ mod tests {
             path: PathBuf::from("/tmp/repo.feature"),
             reason: Some("".into()),
         };
-        let display = err.to_string();
+        let display = err.render();
         assert_snapshot!(display, @"
         [31m✗[39m [31mCannot remove [1mfeature[22m, worktree is locked[39m
         [2m↳[22m [2mTo unlock, run [4mgit worktree unlock /tmp/repo.feature[24m[22m
@@ -1665,7 +2128,7 @@ mod tests {
         let err = GitError::NotRebased {
             target_branch: "main".into(),
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mBranch not rebased onto [1mmain[22m[39m
         [2m↳[22m [2mTo rebase first, run [4mwt step rebase main[24m; or remove [4m--no-rebase[24m[22m
         ");
@@ -1677,13 +2140,13 @@ mod tests {
             name: "unknown".into(),
             available: vec!["lint".into(), "test".into()],
         };
-        assert_snapshot!(err.to_string(), @"[31m✗[39m [31mNo command named [1munknown[22m (available: [1mlint[22m, [1mtest[22m)[39m");
+        assert_snapshot!(err.render(), @"[31m✗[39m [31mNo command named [1munknown[22m (available: [1mlint[22m, [1mtest[22m)[39m");
 
         let err = GitError::HookCommandNotFound {
             name: "unknown".into(),
             available: vec![],
         };
-        assert_snapshot!(err.to_string(), @"[31m✗[39m [31mNo command named [1munknown[22m (hook has no named commands)[39m");
+        assert_snapshot!(err.render(), @"[31m✗[39m [31mNo command named [1munknown[22m (hook has no named commands)[39m");
     }
 
     #[test]
@@ -1693,7 +2156,7 @@ mod tests {
             error: "connection failed".into(),
             reproduction_command: Some("wt step commit --show-prompt | llm".into()),
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mCommit generation command failed[39m
         [107m [0m connection failed
         [2m○[22m Ran command:
@@ -1705,7 +2168,7 @@ mod tests {
             error: "timeout".into(),
             reproduction_command: None,
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mCommit generation command failed[39m
         [107m [0m timeout
         [2m○[22m Ran command:
@@ -1721,7 +2184,7 @@ mod tests {
             branch: None,
             force_hint: false,
         };
-        let display = err.to_string();
+        let display = err.render();
         assert_snapshot!(display, @"
         [31m✗[39m [31mCannot push: working tree has uncommitted changes[39m
         [2m↳[22m [2mCommit or stash changes first[22m
@@ -1734,7 +2197,7 @@ mod tests {
             branch: Some("feature".into()),
             force_hint: false,
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31m[1mfeature[22m has uncommitted changes[39m
         [2m↳[22m [2mCommit or stash changes first[22m
         ");
@@ -1745,7 +2208,7 @@ mod tests {
             branch: None,
             force_hint: false,
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mWorking tree has uncommitted changes[39m
         [2m↳[22m [2mCommit or stash changes first[22m
         ");
@@ -1756,7 +2219,7 @@ mod tests {
             branch: Some("feature".into()),
             force_hint: true,
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mCannot remove worktree: [1mfeature[22m has uncommitted changes[39m
         [2m↳[22m [2mCommit or stash changes first, or to lose uncommitted changes, run [4mwt remove --force feature[24m[22m
         ");
@@ -1770,7 +2233,7 @@ mod tests {
             commits_formatted: "".into(),
             in_merge_context: false,
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mCan't push to local [1mmain[22m branch: it has newer commits[39m
         [2m↳[22m [2mTo rebase onto [4mmain[24m, run [4mwt step rebase main[24m[22m
         ");
@@ -1781,7 +2244,7 @@ mod tests {
             commits_formatted: "abc123 Some commit".into(),
             in_merge_context: false,
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mCan't push to local [1mdevelop[22m branch: it has newer commits[39m
         [107m [0m abc123 Some commit
         [2m↳[22m [2mTo rebase onto [4mdevelop[24m, run [4mwt step rebase develop[24m[22m
@@ -1793,7 +2256,7 @@ mod tests {
             commits_formatted: "def456 Another commit".into(),
             in_merge_context: true,
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mCan't push to local [1mmain[22m branch: it has newer commits[39m
         [107m [0m def456 Another commit
         [2m↳[22m [2mTo incorporate these changes, run [4mwt merge main[24m again[22m
@@ -1807,7 +2270,7 @@ mod tests {
             files: vec![],
             worktree_path: PathBuf::from("/tmp/repo"),
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mCan't push to local [1mmain[22m branch: conflicting uncommitted changes[39m
         [2m↳[22m [2mCommit or stash these changes in /tmp/repo first[22m
         ");
@@ -1820,7 +2283,7 @@ mod tests {
             message: "gh api failed for PR #42".into(),
             stderr: "error: unexpected response\ncode: 500".into(),
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mgh api failed for PR #42[39m
         [107m [0m error: unexpected response
         [107m [0m code: 500
@@ -1834,7 +2297,7 @@ mod tests {
             repo: "upstream-repo".into(),
             suggested_url: "https://github.com/upstream-owner/upstream-repo.git".into(),
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mNo remote found for [1mupstream-owner/upstream-repo[22m[39m
         [2m↳[22m [2mAdd the remote: [4mgit remote add upstream https://github.com/upstream-owner/upstream-repo.git[24m[22m
         ");
@@ -1846,7 +2309,7 @@ mod tests {
             target_branch: "main".into(),
             git_output: "".into(),
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mRebase onto [1mmain[22m incomplete[39m
         [2m↳[22m [2mTo continue after resolving conflicts, run [4mgit rebase --continue[24m[22m
         [2m↳[22m [2mTo abort, run [4mgit rebase --abort[24m[22m
@@ -1864,7 +2327,7 @@ mod tests {
                 trailing_args: vec!["Check my emails".into()],
             },
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mBranch [1memails[22m already exists[39m
         [2m↳[22m [2mTo switch to the existing branch, run without [4m--create[24m: [4mwt switch emails --execute=claude -- 'Check my emails'[24m[22m
         ");
@@ -1883,7 +2346,7 @@ mod tests {
                 trailing_args: vec!["Check my emails".into()],
             },
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mDirectory already exists: [1m/tmp/repo.emails[22m[39m
         [2m↳[22m [2mTo remove manually, run [4mrm -rf /tmp/repo.emails[24m; to overwrite (with backup), run [4mwt switch --create --clobber emails --execute=claude -- 'Check my emails'[24m[22m
         ");
@@ -1900,7 +2363,7 @@ mod tests {
                 trailing_args: vec![],
             },
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mBranch [1memails[22m already exists[39m
         [2m↳[22m [2mTo switch to the existing branch, run without [4m--create[24m: [4mwt switch emails --execute=claude[24m[22m
         ");
@@ -1920,7 +2383,7 @@ mod tests {
                 trailing_args: vec!["Check my emails".into()],
             },
         };
-        assert_snapshot!(err.to_string(), @"
+        assert_snapshot!(err.render(), @"
         [31m✗[39m [31mNo branch named [1memails[22m[39m
         [2m↳[22m [2mTo create a new branch, run [4mwt switch --create emails --execute=claude -- 'Check my emails'[24m; to list branches, run [4mwt list --branches --remotes[24m[22m
         ");
@@ -2026,7 +2489,9 @@ mod tests {
             .context("running prune")
             .unwrap_err();
 
-        let cmd_err = find_command_error(&err).expect("CommandError should be found in chain");
+        let cmd_err = err
+            .find_command_error()
+            .expect("CommandError should be found in chain");
         assert_eq!(cmd_err.program, "git");
         assert_eq!(
             cmd_err.args,
@@ -2038,6 +2503,6 @@ mod tests {
     #[test]
     fn find_command_error_returns_none_for_unrelated_error() {
         let err = anyhow::anyhow!("some other failure");
-        assert!(find_command_error(&err).is_none());
+        assert!(err.find_command_error().is_none());
     }
 }
