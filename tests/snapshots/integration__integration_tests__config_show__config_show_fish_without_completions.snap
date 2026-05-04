@@ -35,13 +35,17 @@ info:
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -61,9 +65,6 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34mcommand[0m[2m wt config shell init fish [0m[2m[36m|[0m[2m [0m[2m[34msource[0m[2m
 [33m▲[39m [33m[1mfish[22m: Completions not configured @ ~/.config/fish/completions/wt.fish[39m
 [2m↳[22m [2mTo configure completions, run [4mwt config shell install fish[24m[22m
-[2m○[22m [2mbash: Skipped; ~/.bashrc not found[22m
-[2m○[22m [2mzsh: Skipped; ~/.zshrc not found[22m
-[2m○[22m [2mnu: Skipped; ~/.config/nushell/vendor/autoload not found[22m
 
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m

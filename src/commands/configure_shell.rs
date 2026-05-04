@@ -324,21 +324,6 @@ fn should_auto_configure_powershell() -> bool {
     }
 }
 
-/// Check if nushell is available on the system.
-///
-/// Nushell's `vendor/autoload` directory may not exist even when nushell is installed,
-/// since it was introduced in nushell v0.96.0 and isn't always created by default.
-/// When `nu` is in PATH, we should auto-configure nushell (creating vendor/autoload/
-/// if needed) rather than silently skipping it.
-fn is_nushell_available() -> bool {
-    // Allow tests to override detection (set via Command::env() in integration tests)
-    if let Ok(val) = std::env::var("WORKTRUNK_TEST_NUSHELL_ENV") {
-        return val == "1";
-    }
-
-    which::which("nu").is_ok()
-}
-
 pub fn scan_shell_configs(
     shell_filter: Option<Shell>,
     dry_run: bool,
@@ -357,7 +342,7 @@ pub fn scan_shell_configs(
 
     // Check if nushell is available on the system (nu binary in PATH).
     // vendor/autoload/ may not exist yet, but we should still install if nu is available.
-    let nushell_available = is_nushell_available();
+    let nushell_available = Shell::Nushell.is_installed();
 
     let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
@@ -408,8 +393,10 @@ pub fn scan_shell_configs(
                     }
                 }
             }
-        } else if shell_filter.is_none() {
-            // Track skipped shells (only when not explicitly filtering)
+        } else if shell_filter.is_none() && shell.is_installed() {
+            // Track skipped shells (only when not explicitly filtering, and only
+            // when the shell binary is on PATH — otherwise the user almost
+            // certainly doesn't use this shell and the entry is just clutter).
             // For Fish/Nushell, we check for parent directory; for others, the config file
             let skipped_path = if shell.is_wrapper_based() {
                 paths
@@ -423,11 +410,6 @@ pub fn scan_shell_configs(
                 skipped.push((shell, path));
             }
         }
-    }
-
-    if results.is_empty() && shell_filter.is_none() && skipped.is_empty() {
-        // No shells checked at all (shouldn't happen normally)
-        return Err("No shell config files found".to_string());
     }
 
     Ok(ScanResult {

@@ -210,7 +210,9 @@ pub fn build_pty_command(
         );
         #[cfg(windows)]
         cmd.env("USERPROFILE", home.to_string_lossy().to_string());
-        // Suppress nushell auto-detection for deterministic PTY tests
+        // Suppress nushell auto-detection for deterministic PTY tests.
+        // Other shell-installed defaults are picked up via STATIC_TEST_ENV_VARS
+        // in callers that pass env_vars from TestRepo::test_env_vars.
         cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
     }
 

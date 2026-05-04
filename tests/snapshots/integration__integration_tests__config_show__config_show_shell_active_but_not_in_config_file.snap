@@ -11,10 +11,15 @@ info:
     COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMON_DIR: ""
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_DIR: ""
     GIT_EDITOR: ""
+    GIT_INDEX_FILE: ""
+    GIT_OBJECT_DIRECTORY: ""
     GIT_TERMINAL_PROMPT: "0"
+    GIT_WORK_TREE: ""
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
@@ -31,13 +36,17 @@ info:
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_DIRECTIVE_CD_FILE: "[DIRECTIVE_CD_FILE]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -54,9 +63,6 @@ exit_code: 0
 [2m○[22m Shell integration active
 
 [2m○[22m [1mzsh[22m: Configured shell extension & completions (not found in ~/.zshrc)
-[2m○[22m [2mbash: Skipped; ~/.bashrc not found[22m
-[2m○[22m [2mfish: Skipped; ~/.config/fish/functions not found[22m
-[2m○[22m [2mnu: Skipped; ~/.config/nushell/vendor/autoload not found[22m
 
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m
