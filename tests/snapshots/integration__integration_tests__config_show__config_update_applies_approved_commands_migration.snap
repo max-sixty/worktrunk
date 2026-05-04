@@ -36,13 +36,17 @@ info:
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -51,7 +55,6 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mUser config: [1mapproved-commands[22m under [1m[projects][22m is deprecated in favor of [1mapprovals.toml[22m[39m
-[2m↳[22m [2mTo see details, run [4mwt config show[24m; to apply updates, run [4mwt config update[24m[22m
 [2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a/test-config.toml/current b/test-config.toml/migrated[m
 [107m [0m [1mindex 51f8ab1..a30ca31 100644[m

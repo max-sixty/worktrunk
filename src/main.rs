@@ -1248,9 +1248,15 @@ fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {
     })
 }
 
-/// True when the parsed command renders a TUI or stderr-sensitive output
-/// (a picker, statusline-on-prompt) and would be visually broken by config
-/// deprecation warnings landing on stderr above it.
+/// True when the parsed command should silence prewarm-time deprecation
+/// warnings. Two reasons qualify:
+///
+/// - **TUI / stderr-sensitive output** (`select`, `switch` picker mode,
+///   `list statusline`) — warnings on stderr would land above the picker
+///   or shell prompt and visually break it.
+/// - **`config update`** — the handler renders the deprecations and a diff
+///   itself, so the prewarm-time warning + `wt config update` hint is
+///   redundant noise above its own UI.
 ///
 /// Read from `Cli::command` before `Repository::prewarm` so the suppress
 /// latch beats `prewarm_user_config`'s warning-emission path. The handler
@@ -1263,6 +1269,9 @@ fn command_suppresses_warnings(command: Option<&Commands>) -> bool {
         Some(Commands::List(args)) => {
             matches!(args.subcommand, Some(ListSubcommand::Statusline { .. }))
         }
+        Some(Commands::Config {
+            action: ConfigCommand::Update { .. },
+        }) => true,
         _ => false,
     }
 }
