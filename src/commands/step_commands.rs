@@ -472,11 +472,9 @@ pub fn handle_squash(
     repo.run_command(&["commit", "-m", &commit_message])
         .context("Failed to create squash commit")?;
 
-    // Full SHA for the JSON payload, plus a `--short`-rendered hash for the
-    // success line (honors `core.abbrev` and auto-extends for ambiguous prefixes).
+    // Full SHA for the JSON payload, abbreviated form for the success line.
     let commit_sha = repo.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
-    let commit_hash = repo.run_command(&["rev-parse", "--short", "HEAD"])?;
-    let commit_hash = commit_hash.trim();
+    let commit_hash = repo.short_sha(&commit_sha)?;
 
     // Show success immediately after completing the squash
     eprintln!(
@@ -1840,10 +1838,10 @@ pub fn step_prune(
         // metadata, current-worktree deferral, and path-based candidates.
         if let CheckSource::Linked { wt_idx } = &item.source {
             let wt = &worktrees[*wt_idx];
-            let label = wt
-                .branch
-                .clone()
-                .unwrap_or_else(|| format!("(detached {})", &wt.head[..7.min(wt.head.len())]));
+            let label = wt.branch.clone().unwrap_or_else(|| {
+                let short = repo.short_sha(&wt.head).unwrap_or_else(|_| wt.head.clone());
+                format!("(detached {short})")
+            });
 
             // Skip recently-created worktrees that look "merged" because
             // they were just created from the default branch

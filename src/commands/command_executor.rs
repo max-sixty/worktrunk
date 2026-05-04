@@ -296,8 +296,10 @@ pub fn build_hook_context(
                 .flatten(),
         };
         if let Some(commit) = commit {
-            if want("short_commit") && commit.len() >= 7 {
-                map.insert("short_commit".into(), commit[..7].into());
+            if want("short_commit")
+                && let Ok(short) = ctx.repo.short_sha(&commit)
+            {
+                map.insert("short_commit".into(), short);
             }
             if want("commit") {
                 map.insert("commit".into(), commit);

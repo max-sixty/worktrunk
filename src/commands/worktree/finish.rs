@@ -94,7 +94,10 @@ pub fn finish_after_merge(
         None
     };
     if let Some(commit) = feature_commit.as_deref() {
-        feature_vars = feature_vars.with_active_commit(commit);
+        let short = repo
+            .short_sha(commit)
+            .unwrap_or_else(|_| commit.to_string());
+        feature_vars = feature_vars.with_active_commit(commit, &short);
     }
 
     // Finish worktree unless removal is disabled or blocked.

@@ -1091,8 +1091,9 @@ pub fn collect(
         if item.worktree_data().is_some_and(|d| d.is_prunable()) {
             continue;
         }
-        if let Some((timestamp, commit_message)) = commit_details_map.get(&item.head) {
+        if let Some((short_sha, timestamp, commit_message)) = commit_details_map.get(&item.head) {
             item.commit = Some(CommitDetails {
+                short_sha: short_sha.clone(),
                 timestamp: *timestamp,
                 commit_message: commit_message.clone(),
             });
@@ -1502,7 +1503,7 @@ pub fn collect(
 /// Sort items by timestamp descending using the pre-fetched commit-details map.
 fn sort_by_timestamp_desc_with_cache<T, F>(
     items: Vec<T>,
-    commit_details: &std::collections::HashMap<String, (i64, String)>,
+    commit_details: &std::collections::HashMap<String, (String, i64, String)>,
     get_sha: F,
 ) -> Vec<T>
 where
@@ -1512,7 +1513,9 @@ where
     let mut with_ts: Vec<_> = items
         .into_iter()
         .map(|item| {
-            let ts = commit_details.get(get_sha(&item)).map_or(0, |(ts, _)| *ts);
+            let ts = commit_details
+                .get(get_sha(&item))
+                .map_or(0, |(_, ts, _)| *ts);
             (item, ts)
         })
         .collect();
@@ -1526,7 +1529,7 @@ fn sort_worktrees_with_cache(
     worktrees: &[WorktreeInfo],
     main_worktree: &WorktreeInfo,
     current_path: Option<&std::path::PathBuf>,
-    commit_details: &std::collections::HashMap<String, (i64, String)>,
+    commit_details: &std::collections::HashMap<String, (String, i64, String)>,
 ) -> Vec<WorktreeInfo> {
     // Embed timestamp and priority in tuple to avoid parallel Vec and index lookups
     let mut with_sort_key: Vec<_> = worktrees
@@ -1539,7 +1542,7 @@ fn sort_worktrees_with_cache(
             } else {
                 2 // Rest by timestamp
             };
-            let ts = commit_details.get(&wt.head).map_or(0, |(ts, _)| *ts);
+            let ts = commit_details.get(&wt.head).map_or(0, |(_, ts, _)| *ts);
             (wt, priority, ts)
         })
         .collect();
@@ -1621,9 +1624,10 @@ pub fn populate_item(
     if item.head != worktrunk::git::NULL_OID
         && !is_prunable
         && let Ok(map) = repo.commit_details_many(&[&item.head])
-        && let Some((timestamp, commit_message)) = map.get(&item.head)
+        && let Some((short_sha, timestamp, commit_message)) = map.get(&item.head)
     {
         item.commit = Some(CommitDetails {
+            short_sha: short_sha.clone(),
             timestamp: *timestamp,
             commit_message: commit_message.clone(),
         });

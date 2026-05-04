@@ -244,12 +244,19 @@ impl JsonItem {
         let is_current = worktree_data.is_some_and(|d| d.is_current);
         let is_previous = worktree_data.is_some_and(|d| d.is_previous);
 
-        // Commit info — empty strings for null OID (unborn branches)
+        // Commit info — empty strings for null OID (unborn branches). The
+        // short form is fetched in the same `git log --no-walk` batch as the
+        // subject and timestamp (see `commit_details_many`), so it honors
+        // `core.abbrev` and disambiguates without an extra subprocess.
         let (sha, short_sha) = if item.head == worktrunk::git::NULL_OID {
             (String::new(), String::new())
         } else {
             let sha = item.head.clone();
-            let short_sha = sha[..7.min(sha.len())].to_string();
+            let short_sha = item
+                .commit
+                .as_ref()
+                .map(|c| c.short_sha.clone())
+                .unwrap_or_else(|| sha.clone());
             (sha, short_sha)
         };
         let commit = JsonCommit {

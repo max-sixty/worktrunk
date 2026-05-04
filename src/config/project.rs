@@ -137,7 +137,7 @@ impl ProjectConfig {
 /// - `{{ primary_worktree_path }}` - Primary worktree path (main worktree for normal repos; default branch worktree for bare repos)
 /// - `{{ default_branch }}` - Default branch name (e.g., "main")
 /// - `{{ commit }}` - Current HEAD commit SHA (full 40-character hash)
-/// - `{{ short_commit }}` - Current HEAD commit SHA (short 7-character hash)
+/// - `{{ short_commit }}` - Current HEAD commit SHA, abbreviated per `core.abbrev` (auto-extends for ambiguous prefixes)
 /// - `{{ remote }}` - Primary remote name (e.g., "origin")
 /// - `{{ upstream }}` - Upstream tracking branch (e.g., "origin/feature"), if configured
 ///

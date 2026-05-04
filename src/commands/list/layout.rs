@@ -1305,6 +1305,7 @@ mod tests {
             head: "abc12345".to_string(),
             branch: Some("feature".to_string()),
             commit: Some(CommitDetails {
+                short_sha: "abc1234".to_string(),
                 timestamp: 1234567890,
                 commit_message: "Test commit message".to_string(),
             }),
@@ -1414,6 +1415,7 @@ mod tests {
             head: "abc12345".to_string(),
             branch: Some("main".to_string()),
             commit: Some(CommitDetails {
+                short_sha: "abc1234".to_string(),
                 timestamp: 1234567890,
                 commit_message: "Test".to_string(),
             }),
@@ -1916,6 +1918,7 @@ mod tests {
                 head: "a620bcfe".to_string(),
                 branch: Some(branch.to_string()),
                 commit: Some(CommitDetails {
+                    short_sha: "a620bcf".to_string(),
                     timestamp: ts,
                     commit_message: "Some commit message".to_string(),
                 }),

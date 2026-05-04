@@ -441,7 +441,8 @@ pub fn handle_no_ff_merge(
 
     ctx.restore_stash();
 
-    let merge_sha_short = &merge_sha[..merge_sha.len().min(7)];
+    // Display uses `Repository::short_sha`; the JSON payload carries the full SHA.
+    let merge_sha_short = ctx.repo.short_sha(&merge_sha)?;
     let sha_suffix = cformat!(" @ <dim>{merge_sha_short}</>");
     ctx.show_success("Merged to", &sha_suffix, ", --no-ff");
 

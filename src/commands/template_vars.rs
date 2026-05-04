@@ -87,10 +87,12 @@ impl TemplateVars {
         self
     }
 
-    /// Override `commit`. Also sets `short_commit` to the first 7 characters
-    /// when present (commit SHAs are ASCII hex, so the byte slice is safe).
-    pub fn with_active_commit(mut self, commit: &str) -> Self {
-        self.active_short_commit = commit.get(..7).map(str::to_owned);
+    /// Override `commit` and `short_commit`. Caller resolves the abbreviated
+    /// form via [`Repository::short_sha`](worktrunk::git::Repository::short_sha)
+    /// so we don't slice raw bytes here — 7-char prefixes regularly collide in
+    /// large repos and ignore the user's `core.abbrev` setting.
+    pub fn with_active_commit(mut self, commit: &str, short_commit: &str) -> Self {
+        self.active_short_commit = Some(short_commit.to_string());
         self.active_commit = Some(commit.to_string());
         self
     }
@@ -222,22 +224,11 @@ mod tests {
     }
 
     #[test]
-    fn active_commit_derives_short_commit() {
-        let vars = TemplateVars::new().with_active_commit("0123456789abcdef");
+    fn active_commit_emits_both_forms() {
+        let vars = TemplateVars::new().with_active_commit("0123456789abcdef", "0123456");
         let pairs = vars.as_extra_vars();
         assert!(pairs.contains(&("commit", "0123456789abcdef")));
         assert!(pairs.contains(&("short_commit", "0123456")));
-    }
-
-    #[test]
-    fn active_commit_skips_short_when_too_short() {
-        // SHAs are always >= 7 chars in practice, but `.get(..7)` returns None
-        // for shorter strings rather than panicking — preserves merge.rs's
-        // pre-refactor behavior.
-        let vars = TemplateVars::new().with_active_commit("abc");
-        let pairs = vars.as_extra_vars();
-        assert!(pairs.iter().any(|(k, _)| *k == "commit"));
-        assert!(!pairs.iter().any(|(k, _)| *k == "short_commit"));
     }
 
     #[test]
