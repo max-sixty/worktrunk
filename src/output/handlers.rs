@@ -449,7 +449,7 @@ fn handle_branch_deletion_result(
                 "{}",
                 error_message(cformat!("Failed to delete branch <bold>{branch_name}</>"))
             );
-            eprintln!("{}", format_with_gutter(&e.to_string(), None));
+            eprintln!("{}", format_with_gutter(&worktrunk::git::display_message(&e), None));
             Err(e)
         }
     }
@@ -1265,7 +1265,7 @@ fn handle_detached_removed_worktree_output(
             branch: path_dir_name(ctx.worktree_path).to_string(),
             path: ctx.worktree_path.to_path_buf(),
             remaining_entries: list_remaining_entries(ctx.worktree_path),
-            error: err.to_string(),
+            error: worktrunk::git::display_message(&err),
         })?;
         let (files, bytes) = output
             .staged_path
