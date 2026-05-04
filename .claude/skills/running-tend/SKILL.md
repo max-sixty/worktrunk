@@ -205,9 +205,16 @@ the full test suite (`cargo run -- hook pre-merge --yes`) and verify
 
 ## Weekly Maintenance: CI Pin Bumps
 
-Bump pinned third-party versions in `.github/workflows/ci.yaml` to track upstream:
+Pinned third-party versions in CI are invisible to Dependabot — it follows `Cargo.toml` deps and `uses: foo@vN` action refs, not inline `version:` strings. They drift unless this step bumps them.
 
-- **`hustcer/setup-nu@v3`** — set `version:` to the latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'` and update all three call sites (`test`, `benchmarks`, `code-coverage`).
+For each weekly run, check upstream and bump:
+
+- **`baptiste0928/cargo-install@v3` blocks** in `.github/workflows/ci.yaml` and `.github/actions/{test,claude}-setup/action.yaml` — every `version: "=X.Y.Z"` against `cargo info <crate>`. Today: `cargo-insta`, `cargo-nextest`, `cargo-llvm-cov`, `cargo-msrv`, `cargo-udeps`, `lychee`, `worktrunk`. The `cargo-affected` install has no version pin (follows default branch) — leave it alone. Verify each crate's `rust-version` against the pinned toolchain and note compatibility in the PR body (see PR #1657 for the format).
+- **`hustcer/setup-nu@v3`** `version:` input — latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'`. Three call sites: `ci.yaml` (`benchmarks`, `code-coverage`) and `actions/test-setup/action.yaml`.
+- **`taiki-e/install-action@v2.x`** `tool: zola@<ver>` in the `check-docs` job — latest from `gh api repos/getzola/zola/releases/latest --jq '.tag_name'`.
+- **Runner images** — `ubuntu-24.04`, `macos-15`, `windows-2022`. Keep `windows-2022` pinned (actions/runner-images#12677 — windows-2025 lacks the D: drive).
+
+Discovery shortcut: a recent green CI run on `main` flags cargo-install drift directly via workflow annotations. `gh run view <run-id> --json jobs --jq '.jobs[].databaseId' | xargs -I{} gh api repos/<owner>/<repo>/check-runs/{}/annotations` returns one warning per outdated pin.
 
 ## Weekly Maintenance: Statusline Cache-Check
 

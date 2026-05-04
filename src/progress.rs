@@ -313,7 +313,7 @@ pub fn format_stats_paren(files: usize, bytes: u64) -> String {
     let word = if files == 1 { "file" } else { "files" };
     // Split the closing paren into a separate cformat so the optimizer doesn't
     // collapse the two color-print spans (matches the squash-progress pattern
-    // in commands/step_commands.rs).
+    // in commands/step/squash.rs).
     let close = cformat!("<bright-black>)</>");
     cformat!(
         " <bright-black>({} {word} · {}</>{close}",

@@ -686,6 +686,82 @@ fn test_remove_no_delete_branch(mut repo: TestRepo) {
     ));
 }
 
+/// `[remove] delete-branch = false` in user config makes `wt remove` keep the
+/// branch by default — equivalent to passing `--no-delete-branch` every time.
+#[rstest]
+fn test_remove_config_delete_branch_false_keeps_branch(mut repo: TestRepo) {
+    repo.write_test_config(
+        r#"[remove]
+delete-branch = false
+"#,
+    );
+    let _worktree_path = repo.add_worktree("feature-config-keep");
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "feature-config-keep"])
+        .output()
+        .expect("wt remove should run");
+    assert!(
+        output.status.success(),
+        "wt remove failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Branch should still exist because config kept it.
+    let branches = repo
+        .git_command()
+        .args(["branch", "--list", "feature-config-keep"])
+        .run()
+        .unwrap()
+        .stdout;
+    assert!(
+        String::from_utf8_lossy(&branches).contains("feature-config-keep"),
+        "branch should be retained when [remove] delete-branch = false; got: {}",
+        String::from_utf8_lossy(&branches),
+    );
+}
+
+/// `--delete-branch` on the command line overrides
+/// `[remove] delete-branch = false` from config.
+#[rstest]
+fn test_remove_cli_delete_branch_overrides_config(mut repo: TestRepo) {
+    repo.write_test_config(
+        r#"[remove]
+delete-branch = false
+"#,
+    );
+    let _worktree_path = repo.add_worktree("feature-cli-override");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "--foreground",
+            "--delete-branch",
+            "feature-cli-override",
+        ])
+        .output()
+        .expect("wt remove should run");
+    assert!(
+        output.status.success(),
+        "wt remove failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let branches = repo
+        .git_command()
+        .args(["branch", "--list", "feature-cli-override"])
+        .run()
+        .unwrap()
+        .stdout;
+    assert!(
+        !String::from_utf8_lossy(&branches).contains("feature-cli-override"),
+        "branch should be deleted when --delete-branch overrides config; got: {}",
+        String::from_utf8_lossy(&branches),
+    );
+}
+
 #[rstest]
 fn test_remove_no_delete_branch_unmerged(mut repo: TestRepo) {
     // Create a worktree with an unmerged commit

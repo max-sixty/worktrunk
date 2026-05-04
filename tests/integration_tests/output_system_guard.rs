@@ -42,8 +42,15 @@ const STDOUT_ALLOWED_PATHS: &[&str] = &[
     "alias.rs",
     // Template evaluation output for scripting
     "eval.rs",
-    // LLM prompt output for wt step commit --show-prompt
-    "step_commands.rs",
+    // LLM prompt output for wt step commit --show-prompt and squash --show-prompt
+    "step/commit.rs",
+    "step/squash.rs",
+    // JSON output for wt step copy-ignored --format=json
+    "step/copy_ignored.rs",
+    // JSON output for wt step prune --format=json
+    "step/prune.rs",
+    // JSON output for wt step relocate --format=json
+    "step/relocate.rs",
     // --no-cd flag: branch name output for scripting
     "picker/mod.rs",
     // JSON output for wt switch --format=json

@@ -9,6 +9,7 @@ pub(crate) mod custom;
 mod eval;
 mod for_each;
 mod handle_switch;
+mod hook_announcement;
 mod hook_commands;
 mod hook_filter;
 pub(crate) mod hooks;
@@ -24,7 +25,7 @@ mod relocate;
 pub(crate) mod repository_ext;
 mod run_pipeline;
 pub(crate) mod statusline;
-pub(crate) mod step_commands;
+pub(crate) mod step;
 pub(crate) mod template_vars;
 pub(crate) mod worktree;
 
@@ -55,7 +56,7 @@ pub(crate) use merge::{MergeFlagOverrides, MergeOptions, handle_merge};
 pub(crate) use picker::handle_picker;
 pub(crate) use repository_ext::RemoveTarget;
 pub(crate) use run_pipeline::run_pipeline;
-pub(crate) use step_commands::{
+pub(crate) use step::{
     PromoteResult, RebaseResult, SquashResult, handle_promote, handle_rebase, handle_squash,
     step_commit, step_copy_ignored, step_diff, step_dry_run_squash, step_prune, step_relocate,
     step_show_squash_prompt,

@@ -6,8 +6,8 @@
 
 use super::UserConfig;
 use super::sections::{
-    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, StepConfig, SwitchConfig,
-    SwitchPickerConfig,
+    CommitConfig, CommitGenerationConfig, ListConfig, MergeConfig, RemoveConfig, StepConfig,
+    SwitchConfig, SwitchPickerConfig,
 };
 
 /// All resolved configuration for a specific project context.
@@ -28,6 +28,7 @@ use super::sections::{
 pub struct ResolvedConfig {
     pub list: ListConfig,
     pub merge: MergeConfig,
+    pub remove: RemoveConfig,
     pub commit: CommitConfig,
     /// Resolved commit generation config
     pub commit_generation: CommitGenerationConfig,
@@ -45,6 +46,7 @@ impl ResolvedConfig {
         Self {
             list: config.list(project),
             merge: config.merge(project),
+            remove: config.remove(project),
             commit: config.commit(project),
             commit_generation: config.commit_generation(project),
             switch_picker: config.switch_picker(project),

@@ -621,7 +621,6 @@ pub fn handle_picker(
             orchestrator: Arc::clone(&orchestrator),
             preview_dims,
             llm_command,
-            repo: repo.clone(),
             summary_hint,
         });
 

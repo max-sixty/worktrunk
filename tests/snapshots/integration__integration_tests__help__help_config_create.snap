@@ -20,13 +20,17 @@ info:
     WORKTRUNK_APPROVALS_PATH: /nonexistent/wt/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml
     WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
 success: true
 exit_code: 0
@@ -171,6 +175,13 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# verify = true      # Run project hooks (--no-hooks to skip)[0m
 [107m [0m [2m# ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)[0m
 [107m [0m [2m#[0m
+[107m [0m [2m# ### Remove[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Persistent flag values for `wt remove`. Override on command line as needed.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [remove][0m
+[107m [0m [2m# delete-branch = true   # Delete branch after removal (--no-delete-branch to keep)[0m
+[107m [0m [2m#[0m
 [107m [0m [2m# ### Switch[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [switch][0m
@@ -210,6 +221,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
 [107m [0m [2m# list.full = true[0m
 [107m [0m [2m# merge.squash = false[0m
+[107m [0m [2m# remove.delete-branch = false[0m
 [107m [0m [2m# pre-start.env = "cp .env.example .env"[0m
 [107m [0m [2m# step.copy-ignored.exclude = [".repo-local-cache/"][0m
 [107m [0m [2m# aliases.deploy = "make deploy BRANCH={{ branch }}"[0m
