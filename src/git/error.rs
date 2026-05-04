@@ -24,14 +24,14 @@
 use std::borrow::Cow;
 use std::path::PathBuf;
 
-use color_print::{cformat, cwrite};
+use color_print::cformat;
 use shell_escape::escape;
 
 use super::HookType;
 use crate::path::format_path_for_display;
 use crate::styling::{
-    ERROR_SYMBOL, HINT_SYMBOL, error_message, format_bash_with_gutter, format_with_gutter,
-    hint_message, info_message, suggest_command,
+    error_message, format_bash_with_gutter, format_with_gutter, hint_message, info_message,
+    suggest_command,
 };
 
 /// Platform-specific reference type (PR vs MR).
@@ -558,6 +558,205 @@ pub enum GitError {
 impl std::error::Error for GitError {}
 
 impl GitError {
+    /// Styled title for this variant (first line, with inline `<bold>`
+    /// highlights on entity names like branch and path).
+    ///
+    /// Single source of truth: [`Diagnostic::render`] uses this directly
+    /// for the header; the [`std::fmt::Display`] impl strips ANSI codes
+    /// (via [`ansi_str::AnsiStr::ansi_strip`]) for embedding into other
+    /// error messages or non-terminal sinks like JSON.
+    fn title(&self) -> String {
+        match self {
+            GitError::WithSwitchSuggestion { source, .. } => source.title(),
+
+            GitError::DetachedHead { action } => match action {
+                Some(action) => cformat!("Cannot {action}: not on a branch (detached HEAD)"),
+                None => "Not on a branch (detached HEAD)".to_string(),
+            },
+
+            GitError::UncommittedChanges { action, branch, .. } => match (action, branch) {
+                (Some(action), Some(b)) => {
+                    cformat!("Cannot {action}: <bold>{b}</> has uncommitted changes")
+                }
+                (Some(action), None) => {
+                    format!("Cannot {action}: working tree has uncommitted changes")
+                }
+                (None, Some(b)) => cformat!("<bold>{b}</> has uncommitted changes"),
+                (None, None) => "Working tree has uncommitted changes".to_string(),
+            },
+
+            GitError::BranchAlreadyExists { branch } => {
+                cformat!("Branch <bold>{branch}</> already exists")
+            }
+
+            GitError::BranchNotFound { branch, .. } => {
+                cformat!("No branch named <bold>{branch}</>")
+            }
+
+            GitError::ReferenceNotFound { reference } => {
+                cformat!("No branch, tag, or commit named <bold>{reference}</>")
+            }
+
+            GitError::StaleDefaultBranch { branch } => {
+                cformat!("Default branch <bold>{branch}</> does not exist locally")
+            }
+
+            GitError::NotInWorktree { action } => match action {
+                Some(action) => format!("Cannot {action}: not in a worktree"),
+                None => "Not in a worktree".to_string(),
+            },
+
+            GitError::WorktreeMissing { branch } => {
+                cformat!("Worktree directory missing for <bold>{branch}</>")
+            }
+
+            GitError::RemoteOnlyBranch { branch, remote } => {
+                cformat!("Branch <bold>{branch}</> exists only on remote ({remote}/{branch})")
+            }
+
+            GitError::WorktreePathOccupied {
+                branch,
+                path,
+                occupant,
+            } => {
+                let path_display = format_path_for_display(path);
+                match occupant {
+                    Some(occupant_branch) => cformat!(
+                        "Cannot switch to <bold>{branch}</> — there's a worktree at the expected path <bold>{path_display}</> on branch <bold>{occupant_branch}</>"
+                    ),
+                    None => cformat!(
+                        "Cannot switch to <bold>{branch}</> — there's a detached worktree at the expected path <bold>{path_display}</>"
+                    ),
+                }
+            }
+
+            GitError::WorktreePathExists { path, .. } => {
+                let path_display = format_path_for_display(path);
+                cformat!("Directory already exists: <bold>{path_display}</>")
+            }
+
+            GitError::WorktreeCreationFailed {
+                branch,
+                base_branch,
+                ..
+            } => match base_branch {
+                Some(base) => cformat!(
+                    "Failed to create worktree for <bold>{branch}</> from base <bold>{base}</>"
+                ),
+                None => cformat!("Failed to create worktree for <bold>{branch}</>"),
+            },
+
+            GitError::WorktreeRemovalFailed { branch, path, .. } => {
+                let path_display = format_path_for_display(path);
+                cformat!(
+                    "Failed to remove worktree for <bold>{branch}</> @ <bold>{path_display}</>"
+                )
+            }
+
+            GitError::CannotRemoveMainWorktree => "The main worktree cannot be removed".to_string(),
+
+            GitError::CannotRemoveDefaultBranch { branch } => {
+                cformat!("Cannot remove the default branch <bold>{branch}</>")
+            }
+
+            GitError::WorktreeLocked { branch, reason, .. } => {
+                let reason_text = match reason {
+                    Some(r) if !r.is_empty() => format!(" ({r})"),
+                    _ => String::new(),
+                };
+                cformat!("Cannot remove <bold>{branch}</>, worktree is locked{reason_text}")
+            }
+
+            GitError::ConflictingChanges { target_branch, .. } => cformat!(
+                "Can't push to local <bold>{target_branch}</> branch: conflicting uncommitted changes"
+            ),
+
+            GitError::NotFastForward { target_branch, .. } => cformat!(
+                "Can't push to local <bold>{target_branch}</> branch: it has newer commits"
+            ),
+
+            GitError::RebaseConflict { target_branch, .. } => {
+                cformat!("Rebase onto <bold>{target_branch}</> incomplete")
+            }
+
+            GitError::NotRebased { target_branch } => {
+                cformat!("Branch not rebased onto <bold>{target_branch}</>")
+            }
+
+            GitError::PushFailed { target_branch, .. } => {
+                cformat!("Can't push to local <bold>{target_branch}</> branch")
+            }
+
+            GitError::NotInteractive => {
+                "Cannot prompt for approval in non-interactive environment".to_string()
+            }
+
+            GitError::HookCommandNotFound { name, available } => {
+                if available.is_empty() {
+                    cformat!("No command named <bold>{name}</> (hook has no named commands)")
+                } else {
+                    let styled_list = available
+                        .iter()
+                        .map(|s| cformat!("<bold>{s}</>"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    cformat!("No command named <bold>{name}</> (available: {styled_list})")
+                }
+            }
+
+            GitError::LlmCommandFailed { .. } => "Commit generation command failed".to_string(),
+
+            GitError::ProjectConfigNotFound { .. } => "No project configuration found".to_string(),
+
+            GitError::ParseError { message } => message.clone(),
+
+            GitError::WorktreeIncludeParseError { .. } => {
+                cformat!("Error parsing <bold>.worktreeinclude</>")
+            }
+
+            GitError::WorktreeNotFound { branch } => {
+                cformat!("Branch <bold>{branch}</> has no worktree")
+            }
+
+            GitError::RefCreateConflict {
+                ref_type,
+                number,
+                branch,
+            } => {
+                let name = ref_type.name();
+                let syntax = ref_type.syntax();
+                cformat!(
+                    "Cannot create branch for <bold>{syntax}{number}</> — {name} already has branch <bold>{branch}</>"
+                )
+            }
+
+            GitError::RefBaseConflict { ref_type, number } => {
+                let syntax = ref_type.syntax();
+                cformat!("Cannot use <bold>--base</> with <bold>{syntax}{number}</>")
+            }
+
+            GitError::BranchTracksDifferentRef {
+                branch,
+                ref_type,
+                number,
+            } => {
+                let name = ref_type.name();
+                let symbol = ref_type.symbol();
+                cformat!(
+                    "Branch <bold>{branch}</> exists but doesn't track {name} {symbol}{number}"
+                )
+            }
+
+            GitError::NoRemoteForRepo { owner, repo, .. } => {
+                cformat!("No remote found for <bold>{owner}/{repo}</>")
+            }
+
+            GitError::CliApiError { message, .. } => message.clone(),
+
+            GitError::Other { message } => message.clone(),
+        }
+    }
+
     /// Render the styled diagnostic block with optional switch suggestion context.
     ///
     /// Most variants ignore `ctx`. The three that render `wt switch` suggestions
@@ -577,15 +776,12 @@ impl GitError {
                 source.write_render_with_ctx(f, Some(ctx))
             }
 
-            GitError::DetachedHead { action } => {
-                let message = match action {
-                    Some(action) => cformat!("Cannot {action}: not on a branch (detached HEAD)"),
-                    None => "Not on a branch (detached HEAD)".to_string(),
-                };
+            GitError::DetachedHead { .. } => {
+                let title = self.title();
                 write!(
                     f,
                     "{}\n{}",
-                    error_message(&message),
+                    error_message(&title),
                     hint_message(cformat!(
                         "To switch to a branch, run <underline>git switch <<branch>></>"
                     ))
@@ -593,22 +789,9 @@ impl GitError {
             }
 
             GitError::UncommittedChanges {
-                action,
-                branch,
-                force_hint,
+                branch, force_hint, ..
             } => {
-                let message = match (action, branch) {
-                    (Some(action), Some(b)) => {
-                        cformat!("Cannot {action}: <bold>{b}</> has uncommitted changes")
-                    }
-                    (Some(action), None) => {
-                        cformat!("Cannot {action}: working tree has uncommitted changes")
-                    }
-                    (None, Some(b)) => {
-                        cformat!("<bold>{b}</> has uncommitted changes")
-                    }
-                    (None, None) => cformat!("Working tree has uncommitted changes"),
-                };
+                let title = self.title();
                 let hint = if *force_hint {
                     // Construct full command: "wt remove [branch] --force"
                     let args: Vec<&str> = branch.as_deref().into_iter().collect();
@@ -619,10 +802,11 @@ impl GitError {
                 } else {
                     "Commit or stash changes first".to_string()
                 };
-                write!(f, "{}\n{}", error_message(&message), hint_message(hint))
+                write!(f, "{}\n{}", error_message(&title), hint_message(hint))
             }
 
             GitError::BranchAlreadyExists { branch } => {
+                let title = self.title();
                 let mut switch_cmd = suggest_command("switch", &[branch], &[]);
                 if let Some(ctx) = ctx {
                     switch_cmd = ctx.apply(switch_cmd);
@@ -630,7 +814,7 @@ impl GitError {
                 write!(
                     f,
                     "{}\n{}",
-                    error_message(cformat!("Branch <bold>{branch}</> already exists")),
+                    error_message(&title),
                     hint_message(cformat!(
                         "To switch to the existing branch, run without <underline>--create</>: <underline>{switch_cmd}</>"
                     ))
@@ -643,6 +827,7 @@ impl GitError {
                 last_fetch_ago,
                 pr_mr_platform,
             } => {
+                let title = self.title();
                 let list_cmd = suggest_command("list", &[], &["--branches", "--remotes"]);
                 let fetch_note = last_fetch_ago
                     .as_ref()
@@ -669,93 +854,73 @@ impl GitError {
                 } else {
                     cformat!("To list branches, run <underline>{list_cmd}</>")
                 };
+                write!(f, "{}\n{}", error_message(&title), hint_message(hint))
+            }
+
+            GitError::ReferenceNotFound { .. } => {
+                let title = self.title();
+                write!(f, "{}", error_message(&title))
+            }
+
+            GitError::StaleDefaultBranch { .. } => {
+                let title = self.title();
                 write!(
                     f,
                     "{}\n{}",
-                    error_message(cformat!("No branch named <bold>{branch}</>")),
-                    hint_message(hint)
-                )
-            }
-
-            GitError::ReferenceNotFound { reference } => {
-                write!(
-                    f,
-                    "{}",
-                    error_message(cformat!(
-                        "No branch, tag, or commit named <bold>{reference}</>"
-                    ))
-                )
-            }
-
-            GitError::StaleDefaultBranch { branch } => {
-                write!(
-                    f,
-                    "{}\n{}",
-                    error_message(cformat!(
-                        "Default branch <bold>{branch}</> does not exist locally"
-                    )),
+                    error_message(&title),
                     hint_message(cformat!(
                         "Reset the cached value with <underline>wt config state default-branch clear</>, or set it explicitly with <underline>wt config state default-branch set BRANCH</>"
                     ))
                 )
             }
 
-            GitError::NotInWorktree { action } => {
-                let message = match action {
-                    Some(action) => cformat!("Cannot {action}: not in a worktree"),
-                    None => "Not in a worktree".to_string(),
-                };
+            GitError::NotInWorktree { .. } => {
+                let title = self.title();
                 write!(
                     f,
                     "{}\n{}",
-                    error_message(&message),
+                    error_message(&title),
                     hint_message(cformat!(
                         "Run from inside a worktree, or specify a branch name"
                     ))
                 )
             }
 
-            GitError::WorktreeMissing { branch } => {
+            GitError::WorktreeMissing { .. } => {
+                let title = self.title();
                 write!(
                     f,
                     "{}\n{}",
-                    error_message(cformat!("Worktree directory missing for <bold>{branch}</>")),
+                    error_message(&title),
                     hint_message(cformat!(
                         "To clean up, run <underline>git worktree prune</>"
                     ))
                 )
             }
 
-            GitError::RemoteOnlyBranch { branch, remote } => {
+            GitError::RemoteOnlyBranch { branch, .. } => {
+                let title = self.title();
                 let cmd = suggest_command("switch", &[branch], &[]);
-                cwrite!(
+                write!(
                     f,
-                    "{ERROR_SYMBOL} <red>Branch <bold>{branch}</> exists only on remote ({remote}/{branch})</>\n{HINT_SYMBOL} <dim>To create a local worktree, run <underline>{cmd}</></>"
+                    "{}\n{}",
+                    error_message(&title),
+                    hint_message(cformat!(
+                        "To create a local worktree, run <underline>{cmd}</>"
+                    ))
                 )
             }
 
-            GitError::WorktreePathOccupied {
-                branch,
-                path,
-                occupant,
-            } => {
+            GitError::WorktreePathOccupied { branch, path, .. } => {
+                let title = self.title();
                 let path_display = format_path_for_display(path);
-                let reason = if let Some(occupant_branch) = occupant {
-                    cformat!(
-                        "there's a worktree at the expected path <bold>{path_display}</> on branch <bold>{occupant_branch}</>"
-                    )
-                } else {
-                    cformat!(
-                        "there's a detached worktree at the expected path <bold>{path_display}</>"
-                    )
-                };
                 let escaped_path = escape(path.to_string_lossy());
                 let escaped_branch = escape(Cow::Borrowed(branch.as_str()));
                 let command = format!("cd {escaped_path} && git switch {escaped_branch}");
                 write!(
                     f,
                     "{}\n{}",
-                    error_message(cformat!("Cannot switch to <bold>{branch}</> — {reason}")),
+                    error_message(&title),
                     hint_message(cformat!(
                         "To switch the worktree at <underline>{path_display}</> to <underline>{branch}</>, run <underline>{command}</>"
                     ))
@@ -767,6 +932,7 @@ impl GitError {
                 path,
                 create,
             } => {
+                let title = self.title();
                 let path_display = format_path_for_display(path);
                 let flags: &[&str] = if *create {
                     &["--create", "--clobber"]
@@ -780,29 +946,16 @@ impl GitError {
                 write!(
                     f,
                     "{}\n{}",
-                    error_message(cformat!(
-                        "Directory already exists: <bold>{path_display}</>"
-                    )),
+                    error_message(&title),
                     hint_message(cformat!(
                         "To remove manually, run <underline>rm -rf {path_display}</>; to overwrite (with backup), run <underline>{switch_cmd}</>"
                     ))
                 )
             }
 
-            GitError::WorktreeCreationFailed {
-                branch,
-                base_branch,
-                error,
-                command,
-            } => {
-                let header = if let Some(base) = base_branch {
-                    error_message(cformat!(
-                        "Failed to create worktree for <bold>{branch}</> from base <bold>{base}</>"
-                    ))
-                } else {
-                    error_message(cformat!("Failed to create worktree for <bold>{branch}</>"))
-                };
-                write!(f, "{}", format_error_block(header, error))?;
+            GitError::WorktreeCreationFailed { error, command, .. } => {
+                let title = self.title();
+                write!(f, "{}", format_error_block(error_message(&title), error))?;
                 if let Some(cmd) = command {
                     write!(
                         f,
@@ -815,16 +968,12 @@ impl GitError {
             }
 
             GitError::WorktreeRemovalFailed {
-                branch,
-                path,
                 error,
                 remaining_entries,
+                ..
             } => {
-                let path_display = format_path_for_display(path);
-                let header = error_message(cformat!(
-                    "Failed to remove worktree for <bold>{branch}</> @ <bold>{path_display}</>"
-                ));
-                write!(f, "{}", format_error_block(header, error))?;
+                let title = self.title();
+                write!(f, "{}", format_error_block(error_message(&title), error))?;
                 if let Some(entries) = remaining_entries {
                     const MAX_SHOWN: usize = 10;
                     let listing = if entries.len() > MAX_SHOWN {
@@ -853,45 +1002,28 @@ impl GitError {
             }
 
             GitError::CannotRemoveMainWorktree => {
-                write!(
-                    f,
-                    "{}",
-                    error_message("The main worktree cannot be removed")
-                )
+                let title = self.title();
+                write!(f, "{}", error_message(&title))
             }
 
             GitError::CannotRemoveDefaultBranch { branch } => {
+                let title = self.title();
                 let cmd = suggest_command("remove", &[branch], &["-D"]);
                 write!(
                     f,
-                    "{}",
-                    error_message(cformat!(
-                        "Cannot remove the default branch <bold>{branch}</>"
-                    ))
-                )?;
-                write!(
-                    f,
-                    "\n{}",
+                    "{}\n{}",
+                    error_message(&title),
                     hint_message(cformat!("To force-delete, run <underline>{cmd}</>"))
                 )
             }
 
-            GitError::WorktreeLocked {
-                branch,
-                path,
-                reason,
-            } => {
-                let reason_text = match reason {
-                    Some(r) if !r.is_empty() => format!(" ({r})"),
-                    _ => String::new(),
-                };
+            GitError::WorktreeLocked { path, .. } => {
+                let title = self.title();
                 let path_display = format_path_for_display(path);
                 write!(
                     f,
                     "{}\n{}",
-                    error_message(cformat!(
-                        "Cannot remove <bold>{branch}</>, worktree is locked{reason_text}"
-                    )),
+                    error_message(&title),
                     hint_message(cformat!(
                         "To unlock, run <underline>git worktree unlock {path_display}</>"
                     ))
@@ -899,17 +1031,12 @@ impl GitError {
             }
 
             GitError::ConflictingChanges {
-                target_branch,
                 files,
                 worktree_path,
+                ..
             } => {
-                write!(
-                    f,
-                    "{}",
-                    error_message(cformat!(
-                        "Can't push to local <bold>{target_branch}</> branch: conflicting uncommitted changes"
-                    ))
-                )?;
+                let title = self.title();
+                write!(f, "{}", error_message(&title))?;
                 if !files.is_empty() {
                     let joined_files = files.join("\n");
                     write!(f, "\n{}", format_with_gutter(&joined_files, None))?;
@@ -929,13 +1056,8 @@ impl GitError {
                 commits_formatted,
                 in_merge_context,
             } => {
-                write!(
-                    f,
-                    "{}",
-                    error_message(cformat!(
-                        "Can't push to local <bold>{target_branch}</> branch: it has newer commits"
-                    ))
-                )?;
+                let title = self.title();
+                write!(f, "{}", error_message(&title))?;
                 if !commits_formatted.is_empty() {
                     write!(f, "\n{}", format_with_gutter(commits_formatted, None))?;
                 }
@@ -961,15 +1083,9 @@ impl GitError {
                 }
             }
 
-            GitError::RebaseConflict {
-                target_branch,
-                git_output,
-            } => {
-                write!(
-                    f,
-                    "{}",
-                    error_message(cformat!("Rebase onto <bold>{target_branch}</> incomplete"))
-                )?;
+            GitError::RebaseConflict { git_output, .. } => {
+                let title = self.title();
+                write!(f, "{}", error_message(&title))?;
                 if !git_output.is_empty() {
                     write!(f, "\n{}", format_with_gutter(git_output, None))
                 } else {
@@ -985,62 +1101,39 @@ impl GitError {
             }
 
             GitError::NotRebased { target_branch } => {
+                let title = self.title();
                 let rebase_cmd = suggest_command("step", &["rebase", target_branch], &[]);
                 write!(
                     f,
                     "{}\n{}",
-                    error_message(cformat!("Branch not rebased onto <bold>{target_branch}</>")),
+                    error_message(&title),
                     hint_message(cformat!(
                         "To rebase first, run <underline>{rebase_cmd}</>; or remove <underline>--no-rebase</>"
                     ))
                 )
             }
 
-            GitError::PushFailed {
-                target_branch,
-                error,
-            } => {
-                let header = error_message(cformat!(
-                    "Can't push to local <bold>{target_branch}</> branch"
-                ));
-                write!(f, "{}", format_error_block(header, error))
+            GitError::PushFailed { error, .. } => {
+                let title = self.title();
+                write!(f, "{}", format_error_block(error_message(&title), error))
             }
 
             GitError::NotInteractive => {
+                let title = self.title();
                 let approvals_cmd = suggest_command("config", &["approvals", "add"], &[]);
                 write!(
                     f,
                     "{}\n{}",
-                    error_message("Cannot prompt for approval in non-interactive environment"),
+                    error_message(&title),
                     hint_message(cformat!(
                         "To skip prompts in CI/CD, add <underline>--yes</>; to pre-approve commands, run <underline>{approvals_cmd}</>"
                     ))
                 )
             }
 
-            GitError::HookCommandNotFound { name, available } => {
-                if available.is_empty() {
-                    write!(
-                        f,
-                        "{}",
-                        error_message(cformat!(
-                            "No command named <bold>{name}</> (hook has no named commands)"
-                        ))
-                    )
-                } else {
-                    let available_str = available
-                        .iter()
-                        .map(|s| cformat!("<bold>{s}</>"))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    write!(
-                        f,
-                        "{}",
-                        error_message(cformat!(
-                            "No command named <bold>{name}</> (available: {available_str})"
-                        ))
-                    )
-                }
+            GitError::HookCommandNotFound { .. } => {
+                let title = self.title();
+                write!(f, "{}", error_message(&title))
             }
 
             GitError::LlmCommandFailed {
@@ -1048,8 +1141,8 @@ impl GitError {
                 error,
                 reproduction_command,
             } => {
-                let error_header = error_message("Commit generation command failed");
-                let error_block = format_error_block(error_header, error);
+                let title = self.title();
+                let error_block = format_error_block(error_message(&title), error);
                 // Show full pipeline command if available, otherwise just the LLM command
                 let display_command = reproduction_command.as_ref().unwrap_or(command);
                 let command_gutter = format_with_gutter(display_command, None);
@@ -1063,32 +1156,35 @@ impl GitError {
             }
 
             GitError::ProjectConfigNotFound { config_path } => {
+                let title = self.title();
                 let path_display = format_path_for_display(config_path);
                 write!(
                     f,
                     "{}\n{}",
-                    error_message("No project configuration found"),
+                    error_message(&title),
                     hint_message(cformat!(
                         "Create a config file at: <underline>{path_display}</>"
                     ))
                 )
             }
 
-            GitError::ParseError { message } => {
-                write!(f, "{}", error_message(message))
+            GitError::ParseError { .. } => {
+                let title = self.title();
+                write!(f, "{}", error_message(&title))
             }
 
             GitError::WorktreeIncludeParseError { error } => {
-                let header = error_message(cformat!("Error parsing <bold>.worktreeinclude</>"));
-                write!(f, "{}", format_error_block(header, error))
+                let title = self.title();
+                write!(f, "{}", format_error_block(error_message(&title), error))
             }
 
             GitError::WorktreeNotFound { branch } => {
+                let title = self.title();
                 let switch_cmd = suggest_command("switch", &[branch], &[]);
                 write!(
                     f,
                     "{}\n{}",
-                    error_message(cformat!("Branch <bold>{branch}</> has no worktree")),
+                    error_message(&title),
                     hint_message(cformat!(
                         "To create a worktree, run <underline>{switch_cmd}</>"
                     ))
@@ -1205,200 +1301,11 @@ impl Diagnostic for GitError {
 
 impl std::fmt::Display for GitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GitError::WithSwitchSuggestion { source, .. } => source.fmt(f),
-
-            GitError::DetachedHead { action } => match action {
-                Some(action) => write!(f, "Cannot {action}: not on a branch (detached HEAD)"),
-                None => f.write_str("Not on a branch (detached HEAD)"),
-            },
-
-            GitError::UncommittedChanges { action, branch, .. } => match (action, branch) {
-                (Some(action), Some(b)) => {
-                    write!(f, "Cannot {action}: {b} has uncommitted changes")
-                }
-                (Some(action), None) => {
-                    write!(f, "Cannot {action}: working tree has uncommitted changes")
-                }
-                (None, Some(b)) => write!(f, "{b} has uncommitted changes"),
-                (None, None) => f.write_str("Working tree has uncommitted changes"),
-            },
-
-            GitError::BranchAlreadyExists { branch } => {
-                write!(f, "Branch {branch} already exists")
-            }
-
-            GitError::BranchNotFound { branch, .. } => {
-                write!(f, "No branch named {branch}")
-            }
-
-            GitError::ReferenceNotFound { reference } => {
-                write!(f, "No branch, tag, or commit named {reference}")
-            }
-
-            GitError::StaleDefaultBranch { branch } => {
-                write!(f, "Default branch {branch} does not exist locally")
-            }
-
-            GitError::NotInWorktree { action } => match action {
-                Some(action) => write!(f, "Cannot {action}: not in a worktree"),
-                None => f.write_str("Not in a worktree"),
-            },
-
-            GitError::WorktreeMissing { branch } => {
-                write!(f, "Worktree directory missing for {branch}")
-            }
-
-            GitError::RemoteOnlyBranch { branch, remote } => {
-                write!(
-                    f,
-                    "Branch {branch} exists only on remote ({remote}/{branch})"
-                )
-            }
-
-            GitError::WorktreePathOccupied {
-                branch,
-                path,
-                occupant,
-            } => {
-                let path_display = format_path_for_display(path);
-                match occupant {
-                    Some(occupant_branch) => write!(
-                        f,
-                        "Cannot switch to {branch} — there's a worktree at the expected path {path_display} on branch {occupant_branch}"
-                    ),
-                    None => write!(
-                        f,
-                        "Cannot switch to {branch} — there's a detached worktree at the expected path {path_display}"
-                    ),
-                }
-            }
-
-            GitError::WorktreePathExists { path, .. } => {
-                let path_display = format_path_for_display(path);
-                write!(f, "Directory already exists: {path_display}")
-            }
-
-            GitError::WorktreeCreationFailed {
-                branch,
-                base_branch,
-                ..
-            } => match base_branch {
-                Some(base) => {
-                    write!(f, "Failed to create worktree for {branch} from base {base}")
-                }
-                None => write!(f, "Failed to create worktree for {branch}"),
-            },
-
-            GitError::WorktreeRemovalFailed { branch, path, .. } => {
-                let path_display = format_path_for_display(path);
-                write!(f, "Failed to remove worktree for {branch} @ {path_display}")
-            }
-
-            GitError::CannotRemoveMainWorktree => {
-                f.write_str("The main worktree cannot be removed")
-            }
-
-            GitError::CannotRemoveDefaultBranch { branch } => {
-                write!(f, "Cannot remove the default branch {branch}")
-            }
-
-            GitError::WorktreeLocked { branch, reason, .. } => {
-                let reason_text = match reason {
-                    Some(r) if !r.is_empty() => format!(" ({r})"),
-                    _ => String::new(),
-                };
-                write!(f, "Cannot remove {branch}, worktree is locked{reason_text}")
-            }
-
-            GitError::ConflictingChanges { target_branch, .. } => write!(
-                f,
-                "Can't push to local {target_branch} branch: conflicting uncommitted changes"
-            ),
-
-            GitError::NotFastForward { target_branch, .. } => write!(
-                f,
-                "Can't push to local {target_branch} branch: it has newer commits"
-            ),
-
-            GitError::RebaseConflict { target_branch, .. } => {
-                write!(f, "Rebase onto {target_branch} incomplete")
-            }
-
-            GitError::NotRebased { target_branch } => {
-                write!(f, "Branch not rebased onto {target_branch}")
-            }
-
-            GitError::PushFailed { target_branch, .. } => {
-                write!(f, "Can't push to local {target_branch} branch")
-            }
-
-            GitError::NotInteractive => {
-                f.write_str("Cannot prompt for approval in non-interactive environment")
-            }
-
-            GitError::HookCommandNotFound { name, available } => {
-                if available.is_empty() {
-                    write!(f, "No command named {name} (hook has no named commands)")
-                } else {
-                    let available_str = available.join(", ");
-                    write!(f, "No command named {name} (available: {available_str})")
-                }
-            }
-
-            GitError::LlmCommandFailed { .. } => f.write_str("Commit generation command failed"),
-
-            GitError::ProjectConfigNotFound { .. } => f.write_str("No project configuration found"),
-
-            GitError::ParseError { message } => f.write_str(message),
-
-            GitError::WorktreeIncludeParseError { .. } => {
-                f.write_str("Error parsing .worktreeinclude")
-            }
-
-            GitError::WorktreeNotFound { branch } => {
-                write!(f, "Branch {branch} has no worktree")
-            }
-
-            GitError::RefCreateConflict {
-                ref_type,
-                number,
-                branch,
-            } => {
-                let name = ref_type.name();
-                let syntax = ref_type.syntax();
-                write!(
-                    f,
-                    "Cannot create branch for {syntax}{number} — {name} already has branch {branch}"
-                )
-            }
-
-            GitError::RefBaseConflict { ref_type, number } => {
-                let syntax = ref_type.syntax();
-                write!(f, "Cannot use --base with {syntax}{number}")
-            }
-
-            GitError::BranchTracksDifferentRef {
-                branch,
-                ref_type,
-                number,
-            } => {
-                let name = ref_type.name();
-                let symbol = ref_type.symbol();
-                write!(
-                    f,
-                    "Branch {branch} exists but doesn't track {name} {symbol}{number}"
-                )
-            }
-
-            GitError::NoRemoteForRepo { owner, repo, .. } => {
-                write!(f, "No remote found for {owner}/{repo}")
-            }
-
-            GitError::CliApiError { message, .. } => f.write_str(message),
-
-            GitError::Other { message } => f.write_str(message),
-        }
+        // The styled title carries inline `<bold>` highlights for terminal
+        // rendering. For embedding in another error's message field or
+        // any non-terminal sink (JSON, log files, snapshots), strip the
+        // ANSI codes so consumers see plain text.
+        f.write_str(&ansi_str::AnsiStr::ansi_strip(&self.title()))
     }
 }
 
@@ -1501,9 +1408,20 @@ impl ErrorExt for anyhow::Error {
     }
 
     fn display_message(&self) -> String {
-        CommandError::find_in(self)
-            .map(|cmd_err| cmd_err.combined_output())
-            .unwrap_or_else(|| self.to_string())
+        // For chains carrying a `CommandError`, prefer git's captured
+        // stderr/stdout. Fall back to the command summary when the
+        // capture is empty (e.g., signal-killed before output) so a
+        // higher-level error like `PushFailed { error: … }` doesn't end
+        // up with a blank detail.
+        if let Some(cmd_err) = CommandError::find_in(self) {
+            let body = cmd_err.combined_output();
+            return if body.is_empty() {
+                cmd_err.to_string()
+            } else {
+                body
+            };
+        }
+        self.to_string()
     }
 
     fn exit_code(&self) -> Option<i32> {
@@ -1546,17 +1464,15 @@ impl ErrorExt for anyhow::Error {
 /// Don't use for `wt hook <type>` — the user explicitly asked to run
 /// hooks, so suggesting `--no-hooks` makes no sense.
 pub fn add_hook_skip_hint(err: anyhow::Error) -> anyhow::Error {
-    // Peek before consuming: only `HookCommandFailed` triggers the
-    // wrapper, and we need ownership of the typed leaf to store it.
-    let Some(hook_type) = err.downcast_ref::<WorktrunkError>().and_then(|e| match e {
-        WorktrunkError::HookCommandFailed { hook_type, .. } => Some(*hook_type),
-        _ => None,
-    }) else {
-        return err;
+    let inner = match err.downcast::<WorktrunkError>() {
+        Ok(inner) => inner,
+        Err(err) => return err,
     };
-    let inner = err
-        .downcast::<WorktrunkError>()
-        .expect("downcast_ref above already confirmed the type");
+    let hook_type = match &inner {
+        WorktrunkError::HookCommandFailed { hook_type, .. } => *hook_type,
+        // Not a hook failure — pass the typed leaf through unchanged.
+        _ => return inner.into(),
+    };
     HookErrorWithHint { inner, hook_type }.into()
 }
 
