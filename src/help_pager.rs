@@ -140,7 +140,7 @@ fn compute_less_flags(user_less: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_less_flags, parse_pager_value, pipe_through_pager};
+    use super::{compute_less_flags, parse_pager_value};
 
     /// `cat > /dev/null` exercises the full spawn → write → wait path with a
     /// stand-in pager that always succeeds. Covers every line of
@@ -149,7 +149,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_pipe_through_pager_pipes_to_real_command() {
-        pipe_through_pager("cat > /dev/null", "help text").expect("cat should succeed");
+        super::pipe_through_pager("cat > /dev/null", "help text").expect("cat should succeed");
     }
 
     #[test]
