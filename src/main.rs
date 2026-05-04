@@ -1418,3 +1418,26 @@ fn main() {
         Err(error) => handle_command_failure(error, verbose, &command_line),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: an anyhow error whose top-level message has the multi-line
+    /// stderr from a failing git command — but a non-empty chain — must take
+    /// the chain branch, not the `debug_assert!` branch. Real-world example:
+    /// step_prune callers wrap `repo.run_command(...)` failures with
+    /// `.context("listing worktrees")?`, so the multi-line git stderr ends up
+    /// in the chain rather than as the top-level message.
+    #[test]
+    fn print_command_error_handles_multiline_with_context() {
+        let inner = anyhow::anyhow!(
+            "warning: unable to access '.git/config': Permission denied\nfatal: unknown error occurred while reading the configuration files"
+        );
+        let err: anyhow::Error = Err::<(), _>(inner)
+            .context("listing worktrees")
+            .unwrap_err();
+        // Must not panic the debug_assert. The chain branch handles this.
+        print_command_error(&err);
+    }
+}
