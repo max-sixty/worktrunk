@@ -604,11 +604,7 @@ pub fn handle_logs_list(format: SwitchFormat) -> anyhow::Result<()> {
     let mut out = String::new();
     render_all_log_sections(&mut out, &repo)?;
 
-    // Display through pager; fall back to direct stdout if pager unavailable
-    // (matches #2155 routing --help output to stdout).
-    if show_help_in_pager(&out, true).is_err() {
-        println!("{}", out);
-    }
+    show_help_in_pager(&out, true);
     Ok(())
 }
 
@@ -1324,11 +1320,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
         writeln!(out, "{}", rendered.trim_end())?;
     }
 
-    // Display through pager; fall back to direct stdout if pager unavailable
-    if let Err(e) = show_help_in_pager(&out, true) {
-        log::debug!("Pager invocation failed: {}", e);
-        println!("{}", out);
-    }
+    show_help_in_pager(&out, true);
 
     Ok(())
 }

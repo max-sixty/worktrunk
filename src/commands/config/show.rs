@@ -77,10 +77,7 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     render_runtime_info(&mut show_output)?;
 
     // Display through pager (config show is always long-form output)
-    if let Err(e) = show_help_in_pager(&show_output, true) {
-        log::debug!("Pager invocation failed: {}", e);
-        worktrunk::styling::println!("{}", show_output);
-    }
+    show_help_in_pager(&show_output, true);
 
     Ok(())
 }

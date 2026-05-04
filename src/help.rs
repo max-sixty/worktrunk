@@ -54,7 +54,7 @@ use worktrunk::docs::{
     BADGE_EXPERIMENTAL_HTML, DEMO_MARKER_PREFIX, MARKER_CLOSE, MARKER_OPEN_PREFIX,
     SUBDOC_MARKER_PREFIX, convert_dollar_console_to_terminal,
 };
-use worktrunk::styling::{eprintln, println};
+use worktrunk::styling::eprintln;
 
 use crate::cli;
 
@@ -241,10 +241,7 @@ pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::
                 // show_help_in_pager checks if stdout or stderr is a TTY.
                 // If neither is a TTY (e.g., `wt --help &>file`), it skips the pager.
                 // use_pager=false for -h (short help), true for --help (long help)
-                if let Err(e) = crate::help_pager::show_help_in_pager(&help, use_pager) {
-                    log::debug!("Pager invocation failed: {}", e);
-                    println!("{}", help);
-                }
+                crate::help_pager::show_help_in_pager(&help, use_pager);
                 process::exit(0);
             }
             ErrorKind::DisplayVersion => {

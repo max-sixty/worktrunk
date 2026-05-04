@@ -76,22 +76,23 @@ fn detect_help_pager() -> Option<String> {
 /// - No pager configured (prints to stdout)
 /// - stdout is not a TTY (prints to stdout)
 /// - Pager spawn fails (prints to stdout)
+/// - Pager closes stdin early or wait fails (prints to stdout)
 ///
 /// Help text goes to stdout — POSIX convention (`wt --help | less` should work
 /// without redirection), matching `cargo`, `curl`, `python`, `git <cmd> -h`,
 /// and `--version` (see #2072).
-pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) -> std::io::Result<()> {
+pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) {
     // Short help (-h) never uses a pager
     if !use_pager {
         log::debug!("Short help (-h) requested, printing directly to stdout");
         print!("{}", help_text);
-        return Ok(());
+        return;
     }
 
     let Some(pager_cmd) = detect_help_pager() else {
         log::debug!("No pager configured, printing help directly to stdout");
         print!("{}", help_text);
-        return Ok(());
+        return;
     };
 
     // Only page when our output destination is a terminal.
@@ -99,7 +100,7 @@ pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) -> std::io::R
     if !std::io::stdout().is_terminal() {
         log::debug!("stdout is not a TTY, skipping pager");
         print!("{}", help_text);
-        return Ok(());
+        return;
     }
 
     log::debug!("Invoking pager: {}", pager_cmd);
@@ -114,7 +115,7 @@ pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) -> std::io::R
         Err(e) => {
             log::debug!("Shell unavailable for pager: {}", e);
             print!("{}", help_text);
-            return Ok(());
+            return;
         }
     };
     log::debug!("$ {} (pager)", pager_cmd);
@@ -130,16 +131,23 @@ pub(crate) fn show_help_in_pager(help_text: &str, use_pager: bool) -> std::io::R
                 e
             );
             print!("{}", help_text);
-            return Ok(());
+            return;
         }
     };
 
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(help_text.as_bytes())?;
+    if let Some(mut stdin) = child.stdin.take()
+        && let Err(e) = stdin.write_all(help_text.as_bytes())
+    {
+        log::debug!("Pager failed, falling back to stdout: {}", e);
+        let _ = child.wait();
+        print!("{}", help_text);
+        return;
     }
 
-    child.wait()?;
-    Ok(())
+    if let Err(e) = child.wait() {
+        log::debug!("Pager failed, falling back to stdout: {}", e);
+        print!("{}", help_text);
+    }
 }
 
 /// Compute LESS flags by appending our required flags to user's existing LESS setting.
