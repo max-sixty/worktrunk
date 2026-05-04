@@ -19,13 +19,17 @@ info:
     WORKTRUNK_APPROVALS_PATH: /nonexistent/wt/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml
     WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
 success: true
 exit_code: 0
@@ -219,6 +223,13 @@ Most flags are on by default. Set to false to change default behavior.
 [107m [0m [2mverify = [0m[2m[33mtrue[0m[2m      [0m[2m# Run project hooks (--no-hooks to skip)[0m
 [107m [0m [2mff = [0m[2m[33mtrue[0m[2m          [0m[2m# Fast-forward merge (--no-ff to create a merge commit instead)[0m
 
+[32mRemove[0m
+
+Persistent flag values for [2mwt remove[0m. Override on command line as needed.
+
+[107m [0m [2m[36m[remove][0m
+[107m [0m [2mdelete-branch = [0m[2m[33mtrue[0m[2m   [0m[2m# Delete branch after removal (--no-delete-branch to keep)[0m
+
 [32mSwitch[0m
 
 [107m [0m [2m[36m[switch][0m
@@ -258,6 +269,7 @@ Entries are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m). Sc
 [107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
 [107m [0m [2mlist.full = [0m[2m[33mtrue[0m
 [107m [0m [2mmerge.squash = [0m[2m[33mfalse[0m
+[107m [0m [2mremove.delete-branch = [0m[2m[33mfalse[0m
 [107m [0m [2mpre-start.env = [0m[2m[32m"cp .env.example .env"[0m
 [107m [0m [2mstep.copy-ignored.exclude = [[0m[2m[32m".repo-local-cache/"[0m[2m][0m
 [107m [0m [2maliases.deploy = [0m[2m[32m"make deploy BRANCH={{ branch }}"[0m

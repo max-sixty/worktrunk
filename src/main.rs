@@ -869,15 +869,22 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
     UserConfig::load()
         .context("Failed to load config")
         .and_then(|config| {
+            let repo = Repository::current().context("Failed to remove worktree")?;
+
+            // CLI flags override config; otherwise fall through to [remove] delete-branch
+            // (defaults to true).
+            let project = repo.project_identifier().ok();
+            let cli_override = flag_pair(args.delete_branch, args.no_delete_branch);
+            let delete_branch =
+                cli_override.unwrap_or_else(|| config.remove(project.as_deref()).delete_branch());
+
             // Validate conflicting flags
-            if !args.delete_branch && args.force_delete {
+            if !delete_branch && args.force_delete {
                 return Err(worktrunk::git::GitError::Other {
                     message: "Cannot use --force-delete with --no-delete-branch".into(),
                 }
                 .into());
             }
-
-            let repo = Repository::current().context("Failed to remove worktree")?;
 
             // Resolve current worktree context for hook approval
             let current_wt = repo.current_worktree();
@@ -914,7 +921,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 let result = repo
                     .prepare_worktree_removal(
                         RemoveTarget::Current,
-                        BranchDeletionMode::from_flags(!args.delete_branch, args.force_delete),
+                        BranchDeletionMode::from_flags(!delete_branch, args.force_delete),
                         args.force,
                         &config,
                         None,
@@ -949,7 +956,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     &repo,
                     branches,
                     &config,
-                    !args.delete_branch,
+                    !delete_branch,
                     args.force_delete,
                     args.force,
                 );

@@ -404,7 +404,15 @@ pub(crate) struct RemoveArgs {
     pub(crate) branches: Vec<String>,
 
     /// Keep branch after removal
-    #[arg(long = "no-delete-branch", action = clap::ArgAction::SetFalse, default_value_t = true)]
+    #[arg(long = "no-delete-branch", overrides_with = "delete_branch")]
+    pub(crate) no_delete_branch: bool,
+
+    /// Delete branch after removal (overrides config `[remove] delete-branch = false`)
+    #[arg(
+        long = "delete-branch",
+        overrides_with = "no_delete_branch",
+        hide = true
+    )]
     pub(crate) delete_branch: bool,
 
     /// Delete unmerged branches
@@ -1699,6 +1707,15 @@ verify = true      # Run project hooks (--no-hooks to skip)
 ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 ```
 
+### Remove
+
+Persistent flag values for `wt remove`. Override on command line as needed.
+
+```toml
+[remove]
+delete-branch = true   # Delete branch after removal (--no-delete-branch to keep)
+```
+
 ### Switch
 
 ```toml
@@ -1745,6 +1762,7 @@ Entries are keyed by project identifier (e.g., `github.com/user/repo`). Scalar v
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 list.full = true
 merge.squash = false
+remove.delete-branch = false
 pre-start.env = "cp .env.example .env"
 step.copy-ignored.exclude = [".repo-local-cache/"]
 aliases.deploy = "make deploy BRANCH={{ branch }}"

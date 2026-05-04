@@ -110,6 +110,13 @@
 # verify = true      # Run project hooks (--no-hooks to skip)
 # ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 #
+# ### Remove
+#
+# Persistent flag values for `wt remove`. Override on command line as needed.
+#
+# [remove]
+# delete-branch = true   # Delete branch after removal (--no-delete-branch to keep)
+#
 # ### Switch
 #
 # [switch]
@@ -149,6 +156,7 @@
 # worktree-path = ".worktrees/{{ branch | sanitize }}"
 # list.full = true
 # merge.squash = false
+# remove.delete-branch = false
 # pre-start.env = "cp .env.example .env"
 # step.copy-ignored.exclude = [".repo-local-cache/"]
 # aliases.deploy = "make deploy BRANCH={{ branch }}"
