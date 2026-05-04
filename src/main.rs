@@ -1565,6 +1565,27 @@ mod tests {
         );
     }
 
+    /// A `CommandError` with empty stderr/stdout (e.g., a child killed by
+    /// a signal before producing output) wrapped in context: the gutter
+    /// should fall back to the `CommandError` summary so the user sees
+    /// something more than just the outer context. Exercises the
+    /// empty-body branch of the renderer's gutter assembly.
+    #[test]
+    fn renders_command_error_with_empty_body() {
+        let empty = CommandError {
+            program: "git".into(),
+            args: vec!["fetch".into()],
+            stderr: String::new(),
+            stdout: String::new(),
+            exit_code: None,
+        };
+        let err: anyhow::Error = Err::<(), _>(empty).context("syncing remotes").unwrap_err();
+        let out = format_command_error(&err);
+        assert!(out.contains("syncing remotes"));
+        // No body to render, so the summary is what we surface.
+        assert!(out.contains("git fetch failed"));
+    }
+
     /// Codex P2: typed `GitError` wrappers (e.g., `WorktreeRemovalFailed`,
     /// `PushFailed`) embed a stringified sub-error into their `error`
     /// field. With `display_message`, that field carries git's stderr

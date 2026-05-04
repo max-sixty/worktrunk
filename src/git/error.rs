@@ -1962,6 +1962,22 @@ mod tests {
     }
 
     #[test]
+    fn command_error_command_string_handles_empty_args() {
+        // Degenerate but reachable when a `Cmd` is built with no
+        // `.args(...)` call. Covers the args-empty branch of
+        // `command_string()` (codecov flagged this line).
+        let err = CommandError {
+            program: "git".into(),
+            args: Vec::new(),
+            stderr: String::new(),
+            stdout: String::new(),
+            exit_code: Some(1),
+        };
+        assert_eq!(err.command_string(), "git");
+        assert_eq!(err.to_string(), "git failed (exit 1)");
+    }
+
+    #[test]
     fn command_error_combined_output_strips_trailing_whitespace_and_joins() {
         let err = CommandError {
             program: "git".into(),
