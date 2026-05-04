@@ -621,6 +621,35 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
     });
 }
 
+/// Cover the per-shell "Skipped" row in `wt config show`. After #2574,
+/// `scan_shell_configs` only adds a shell to `skipped` when its binary is on
+/// PATH AND no rc file/dir exists — without an installed binary the entry
+/// never reaches `render_shell_status`. Here bash is flagged installed (test
+/// override) with no `.bashrc`, so the Skipped row renders and the styling
+/// (`<bold>{shell}</>: <dim>Skipped; {path} not found</>`) is verified.
+#[rstest]
+fn test_config_show_skipped_with_installed_binary(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_TEST_BASH_INSTALLED", "1");
+        cmd.env("SHELL", "/bin/zsh");
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[rstest]
 fn test_config_show_partial_shell_config_shows_hint(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
