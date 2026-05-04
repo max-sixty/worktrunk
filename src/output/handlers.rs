@@ -36,7 +36,7 @@ use worktrunk::styling::{
 
 use super::shell_integration::{
     compute_shell_warning_reason, explicit_path_hint, git_subcommand_warning,
-    shell_integration_hint, should_show_explicit_path_hint,
+    print_shell_integration_hint, should_show_explicit_path_hint,
 };
 
 // ============================================================================
@@ -591,7 +591,7 @@ fn print_switch_message_if_changed(
         if should_show_explicit_path_hint() {
             eprintln!("{}", hint_message(explicit_path_hint(&dest_branch)));
         } else {
-            eprintln!("{}", hint_message(shell_integration_hint()));
+            print_shell_integration_hint(&repo);
         }
     }
     Ok(())
@@ -1734,12 +1734,6 @@ mod tests {
 
         let result = resolve_subdir_in_target(&target, Some(&source), &source);
         assert_eq!(result, target);
-    }
-
-    #[test]
-    fn test_shell_integration_hint() {
-        let hint = shell_integration_hint();
-        assert_snapshot!(hint, @"To enable automatic cd, run [4mwt config shell install[24m");
     }
 
     #[test]

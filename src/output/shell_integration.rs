@@ -62,6 +62,7 @@ use std::io::IsTerminal;
 
 use color_print::cformat;
 use worktrunk::config::UserConfig;
+use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{Shell, current_shell, extract_filename_from_path};
 use worktrunk::styling::{
@@ -73,12 +74,39 @@ use crate::commands::configure_shell::{
     scan_shell_configs,
 };
 
+/// Git config key tracking how many times the shell-integration install hint
+/// has been shown to this user. Stored as an integer count via the generic
+/// hints API; reaching 5 escalates the hint with a `wt config show` pointer.
+pub(crate) const SHELL_INTEGRATION_HINT: &str = "shell-integration";
+
 /// Shell integration install hint message.
-// TODO(hints-count): After showing this hint 5+ times, suggest `wt config show` for diagnostics.
-// This requires changing the hints infrastructure to track counts rather than booleans.
-// See `Repository::mark_hint_shown()` and `list_shown_hints()` in src/git/repository/mod.rs.
-pub(crate) fn shell_integration_hint() -> String {
-    cformat!("To enable automatic cd, run <underline>wt config shell install</>")
+///
+/// `count` is how many times the hint has previously been shown (i.e., the
+/// current value of `worktrunk.hints.shell-integration`, before incrementing
+/// for this display). After 5+ prior shows, append a diagnostic suggestion
+/// pointing at `wt config show` so users who keep seeing this can investigate
+/// why their shell wrapper isn't intercepting.
+pub(crate) fn shell_integration_hint(count: u32) -> String {
+    if count >= 5 {
+        cformat!(
+            "To enable automatic cd, run <underline>wt config shell install</>; if this keeps appearing, run <underline>wt config show</> to diagnose"
+        )
+    } else {
+        cformat!("To enable automatic cd, run <underline>wt config shell install</>")
+    }
+}
+
+/// Print the shell-integration install hint and bump its display counter.
+///
+/// Reads the current count from `worktrunk.hints.shell-integration`, formats
+/// the hint (escalating at 5+), prints it, and persists `count + 1` so the
+/// next display sees an updated value. The persist step is best-effort — if
+/// `git config` fails, only the escalation is delayed, never the hint
+/// itself, so we deliberately ignore the error.
+pub(crate) fn print_shell_integration_hint(repo: &Repository) {
+    let count = repo.hint_count(SHELL_INTEGRATION_HINT);
+    eprintln!("{}", hint_message(shell_integration_hint(count)));
+    let _ = repo.mark_hint_shown(SHELL_INTEGRATION_HINT);
 }
 
 /// Hint when shell integration is installed but shell needs restart.
@@ -360,8 +388,12 @@ pub fn print_shell_install_result(
 /// Called after `wt switch` when shell integration is NOT active.
 /// See module documentation for the complete decision flow.
 ///
+/// `repo` is threaded through so the install hint can read and bump
+/// `worktrunk.hints.shell-integration`.
+///
 /// Returns `Ok(true)` if installed, `Ok(false)` otherwise.
 pub fn prompt_shell_integration(
+    repo: &Repository,
     config: &mut UserConfig,
     binary_name: &str,
     skip_prompt: bool,
@@ -379,13 +411,17 @@ pub fn prompt_shell_integration(
     // Only prompt if current shell is supported (so they benefit immediately)
     let shell_env = std::env::var("SHELL").ok();
     if current_shell().is_none() {
-        let msg = match &shell_env {
-            Some(path) => shell_integration_unsupported_shell(path),
+        match &shell_env {
+            Some(path) => {
+                eprintln!(
+                    "{}",
+                    hint_message(shell_integration_unsupported_shell(path))
+                );
+            }
             // $SHELL not set: could be Windows PowerShell, or unusual Unix setup
-            // Point them to manual installation
-            None => shell_integration_hint(),
-        };
-        eprintln!("{}", hint_message(msg));
+            // Point them to manual installation (and count it as a shown install hint)
+            None => print_shell_integration_hint(repo),
+        }
         return Ok(false);
     };
 
@@ -396,7 +432,7 @@ pub fn prompt_shell_integration(
 
     // No config files exist - show install hint
     if scan.configured.is_empty() {
-        eprintln!("{}", hint_message(shell_integration_hint()));
+        print_shell_integration_hint(repo);
         return Ok(false);
     }
 
@@ -419,7 +455,7 @@ pub fn prompt_shell_integration(
 
     // Can't or shouldn't prompt - show install hint
     if config.skip_shell_integration_prompt || !is_tty || skip_prompt {
-        eprintln!("{}", hint_message(shell_integration_hint()));
+        print_shell_integration_hint(repo);
         return Ok(false);
     }
 
@@ -436,7 +472,7 @@ pub fn prompt_shell_integration(
     if !confirmed {
         // Only skip future prompts after explicit decline (not Ctrl+C)
         let _ = config.set_skip_shell_integration_prompt(None);
-        eprintln!("{}", hint_message(shell_integration_hint()));
+        print_shell_integration_hint(repo);
         return Ok(false);
     }
 
@@ -570,8 +606,25 @@ mod tests {
 
     #[test]
     fn test_shell_integration_hint() {
-        let hint = shell_integration_hint();
-        assert_snapshot!(hint, @"To enable automatic cd, run [4mwt config shell install[24m");
+        // Below the escalation threshold — base message only.
+        assert_snapshot!(
+            shell_integration_hint(0),
+            @"To enable automatic cd, run [4mwt config shell install[24m"
+        );
+        assert_snapshot!(
+            shell_integration_hint(4),
+            @"To enable automatic cd, run [4mwt config shell install[24m"
+        );
+
+        // At and above the escalation threshold — append diagnostic suggestion.
+        assert_snapshot!(
+            shell_integration_hint(5),
+            @"To enable automatic cd, run [4mwt config shell install[24m; if this keeps appearing, run [4mwt config show[24m to diagnose"
+        );
+        assert_snapshot!(
+            shell_integration_hint(10),
+            @"To enable automatic cd, run [4mwt config shell install[24m; if this keeps appearing, run [4mwt config show[24m to diagnose"
+        );
     }
 
     #[test]
