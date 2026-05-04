@@ -449,7 +449,10 @@ fn handle_branch_deletion_result(
                 "{}",
                 error_message(cformat!("Failed to delete branch <bold>{branch_name}</>"))
             );
-            eprintln!("{}", format_with_gutter(&worktrunk::git::display_message(&e), None));
+            eprintln!(
+                "{}",
+                format_with_gutter(&worktrunk::git::display_message(&e), None)
+            );
             Err(e)
         }
     }
