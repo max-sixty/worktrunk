@@ -697,11 +697,9 @@ delete-branch = false
     );
     let _worktree_path = repo.add_worktree("feature-config-keep");
 
-    let output = wt_command()
+    let output = repo
+        .wt_command()
         .args(["remove", "--foreground", "feature-config-keep"])
-        .current_dir(repo.root_path())
-        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
-        .env("WORKTRUNK_APPROVALS_PATH", repo.test_approvals_path())
         .output()
         .expect("wt remove should run");
     assert!(
@@ -735,16 +733,14 @@ delete-branch = false
     );
     let _worktree_path = repo.add_worktree("feature-cli-override");
 
-    let output = wt_command()
+    let output = repo
+        .wt_command()
         .args([
             "remove",
             "--foreground",
             "--delete-branch",
             "feature-cli-override",
         ])
-        .current_dir(repo.root_path())
-        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
-        .env("WORKTRUNK_APPROVALS_PATH", repo.test_approvals_path())
         .output()
         .expect("wt remove should run");
     assert!(

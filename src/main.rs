@@ -881,7 +881,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
             // Validate conflicting flags
             if !delete_branch && args.force_delete {
                 return Err(worktrunk::git::GitError::Other {
-                    message: "Cannot use --force-delete with --no-delete-branch".into(),
+                    message: "Cannot use --force-delete with delete-branch=false (set via --no-delete-branch or [remove] delete-branch = false)".into(),
                 }
                 .into());
             }
