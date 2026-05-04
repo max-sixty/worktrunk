@@ -561,11 +561,8 @@ impl Repository {
     /// Unlike `user_config`, this does **not** participate in
     /// [`Repository::prewarm`] — `.config/wt.toml` lives inside the
     /// worktree, so the read can't fire until git discovery finishes.
-    /// Callers pay a few-tens-of-µs sequential file read on first access.
-    /// Deprecation warnings emit on that first call, so handlers that
-    /// produce ordered output (hooks, picker) typically warm this from
-    /// the entry point rather than letting it interleave with their own
-    /// stderr later.
+    /// Callers pay a few-tens-of-µs sequential file read on first access,
+    /// and deprecation warnings (if any) emit on that first call.
     ///
     /// User and project configs are kept distinct rather than merged
     /// because downstream consumers (alias loading, hook resolution,
