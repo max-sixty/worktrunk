@@ -56,10 +56,9 @@ use commands::{
     handle_hints_get, handle_hook_show, handle_init, handle_list, handle_logs_list, handle_merge,
     handle_opencode_install, handle_opencode_uninstall, handle_promote, handle_rebase,
     handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
-    handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
-    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set, resolve_worktree_arg,
-    run_hook, step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune,
-    step_relocate,
+    handle_state_set, handle_state_show, handle_unconfigure_shell, handle_vars_clear,
+    handle_vars_get, handle_vars_list, handle_vars_set, resolve_worktree_arg, run_hook, run_switch,
+    step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune, step_relocate,
 };
 use output::handle_remove_output;
 use worktrunk::git::BranchDeletionMode;
@@ -684,7 +683,7 @@ fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> {
                 }
             };
 
-            handle_switch(
+            run_switch(
                 SwitchOptions {
                     branch: &branch,
                     create: args.create,

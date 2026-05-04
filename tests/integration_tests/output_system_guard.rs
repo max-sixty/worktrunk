@@ -54,7 +54,7 @@ const STDOUT_ALLOWED_PATHS: &[&str] = &[
     // --no-cd flag: branch name output for scripting
     "picker/mod.rs",
     // JSON output for wt switch --format=json
-    "handle_switch.rs",
+    "worktree/switch.rs",
     // JSON output for wt config show --format=json
     "config/show.rs",
     // Migrated TOML output for wt config update --print (pipeable)

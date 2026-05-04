@@ -95,7 +95,8 @@ pub use resolve::{
     compute_worktree_path, is_worktree_at_expected_path, offer_bare_repo_worktree_path_fix,
     path_mismatch, resolve_worktree_arg, worktree_display_name,
 };
-pub use switch::{execute_switch, plan_switch};
-pub use types::{
-    MergeOperations, OperationMode, RemoveResult, SwitchBranchInfo, SwitchPlan, SwitchResult,
+pub use switch::{SwitchOptions, execute_switch, plan_switch, run_switch};
+pub(crate) use switch::{
+    approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks,
 };
+pub use types::{MergeOperations, OperationMode, RemoveResult, SwitchBranchInfo, SwitchResult};
