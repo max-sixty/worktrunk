@@ -1342,18 +1342,18 @@ fn format_command_error(error: &anyhow::Error) -> String {
             .map(|r| (i, r, cause.is::<worktrunk::git::CommandError>()))
     });
 
+    let wrapped_command_error = matches!(diagnostic_hit, Some((pos, _, true)) if pos > 0);
+
     match diagnostic_hit {
-        Some((_, rendered, false)) | Some((0, rendered, true)) => {
-            // Either a non-`CommandError` Diagnostic anywhere in the
-            // chain, or a top-level `CommandError`. Either way the
-            // type's `render()` produces a complete styled block — emit
-            // it directly. Empty rendering (AlreadyDisplayed,
+        Some((_, rendered, _)) if !wrapped_command_error => {
+            // The type's `render()` produces a complete styled block —
+            // emit it directly. Empty rendering (AlreadyDisplayed,
             // CommandNotApproved) is a signal to skip output entirely.
             if !rendered.is_empty() {
                 let _ = writeln!(out, "{rendered}");
             }
         }
-        Some((_, _, true)) => {
+        Some(_) => {
             // Wrapped `CommandError`: outermost context becomes the
             // header, intermediate contexts plus the captured
             // stderr/stdout join the gutter so wrapped failures like
