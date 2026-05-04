@@ -696,6 +696,40 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Emit the "fish integration found in deprecated location" notice plus the
+/// hint pointing at the canonical path. Used wherever fish integration lives
+/// at the legacy `~/.config/fish/conf.d/` location (deprecated since #566).
+fn render_fish_legacy_migration(
+    out: &mut String,
+    legacy_fish_conf_d: Option<&Path>,
+    cmd: &str,
+) -> anyhow::Result<()> {
+    let legacy_path = legacy_fish_conf_d
+        .map(format_path_for_display)
+        .unwrap_or_default();
+    let canonical_path = Shell::Fish
+        .config_paths(cmd)
+        .ok()
+        .and_then(|p| p.into_iter().next())
+        .map(|p| format_path_for_display(&p))
+        .unwrap_or_else(|| "~/.config/fish/functions/".to_string());
+    writeln!(
+        out,
+        "{}",
+        info_message(cformat!(
+            "Fish integration found in deprecated location @ <bold>{legacy_path}</>"
+        ))
+    )?;
+    writeln!(
+        out,
+        "{}",
+        hint_message(cformat!(
+            "To migrate to <underline>{canonical_path}</>, run <underline>{cmd} config shell install fish</>"
+        ))
+    )?;
+    Ok(())
+}
+
 fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("SHELL INTEGRATION", None))?;
 
@@ -920,31 +954,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                 // For fish, check if we have valid integration at the legacy conf.d location
                 if matches!(shell, Shell::Fish) && legacy_fish_has_integration {
                     // Show migration hint instead of "Not configured"
-                    let legacy_path = legacy_fish_conf_d
-                        .as_ref()
-                        .map(|p| format_path_for_display(p))
-                        .unwrap_or_default();
-                    writeln!(
-                        out,
-                        "{}",
-                        info_message(cformat!(
-                            "Fish integration found in deprecated location @ <bold>{legacy_path}</>"
-                        ))
-                    )?;
-                    // Get canonical path for the migration hint
-                    let canonical_path = Shell::Fish
-                        .config_paths(&cmd)
-                        .ok()
-                        .and_then(|p| p.into_iter().next())
-                        .map(|p| format_path_for_display(&p))
-                        .unwrap_or_else(|| "~/.config/fish/functions/".to_string());
-                    writeln!(
-                        out,
-                        "{}",
-                        hint_message(cformat!(
-                            "To migrate to <underline>{canonical_path}</>, run <underline>{cmd} config shell install fish</>"
-                        ))
-                    )?;
+                    render_fish_legacy_migration(out, legacy_fish_conf_d.as_deref(), &cmd)?;
                 } else if shell.is_wrapper_based()
                     && matches!(result.action, ConfigAction::WouldAdd)
                 {
@@ -988,30 +998,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     for (shell, path) in &scan_result.skipped {
         if matches!(shell, Shell::Fish) && legacy_fish_has_integration {
             // Show migration hint for legacy fish location
-            let legacy_path = legacy_fish_conf_d
-                .as_ref()
-                .map(|p| format_path_for_display(p))
-                .unwrap_or_default();
-            let canonical_path = Shell::Fish
-                .config_paths(&cmd)
-                .ok()
-                .and_then(|p| p.into_iter().next())
-                .map(|p| format_path_for_display(&p))
-                .unwrap_or_else(|| "~/.config/fish/functions/".to_string());
-            writeln!(
-                out,
-                "{}",
-                info_message(cformat!(
-                    "Fish integration found in deprecated location @ <bold>{legacy_path}</>"
-                ))
-            )?;
-            writeln!(
-                out,
-                "{}",
-                hint_message(cformat!(
-                    "To migrate to <underline>{canonical_path}</>, run <underline>{cmd} config shell install fish</>"
-                ))
-            )?;
+            render_fish_legacy_migration(out, legacy_fish_conf_d.as_deref(), &cmd)?;
             continue;
         }
         let path = format_path_for_display(path);
