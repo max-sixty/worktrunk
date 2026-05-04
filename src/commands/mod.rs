@@ -57,7 +57,8 @@ pub(crate) use repository_ext::RemoveTarget;
 pub(crate) use run_pipeline::run_pipeline;
 pub(crate) use step_commands::{
     PromoteResult, RebaseResult, SquashResult, handle_promote, handle_rebase, handle_squash,
-    step_commit, step_copy_ignored, step_diff, step_prune, step_relocate, step_show_squash_prompt,
+    step_commit, step_copy_ignored, step_diff, step_dry_run_squash, step_prune, step_relocate,
+    step_show_squash_prompt,
 };
 pub(crate) use worktree::{
     OperationMode, is_worktree_at_expected_path, resolve_worktree_arg, worktree_display_name,

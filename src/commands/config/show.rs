@@ -871,8 +871,11 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                     }
                 }
 
-                // When configured but not active, show how to verify the wrapper loaded
-                if !shell_active {
+                // When configured but not active, show how to verify the wrapper loaded.
+                // Only meaningful for the user's current shell — `type wt` probes the
+                // running shell, so a hint under bash while $SHELL=zsh would tell the
+                // user nothing about the bash wrapper.
+                if !shell_active && Some(shell) == worktrunk::shell::current_shell() {
                     let verify_cmd = match shell {
                         Shell::PowerShell => format!("Get-Command {cmd}"),
                         _ => format!("type {cmd}"),
@@ -942,7 +945,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                     writeln!(
                         out,
                         "{}",
-                        hint_message(format!("{shell}: Not configured {what}"))
+                        info_message(cformat!("<bold>{shell}</>: Not configured {what}"))
                     )?;
                 }
             }
@@ -989,8 +992,15 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         )?;
     }
 
-    // Summary hint when shells need configuration
-    if any_not_configured {
+    // Summary hint when the user has no working integration and could install some.
+    // Fires when any shell is in the plain "Not configured" state (rc file present,
+    // no init line) AND in the fresh-user case where every shell falls into `skipped`
+    // because no rc file exists. Without this second arm, a brand-new user runs
+    // `wt config show` and sees only "▲ not active" + four "Skipped" lines with no
+    // next step. The `!shell_active` gate avoids firing for the dotfile-manager
+    // case (wrapper sourced from a non-standard path so no rc file has the init line).
+    let nothing_configured_yet = !shell_active && scan_result.configured.is_empty();
+    if any_not_configured || nothing_configured_yet {
         writeln!(
             out,
             "{}",

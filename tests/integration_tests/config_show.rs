@@ -658,6 +658,9 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
         cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1"); // Bypass zsh subprocess check
+        // Set SHELL=zsh so the "verify wrapper loaded" hint appears under zsh
+        // (configured + matches current shell) but is suppressed under bash.
+        cmd.env("SHELL", "/bin/zsh");
 
         assert_cmd_snapshot!(cmd);
     });

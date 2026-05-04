@@ -44,6 +44,22 @@ impl PushKind {
     }
 }
 
+/// Outcome of a push or no-ff merge, returned for JSON output.
+pub struct PushResult {
+    pub target: String,
+    pub commit_count: usize,
+    pub outcome: PushOutcome,
+}
+
+pub enum PushOutcome {
+    /// Target was fast-forwarded to HEAD.
+    FastForwarded,
+    /// Target already contained HEAD; nothing to push.
+    UpToDate,
+    /// A new merge commit was created on the target branch.
+    MergeCommit { merge_sha: String },
+}
+
 // ---------------------------------------------------------------------------
 // Shared scaffolding
 // ---------------------------------------------------------------------------
@@ -279,7 +295,7 @@ pub fn handle_push(
     target: Option<&str>,
     kind: PushKind,
     operations: Option<MergeOperations>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<PushResult> {
     let mut ctx = MergeContext::prepare(target, operations)?;
 
     ctx.show_progress(kind.verb_progressive(), "", operations)?;
@@ -304,13 +320,19 @@ pub fn handle_push(
 
     ctx.restore_stash();
 
-    if ctx.commit_count > 0 {
+    let outcome = if ctx.commit_count > 0 {
         ctx.show_success(kind.verb_past(), "", "");
+        PushOutcome::FastForwarded
     } else {
         ctx.show_up_to_date_if_needed(operations);
-    }
+        PushOutcome::UpToDate
+    };
 
-    Ok(())
+    Ok(PushResult {
+        target: ctx.target_branch,
+        commit_count: ctx.commit_count,
+        outcome,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -335,13 +357,17 @@ pub fn handle_no_ff_merge(
     target: Option<&str>,
     operations: Option<MergeOperations>,
     feature_branch: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<PushResult> {
     let mut ctx = MergeContext::prepare(target, operations)?;
 
     ctx.show_progress("Merging", " (--no-ff)", operations)?;
 
     if ctx.show_up_to_date_if_needed(operations) {
-        return Ok(());
+        return Ok(PushResult {
+            target: ctx.target_branch,
+            commit_count: 0,
+            outcome: PushOutcome::UpToDate,
+        });
     }
 
     // Create the merge commit using git plumbing.
@@ -419,7 +445,11 @@ pub fn handle_no_ff_merge(
     let sha_suffix = cformat!(" @ <dim>{merge_sha_short}</>");
     ctx.show_success("Merged to", &sha_suffix, ", --no-ff");
 
-    Ok(())
+    Ok(PushResult {
+        target: ctx.target_branch,
+        commit_count: ctx.commit_count,
+        outcome: PushOutcome::MergeCommit { merge_sha },
+    })
 }
 
 #[cfg(test)]

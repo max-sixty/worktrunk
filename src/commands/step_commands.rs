@@ -31,13 +31,13 @@ use worktrunk::path::format_path_for_display;
 use worktrunk::progress::{Progress, format_bytes};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
-    eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
-    verbosity, warning_message,
+    eprintln, format_bash_with_gutter, format_heading, format_with_gutter, hint_message,
+    info_message, println, progress_message, success_message, verbosity, warning_message,
 };
 
 use super::command_approval::approve_or_skip;
 use super::command_executor::FailureStrategy;
-use super::commit::{CommitGenerator, CommitOptions, HookGate, StageMode};
+use super::commit::{CommitGenerator, CommitOptions, CommitOutcome, HookGate, StageMode};
 use super::context::CommandEnv;
 use super::hooks::{HookAnnouncer, execute_hook};
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
@@ -54,16 +54,14 @@ pub fn step_commit(
     verify: bool,
     stage: Option<StageMode>,
     show_prompt: bool,
-) -> anyhow::Result<()> {
-    // Handle --show-prompt early: just build and output the prompt
-    if show_prompt {
-        let repo = worktrunk::git::Repository::current()?;
-        let config = UserConfig::load().context("Failed to load config")?;
-        let project_id = repo.project_identifier().ok();
-        let commit_config = config.commit_generation(project_id.as_deref());
-        let prompt = crate::llm::build_commit_prompt(&commit_config)?;
-        println!("{}", prompt);
-        return Ok(());
+    dry_run: bool,
+) -> anyhow::Result<Option<CommitOutcome>> {
+    // --show-prompt and --dry-run skip hooks and the commit itself; --dry-run still
+    // mirrors --stage against a temp index so the previewed prompt matches what a real
+    // run would send the LLM. Neither path produces a CommitOutcome.
+    if show_prompt || dry_run {
+        preview_commit(stage, dry_run)?;
+        return Ok(None);
     }
 
     // Load config once, run LLM setup prompt, then reuse config
@@ -98,15 +96,132 @@ pub fn step_commit(
     options.warn_about_untracked = stage_mode == StageMode::All;
 
     let mut announcer = HookAnnouncer::new(ctx.repo, ctx.config, false);
-    options.commit(&mut announcer)?;
-    announcer.flush()
+    let outcome = options.commit(&mut announcer)?;
+    announcer.flush()?;
+    Ok(Some(outcome))
+}
+
+/// Handle `wt step commit` in `--show-prompt` or `--dry-run` mode.
+///
+/// Both modes skip hooks and the commit itself. `--show-prompt` outputs only the
+/// rendered prompt against the existing index (cheap, pipeable). `--dry-run` mirrors
+/// `--stage` against a temp index — so the previewed prompt matches what a real run
+/// would send — then calls the LLM and prints the command and message in three labeled
+/// sections. The user's real index is never modified.
+fn preview_commit(stage: Option<StageMode>, dry_run: bool) -> anyhow::Result<()> {
+    let env = CommandEnv::for_action(UserConfig::load().context("Failed to load config")?)?;
+    let commit_config = env.resolved().commit_generation.clone();
+
+    // For --dry-run, stage to a copy of the index so the preview reflects what a real
+    // run would send. --show-prompt skips this — it's the cheap "what's already staged"
+    // path. StageMode::None has nothing to stage, so we use the existing index as-is.
+    let temp_index = if dry_run {
+        let add_args: Option<&[&str]> = match stage.unwrap_or(env.resolved().commit.stage()) {
+            StageMode::All => Some(&["add", "-A"]),
+            StageMode::Tracked => Some(&["add", "-u"]),
+            StageMode::None => None,
+        };
+        add_args
+            .map(|args| stage_to_temp_index(&env.repo, args))
+            .transpose()?
+    } else {
+        None
+    };
+    let index_override = temp_index.as_ref().map(|t| t.path());
+
+    let prompt = crate::llm::build_commit_prompt(&commit_config, index_override)?;
+    if !dry_run {
+        println!("{}", prompt);
+        return Ok(());
+    }
+    let message = crate::llm::generate_commit_message(&commit_config, index_override)?;
+    print_dry_run(&prompt, &commit_config, &message)
+}
+
+/// Copy the current worktree's index to a temp file and run `git <add_args>` against it.
+///
+/// Returns the [`tempfile::NamedTempFile`] so the caller controls its lifetime — when
+/// dropped, the temp file is removed without ever touching the user's real index.
+fn stage_to_temp_index(
+    repo: &Repository,
+    add_args: &[&str],
+) -> anyhow::Result<tempfile::NamedTempFile> {
+    let wt = repo.current_worktree();
+    let real_index = wt.git_dir()?.join("index");
+    let temp = tempfile::NamedTempFile::new().context("Failed to create temporary index")?;
+    fs::copy(&real_index, temp.path()).context("Failed to copy index file")?;
+
+    let output = Cmd::new("git")
+        .args(add_args.iter().copied())
+        .current_dir(wt.root()?)
+        .env("GIT_INDEX_FILE", temp.path())
+        .run()
+        .context("Failed to stage changes into temp index")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git {} failed: {}", add_args.join(" "), stderr.trim());
+    }
+    Ok(temp)
+}
+
+/// Print the three dry-run sections: rendered prompt, LLM command, generated message.
+///
+/// The COMMAND and MESSAGE sections use the same gutter treatment as the regular commit
+/// flow — `format_bash_with_gutter` for the shell invocation, and the bold-first-line
+/// commit message format wrapped in `format_with_gutter`. The PROMPT is left ungutter'd
+/// to keep `--dry-run`'s output visually aligned with `--show-prompt`.
+///
+/// Output is routed through the pager when stdout is a TTY (see writing-user-outputs →
+/// "When to page output"). The helper falls back to direct stdout when piped.
+fn print_dry_run(
+    prompt: &str,
+    commit_config: &worktrunk::config::CommitGenerationConfig,
+    message: &str,
+) -> anyhow::Result<()> {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    writeln!(out, "{}", format_heading("PROMPT", None))?;
+    writeln!(out, "{}", prompt)?;
+    writeln!(out)?;
+    writeln!(out, "{}", format_heading("COMMAND", None))?;
+    match commit_config
+        .command
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        Some(cmd) => writeln!(
+            out,
+            "{}",
+            format_bash_with_gutter(&crate::llm::render_llm_invocation(cmd)?)
+        )?,
+        None => writeln!(
+            out,
+            "{}",
+            format_with_gutter("(LLM not configured — using built-in fallback)", None)
+        )?,
+    }
+    writeln!(out)?;
+    writeln!(out, "{}", format_heading("MESSAGE", None))?;
+    let formatted = CommitGenerator::new(commit_config).format_message_for_display(message);
+    writeln!(out, "{}", format_with_gutter(&formatted, None))?;
+
+    if let Err(e) = crate::help_pager::show_help_in_pager(&out, true) {
+        log::debug!("Pager failed, falling back to stdout: {}", e);
+        println!("{}", out);
+    }
+    Ok(())
 }
 
 /// Result of a squash operation
 #[derive(Debug, Clone)]
 pub enum SquashResult {
-    /// Squash or commit occurred
-    Squashed,
+    /// Squash or commit occurred. Carries the resulting commit's SHA, message,
+    /// and resolved stage mode so callers can render structured output.
+    Squashed {
+        sha: String,
+        message: String,
+        stage_mode: StageMode,
+    },
     /// Nothing to squash: no commits ahead of target branch
     NoCommitsAhead(String),
     /// Nothing to squash: already a single commit
@@ -236,8 +351,16 @@ pub fn handle_squash(
 
     if commit_count == 0 && has_staged {
         // Just staged changes, no commits - commit them directly (no squashing needed)
-        generator.commit_staged_changes(&wt, true, true, stage_mode)?;
-        return Ok(SquashResult::Squashed);
+        let CommitOutcome {
+            sha,
+            message,
+            stage_mode,
+        } = generator.commit_staged_changes(&wt, true, true, stage_mode)?;
+        return Ok(SquashResult::Squashed {
+            sha,
+            message,
+            stage_mode,
+        });
     }
 
     if commit_count == 1 && !has_staged {
@@ -349,11 +472,11 @@ pub fn handle_squash(
     repo.run_command(&["commit", "-m", &commit_message])
         .context("Failed to create squash commit")?;
 
-    // Get commit hash for display
-    let commit_hash = repo
-        .run_command(&["rev-parse", "--short", "HEAD"])?
-        .trim()
-        .to_string();
+    // Full SHA for the JSON payload, plus a `--short`-rendered hash for the
+    // success line (honors `core.abbrev` and auto-extends for ambiguous prefixes).
+    let commit_sha = repo.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
+    let commit_hash = repo.run_command(&["rev-parse", "--short", "HEAD"])?;
+    let commit_hash = commit_hash.trim();
 
     // Show success immediately after completing the squash
     eprintln!(
@@ -367,35 +490,49 @@ pub fn handle_squash(
         announcer.register(&ctx, HookType::PostCommit, &extra_vars, None)?;
     }
 
-    Ok(SquashResult::Squashed)
+    Ok(SquashResult::Squashed {
+        sha: commit_sha,
+        message: commit_message,
+        stage_mode,
+    })
 }
 
 /// Handle `wt step squash --show-prompt`
 ///
 /// Builds and outputs the squash prompt without running the LLM or squashing.
 pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
+    preview_squash(target, false)
+}
+
+/// Handle `wt step squash --dry-run`
+///
+/// Renders the squash prompt, prints the LLM command, generates the message, and prints
+/// it without resetting, running hooks, or committing.
+pub fn step_dry_run_squash(target: Option<&str>) -> anyhow::Result<()> {
+    preview_squash(target, true)
+}
+
+/// Shared implementation for `--show-prompt` and `--dry-run` on squash. `--show-prompt`
+/// (`dry_run = false`) outputs only the rendered prompt; `--dry-run` additionally calls
+/// the LLM and prints the command and the generated message.
+fn preview_squash(target: Option<&str>, dry_run: bool) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let config = UserConfig::load().context("Failed to load config")?;
     let project_id = repo.project_identifier().ok();
-    let effective_config = config.commit_generation(project_id.as_deref());
+    let commit_config = config.commit_generation(project_id.as_deref());
 
-    // Get and validate target ref (any commit-ish for merge-base calculation)
     let integration_target = repo.require_target_ref(target)?;
 
-    // Get current branch
     let wt = repo.current_worktree();
     let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
 
-    // Get merge base with target branch (required for generating squash message)
     let merge_base = repo
         .merge_base("HEAD", &integration_target)?
         .context("Cannot generate squash message: no common ancestor with target branch")?;
 
-    // Get commit subjects for the squash message
     let range = format!("{}..HEAD", merge_base);
     let subjects = repo.commit_subjects(&range)?;
 
-    // Get repo name from directory
     let repo_root = wt.root()?;
     let repo_name = repo_root
         .file_name()
@@ -408,16 +545,27 @@ pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
         &subjects,
         &current_branch,
         repo_name,
-        &effective_config,
+        &commit_config,
     )?;
-    println!("{}", prompt);
-    Ok(())
+    if !dry_run {
+        println!("{}", prompt);
+        return Ok(());
+    }
+    let message = crate::llm::generate_squash_message(
+        &integration_target,
+        &merge_base,
+        &subjects,
+        &current_branch,
+        repo_name,
+        &commit_config,
+    )?;
+    print_dry_run(&prompt, &commit_config, &message)
 }
 
 /// Result of a rebase operation
 pub enum RebaseResult {
-    /// Rebase occurred (either true rebase or fast-forward)
-    Rebased,
+    /// Rebase occurred. `fast_forward` distinguishes the two flavors.
+    Rebased { target: String, fast_forward: bool },
     /// Already up-to-date with target branch
     UpToDate(String),
 }
@@ -494,7 +642,10 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     };
     eprintln!("{}", success_message(msg));
 
-    Ok(RebaseResult::Rebased)
+    Ok(RebaseResult::Rebased {
+        target: integration_target,
+        fast_forward: is_fast_forward,
+    })
 }
 
 /// Handle `wt step diff` command
@@ -704,6 +855,7 @@ pub fn step_copy_ignored(
     to: Option<&str>,
     dry_run: bool,
     force: bool,
+    format: crate::cli::SwitchFormat,
 ) -> anyhow::Result<()> {
     // Self-lower only when we're running inside a background hook pipeline
     // (parent `wt` sets `WORKTRUNK_FOREGROUND=-1` on the detached runner).
@@ -713,6 +865,7 @@ pub fn step_copy_ignored(
     if worktrunk::priority::in_background_hook() {
         worktrunk::priority::lower_current_process();
     }
+    let json_mode = format == crate::cli::SwitchFormat::Json;
     let repo = Repository::current()?;
     let copy_ignored_config = resolve_copy_ignored_config(&repo)?;
 
@@ -752,10 +905,22 @@ pub fn step_copy_ignored(
     };
 
     if source_path == dest_path {
-        eprintln!(
-            "{}",
-            info_message("Source and destination are the same worktree")
-        );
+        if json_mode {
+            let payload = serde_json::json!({
+                "outcome": "same_worktree",
+                "from": source_path,
+                "to": dest_path,
+                "entries": Vec::<serde_json::Value>::new(),
+                "files": 0,
+                "bytes": 0,
+            });
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        } else {
+            eprintln!(
+                "{}",
+                info_message("Source and destination are the same worktree")
+            );
+        }
         return Ok(());
     }
 
@@ -772,14 +937,49 @@ pub fn step_copy_ignored(
     )?;
 
     if entries_to_copy.is_empty() {
-        eprintln!("{}", info_message("No matching files to copy"));
+        if json_mode {
+            let payload = serde_json::json!({
+                "outcome": if dry_run { "planned" } else { "copied" },
+                "dry_run": dry_run,
+                "from": source_path,
+                "to": dest_path,
+                "entries": Vec::<serde_json::Value>::new(),
+                "files": 0,
+                "bytes": 0,
+            });
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        } else {
+            eprintln!("{}", info_message("No matching files to copy"));
+        }
         return Ok(());
     }
 
     let verbose = verbosity();
 
-    // Show entries in verbose or dry-run mode
-    if verbose >= 1 || dry_run {
+    if dry_run {
+        if json_mode {
+            let entries: Vec<_> = entries_to_copy
+                .iter()
+                .map(|(src_entry, is_dir)| {
+                    let relative = src_entry
+                        .strip_prefix(&source_path)
+                        .unwrap_or(src_entry.as_path());
+                    serde_json::json!({
+                        "path": relative,
+                        "kind": if *is_dir { "dir" } else { "file" },
+                    })
+                })
+                .collect();
+            let payload = serde_json::json!({
+                "outcome": "planned",
+                "dry_run": true,
+                "from": source_path,
+                "to": dest_path,
+                "entries": entries,
+            });
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+            return Ok(());
+        }
         let items: Vec<String> = entries_to_copy
             .iter()
             .map(|(src_entry, is_dir)| {
@@ -791,23 +991,44 @@ pub fn step_copy_ignored(
             })
             .collect();
         let entry_word = if items.len() == 1 { "entry" } else { "entries" };
-        let verb = if dry_run { "Would copy" } else { "Copying" };
         eprintln!(
             "{}",
             info_message(format!(
-                "{verb} {} {}:\n{}",
+                "Would copy {} {}:\n{}",
                 items.len(),
                 entry_word,
                 format_with_gutter(&items.join("\n"), None)
             ))
         );
-        if dry_run {
-            return Ok(());
-        }
+        return Ok(());
+    }
+
+    // Show entries in verbose mode (text only — JSON mode emits the full list at the end).
+    if verbose >= 1 && !json_mode {
+        let items: Vec<String> = entries_to_copy
+            .iter()
+            .map(|(src_entry, is_dir)| {
+                let relative = src_entry
+                    .strip_prefix(&source_path)
+                    .unwrap_or(src_entry.as_path());
+                let entry_type = if *is_dir { "dir" } else { "file" };
+                format!("{} ({})", format_path_for_display(relative), entry_type)
+            })
+            .collect();
+        let entry_word = if items.len() == 1 { "entry" } else { "entries" };
+        eprintln!(
+            "{}",
+            info_message(format!(
+                "Copying {} {}:\n{}",
+                items.len(),
+                entry_word,
+                format_with_gutter(&items.join("\n"), None)
+            ))
+        );
     }
 
     // `start` auto-detects the TTY; verbose/dry-run already print enough.
-    let progress = if verbose >= 1 || dry_run {
+    let progress = if verbose >= 1 || json_mode {
         Progress::disabled()
     } else {
         Progress::start("Copying")
@@ -847,15 +1068,43 @@ pub fn step_copy_ignored(
     }
     progress.finish();
 
-    // Show summary
-    let file_word = if copied_count == 1 { "file" } else { "files" };
-    eprintln!(
-        "{}",
-        success_message(format!(
-            "Copied {copied_count} {file_word} · {}",
-            format_bytes(copied_bytes)
-        ))
-    );
+    if json_mode {
+        // `entries` mirrors dry-run: the top-level units selected for copy
+        // (files and dirs). `files` counts the actual leaves written
+        // (recursive + skipping pre-existing files), `bytes` sums their size.
+        let entries: Vec<_> = entries_to_copy
+            .iter()
+            .map(|(src_entry, is_dir)| {
+                let relative = src_entry
+                    .strip_prefix(&source_path)
+                    .unwrap_or(src_entry.as_path());
+                serde_json::json!({
+                    "path": relative,
+                    "kind": if *is_dir { "dir" } else { "file" },
+                })
+            })
+            .collect();
+        let payload = serde_json::json!({
+            "outcome": "copied",
+            "dry_run": false,
+            "from": source_path,
+            "to": dest_path,
+            "entries": entries,
+            "files": copied_count,
+            "bytes": copied_bytes,
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        // Show summary
+        let file_word = if copied_count == 1 { "file" } else { "files" };
+        eprintln!(
+            "{}",
+            success_message(format!(
+                "Copied {copied_count} {file_word} · {}",
+                format_bytes(copied_bytes)
+            ))
+        );
+    }
 
     Ok(())
 }
@@ -1838,11 +2087,14 @@ pub fn step_relocate(
     dry_run: bool,
     commit: bool,
     clobber: bool,
+    format: crate::cli::SwitchFormat,
 ) -> anyhow::Result<()> {
     use super::relocate::{
         GatherResult, RelocationExecutor, ValidationResult, gather_candidates, show_all_skipped,
         show_dry_run_preview, show_no_relocations_needed, show_summary, validate_candidates,
     };
+
+    let json_mode = format == crate::cli::SwitchFormat::Json;
 
     let repo = Repository::current()?;
     let config = UserConfig::load()?;
@@ -1859,26 +2111,58 @@ pub fn step_relocate(
     // Phase 1: Gather candidates (worktrees not at expected paths)
     let GatherResult {
         candidates,
-        template_errors,
+        template_error_branches,
     } = gather_candidates(&repo, &config, &branches)?;
 
+    let template_skips: Vec<super::relocate::SkippedEntry> = template_error_branches
+        .iter()
+        .map(|b| super::relocate::SkippedEntry {
+            branch: b.clone(),
+            reason: "template_error",
+        })
+        .collect();
+
     if candidates.is_empty() {
-        show_no_relocations_needed(template_errors);
+        if json_mode {
+            print_relocate_json(&[], &template_skips, dry_run)?;
+        } else {
+            show_no_relocations_needed(template_error_branches.len());
+        }
         return Ok(());
     }
 
     // Dry run: show preview and exit
     if dry_run {
-        show_dry_run_preview(&candidates);
+        if json_mode {
+            let planned: Vec<_> = candidates
+                .iter()
+                .map(|c| RelocatedEntryView {
+                    branch: c.branch().to_string(),
+                    from: c.wt.path.clone(),
+                    to: c.expected_path.clone(),
+                })
+                .collect();
+            print_relocate_json(&planned, &template_skips, true)?;
+        } else {
+            show_dry_run_preview(&candidates);
+        }
         return Ok(());
     }
 
     // Phase 2: Validate candidates (check locked/dirty, optionally auto-commit)
-    let ValidationResult { validated, skipped } =
-        validate_candidates(&repo, &config, candidates, commit, &repo_path)?;
+    let ValidationResult {
+        validated,
+        skipped: validation_skipped,
+    } = validate_candidates(&repo, &config, candidates, commit, &repo_path)?;
 
     if validated.is_empty() {
-        show_all_skipped(skipped);
+        if json_mode {
+            let mut all_skipped = template_skips;
+            all_skipped.extend(validation_skipped);
+            print_relocate_json(&[], &all_skipped, false)?;
+        } else {
+            show_all_skipped(validation_skipped.len());
+        }
         return Ok(());
     }
 
@@ -1887,10 +2171,53 @@ pub fn step_relocate(
     let cwd = std::env::current_dir().ok();
     executor.execute(&default_branch, cwd.as_deref())?;
 
-    // Show summary
-    let total_skipped = skipped + executor.skipped;
-    show_summary(executor.relocated, total_skipped);
+    if json_mode {
+        let relocated_views: Vec<RelocatedEntryView> = executor
+            .relocated_entries
+            .iter()
+            .map(|e| RelocatedEntryView {
+                branch: e.branch.clone(),
+                from: e.from.clone(),
+                to: e.to.clone(),
+            })
+            .collect();
+        let mut all_skipped = template_skips;
+        all_skipped.extend(validation_skipped);
+        all_skipped.extend(executor.skipped_entries);
+        print_relocate_json(&relocated_views, &all_skipped, false)?;
+    } else {
+        let total_skipped = validation_skipped.len() + executor.skipped_count();
+        show_summary(executor.relocated_count(), total_skipped);
+    }
 
+    Ok(())
+}
+
+/// Internal projection of a relocation event for JSON output.
+struct RelocatedEntryView {
+    branch: String,
+    from: PathBuf,
+    to: PathBuf,
+}
+
+fn print_relocate_json(
+    entries: &[RelocatedEntryView],
+    skipped: &[super::relocate::SkippedEntry],
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    let payload = serde_json::json!({
+        "dry_run": dry_run,
+        "entries": entries.iter().map(|e| serde_json::json!({
+            "branch": e.branch,
+            "from": e.from,
+            "to": e.to,
+        })).collect::<Vec<_>>(),
+        "skipped": skipped.iter().map(|s| serde_json::json!({
+            "branch": s.branch,
+            "reason": s.reason,
+        })).collect::<Vec<_>>(),
+    });
+    println!("{}", serde_json::to_string_pretty(&payload)?);
     Ok(())
 }
 

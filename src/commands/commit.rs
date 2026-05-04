@@ -15,6 +15,17 @@ use super::template_vars::TemplateVars;
 // Re-export StageMode from config for use by CLI
 pub use worktrunk::config::StageMode;
 
+/// Outcome of a successful commit operation. Returned so callers (e.g.
+/// `step commit --format=json`) can render structured output.
+///
+/// `stage_mode` is the *resolved* mode that was actually applied (CLI flag
+/// merged with config defaults), not the user-supplied flag.
+pub struct CommitOutcome {
+    pub sha: String,
+    pub message: String,
+    pub stage_mode: StageMode,
+}
+
 /// Whether pre/post-commit hooks run, and — if not — whether to print the skip message.
 /// Two distinct paths disable hooks: `--no-hooks` (we own the skip message) and declined
 /// approval (the caller already printed its own message).
@@ -121,7 +132,7 @@ impl<'a> CommitGenerator<'a> {
         show_progress: bool,
         show_no_squash_note: bool,
         stage_mode: StageMode,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<CommitOutcome> {
         // Fail early if nothing is staged (avoids confusing LLM prompt with empty diff)
         if !wt.has_staged_changes()? {
             anyhow::bail!("Nothing to commit");
@@ -164,7 +175,7 @@ impl<'a> CommitGenerator<'a> {
         }
 
         self.emit_hint_if_needed();
-        let commit_message = crate::llm::generate_commit_message(self.config)?;
+        let commit_message = crate::llm::generate_commit_message(self.config, None)?;
 
         let formatted_message = self.format_message_for_display(&commit_message);
         eprintln!("{}", format_with_gutter(&formatted_message, None));
@@ -172,17 +183,22 @@ impl<'a> CommitGenerator<'a> {
         wt.run_command(&["commit", "-m", &commit_message])
             .context("Failed to commit")?;
 
-        let commit_hash = wt
-            .run_command(&["rev-parse", "--short", "HEAD"])?
-            .trim()
-            .to_string();
+        let commit_sha = wt.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
+        // Display uses `--short` to honor `core.abbrev` and auto-extend for
+        // ambiguous prefixes; the JSON payload carries the full SHA.
+        let commit_hash = wt.run_command(&["rev-parse", "--short", "HEAD"])?;
+        let commit_hash = commit_hash.trim();
 
         eprintln!(
             "{}",
             success_message(cformat!("Committed changes @ <dim>{commit_hash}</>"))
         );
 
-        Ok(())
+        Ok(CommitOutcome {
+            sha: commit_sha,
+            message: commit_message,
+            stage_mode,
+        })
     }
 }
 
@@ -194,7 +210,7 @@ impl CommitOptions<'_> {
     /// --squash` batching post-commit + post-remove + post-switch + post-merge)
     /// share one announce line; standalone callers (e.g. `wt commit`)
     /// construct an announcer of their own and flush right after.
-    pub fn commit(self, announcer: &mut HookAnnouncer<'_>) -> anyhow::Result<()> {
+    pub fn commit(self, announcer: &mut HookAnnouncer<'_>) -> anyhow::Result<CommitOutcome> {
         let project_config = self.ctx.repo.load_project_config()?;
         let user_hooks = self.ctx.config.hooks(self.ctx.project_id().as_deref());
         let (user_cfg, proj_cfg) = super::hooks::lookup_hook_configs(
@@ -255,7 +271,7 @@ impl CommitOptions<'_> {
         }
 
         let effective_config = self.ctx.commit_generation();
-        CommitGenerator::new(&effective_config).commit_staged_changes(
+        let outcome = CommitGenerator::new(&effective_config).commit_staged_changes(
             &wt,
             true, // show_progress
             self.show_no_squash_note,
@@ -268,7 +284,7 @@ impl CommitOptions<'_> {
             announcer.register(self.ctx, HookType::PostCommit, &extra_vars, None)?;
         }
 
-        Ok(())
+        Ok(outcome)
     }
 }
 

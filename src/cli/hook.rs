@@ -81,6 +81,12 @@ pub enum HookCommand {
         /// Show expanded commands with current variables
         #[arg(long)]
         expanded: bool,
+
+        /// Output format
+        ///
+        /// JSON prints structured result to stdout — one record per configured command.
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// Internal: run a serialized pipeline from stdin

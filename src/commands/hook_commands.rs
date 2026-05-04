@@ -367,14 +367,17 @@ pub fn run_hook(
 }
 
 /// Handle `wt hook show` command - display configured hooks
-pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyhow::Result<()> {
+pub fn handle_hook_show(
+    hook_type_filter: Option<&str>,
+    expanded: bool,
+    format: crate::cli::SwitchFormat,
+) -> anyhow::Result<()> {
     use crate::help_pager::show_help_in_pager;
 
     let repo = Repository::current().context("Failed to show hooks")?;
-    let LoadedConfigs {
-        user: config,
-        project: project_config,
-    } = LoadedConfigs::load(&repo).context("Failed to load configs")?;
+    let configs = LoadedConfigs::load(&repo).context("Failed to load configs")?;
+    let config: &UserConfig = configs.user;
+    let project_config: Option<&ProjectConfig> = configs.project;
     let approvals = Approvals::load().context("Failed to load approvals")?;
     let project_id = repo.project_identifier().ok();
 
@@ -403,6 +406,18 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
     };
     let ctx = env.as_ref().map(|e| e.context(false));
 
+    if format == crate::cli::SwitchFormat::Json {
+        return emit_hook_show_json(
+            config,
+            project_config,
+            &approvals,
+            project_id.as_deref(),
+            filter,
+            ctx.as_ref(),
+            expanded,
+        );
+    }
+
     let mut output = String::new();
 
     // Render user hooks
@@ -425,6 +440,89 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
         worktrunk::styling::println!("{}", output);
     }
 
+    Ok(())
+}
+
+/// Emit configured hooks as a JSON array of structured records.
+///
+/// Each record carries the hook type, source (user or project), optional name,
+/// raw template, project approval status, and — when `--expanded` was passed —
+/// the rendered command preview.
+#[allow(clippy::too_many_arguments)]
+fn emit_hook_show_json(
+    user_config: &UserConfig,
+    project_config: Option<&ProjectConfig>,
+    approvals: &Approvals,
+    project_id: Option<&str>,
+    filter: Option<HookType>,
+    ctx: Option<&CommandContext>,
+    expanded: bool,
+) -> anyhow::Result<()> {
+    let mut entries: Vec<serde_json::Value> = Vec::new();
+
+    let mut emit = |hook_type: HookType,
+                    source: &'static str,
+                    cfg: &CommandConfig,
+                    needs_approval_for: Option<(&Approvals, Option<&str>)>|
+     -> anyhow::Result<()> {
+        for cmd in cfg.commands() {
+            let needs_approval = needs_approval_for
+                .map(|(approvals, project_id)| {
+                    project_id.is_some_and(|pid| !approvals.is_command_approved(pid, &cmd.template))
+                })
+                .unwrap_or(false);
+
+            let mut obj = serde_json::json!({
+                "type": hook_type.to_string(),
+                "source": source,
+                "name": cmd.name,
+                "template": cmd.template,
+                "needs_approval": needs_approval,
+            });
+
+            if expanded && let Some(command_ctx) = ctx {
+                let rendered = expand_command_template(
+                    &cmd.template,
+                    command_ctx,
+                    hook_type,
+                    cmd.name.as_deref(),
+                )?;
+                obj["expanded"] = serde_json::Value::String(rendered);
+            }
+
+            entries.push(obj);
+        }
+        Ok(())
+    };
+
+    // User hooks
+    let user_hooks = &user_config.hooks;
+    for hook_type in HookType::iter() {
+        if let Some(f) = filter
+            && f != hook_type
+        {
+            continue;
+        }
+        if let Some(cfg) = user_hooks.get(hook_type) {
+            emit(hook_type, "user", cfg, None)?;
+        }
+    }
+
+    // Project hooks
+    if let Some(project) = project_config {
+        for hook_type in HookType::iter() {
+            if let Some(f) = filter
+                && f != hook_type
+            {
+                continue;
+            }
+            if let Some(cfg) = project.hooks.get(hook_type) {
+                emit(hook_type, "project", cfg, Some((approvals, project_id)))?;
+            }
+        }
+    }
+
+    println!("{}", serde_json::to_string_pretty(&entries)?);
     Ok(())
 }
 

@@ -19,6 +19,31 @@ const SHELL_METACHARACTERS: &[char] = &[
     '\\',
 ];
 
+/// Render the shell invocation worktrunk would use to run `command`.
+///
+/// Mirrors the wrapping done by [`execute_llm_command`]: every LLM command is passed as
+/// a single argument to the platform shell, so the displayed form is always
+/// `<shell> <shell-args> <quoted-command>` (e.g. `sh -c 'claude -p'`).
+///
+/// Uses the shell's basename rather than the full path so the displayed command stays
+/// short and doesn't leak the user's install path (`C:\Program Files\Git\bin\bash.exe`
+/// becomes `bash.exe`).
+pub(crate) fn render_llm_invocation(command: &str) -> anyhow::Result<String> {
+    let shell = ShellConfig::get()?;
+    let mut rendered = shell
+        .executable
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| shell.executable.to_string_lossy().into_owned());
+    for arg in &shell.args {
+        rendered.push(' ');
+        rendered.push_str(arg);
+    }
+    rendered.push(' ');
+    rendered.push_str(&escape(Cow::Borrowed(command)));
+    Ok(rendered)
+}
+
 /// Format a reproduction command, only wrapping with `sh -c` if needed.
 ///
 /// Simple commands like `llm -m haiku` are shown as-is.
@@ -475,30 +500,39 @@ fn build_prompt(
     Ok(rendered)
 }
 
+/// `index_override` is forwarded to git operations that read the staging area, so
+/// `--dry-run` can preview against a temp index without touching the user's real one.
 pub(crate) fn generate_commit_message(
     commit_generation_config: &CommitGenerationConfig,
+    index_override: Option<&Path>,
 ) -> anyhow::Result<String> {
     // Check if commit generation is configured (non-empty command)
     if commit_generation_config.is_configured() {
         let command = commit_generation_config.command.as_ref().unwrap();
         // Commit generation is explicitly configured - fail if it doesn't work
-        return try_generate_commit_message(command, commit_generation_config).map_err(|e| {
-            worktrunk::git::GitError::LlmCommandFailed {
-                command: command.clone(),
-                error: e.to_string(),
-                reproduction_command: Some(format_reproduction_command(
-                    "wt step commit --show-prompt",
-                    command,
-                )),
-            }
-            .into()
-        });
+        return try_generate_commit_message(command, commit_generation_config, index_override)
+            .map_err(|e| {
+                worktrunk::git::GitError::LlmCommandFailed {
+                    command: command.clone(),
+                    error: e.to_string(),
+                    reproduction_command: Some(format_reproduction_command(
+                        "wt step commit --show-prompt",
+                        command,
+                    )),
+                }
+                .into()
+            });
     }
 
     // Fallback: generate a descriptive commit message based on changed files
     let repo = Repository::current()?;
-    // Use -z for NUL-separated output to handle filenames with spaces/newlines
-    let file_list = repo.run_command(&["diff", "--staged", "--name-only", "-z"])?;
+    let mut name_only = Cmd::new("git")
+        .args(["diff", "--staged", "--name-only", "-z"])
+        .current_dir(repo.discovery_path());
+    if let Some(path) = index_override {
+        name_only = name_only.env("GIT_INDEX_FILE", path);
+    }
+    let file_list = run_git_capture(name_only, "diff --staged --name-only")?;
     let staged_files = file_list
         .split('\0')
         .map(|s| s.trim())
@@ -528,31 +562,66 @@ pub(crate) fn generate_commit_message(
 fn try_generate_commit_message(
     command: &str,
     config: &CommitGenerationConfig,
+    index_override: Option<&Path>,
 ) -> anyhow::Result<String> {
-    let prompt = build_commit_prompt(config)?;
+    let prompt = build_commit_prompt(config, index_override)?;
     execute_llm_command(command, &prompt)
+}
+
+/// Run a git `Cmd` and bail on non-zero exit, mirroring [`Repository::run_command`].
+///
+/// Used by call sites that need to set `GIT_INDEX_FILE` (`--dry-run`) and so can't go
+/// through `Repository::run_command`. Without this check, a failing `git diff` would
+/// silently feed an empty diff to the LLM.
+fn run_git_capture(cmd: Cmd, what: &str) -> anyhow::Result<String> {
+    let output = cmd
+        .run()
+        .with_context(|| format!("Failed to execute git {what}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git {what} failed: {}", stderr.trim());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// Build the commit prompt from staged changes.
 ///
 /// Gathers the staged diff, branch name, repo name, and recent commits, then renders
-/// the prompt template. Used by both normal commit generation and `--show-prompt`.
-pub(crate) fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<String> {
+/// the prompt template. Used by normal commit generation, `--show-prompt`, and
+/// `--dry-run`.
+///
+/// `index_override` points git at an alternate index via `GIT_INDEX_FILE` — used by
+/// `--dry-run` to preview what `git add` per the user's `--stage` flag would produce
+/// without modifying the real index.
+pub(crate) fn build_commit_prompt(
+    config: &CommitGenerationConfig,
+    index_override: Option<&Path>,
+) -> anyhow::Result<String> {
     let repo = Repository::current()?;
+    let cwd = repo.discovery_path().to_path_buf();
 
-    // Get staged diff and diffstat
     // Use -c flags to ensure consistent format regardless of user's git config
     // (diff.noprefix, diff.mnemonicPrefix, etc. could break our parsing)
-    let diff_output = repo.run_command(&[
-        "-c",
-        "diff.noprefix=false",
-        "-c",
-        "diff.mnemonicPrefix=false",
-        "--no-pager",
-        "diff",
-        "--staged",
-    ])?;
-    let diff_stat = repo.run_command(&["--no-pager", "diff", "--staged", "--stat"])?;
+    let mut diff_cmd = Cmd::new("git")
+        .args([
+            "-c",
+            "diff.noprefix=false",
+            "-c",
+            "diff.mnemonicPrefix=false",
+            "--no-pager",
+            "diff",
+            "--staged",
+        ])
+        .current_dir(&cwd);
+    let mut diff_stat_cmd = Cmd::new("git")
+        .args(["--no-pager", "diff", "--staged", "--stat"])
+        .current_dir(&cwd);
+    if let Some(index) = index_override {
+        diff_cmd = diff_cmd.env("GIT_INDEX_FILE", index);
+        diff_stat_cmd = diff_stat_cmd.env("GIT_INDEX_FILE", index);
+    }
+    let diff_output = run_git_capture(diff_cmd, "diff --staged")?;
+    let diff_stat = run_git_capture(diff_stat_cmd, "diff --staged --stat")?;
 
     // Prepare diff (may filter if too large)
     let prepared = prepare_diff(diff_output, diff_stat);
@@ -732,6 +801,35 @@ pub(crate) fn test_commit_generation(
 mod tests {
     use super::*;
     use insta::assert_snapshot;
+
+    /// `render_llm_invocation` should wrap the command through the platform shell with
+    /// the shell's basename (no full install path) and shell-escape the command argument
+    /// so paths/quotes survive the round-trip.
+    #[test]
+    fn test_render_llm_invocation_basics() {
+        let rendered = render_llm_invocation("llm -m haiku").unwrap();
+        // Linux: "sh -c 'llm -m haiku'" — Windows: "bash.exe -c 'llm -m haiku'"
+        assert!(
+            rendered.ends_with(" -c 'llm -m haiku'"),
+            "expected '<shell> -c <quoted-command>', got: {rendered}"
+        );
+        // Basename only — no install-path leakage.
+        assert!(
+            !rendered.contains('/') && !rendered.contains('\\'),
+            "shell rendered with directory components: {rendered}"
+        );
+    }
+
+    /// Single-quotes in the user's command must be escaped so the displayed string is a
+    /// faithful, copy-pasteable shell invocation.
+    #[test]
+    fn test_render_llm_invocation_escapes_quotes() {
+        let rendered = render_llm_invocation("echo 'hi'").unwrap();
+        assert!(
+            rendered.contains(r#"'echo '\''hi'\'''"#),
+            "single quotes not escaped: {rendered}"
+        );
+    }
 
     /// Helper to create a commit context (no squash-specific fields)
     fn commit_context<'a>(

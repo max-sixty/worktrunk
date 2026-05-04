@@ -2363,6 +2363,213 @@ fn test_step_squash_show_prompt(repo_with_multi_commit_feature: TestRepo) {
 }
 
 // =============================================================================
+// --dry-run tests
+// =============================================================================
+
+#[rstest]
+fn test_step_commit_dry_run(repo: TestRepo) {
+    // Stage a change so the prompt has a diff to describe
+    fs::write(repo.root_path().join("new_file.txt"), "new content").expect("Failed to write file");
+    repo.git_command()
+        .args(["add", "new_file.txt"])
+        .run()
+        .expect("git add failed");
+
+    // Stub the LLM with a command that consumes stdin and prints a fixed message
+    let worktrunk_config = r#"
+[commit.generation]
+command = "cat >/dev/null && echo 'feat: add new_file'"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    // PROMPT/COMMAND/MESSAGE sections render to stdout; nothing is committed.
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["commit", "--dry-run"],
+        None
+    ));
+
+    // Confirm no commit was created — HEAD must still be the fixture's initial commit.
+    let log = repo
+        .git_command()
+        .args(["log", "--oneline"])
+        .run()
+        .expect("git log failed");
+    let log_text = String::from_utf8(log.stdout).unwrap();
+    assert_eq!(
+        log_text.lines().count(),
+        1,
+        "--dry-run must not create a commit; got log:\n{log_text}"
+    );
+}
+
+/// `--dry-run` should mirror `--stage` against a temp index so the prompt reflects what a
+/// real run would send the LLM — including untracked files that aren't yet in the index.
+#[rstest]
+fn test_step_commit_dry_run_stages_untracked(repo: TestRepo) {
+    // Untracked, never `git add`'d. Default --stage=all would pick this up at commit time.
+    fs::write(repo.root_path().join("untracked.txt"), "untracked content")
+        .expect("Failed to write file");
+
+    let worktrunk_config = r#"
+[commit.generation]
+command = "cat >/dev/null && echo 'feat: add untracked'"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    let output = make_snapshot_cmd(&repo, "step", &["commit", "--dry-run"], None)
+        .output()
+        .expect("wt step commit --dry-run failed");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("untracked.txt"),
+        "--dry-run with default --stage=all should include untracked files in the prompt; \
+         got stdout:\n{stdout}"
+    );
+
+    // The user's real index must not have absorbed the untracked file.
+    let status = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .run()
+        .expect("git status failed");
+    let status_text = String::from_utf8(status.stdout).unwrap();
+    assert!(
+        status_text.contains("?? untracked.txt"),
+        "untracked.txt should remain untracked after --dry-run; got status:\n{status_text}"
+    );
+}
+
+/// `--stage=none` overrides the default — `--dry-run` should respect the override and
+/// preview against only what's already in the index, ignoring untracked changes.
+#[rstest]
+fn test_step_commit_dry_run_stage_none(repo: TestRepo) {
+    fs::write(repo.root_path().join("untracked.txt"), "untracked content")
+        .expect("Failed to write file");
+
+    let worktrunk_config = r#"
+[commit.generation]
+command = "cat >/dev/null && echo 'fallback'"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    let output = make_snapshot_cmd(
+        &repo,
+        "step",
+        &["commit", "--dry-run", "--stage=none"],
+        None,
+    )
+    .output()
+    .expect("wt step commit --dry-run --stage=none failed");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        !stdout.contains("untracked.txt"),
+        "--stage=none should skip untracked files in the dry-run prompt; got stdout:\n{stdout}"
+    );
+}
+
+/// `--stage=tracked` should mirror `git add -u` against the temp index — modifications
+/// to tracked files appear in the prompt, but untracked files do not.
+#[rstest]
+fn test_step_commit_dry_run_stage_tracked(repo: TestRepo) {
+    // Create and commit a tracked file first
+    fs::write(repo.root_path().join("tracked.txt"), "original").expect("Failed to write");
+    repo.git_command()
+        .args(["add", "tracked.txt"])
+        .run()
+        .expect("git add failed");
+    repo.git_command()
+        .args(["commit", "-m", "add tracked"])
+        .run()
+        .expect("git commit failed");
+
+    // Modify the tracked file (unstaged) and create a new untracked file
+    fs::write(repo.root_path().join("tracked.txt"), "modified").expect("Failed to write");
+    fs::write(repo.root_path().join("untracked.txt"), "new").expect("Failed to write");
+
+    let worktrunk_config = r#"
+[commit.generation]
+command = "cat >/dev/null && echo 'feat: tweak'"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    let output = make_snapshot_cmd(
+        &repo,
+        "step",
+        &["commit", "--dry-run", "--stage=tracked"],
+        None,
+    )
+    .output()
+    .expect("wt step commit --dry-run --stage=tracked failed");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("tracked.txt") && stdout.contains("modified"),
+        "--stage=tracked should include modified tracked files; got stdout:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("untracked.txt"),
+        "--stage=tracked should skip untracked files; got stdout:\n{stdout}"
+    );
+}
+
+/// `--dry-run` without an LLM configured falls back to the deterministic message
+/// generator and prints `(LLM not configured — using built-in fallback)` for COMMAND.
+#[rstest]
+fn test_step_commit_dry_run_no_llm_configured(repo: TestRepo) {
+    fs::write(repo.root_path().join("new.txt"), "x").expect("Failed to write");
+    repo.git_command()
+        .args(["add", "new.txt"])
+        .run()
+        .expect("git add failed");
+    // Empty config: no [commit.generation] section.
+    fs::write(repo.test_config_path(), "").unwrap();
+
+    let output = make_snapshot_cmd(&repo, "step", &["commit", "--dry-run"], None)
+        .output()
+        .expect("wt step commit --dry-run failed");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("LLM not configured"),
+        "fallback notice should appear in the COMMAND section; got stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Changes to new.txt"),
+        "fallback message generator should describe the staged file; got stdout:\n{stdout}"
+    );
+}
+
+#[rstest]
+fn test_step_squash_dry_run(repo_with_multi_commit_feature: TestRepo) {
+    let repo = repo_with_multi_commit_feature;
+    let feature_wt = repo.worktree_path("feature");
+
+    let worktrunk_config = r#"
+[commit.generation]
+command = "cat >/dev/null && echo 'feat: combined feature work'"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["squash", "--dry-run"],
+        Some(feature_wt)
+    ));
+
+    // The feature branch must still have its multiple commits — squash didn't run.
+    let log = std::process::Command::new("git")
+        .args(["-C", feature_wt.to_str().unwrap(), "log", "--oneline"])
+        .output()
+        .expect("git log failed");
+    let log_text = String::from_utf8(log.stdout).unwrap();
+    assert!(
+        log_text.lines().count() > 1,
+        "--dry-run must not squash; got log:\n{log_text}"
+    );
+}
+
+// =============================================================================
 // step rebase tests
 // =============================================================================
 
@@ -2421,6 +2628,298 @@ fn test_step_rebase_already_up_to_date(mut repo: TestRepo) {
         &["rebase"],
         Some(&feature_wt)
     ));
+}
+
+// =============================================================================
+// JSON output tests
+// =============================================================================
+
+/// `step rebase --format=json` reports `up_to_date` when nothing to do.
+#[rstest]
+fn test_step_rebase_up_to_date_json(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    let output = repo
+        .wt_command()
+        .args(["step", "rebase", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "up_to_date");
+    assert_eq!(parsed["target"], "main");
+}
+
+/// `step rebase --format=json` reports `fast_forwarded` when target advanced cleanly.
+#[rstest]
+fn test_step_rebase_fast_forwarded_json(mut repo: TestRepo) {
+    // feature created BEFORE main advances → main is ahead, feature has no new commits
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(repo.root_path().join("main-update.txt"), "x").unwrap();
+    repo.run_git(&["add", "main-update.txt"]);
+    repo.run_git(&["commit", "-m", "Update main"]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "rebase", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "fast_forwarded");
+    assert_eq!(parsed["target"], "main");
+}
+
+/// `step push --format=json` reports `fast_forwarded` plus commit count.
+#[rstest]
+fn test_step_push_fast_forwarded_json(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree_with_commit("feature", "f.txt", "x", "feat: x");
+
+    let output = repo
+        .wt_command()
+        .args(["step", "push", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "fast_forwarded");
+    assert_eq!(parsed["target"], "main");
+    assert_eq!(parsed["commits"], 1);
+}
+
+/// `step push --no-ff --format=json` reports `merge_commit` and includes
+/// the new merge SHA — the field that was previously discarded.
+#[rstest]
+fn test_step_push_no_ff_json(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree_with_commit("feature", "f.txt", "x", "feat: x");
+
+    let output = repo
+        .wt_command()
+        .args(["step", "push", "--no-ff", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "step push --no-ff --format=json failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "merge_commit");
+    assert_eq!(parsed["target"], "main");
+    assert_eq!(parsed["commits"], 1);
+    let merge_sha = parsed["merge_sha"].as_str().expect("merge_sha string");
+    assert_eq!(
+        merge_sha.len(),
+        40,
+        "expected full 40-char merge SHA, got {merge_sha}"
+    );
+}
+
+/// `step push --format=json` reports `up_to_date` when target already contains HEAD.
+#[rstest]
+fn test_step_push_up_to_date_json(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    let output = repo
+        .wt_command()
+        .args(["step", "push", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "up_to_date");
+    assert_eq!(parsed["commits"], 0);
+}
+
+/// `step commit --format=json` reports the new commit's SHA + message + stage_mode.
+#[rstest]
+fn test_step_commit_json(repo: TestRepo) {
+    fs::write(repo.root_path().join("file1.txt"), "content").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "commit", "--no-hooks", "--format=json"])
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: add file'",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "step commit failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let sha = parsed["commit"].as_str().expect("commit SHA");
+    assert_eq!(sha.len(), 40, "expected full 40-char SHA, got {sha}");
+    assert_eq!(parsed["message"], "feat: add file");
+    // Without --stage on the CLI, the resolved default ("all") is emitted —
+    // not null. Scripters get a stable identifier for what was applied.
+    assert_eq!(parsed["stage_mode"], "all");
+}
+
+/// `step squash --format=json` reports `no_commits_ahead` cleanly.
+#[rstest]
+fn test_step_squash_no_commits_json(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "no_commits_ahead");
+    assert_eq!(parsed["target"], "main");
+}
+
+/// `step squash --format=json` reports `already_single_commit` when nothing to squash.
+#[rstest]
+fn test_step_squash_already_single_commit_json(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree_with_commit("feature", "f.txt", "x", "feat: single");
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "already_single_commit");
+}
+
+/// `step squash --format=json` reports `squashed` with the new commit's full
+/// SHA and the LLM-generated message when there are multiple commits to squash.
+#[rstest]
+fn test_step_squash_squashed_json(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree_with_commit("feature", "a.txt", "1", "feat: a");
+    fs::write(feature_wt.join("b.txt"), "2").unwrap();
+    repo.git_command()
+        .current_dir(&feature_wt)
+        .args(["add", "b.txt"])
+        .run()
+        .unwrap();
+    repo.git_command()
+        .current_dir(&feature_wt)
+        .args(["commit", "-m", "feat: b"])
+        .run()
+        .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--no-hooks", "--format=json"])
+        .current_dir(&feature_wt)
+        .env(
+            "WORKTRUNK_COMMIT__GENERATION__COMMAND",
+            "cat >/dev/null && echo 'feat: combined ab'",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "step squash failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "squashed");
+    let sha = parsed["commit"].as_str().expect("commit SHA");
+    assert_eq!(sha.len(), 40);
+    assert_eq!(parsed["message"], "feat: combined ab");
+    assert_eq!(parsed["stage_mode"], "all");
+}
+
+/// `step squash --format=json` reports `no_net_changes` when commits cancel
+/// each other out so the squash produces an empty diff.
+#[rstest]
+fn test_step_squash_no_net_changes_json(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    let file_path = feature_wt.join("file.txt");
+    let initial = std::fs::read_to_string(&file_path).unwrap();
+
+    repo.commit_in_worktree(&feature_wt, "file.txt", "change1", "change 1");
+    repo.commit_in_worktree(&feature_wt, "file.txt", "change2", "change 2");
+    repo.commit_in_worktree(&feature_wt, "file.txt", &initial, "revert to initial");
+
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--no-hooks", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "step squash failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "no_net_changes");
+}
+
+/// `step rebase --format=json` reports `rebased` (not `fast_forwarded`) when
+/// the feature branch has its own commits that need to be replayed onto a
+/// moved target.
+#[rstest]
+fn test_step_rebase_rebased_json(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree_with_commit("feature", "f.txt", "x", "feat: f");
+    // Advance main with an unrelated commit so feature must be rebased.
+    fs::write(repo.root_path().join("main-update.txt"), "y").unwrap();
+    repo.run_git(&["add", "main-update.txt"]);
+    repo.run_git(&["commit", "-m", "update main"]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "rebase", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "step rebase failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(parsed["outcome"], "rebased");
+    assert_eq!(parsed["target"], "main");
+}
+
+/// `step commit --show-prompt --format=json` is rejected — show-prompt emits
+/// raw text that would corrupt JSON output.
+#[rstest]
+fn test_step_commit_show_prompt_with_json_rejected(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args(["step", "commit", "--show-prompt", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot be combined with --format=json"),
+        "stderr: {stderr}"
+    );
+}
+
+/// Same guard for squash.
+#[rstest]
+fn test_step_squash_show_prompt_with_json_rejected(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    let output = repo
+        .wt_command()
+        .args(["step", "squash", "--show-prompt", "--format=json"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot be combined with --format=json"),
+        "stderr: {stderr}"
+    );
 }
 
 // =============================================================================
