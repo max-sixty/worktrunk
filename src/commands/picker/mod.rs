@@ -727,11 +727,9 @@ pub fn handle_picker(
         } else {
             Repository::current().context("Failed to switch worktree")?
         };
-        // Warm the project config so it sits in the cache for downstream
-        // `run_pre_switch_hooks` / `plan_switch` and any deprecation warnings
-        // surface before hook output. Clone user out so
-        // `offer_bare_repo_worktree_path_fix` can mutate locally.
-        repo.project_config().context("Failed to load config")?;
+        // Clone user out so `offer_bare_repo_worktree_path_fix` can mutate
+        // locally. Project config is loaded on demand by downstream
+        // `run_pre_switch_hooks` / `plan_switch`.
         let mut config = repo.user_config().clone();
         offer_bare_repo_worktree_path_fix(&repo, &mut config)?;
 

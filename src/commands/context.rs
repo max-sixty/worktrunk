@@ -76,10 +76,6 @@ impl CommandEnv {
         let branch = current_wt
             .branch()
             .context("Failed to determine current branch")?;
-        // Warm the project config so downstream hook code reads it from the
-        // cache and any deprecation warnings surface here, before hook output.
-        // Clone user out — `CommandEnv` owns its config.
-        repo.project_config().context("Failed to load config")?;
         let config = repo.user_config().clone();
 
         Ok(Self {
