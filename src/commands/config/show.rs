@@ -1014,7 +1014,9 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         writeln!(
             out,
             "{}",
-            info_message(cformat!("<dim>{shell}: Skipped; {path} not found</>"))
+            info_message(cformat!(
+                "<bold>{shell}</>: <dim>Skipped; {path} not found</>"
+            ))
         )?;
     }
 

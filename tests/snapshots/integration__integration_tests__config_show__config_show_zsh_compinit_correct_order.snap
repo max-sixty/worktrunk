@@ -60,9 +60,9 @@ exit_code: 0
 
 [2m○[22m [1mzsh[22m: Already configured shell extension & completions @ ~/.zshrc:5
 [107m [0m [2m[0m[2m[35mif[0m[2m [0m[2m[34mcommand[0m[2m [0m[2m[36m-v[0m[2m wt [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1; [0m[2m[35mthen[0m[2m [0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mcommand[0m[2m wt config shell init zsh)"[0m[2m; [0m[2m[35mfi[0m[2m
-[2m○[22m [2mbash: Skipped; ~/.bashrc not found[22m
-[2m○[22m [2mfish: Skipped; ~/.config/fish/functions not found[22m
-[2m○[22m [2mnu: Skipped; ~/.config/nushell/vendor/autoload not found[22m
+[2m○[22m [1mbash[22m: [2mSkipped; ~/.bashrc not found[22m
+[2m○[22m [1mfish[22m: [2mSkipped; ~/.config/fish/functions not found[22m
+[2m○[22m [1mnu[22m: [2mSkipped; ~/.config/nushell/vendor/autoload not found[22m
 
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m

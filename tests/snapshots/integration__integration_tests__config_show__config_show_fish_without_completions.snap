@@ -61,9 +61,9 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34mcommand[0m[2m wt config shell init fish [0m[2m[36m|[0m[2m [0m[2m[34msource[0m[2m
 [33m▲[39m [33m[1mfish[22m: Completions not configured @ ~/.config/fish/completions/wt.fish[39m
 [2m↳[22m [2mTo configure completions, run [4mwt config shell install fish[24m[22m
-[2m○[22m [2mbash: Skipped; ~/.bashrc not found[22m
-[2m○[22m [2mzsh: Skipped; ~/.zshrc not found[22m
-[2m○[22m [2mnu: Skipped; ~/.config/nushell/vendor/autoload not found[22m
+[2m○[22m [1mbash[22m: [2mSkipped; ~/.bashrc not found[22m
+[2m○[22m [1mzsh[22m: [2mSkipped; ~/.zshrc not found[22m
+[2m○[22m [1mnu[22m: [2mSkipped; ~/.config/nushell/vendor/autoload not found[22m
 
 [36mOTHER[39m
 [2m○[22m wt: [1m[VERSION][22m
