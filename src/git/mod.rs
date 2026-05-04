@@ -38,6 +38,8 @@ pub const NULL_OID: &str = "0000000000000000000000000000000000000000";
 pub(crate) use diff::DiffStats;
 pub use diff::{LineDiff, parse_numstat_line};
 pub use error::{
+    // Typed leaf error for buffered command-runner failures (downcast target)
+    CommandError,
     // Structured command failure info
     FailedCommand,
     // Typed error enum (Display produces styled output)
@@ -52,7 +54,11 @@ pub use error::{
     WorktrunkError,
     // Error inspection functions
     add_hook_skip_hint,
+    // User-facing detail string (prefers CommandError stderr)
+    display_message,
     exit_code,
+    // Walk an anyhow chain for the first CommandError
+    find_command_error,
     interrupt_exit_code,
 };
 pub use parse::{parse_porcelain_z, parse_untracked_files};

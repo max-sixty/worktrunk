@@ -84,7 +84,12 @@ impl TaskContext {
         } else {
             ErrorCause::Other
         };
-        TaskError::new(self.item_idx, kind, err.to_string(), cause)
+        // Prefer the typed leaf's captured stderr/stdout when present so the
+        // user sees git's actual error message (e.g., "fatal: bad object
+        // HEAD") rather than our single-line `CommandError` summary
+        // ("git status --porcelain failed (exit 128)").
+        let message = worktrunk::git::display_message(err);
+        TaskError::new(self.item_idx, kind, message, cause)
     }
 
     /// Get the default branch resolved for this list invocation.

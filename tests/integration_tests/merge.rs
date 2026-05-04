@@ -2484,8 +2484,11 @@ fn test_step_commit_dry_run_stage_tracked(repo: TestRepo) {
         .run()
         .expect("git commit failed");
 
-    // Modify the tracked file (unstaged) and create a new untracked file
-    fs::write(repo.root_path().join("tracked.txt"), "modified").expect("Failed to write");
+    // Modify the tracked file (unstaged) and create a new untracked file. The new
+    // content must differ in size from "original" — otherwise `git add -u` against
+    // the dry-run temp index can race on mtime and treat the file as unchanged
+    // (same-size + same-second mtime → no DATA_CHANGED, no MTIME_CHANGED).
+    fs::write(repo.root_path().join("tracked.txt"), "modified content").expect("Failed to write");
     fs::write(repo.root_path().join("untracked.txt"), "new").expect("Failed to write");
 
     let worktrunk_config = r#"

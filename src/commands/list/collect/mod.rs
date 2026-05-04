@@ -748,9 +748,12 @@ pub fn collect(
         .filter(|sha| *sha != worktrunk::git::NULL_OID)
         .collect();
     let commit_details_map = repo.commit_details_many(&all_shas).unwrap_or_else(|err| {
+        // Surface git's actual stderr (when available via the typed leaf)
+        // rather than our `CommandError` summary.
+        let detail = worktrunk::git::display_message(&err);
         eprintln!(
             "{}",
-            warning_message(cformat!("Failed to batch-fetch commit details: {err}"))
+            warning_message(cformat!("Failed to batch-fetch commit details: {detail}"))
         );
         std::collections::HashMap::new()
     });

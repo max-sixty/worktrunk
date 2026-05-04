@@ -105,6 +105,116 @@ pub struct FailedCommand {
     pub exit_info: String,
 }
 
+/// Typed leaf error for a command (e.g., `git`) that exited non-zero with
+/// captured stdout/stderr.
+///
+/// Worktrunk's buffered command wrappers ([`super::Repository::run_command`],
+/// [`super::WorkingTree::run_command`]) return this — wrapped via
+/// `anyhow::Error` — instead of `bail!("{stderr}")`-ing a multi-line string.
+/// The structured form lets the renderer distinguish a command's captured
+/// output (which is often multi-line) from a context chain entry (which is
+/// always one line per layer in the anyhow model), and lets callers that
+/// embed the raw stderr in a higher-level error (`GitError::RebaseConflict`
+/// stores git's conflict-marker stderr in `git_output`) read it directly
+/// instead of round-tripping through `e.to_string()`.
+///
+/// `Display` is intentionally a single-line summary — `format_with_gutter`
+/// in `print_command_error` renders [`Self::combined_output`] separately for
+/// the multi-line body. The streaming path (`run_command_delayed_stream`)
+/// uses a sibling crate-private `StreamCommandError` for the same role,
+/// where stdout/stderr are interleaved and a string body is the most we can
+/// recover.
+#[derive(Debug, Clone)]
+pub struct CommandError {
+    /// Program name, e.g., `"git"`.
+    pub program: String,
+    /// Arguments, e.g., `["worktree", "list"]`.
+    pub args: Vec<String>,
+    /// Captured stderr with `\r` normalized to `\n` (git emits `\r` for
+    /// progress; non-TTY contexts otherwise produce snapshot instability).
+    pub stderr: String,
+    /// Captured stdout — kept separate because some git subcommands print
+    /// errors here (e.g., `commit` with nothing to commit).
+    pub stdout: String,
+    /// Process exit code; `None` if the child was killed by a signal.
+    pub exit_code: Option<i32>,
+}
+
+impl CommandError {
+    /// Build from the captured `Output` of a non-zero exit.
+    pub fn from_failed_output(
+        program: impl Into<String>,
+        args: &[&str],
+        output: &std::process::Output,
+    ) -> Self {
+        let stderr = String::from_utf8_lossy(&output.stderr).replace('\r', "\n");
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        Self {
+            program: program.into(),
+            args: args.iter().map(|&s| s.to_string()).collect(),
+            stderr,
+            stdout,
+            exit_code: output.status.code(),
+        }
+    }
+
+    /// Reconstruct the command line for display.
+    pub fn command_string(&self) -> String {
+        if self.args.is_empty() {
+            self.program.clone()
+        } else {
+            format!("{} {}", self.program, self.args.join(" "))
+        }
+    }
+
+    /// stderr + stdout, trimmed and joined by `\n`, with empty pieces
+    /// dropped. Mirrors the legacy `bail!("{}", error_msg)` payload so
+    /// callers that previously parsed `e.to_string()` (notably
+    /// `GitError::RebaseConflict`) get the same bytes when they downcast.
+    pub fn combined_output(&self) -> String {
+        [self.stderr.trim(), self.stdout.trim()]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+impl std::fmt::Display for CommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.exit_code {
+            Some(code) => write!(f, "{} failed (exit {})", self.command_string(), code),
+            None => write!(f, "{} failed", self.command_string()),
+        }
+    }
+}
+
+impl std::error::Error for CommandError {}
+
+/// Walk an anyhow chain looking for a [`CommandError`].
+///
+/// Returns the first match. Useful for renderers and callers that need the
+/// raw stderr regardless of how many `.context(...)` layers wrap it.
+pub fn find_command_error(error: &anyhow::Error) -> Option<&CommandError> {
+    error.chain().find_map(|e| e.downcast_ref::<CommandError>())
+}
+
+/// User-facing detail string for an error that may carry a [`CommandError`].
+///
+/// When a [`CommandError`] is anywhere in the chain, returns its captured
+/// stderr/stdout via [`CommandError::combined_output`] — that's git's actual
+/// error message. Otherwise falls back to the rendered top-level string.
+///
+/// Use this when embedding a sub-error's text inside another typed error's
+/// message field (e.g., `GitError::WorktreeRemovalFailed::error`,
+/// `GitError::PushFailed::error`) so the user sees git's real reason rather
+/// than the [`CommandError`] single-line summary.
+pub fn display_message(error: &anyhow::Error) -> String {
+    find_command_error(error)
+        .map(|cmd_err| cmd_err.combined_output())
+        .unwrap_or_else(|| error.to_string())
+}
+
 /// Extra CLI context for enriching `wt switch` suggestions in error hints.
 ///
 /// When a switch error is raised deep in the planning layer, the error only knows
@@ -1188,6 +1298,7 @@ fn format_error_block(header: impl Into<String>, error: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context;
     use insta::assert_snapshot;
 
     #[test]
@@ -1830,5 +1941,103 @@ mod tests {
         };
         // Errors without switch suggestions should render identically
         assert_eq!(inner.to_string(), wrapped.to_string());
+    }
+
+    fn sample_command_error() -> CommandError {
+        CommandError {
+            program: "git".into(),
+            args: vec!["worktree".into(), "list".into()],
+            stderr: "fatal: not a git repository\n".into(),
+            stdout: String::new(),
+            exit_code: Some(128),
+        }
+    }
+
+    #[test]
+    fn command_error_display_is_single_line() {
+        let err = sample_command_error();
+        let s = err.to_string();
+        assert_eq!(s, "git worktree list failed (exit 128)");
+        assert!(!s.contains('\n'));
+    }
+
+    #[test]
+    fn command_error_command_string_handles_empty_args() {
+        // Degenerate but reachable when a `Cmd` is built with no
+        // `.args(...)` call. Covers the args-empty branch of
+        // `command_string()` (codecov flagged this line).
+        let err = CommandError {
+            program: "git".into(),
+            args: Vec::new(),
+            stderr: String::new(),
+            stdout: String::new(),
+            exit_code: Some(1),
+        };
+        assert_eq!(err.command_string(), "git");
+        assert_eq!(err.to_string(), "git failed (exit 1)");
+    }
+
+    #[test]
+    fn command_error_combined_output_strips_trailing_whitespace_and_joins() {
+        let err = CommandError {
+            program: "git".into(),
+            args: vec!["push".into()],
+            stderr: "warning: line 1\nfatal: line 2\n\n".into(),
+            stdout: "  trailing-stdout-error\n".into(),
+            exit_code: Some(1),
+        };
+        // Both streams are trimmed, then joined with `\n`.
+        assert_eq!(
+            err.combined_output(),
+            "warning: line 1\nfatal: line 2\ntrailing-stdout-error",
+        );
+    }
+
+    #[test]
+    fn command_error_combined_output_drops_empty_streams() {
+        let err = CommandError {
+            program: "git".into(),
+            args: vec!["status".into()],
+            stderr: "   ".into(),
+            stdout: "actual error on stdout".into(),
+            exit_code: Some(1),
+        };
+        assert_eq!(err.combined_output(), "actual error on stdout");
+    }
+
+    #[test]
+    fn command_error_signal_kill_omits_exit_code() {
+        let err = CommandError {
+            program: "git".into(),
+            args: vec!["fetch".into()],
+            stderr: String::new(),
+            stdout: String::new(),
+            exit_code: None,
+        };
+        assert_eq!(err.to_string(), "git fetch failed");
+    }
+
+    #[test]
+    fn find_command_error_walks_anyhow_chain() {
+        // Wrapping with `.context(...)` must not hide the typed leaf — the
+        // helper should pull it out regardless of how many layers wrap.
+        let err: anyhow::Error = Err::<(), _>(sample_command_error())
+            .context("listing worktrees")
+            .context("running prune")
+            .unwrap_err();
+
+        let cmd_err = find_command_error(&err).expect("CommandError should be found in chain");
+        assert_eq!(cmd_err.program, "git");
+        assert_eq!(
+            cmd_err.args,
+            vec!["worktree".to_string(), "list".to_string()]
+        );
+        assert!(cmd_err.stderr.contains("not a git repository"));
+    }
+
+    #[test]
+    fn find_command_error_returns_none_for_unrelated_error() {
+        let err = anyhow::anyhow!("some other failure");
+        assert!(find_command_error(&err).is_none());
     }
 }

@@ -590,12 +590,14 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
         let is_rebasing = repo
             .worktree_state()?
             .is_some_and(|s| s.starts_with("REBASING"));
+        // Pull git's stderr from the typed leaf when present so we get the
+        // raw conflict-marker bytes regardless of how many `.context(...)`
+        // layers wrap the error.
+        let detail = worktrunk::git::display_message(&e);
         if is_rebasing {
-            // Extract git's stderr output from the error
-            let git_output = e.to_string();
             return Err(worktrunk::git::GitError::RebaseConflict {
                 target_branch: integration_target,
-                git_output,
+                git_output: detail,
             }
             .into());
         }
@@ -604,7 +606,7 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
             message: cformat!(
                 "Failed to rebase onto <bold>{}</>: {}",
                 integration_target,
-                e
+                detail
             ),
         }
         .into());

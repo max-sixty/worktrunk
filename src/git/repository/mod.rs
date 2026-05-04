@@ -1289,18 +1289,9 @@ impl Repository {
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // Normalize carriage returns to newlines for consistent output
-            // Git uses \r for progress updates; in non-TTY contexts this causes snapshot instability
-            let stderr = stderr.replace('\r', "\n");
-            // Some git commands print errors to stdout (e.g., `commit` with nothing to commit)
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let error_msg = [stderr.trim(), stdout.trim()]
-                .into_iter()
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n");
-            bail!("{}", error_msg);
+            return Err(
+                super::error::CommandError::from_failed_output("git", args, &output).into(),
+            );
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -1479,23 +1470,39 @@ impl Repository {
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
     }
 
-    /// Extract structured failure info from a [`Repository::run_command_delayed_stream`] error.
+    /// Extract structured failure info from a command-runner error.
     ///
-    /// Returns `(output, Some(FailedCommand))` if the error is a `StreamCommandError`,
-    /// or `(error_string, None)` for other error types (e.g., spawn failures).
+    /// Returns `(output, Some(FailedCommand))` when the chain carries
+    /// either a `StreamCommandError` (from `run_command_delayed_stream`)
+    /// or a [`super::error::CommandError`] (from `run_command` /
+    /// `WorkingTree::run_command`). Falls back to `(error_string, None)`
+    /// for other error types (e.g., spawn failures).
     pub fn extract_failed_command(
         err: &anyhow::Error,
     ) -> (String, Option<super::error::FailedCommand>) {
-        match err.downcast_ref::<StreamCommandError>() {
-            Some(e) => (
+        if let Some(e) = err.downcast_ref::<StreamCommandError>() {
+            return (
                 e.output.clone(),
                 Some(super::error::FailedCommand {
                     command: e.command.clone(),
                     exit_info: e.exit_info.clone(),
                 }),
-            ),
-            None => (err.to_string(), None),
+            );
         }
+        if let Some(cmd_err) = super::error::find_command_error(err) {
+            let exit_info = match cmd_err.exit_code {
+                Some(code) => format!("exit code {code}"),
+                None => "killed by signal".to_string(),
+            };
+            return (
+                cmd_err.combined_output(),
+                Some(super::error::FailedCommand {
+                    command: cmd_err.command_string(),
+                    exit_info,
+                }),
+            );
+        }
+        (err.to_string(), None)
     }
 }
 

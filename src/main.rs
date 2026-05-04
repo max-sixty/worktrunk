@@ -869,15 +869,22 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
     UserConfig::load()
         .context("Failed to load config")
         .and_then(|config| {
+            let repo = Repository::current().context("Failed to remove worktree")?;
+
+            // CLI flags override config; otherwise fall through to [remove] delete-branch
+            // (defaults to true).
+            let project = repo.project_identifier().ok();
+            let cli_override = flag_pair(args.delete_branch, args.no_delete_branch);
+            let delete_branch =
+                cli_override.unwrap_or_else(|| config.remove(project.as_deref()).delete_branch());
+
             // Validate conflicting flags
-            if !args.delete_branch && args.force_delete {
+            if !delete_branch && args.force_delete {
                 return Err(worktrunk::git::GitError::Other {
-                    message: "Cannot use --force-delete with --no-delete-branch".into(),
+                    message: "Cannot use --force-delete with delete-branch=false (set via --no-delete-branch or [remove] delete-branch = false)".into(),
                 }
                 .into());
             }
-
-            let repo = Repository::current().context("Failed to remove worktree")?;
 
             // Resolve current worktree context for hook approval
             let current_wt = repo.current_worktree();
@@ -914,7 +921,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 let result = repo
                     .prepare_worktree_removal(
                         RemoveTarget::Current,
-                        BranchDeletionMode::from_flags(!args.delete_branch, args.force_delete),
+                        BranchDeletionMode::from_flags(!delete_branch, args.force_delete),
                         args.force,
                         &config,
                         None,
@@ -949,7 +956,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     &repo,
                     branches,
                     &config,
-                    !args.delete_branch,
+                    !delete_branch,
                     args.force_delete,
                     args.force,
                 );
@@ -1298,20 +1305,81 @@ fn dispatch_command(
 }
 
 fn print_command_error(error: &anyhow::Error) {
+    let formatted = format_command_error(error);
+    if !formatted.is_empty() {
+        // Route through `worktrunk::styling::eprintln` (anstream) so ANSI
+        // codes are stripped when stderr isn't a TTY. Building a String
+        // and using `std::eprint!` would bypass the strip stream and leak
+        // raw escape sequences into snapshots.
+        eprintln!("{}", formatted.trim_end_matches('\n'));
+    }
+}
+
+/// Render an error for terminal display. Returns the full formatted output
+/// (including a trailing newline when non-empty) so tests can assert on it
+/// without capturing stderr.
+fn format_command_error(error: &anyhow::Error) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
     // GitError, WorktrunkError, and HookErrorWithHint produce styled output via Display.
     // Some variants (AlreadyDisplayed, CommandNotApproved) have empty Display impls —
-    // skip eprintln! for those to avoid phantom blank lines.
+    // skip writes for those to avoid phantom blank lines.
     if let Some(err) = error.downcast_ref::<worktrunk::git::GitError>() {
-        eprintln!("{}", err);
+        let _ = writeln!(out, "{err}");
     } else if let Some(err) = error.downcast_ref::<worktrunk::git::WorktrunkError>() {
         let display = err.to_string();
         if !display.is_empty() {
-            eprintln!("{display}");
+            let _ = writeln!(out, "{display}");
         }
     } else if let Some(err) = error.downcast_ref::<worktrunk::git::HookErrorWithHint>() {
-        eprintln!("{}", err);
+        let _ = writeln!(out, "{err}");
     } else if let Some(err) = error.downcast_ref::<worktrunk::config::TemplateExpandError>() {
-        eprintln!("{}", err);
+        let _ = writeln!(out, "{err}");
+    } else if worktrunk::git::find_command_error(error).is_some() {
+        // Captured stderr/stdout from a buffered command (Repository::run_command,
+        // WorkingTree::run_command). The header is the top-level message
+        // (the outermost `.context(...)` if any, else the CommandError's
+        // single-line summary). The gutter shows intermediate context
+        // entries followed by the captured output, so wrapped failures
+        // like `.context("listing worktrees").context("running prune")`
+        // keep their diagnostic context while still surfacing git's
+        // actual stderr.
+        let _ = writeln!(out, "{}", error_message(error.to_string()));
+
+        let mut gutter_parts: Vec<String> = Vec::new();
+        let mut command_handled = false;
+        for cause in error.chain().skip(1) {
+            if !command_handled
+                && let Some(cmd_err) = cause.downcast_ref::<worktrunk::git::CommandError>()
+            {
+                let body = cmd_err.combined_output();
+                gutter_parts.push(if body.is_empty() {
+                    cmd_err.to_string()
+                } else {
+                    body
+                });
+                command_handled = true;
+            } else {
+                gutter_parts.push(cause.to_string());
+            }
+        }
+        if !command_handled {
+            // Top-level error itself was the CommandError — header is its
+            // single-line summary; put the captured body in the gutter.
+            if let Some(cmd_err) = error.downcast_ref::<worktrunk::git::CommandError>() {
+                let body = cmd_err.combined_output();
+                if !body.is_empty() {
+                    gutter_parts.push(body);
+                }
+            }
+        }
+        if !gutter_parts.is_empty() {
+            let _ = writeln!(
+                out,
+                "{}",
+                format_with_gutter(&gutter_parts.join("\n"), None)
+            );
+        }
     } else {
         // Anyhow error formatting:
         // - With context: show context as header, root cause in gutter
@@ -1321,20 +1389,32 @@ fn print_command_error(error: &anyhow::Error) {
         if !msg.is_empty() {
             let chain: Vec<String> = error.chain().skip(1).map(|e| e.to_string()).collect();
             if !chain.is_empty() {
-                eprintln!("{}", error_message(&msg));
+                let _ = writeln!(out, "{}", error_message(&msg));
                 let chain_text = chain.join("\n");
-                eprintln!("{}", format_with_gutter(&chain_text, None));
+                let _ = writeln!(out, "{}", format_with_gutter(&chain_text, None));
             } else if msg.contains('\n') || msg.contains('\r') {
-                debug_assert!(false, "Multiline error without context: {msg}");
-                log::warn!("Multiline error without context: {msg}");
+                // A multi-line error reached this branch without being wrapped
+                // in a typed `CommandError` and without `.context(...)` on top.
+                // Buffered command failures should always surface as
+                // `CommandError`; if you hit this assert, route the failing
+                // path through `Repository::run_command` /
+                // `WorkingTree::run_command` (or construct a
+                // `worktrunk::git::CommandError` directly) instead of
+                // `bail!("{stderr}")`.
+                debug_assert!(
+                    false,
+                    "Multiline error without CommandError or context: {msg}"
+                );
+                log::warn!("Multiline error without CommandError or context: {msg}");
                 let normalized = msg.replace("\r\n", "\n").replace('\r', "\n");
-                eprintln!("{}", error_message("Command failed"));
-                eprintln!("{}", format_with_gutter(&normalized, None));
+                let _ = writeln!(out, "{}", error_message("Command failed"));
+                let _ = writeln!(out, "{}", format_with_gutter(&normalized, None));
             } else {
-                eprintln!("{}", error_message(&msg));
+                let _ = writeln!(out, "{}", error_message(&msg));
             }
         }
     }
+    out
 }
 
 fn print_cwd_removed_hint_if_needed() {
@@ -1462,22 +1542,110 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use worktrunk::git::CommandError;
 
-    /// Regression: an anyhow error whose top-level message has the multi-line
-    /// stderr from a failing git command — but a non-empty chain — must take
-    /// the chain branch, not the `debug_assert!` branch. Real-world example:
-    /// step_prune callers wrap `repo.run_command(...)` failures with
-    /// `.context("listing worktrees")?`, so the multi-line git stderr ends up
-    /// in the chain rather than as the top-level message.
+    fn permission_denied_command_error() -> CommandError {
+        // Faithful reproduction of the failure shape from issue #2564:
+        // git emits a multi-line stderr (warning + fatal) and exits 128.
+        CommandError {
+            program: "git".into(),
+            args: vec!["worktree".into(), "list".into()],
+            stderr: "warning: unable to access '.git/config': Permission denied\nfatal: unknown error occurred while reading the configuration files".into(),
+            stdout: String::new(),
+            exit_code: Some(128),
+        }
+    }
+
+    /// Regression for #2564: a buffered `git` failure surfaces as a typed
+    /// `CommandError`. The single-line summary becomes the header and the
+    /// multi-line stderr lands in the gutter — no `debug_assert!` panic.
     #[test]
-    fn print_command_error_handles_multiline_with_context() {
-        let inner = anyhow::anyhow!(
-            "warning: unable to access '.git/config': Permission denied\nfatal: unknown error occurred while reading the configuration files"
-        );
-        let err: anyhow::Error = Err::<(), _>(inner)
+    fn renders_command_error_without_context() {
+        let err: anyhow::Error = permission_denied_command_error().into();
+        let out = format_command_error(&err);
+        assert!(out.contains("git worktree list failed (exit 128)"));
+        assert!(out.contains("Permission denied"));
+        assert!(out.contains("unknown error occurred while reading"));
+    }
+
+    /// One `.context(...)` layer above the `CommandError` — the context is
+    /// the header, captured stderr is the body.
+    #[test]
+    fn renders_command_error_with_one_context() {
+        let err: anyhow::Error = Err::<(), _>(permission_denied_command_error())
             .context("listing worktrees")
             .unwrap_err();
-        // Must not panic the debug_assert. The chain branch handles this.
-        print_command_error(&err);
+        let out = format_command_error(&err);
+        assert!(out.contains("listing worktrees"));
+        assert!(out.contains("Permission denied"));
+    }
+
+    /// Codex P3: when a `CommandError` is wrapped by *multiple*
+    /// `.context(...)` layers, intermediate context entries must appear in
+    /// the gutter — they were dropped by an earlier rev that only used the
+    /// top-level message.
+    #[test]
+    fn renders_command_error_preserves_intermediate_context() {
+        let err: anyhow::Error = Err::<(), _>(permission_denied_command_error())
+            .context("listing worktrees")
+            .context("running prune")
+            .unwrap_err();
+        let out = format_command_error(&err);
+        // Outer context is the header
+        assert!(
+            out.contains("running prune"),
+            "missing outer context: {out}"
+        );
+        // Intermediate context survives — the bug Codex flagged
+        assert!(
+            out.contains("listing worktrees"),
+            "intermediate context dropped: {out}",
+        );
+        // Stderr body still rendered
+        assert!(out.contains("Permission denied"), "stderr lost: {out}",);
+        // The `CommandError` summary itself shouldn't appear when its
+        // body replaced its slot — we want git's actual error, not our
+        // wrapper.
+        assert!(
+            !out.contains("git worktree list failed"),
+            "summary surfaced alongside stderr: {out}",
+        );
+    }
+
+    /// A `CommandError` with empty stderr/stdout (e.g., a child killed by
+    /// a signal before producing output) wrapped in context: the gutter
+    /// should fall back to the `CommandError` summary so the user sees
+    /// something more than just the outer context. Exercises the
+    /// empty-body branch of the renderer's gutter assembly.
+    #[test]
+    fn renders_command_error_with_empty_body() {
+        let empty = CommandError {
+            program: "git".into(),
+            args: vec!["fetch".into()],
+            stderr: String::new(),
+            stdout: String::new(),
+            exit_code: None,
+        };
+        let err: anyhow::Error = Err::<(), _>(empty).context("syncing remotes").unwrap_err();
+        let out = format_command_error(&err);
+        assert!(out.contains("syncing remotes"));
+        // No body to render, so the summary is what we surface.
+        assert!(out.contains("git fetch failed"));
+    }
+
+    /// Codex P2: typed `GitError` wrappers (e.g., `WorktreeRemovalFailed`,
+    /// `PushFailed`) embed a stringified sub-error into their `error`
+    /// field. With `display_message`, that field carries git's stderr
+    /// rather than our `CommandError` summary.
+    #[test]
+    fn display_message_prefers_command_error_stderr_over_summary() {
+        let err: anyhow::Error = Err::<(), _>(permission_denied_command_error())
+            .context("creating worktree")
+            .unwrap_err();
+        let detail = worktrunk::git::display_message(&err);
+        assert!(detail.contains("Permission denied"));
+        assert!(detail.contains("unknown error occurred while reading"));
+        // Without find_command_error this would be "creating worktree".
+        assert!(!detail.starts_with("creating worktree"));
     }
 }
