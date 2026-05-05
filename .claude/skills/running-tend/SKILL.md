@@ -95,6 +95,8 @@ Before opening a `fix/ci-*` PR, classify the failure:
   PR (same behavior as prior test-flake ci-fix runs).
 - **Real regression** — proceed with a fix PR.
 
+**Non-required ≠ transient.** A non-required job (e.g. `collect affected coverage`, `affected tests (linux, advisory)`) can fail from a real regression. The required/non-required distinction is about merge-blocking, not about how the failure is classified. If a deterministic build error (`error[E...]`, "binary not found", "ambiguous candidates", missing target) repeats across consecutive runs of the same shape, it's a real regression even when the job is advisory. Reserve "transient" for non-deterministic causes: `BrokenPipe`, `connection reset`, runner disk full, GitHub API timeouts, host-availability blips.
+
 **Lychee link-check timeouts are always transient** unless the same URL has
 failed on at least two separate runs within the last few days. `.config/lychee.toml`
 already sets `max_retries = 6` and lists known-unreliable hosts; one timeout
