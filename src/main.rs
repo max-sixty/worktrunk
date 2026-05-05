@@ -1651,7 +1651,7 @@ mod tests {
         let detail = err.display_message();
         assert!(detail.contains("Permission denied"));
         assert!(detail.contains("unknown error occurred while reading"));
-        // Without find_command_error this would be "creating worktree".
+        // Without `CommandError::find_in` this would be "creating worktree".
         assert!(!detail.starts_with("creating worktree"));
     }
 }

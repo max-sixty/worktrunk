@@ -259,11 +259,11 @@ When no structured alternative exists, document the fragility inline.
 **Implementation:**
 
 - Signal-derived child exits surface as `WorktrunkError::ChildProcessExited { signal: Some(sig), .. }`. The `signal` field is the structured channel — never sniff `code >= 128` or parse error messages.
-- Use `worktrunk::git::interrupt_exit_code(&err)` to detect them. When it returns `Some(exit_code)`, propagate via `WorktrunkError::AlreadyDisplayed { exit_code }` (`128 + sig` by convention — 130 for SIGINT, 143 for SIGTERM) and break the loop.
+- Use `err.interrupt_exit_code()` (from the `worktrunk::git::ErrorExt` trait) to detect them. When it returns `Some(exit_code)`, propagate via `WorktrunkError::AlreadyDisplayed { exit_code }` (`128 + sig` by convention — 130 for SIGINT, 143 for SIGTERM) and break the loop.
 - The check happens **before** any `FailureStrategy` branch — Warn must NOT swallow signal-derived errors.
 - `handle_command_error` in `src/commands/command_executor.rs` enforces the policy for hook and alias pipelines (foreground and concurrent groups). `for_each.rs` enforces it directly for the worktree loop.
 
-When adding a new code path that loops over child processes, run `interrupt_exit_code` on per-iteration errors and break.
+When adding a new code path that loops over child processes, call `.interrupt_exit_code()` on per-iteration errors and break.
 
 ## Hook Output Logs
 

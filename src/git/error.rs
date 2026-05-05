@@ -757,15 +757,14 @@ impl GitError {
         }
     }
 
-    /// Render the styled diagnostic block with optional switch suggestion context.
+    /// Write the styled diagnostic block, with optional switch-suggestion
+    /// context propagated from a [`GitError::WithSwitchSuggestion`] wrapper.
     ///
     /// Most variants ignore `ctx`. The three that render `wt switch` suggestions
     /// (`BranchAlreadyExists`, `BranchNotFound`, `WorktreePathExists`) use it
     /// to append extra flags and trailing args for a copy-pasteable command.
     ///
-    /// Generic over the writer so the same body can drive both
-    /// `String`-building (via [`render_with_ctx`](Self::render_with_ctx)) and
-    /// any other [`std::fmt::Write`] sink.
+    /// Called internally by [`Diagnostic::render`]; not part of the public API.
     fn write_render_with_ctx<W: std::fmt::Write>(
         &self,
         f: &mut W,
@@ -1278,24 +1277,12 @@ impl GitError {
     }
 }
 
-impl GitError {
-    /// Return the styled diagnostic block as an owned `String`.
-    ///
-    /// The `ctx` form is internal — the public API is [`Diagnostic::render`],
-    /// which calls this with `None`. Renderers that have a
-    /// [`SwitchSuggestionCtx`] in hand (e.g., the alias dispatch path) can
-    /// pass it directly without going through `WithSwitchSuggestion`.
-    pub(crate) fn render_with_ctx(&self, ctx: Option<&SwitchSuggestionCtx>) -> String {
-        let mut out = String::new();
-        self.write_render_with_ctx(&mut out, ctx)
-            .expect("writing to a String never fails");
-        out
-    }
-}
-
 impl Diagnostic for GitError {
     fn render(&self) -> String {
-        self.render_with_ctx(None)
+        let mut out = String::new();
+        self.write_render_with_ctx(&mut out, None)
+            .expect("writing to a String never fails");
+        out
     }
 }
 
