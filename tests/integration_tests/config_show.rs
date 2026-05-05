@@ -843,6 +843,60 @@ fn test_config_show_nushell_outdated_wrapper(mut repo: TestRepo, temp_home: Temp
     });
 }
 
+/// Cover the `.exe` alias hint inside `render_already_configured`. The hint
+/// fires when at least one matched integration line in the rc file uses
+/// `wt.exe` — common on Git Bash where the binary is `wt.exe` but POSIX
+/// aliases must still target `wt`. We pair the canonical line (so the row
+/// hits `AlreadyExists`) with an extra `wt.exe` line in the same file so
+/// `detection.matched_lines` carries the `.exe` content.
+#[rstest]
+fn test_config_show_bash_matched_exe_emits_alias_hint(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    fs::write(
+        temp_home.path().join(".bashrc"),
+        r#"# Canonical line so the row reports AlreadyExists.
+if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init bash)"; fi
+# Stale wt.exe form left over from a Windows install — scan_for_detection_details
+# still recognizes it as a matched integration line.
+eval "$(wt.exe config shell init bash)"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+        cmd.env("WORKTRUNK_TEST_BASH_INSTALLED", "1");
+        // SHELL=bash so current_shell() == Bash and the verify-wrapper hint
+        // appears under bash (not duplicated for other shells).
+        cmd.env("SHELL", "/bin/bash");
+
+        // Pre-snapshot guard: confirm the unredacted output really did emit
+        // the alias hint. The shared `wt\.exe` → `wt` redaction collapses
+        // both `<underline>wt</>` and `<underline>wt.exe</>` to the same
+        // visual `wt` in the snapshot, which would otherwise hide whether
+        // the .exe branch ran at all.
+        let raw = String::from_utf8_lossy(&cmd.output().unwrap().stdout).to_string();
+        assert!(
+            raw.contains("Creates shell function") && raw.contains("not ") && raw.contains(".exe"),
+            "Expected the .exe alias hint in unredacted output, got:\n{raw}"
+        );
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[rstest]
 fn test_config_show_zsh_compinit_correct_order(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -1533,6 +1587,56 @@ alias wt="git worktree"
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
         cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Cover the unmatched-candidate `.exe` hint in `render_shell_status`. When
+/// the detector finds a `wt`-mentioning line that doesn't look like a valid
+/// integration AND any of the unmatched candidates contains `.exe`, an
+/// extra hint explains the function-name vs alias-name distinction.
+#[rstest]
+fn test_config_show_unmatched_candidate_exe_emits_extra_hint(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    // `.bashrc` line containing `wt` at a word boundary but not in a
+    // shell-integration shape — the detector flags it as an unmatched
+    // candidate, and the `.exe` token triggers the extra alias hint.
+    // Use `export` rather than `alias` so the line doesn't get classified
+    // as a bypass alias (which would emit a separate warning instead).
+    fs::write(
+        temp_home.path().join(".bashrc"),
+        r#"# Custom shim path pointing at a Windows binary
+export WT_BIN="/c/Program Files/wt.exe"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+        cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+
+        // Pre-snapshot guard: the shared `wt\.exe` → `wt` redaction would
+        // otherwise hide whether the unmatched-candidate `.exe` branch ran.
+        let raw = String::from_utf8_lossy(&cmd.output().unwrap().stdout).to_string();
+        assert!(
+            raw.contains("creates shell function") && raw.contains(".exe"),
+            "Expected the .exe alias hint in unredacted output, got:\n{raw}"
+        );
 
         assert_cmd_snapshot!(cmd);
     });
