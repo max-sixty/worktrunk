@@ -579,6 +579,7 @@ fn test_config_show_fish_legacy_with_functions_dir(mut repo: TestRepo, temp_home
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/fish");
+        cmd.env("WORKTRUNK_TEST_FISH_INSTALLED", "1");
         cmd.arg("config").arg("show").current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);

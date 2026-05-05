@@ -8,7 +8,6 @@ pub(crate) mod context;
 pub(crate) mod custom;
 mod eval;
 mod for_each;
-mod handle_switch;
 mod hook_announcement;
 mod hook_commands;
 mod hook_filter;
@@ -47,7 +46,6 @@ pub(crate) use configure_shell::{
 pub(crate) use custom::handle_custom_command;
 pub(crate) use eval::step_eval;
 pub(crate) use for_each::step_for_each;
-pub(crate) use handle_switch::{SwitchOptions, handle_switch};
 pub(crate) use hook_commands::{HookCliArgs, handle_hook_show, run_hook};
 pub(crate) use init::{handle_completions, handle_init};
 pub(crate) use list::handle_list;
@@ -62,7 +60,8 @@ pub(crate) use step::{
     step_show_squash_prompt,
 };
 pub(crate) use worktree::{
-    OperationMode, is_worktree_at_expected_path, resolve_worktree_arg, worktree_display_name,
+    OperationMode, SwitchOptions, is_worktree_at_expected_path, resolve_worktree_arg, run_switch,
+    worktree_display_name,
 };
 
 // Re-export Shell from the canonical location

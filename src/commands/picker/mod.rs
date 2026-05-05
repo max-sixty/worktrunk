@@ -109,9 +109,6 @@ use skim::reader::CommandCollector;
 use worktrunk::git::{Repository, current_or_recover};
 
 use super::command_executor::FailureStrategy;
-use super::handle_switch::{
-    approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks,
-};
 use super::hooks::{HookAnnouncer, execute_hook};
 use super::list::collect;
 use super::list::progressive::RenderTarget;
@@ -119,8 +116,9 @@ use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::template_vars::TemplateVars;
 use super::worktree::hooks::PostRemoveContext;
 use super::worktree::{
-    RemoveResult, SwitchBranchInfo, SwitchResult, execute_switch,
-    offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
+    RemoveResult, SwitchBranchInfo, SwitchResult, approve_switch_hooks, execute_switch,
+    offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch, run_pre_switch_hooks,
+    spawn_switch_background_hooks,
 };
 use crate::commands::command_executor::CommandContext;
 use crate::output::handle_switch_output;

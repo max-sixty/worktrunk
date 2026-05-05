@@ -160,6 +160,74 @@ pub enum PromoteResult {
     AlreadyInMain(String),
 }
 
+/// Resolve the branch to promote when no explicit argument was passed.
+///
+/// From the main worktree, restore the default branch. From a linked worktree,
+/// promote the current branch.
+fn resolve_target_branch(branch: Option<&str>, repo: &Repository) -> anyhow::Result<String> {
+    use worktrunk::git::GitError;
+
+    if let Some(b) = branch {
+        return Ok(b.to_string());
+    }
+
+    let current_wt = repo.current_worktree();
+    if !current_wt.is_linked()? {
+        // From main worktree with no args: restore default branch
+        repo.default_branch()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine default branch"))
+    } else {
+        // From other worktree with no args: promote current branch
+        current_wt.branch()?.ok_or_else(|| {
+            GitError::DetachedHead {
+                action: Some("promote".into()),
+            }
+            .into()
+        })
+    }
+}
+
+/// Bail if a leftover staging dir exists from a previous interrupted promote —
+/// it may contain the user's only copy of files from the failed swap.
+/// Checked BEFORE `ensure_clean` so users see the recovery path first.
+fn check_leftover_staging(staging_path: &Path) -> anyhow::Result<()> {
+    if !staging_path.exists() {
+        return Ok(());
+    }
+    let display = staging_path.to_slash_lossy();
+    Err(anyhow::anyhow!(
+        "Files may need manual recovery from: {display}\n\
+         Remove it to retry: rm -rf \"{display}\""
+    )
+    .context("Found leftover staging directory from an interrupted promote"))
+}
+
+/// Print the user-facing announcement for the promote operation: either a
+/// "restoring main worktree" info line or a mismatch warning plus a hint
+/// for restoring canonical locations.
+fn print_promote_announcement(is_restoring: bool, default_branch: Option<&str>) {
+    if is_restoring {
+        // Restoring default branch to main worktree - no warning needed
+        eprintln!("{}", info_message("Restoring main worktree"));
+        return;
+    }
+
+    // Creating mismatch - show warning and how to restore
+    eprintln!(
+        "{}",
+        warning_message("Promoting creates mismatched worktree state (shown as ⚑ in wt list)",)
+    );
+    // Only show restore hint if we know the default branch
+    if let Some(default) = default_branch {
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
+                "Run <underline>wt step promote {default}</> to restore canonical locations"
+            ))
+        );
+    }
+}
+
 /// Exchange branches between two worktrees.
 ///
 /// Steps: detach target → detach main → switch main → switch target.
@@ -233,22 +301,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
         })?;
 
     // Resolve the branch to promote (default_branch computed lazily, only when needed)
-    let target_branch = match branch {
-        Some(b) => b.to_string(),
-        None => {
-            let current_wt = repo.current_worktree();
-            if !current_wt.is_linked()? {
-                // From main worktree with no args: restore default branch
-                repo.default_branch()
-                    .ok_or_else(|| anyhow::anyhow!("Could not determine default branch"))?
-            } else {
-                // From other worktree with no args: promote current branch
-                current_wt.branch()?.ok_or_else(|| GitError::DetachedHead {
-                    action: Some("promote".into()),
-                })?
-            }
-        }
-    };
+    let target_branch = resolve_target_branch(branch, &repo)?;
 
     // Check if target is already in main worktree
     if target_branch == main_branch {
@@ -267,17 +320,9 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     let target_path = &target_wt.path;
 
     // Bail early if a leftover staging dir exists from a previous interrupted promote —
-    // it may contain the user's only copy of files from the failed swap.
-    // Check BEFORE ensure_clean so users see the recovery path first.
+    // checked before `ensure_clean` so users see the recovery path first.
     let staging_path = repo.wt_dir().join(PROMOTE_STAGING_DIR);
-    if staging_path.exists() {
-        let display = staging_path.to_slash_lossy();
-        return Err(anyhow::anyhow!(
-            "Files may need manual recovery from: {display}\n\
-             Remove it to retry: rm -rf \"{display}\""
-        )
-        .context("Found leftover staging directory from an interrupted promote"));
-    }
+    check_leftover_staging(&staging_path)?;
 
     // Ensure both worktrees are clean
     let main_working_tree = repo.worktree_at(main_path);
@@ -290,26 +335,7 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     // Only lookup default_branch if needed for messaging (already resolved if no-arg from main)
     let default_branch = repo.default_branch();
     let is_restoring = default_branch.as_ref() == Some(&target_branch);
-
-    if is_restoring {
-        // Restoring default branch to main worktree - no warning needed
-        eprintln!("{}", info_message("Restoring main worktree"));
-    } else {
-        // Creating mismatch - show warning and how to restore
-        eprintln!(
-            "{}",
-            warning_message("Promoting creates mismatched worktree state (shown as ⚑ in wt list)",)
-        );
-        // Only show restore hint if we know the default branch
-        if let Some(default) = &default_branch {
-            eprintln!(
-                "{}",
-                hint_message(cformat!(
-                    "Run <underline>wt step promote {default}</> to restore canonical locations"
-                ))
-            );
-        }
-    }
+    print_promote_announcement(is_restoring, default_branch.as_deref());
 
     // Discover gitignored entries BEFORE branch exchange — .gitignore rules belong
     // to the current branch and will change after `git switch`.
