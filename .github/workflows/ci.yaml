@@ -390,7 +390,19 @@ jobs:
     - name: 🎯 Run affected tests
       env:
         NEXTEST_NO_INPUT_HANDLER: 1
-      run: cargo affected run -- --features shell-integration-tests
+      run: cargo affected run --report-json target/affected/report.json -- --features shell-integration-tests
+
+    # Report writes BEFORE nextest runs, so it survives test failures —
+    # uploading on `!cancelled()` makes it the most useful diagnostic
+    # when tests fail (cache state, fingerprint divergence, selection
+    # reasons). Schema documented at:
+    # https://github.com/max-sixty/cargo-affected/blob/main/docs/report-json.md
+    - name: 📊 Upload cargo-affected report
+      if: ${{ !cancelled() }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: cargo-affected-report
+        path: target/affected/report.json
 
   code-coverage:
     runs-on: ubuntu-24.04
