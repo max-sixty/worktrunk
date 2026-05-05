@@ -1483,18 +1483,19 @@ impl std::fmt::Display for HookErrorWithHint {
 
 impl Diagnostic for HookErrorWithHint {
     fn render(&self) -> String {
-        let body = self.inner.render();
-        // Can't derive command from hook type (e.g., PreRemove is used by both `wt remove` and `wt merge`)
-        let hint = hint_message(cformat!(
-            "To skip {} hooks, re-run with <underline>--no-hooks</>",
-            self.hook_type
-        ))
-        .to_string();
-        if body.is_empty() {
-            hint
-        } else {
-            format!("{body}\n{hint}")
-        }
+        // The wrapper is only constructed for `HookCommandFailed`, whose
+        // render always emits an `error_message(…)` line — never empty.
+        // No empty-body fallback needed.
+        // Can't derive command from hook type (e.g., PreRemove is used
+        // by both `wt remove` and `wt merge`), so the hint stays generic.
+        format!(
+            "{}\n{}",
+            self.inner.render(),
+            hint_message(cformat!(
+                "To skip {} hooks, re-run with <underline>--no-hooks</>",
+                self.hook_type
+            ))
+        )
     }
 }
 

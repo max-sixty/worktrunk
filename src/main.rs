@@ -1654,4 +1654,21 @@ mod tests {
         // Without `CommandError::find_in` this would be "creating worktree".
         assert!(!detail.starts_with("creating worktree"));
     }
+
+    /// When a `CommandError` has empty stderr/stdout (signal-killed before
+    /// output, or git silent on a non-zero exit), `display_message` falls
+    /// back to the command summary so the embedding error doesn't end up
+    /// with a blank detail.
+    #[test]
+    fn display_message_falls_back_to_summary_when_capture_empty() {
+        let empty = CommandError {
+            program: "git".into(),
+            args: vec!["fetch".into()],
+            stderr: String::new(),
+            stdout: String::new(),
+            exit_code: None,
+        };
+        let err: anyhow::Error = empty.into();
+        assert_eq!(err.display_message(), "git fetch failed");
+    }
 }
