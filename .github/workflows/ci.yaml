@@ -257,6 +257,12 @@ jobs:
   #   at the end of every successful collect, but caching the path
   #   explicitly keeps the contract obvious and ~10 GB of profile bundles
   #   from leaking into the cache if that cleanup ever regresses.
+  # - `collect-affected` also restores the most recent prior main DB before
+  #   collecting, so the new DB accumulates rows for up to FINGERPRINT_KEEP
+  #   (=10) recent main-tip env_fingerprints (LRU-evicted in `Db::gc`).
+  #   PRs whose manifests match any of those fingerprints get exact-match
+  #   selection instead of the all-or-nothing single-fingerprint cache.
+  #   Don't "simplify" by removing the restore — it's load-bearing.
   # - `affected-tests` (PRs) restores the cache. Primary key is the
   #   PR/main merge-base — when collect ran on that exact commit, we get a
   #   tight diff (`PR changes only`) and the smallest possible selection.
@@ -293,6 +299,24 @@ jobs:
 
     - name: Install llvm-tools
       run: rustup component add llvm-tools
+
+    - name: 💾 Restore prior coverage DB
+      uses: actions/cache/restore@v5
+      with:
+        path: target/affected/coverage.db
+        # Primary key matches the current sha (no-op on first push of this
+        # commit; on re-runs of the same sha, lets us skip rebuilding from
+        # scratch).
+        key: cargo-affected-db-v1-${{ runner.os }}-${{ github.sha }}
+        # Fall back to any prior main DB. cargo-affected preserves rows for
+        # up to FINGERPRINT_KEEP (=10) distinct fingerprints in one DB,
+        # evicting LRU on each collect. By feeding a prior DB into the new
+        # collect, we accumulate fingerprint snapshots across main commits —
+        # PRs whose manifests match any of the last ~10 main fingerprints
+        # get exact-match selection, instead of the all-or-nothing
+        # single-fingerprint cache.
+        restore-keys: |
+          cargo-affected-db-v1-${{ runner.os }}-
 
     - name: 📊 Collect coverage data
       env:
