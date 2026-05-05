@@ -34,6 +34,19 @@ struct Candidate {
     kind: CandidateKind,
 }
 
+impl Candidate {
+    /// Error context for `try_remove` failures: distinguishes branch-only
+    /// removals (no worktree exists) from worktree removals.
+    fn removal_context(&self) -> String {
+        match self.kind {
+            CandidateKind::BranchOnly => format!("removing branch {}", self.label),
+            CandidateKind::Current | CandidateKind::Other => {
+                format!("removing worktree for {}", self.label)
+            }
+        }
+    }
+}
+
 enum CandidateKind {
     Current,
     Other,
@@ -533,7 +546,7 @@ pub fn step_prune(
                 worktrees,
                 &snapshot_arc,
             )
-            .with_context(|| format!("removing worktree for {}", candidate.label))?
+            .with_context(|| candidate.removal_context())?
             {
                 removed.push(candidate);
             }
@@ -586,7 +599,7 @@ pub fn step_prune(
             worktrees,
             &snapshot_arc,
         )
-        .with_context(|| format!("removing worktree for {}", candidate.label))?
+        .with_context(|| candidate.removal_context())?
         {
             removed.push(candidate);
         }
@@ -607,7 +620,7 @@ pub fn step_prune(
             worktrees,
             &snapshot_arc,
         )
-        .with_context(|| format!("removing worktree for {}", current.label))?
+        .with_context(|| current.removal_context())?
     {
         removed.push(current);
     }
@@ -636,4 +649,35 @@ pub fn step_prune(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candidate(kind: CandidateKind, label: &str) -> Candidate {
+        Candidate {
+            check_idx: 0,
+            branch: Some(label.to_string()),
+            label: label.to_string(),
+            path: None,
+            kind,
+        }
+    }
+
+    #[test]
+    fn removal_context_distinguishes_branch_only_from_worktree() {
+        assert_eq!(
+            candidate(CandidateKind::BranchOnly, "orphan").removal_context(),
+            "removing branch orphan"
+        );
+        assert_eq!(
+            candidate(CandidateKind::Other, "feature").removal_context(),
+            "removing worktree for feature"
+        );
+        assert_eq!(
+            candidate(CandidateKind::Current, "feature").removal_context(),
+            "removing worktree for feature"
+        );
+    }
 }
