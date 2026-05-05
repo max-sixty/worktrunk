@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.name' | xargs -I{} wt switch --create {} --no-cd --format=json | jq -r '.path'"
+            "command": "jq -r '.name' | xargs -I{} bash \"${CLAUDE_PLUGIN_ROOT}/.claude-plugin/hooks/wt.sh\" switch --create {} --no-cd --format=json | jq -r '.path'"
           }
         ]
       }
@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.worktree_path' | xargs wt remove -D --foreground"
+            "command": "jq -r '.worktree_path' | xargs bash \"${CLAUDE_PLUGIN_ROOT}/.claude-plugin/hooks/wt.sh\" remove -D --foreground"
           }
         ]
       }
