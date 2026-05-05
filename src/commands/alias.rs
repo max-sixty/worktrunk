@@ -431,7 +431,7 @@ fn referenced_vars_for_entry(entry: &AliasEntry) -> anyhow::Result<BTreeSet<Stri
 /// rather than silently turning into an "unrecognized subcommand" once we
 /// fall through to PATH lookup.
 pub fn try_alias(name: String, rest: Vec<String>, global_yes: bool) -> anyhow::Result<Option<()>> {
-    let _span = Span::new("try_alias");
+    let _span = Span::new(format!("try_alias:{}", name));
     let Ok(repo) = Repository::current() else {
         return Ok(None);
     };
@@ -549,7 +549,7 @@ fn run_alias(
     entry: &AliasEntry,
     global_yes: bool,
 ) -> anyhow::Result<()> {
-    let _span = Span::new("run_alias");
+    let _span = Span::new(format!("run_alias:{}", opts.name));
     for warning in &warnings {
         eprintln!("{}", warning_message(warning));
     }
@@ -611,7 +611,7 @@ fn run_alias(
 
     let alias_name = opts.name.clone();
     let foreground_steps = {
-        let _span = Span::new("prepare_steps");
+        let _span = Span::new(format!("prepare_steps:{}", alias_name));
         let mut sourced_steps = Vec::new();
         for (source, cfg) in entry.iter() {
             for step in cfg.steps() {

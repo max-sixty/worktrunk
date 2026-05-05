@@ -437,12 +437,13 @@ fn run_concurrent_group(
         announce_command(cmd, &fg_step.announce);
     }
 
-    let expanded: Vec<String> = {
-        let _span = Span::new("template_render");
-        cmds.iter()
-            .map(|cmd| resolve_command_str(cmd, repo))
-            .collect::<Result<_>>()?
-    };
+    let expanded: Vec<String> = cmds
+        .iter()
+        .map(|cmd| {
+            let _span = Span::new(format!("template_render:{}", cmd.label));
+            resolve_command_str(cmd, repo)
+        })
+        .collect::<Result<_>>()?;
 
     // Both alias tables and hook tables produce named commands (TOML keys
     // become `name`), so `cmd.name` is always `Some` here.
@@ -500,7 +501,7 @@ fn run_one_command(
     announce_command(cmd, &fg_step.announce);
 
     let command_str = {
-        let _span = Span::new("template_render");
+        let _span = Span::new(format!("template_render:{}", cmd.label));
         resolve_command_str(cmd, repo)?
     };
 
