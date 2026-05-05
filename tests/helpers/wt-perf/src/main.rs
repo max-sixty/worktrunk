@@ -8,9 +8,8 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
-use wt_perf::{
-    canonicalize, create_repo_at, invalidate_caches_auto, parse_config, render_timeline,
-};
+use worktrunk::trace::{TraceEntry, TraceEntryKind, TraceResult};
+use wt_perf::{canonicalize, create_repo_at, invalidate_caches_auto, parse_config};
 
 #[derive(Parser)]
 #[command(name = "wt-perf")]
@@ -310,6 +309,120 @@ fn run_timeline(cold: bool, repo: Option<PathBuf>, chrome: bool, wt_args: &[Stri
     }
 }
 
+/// Render parsed entries as a column-aligned, start-time-sorted timeline.
+///
+/// `wall` is the externally-measured spawn → wait duration. The trace
+/// can't see the prelude (argv parsing, dyld, time before `init_logging`
+/// sets the trace epoch) or the exit path, so reporting `wall` lets
+/// readers see how much of the process the trace actually accounts for —
+/// the gap between `traced` and `wall` is the unobserved overhead.
+///
+/// Column alignment uses `tabwriter`'s elastic tabstops (write `\t`-separated
+/// rows, padding is computed at flush). Durations are rendered via
+/// `Duration`'s `Debug` impl, which produces compact units (`999µs`, `4.5ms`,
+/// `1.5s`) — matches what we want without a dedicated humanization crate.
+fn render_timeline(entries: &[TraceEntry], wall: Duration) -> String {
+    let mut sorted: Vec<&TraceEntry> = entries.iter().collect();
+    sorted.sort_by_key(|e| e.start_time_us.unwrap_or(0));
+
+    let mut tw = tabwriter::TabWriter::new(Vec::<u8>::new())
+        .minwidth(2)
+        .padding(2);
+    writeln!(tw, "ts(ms)\tdur\ttid\tkind\tname").unwrap();
+    for e in &sorted {
+        let (kind, dur, name) = describe(e);
+        let ts_ms = e.start_time_us.unwrap_or(0) as f64 / 1_000.0;
+        let tid = e
+            .thread_id
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "-".into());
+        writeln!(tw, "{ts_ms:.3}\t{dur:?}\t{tid}\t{kind}\t{name}").unwrap();
+    }
+    tw.flush().unwrap();
+    let mut out = String::from_utf8(tw.into_inner().unwrap()).unwrap();
+
+    // Summary: subprocess totals + traced span + true process wall.
+    let cmds: Vec<(Duration, String)> = sorted
+        .iter()
+        .filter_map(|e| match &e.kind {
+            TraceEntryKind::Command { duration, .. } => {
+                let (_, _, name) = describe(e);
+                Some((*duration, name))
+            }
+            _ => None,
+        })
+        .collect();
+    let cmd_total: Duration = cmds.iter().map(|(d, _)| *d).sum();
+    let slowest = cmds.iter().max_by_key(|(d, _)| *d);
+    let traced = Duration::from_micros(
+        sorted
+            .iter()
+            .map(|e| e.start_time_us.unwrap_or(0) + duration_of(e).as_micros() as u64)
+            .max()
+            .unwrap_or(0)
+            .saturating_sub(
+                sorted
+                    .iter()
+                    .map(|e| e.start_time_us.unwrap_or(0))
+                    .min()
+                    .unwrap_or(0),
+            ),
+    );
+    let untraced = wall.saturating_sub(traced);
+
+    out.push('\n');
+    if let Some((dur, name)) = slowest {
+        let plural = if cmds.len() == 1 { "" } else { "es" };
+        out.push_str(&format!(
+            "{} subprocess{plural} totaling {cmd_total:?} (slowest: {dur:?} {name})\n",
+            cmds.len(),
+        ));
+    } else {
+        out.push_str("0 subprocesses\n");
+    }
+    out.push_str(&format!(
+        "traced: {traced:?} (first → last [wt-trace] record)\n"
+    ));
+    out.push_str(&format!(
+        "wall:   {wall:?} (spawn → wait; +{untraced:?} untraced prelude/epilogue)\n"
+    ));
+    out
+}
+
+/// Extract the (kind, duration, display-name) tuple for a trace entry.
+fn describe(e: &TraceEntry) -> (&'static str, Duration, String) {
+    match &e.kind {
+        TraceEntryKind::Command {
+            command,
+            duration,
+            result,
+        } => {
+            let mut label = match e.context.as_deref() {
+                Some(c) => format!("{command} [{c}]"),
+                None => command.clone(),
+            };
+            match result {
+                TraceResult::Completed { success: false } => label.push_str("  (ok=false)"),
+                TraceResult::Error { message } => label.push_str(&format!("  (err: {message})")),
+                TraceResult::Completed { success: true } => {}
+            }
+            ("cmd", *duration, label)
+        }
+        TraceEntryKind::Span { name, duration } => ("span", *duration, name.clone()),
+        TraceEntryKind::Instant { name } => ("event", Duration::ZERO, name.clone()),
+    }
+}
+
+/// Duration of an entry (zero for instant events).
+fn duration_of(e: &TraceEntry) -> Duration {
+    match &e.kind {
+        TraceEntryKind::Command { duration, .. } | TraceEntryKind::Span { duration, .. } => {
+            *duration
+        }
+        TraceEntryKind::Instant { .. } => Duration::ZERO,
+    }
+}
+
 /// Read trace input from file or stdin, parse entries, and exit if empty.
 fn read_trace_entries(file: Option<&std::path::Path>) -> Vec<worktrunk::trace::TraceEntry> {
     let input = match file {
@@ -448,4 +561,87 @@ fn cache_check(entries: &[worktrunk::trace::TraceEntry]) {
         "same_context_extra_us": total_extra_us,
     });
     println!("{}", serde_json::to_string_pretty(&output).unwrap());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn span(name: &str, ts_us: u64, dur_us: u64, tid: u64) -> TraceEntry {
+        TraceEntry {
+            context: None,
+            kind: TraceEntryKind::Span {
+                name: name.to_string(),
+                duration: Duration::from_micros(dur_us),
+            },
+            start_time_us: Some(ts_us),
+            thread_id: Some(tid),
+        }
+    }
+
+    fn cmd(
+        cmd: &str,
+        ctx: Option<&str>,
+        ts_us: u64,
+        dur_us: u64,
+        tid: u64,
+        ok: bool,
+    ) -> TraceEntry {
+        TraceEntry {
+            context: ctx.map(|s| s.to_string()),
+            kind: TraceEntryKind::Command {
+                command: cmd.to_string(),
+                duration: Duration::from_micros(dur_us),
+                result: TraceResult::Completed { success: ok },
+            },
+            start_time_us: Some(ts_us),
+            thread_id: Some(tid),
+        }
+    }
+
+    #[test]
+    fn renders_sorted_timeline_with_summary() {
+        // Emit order swaps span and child cmd (parent finishes after child),
+        // so this exercises the sort-by-start-time guarantee. Durations are
+        // chosen so std `Duration` Debug renders compact (no trailing
+        // sub-millisecond precision): 4ms, 4.1ms, 280µs, 8µs.
+        let entries = vec![
+            cmd("git rev-parse HEAD", Some("repo"), 50, 4_000, 1, true),
+            span("prewarm", 30, 4_100, 1),
+            span("init_logging", 0, 8, 1),
+            span("user_config_load", 4_200, 280, 38),
+        ];
+        // Wall = 6ms; traced = 4.48ms (4.2ms start → 4.48ms end);
+        // untraced prelude/epilogue = 6 - 4.48 = ~1.52ms.
+        insta::assert_snapshot!(
+            render_timeline(&entries, Duration::from_micros(6_000)),
+            @r"
+        ts(ms)  dur    tid  kind  name
+        0.000   8µs    1    span  init_logging
+        0.030   4.1ms  1    span  prewarm
+        0.050   4ms    1    cmd   git rev-parse HEAD [repo]
+        4.200   280µs  38   span  user_config_load
+
+        1 subprocess totaling 4ms (slowest: 4ms git rev-parse HEAD [repo])
+        traced: 4.48ms (first → last [wt-trace] record)
+        wall:   6ms (spawn → wait; +1.52ms untraced prelude/epilogue)
+        "
+        );
+    }
+
+    #[test]
+    fn cmd_failure_annotates_name() {
+        let entries = vec![cmd("git foo", None, 0, 1_000, 1, false)];
+        insta::assert_snapshot!(
+            render_timeline(&entries, Duration::from_millis(2)),
+            @r"
+        ts(ms)  dur  tid  kind  name
+        0.000   1ms  1    cmd   git foo  (ok=false)
+
+        1 subprocess totaling 1ms (slowest: 1ms git foo  (ok=false))
+        traced: 1ms (first → last [wt-trace] record)
+        wall:   2ms (spawn → wait; +1ms untraced prelude/epilogue)
+        "
+        );
+    }
 }
