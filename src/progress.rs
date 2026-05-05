@@ -69,7 +69,17 @@ mod imp {
         /// TTY is detected. When stderr is not a TTY, returns a disabled reporter
         /// and does no work.
         pub fn start(verb: &'static str) -> Self {
-            if std::io::stderr().is_terminal() {
+            Self::start_with(verb, std::io::stderr().is_terminal())
+        }
+
+        /// Dispatch helper that picks the enabled or disabled branch from an
+        /// explicit `is_tty` flag. Extracted so tests can exercise both branches
+        /// without depending on the ambient stderr fd — sandboxes (Nix builds,
+        /// some CI runners) hand the test process a PTY-backed stderr, which
+        /// would flip the gate in `start` and break a test that hard-coded the
+        /// disabled outcome. See #2615.
+        fn start_with(verb: &'static str, is_tty: bool) -> Self {
+            if is_tty {
                 Self::enabled(verb)
             } else {
                 Self::disabled()
@@ -218,8 +228,15 @@ mod imp {
         }
 
         #[test]
-        fn test_start_in_non_tty_is_disabled() {
-            assert!(Progress::start("Copying").0.is_none());
+        fn test_start_with_non_tty_is_disabled() {
+            assert!(Progress::start_with("Copying", false).0.is_none());
+        }
+
+        #[test]
+        fn test_start_with_tty_is_enabled() {
+            let p = Progress::start_with("Copying", true);
+            assert!(p.0.is_some());
+            p.finish();
         }
 
         #[test]
