@@ -2223,7 +2223,7 @@ post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_pa
 
     let mut cmd = repo.wt_command();
     cmd.args(["switch", "pr:42", "--yes"]);
-    configure_mock_gh_env(&mut cmd, &mock_bin);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
     let output = cmd.output().expect("wt switch pr:42 should run");
     assert!(
         output.status.success(),
@@ -2600,7 +2600,7 @@ fn test_switch_base_pr_sets_upstream(#[from(repo_with_remote)] mut repo: TestRep
     cmd.args([
         "switch", "--create", "swa-65", "--base", "pr:2648", "--no-cd",
     ]);
-    configure_mock_gh_env(&mut cmd, &mock_bin);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
     let status = cmd.status().expect("wt switch should run");
     assert!(status.success(), "wt switch failed: {:?}", status);
 

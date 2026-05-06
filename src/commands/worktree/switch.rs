@@ -141,39 +141,20 @@ fn choose_pr_provider(repo: &Repository) -> anyhow::Result<PrProviderChoice> {
 /// top-level error has embedded newlines without an explanatory context,
 /// and the rendered Display of `GitError::CliApiError` is a multi-line gutter
 /// block. We iterate the cause chain joining with `: `, strip ANSI, and
-/// replace newlines with spaces.
+/// collapse whitespace runs (including newlines).
 fn flatten_error(err: &anyhow::Error) -> String {
+    use ansi_str::AnsiStr;
+
     let mut parts = Vec::new();
     for cause in err.chain() {
         let raw = cause.to_string();
-        let stripped = strip_ansi(&raw);
-        let one_line = stripped.replace('\n', " ");
-        let trimmed = one_line.split_whitespace().collect::<Vec<_>>().join(" ");
+        let stripped = raw.ansi_strip();
+        let trimmed = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
         if !trimmed.is_empty() {
             parts.push(trimmed);
         }
     }
     parts.join(": ")
-}
-
-/// Strip ANSI escape sequences (CSI codes like `\x1b[31m`).
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' && chars.peek() == Some(&'[') {
-            chars.next();
-            for next in chars.by_ref() {
-                // CSI parameters end at a byte in the range 0x40..=0x7E
-                if ('\x40'..='\x7e').contains(&next) {
-                    break;
-                }
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 fn ambiguous_pr_error(
@@ -224,7 +205,10 @@ fn resolve_pr_target(
     }
 }
 
-fn resolve_pr_base(repo: &Repository, number: u32) -> anyhow::Result<String> {
+fn resolve_pr_base(
+    repo: &Repository,
+    number: u32,
+) -> anyhow::Result<(String, Option<(String, String)>)> {
     match choose_pr_provider(repo)? {
         PrProviderChoice::GitHub => resolve_remote_ref_as_base(repo, &GitHubProvider, number),
         PrProviderChoice::Gitea => resolve_remote_ref_as_base(repo, &GiteaProvider, number),
