@@ -16,8 +16,8 @@ info:
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
-    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
-    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/wt/approvals.toml
+    WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml
     WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
@@ -311,12 +311,13 @@ Query structured data with [2m--format=json[0m:
 
 [32mCommit object[0m
 
-   Field    Type          Description         
- ───────── ────── ─────────────────────────── 
- [2msha[0m       string Full commit SHA (40 chars)  
- [2mshort_sha[0m string Short commit SHA (7 chars)  
- [2mmessage[0m   string Commit message (first line) 
- [2mtimestamp[0m number Unix timestamp              
+   Field    Type                           Description                          
+ ───────── ────── ───────────────────────────────────────────────────────────── 
+ [2msha[0m       string Full commit SHA (40 chars)                                    
+ [2mshort_sha[0m string Short commit SHA, abbreviated per [2mcore.abbrev[0m (auto-extends   
+                  for ambiguous prefixes)                                       
+ [2mmessage[0m   string Commit message (first line)                                   
+ [2mtimestamp[0m number Unix timestamp                                                
 
 [32mworking_tree object[0m
 

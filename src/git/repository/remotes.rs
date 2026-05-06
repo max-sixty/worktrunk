@@ -92,6 +92,7 @@
 use anyhow::Context;
 
 use super::{GitRemoteUrl, Repository};
+use crate::git::error::RefType;
 
 impl Repository {
     /// Get the primary remote name for this repository.
@@ -263,6 +264,31 @@ impl Repository {
         self.primary_remote_url()
             .as_deref()
             .and_then(GitRemoteUrl::parse)
+    }
+
+    /// Detect the platform's reference type (PR for GitHub, MR for GitLab).
+    ///
+    /// Hostname-matches the primary remote's effective URL (so `url.insteadOf`
+    /// rewrites are respected). Returns `None` when the platform can't be
+    /// determined (no remote, opaque host).
+    ///
+    /// Drives the numeric-branch hint in `BranchNotFound` only — `forge.platform`
+    /// is intentionally not consulted here. Honoring it would duplicate
+    /// `platform_for_repo`'s precedence rules; users with that override and an
+    /// opaque remote host fall through to the both-platforms hint.
+    pub fn detect_ref_type(&self) -> Option<RefType> {
+        let url = self
+            .primary_remote()
+            .ok()
+            .and_then(|remote| self.effective_remote_url(&remote))?;
+        let parsed = GitRemoteUrl::parse(&url)?;
+        if parsed.is_github() {
+            Some(RefType::Pr)
+        } else if parsed.is_gitlab() {
+            Some(RefType::Mr)
+        } else {
+            None
+        }
     }
 
     /// Get a project identifier for approval tracking.

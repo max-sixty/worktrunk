@@ -68,20 +68,20 @@ impl LocalBranchInventory {
 /// in the Rust string: Rust's `Command::arg` rejects arguments containing
 /// interior NUL bytes (they can't survive the `CString` conversion to
 /// `execve`), so passing `\0` through `args()` would error before git runs.
-const FIELD_SEP: char = '\0';
+pub(super) const FIELD_SEP: char = '\0';
 
 /// Format string for the local-branch scan.
 ///
 /// Fields, in order: short name, object SHA, committer Unix timestamp,
 /// upstream short name (empty if none), upstream track (`[gone]` if the
 /// configured upstream no longer exists on the remote).
-const LOCAL_BRANCH_FORMAT: &str = "--format=%(refname:lstrip=2)%00%(objectname)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track)";
+pub(super) const LOCAL_BRANCH_FORMAT: &str = "--format=%(refname:lstrip=2)%00%(objectname)%00%(committerdate:unix)%00%(upstream:short)%00%(upstream:track)";
 
 /// Format string for the remote-branch scan.
 ///
 /// Fields, in order: remote-qualified short name (e.g. `origin/feature`),
 /// object SHA, committer Unix timestamp.
-const REMOTE_BRANCH_FORMAT: &str =
+pub(super) const REMOTE_BRANCH_FORMAT: &str =
     "--format=%(refname:lstrip=2)%00%(objectname)%00%(committerdate:unix)";
 
 impl Repository {
@@ -107,10 +107,11 @@ impl Repository {
     /// timestamp, most recent first. Result is cached for the lifetime of
     /// this `Repository` instance (shared across clones via `Arc`).
     ///
-    /// The initial scan also primes `resolved_refs` (`name` →
-    /// `refs/heads/name`) and `commit_shas` (both keys → commit SHA) so
-    /// later `resolve_preferring_branch()` and `rev_parse_commit()` calls
-    /// hit memory instead of spawning per-branch `git rev-parse`.
+    /// `commit_sha` on each entry is a snapshot at scan time. Code that
+    /// needs a current SHA for a ref must resolve through a `RefSnapshot`
+    /// captured at the moment of read, not through this inventory. The
+    /// inventory itself is used for branch listing and upstream-tracking
+    /// metadata, both of which are stable for the duration of a command.
     pub fn local_branches(&self) -> anyhow::Result<&[LocalBranch]> {
         Ok(self.local_branch_inventory()?.entries())
     }
@@ -144,27 +145,18 @@ impl Repository {
             .map(Vec::as_slice)
     }
 
-    /// Run the local-branch scan and prime SHA/ref caches.
+    /// Run the local-branch scan.
+    ///
+    /// The inventory's `commit_sha` fields are a snapshot at scan time —
+    /// callers that need a current SHA must resolve through a
+    /// [`crate::git::RefSnapshot`] captured at the moment of the read,
+    /// not through this inventory.
     fn scan_local_branches(&self) -> anyhow::Result<LocalBranchInventory> {
         let output = self.run_command(&["for-each-ref", LOCAL_BRANCH_FORMAT, "refs/heads/"])?;
 
         let mut branches: Vec<LocalBranch> =
             output.lines().filter_map(parse_local_branch_line).collect();
         branches.sort_by_key(|b| std::cmp::Reverse(b.committer_ts));
-
-        for branch in &branches {
-            let qualified = format!("refs/heads/{}", branch.name);
-            self.cache
-                .resolved_refs
-                .insert(branch.name.clone(), qualified.clone());
-            self.cache
-                .commit_shas
-                .insert(qualified, branch.commit_sha.clone());
-            self.cache
-                .commit_shas
-                .insert(branch.name.clone(), branch.commit_sha.clone());
-        }
-
         Ok(LocalBranchInventory::new(branches))
     }
 
@@ -293,7 +285,7 @@ impl Repository {
 /// Returns `None` for malformed lines — e.g. a future git format change or
 /// a control character snuck through. Callers skip those entries rather
 /// than fail the whole scan.
-fn parse_local_branch_line(line: &str) -> Option<LocalBranch> {
+pub(super) fn parse_local_branch_line(line: &str) -> Option<LocalBranch> {
     let mut parts = line.split(FIELD_SEP);
     let name = parts.next()?.to_string();
     let commit_sha = parts.next()?.to_string();
@@ -317,7 +309,7 @@ fn parse_local_branch_line(line: &str) -> Option<LocalBranch> {
 ///
 /// Skips `<remote>/HEAD` symrefs — they duplicate another ref and would
 /// confuse callers that key by local name.
-fn parse_remote_branch_line(line: &str) -> Option<RemoteBranch> {
+pub(super) fn parse_remote_branch_line(line: &str) -> Option<RemoteBranch> {
     let mut parts = line.split(FIELD_SEP);
     let short_name = parts.next()?;
     let commit_sha = parts.next()?.to_string();

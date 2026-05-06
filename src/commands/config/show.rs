@@ -12,9 +12,9 @@ use color_print::cformat;
 use worktrunk::config::{
     ProjectConfig, UserConfig, default_system_config_path, system_config_path,
 };
-use worktrunk::git::Repository;
+use worktrunk::git::{ErrorExt, Repository};
 use worktrunk::path::format_path_for_display;
-use worktrunk::shell::{Shell, scan_for_detection_details};
+use worktrunk::shell::{FileDetectionResult, Shell, scan_for_detection_details};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
     error_message, format_bash_with_gutter, format_heading, format_toml, format_with_gutter,
@@ -23,7 +23,7 @@ use worktrunk::styling::{
 
 use super::state::require_user_config_path;
 use crate::cli::{SwitchFormat, version_str};
-use crate::commands::configure_shell::{ConfigAction, scan_shell_configs};
+use crate::commands::configure_shell::{ConfigAction, ConfigureResult, scan_shell_configs};
 use crate::commands::list::ci_status::{CiPlatform, CiToolsStatus, platform_for_repo};
 use crate::help_pager::show_help_in_pager;
 use crate::llm::test_commit_generation;
@@ -83,10 +83,7 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     render_runtime_info(&mut show_output)?;
 
     // Display through pager (config show is always long-form output)
-    if let Err(e) = show_help_in_pager(&show_output, true) {
-        log::debug!("Pager invocation failed: {}", e);
-        worktrunk::styling::println!("{}", show_output);
-    }
+    show_help_in_pager(&show_output, true);
 
     Ok(())
 }
@@ -427,9 +424,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
 
     // Test commit generation - use effective config for current project
     let config = UserConfig::load()?;
-    let project_id = Repository::current()
-        .ok()
-        .and_then(|r| r.project_identifier().ok());
+    let project_id = repo.project_identifier().ok();
     let commit_config = config.commit_generation(project_id.as_deref());
 
     if !commit_config.is_configured() {
@@ -456,7 +451,10 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
                         "Commit generation failed (<bold>{command_display}</>)"
                     ))
                 )?;
-                writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
+                // Use the typed diagnostic block (with hint, gutter, etc.)
+                // when present; otherwise fall back to the short Display label.
+                let body = e.render_diagnostic().unwrap_or_else(|| e.to_string());
+                writeln!(out, "{}", format_with_gutter(&body, None))?;
             }
         }
     }
@@ -732,15 +730,301 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Emit the "fish integration found in deprecated location" notice plus the
+/// hint pointing at the canonical path. Used wherever fish integration lives
+/// at the legacy `~/.config/fish/conf.d/` location (deprecated since #566).
+fn render_fish_legacy_migration(
+    out: &mut String,
+    legacy_fish_conf_d: Option<&Path>,
+    cmd: &str,
+) -> anyhow::Result<()> {
+    let legacy_path = legacy_fish_conf_d
+        .map(format_path_for_display)
+        .unwrap_or_default();
+    let canonical_path = Shell::Fish
+        .config_paths(cmd)
+        .ok()
+        .and_then(|p| p.into_iter().next())
+        .map(|p| format_path_for_display(&p))
+        .unwrap_or_else(|| "~/.config/fish/functions/".to_string());
+    writeln!(
+        out,
+        "{}",
+        info_message(cformat!(
+            "Fish integration found in deprecated location @ <bold>{legacy_path}</>"
+        ))
+    )?;
+    writeln!(
+        out,
+        "{}",
+        hint_message(cformat!(
+            "To migrate to <underline>{canonical_path}</>, run <underline>{cmd} config shell install fish</>"
+        ))
+    )?;
+    Ok(())
+}
+
+/// Per-shell label distinguishing fish (separate completion file) from
+/// bash/zsh (inline completions).
+fn what_label(shell: Shell) -> &'static str {
+    if matches!(shell, Shell::Fish) {
+        "shell extension"
+    } else {
+        "shell extension & completions"
+    }
+}
+
+/// Zsh-only: warn when compinit isn't enabled, since the integration
+/// installs completions but they won't load without compinit.
+fn render_zsh_compinit_warning(out: &mut String) -> anyhow::Result<()> {
+    if !check_zsh_compinit_missing() {
+        return Ok(());
+    }
+    writeln!(
+        out,
+        "{}",
+        warning_message("Completions won't work; add to ~/.zshrc before the wt line:")
+    )?;
+    writeln!(
+        out,
+        "{}",
+        format_with_gutter("autoload -Uz compinit && compinit", None)
+    )?;
+    Ok(())
+}
+
+/// Fish-only: report whether the separate completions file is in place.
+/// Doesn't flip `any_not_configured` — missing fish completions have a
+/// shell-specific remediation hint rather than the generic "To configure"
+/// summary.
+fn render_fish_completion_status(out: &mut String, cmd: &str) -> anyhow::Result<()> {
+    let Ok(completion_path) = Shell::Fish.completion_path(cmd) else {
+        return Ok(());
+    };
+    let completion_display = format_path_for_display(&completion_path);
+    let shell = Shell::Fish;
+    if completion_path.exists() {
+        writeln!(
+            out,
+            "{}",
+            info_message(cformat!(
+                "<bold>{shell}</>: Already configured completions @ {completion_display}"
+            ))
+        )?;
+    } else {
+        let warning = warning_message(cformat!(
+            "<bold>{shell}</>: Completions not configured @ {completion_display}"
+        ));
+        let hint = hint_message(cformat!(
+            "To configure completions, run <underline>{cmd} config shell install {shell}</>"
+        ));
+        writeln!(out, "{warning}\n{hint}")?;
+    }
+    Ok(())
+}
+
+/// When the integration is configured but the wrapper isn't loaded in the
+/// running shell, suggest a verify command. Only fires for the user's
+/// current shell — `type wt` (or `Get-Command wt`) probes the running
+/// shell, so a hint targeted at a different shell would mislead.
+fn render_verify_wrapper_hint(
+    out: &mut String,
+    shell: Shell,
+    cmd: &str,
+    shell_active: bool,
+) -> anyhow::Result<()> {
+    if shell_active || Some(shell) != worktrunk::shell::current_shell() {
+        return Ok(());
+    }
+    let verify_cmd = match shell {
+        Shell::PowerShell => format!("Get-Command {cmd}"),
+        _ => format!("type {cmd}"),
+    };
+    let hint = hint_message(cformat!(
+        "To verify wrapper loaded: <underline>{verify_cmd}</>"
+    ));
+    writeln!(out, "{hint}")?;
+    Ok(())
+}
+
+/// Render the `AlreadyExists` row plus any per-shell follow-ups (matched
+/// lines, .exe warning, zsh compinit, fish completions, verify hint).
+fn render_already_configured(
+    out: &mut String,
+    result: &ConfigureResult,
+    detection_results: &[FileDetectionResult],
+    cmd: &str,
+    shell_active: bool,
+) -> anyhow::Result<()> {
+    let shell = result.shell;
+    let path = format_path_for_display(&result.path);
+    let what = what_label(shell);
+
+    let detection = detection_results
+        .iter()
+        .find(|d| d.path == result.path && !d.matched_lines.is_empty());
+
+    // Build file:line location (clickable in terminals - use first line only)
+    let location = match detection.and_then(|d| d.matched_lines.first()) {
+        Some(first_line) => format!("{}:{}", path, first_line.line_number),
+        None => path.to_string(),
+    };
+
+    writeln!(
+        out,
+        "{}",
+        info_message(cformat!(
+            "<bold>{shell}</>: Already configured {what} @ {location}"
+        ))
+    )?;
+
+    if let Some(det) = detection {
+        for detected in &det.matched_lines {
+            writeln!(out, "{}", format_bash_with_gutter(detected.content.trim()))?;
+        }
+        // Warn when the matched lines use .exe — installs the function as
+        // wt.exe, but aliases still need to point at wt.
+        if det.matched_lines.iter().any(|m| m.content.contains(".exe")) {
+            writeln!(
+                out,
+                "{}",
+                hint_message(cformat!(
+                    "Creates shell function <bold>{cmd}</>. Aliases should use <underline>{cmd}</>, not <underline>{cmd}.exe</>"
+                ))
+            )?;
+        }
+    }
+
+    match shell {
+        Shell::Zsh => render_zsh_compinit_warning(out)?,
+        Shell::Fish => render_fish_completion_status(out, cmd)?,
+        _ => {}
+    }
+
+    render_verify_wrapper_hint(out, shell, cmd, shell_active)?;
+    Ok(())
+}
+
+/// Render the `WouldAdd`/`WouldCreate` arm. Returns whether the row
+/// should count toward `any_not_configured` (the trailing "To configure"
+/// summary is suppressed for outdated wrappers and dotfile-managed setups).
+fn render_would_add_or_create(
+    out: &mut String,
+    result: &ConfigureResult,
+    legacy_fish_conf_d: Option<&Path>,
+    legacy_fish_has_integration: bool,
+    cmd: &str,
+    shell_active: bool,
+) -> anyhow::Result<bool> {
+    let shell = result.shell;
+    let path = format_path_for_display(&result.path);
+    let what = what_label(shell);
+
+    // Fish: prefer migration hint when the legacy conf.d location has
+    // working integration — silencing the "Not configured" row.
+    if matches!(shell, Shell::Fish) && legacy_fish_has_integration {
+        render_fish_legacy_migration(out, legacy_fish_conf_d, cmd)?;
+        return Ok(false);
+    }
+
+    // Wrapper-based shells with WouldAdd: file exists but content drifted
+    // (e.g. outdated wrapper). The per-shell "To update" hint covers it,
+    // so the generic "To configure" summary stays silent.
+    if shell.is_wrapper_based() && matches!(result.action, ConfigAction::WouldAdd) {
+        let warning = warning_message(cformat!(
+            "<bold>{shell}</>: Outdated shell extension @ {path}"
+        ));
+        let hint = hint_message(cformat!(
+            "To update, run <underline>{cmd} config shell install {shell}</>"
+        ));
+        writeln!(out, "{warning}\n{hint}")?;
+        return Ok(false);
+    }
+
+    // Integration is loaded at runtime even though no rc file matched —
+    // common with dotfile managers (stow/chezmoi) that source from
+    // unknown locations.
+    if shell_active && Some(shell) == worktrunk::shell::current_shell() {
+        writeln!(
+            out,
+            "{}",
+            info_message(cformat!(
+                "<bold>{shell}</>: Configured {what} (not found in {path})"
+            ))
+        )?;
+        return Ok(false);
+    }
+
+    writeln!(
+        out,
+        "{}",
+        info_message(cformat!("<bold>{shell}</>: Not configured {what}"))
+    )?;
+    Ok(true)
+}
+
 fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("SHELL INTEGRATION", None))?;
 
+    // Use the same detection logic as `wt config shell install`. Hoisted above the
+    // active/inactive warning so the warning text can distinguish "installed but
+    // not loaded" (▲ not active) from "never installed" (▲ not configured).
+    let cmd = crate::binary_name();
+    let scan_result = match scan_shell_configs(None, true, &cmd) {
+        Ok(r) => r,
+        Err(e) => {
+            writeln!(
+                out,
+                "{}",
+                hint_message(format!("Could not determine shell status: {e}"))
+            )?;
+            return Ok(());
+        }
+    };
+
+    // Get detection details to show matched lines inline
+    let detection_results = scan_for_detection_details(&cmd).unwrap_or_default();
+
+    // Check for legacy fish conf.d path (deprecated location from before #566)
+    // We need this early to handle the case where fish shows "Not configured" at the
+    // new location but has valid integration at the legacy location.
+    let legacy_fish_conf_d = Shell::legacy_fish_conf_d_path(&cmd).ok();
+    let legacy_fish_has_integration = legacy_fish_conf_d.as_ref().is_some_and(|legacy_path| {
+        detection_results
+            .iter()
+            .any(|d| d.path == *legacy_path && !d.matched_lines.is_empty())
+    });
+
+    // "Configured somewhere" means any rc file already has the init line, any
+    // wrapper-based shell has its wrapper file (WouldAdd on a wrapper means
+    // the file exists but content differs — i.e. outdated, still installed),
+    // or fish has integration at the legacy conf.d path.
+    let any_configured_somewhere = scan_result.configured.iter().any(|r| {
+        matches!(r.action, ConfigAction::AlreadyExists)
+            || (r.shell.is_wrapper_based() && matches!(r.action, ConfigAction::WouldAdd))
+    }) || legacy_fish_has_integration;
+
     // Shell integration runtime status (moved from RUNTIME section)
     let shell_active = output::is_shell_integration_active();
+    // When the user has no working integration anywhere, the install hint goes
+    // directly under the warning so cause and remedy stay together. The trailing
+    // hint at the bottom of the section is suppressed in this case.
+    let hint_under_warning = !shell_active && !any_configured_somewhere;
     if shell_active {
         writeln!(out, "{}", info_message("Shell integration active"))?;
     } else {
-        writeln!(out, "{}", warning_message("Shell integration not active"))?;
+        let warning_text = if any_configured_somewhere {
+            "Shell integration not active"
+        } else {
+            "Shell integration not configured"
+        };
+        writeln!(out, "{}", warning_message(warning_text))?;
+        if hint_under_warning {
+            let hint = hint_message(cformat!(
+                "To configure, run <underline>{cmd} config shell install</>"
+            ));
+            writeln!(out, "{hint}")?;
+        }
         // Show invocation details to help diagnose
         let invocation = crate::invocation_path();
         let is_git_subcommand = crate::is_git_subcommand();
@@ -772,34 +1056,14 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         }
         writeln!(out, "{}", format_with_gutter(&debug_lines.join("\n"), None))?;
     }
-    writeln!(out)?;
 
-    // Use the same detection logic as `wt config shell install`
-    let cmd = crate::binary_name();
-    let scan_result = match scan_shell_configs(None, true, &cmd) {
-        Ok(r) => r,
-        Err(e) => {
-            writeln!(
-                out,
-                "{}",
-                hint_message(format!("Could not determine shell status: {e}"))
-            )?;
-            return Ok(());
-        }
-    };
-
-    // Get detection details to show matched lines inline
-    let detection_results = scan_for_detection_details(&cmd).unwrap_or_default();
-
-    // Check for legacy fish conf.d path (deprecated location from before #566)
-    // We need this early to handle the case where fish shows "Not configured" at the
-    // new location but has valid integration at the legacy location.
-    let legacy_fish_conf_d = Shell::legacy_fish_conf_d_path(&cmd).ok();
-    let legacy_fish_has_integration = legacy_fish_conf_d.as_ref().is_some_and(|legacy_path| {
-        detection_results
-            .iter()
-            .any(|d| d.path == *legacy_path && !d.matched_lines.is_empty())
-    });
+    // Blank line separates the active/not-active status from the per-shell list.
+    // Only emit when there's a list to render — otherwise the trailing hint
+    // ("To configure, run …") would float behind a stray blank, breaking the
+    // hint-attaches-to-subject formatting rule.
+    if !scan_result.configured.is_empty() || !scan_result.skipped.is_empty() {
+        writeln!(out)?;
+    }
 
     let mut any_not_configured = false;
     let mut has_any_unmatched = false;
@@ -808,175 +1072,20 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     // Bash/Zsh: inline completions, show "shell extension & completions"
     // Fish: separate completion file, show "shell extension" for functions/ and "completions" for completions/
     for result in &scan_result.configured {
-        let shell = result.shell;
-        let path = format_path_for_display(&result.path);
-        // Fish has separate completion file; bash/zsh have inline completions
-        let what = if matches!(shell, Shell::Fish) {
-            "shell extension"
-        } else {
-            "shell extension & completions"
-        };
-
         match result.action {
             ConfigAction::AlreadyExists => {
-                // Show the matched lines directly under this status
-                let detection = detection_results
-                    .iter()
-                    .find(|d| d.path == result.path && !d.matched_lines.is_empty());
-
-                // Build file:line location (clickable in terminals - use first line only)
-                let location = if let Some(det) = detection {
-                    if let Some(first_line) = det.matched_lines.first() {
-                        format!("{}:{}", path, first_line.line_number)
-                    } else {
-                        path.to_string()
-                    }
-                } else {
-                    path.to_string()
-                };
-
-                writeln!(
-                    out,
-                    "{}",
-                    info_message(cformat!(
-                        "<bold>{shell}</>: Already configured {what} @ {location}"
-                    ))
-                )?;
-
-                if let Some(det) = detection {
-                    for detected in &det.matched_lines {
-                        writeln!(out, "{}", format_bash_with_gutter(detected.content.trim()))?;
-                    }
-
-                    // Check if any matched lines use .exe suffix and warn about function name
-                    let uses_exe = det.matched_lines.iter().any(|m| m.content.contains(".exe"));
-                    if uses_exe {
-                        writeln!(
-                            out,
-                            "{}",
-                            hint_message(cformat!(
-                                "Creates shell function <bold>{cmd}</>. Aliases should use <underline>{cmd}</>, not <underline>{cmd}.exe</>"
-                            ))
-                        )?;
-                    }
-                }
-
-                // Check if zsh has compinit enabled (required for completions)
-                if matches!(shell, Shell::Zsh) && check_zsh_compinit_missing() {
-                    writeln!(
-                        out,
-                        "{}",
-                        warning_message(
-                            "Completions won't work; add to ~/.zshrc before the wt line:"
-                        )
-                    )?;
-                    writeln!(
-                        out,
-                        "{}",
-                        format_with_gutter("autoload -Uz compinit && compinit", None)
-                    )?;
-                }
-
-                // For fish, check completions file separately
-                if matches!(shell, Shell::Fish)
-                    && let Ok(completion_path) = shell.completion_path(&cmd)
-                {
-                    let completion_display = format_path_for_display(&completion_path);
-                    if completion_path.exists() {
-                        writeln!(
-                            out,
-                            "{}",
-                            info_message(cformat!(
-                                "<bold>{shell}</>: Already configured completions @ {completion_display}"
-                            ))
-                        )?;
-                    } else {
-                        // Missing completions are a fish-specific problem with a specific
-                        // remediation. Don't flip `any_not_configured` — the generic
-                        // "To configure" summary is for shells with no integration at all.
-                        let warning = warning_message(cformat!(
-                            "<bold>{shell}</>: Completions not configured @ {completion_display}"
-                        ));
-                        let hint = hint_message(cformat!(
-                            "To configure completions, run <underline>{cmd} config shell install {shell}</>"
-                        ));
-                        writeln!(out, "{warning}\n{hint}")?;
-                    }
-                }
-
-                // When configured but not active, show how to verify the wrapper loaded
-                if !shell_active {
-                    let verify_cmd = match shell {
-                        Shell::PowerShell => format!("Get-Command {cmd}"),
-                        _ => format!("type {cmd}"),
-                    };
-                    let hint = hint_message(cformat!(
-                        "To verify wrapper loaded: <underline>{verify_cmd}</>"
-                    ));
-                    writeln!(out, "{hint}")?;
-                }
+                render_already_configured(out, result, &detection_results, &cmd, shell_active)?;
             }
             ConfigAction::WouldAdd | ConfigAction::WouldCreate => {
-                // For fish, check if we have valid integration at the legacy conf.d location
-                if matches!(shell, Shell::Fish) && legacy_fish_has_integration {
-                    // Show migration hint instead of "Not configured"
-                    let legacy_path = legacy_fish_conf_d
-                        .as_ref()
-                        .map(|p| format_path_for_display(p))
-                        .unwrap_or_default();
-                    writeln!(
-                        out,
-                        "{}",
-                        info_message(cformat!(
-                            "Fish integration found in deprecated location @ <bold>{legacy_path}</>"
-                        ))
-                    )?;
-                    // Get canonical path for the migration hint
-                    let canonical_path = Shell::Fish
-                        .config_paths(&cmd)
-                        .ok()
-                        .and_then(|p| p.into_iter().next())
-                        .map(|p| format_path_for_display(&p))
-                        .unwrap_or_else(|| "~/.config/fish/functions/".to_string());
-                    writeln!(
-                        out,
-                        "{}",
-                        hint_message(cformat!(
-                            "To migrate to <underline>{canonical_path}</>, run <underline>{cmd} config shell install fish</>"
-                        ))
-                    )?;
-                } else if shell.is_wrapper_based()
-                    && matches!(result.action, ConfigAction::WouldAdd)
-                {
-                    // File exists but has different content (e.g. outdated version).
-                    // The per-shell "To update" hint below covers this case, so we
-                    // don't flip `any_not_configured` — the generic "To configure"
-                    // summary would be misleading when the integration is installed.
-                    let warning = warning_message(cformat!(
-                        "<bold>{shell}</>: Outdated shell extension @ {path}"
-                    ));
-                    let hint = hint_message(cformat!(
-                        "To update, run <underline>{cmd} config shell install {shell}</>"
-                    ));
-                    writeln!(out, "{warning}\n{hint}")?;
-                } else if shell_active && Some(shell) == worktrunk::shell::current_shell() {
-                    // Shell integration is active at runtime even though we can't
-                    // find the init line in config files — likely sourced from
-                    // another file (common with dotfile managers like stow/chezmoi).
-                    writeln!(
-                        out,
-                        "{}",
-                        info_message(cformat!(
-                            "<bold>{shell}</>: Configured {what} (not found in {path})"
-                        ))
-                    )?;
-                } else {
+                if render_would_add_or_create(
+                    out,
+                    result,
+                    legacy_fish_conf_d.as_deref(),
+                    legacy_fish_has_integration,
+                    &cmd,
+                    shell_active,
+                )? {
                     any_not_configured = true;
-                    writeln!(
-                        out,
-                        "{}",
-                        hint_message(format!("{shell}: Not configured {what}"))
-                    )?;
                 }
             }
             _ => {} // Added/Created won't appear in dry_run mode
@@ -988,42 +1097,27 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     for (shell, path) in &scan_result.skipped {
         if matches!(shell, Shell::Fish) && legacy_fish_has_integration {
             // Show migration hint for legacy fish location
-            let legacy_path = legacy_fish_conf_d
-                .as_ref()
-                .map(|p| format_path_for_display(p))
-                .unwrap_or_default();
-            let canonical_path = Shell::Fish
-                .config_paths(&cmd)
-                .ok()
-                .and_then(|p| p.into_iter().next())
-                .map(|p| format_path_for_display(&p))
-                .unwrap_or_else(|| "~/.config/fish/functions/".to_string());
-            writeln!(
-                out,
-                "{}",
-                info_message(cformat!(
-                    "Fish integration found in deprecated location @ <bold>{legacy_path}</>"
-                ))
-            )?;
-            writeln!(
-                out,
-                "{}",
-                hint_message(cformat!(
-                    "To migrate to <underline>{canonical_path}</>, run <underline>{cmd} config shell install fish</>"
-                ))
-            )?;
+            render_fish_legacy_migration(out, legacy_fish_conf_d.as_deref(), &cmd)?;
             continue;
         }
         let path = format_path_for_display(path);
         writeln!(
             out,
             "{}",
-            info_message(cformat!("<dim>{shell}: Skipped; {path} not found</>"))
+            info_message(cformat!(
+                "<bold>{shell}</>: <dim>Skipped; {path} not found</>"
+            ))
         )?;
     }
 
-    // Summary hint when shells need configuration
-    if any_not_configured {
+    // Summary hint pointing at `wt config shell install`. The fresh-user and
+    // nothing-configured-anywhere cases are already covered by the hint emitted
+    // directly under the warning, so this trailing emit is suppressed when
+    // `hint_under_warning` fired. It still fires for the partial-config case
+    // (some shells configured, some not) and for fish-legacy (working
+    // integration via the legacy path, other shells unconfigured).
+    let nothing_configured_yet = !shell_active && scan_result.configured.is_empty();
+    if !hint_under_warning && (any_not_configured || nothing_configured_yet) {
         writeln!(
             out,
             "{}",

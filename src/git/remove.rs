@@ -37,8 +37,10 @@
 //! };
 //!
 //! let repo = Repository::current()?;
+//! let snapshot = repo.capture_refs()?;
 //! let output = remove_worktree_with_cleanup(
 //!     &repo,
+//!     &snapshot,
 //!     Path::new("/repos/myproject.feature"),
 //!     RemoveOptions {
 //!         branch: Some("feature".into()),
@@ -198,6 +200,7 @@ pub struct RemovalOutput {
 ///   handle a residual branch-deletion failure.
 pub fn remove_worktree_with_cleanup(
     repo: &Repository,
+    snapshot: &crate::git::RefSnapshot,
     worktree_path: &Path,
     options: RemoveOptions,
 ) -> anyhow::Result<RemovalOutput> {
@@ -222,6 +225,7 @@ pub fn remove_worktree_with_cleanup(
         let target = options.target_branch.as_deref().unwrap_or("HEAD");
         Some(delete_branch_if_safe(
             repo,
+            snapshot,
             branch,
             target,
             options.deletion_mode.is_force(),
@@ -272,6 +276,7 @@ pub fn stage_worktree_removal(repo: &Repository, worktree_path: &Path) -> Option
 /// to surface it. Only `git branch -D` failures propagate as `Err`.
 pub fn delete_branch_if_safe(
     repo: &Repository,
+    snapshot: &crate::git::RefSnapshot,
     branch_name: &str,
     target: &str,
     force_delete: bool,
@@ -286,7 +291,7 @@ pub fn delete_branch_if_safe(
         });
     }
 
-    let (effective_target, reason) = repo.integration_reason(branch_name, target)?;
+    let (effective_target, reason) = repo.integration_reason(snapshot, branch_name, target)?;
 
     let outcome = match reason {
         Some(r) => {

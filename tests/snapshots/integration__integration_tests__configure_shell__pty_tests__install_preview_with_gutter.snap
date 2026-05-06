@@ -4,9 +4,6 @@ expression: "output.trim_start_matches('\\n')"
 ---
 [36m❯[39m Install shell integration? [1m[y/N/?][22m 
 ✓ Added shell extension & completions for zsh @ ~/.zshrc
-↳ Skipped bash; ~/.bashrc not found
-↳ Skipped fish; ~/.config/fish/functions not found
-↳ Skipped nu; ~/.config/nushell/vendor/autoload not found
 
 ✓ Configured 1 shell
 ▲ Completions require compinit; add to ~/.zshrc before the wt line:

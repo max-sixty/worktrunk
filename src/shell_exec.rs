@@ -67,7 +67,11 @@ static STARTUP_CWD: OnceLock<Option<PathBuf>> = OnceLock::new();
 /// then resolve against whatever `current_dir` a child process happens to
 /// run in — not the directory where `wt` was invoked. Normalizing them to
 /// absolute paths keeps git's alias context without breaking discovery.
-const INHERITED_GIT_PATH_VARS: &[&str] = &[
+///
+/// Also consumed by [`crate::testing::scrub_git_path_vars`] so test/bench
+/// helpers strip the same list before spawning a `git` subprocess that
+/// targets an explicit path.
+pub const INHERITED_GIT_PATH_VARS: &[&str] = &[
     "GIT_DIR",
     "GIT_WORK_TREE",
     "GIT_COMMON_DIR",
@@ -305,9 +309,10 @@ pub const DIRECTIVE_CD_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_CD_FILE";
 /// Shell wrappers set this to a temp file; wt writes shell commands (e.g. the
 /// body of `wt switch --execute`) to it and the wrapper sources the file after
 /// wt exits, so the command runs in the user's interactive shell. Because the
-/// file contents are arbitrary shell, wt scrubs this from alias/hook child
-/// environments — a hook body writing to this file could inject shell into
-/// the parent shell. Only trusted wt-internal callers write to it.
+/// file contents are arbitrary shell, wt scrubs this from project-alias and
+/// hook child environments — a body authored in shared config could inject
+/// shell into the parent shell. User-source aliases re-add it (issue #2101)
+/// since the body is user-authored just like a top-level `wt --execute`.
 pub const DIRECTIVE_EXEC_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_EXEC_FILE";
 
 /// Legacy pre-split directive file env var. Honored for one release so users
@@ -353,16 +358,6 @@ thread_local! {
 /// to all git operations within that task.
 pub fn set_command_timeout(timeout: Option<Duration>) {
     COMMAND_TIMEOUT.with(|t| t.set(timeout));
-}
-
-/// Emit an instant trace event (a milestone marker with no duration).
-///
-/// Re-exported from [`crate::trace::emit::instant`] for convenience at the
-/// call sites that already import from `shell_exec`. Instant events appear as
-/// vertical lines in Chrome Trace Format visualization tools
-/// (chrome://tracing, Perfetto).
-pub fn trace_instant(event: &str) {
-    crate::trace::emit::instant(event);
 }
 
 /// Maximum lines of captured stdout/stderr emitted to stderr per stream.
@@ -473,33 +468,6 @@ fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
         bytes_emitted += line.len() + 1;
     }
     out
-}
-
-/// Emit a `[wt-trace]` line plus stdout/stderr for a finished command.
-fn log_command_result(
-    context: Option<&str>,
-    cmd_str: &str,
-    ts: u64,
-    tid: u64,
-    dur_us: u64,
-    result: &std::io::Result<std::process::Output>,
-) {
-    match result {
-        Ok(output) => {
-            crate::trace::emit::command_completed(
-                context,
-                cmd_str,
-                ts,
-                tid,
-                dur_us,
-                output.status.success(),
-            );
-            log_output(output);
-        }
-        Err(e) => {
-            crate::trace::emit::command_errored(context, cmd_str, ts, tid, dur_us, e);
-        }
-    }
 }
 
 /// Implementation of timeout-based command execution.
@@ -620,9 +588,14 @@ pub struct Cmd {
     /// When set, re-adds `WORKTRUNK_DIRECTIVE_CD_FILE` after the security scrub
     /// in `apply_common_settings`. Used by aliases and foreground hooks — their
     /// shell bodies may emit cd directives (the file holds a raw path, no shell
-    /// injection surface). `WORKTRUNK_DIRECTIVE_EXEC_FILE` is NEVER re-added,
-    /// so alias/hook bodies cannot inject arbitrary shell into the parent.
+    /// injection surface).
     directive_cd_file: Option<std::path::PathBuf>,
+    /// When set, re-adds `WORKTRUNK_DIRECTIVE_EXEC_FILE` after the security
+    /// scrub. Set only by user-source aliases (issue #2101): the body is the
+    /// user's own config, so a nested `wt --execute` is no different from the
+    /// user typing it at the top level. Project aliases and hooks must NEVER
+    /// set this — they could inject arbitrary shell into the parent session.
+    directive_exec_file: Option<std::path::PathBuf>,
     /// When set, re-adds the legacy `WORKTRUNK_DIRECTIVE_FILE` env var. Used in
     /// legacy-wrapper compat mode to preserve pre-split behavior for alias/hook
     /// bodies running under an old shell wrapper.
@@ -653,6 +626,77 @@ impl ExternalCommandLog {
     }
 }
 
+/// Per-subprocess `[wt-trace]` recorder used by `Cmd::run`, `Cmd::pipe_into`,
+/// and `Cmd::stream`.
+///
+/// Captures `ts`/`tid`/`started_at` at construction; callers invoke
+/// `completed` / `errored` at each exit point. `record_result` is a
+/// convenience wrapper used by `run`/`pipe_into` (which have a single
+/// `Result<Output>` exit each, plus captured stdout/stderr to surface).
+/// `stream` has multiple exit points and uses the lower-level methods.
+struct WtTraceLog<'a> {
+    context: Option<&'a str>,
+    cmd_str: &'a str,
+    started_at: Instant,
+    ts: u64,
+    tid: u64,
+}
+
+impl<'a> WtTraceLog<'a> {
+    fn new(context: Option<&'a str>, cmd_str: &'a str) -> Self {
+        let started_at = Instant::now();
+        let ts = started_at
+            .duration_since(crate::trace::emit::trace_epoch())
+            .as_micros() as u64;
+        let tid = crate::trace::emit::thread_id();
+        Self {
+            context,
+            cmd_str,
+            started_at,
+            ts,
+            tid,
+        }
+    }
+
+    fn completed(&self, success: bool) {
+        let dur_us = self.started_at.elapsed().as_micros() as u64;
+        crate::trace::emit::command_completed(
+            self.context,
+            self.cmd_str,
+            self.ts,
+            self.tid,
+            dur_us,
+            success,
+        );
+    }
+
+    fn errored(&self, err: impl std::fmt::Display) {
+        let dur_us = self.started_at.elapsed().as_micros() as u64;
+        crate::trace::emit::command_errored(
+            self.context,
+            self.cmd_str,
+            self.ts,
+            self.tid,
+            dur_us,
+            err,
+        );
+    }
+
+    /// Emit a trace record for a finished `run`/`pipe_into` invocation and
+    /// surface the captured stdout/stderr to the debug log. `stream` doesn't
+    /// capture output (it inherits stdio), so it uses `completed`/`errored`
+    /// directly.
+    fn record_result(&self, result: &std::io::Result<std::process::Output>) {
+        match result {
+            Ok(output) => {
+                self.completed(output.status.success());
+                log_output(output);
+            }
+            Err(e) => self.errored(e),
+        }
+    }
+}
+
 impl Cmd {
     fn builder(program: impl Into<String>, shell_wrap: bool) -> Self {
         Self {
@@ -671,6 +715,7 @@ impl Cmd {
             forward_signals: false,
             external_label: None,
             directive_cd_file: None,
+            directive_exec_file: None,
             directive_legacy_file: None,
         }
     }
@@ -894,12 +939,22 @@ impl Cmd {
     /// contexts (aliases, foreground hooks) where the child should be able
     /// to request a directory change. It is always safe to pass through: the
     /// file holds a raw path, not shell, so there is no injection surface.
-    ///
-    /// `WORKTRUNK_DIRECTIVE_EXEC_FILE` is intentionally *not* exposed by any
-    /// `Cmd` method — only wt-internal Rust code writes arbitrary shell
-    /// directives, so no child process ever needs the env var.
     pub fn directive_cd_file(mut self, path: impl Into<std::path::PathBuf>) -> Self {
         self.directive_cd_file = Some(path.into());
+        self
+    }
+
+    /// Pass the EXEC directive file through to the child process.
+    ///
+    /// Re-adds `WORKTRUNK_DIRECTIVE_EXEC_FILE`, allowing the child to request
+    /// arbitrary shell execution in the parent shell (the wrapper sources the
+    /// file after wt exits). This is only safe when the child's command body
+    /// is itself trusted user-authored input — currently just user-source
+    /// aliases, where the alias body lives in the user's own config and
+    /// nesting `wt --execute` is no different from the user typing it. Project
+    /// aliases and hooks must not call this — see issue #2101.
+    pub fn directive_exec_file(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.directive_exec_file = Some(path.into());
         self
     }
 
@@ -930,7 +985,9 @@ impl Cmd {
             "Cmd::shell() commands must use .stream(), not .run()"
         );
         debug_assert!(
-            self.directive_cd_file.is_none() && self.directive_legacy_file.is_none(),
+            self.directive_cd_file.is_none()
+                && self.directive_exec_file.is_none()
+                && self.directive_legacy_file.is_none(),
             "directive_*_file is only applied by .stream(), not .run()"
         );
 
@@ -941,12 +998,7 @@ impl Cmd {
         // Acquire semaphore to limit concurrent commands
         let _guard = semaphore().acquire();
 
-        // Capture timing for tracing
-        let t0 = Instant::now();
-        let ts = t0
-            .duration_since(crate::trace::emit::trace_epoch())
-            .as_micros() as u64;
-        let tid = crate::trace::emit::thread_id();
+        let trace_log = WtTraceLog::new(self.context.as_deref(), &cmd_str);
 
         let mut cmd = self.direct_command();
         self.apply_common_settings(&mut cmd);
@@ -981,9 +1033,7 @@ impl Cmd {
             cmd.output()
         };
 
-        // Log trace
-        let dur_us = t0.elapsed().as_micros() as u64;
-        log_command_result(self.context.as_deref(), &cmd_str, ts, tid, dur_us, &result);
+        trace_log.record_result(&result);
 
         let exit_code = result.as_ref().ok().and_then(|output| output.status.code());
         external_log.record(exit_code);
@@ -1036,8 +1086,10 @@ impl Cmd {
         );
         debug_assert!(
             self.directive_cd_file.is_none()
+                && self.directive_exec_file.is_none()
                 && self.directive_legacy_file.is_none()
                 && next.directive_cd_file.is_none()
+                && next.directive_exec_file.is_none()
                 && next.directive_legacy_file.is_none(),
             "directive_*_file is only applied by .stream(), not pipe_into"
         );
@@ -1049,11 +1101,8 @@ impl Cmd {
 
         let _guard = semaphore().acquire();
 
-        let t0 = Instant::now();
-        let ts = t0
-            .duration_since(crate::trace::emit::trace_epoch())
-            .as_micros() as u64;
-        let tid = crate::trace::emit::thread_id();
+        let first_log = WtTraceLog::new(self.context.as_deref(), &first_cmd_str);
+        let second_log = WtTraceLog::new(next.context.as_deref(), &second_cmd_str);
 
         let mut first = self.direct_command();
         self.apply_common_settings(&mut first);
@@ -1096,7 +1145,7 @@ impl Cmd {
             .take()
             .expect("stderr was configured as piped");
 
-        let (first_result, second_result, first_dur_us, second_dur_us) = std::thread::scope(|s| {
+        let (first_result, second_result) = std::thread::scope(|s| {
             let stderr_thread = s.spawn(move || {
                 let mut buf = Vec::new();
                 first_stderr_pipe.read_to_end(&mut buf).map(|_| buf)
@@ -1105,13 +1154,12 @@ impl Cmd {
             // Drain `next` first (its `wait_with_output` reads its own
             // stdout/stderr), so `first`'s writes can complete.
             let second_result = second_child.wait_with_output();
-            let second_dur_us = t0.elapsed().as_micros() as u64;
+            second_log.record_result(&second_result);
 
             // Reap `first`. Its stderr is already being drained; combine
             // the captured stderr with the exit status into an Output.
             let first_status = first_child.wait();
             let first_stderr = stderr_thread.join().unwrap();
-            let first_dur_us = t0.elapsed().as_micros() as u64;
 
             let first_result = first_status.and_then(|status| {
                 first_stderr.map(|stderr| std::process::Output {
@@ -1120,26 +1168,10 @@ impl Cmd {
                     stderr,
                 })
             });
+            first_log.record_result(&first_result);
 
-            (first_result, second_result, first_dur_us, second_dur_us)
+            (first_result, second_result)
         });
-
-        log_command_result(
-            self.context.as_deref(),
-            &first_cmd_str,
-            ts,
-            tid,
-            first_dur_us,
-            &first_result,
-        );
-        log_command_result(
-            next.context.as_deref(),
-            &second_cmd_str,
-            ts,
-            tid,
-            second_dur_us,
-            &second_result,
-        );
 
         Ok((first_result?, second_result?))
     }
@@ -1188,9 +1220,14 @@ impl Cmd {
 
         // Re-add directive files after security scrub for trusted contexts.
         // CD file is always safe to pass through (raw path, no shell). EXEC
-        // file is never re-added — alias/hook bodies must not inject shell.
+        // file is only re-added for user-source aliases (issue #2101); project
+        // aliases and hooks leave it scrubbed so their bodies cannot inject
+        // shell into the parent session.
         if let Some(ref path) = self.directive_cd_file {
             cmd.env(DIRECTIVE_CD_FILE_ENV_VAR, path);
+        }
+        if let Some(ref path) = self.directive_exec_file {
+            cmd.env(DIRECTIVE_EXEC_FILE_ENV_VAR, path);
         }
         if let Some(ref path) = self.directive_legacy_file {
             cmd.env(DIRECTIVE_FILE_ENV_VAR, path);
@@ -1210,7 +1247,7 @@ impl Cmd {
         };
 
         #[cfg(unix)]
-        let mut signals = if self.forward_signals {
+        let signals = if self.forward_signals {
             Some(Signals::new([SIGINT, SIGTERM])?)
         } else {
             None
@@ -1237,11 +1274,17 @@ impl Cmd {
             // Prevent vergen "overridden" warning in nested cargo builds
             .env_remove("VERGEN_GIT_DESCRIBE");
 
-        let mut child = cmd.spawn().map_err(|e| {
-            anyhow::Error::from(GitError::Other {
-                message: format!("Failed to execute command ({}): {}", exec_mode, e),
-            })
-        })?;
+        let trace_log = WtTraceLog::new(self.context.as_deref(), &cmd_str);
+
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                trace_log.errored(&e);
+                return Err(anyhow::Error::from(GitError::Other {
+                    message: format!("Failed to execute command ({}): {}", exec_mode, e),
+                }));
+            }
+        };
 
         // Write stdin content if provided (ignore BrokenPipe - child may exit early)
         if let Some(ref content) = self.stdin_data
@@ -1249,28 +1292,41 @@ impl Cmd {
             && let Err(e) = stdin.write_all(content)
             && e.kind() != std::io::ErrorKind::BrokenPipe
         {
+            trace_log.errored(&e);
             return Err(e.into());
         }
         // stdin handle is dropped here, closing the pipe
 
-        // Wait for child with optional signal forwarding
+        // Wait for child. With signal forwarding, a listener thread blocks
+        // on `Signals::forever()` and forwards SIGINT/SIGTERM to the child;
+        // the main thread blocks on `child.wait()`. After wait returns we
+        // close the signal handle (which unblocks `forever()`) and join
+        // the listener.
         #[cfg(unix)]
-        let (status, seen_signal) = if self.forward_signals {
+        let listener_state = signals.map(|mut signals| {
             let child_pid = child.id() as i32;
-            let mut seen_signal: Option<i32> = None;
-            loop {
-                if let Some(status) = child.try_wait().map_err(|e| {
-                    anyhow::Error::from(GitError::Other {
-                        message: format!("Failed to wait for command: {}", e),
-                    })
-                })? {
-                    break (status, seen_signal);
-                }
-                if let Some(signals) = signals.as_mut() {
-                    for sig in signals.pending() {
-                        if seen_signal.is_none() {
-                            seen_signal = Some(sig);
-                            if self.share_parent_pgroup {
+            let share_parent_pgroup = self.share_parent_pgroup;
+            let handle = signals.handle();
+            // Sentinel 0 = no signal yet (POSIX signals are >= 1). First
+            // signal wins via compare_exchange; subsequent signals are
+            // dropped, matching the prior loop's first-signal-only semantics.
+            // Re-press escalation lives inside `forward_signal_with_escalation`
+            // (SIGINT → SIGTERM → SIGKILL with grace windows).
+            let seen = std::sync::Arc::new(std::sync::atomic::AtomicI32::new(0));
+            let listener = {
+                let seen = std::sync::Arc::clone(&seen);
+                std::thread::spawn(move || {
+                    for sig in signals.forever() {
+                        if seen
+                            .compare_exchange(
+                                0,
+                                sig,
+                                std::sync::atomic::Ordering::Relaxed,
+                                std::sync::atomic::Ordering::Relaxed,
+                            )
+                            .is_ok()
+                        {
+                            if share_parent_pgroup {
                                 // Shared-pgroup mode: tty-initiated signals
                                 // (Ctrl-C, hangup) already hit the child via
                                 // kernel fg-pgroup delivery. Forward by PID
@@ -1287,28 +1343,48 @@ impl Cmd {
                             }
                         }
                     }
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-        } else {
-            let status = child.wait().map_err(|e| {
-                anyhow::Error::from(GitError::Other {
-                    message: format!("Failed to wait for command: {}", e),
                 })
-            })?;
-            (status, None)
+            };
+            (handle, listener, seen)
+        });
+
+        let wait_result = child.wait();
+
+        // Always tear down the listener, even on wait error, so the
+        // signal-hook handle is released and the thread doesn't leak.
+        #[cfg(unix)]
+        let seen_signal = listener_state.and_then(|(handle, listener, seen)| {
+            handle.close();
+            let _ = listener.join();
+            let sig = seen.load(std::sync::atomic::Ordering::Relaxed);
+            (sig != 0).then_some(sig)
+        });
+
+        let status = match wait_result {
+            Ok(status) => status,
+            Err(e) => {
+                trace_log.errored(&e);
+                return Err(anyhow::Error::from(GitError::Other {
+                    message: format!("Failed to wait for command: {}", e),
+                }));
+            }
         };
 
-        #[cfg(not(unix))]
-        let status = child.wait().map_err(|e| {
-            anyhow::Error::from(GitError::Other {
-                message: format!("Failed to wait for command: {}", e),
-            })
-        })?;
-
-        // Handle signals (Unix only)
+        // Handle signals (Unix only).
+        //
+        // `seen_signal` records any signal forwarded by the listener thread,
+        // covering the case where the child caught the signal and exited with
+        // a code (no kernel `status.signal()` to read). The clean-exit gate
+        // closes the wait-vs-handle.close window: if `child.wait()` returned
+        // success and a signal then landed before `handle.close()` ran, the
+        // signal arrived too late to have killed anything — the contract on
+        // `signal: Some(_)` is "this child was killed by the signal" and
+        // `interrupt_exit_code` callers in pipeline loops break on it.
         #[cfg(unix)]
-        if let Some(sig) = seen_signal {
+        if let Some(sig) = seen_signal
+            && !status.success()
+        {
+            trace_log.completed(false);
             external_log.record(Some(128 + sig));
             return Err(WorktrunkError::ChildProcessExited {
                 code: 128 + sig,
@@ -1323,9 +1399,11 @@ impl Cmd {
             // SIGPIPE (13) is expected when a pager (less, bat) exits before the
             // child finishes writing — not an error from the user's perspective.
             if sig == SIGPIPE {
+                trace_log.completed(true);
                 external_log.record(Some(0));
                 return Ok(());
             }
+            trace_log.completed(false);
             external_log.record(Some(128 + sig));
             return Err(WorktrunkError::ChildProcessExited {
                 code: 128 + sig,
@@ -1337,6 +1415,7 @@ impl Cmd {
 
         if !status.success() {
             let code = status.code().unwrap_or(1);
+            trace_log.completed(false);
             external_log.record(status.code());
             return Err(WorktrunkError::ChildProcessExited {
                 code,
@@ -1346,6 +1425,7 @@ impl Cmd {
             .into());
         }
 
+        trace_log.completed(true);
         external_log.record(Some(0));
 
         Ok(())
@@ -1770,6 +1850,20 @@ mod tests {
             }
             _ => panic!("Expected ChildProcessExited error"),
         }
+    }
+
+    #[test]
+    fn test_cmd_stream_spawn_failure_is_errored() {
+        // Spawning a non-existent binary fails inside `cmd.spawn()`, exercising
+        // the `Err` arm of the new spawn-match in `stream()` (and the
+        // `WtTraceLog::errored` path that fires alongside it).
+        let result = Cmd::new("/no/such/binary-7f3a9b2c").stream();
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("Failed to execute command"),
+            "expected spawn-failure message, got: {msg}"
+        );
     }
 
     #[test]

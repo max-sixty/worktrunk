@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use color_print::cformat;
-use worktrunk::git::{GitError, Repository};
+use worktrunk::git::{ErrorExt, GitError, Repository};
 use worktrunk::styling::{
     eprintln, format_with_gutter, info_message, progress_message, success_message, warning_message,
 };
@@ -42,6 +42,22 @@ impl PushKind {
             PushKind::MergeFastForward => "Merging",
         }
     }
+}
+
+/// Outcome of a push or no-ff merge, returned for JSON output.
+pub struct PushResult {
+    pub target: String,
+    pub commit_count: usize,
+    pub outcome: PushOutcome,
+}
+
+pub enum PushOutcome {
+    /// Target was fast-forwarded to HEAD.
+    FastForwarded,
+    /// Target already contained HEAD; nothing to push.
+    UpToDate,
+    /// A new merge commit was created on the target branch.
+    MergeCommit { merge_sha: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -144,8 +160,8 @@ impl MergeContext {
         } else {
             "commits"
         };
-        let head_sha = self.repo.run_command(&["rev-parse", "--short", "HEAD"])?;
-        let head_sha = head_sha.trim();
+        let full_sha = self.repo.run_command(&["rev-parse", "HEAD"])?;
+        let head_sha = self.repo.short_sha(full_sha.trim())?;
 
         let operations_note = format_operations_note(operations);
 
@@ -279,7 +295,7 @@ pub fn handle_push(
     target: Option<&str>,
     kind: PushKind,
     operations: Option<MergeOperations>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<PushResult> {
     let mut ctx = MergeContext::prepare(target, operations)?;
 
     ctx.show_progress(kind.verb_progressive(), "", operations)?;
@@ -299,18 +315,24 @@ pub fn handle_push(
         ])
         .map_err(|e| GitError::PushFailed {
             target_branch: ctx.target_branch.clone(),
-            error: e.to_string(),
+            error: e.display_message(),
         })?;
 
     ctx.restore_stash();
 
-    if ctx.commit_count > 0 {
+    let outcome = if ctx.commit_count > 0 {
         ctx.show_success(kind.verb_past(), "", "");
+        PushOutcome::FastForwarded
     } else {
         ctx.show_up_to_date_if_needed(operations);
-    }
+        PushOutcome::UpToDate
+    };
 
-    Ok(())
+    Ok(PushResult {
+        target: ctx.target_branch,
+        commit_count: ctx.commit_count,
+        outcome,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -335,13 +357,17 @@ pub fn handle_no_ff_merge(
     target: Option<&str>,
     operations: Option<MergeOperations>,
     feature_branch: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<PushResult> {
     let mut ctx = MergeContext::prepare(target, operations)?;
 
     ctx.show_progress("Merging", " (--no-ff)", operations)?;
 
     if ctx.show_up_to_date_if_needed(operations) {
-        return Ok(());
+        return Ok(PushResult {
+            target: ctx.target_branch,
+            commit_count: 0,
+            outcome: PushOutcome::UpToDate,
+        });
     }
 
     // Create the merge commit using git plumbing.
@@ -385,7 +411,7 @@ pub fn handle_no_ff_merge(
         .run_command(&["update-ref", &target_ref, &merge_sha, &ctx.target_tip])
         .map_err(|e| GitError::PushFailed {
             target_branch: ctx.target_branch.clone(),
-            error: format!("Failed to update ref: {e:#}"),
+            error: format!("Failed to update ref: {}", e.display_message()),
         })?;
 
     // Sync the target worktree's working tree if it exists.
@@ -415,11 +441,16 @@ pub fn handle_no_ff_merge(
 
     ctx.restore_stash();
 
-    let merge_sha_short = &merge_sha[..merge_sha.len().min(7)];
+    // Display uses `Repository::short_sha`; the JSON payload carries the full SHA.
+    let merge_sha_short = ctx.repo.short_sha(&merge_sha)?;
     let sha_suffix = cformat!(" @ <dim>{merge_sha_short}</>");
     ctx.show_success("Merged to", &sha_suffix, ", --no-ff");
 
-    Ok(())
+    Ok(PushResult {
+        target: ctx.target_branch,
+        commit_count: ctx.commit_count,
+        outcome: PushOutcome::MergeCommit { merge_sha },
+    })
 }
 
 #[cfg(test)]

@@ -26,7 +26,7 @@ pub fn step_eval(template: &str, dry_run: bool) -> anyhow::Result<()> {
     let worktree_path = wt.root()?;
 
     let ctx = CommandContext::new(&repo, &config, branch.as_deref(), &worktree_path, false);
-    let context_map = build_hook_context(&ctx, &[])?;
+    let context_map = build_hook_context(&ctx, &[], None)?;
 
     let vars: HashMap<&str, &str> = context_map
         .iter()

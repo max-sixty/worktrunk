@@ -98,7 +98,7 @@ fn run_post_hook(
         if flat.is_empty() {
             return Ok(());
         }
-        announcer.extend(std::iter::once((*ctx, flat)));
+        announcer.extend(std::iter::once((*ctx, hook_type, None, flat)));
     }
     announcer.flush()
 }
@@ -366,13 +366,19 @@ pub fn run_hook(
 }
 
 /// Handle `wt hook show` command - display configured hooks
-pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyhow::Result<()> {
+pub fn handle_hook_show(
+    hook_type_filter: Option<&str>,
+    expanded: bool,
+    format: crate::cli::SwitchFormat,
+) -> anyhow::Result<()> {
     use crate::help_pager::show_help_in_pager;
 
     let repo = Repository::current().context("Failed to show hooks")?;
-    let config = UserConfig::load().context("Failed to load user config")?;
+    let config: &UserConfig = repo.user_config();
+    let project_config: Option<&ProjectConfig> = repo
+        .project_config()
+        .context("Failed to load project config")?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
-    let project_config = repo.load_project_config()?;
     let project_id = repo.project_identifier().ok();
 
     // Parse hook type filter if provided
@@ -400,28 +406,120 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
     };
     let ctx = env.as_ref().map(|e| e.context(false));
 
+    if format == crate::cli::SwitchFormat::Json {
+        return emit_hook_show_json(
+            config,
+            project_config,
+            &approvals,
+            project_id.as_deref(),
+            filter,
+            ctx.as_ref(),
+            expanded,
+        );
+    }
+
     let mut output = String::new();
 
     // Render user hooks
-    render_user_hooks(&mut output, &config, filter, ctx.as_ref())?;
+    render_user_hooks(&mut output, config, filter, ctx.as_ref())?;
     output.push('\n');
 
     // Render project hooks
     render_project_hooks(
         &mut output,
         &repo,
-        project_config.as_ref(),
+        project_config,
         &approvals,
         project_id.as_deref(),
         filter,
         ctx.as_ref(),
     )?;
 
-    // Display through pager; fall back to direct stdout if pager unavailable
-    if show_help_in_pager(&output, true).is_err() {
-        worktrunk::styling::println!("{}", output);
+    show_help_in_pager(&output, true);
+
+    Ok(())
+}
+
+/// Emit configured hooks as a JSON array of structured records.
+///
+/// Each record carries the hook type, source (user or project), optional name,
+/// raw template, project approval status, and — when `--expanded` was passed —
+/// the rendered command preview.
+#[allow(clippy::too_many_arguments)]
+fn emit_hook_show_json(
+    user_config: &UserConfig,
+    project_config: Option<&ProjectConfig>,
+    approvals: &Approvals,
+    project_id: Option<&str>,
+    filter: Option<HookType>,
+    ctx: Option<&CommandContext>,
+    expanded: bool,
+) -> anyhow::Result<()> {
+    let mut entries: Vec<serde_json::Value> = Vec::new();
+
+    let mut emit = |hook_type: HookType,
+                    source: &'static str,
+                    cfg: &CommandConfig,
+                    needs_approval_for: Option<(&Approvals, Option<&str>)>|
+     -> anyhow::Result<()> {
+        for cmd in cfg.commands() {
+            let needs_approval = needs_approval_for
+                .map(|(approvals, project_id)| {
+                    project_id.is_some_and(|pid| !approvals.is_command_approved(pid, &cmd.template))
+                })
+                .unwrap_or(false);
+
+            let mut obj = serde_json::json!({
+                "type": hook_type.to_string(),
+                "source": source,
+                "name": cmd.name,
+                "template": cmd.template,
+                "needs_approval": needs_approval,
+            });
+
+            if expanded && let Some(command_ctx) = ctx {
+                let rendered = expand_command_template(
+                    &cmd.template,
+                    command_ctx,
+                    hook_type,
+                    cmd.name.as_deref(),
+                )?;
+                obj["expanded"] = serde_json::Value::String(rendered);
+            }
+
+            entries.push(obj);
+        }
+        Ok(())
+    };
+
+    // User hooks
+    let user_hooks = &user_config.hooks;
+    for hook_type in HookType::iter() {
+        if let Some(f) = filter
+            && f != hook_type
+        {
+            continue;
+        }
+        if let Some(cfg) = user_hooks.get(hook_type) {
+            emit(hook_type, "user", cfg, None)?;
+        }
     }
 
+    // Project hooks
+    if let Some(project) = project_config {
+        for hook_type in HookType::iter() {
+            if let Some(f) = filter
+                && f != hook_type
+            {
+                continue;
+            }
+            if let Some(cfg) = project.hooks.get(hook_type) {
+                emit(hook_type, "project", cfg, Some((approvals, project_id)))?;
+            }
+        }
+    }
+
+    println!("{}", serde_json::to_string_pretty(&entries)?);
     Ok(())
 }
 
@@ -590,7 +688,7 @@ fn expand_command_template(
     let default_branch = ctx.repo.default_branch();
     let template_vars = build_manual_hook_template_vars(ctx, hook_type, default_branch.as_deref());
     let extra_vars = template_vars.as_extra_vars();
-    let mut template_ctx = build_hook_context(ctx, &extra_vars)?;
+    let mut template_ctx = build_hook_context(ctx, &extra_vars, None)?;
     template_ctx.insert("hook_type".into(), hook_type.to_string());
     if let Some(name) = hook_name {
         template_ctx.insert("hook_name".into(), name.into());

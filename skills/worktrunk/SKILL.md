@@ -1,7 +1,7 @@
 ---
 name: worktrunk
 description: Guidance for Worktrunk (the `wt` CLI) — git worktree management, hooks, and config. Load when editing .config/wt.toml or ~/.config/worktrunk/config.toml; adding, modifying, or debugging hooks (post-merge, post-start, pre-commit, pre-merge, post-switch, etc.); configuring commit message generation or command aliases; or troubleshooting wt behavior. Also answers general worktrunk/wt questions.
-version: 0.46.1
+version: 0.48.0
 license: MIT OR Apache-2.0
 compatibility: Requires worktrunk CLI (https://worktrunk.dev)
 ---
@@ -297,3 +297,22 @@ Example (Zellij, OpenCode):
 zellij run -- wt switch --create fix-auth-bug -x 'opencode run' -- \
   'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'
 ```
+
+### Parallel sub-Agents (single Claude Code session)
+
+To spawn multiple sub-Agents that each work in their own worktree from one Claude Code session — no terminal multiplexer, no human in the other pane — pre-create each worktree from the parent and pass the path into the sub-Agent prompt:
+
+```bash
+wt switch --create <branch> --no-cd --no-hooks
+```
+
+Then call the `Agent` tool **without** `isolation: "worktree"`, naming the path in the prompt:
+
+```
+You are working in `/abs/path/to/worktrunk.<branch>` on branch `<branch>`.
+All edits must stay in that worktree.
+```
+
+`--no-cd` skips the shell-integration cd script the parent can't consume; `--no-hooks` is appropriate when each sub-Agent will run its own build/test step (e.g. `cargo run -- hook pre-merge --yes`) and you don't need post-start setup repeated per worktree.
+
+**Do not** use `Agent { isolation: "worktree" }` for this. Claude Code passes its internal agent ID as `name` to the `WorktreeCreate` hook, so `wt` creates the worktree as `worktrunk.agent-<id>` on a throwaway branch. If the sub-Agent then creates a feature branch on top, you end up with non-canonical paths, orphan branches, and post-start hooks fired against the wrong branch. Pre-creating with `wt switch --create` keeps path, branch, and hook target aligned.

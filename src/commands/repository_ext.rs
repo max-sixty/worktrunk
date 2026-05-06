@@ -7,8 +7,8 @@ use anyhow::{Context, bail};
 use color_print::cformat;
 use worktrunk::config::UserConfig;
 use worktrunk::git::{
-    BranchDeletionMode, GitError, IntegrationReason, Repository, WorktreeInfo, parse_porcelain_z,
-    parse_untracked_files,
+    BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorktreeInfo,
+    parse_porcelain_z, parse_untracked_files,
 };
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{eprintln, format_with_gutter, progress_message, warning_message};
@@ -42,6 +42,12 @@ pub trait RepositoryCliExt {
     ///
     /// `worktrees` provides a pre-fetched worktree list to avoid redundant
     /// `git worktree list` calls. Pass `None` to fetch on demand.
+    ///
+    /// `snapshot` provides a pre-captured ref snapshot to avoid redundant
+    /// `for-each-ref` scans when preparing many removals in a row (e.g.
+    /// `step_prune` validates one candidate per loop iteration). Pass `None`
+    /// to capture a fresh snapshot inside this call.
+    #[allow(clippy::too_many_arguments)]
     fn prepare_worktree_removal(
         &self,
         target: RemoveTarget,
@@ -50,6 +56,7 @@ pub trait RepositoryCliExt {
         config: &UserConfig,
         current_path: Option<PathBuf>,
         worktrees: Option<&[WorktreeInfo]>,
+        snapshot: Option<&RefSnapshot>,
     ) -> anyhow::Result<RemoveResult>;
 
     /// Prepare the target worktree for push by auto-stashing non-overlapping changes when safe.
@@ -79,6 +86,7 @@ impl RepositoryCliExt for Repository {
         warn_about_untracked_files(&status)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn prepare_worktree_removal(
         &self,
         target: RemoveTarget,
@@ -87,6 +95,7 @@ impl RepositoryCliExt for Repository {
         config: &UserConfig,
         current_path: Option<PathBuf>,
         worktrees: Option<&[WorktreeInfo]>,
+        snapshot: Option<&RefSnapshot>,
     ) -> anyhow::Result<RemoveResult> {
         let current_path = current_path.map_or_else(|| self.current_worktree().root(), Ok)?;
         let worktrees = match worktrees {
@@ -96,6 +105,17 @@ impl RepositoryCliExt for Repository {
         // Primary worktree path: prefer default branch's worktree, fall back to first
         // worktree, then repo base for bare repos with no worktrees.
         let primary_path = self.home_path()?;
+
+        // Reuse caller's snapshot when present; otherwise capture once for the
+        // two `compute_integration_reason` calls below.
+        let owned_snapshot;
+        let snapshot = match snapshot {
+            Some(s) => s,
+            None => {
+                owned_snapshot = self.capture_refs()?;
+                &owned_snapshot
+            }
+        };
 
         // Phase 1: Resolve target to branch name and worktree disposition.
         // BranchOnly variants don't early-return — they go through shared validation below.
@@ -157,6 +177,7 @@ impl RepositoryCliExt for Repository {
                                 branch: branch.into(),
                                 show_create_hint: false,
                                 last_fetch_ago: None,
+                                pr_mr_platform: None,
                             }
                             .into());
                         }
@@ -223,8 +244,13 @@ impl RepositoryCliExt for Repository {
             Resolved::BranchOnly { branch, pruned } => {
                 let default_branch = self.default_branch();
                 let target = default_branch.as_deref().or(Some("HEAD"));
-                let (integration_reason, target_branch) =
-                    compute_integration_reason(self, Some(&branch), target, deletion_mode);
+                let (integration_reason, target_branch) = compute_integration_reason(
+                    self,
+                    snapshot,
+                    Some(&branch),
+                    target,
+                    deletion_mode,
+                );
                 return Ok(RemoveResult::BranchOnly {
                     branch_name: branch,
                     deletion_mode,
@@ -272,6 +298,7 @@ impl RepositoryCliExt for Repository {
         // display (e.g., origin/main when upstream is ahead).
         let (integration_reason, effective_target) = compute_integration_reason(
             self,
+            snapshot,
             branch_name.as_deref(),
             target_branch.as_deref(),
             deletion_mode,
@@ -444,6 +471,7 @@ pub(crate) fn is_primary_worktree(repo: &Repository) -> anyhow::Result<bool> {
 /// if the flag had an effect (branch was integrated) or not (branch was unmerged).
 pub(crate) fn compute_integration_reason(
     repo: &Repository,
+    snapshot: &RefSnapshot,
     branch_name: Option<&str>,
     target_branch: Option<&str>,
     deletion_mode: BranchDeletionMode,
@@ -458,7 +486,7 @@ pub(crate) fn compute_integration_reason(
         None => return (None, None),
     };
     // On error, return None (informational only)
-    match repo.integration_reason(branch, target) {
+    match repo.integration_reason(snapshot, branch, target) {
         Ok((effective_target, reason)) => (reason, Some(effective_target)),
         Err(_) => (None, None),
     }

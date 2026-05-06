@@ -404,7 +404,15 @@ pub(crate) struct RemoveArgs {
     pub(crate) branches: Vec<String>,
 
     /// Keep branch after removal
-    #[arg(long = "no-delete-branch", action = clap::ArgAction::SetFalse, default_value_t = true)]
+    #[arg(long = "no-delete-branch", overrides_with = "delete_branch")]
+    pub(crate) no_delete_branch: bool,
+
+    /// Delete branch after removal (overrides config `[remove] delete-branch = false`)
+    #[arg(
+        long = "delete-branch",
+        overrides_with = "no_delete_branch",
+        hide = true
+    )]
     pub(crate) delete_branch: bool,
 
     /// Delete unmerged branches
@@ -847,7 +855,7 @@ $ wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 | Field | Type | Description |
 |-------|------|-------------|
 | `sha` | string | Full commit SHA (40 chars) |
-| `short_sha` | string | Short commit SHA (7 chars) |
+| `short_sha` | string | Short commit SHA, abbreviated per `core.abbrev` (auto-extends for ambiguous prefixes) |
 | `message` | string | Commit message (first line) |
 | `timestamp` | number | Unix timestamp |
 
@@ -1303,7 +1311,7 @@ Hooks can use template variables that expand at runtime:
 |           | `{{ worktree_path }}`         | Worktree path |
 |           | `{{ worktree_name }}`         | Worktree directory name |
 |           | `{{ commit }}`                | Branch HEAD SHA |
-|           | `{{ short_commit }}`          | Branch HEAD SHA (7 chars) |
+|           | `{{ short_commit }}`          | Branch HEAD SHA, abbreviated per `core.abbrev` |
 |           | `{{ upstream }}`              | Branch upstream (if tracking a remote) |
 | operation | `{{ base }}`                  | Base branch name |
 |           | `{{ base_worktree_path }}`    | Base worktree path |
@@ -1363,12 +1371,21 @@ Templates support Jinja2 filters for transforming values:
 | `sanitize_hash` | `{{ branch \| sanitize_hash }}` | Filesystem-safe name with hash suffix for uniqueness |
 | `hash` | `{{ branch \| hash }}` | 3-character base36 digest of the input |
 | `hash_port` | `{{ branch \| hash_port }}` | Hash to port 10000-19999 |
+| `dirname` | `{{ repo_path \| dirname }}` | Strip the last path component (`/a/b/c` → `/a/b`) |
+| `basename` | `{{ repo_path \| basename }}` | Keep only the last path component (`/a/b/c` → `c`) |
 
 The `sanitize` filter makes branch names safe for filesystem paths. The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `sanitize_hash` filter produces a filesystem-safe name and appends a 3-character hash suffix when sanitization changed the input, so distinct originals never collide — already-safe names pass through unchanged. The `hash` filter is the bare 3-character base36 digest, useful for composing your own truncate-with-collision-avoidance recipes when an output budget is tight (e.g., Unix socket paths capped at 107 bytes):
 
 ```toml
 # Truncated branch slug + hash: collisions remain disambiguated even when prefixes match
 worktree-path = "/tmp/{{ (branch | sanitize)[:20] }}_{{ branch | sanitize | hash }}"
+```
+
+The `dirname` and `basename` filters traverse paths. They're useful for bare repos in a hidden directory like `myproject/.git`, where `{{ repo }}` resolves to `.git`:
+
+```toml
+# Place worktrees as siblings of the bare repo, named `<wrapper>.<branch>`
+worktree-path = "{{ repo_path }}/../{{ repo_path | dirname | basename }}.{{ branch | sanitize }}"
 ```
 
 The `hash_port` filter is useful for running dev servers on unique ports per worktree:
@@ -1699,6 +1716,15 @@ verify = true      # Run project hooks (--no-hooks to skip)
 ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 ```
 
+### Remove
+
+Persistent flag values for `wt remove`. Override on command line as needed.
+
+```toml
+[remove]
+delete-branch = true   # Delete branch after removal (--no-delete-branch to keep)
+```
+
 ### Switch
 
 ```toml
@@ -1716,7 +1742,7 @@ pager = "delta --paging=never"   # Example: override git's core.pager for diff p
 exclude = []   # Additional excludes (e.g., [".cache/", ".turbo/"])
 ```
 
-Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.
+Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.worktrees/`). User config and project config exclusions are combined.
 
 ### Aliases
 
@@ -1745,6 +1771,7 @@ Entries are keyed by project identifier (e.g., `github.com/user/repo`). Scalar v
 worktree-path = ".worktrees/{{ branch | sanitize }}"
 list.full = true
 merge.squash = false
+remove.delete-branch = false
 pre-start.env = "cp .env.example .env"
 step.copy-ignored.exclude = [".repo-local-cache/"]
 aliases.deploy = "make deploy BRANCH={{ branch }}"
@@ -1893,7 +1920,7 @@ Additional excludes for `wt step copy-ignored`:
 exclude = [".cache/", ".turbo/"]
 ```
 
-Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). User config and project config exclusions are combined.
+Built-in excludes always apply: VCS metadata directories (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state directories (`.conductor/`, `.entire/`, `.worktrees/`). User config and project config exclusions are combined.
 
 ## Aliases
 

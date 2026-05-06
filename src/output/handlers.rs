@@ -18,6 +18,7 @@ use crate::commands::process::{
 use crate::commands::worktree::hooks::PostRemoveContext;
 use crate::commands::worktree::{RemoveResult, SwitchBranchInfo, SwitchResult};
 use worktrunk::config::UserConfig;
+use worktrunk::git::ErrorExt;
 use worktrunk::git::GitError;
 use worktrunk::git::IntegrationReason;
 use worktrunk::git::Repository;
@@ -36,7 +37,7 @@ use worktrunk::styling::{
 
 use super::shell_integration::{
     compute_shell_warning_reason, explicit_path_hint, git_subcommand_warning,
-    shell_integration_hint, should_show_explicit_path_hint,
+    print_shell_integration_hint, should_show_explicit_path_hint,
 };
 
 // ============================================================================
@@ -449,7 +450,7 @@ fn handle_branch_deletion_result(
                 "{}",
                 error_message(cformat!("Failed to delete branch <bold>{branch_name}</>"))
             );
-            eprintln!("{}", format_with_gutter(&e.to_string(), None));
+            eprintln!("{}", format_with_gutter(&e.display_message(), None));
             Err(e)
         }
     }
@@ -588,7 +589,7 @@ fn print_switch_message_if_changed(
         if should_show_explicit_path_hint() {
             eprintln!("{}", hint_message(explicit_path_hint(&dest_branch)));
         } else {
-            eprintln!("{}", hint_message(shell_integration_hint()));
+            print_shell_integration_hint(&repo);
         }
     }
     Ok(())
@@ -1249,8 +1250,10 @@ fn handle_detached_removed_worktree_output(
                 format_path_for_display(ctx.worktree_path)
             ))
         );
+        let snapshot = repo.capture_refs()?;
         let output = remove_worktree_with_cleanup(
             repo,
+            &snapshot,
             ctx.worktree_path,
             RemoveOptions {
                 branch: None,
@@ -1263,7 +1266,7 @@ fn handle_detached_removed_worktree_output(
             branch: path_dir_name(ctx.worktree_path).to_string(),
             path: ctx.worktree_path.to_path_buf(),
             remaining_entries: list_remaining_entries(ctx.worktree_path),
-            error: err.to_string(),
+            error: err.display_message(),
         })?;
         let (files, bytes) = output
             .staged_path
@@ -1323,8 +1326,10 @@ fn handle_named_removed_worktree_foreground(
         );
     }
 
+    let snapshot = repo.capture_refs()?;
     let output = remove_worktree_with_cleanup(
         repo,
+        &snapshot,
         ctx.worktree_path,
         RemoveOptions {
             branch: Some(branch_name.to_string()),
@@ -1337,7 +1342,7 @@ fn handle_named_removed_worktree_foreground(
         branch: branch_name.into(),
         path: ctx.worktree_path.to_path_buf(),
         remaining_entries: list_remaining_entries(ctx.worktree_path),
-        error: err.to_string(),
+        error: err.display_message(),
     })?;
     let stats = output
         .staged_path
@@ -1440,17 +1445,19 @@ fn handle_removed_worktree_output(
 ///
 /// `directives` controls whether the child can write shell-integration
 /// directives back to the parent shell. The CD file is always safe to pass
-/// through (raw path, no injection surface); the EXEC file is never passed
-/// through — only wt-internal Rust code writes arbitrary shell directives.
+/// through (raw path, no injection surface); the EXEC file is normally scrubbed
+/// because alias/hook bodies must not inject arbitrary shell into the parent
+/// session — see [`DirectivePassthrough::inherit_from_env_with_exec`] for the
+/// one exception.
 ///
-/// - `DirectivePassthrough::none()` — scrubs all directive env vars from the
-///   child. Used by `for-each` (runs in other worktrees) and background hooks
-///   (outlive the parent shell).
-/// - `DirectivePassthrough::inherit_from_env()` — re-adds whichever directive
-///   env vars are currently set in this process. Used by aliases and
-///   foreground hooks, which may emit `cd` directives. In new-protocol mode
-///   only the CD file passes through; in legacy compat mode the single
-///   legacy file passes through to preserve pre-split behavior.
+/// - `DirectivePassthrough::default()` — scrubs all directive env vars from
+///   the child. Used by background hooks (outlive the parent shell).
+/// - `DirectivePassthrough::inherit_from_env()` — re-adds CD (and the legacy
+///   compat var) but scrubs EXEC. Used by project aliases and foreground hooks,
+///   which may emit `cd` directives but must not be able to inject shell.
+/// - `DirectivePassthrough::inherit_from_env_with_exec()` — also re-adds EXEC.
+///   Used only for user-source aliases, where the alias body is already user-
+///   authored just like a top-level `wt switch --execute` invocation.
 ///
 /// ## Stdout routing
 ///
@@ -1514,6 +1521,9 @@ pub fn execute_shell_command(
     if let Some(path) = directives.cd_file {
         cmd = cmd.directive_cd_file(path);
     }
+    if let Some(path) = directives.exec_file {
+        cmd = cmd.directive_exec_file(path);
+    }
     if let Some(path) = directives.legacy_file {
         cmd = cmd.directive_legacy_file(path);
     }
@@ -1528,38 +1538,51 @@ pub fn execute_shell_command(
 
 /// Selector for which directive file env vars to pass through to a child shell.
 ///
-/// Constructed by callers via [`DirectivePassthrough::none`] or
-/// [`DirectivePassthrough::inherit_from_env`]. The EXEC file is intentionally
-/// never included — alias/hook shell bodies must not inject arbitrary shell
-/// into the parent session.
+/// `Default` (no fields set) scrubs all directive env vars from the child;
+/// [`DirectivePassthrough::inherit_from_env`] reads the current process
+/// environment and re-adds CD only; [`DirectivePassthrough::inherit_from_env_with_exec`]
+/// re-adds CD and EXEC. The EXEC file is only included by the `_with_exec`
+/// variant — every other path scrubs it so alias/hook shell bodies cannot
+/// inject arbitrary shell into the parent session.
 #[derive(Debug, Default, Clone)]
 pub struct DirectivePassthrough {
     pub cd_file: Option<std::path::PathBuf>,
+    pub exec_file: Option<std::path::PathBuf>,
     pub legacy_file: Option<std::path::PathBuf>,
 }
 
 impl DirectivePassthrough {
-    /// Scrub all directive file env vars from the child process.
-    pub fn none() -> Self {
-        Self::default()
-    }
-
     /// Pass CD and legacy directive files through to the child, reading the
-    /// current process environment. Used by trusted contexts (aliases,
-    /// foreground hooks) that may legitimately emit a `cd` directive. The
-    /// EXEC file is deliberately omitted.
+    /// current process environment. Used by project aliases and foreground
+    /// hooks that may legitimately emit a `cd` directive. The EXEC file is
+    /// deliberately omitted — a project-config body could otherwise inject
+    /// arbitrary shell into the parent session.
     pub fn inherit_from_env() -> Self {
         use worktrunk::shell_exec::{DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR};
-        let read = |var: &str| {
-            std::env::var_os(var)
-                .map(std::path::PathBuf::from)
-                .filter(|p| !p.as_os_str().is_empty())
-        };
         Self {
-            cd_file: read(DIRECTIVE_CD_FILE_ENV_VAR),
-            legacy_file: read(DIRECTIVE_FILE_ENV_VAR),
+            cd_file: read_directive_env(DIRECTIVE_CD_FILE_ENV_VAR),
+            exec_file: None,
+            legacy_file: read_directive_env(DIRECTIVE_FILE_ENV_VAR),
         }
     }
+
+    /// Like [`Self::inherit_from_env`] but also passes the EXEC directive
+    /// file through. Used only for user-source aliases: the body lives in the
+    /// user's own config, so a nested `wt --execute` is no different from the
+    /// user typing the same command at the top level. See issue #2101.
+    pub fn inherit_from_env_with_exec() -> Self {
+        use worktrunk::shell_exec::DIRECTIVE_EXEC_FILE_ENV_VAR;
+        Self {
+            exec_file: read_directive_env(DIRECTIVE_EXEC_FILE_ENV_VAR),
+            ..Self::inherit_from_env()
+        }
+    }
+}
+
+fn read_directive_env(var: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os(var)
+        .map(std::path::PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
 }
 
 #[cfg(test)]
@@ -1709,12 +1732,6 @@ mod tests {
 
         let result = resolve_subdir_in_target(&target, Some(&source), &source);
         assert_eq!(result, target);
-    }
-
-    #[test]
-    fn test_shell_integration_hint() {
-        let hint = shell_integration_hint();
-        assert_snapshot!(hint, @"To enable automatic cd, run [4mwt config shell install[24m");
     }
 
     #[test]

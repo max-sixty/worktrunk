@@ -54,11 +54,10 @@ pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
 
     if print {
         // Emit migrated content to stdout. Multiple configs → separate with a
-        // labeled header so the output is still parseable. Warnings still go
-        // to stderr so stdout stays clean for piping.
+        // labeled header so the output is still parseable. `--print` is for
+        // piping, so stderr stays empty.
         let multi = candidates.len() > 1;
         for (idx, candidate) in candidates.iter().enumerate() {
-            eprint!("{}", format_deprecation_warnings(&candidate.info));
             if multi {
                 if idx > 0 {
                     println!();
@@ -118,10 +117,13 @@ pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
 
 /// Format update preview for display.
 ///
-/// Shows deprecation warnings and diff, but omits the "To apply" hint
-/// since `config update` will apply automatically.
+/// Renders the per-pattern deprecation warnings followed by the diff. The
+/// `wt config update` hint that normally accompanies prewarm-time warnings
+/// is dropped here — the prompt below the preview is the action.
 fn format_update_preview(candidate: &UpdateCandidate) -> String {
-    let mut out = format_deprecation_warnings(&candidate.info);
+    let mut out = String::new();
+
+    out.push_str(&format_deprecation_warnings(&candidate.info));
 
     let label = candidate
         .config_path

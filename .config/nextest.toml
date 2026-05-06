@@ -11,6 +11,10 @@
 #
 #   cargo test --test integration --features shell-integration-tests
 
+# Enable setup-scripts (still experimental in nextest) so the build-bins script
+# below can run before any test starts.
+experimental = ["setup-scripts"]
+
 [profile.default]
 slow-timeout = { period = "180s", terminate-after = 1 }
 status-level = "fail"
@@ -18,3 +22,46 @@ success-output = "never"
 
 [profile.default.junit]
 path = "junit.xml"
+
+# Build the helper binaries (`mock-stub`, `wt-perf`) before any test runs.
+#
+# These live in separate workspace packages so cargo-dist doesn't ship them
+# (see tests/helpers/mock-stub/Cargo.toml for the rationale). The
+# `default-members` setting builds them under unfiltered `cargo nextest run`,
+# but a target filter like `--test integration` overrides default-members and
+# the helpers are skipped — so tests that spawn them fail.
+#
+# Under `cargo llvm-cov nextest`, nextest doesn't propagate the outer
+# --target-dir as a CARGO_TARGET_DIR env var, so a plain `cargo build` would
+# write to target/ rather than target/llvm-cov-target/ and the test binary
+# would still find no helpers. Derive the right target-dir from
+# LLVM_PROFILE_FILE (cargo-llvm-cov sets it to a path inside its target dir)
+# and pass it through with --target-dir. Worktrunk already requires bash for
+# shell-integration tests on every platform, so bash here is fine.
+#
+# TODO: collapse this whole layer once cargo-dist supports per-binary
+# exclusion. The chain — separate `tests/helpers/{mock-stub,wt-perf}`
+# packages, the dummy `tests/builds.rs` trick that makes `default-members`
+# build them, this setup-script, and `workspace_bin()` in src/testing/mod.rs
+# — exists only because cargo-dist (≤ 0.30.x at time of writing) ships every
+# `[[bin]]` in the main crate and offers no per-binary opt-out. PR #127
+# (commit d21925692) documented the failure modes: `required-features` on
+# `[[bin]]` still trips cargo-dist's "bin not found", and
+# `[package.metadata.dist] dist = false` excludes the entire package, not
+# individual binaries. When cargo-dist gains per-binary exclusion (or we
+# move off cargo-dist), pull mock-stub and wt-perf back into the worktrunk
+# crate as `[[bin]]` targets, use `CARGO_BIN_EXE_<name>`, and delete this
+# script along with `workspace_bin()` and the helper packages.
+[scripts.setup.build-bins]
+command = [
+    "bash",
+    "-c",
+    'if [ -n "${LLVM_PROFILE_FILE:-}" ]; then cargo build --bin mock-stub --bin wt-perf --target-dir "$(dirname "$LLVM_PROFILE_FILE")"; else cargo build --bin mock-stub --bin wt-perf; fi',
+]
+
+[[profile.default.scripts]]
+# Only the `integration` test binary calls `workspace_bin()` (via MockConfig
+# and analyze_trace.rs), so don't pay the helper-build cost on `--lib`,
+# `--bin wt`, doctest, or bench runs.
+filter = "binary(integration)"
+setup = "build-bins"

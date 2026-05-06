@@ -139,9 +139,9 @@ fn test_copy_ignored_excludes_user_config(mut repo: TestRepo) {
 #[rstest]
 fn test_copy_ignored_skips_built_in_excluded_dirs(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
-    let ignored_entries = ".conductor/\n.entire/\n.pi/\n.env\n";
+    let ignored_entries = ".conductor/\n.entire/\n.env\n";
 
-    for dir in [".conductor", ".entire", ".pi"] {
+    for dir in [".conductor", ".entire"] {
         fs::create_dir_all(repo.root_path().join(dir)).unwrap();
         fs::write(repo.root_path().join(dir).join("state.json"), dir).unwrap();
     }
@@ -153,7 +153,7 @@ fn test_copy_ignored_skips_built_in_excluded_dirs(mut repo: TestRepo) {
 
     assert_copy_ignored_excluded(
         &feature_path,
-        &[".conductor", ".entire", ".pi"],
+        &[".conductor", ".entire"],
         "built-in excludes",
     );
 }
@@ -778,6 +778,88 @@ fn test_copy_ignored_force_directory(mut repo: TestRepo) {
     );
 }
 
+#[cfg(unix)]
+fn setup_copy_ignored_symlinked_dest_dir(repo: &mut TestRepo) -> (PathBuf, tempfile::TempDir) {
+    let feature_path = repo.add_worktree("feature");
+
+    let target_dir = repo.root_path().join("target");
+    fs::create_dir_all(target_dir.join("debug")).unwrap();
+    fs::write(target_dir.join("debug").join("output"), "copied content").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), "target/\n").unwrap();
+    fs::write(repo.root_path().join(".worktreeinclude"), "target/\n").unwrap();
+
+    let outside = tempfile::tempdir().unwrap();
+    let outside_target = outside.path().join("target");
+    fs::create_dir_all(&outside_target).unwrap();
+    fs::write(outside_target.join("sentinel"), "keep me").unwrap();
+    std::os::unix::fs::symlink(&outside_target, feature_path.join("target")).unwrap();
+
+    (feature_path, outside)
+}
+
+#[cfg(unix)]
+fn assert_copy_ignored_rejects_symlinked_dest_dir(repo: &TestRepo, feature_path: &Path) {
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(feature_path)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "copy-ignored should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("refusing to copy outside destination worktree"),
+        "expected outside-destination error, got: {stderr}",
+    );
+}
+
+#[cfg(unix)]
+fn assert_symlinked_dest_outside_unchanged(outside: &tempfile::TempDir) {
+    let outside_target = outside.path().join("target");
+    assert_eq!(
+        fs::read_to_string(outside_target.join("sentinel")).unwrap(),
+        "keep me",
+        "sentinel outside destination worktree should remain unchanged",
+    );
+    assert!(
+        !outside_target.join("debug").join("output").exists(),
+        "copy-ignored should not write through destination directory symlink",
+    );
+}
+
+/// Refuse to copy through destination directory symlinks.
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_rejects_symlinked_destination_directory(mut repo: TestRepo) {
+    let (feature_path, outside) = setup_copy_ignored_symlinked_dest_dir(&mut repo);
+
+    assert_copy_ignored_rejects_symlinked_dest_dir(&repo, &feature_path);
+    assert_symlinked_dest_outside_unchanged(&outside);
+}
+
+/// --force must not overwrite files through destination directory symlinks.
+#[cfg(unix)]
+#[rstest]
+fn test_copy_ignored_force_rejects_symlinked_destination_directory(mut repo: TestRepo) {
+    let (feature_path, outside) = setup_copy_ignored_symlinked_dest_dir(&mut repo);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored", "--force"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "copy-ignored --force should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("refusing to copy outside destination worktree"),
+        "expected outside-destination error, got: {stderr}",
+    );
+    assert_symlinked_dest_outside_unchanged(&outside);
+}
+
 /// Test --verbose shows entries being copied (GitHub issue #1084)
 #[rstest]
 fn test_copy_ignored_verbose(mut repo: TestRepo) {
@@ -1320,7 +1402,7 @@ fn test_copy_ignored_preserves_file_executable_permissions(mut repo: TestRepo) {
     fs::write(bin_dir.join("config.json"), r#"{"key": "value"}"#).unwrap();
 
     // Create a top-level ignored executable file (exercises the individual file copy
-    // path in step_commands.rs, separate from the recursive directory copy in copy.rs)
+    // path in step/copy_ignored.rs, separate from the recursive directory copy in copy.rs)
     fs::write(
         repo.root_path().join("run-tests.sh"),
         "#!/bin/sh\necho running tests",
@@ -1372,7 +1454,7 @@ fn test_copy_ignored_preserves_file_executable_permissions(mut repo: TestRepo) {
     );
 
     // Verify top-level executable file was copied with permissions preserved
-    // (exercises step_commands.rs individual file copy path)
+    // (exercises step/copy_ignored.rs individual file copy path)
     let dest_script = feature_path.join("run-tests.sh");
     assert!(
         dest_script.exists(),
@@ -1537,4 +1619,128 @@ fn test_copy_ignored_many_directories_no_emfile(mut repo: TestRepo) {
             );
         }
     }
+}
+
+/// `copy-ignored --dry-run --format=json` lists planned entries instead of copying.
+#[rstest]
+fn test_copy_ignored_dry_run_json(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+    fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored", "--dry-run", "--format=json"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+
+    assert_eq!(parsed["outcome"], "planned");
+    assert_eq!(parsed["dry_run"], true);
+    let entries = parsed["entries"].as_array().expect("entries array");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["path"], ".env");
+    assert_eq!(entries[0]["kind"], "file");
+
+    // Dry run did not copy
+    assert!(!feature_path.join(".env").exists());
+}
+
+/// `copy-ignored --format=json` after execution emits file/byte counts.
+#[rstest]
+fn test_copy_ignored_json_summary(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+    fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored", "--format=json"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+
+    assert_eq!(parsed["outcome"], "copied");
+    assert_eq!(parsed["dry_run"], false);
+    assert_eq!(parsed["files"], 1);
+    // .env content "SECRET=value" is 12 bytes
+    assert_eq!(parsed["bytes"], 12);
+    let entries = parsed["entries"].as_array().expect("entries array");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["path"], ".env");
+    assert!(feature_path.join(".env").exists());
+}
+
+/// `copy-ignored --format=json` reports `same_worktree` when source and
+/// destination resolve to the same path, with empty entries.
+#[rstest]
+fn test_copy_ignored_same_worktree_json(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "copy-ignored",
+            "--from=feature",
+            "--to=feature",
+            "--format=json",
+        ])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "copy-ignored same-worktree should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+
+    assert_eq!(parsed["outcome"], "same_worktree");
+    assert_eq!(parsed["files"], 0);
+    assert_eq!(parsed["bytes"], 0);
+    assert_eq!(
+        parsed["entries"].as_array().expect("entries array").len(),
+        0
+    );
+}
+
+/// `copy-ignored --format=json` reports `copied` with zero counts when no
+/// ignored files match — distinct from the same-worktree case.
+#[rstest]
+fn test_copy_ignored_no_matches_json(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    // No .gitignore / .worktreeinclude — nothing to copy.
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored", "--format=json"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "copy-ignored should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+
+    assert_eq!(parsed["outcome"], "copied");
+    assert_eq!(parsed["dry_run"], false);
+    assert_eq!(parsed["files"], 0);
+    assert_eq!(parsed["bytes"], 0);
+    assert_eq!(
+        parsed["entries"].as_array().expect("entries array").len(),
+        0
+    );
 }

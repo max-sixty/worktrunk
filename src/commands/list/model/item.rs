@@ -196,15 +196,18 @@ pub struct ListItem {
     // Common fields (present for both worktrees and branches)
     #[serde(rename = "head_sha")]
     pub head: String,
+    /// Abbreviated form of `head`, honoring `core.abbrev` and auto-extending
+    /// for ambiguous prefixes. Always populated when there is a HEAD commit
+    /// to abbreviate (the `git log` batch in `collect()` emits `%h` for every
+    /// row, including prunable worktrees). Empty for null OIDs (unborn
+    /// branches) or when the batch failed for this row.
+    #[serde(skip)]
+    pub short_sha: String,
     /// Branch name - None for detached worktrees
     pub branch: Option<String>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub commit: Option<CommitDetails>,
 
-    // TODO: Evaluate if skipping these fields in JSON when None is correct behavior.
-    // Currently, main worktree omits counts/branch_diff (since it doesn't compare to itself),
-    // but consumers may expect these fields to always be present (even if zero).
-    // Consider: always include with default values vs current "omit when not computed" approach.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub counts: Option<AheadBehind>,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
@@ -238,7 +241,6 @@ pub struct ListItem {
     #[serde(skip)]
     pub is_orphan: Option<bool>,
 
-    // TODO: Same concern as counts/branch_diff above - should upstream fields always be present?
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub upstream: Option<UpstreamStatus>,
 
@@ -296,6 +298,7 @@ impl ListItem {
     pub(crate) fn new_branch(head: String, branch: String) -> Self {
         Self {
             head,
+            short_sha: String::new(),
             branch: Some(branch),
             commit: None,
             counts: None,
@@ -324,13 +327,11 @@ impl ListItem {
     }
 
     /// Short display name for this item — the branch if present, otherwise
-    /// a truncated HEAD SHA. Use when reporting which item is pending,
-    /// stuck, or missing: `branch_name()`'s `"(detached)"` fallback collapses
-    /// distinct detached items into one label.
+    /// the short SHA. Use when reporting which item is pending, stuck, or
+    /// missing: `branch_name()`'s `"(detached)"` fallback collapses distinct
+    /// detached items into one label.
     pub fn display_name(&self) -> &str {
-        self.branch
-            .as_deref()
-            .unwrap_or_else(|| &self.head[..8.min(self.head.len())])
+        self.branch.as_deref().unwrap_or(&self.short_sha)
     }
 
     pub fn is_main(&self) -> bool {

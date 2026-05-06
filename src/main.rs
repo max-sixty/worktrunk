@@ -8,7 +8,7 @@ use color_print::{ceprintln, cformat};
 use std::process;
 use worktrunk::config::{UserConfig, set_config_path};
 use worktrunk::git::{
-    Repository, ResolvedWorktree, WorktrunkError, current_or_recover, cwd_removed_hint, exit_code,
+    ErrorExt, Repository, ResolvedWorktree, WorktrunkError, current_or_recover, cwd_removed_hint,
     set_base_path,
 };
 use worktrunk::styling::{
@@ -46,7 +46,7 @@ use commands::commit::HookGate;
 #[cfg(unix)]
 use commands::handle_picker;
 use commands::repository_ext::RepositoryCliExt;
-use commands::worktree::{PushKind, handle_no_ff_merge, handle_push};
+use commands::worktree::{PushKind, PushOutcome, PushResult, handle_no_ff_merge, handle_push};
 use commands::{
     HookCliArgs, MergeFlagOverrides, MergeOptions, OperationMode, RebaseResult, RemoveTarget,
     SquashResult, SwitchOptions, add_approvals, clear_approvals, handle_alias_dry_run,
@@ -57,8 +57,8 @@ use commands::{
     handle_list, handle_logs_list, handle_merge, handle_opencode_install,
     handle_opencode_uninstall, handle_promote, handle_rebase, handle_show_theme, handle_squash,
     handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
-    handle_state_show, handle_switch, handle_unconfigure_shell, handle_vars_clear, handle_vars_get,
-    handle_vars_list, handle_vars_set, resolve_worktree_arg, run_hook, step_commit,
+    handle_state_show, handle_unconfigure_shell, handle_vars_clear, handle_vars_get,
+    handle_vars_list, handle_vars_set, resolve_worktree_arg, run_hook, run_switch, step_commit,
     step_copy_ignored, step_diff, step_eval, step_for_each, step_prune, step_relocate,
 };
 use output::handle_remove_output;
@@ -163,7 +163,8 @@ fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
         HookCommand::Show {
             hook_type,
             expanded,
-        } => handle_hook_show(hook_type.as_deref(), expanded),
+            format,
+        } => handle_hook_show(hook_type.as_deref(), expanded, format),
         HookCommand::RunPipeline => commands::run_pipeline(),
         HookCommand::Approvals { action } => {
             eprintln!(
@@ -209,13 +210,45 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
     match action {
         StepCommand::Commit(args) => {
             let verify = resolve_verify(args.verify, args.no_verify_deprecated);
-            step_commit(args.branch, yes, verify, args.stage, args.show_prompt)
+            let format = args.format;
+            // `--show-prompt` and `--dry-run` emit raw text (rendered prompt or LLM
+            // preview), which would corrupt a JSON consumer's stdout. Refuse the
+            // combination rather than silently emit non-JSON.
+            if format == SwitchFormat::Json && (args.show_prompt || args.dry_run) {
+                anyhow::bail!("--show-prompt / --dry-run cannot be combined with --format=json");
+            }
+            let outcome = step_commit(
+                args.branch,
+                yes,
+                verify,
+                args.stage,
+                args.show_prompt,
+                args.dry_run,
+            )?;
+            if format == SwitchFormat::Json
+                && let Some(outcome) = outcome
+            {
+                let payload = serde_json::json!({
+                    "commit": outcome.sha,
+                    "message": outcome.message,
+                    "stage_mode": outcome.stage_mode,
+                });
+                println!("{}", serde_json::to_string_pretty(&payload)?);
+            }
+            Ok(())
         }
         StepCommand::Squash(args) => {
             let verify = resolve_verify(args.verify, args.no_verify_deprecated);
-            // Handle --show-prompt early: just build and output the prompt
+            // `--show-prompt` and `--dry-run` emit raw text (rendered prompt or LLM
+            // preview), which would corrupt a JSON consumer's stdout.
+            if args.format == SwitchFormat::Json && (args.show_prompt || args.dry_run) {
+                anyhow::bail!("--show-prompt / --dry-run cannot be combined with --format=json");
+            }
+            // --show-prompt and --dry-run skip the squash and exit after preview output.
             if args.show_prompt {
                 commands::step_show_squash_prompt(args.target.as_deref())
+            } else if args.dry_run {
+                commands::step_dry_run_squash(args.target.as_deref())
             } else {
                 // Approval is handled inside handle_squash (like step_commit).
                 let repo = Repository::current()?;
@@ -226,6 +259,7 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
                     HookGate::NoHooksFlag
                 };
                 let mut announcer = HookAnnouncer::new(&repo, &config, false);
+                let format = args.format;
                 let result = handle_squash(
                     args.target.as_deref(),
                     yes,
@@ -234,45 +268,111 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
                     &mut announcer,
                 )?;
                 announcer.flush()?;
-                match result {
-                    SquashResult::Squashed | SquashResult::NoNetChanges => {}
-                    SquashResult::NoCommitsAhead(branch) => {
-                        eprintln!(
-                            "{}",
-                            info_message(format!(
-                                "Nothing to squash; no commits ahead of {branch}"
-                            ))
-                        );
-                    }
-                    SquashResult::AlreadySingleCommit => {
-                        eprintln!(
-                            "{}",
-                            info_message("Nothing to squash; already a single commit")
-                        );
+                if format == SwitchFormat::Json {
+                    let payload = match &result {
+                        SquashResult::Squashed {
+                            sha,
+                            message,
+                            stage_mode,
+                        } => serde_json::json!({
+                            "outcome": "squashed",
+                            "commit": sha,
+                            "message": message,
+                            "stage_mode": stage_mode,
+                        }),
+                        SquashResult::NoCommitsAhead(target) => serde_json::json!({
+                            "outcome": "no_commits_ahead",
+                            "target": target,
+                        }),
+                        SquashResult::AlreadySingleCommit => serde_json::json!({
+                            "outcome": "already_single_commit",
+                        }),
+                        SquashResult::NoNetChanges => serde_json::json!({
+                            "outcome": "no_net_changes",
+                        }),
+                    };
+                    println!("{}", serde_json::to_string_pretty(&payload)?);
+                } else {
+                    match result {
+                        SquashResult::Squashed { .. } | SquashResult::NoNetChanges => {}
+                        SquashResult::NoCommitsAhead(branch) => {
+                            eprintln!(
+                                "{}",
+                                info_message(format!(
+                                    "Nothing to squash; no commits ahead of {branch}"
+                                ))
+                            );
+                        }
+                        SquashResult::AlreadySingleCommit => {
+                            eprintln!(
+                                "{}",
+                                info_message("Nothing to squash; already a single commit")
+                            );
+                        }
                     }
                 }
                 Ok(())
             }
         }
-        StepCommand::Push { target, no_ff, .. } => {
-            if no_ff {
+        StepCommand::Push {
+            target,
+            no_ff,
+            format,
+            ..
+        } => {
+            let result = if no_ff {
                 let repo = Repository::current()?;
                 let current_branch = repo.require_current_branch("step push --no-ff")?;
-                handle_no_ff_merge(target.as_deref(), None, &current_branch)
+                handle_no_ff_merge(target.as_deref(), None, &current_branch)?
             } else {
-                handle_push(target.as_deref(), PushKind::Standalone, None)
-            }
-        }
-        StepCommand::Rebase { target } => {
-            handle_rebase(target.as_deref()).map(|result| match result {
-                RebaseResult::Rebased => (),
-                RebaseResult::UpToDate(branch) => {
-                    eprintln!(
-                        "{}",
-                        info_message(cformat!("Already up to date with <bold>{branch}</>"))
-                    );
+                handle_push(target.as_deref(), PushKind::Standalone, None)?
+            };
+            if format == SwitchFormat::Json {
+                let PushResult {
+                    target,
+                    commit_count,
+                    outcome,
+                } = result;
+                let mut payload = serde_json::json!({
+                    "target": target,
+                    "outcome": match outcome {
+                        PushOutcome::FastForwarded => "fast_forwarded",
+                        PushOutcome::UpToDate => "up_to_date",
+                        PushOutcome::MergeCommit { .. } => "merge_commit",
+                    },
+                    "commits": commit_count,
+                });
+                if let PushOutcome::MergeCommit { merge_sha } = outcome {
+                    payload["merge_sha"] = serde_json::Value::String(merge_sha);
                 }
-            })
+                println!("{}", serde_json::to_string_pretty(&payload)?);
+            }
+            Ok(())
+        }
+        StepCommand::Rebase { target, format } => {
+            let result = handle_rebase(target.as_deref())?;
+            if format == SwitchFormat::Json {
+                let output = match &result {
+                    RebaseResult::Rebased {
+                        target,
+                        fast_forward,
+                    } => serde_json::json!({
+                        "target": target,
+                        "outcome": if *fast_forward { "fast_forwarded" } else { "rebased" },
+                    }),
+                    RebaseResult::UpToDate(target) => serde_json::json!({
+                        "target": target,
+                        "outcome": "up_to_date",
+                    }),
+                };
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else if let RebaseResult::UpToDate(branch) = &result {
+                eprintln!(
+                    "{}",
+                    info_message(cformat!("Already up to date with <bold>{branch}</>"))
+                );
+            }
+            Ok(())
         }
         StepCommand::Diff { target, extra_args } => step_diff(target.as_deref(), &extra_args),
         StepCommand::CopyIgnored {
@@ -280,7 +380,8 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             to,
             dry_run,
             force,
-        } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force),
+            format,
+        } => step_copy_ignored(from.as_deref(), to.as_deref(), dry_run, force, format),
         StepCommand::Eval { template, dry_run } => step_eval(&template, dry_run),
         StepCommand::ForEach { format, args } => step_for_each(args, format),
         StepCommand::Promote { branch } => {
@@ -307,7 +408,8 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             dry_run,
             commit,
             clobber,
-        } => step_relocate(branches, dry_run, commit, clobber),
+            format,
+        } => step_relocate(branches, dry_run, commit, clobber, format),
         StepCommand::External(args) => commands::step_alias(args, yes),
     }
 }
@@ -587,7 +689,7 @@ fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> {
                 }
             };
 
-            handle_switch(
+            run_switch(
                 SwitchOptions {
                     branch: &branch,
                     create: args.create,
@@ -623,7 +725,14 @@ impl RemovePlans {
     }
 
     fn record_error(&mut self, e: anyhow::Error) {
-        eprintln!("{}", e);
+        // The remove command collects per-target errors and surfaces each
+        // individually (partial-success path). Render the typed
+        // diagnostic block when present so locked/dirty/etc. errors
+        // carry their hint, falling back to the short label otherwise.
+        let rendered = e.render_diagnostic().unwrap_or_else(|| e.to_string());
+        if !rendered.is_empty() {
+            eprintln!("{rendered}");
+        }
         self.errors.push(e);
     }
 }
@@ -659,6 +768,12 @@ fn validate_remove_targets(
     let deletion_mode = BranchDeletionMode::from_flags(keep_branch, force_delete);
     let worktrees = repo.list_worktrees().ok();
 
+    // Capture once for the validation loop. Validation only reads — actual
+    // removals run later in `handle_remove_output`, so ref state is stable
+    // across candidates here. Errors propagate to per-candidate calls, which
+    // fall back to capturing internally when None.
+    let snapshot = repo.capture_refs().ok();
+
     let mut plans = RemovePlans {
         others: Vec::new(),
         branch_only: Vec::new(),
@@ -690,6 +805,7 @@ fn validate_remove_targets(
                         config,
                         None,
                         worktrees,
+                        snapshot.as_ref(),
                     ) {
                         Ok(result) => plans.current = Some(result),
                         Err(e) => plans.record_error(e),
@@ -711,6 +827,7 @@ fn validate_remove_targets(
                     config,
                     None,
                     worktrees,
+                    snapshot.as_ref(),
                 ) {
                     Ok(result) => plans.others.push(result),
                     Err(e) => plans.record_error(e),
@@ -724,6 +841,7 @@ fn validate_remove_targets(
                     config,
                     None,
                     worktrees,
+                    snapshot.as_ref(),
                 ) {
                     Ok(result) => plans.branch_only.push(result),
                     Err(e) => plans.record_error(e),
@@ -763,15 +881,22 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
     UserConfig::load()
         .context("Failed to load config")
         .and_then(|config| {
+            let repo = Repository::current().context("Failed to remove worktree")?;
+
+            // CLI flags override config; otherwise fall through to [remove] delete-branch
+            // (defaults to true).
+            let project = repo.project_identifier().ok();
+            let cli_override = flag_pair(args.delete_branch, args.no_delete_branch);
+            let delete_branch =
+                cli_override.unwrap_or_else(|| config.remove(project.as_deref()).delete_branch());
+
             // Validate conflicting flags
-            if !args.delete_branch && args.force_delete {
+            if !delete_branch && args.force_delete {
                 return Err(worktrunk::git::GitError::Other {
-                    message: "Cannot use --force-delete with --no-delete-branch".into(),
+                    message: "Cannot use --force-delete with delete-branch=false (set via --no-delete-branch or [remove] delete-branch = false)".into(),
                 }
                 .into());
             }
-
-            let repo = Repository::current().context("Failed to remove worktree")?;
 
             // Resolve current worktree context for hook approval
             let current_wt = repo.current_worktree();
@@ -808,9 +933,10 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 let result = repo
                     .prepare_worktree_removal(
                         RemoveTarget::Current,
-                        BranchDeletionMode::from_flags(!args.delete_branch, args.force_delete),
+                        BranchDeletionMode::from_flags(!delete_branch, args.force_delete),
                         args.force,
                         &config,
+                        None,
                         None,
                         None,
                     )
@@ -842,7 +968,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     &repo,
                     branches,
                     &config,
-                    !args.delete_branch,
+                    !delete_branch,
                     args.force_delete,
                     args.force,
                 );
@@ -1049,11 +1175,11 @@ fn init_logging(verbose_level: u8) {
     // capped). At -vv, `.git/wt/logs/trace.log` mirrors stderr and
     // `.git/wt/logs/output.log` receives the uncapped subprocess bodies
     // routed via `shell_exec::SUBPROCESS_FULL_TARGET`.
-    if verbose_level >= 2 {
-        log_files::init();
-    }
-
-    // Set global verbosity level for styled verbose output
+    //
+    // env_logger registers the logger via `.init()` at the bottom of this
+    // function. `log_files::init()` runs after that so the
+    // `Repository::current()` it triggers (cold cache: 4ms `git rev-parse
+    // --git-common-dir`) is visible in `[wt-trace]` output.
     output::set_verbosity(verbose_level);
 
     let mut builder = match verbose_level {
@@ -1116,6 +1242,13 @@ fn init_logging(verbose_level: u8) {
             }
         })
         .init();
+
+    // Open per-file log sinks AFTER env_logger is registered so the
+    // `Repository::current()` rev-parse fired by `try_create` is captured
+    // in the trace.
+    if verbose_level >= 2 {
+        log_files::init();
+    }
 }
 
 fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {
@@ -1132,6 +1265,34 @@ fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {
         stage: args.stage,
         format: args.format,
     })
+}
+
+/// True when the parsed command should silence prewarm-time deprecation
+/// warnings. Two reasons qualify:
+///
+/// - **TUI / stderr-sensitive output** (`select`, `switch` picker mode,
+///   `list statusline`) — warnings on stderr would land above the picker
+///   or shell prompt and visually break it.
+/// - **`config update`** — the handler renders the deprecations and a diff
+///   itself, so the prewarm-time warning + `wt config update` hint is
+///   redundant noise above its own UI.
+///
+/// Read from `Cli::command` before `Repository::prewarm` so the suppress
+/// latch beats `prewarm_user_config`'s warning-emission path. The handler
+/// for each of these commands also calls `suppress_warnings()` locally;
+/// both calls hit the same `OnceLock` so the second is a no-op.
+fn command_suppresses_warnings(command: Option<&Commands>) -> bool {
+    match command {
+        Some(Commands::Select { .. }) => true,
+        Some(Commands::Switch(args)) => args.branch.is_none(),
+        Some(Commands::List(args)) => {
+            matches!(args.subcommand, Some(ListSubcommand::Statusline { .. }))
+        }
+        Some(Commands::Config {
+            action: ConfigCommand::Update { .. },
+        }) => true,
+        _ => false,
+    }
 }
 
 fn dispatch_command(
@@ -1156,43 +1317,116 @@ fn dispatch_command(
 }
 
 fn print_command_error(error: &anyhow::Error) {
-    // GitError, WorktrunkError, and HookErrorWithHint produce styled output via Display.
-    // Some variants (AlreadyDisplayed, CommandNotApproved) have empty Display impls —
-    // skip eprintln! for those to avoid phantom blank lines.
-    if let Some(err) = error.downcast_ref::<worktrunk::git::GitError>() {
-        eprintln!("{}", err);
-    } else if let Some(err) = error.downcast_ref::<worktrunk::git::WorktrunkError>() {
-        let display = err.to_string();
-        if !display.is_empty() {
-            eprintln!("{display}");
+    let formatted = format_command_error(error);
+    if !formatted.is_empty() {
+        // Route through `worktrunk::styling::eprintln` (anstream) so ANSI
+        // codes are stripped when stderr isn't a TTY. Building a String
+        // and using `std::eprint!` would bypass the strip stream and leak
+        // raw escape sequences into snapshots.
+        eprintln!("{}", formatted.trim_end_matches('\n'));
+    }
+}
+
+/// Render an error for terminal display. Returns the full formatted output
+/// (including a trailing newline when non-empty) so tests can assert on it
+/// without capturing stderr.
+fn format_command_error(error: &anyhow::Error) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+
+    // Locate the first error in the chain that implements `Diagnostic`.
+    // Most typed errors render directly even when wrapped in
+    // `.context(...)`: their styled block is self-contained and the
+    // wrapping context (if any) was added to enrich logs, not the
+    // user-facing message. The exception is `CommandError`: its captured
+    // stderr/stdout pairs naturally with the wrapping context to form a
+    // header + body block (e.g., header `"running prune"`, body git's
+    // actual error).
+    let diagnostic_hit = error.chain().enumerate().find_map(|(i, cause)| {
+        worktrunk::git::try_render_diagnostic(cause)
+            .map(|r| (i, r, cause.is::<worktrunk::git::CommandError>()))
+    });
+
+    let wrapped_command_error = matches!(diagnostic_hit, Some((pos, _, true)) if pos > 0);
+
+    match diagnostic_hit {
+        Some((_, rendered, _)) if !wrapped_command_error => {
+            // The type's `render()` produces a complete styled block —
+            // emit it directly. Empty rendering (AlreadyDisplayed,
+            // CommandNotApproved) is a signal to skip output entirely.
+            if !rendered.is_empty() {
+                let _ = writeln!(out, "{rendered}");
+            }
         }
-    } else if let Some(err) = error.downcast_ref::<worktrunk::git::HookErrorWithHint>() {
-        eprintln!("{}", err);
-    } else if let Some(err) = error.downcast_ref::<worktrunk::config::TemplateExpandError>() {
-        eprintln!("{}", err);
-    } else {
-        // Anyhow error formatting:
-        // - With context: show context as header, root cause in gutter
-        // - Simple error: inline with emoji
-        // - Empty error: skip (errors already printed elsewhere)
-        let msg = error.to_string();
-        if !msg.is_empty() {
-            let chain: Vec<String> = error.chain().skip(1).map(|e| e.to_string()).collect();
-            if !chain.is_empty() {
-                eprintln!("{}", error_message(&msg));
-                let chain_text = chain.join("\n");
-                eprintln!("{}", format_with_gutter(&chain_text, None));
-            } else if msg.contains('\n') || msg.contains('\r') {
-                debug_assert!(false, "Multiline error without context: {msg}");
-                log::warn!("Multiline error without context: {msg}");
-                let normalized = msg.replace("\r\n", "\n").replace('\r', "\n");
-                eprintln!("{}", error_message("Command failed"));
-                eprintln!("{}", format_with_gutter(&normalized, None));
-            } else {
-                eprintln!("{}", error_message(&msg));
+        Some(_) => {
+            // Wrapped `CommandError`: outermost context becomes the
+            // header, intermediate contexts plus the captured
+            // stderr/stdout join the gutter so wrapped failures like
+            // `.context("listing worktrees").context("running prune")`
+            // keep their diagnostic context while still surfacing git's
+            // actual stderr.
+            let _ = writeln!(out, "{}", error_message(error.to_string()));
+            let mut gutter_parts: Vec<String> = Vec::new();
+            let mut command_handled = false;
+            for cause in error.chain().skip(1) {
+                if !command_handled
+                    && let Some(cmd_err) = cause.downcast_ref::<worktrunk::git::CommandError>()
+                {
+                    let body = cmd_err.combined_output();
+                    gutter_parts.push(if body.is_empty() {
+                        cmd_err.to_string()
+                    } else {
+                        body
+                    });
+                    command_handled = true;
+                } else {
+                    gutter_parts.push(cause.to_string());
+                }
+            }
+            if !gutter_parts.is_empty() {
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    format_with_gutter(&gutter_parts.join("\n"), None)
+                );
+            }
+        }
+        None => {
+            // Anyhow error formatting:
+            // - With context: show context as header, root cause in gutter
+            // - Simple error: inline with emoji
+            // - Empty error: skip (errors already printed elsewhere)
+            let msg = error.to_string();
+            if !msg.is_empty() {
+                let chain: Vec<String> = error.chain().skip(1).map(|e| e.to_string()).collect();
+                if !chain.is_empty() {
+                    let _ = writeln!(out, "{}", error_message(&msg));
+                    let chain_text = chain.join("\n");
+                    let _ = writeln!(out, "{}", format_with_gutter(&chain_text, None));
+                } else if msg.contains('\n') || msg.contains('\r') {
+                    // A multi-line error reached this branch without being wrapped
+                    // in a typed `CommandError` and without `.context(...)` on top.
+                    // Buffered command failures should always surface as
+                    // `CommandError`; if you hit this assert, route the failing
+                    // path through `Repository::run_command` /
+                    // `WorkingTree::run_command` (or construct a
+                    // `worktrunk::git::CommandError` directly) instead of
+                    // `bail!("{stderr}")`.
+                    debug_assert!(
+                        false,
+                        "Multiline error without CommandError or context: {msg}"
+                    );
+                    log::warn!("Multiline error without CommandError or context: {msg}");
+                    let normalized = msg.replace("\r\n", "\n").replace('\r', "\n");
+                    let _ = writeln!(out, "{}", error_message("Command failed"));
+                    let _ = writeln!(out, "{}", format_with_gutter(&normalized, None));
+                } else {
+                    let _ = writeln!(out, "{}", error_message(&msg));
+                }
             }
         }
     }
+    out
 }
 
 fn print_cwd_removed_hint_if_needed() {
@@ -1221,7 +1455,7 @@ fn handle_command_failure(error: anyhow::Error, verbose_level: u8, command_line:
     print_cwd_removed_hint_if_needed();
 
     // Preserve exit code from child processes (especially for signals like SIGINT)
-    let code = exit_code(&error).unwrap_or(1);
+    let code = error.exit_code().unwrap_or(1);
     finish_command(verbose_level, command_line, Some(&error));
     process::exit(code);
 }
@@ -1239,6 +1473,12 @@ fn main() {
     // from a parent `git` (e.g. when invoked via `git wt ...` with
     // `alias.wt = "!wt"`) against a stable reference, rather than against
     // each child command's `current_dir`. See issue #1914.
+    //
+    // `[wt-trace]` spans before the logger is registered would silently
+    // no-op, so the prelude up to `init_logging` — `init_startup_cwd`,
+    // `init_rayon_thread_pool`, `force_color_output`, `parse_cli` — isn't
+    // attributed. If startup itself becomes the suspect, capture it as
+    // wall-clock minus the sum of post-init spans.
     worktrunk::shell_exec::init_startup_cwd();
 
     init_rayon_thread_pool();
@@ -1262,9 +1502,41 @@ fn main() {
     // existing destructure pattern.
     apply_global_options(directory.clone(), config);
 
+    // Latch warning suppression for commands whose UX is broken by stderr
+    // noise — TUI pickers (`switch` without a branch, `select`) and
+    // statusline output rendered above each shell prompt. Must fire before
+    // `Repository::prewarm` since `prewarm_user_config` loads `UserConfig`
+    // eagerly and would otherwise emit deprecation warnings before the
+    // command handler's own `suppress_warnings()` call could latch.
+    // Handlers keep their `suppress_warnings()` calls — `OnceLock` is
+    // idempotent and the local call documents the intent at the use site.
+    if command_suppresses_warnings(command.as_ref()) {
+        worktrunk::config::suppress_warnings();
+    }
+
+    // `init_logging` registers the logger. Run it before `init_command_log`
+    // so the latter's `Repository::current()` → `git rev-parse
+    // --git-common-dir` subprocess is visible in `[wt-trace]` output. With
+    // the previous order the rev-parse fired before any logger was
+    // registered, leaving a 4ms hole in the trace where the subprocess
+    // actually ran. Same reason `init_logging` itself reorders to
+    // register env_logger before opening per-file log sinks.
+    {
+        let _span = worktrunk::trace::Span::new("init_logging");
+        init_logging(verbose);
+    }
+
+    // Fold the two cold-path rev-parses (`--git-common-dir` from
+    // `init_command_log`, the `prewarm_info` batch from `try_alias` →
+    // `project_config_path`) into one fork. Best-effort — failure leaves both
+    // on-demand callers unchanged.
+    Repository::prewarm();
+
     let command_line = std::env::args().collect::<Vec<_>>().join(" ");
-    init_command_log(&command_line);
-    init_logging(verbose);
+    {
+        let _span = worktrunk::trace::Span::new("init_command_log");
+        init_command_log(&command_line);
+    }
 
     let Some(command) = command else {
         print_help_to_stderr();
@@ -1276,5 +1548,133 @@ fn main() {
     match result {
         Ok(()) => finish_command(verbose, &command_line, None),
         Err(error) => handle_command_failure(error, verbose, &command_line),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use worktrunk::git::CommandError;
+
+    fn permission_denied_command_error() -> CommandError {
+        // Faithful reproduction of the failure shape from issue #2564:
+        // git emits a multi-line stderr (warning + fatal) and exits 128.
+        CommandError {
+            program: "git".into(),
+            args: vec!["worktree".into(), "list".into()],
+            stderr: "warning: unable to access '.git/config': Permission denied\nfatal: unknown error occurred while reading the configuration files".into(),
+            stdout: String::new(),
+            exit_code: Some(128),
+        }
+    }
+
+    /// Regression for #2564: a buffered `git` failure surfaces as a typed
+    /// `CommandError`. The single-line summary becomes the header and the
+    /// multi-line stderr lands in the gutter — no `debug_assert!` panic.
+    #[test]
+    fn renders_command_error_without_context() {
+        let err: anyhow::Error = permission_denied_command_error().into();
+        let out = format_command_error(&err);
+        assert!(out.contains("git worktree list failed (exit 128)"));
+        assert!(out.contains("Permission denied"));
+        assert!(out.contains("unknown error occurred while reading"));
+    }
+
+    /// One `.context(...)` layer above the `CommandError` — the context is
+    /// the header, captured stderr is the body.
+    #[test]
+    fn renders_command_error_with_one_context() {
+        let err: anyhow::Error = Err::<(), _>(permission_denied_command_error())
+            .context("listing worktrees")
+            .unwrap_err();
+        let out = format_command_error(&err);
+        assert!(out.contains("listing worktrees"));
+        assert!(out.contains("Permission denied"));
+    }
+
+    /// Codex P3: when a `CommandError` is wrapped by *multiple*
+    /// `.context(...)` layers, intermediate context entries must appear in
+    /// the gutter — they were dropped by an earlier rev that only used the
+    /// top-level message.
+    #[test]
+    fn renders_command_error_preserves_intermediate_context() {
+        let err: anyhow::Error = Err::<(), _>(permission_denied_command_error())
+            .context("listing worktrees")
+            .context("running prune")
+            .unwrap_err();
+        let out = format_command_error(&err);
+        // Outer context is the header
+        assert!(
+            out.contains("running prune"),
+            "missing outer context: {out}"
+        );
+        // Intermediate context survives — the bug Codex flagged
+        assert!(
+            out.contains("listing worktrees"),
+            "intermediate context dropped: {out}",
+        );
+        // Stderr body still rendered
+        assert!(out.contains("Permission denied"), "stderr lost: {out}",);
+        // The `CommandError` summary itself shouldn't appear when its
+        // body replaced its slot — we want git's actual error, not our
+        // wrapper.
+        assert!(
+            !out.contains("git worktree list failed"),
+            "summary surfaced alongside stderr: {out}",
+        );
+    }
+
+    /// A `CommandError` with empty stderr/stdout (e.g., a child killed by
+    /// a signal before producing output) wrapped in context: the gutter
+    /// should fall back to the `CommandError` summary so the user sees
+    /// something more than just the outer context. Exercises the
+    /// empty-body branch of the renderer's gutter assembly.
+    #[test]
+    fn renders_command_error_with_empty_body() {
+        let empty = CommandError {
+            program: "git".into(),
+            args: vec!["fetch".into()],
+            stderr: String::new(),
+            stdout: String::new(),
+            exit_code: None,
+        };
+        let err: anyhow::Error = Err::<(), _>(empty).context("syncing remotes").unwrap_err();
+        let out = format_command_error(&err);
+        assert!(out.contains("syncing remotes"));
+        // No body to render, so the summary is what we surface.
+        assert!(out.contains("git fetch failed"));
+    }
+
+    /// Codex P2: typed `GitError` wrappers (e.g., `WorktreeRemovalFailed`,
+    /// `PushFailed`) embed a stringified sub-error into their `error`
+    /// field. With `display_message`, that field carries git's stderr
+    /// rather than our `CommandError` summary.
+    #[test]
+    fn display_message_prefers_command_error_stderr_over_summary() {
+        let err: anyhow::Error = Err::<(), _>(permission_denied_command_error())
+            .context("creating worktree")
+            .unwrap_err();
+        let detail = err.display_message();
+        assert!(detail.contains("Permission denied"));
+        assert!(detail.contains("unknown error occurred while reading"));
+        // Without `CommandError::find_in` this would be "creating worktree".
+        assert!(!detail.starts_with("creating worktree"));
+    }
+
+    /// When a `CommandError` has empty stderr/stdout (signal-killed before
+    /// output, or git silent on a non-zero exit), `display_message` falls
+    /// back to the command summary so the embedding error doesn't end up
+    /// with a blank detail.
+    #[test]
+    fn display_message_falls_back_to_summary_when_capture_empty() {
+        let empty = CommandError {
+            program: "git".into(),
+            args: vec!["fetch".into()],
+            stderr: String::new(),
+            stdout: String::new(),
+            exit_code: None,
+        };
+        let err: anyhow::Error = empty.into();
+        assert_eq!(err.display_message(), "git fetch failed");
     }
 }

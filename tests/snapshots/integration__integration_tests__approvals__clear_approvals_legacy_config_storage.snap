@@ -12,10 +12,15 @@ info:
     COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMON_DIR: ""
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_DIR: ""
     GIT_EDITOR: ""
+    GIT_INDEX_FILE: ""
+    GIT_OBJECT_DIRECTORY: ""
     GIT_TERMINAL_PROMPT: "0"
+    GIT_WORK_TREE: ""
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
@@ -45,4 +50,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
+[33m▲[39m [33mUser config: [1mapproved-commands[22m under [1m[projects][22m is deprecated in favor of [1mapprovals.toml[22m[39m
+[2m↳[22m [2mTo see details, run [4mwt config show[24m; to apply updates, run [4mwt config update[24m[22m
 [32m✓[39m [32mCleared 3 approvals for this project[39m

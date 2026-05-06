@@ -473,6 +473,56 @@ fn test_merge_config_serde() {
 }
 
 #[test]
+fn test_remove_config_default_delete_branch_true() {
+    let config = RemoveConfig::default();
+    assert!(config.delete_branch());
+    assert_eq!(config.delete_branch, None);
+}
+
+#[test]
+fn test_remove_config_parse_delete_branch_false() {
+    let toml = r#"
+[remove]
+delete-branch = false
+"#;
+    let parsed = UserConfig::load_from_str(toml).unwrap();
+    assert_eq!(parsed.remove.delete_branch, Some(false));
+    assert!(!parsed.remove(None).delete_branch());
+}
+
+#[test]
+fn test_remove_config_project_override() {
+    let toml = r#"
+[remove]
+delete-branch = true
+
+[projects."github.com/user/repo".remove]
+delete-branch = false
+"#;
+    let parsed = UserConfig::load_from_str(toml).unwrap();
+    // Global default is preserved
+    assert!(parsed.remove(None).delete_branch());
+    // Project override wins
+    assert!(!parsed.remove(Some("github.com/user/repo")).delete_branch());
+}
+
+#[test]
+fn test_remove_config_merge() {
+    let base = RemoveConfig {
+        delete_branch: Some(true),
+    };
+    let override_config = RemoveConfig {
+        delete_branch: Some(false),
+    };
+    let merged = base.merge_with(&override_config);
+    assert_eq!(merged.delete_branch, Some(false));
+
+    // Empty override falls back to base
+    let merged = base.merge_with(&RemoveConfig::default());
+    assert_eq!(merged.delete_branch, Some(true));
+}
+
+#[test]
 fn test_skip_shell_integration_prompt_default_false() {
     let config = UserConfig::default();
     assert!(!config.skip_shell_integration_prompt);
@@ -1956,8 +2006,8 @@ fn test_valid_user_config_keys_all_deserialize() {
             "worktree-path" => {
                 scalar_lines.push(format!("{key} = \"test-value\""));
             }
-            "list" | "commit" | "merge" | "switch" | "step" | "select" | "commit-generation"
-            | "aliases" => {
+            "list" | "commit" | "merge" | "remove" | "switch" | "step" | "select"
+            | "commit-generation" | "aliases" => {
                 // Table sections with minimal content
                 table_lines.push(format!("[{key}]"));
             }

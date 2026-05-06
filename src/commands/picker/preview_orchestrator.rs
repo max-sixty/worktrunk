@@ -89,6 +89,57 @@ impl PreviewOrchestrator {
         });
     }
 
+    /// Spawn the full pre-compute fan-out for a freshly published skeleton.
+    ///
+    /// Spawn order: the first item's modes win the first slots (the user
+    /// lands there and may tab-cycle), then mode-major across the rest.
+    /// Summaries queue last because each LLM call can take seconds.
+    ///
+    /// When `llm_command` is `None` and `summary_hint` is `Some`, the hint
+    /// is written directly into the Summary cache for every item — gives
+    /// the Summary tab something useful instead of a perpetual
+    /// "Generating…" placeholder.
+    pub(super) fn spawn_all_precompute(
+        &self,
+        list_items: &[Arc<ListItem>],
+        preview_dims: (usize, usize),
+        llm_command: Option<&str>,
+        summary_hint: Option<&str>,
+    ) {
+        let modes = [
+            PreviewMode::WorkingTree,
+            PreviewMode::Log,
+            PreviewMode::BranchDiff,
+            PreviewMode::UpstreamDiff,
+        ];
+
+        if let Some(first) = list_items.first() {
+            for mode in modes {
+                self.spawn_preview(Arc::clone(first), mode, preview_dims);
+            }
+        }
+        for mode in modes {
+            for item in list_items.iter().skip(1) {
+                self.spawn_preview(Arc::clone(item), mode, preview_dims);
+            }
+        }
+
+        if let Some(llm) = llm_command {
+            if let Some(first) = list_items.first() {
+                self.spawn_summary(Arc::clone(first), llm.to_string(), self.repo.clone());
+            }
+            for item in list_items.iter().skip(1) {
+                self.spawn_summary(Arc::clone(item), llm.to_string(), self.repo.clone());
+            }
+        } else if let Some(hint) = summary_hint {
+            for item in list_items {
+                let branch = item.branch_name().to_string();
+                self.cache
+                    .insert((branch, PreviewMode::Summary), hint.to_string());
+            }
+        }
+    }
+
     fn spawn_task<F: FnOnce() + Send + 'static>(&self, task: F) {
         self.pending.fetch_add(1, Ordering::SeqCst);
         let guard = PendingGuard(Arc::clone(&self.pending));

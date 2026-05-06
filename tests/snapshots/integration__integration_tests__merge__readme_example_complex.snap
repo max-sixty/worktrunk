@@ -12,10 +12,15 @@ info:
     COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMON_DIR: ""
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_DIR: ""
     GIT_EDITOR: ""
+    GIT_INDEX_FILE: ""
+    GIT_OBJECT_DIRECTORY: ""
     GIT_TERMINAL_PROMPT: "0"
+    GIT_WORK_TREE: ""
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
@@ -83,4 +88,4 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 [36m◎[39m [36mRemoving [1mfeature-auth[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
-[36m◎[39m [36mRunning post-merge: [1mproject:install[22m @ [1m_REPO_[22m[39m
+[36m◎[39m [36mRunning post-merge: [1minstall[22m (project) @ [1m_REPO_[22m[39m

@@ -23,18 +23,19 @@ use std::io::Write;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, append_aliases,
-    referenced_vars_for_config, template_references_var, validate_template_syntax,
+    ALIAS_ARGS_KEY, CommandConfig, ProjectConfig, UserConfig, referenced_vars_for_config,
+    template_references_var, validate_template_syntax,
 };
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{format_bash_with_gutter, info_message, println};
 
-use crate::commands::alias::{AliasOptions, AliasSource, TOP_LEVEL_BUILTINS};
+use crate::commands::alias::{AliasOptions, TOP_LEVEL_BUILTINS, load_aliases};
 use crate::commands::build_invalid_subcommand_error;
 use crate::commands::command_executor::{
     CommandContext, build_hook_context, expand_shell_template,
 };
 use crate::commands::did_you_mean;
+use crate::commands::hooks::HookSource;
 
 /// Show the configured template(s) for an alias, tagged by source.
 ///
@@ -42,15 +43,15 @@ use crate::commands::did_you_mean;
 /// entries are printed (user first, matching runtime execution order).
 pub fn handle_alias_show(name: String) -> anyhow::Result<()> {
     let repo = Repository::current()?;
-    let user_config = UserConfig::load()?;
-    let project_config = ProjectConfig::load(&repo, true)?;
-    let entries = entries_for_name(&repo, &user_config, project_config.as_ref(), &name);
+    let user_config = repo.user_config();
+    let project_config = repo.project_config()?;
+    let entries = entries_for_name(&repo, user_config, project_config, &name);
 
     if entries.is_empty() {
         return Err(unknown_alias_error(
             &repo,
-            &user_config,
-            project_config.as_ref(),
+            user_config,
+            project_config,
             &name,
             "show",
         ));
@@ -93,15 +94,15 @@ fn warn_if_shadowed(name: &str) {
 /// Other templates expand against the current context.
 pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<()> {
     let repo = Repository::current()?;
-    let user_config = UserConfig::load()?;
-    let project_config = ProjectConfig::load(&repo, true)?;
-    let entries = entries_for_name(&repo, &user_config, project_config.as_ref(), &name);
+    let user_config = repo.user_config();
+    let project_config = repo.project_config()?;
+    let entries = entries_for_name(&repo, user_config, project_config, &name);
 
     if entries.is_empty() {
         return Err(unknown_alias_error(
             &repo,
-            &user_config,
-            project_config.as_ref(),
+            user_config,
+            project_config,
             &name,
             "dry-run",
         ));
@@ -127,13 +128,13 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
     let wt = repo.current_worktree();
     let wt_path = wt.root().context("Failed to get worktree root")?;
     let branch = wt.branch().ok().flatten();
-    let ctx = CommandContext::new(&repo, &user_config, branch.as_deref(), &wt_path, false);
+    let ctx = CommandContext::new(&repo, user_config, branch.as_deref(), &wt_path, false);
     let extra_refs: Vec<(&str, &str)> = opts
         .vars
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    let mut context_map = build_hook_context(&ctx, &extra_refs)?;
+    let mut context_map = build_hook_context(&ctx, &extra_refs, None)?;
     context_map.insert(
         ALIAS_ARGS_KEY.to_string(),
         serde_json::to_string(&opts.positional_args)
@@ -218,16 +219,16 @@ fn entries_for_name(
     user_config: &UserConfig,
     project_config: Option<&ProjectConfig>,
     name: &str,
-) -> Vec<(CommandConfig, AliasSource)> {
+) -> Vec<(CommandConfig, HookSource)> {
     let project_id = repo.project_identifier().ok();
     let mut entries = Vec::new();
     if let Some(cfg) = user_config.aliases(project_id.as_deref()).get(name) {
-        entries.push((cfg.clone(), AliasSource::User));
+        entries.push((cfg.clone(), HookSource::User));
     }
     if let Some(pc) = project_config
         && let Some(cfg) = pc.aliases.get(name)
     {
-        entries.push((cfg.clone(), AliasSource::Project));
+        entries.push((cfg.clone(), HookSource::Project));
     }
     entries
 }
@@ -262,12 +263,8 @@ fn unknown_alias_error(
     name: &str,
     sub: &str,
 ) -> anyhow::Error {
-    let project_id = repo.project_identifier().ok();
-    let mut merged = user_config.aliases(project_id.as_deref());
-    if let Some(pc) = project_config {
-        append_aliases(&mut merged, &pc.aliases);
-    }
-    let suggestions = did_you_mean(name, merged.into_keys());
+    let aliases = load_aliases(Some(repo), user_config, project_config);
+    let suggestions = did_you_mean(name, aliases.into_keys());
 
     let mut top = crate::cli::build_command();
     let sub_cmd = top
@@ -304,7 +301,7 @@ fn unknown_alias_error(
 fn format_entry(
     name: &str,
     cfg: &CommandConfig,
-    source: AliasSource,
+    source: HookSource,
     bodies: &[String],
     verb: Option<&str>,
 ) -> String {
@@ -316,12 +313,11 @@ fn format_entry(
 fn format_entry_with_routing(
     name: &str,
     cfg: &CommandConfig,
-    source: AliasSource,
+    source: HookSource,
     bodies: &[String],
     verb: Option<&str>,
     routing: Option<&str>,
 ) -> String {
-    let label = source.label();
     let suffix = match verb {
         Some(v) => format!(" {v}:"),
         None => ":".to_string(),
@@ -340,7 +336,7 @@ fn format_entry_with_routing(
         body.push_str(rendered);
     }
     info_message(cformat!(
-        "Alias <bold>{name}</> ({label}){suffix}\n{}",
+        "Alias <bold>{name}</> ({source}){suffix}\n{}",
         format_bash_with_gutter(&body)
     ))
     .to_string()
@@ -363,7 +359,7 @@ mod tests {
     fn test_format_entry_show_single() {
         let cfg = cfg_from_toml(r#"cmd = "echo {{ branch }}""#);
         let bodies: Vec<String> = cfg.commands().map(|c| c.template.clone()).collect();
-        let out = format_entry("greet", &cfg, AliasSource::User, &bodies, None);
+        let out = format_entry("greet", &cfg, HookSource::User, &bodies, None);
         insta::assert_snapshot!(out.ansi_strip());
     }
 
@@ -378,7 +374,7 @@ cmd = [
 "#,
         );
         let bodies: Vec<String> = cfg.commands().map(|c| c.template.clone()).collect();
-        let out = format_entry("deploy", &cfg, AliasSource::Project, &bodies, None);
+        let out = format_entry("deploy", &cfg, HookSource::Project, &bodies, None);
         insta::assert_snapshot!(out.ansi_strip());
     }
 
@@ -397,7 +393,7 @@ cmd = [
         let out = format_entry(
             "deploy",
             &cfg,
-            AliasSource::Project,
+            HookSource::Project,
             &bodies,
             Some("would run"),
         );

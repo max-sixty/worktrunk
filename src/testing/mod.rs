@@ -38,7 +38,7 @@ use std::process::Command;
 
 use crate::config::sanitize_branch_name;
 use crate::git::Repository;
-use crate::shell_exec::Cmd;
+use crate::shell_exec::{Cmd, INHERITED_GIT_PATH_VARS};
 
 use self::mock_commands::{MockConfig, MockResponse};
 
@@ -254,6 +254,20 @@ pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
     // Disable delayed streaming for deterministic output across platforms.
     // Without this, slow CI triggers progress messages that don't appear on faster systems.
     ("WORKTRUNK_TEST_DELAYED_STREAM_MS", "-1"),
+    // Treat shells as not installed by default so the "Skipped …; rc not found"
+    // filter in scan_shell_configs is deterministic across hosts. Tests that need
+    // a shell to count as installed (e.g., to assert the Skipped path) set "1".
+    // Nushell uses the historical env-var name `_ENV` (see Shell::is_installed).
+    ("WORKTRUNK_TEST_BASH_INSTALLED", "0"),
+    ("WORKTRUNK_TEST_ZSH_INSTALLED", "0"),
+    ("WORKTRUNK_TEST_FISH_INSTALLED", "0"),
+    ("WORKTRUNK_TEST_NUSHELL_ENV", "0"),
+    ("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "0"),
+    // Disable PowerShell auto-detection (PSModulePath / SHELL signal).
+    // Iteration is unconditional (matches the other shells); this var only
+    // controls `allow_create` via `should_auto_configure_powershell()` so we
+    // don't write a profile in tests that aren't asserting that path.
+    ("WORKTRUNK_TEST_POWERSHELL_ENV", "0"),
 ];
 
 // NOTE: TERM is intentionally NOT in STATIC_TEST_ENV_VARS because:
@@ -267,6 +281,85 @@ pub const STATIC_TEST_ENV_VARS: &[(&str, &str)] = &[
 pub const NULL_DEVICE: &str = "NUL";
 #[cfg(not(windows))]
 pub const NULL_DEVICE: &str = "/dev/null";
+
+/// Default user-config path for isolated subprocesses — points at a
+/// nonexistent file so wt treats it as "no config." Callers can override
+/// via the `user_config` parameter to [`isolate_subprocess_env`].
+pub const DEFAULT_ISOLATED_USER_CONFIG: &str = "/nonexistent/wt/config.toml";
+
+/// Default approvals path for isolated subprocesses — nonexistent file.
+const DEFAULT_ISOLATED_APPROVALS: &str = "/nonexistent/wt/approvals.toml";
+
+/// Default system-config path for isolated subprocesses. Uses the real
+/// XDG location so tests verify wt's XDG lookup path is exercised; the
+/// file doesn't actually exist on test/CI machines.
+const DEFAULT_ISOLATED_SYSTEM_CONFIG: &str = "/etc/xdg/worktrunk/config.toml";
+
+/// Prepare a subprocess to run with a clean wt environment.
+///
+/// Strips every `GIT_*` and `WORKTRUNK_*` from the parent env, plus
+/// `NO_COLOR` / `SHELL` / `PSModulePath`, then points the three
+/// `WORKTRUNK_*_PATH` env vars at known locations:
+///
+/// - `WORKTRUNK_CONFIG_PATH` ← `user_config` (or [`DEFAULT_ISOLATED_USER_CONFIG`])
+/// - `WORKTRUNK_SYSTEM_CONFIG_PATH` ← real XDG location (typically nonexistent on CI)
+/// - `WORKTRUNK_APPROVALS_PATH` ← nonexistent file
+///
+/// Shared by [`configure_cli_command`] (test-side, layers on test
+/// determinism: forced colors, fixed timestamps, log level, etc.) and
+/// bench callers (no extra layer — benches want realism). The two
+/// genuinely diverge in the *additions*, but the isolation baseline is
+/// identical.
+///
+/// Use on any wt subprocess that must not see host context. For `git`
+/// subprocesses, use [`configure_git_cmd`] instead.
+pub fn isolate_subprocess_env(cmd: &mut Command, user_config: Option<&Path>) {
+    isolate_subprocess_env_from(cmd, user_config, std::env::vars().map(|(k, _)| k));
+}
+
+/// Inner form of [`isolate_subprocess_env`] that takes the parent-env keys
+/// as an iterator instead of reading [`std::env::vars`]. Lets tests exercise
+/// the GIT_*/WORKTRUNK_* scrub branch with synthetic input — `set_var` is
+/// `unsafe` and races with parallel tests, so we don't mutate process env.
+fn isolate_subprocess_env_from<I>(cmd: &mut Command, user_config: Option<&Path>, env_keys: I)
+where
+    I: IntoIterator<Item = String>,
+{
+    for key in env_keys {
+        if key.starts_with("GIT_") || key.starts_with("WORKTRUNK_") {
+            cmd.env_remove(&key);
+        }
+    }
+    cmd.env_remove("NO_COLOR");
+    cmd.env_remove("SHELL");
+    // PSModulePath being inherited triggers false PowerShell detection on
+    // CI environments where PowerShell Core is installed but not in use.
+    cmd.env_remove("PSModulePath");
+
+    cmd.env(
+        "WORKTRUNK_CONFIG_PATH",
+        user_config.unwrap_or(Path::new(DEFAULT_ISOLATED_USER_CONFIG)),
+    );
+    cmd.env(
+        "WORKTRUNK_SYSTEM_CONFIG_PATH",
+        DEFAULT_ISOLATED_SYSTEM_CONFIG,
+    );
+    cmd.env("WORKTRUNK_APPROVALS_PATH", DEFAULT_ISOLATED_APPROVALS);
+}
+
+/// `env_remove` the [`INHERITED_GIT_PATH_VARS`] from `cmd`. Call this on
+/// any `git` subprocess spawned with an explicit `current_dir`, so an
+/// inherited relative `GIT_DIR=.git` (from a git alias, hook, etc.)
+/// doesn't redirect discovery away from the path you set.
+///
+/// Strictly defensive when used downstream of [`isolate_subprocess_env`]
+/// (which already stripped these). Required when there's no upstream
+/// scrub — e.g. wt-perf shells out to `git` directly without a `wt` parent.
+pub fn scrub_git_path_vars(cmd: &mut Command) {
+    for var in INHERITED_GIT_PATH_VARS {
+        cmd.env_remove(var);
+    }
+}
 
 /// Create a `wt` CLI command with standardized test environment settings.
 ///
@@ -337,9 +430,10 @@ pub fn configure_completion_invocation_for_shell(cmd: &mut Command, words: &[&st
 /// and is intended for cases where tests need to construct the command manually
 /// (e.g., to execute shell pipelines).
 ///
-/// This is intentionally more thorough than `wt_perf::isolate_cmd()`:
-/// integration tests need full determinism (timestamps, locale, mock commands,
-/// wide COLUMNS for path display) while benchmarks only need host config stripped.
+/// Layers on top of [`isolate_subprocess_env`] (the env-strip + path
+/// baseline that benches use directly): tests additionally pin
+/// timestamps, locale, mock-command flags, and wide COLUMNS for
+/// deterministic snapshots, where benches want realism.
 ///
 /// ## Related: `TestRepo::test_env_vars()`
 ///
@@ -351,42 +445,14 @@ pub fn configure_completion_invocation_for_shell(cmd: &mut Command, words: &[&st
 /// - This function enables RUST_LOG=warn; PTY tests don't (too noisy in combined output)
 /// - This function clears host GIT_*/WORKTRUNK_* vars; PTY tests start with clean env
 pub fn configure_cli_command(cmd: &mut Command) {
-    for (key, _) in std::env::vars() {
-        if key.starts_with("GIT_") || key.starts_with("WORKTRUNK_") {
-            cmd.env_remove(&key);
-        }
-    }
-    // Prevent host environment from disabling ANSI in snapshots.
-    // NO_COLOR can override CLICOLOR_FORCE in downstream output handling.
-    cmd.env_remove("NO_COLOR");
-    // Set to non-existent path to prevent loading user's real config.
-    // Tests that need config should use TestRepo::configure_wt_cmd() which overrides this.
-    // Note: env_remove above may cause insta-cmd to capture empty values in snapshots,
-    // but correctness (isolating from host WORKTRUNK_* vars) trumps snapshot aesthetics.
-    cmd.env("WORKTRUNK_CONFIG_PATH", "/nonexistent/test/config.toml");
-    cmd.env(
-        "WORKTRUNK_SYSTEM_CONFIG_PATH",
-        "/etc/xdg/worktrunk/config.toml",
-    );
-    // `WORKTRUNK_PROJECT_CONFIG_PATH` is intentionally left unset so tests
-    // can pick up `.config/wt.toml` in their own test repo via the default
-    // lookup. Host leakage is prevented by the `WORKTRUNK_*` env_remove loop
-    // above. Tests needing full project-config isolation (e.g., completion
-    // tests that must not see this repo's aliases) should set it explicitly.
-    cmd.env(
-        "WORKTRUNK_APPROVALS_PATH",
-        "/nonexistent/test/approvals.toml",
-    );
-    // Remove $SHELL to avoid platform-dependent diagnostic output (macOS has /bin/zsh,
-    // Linux has /bin/bash). Tests that need SHELL should set it explicitly.
-    cmd.env_remove("SHELL");
-    // Remove PSModulePath to prevent false PowerShell detection on CI environments
-    // where PowerShell Core is installed but not being used.
-    cmd.env_remove("PSModulePath");
-    // Disable auto PowerShell detection (tests that need it should set to "1")
-    cmd.env("WORKTRUNK_TEST_POWERSHELL_ENV", "0");
-    // Disable auto nushell detection (tests that need it should set to "1")
-    cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
+    // Strip host context and set baseline `WORKTRUNK_*_PATH` defaults
+    // (all pointing at nonexistent or XDG paths). Tests needing real
+    // config should override after this call (e.g. via
+    // `TestRepo::configure_wt_cmd`). `WORKTRUNK_PROJECT_CONFIG_PATH` is
+    // intentionally not set so tests pick up `.config/wt.toml` in their
+    // own test repo via the default lookup; host leakage is prevented
+    // by the env-strip above.
+    isolate_subprocess_env(cmd, None);
     cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
     // Enable warn-level logging so diagnostics show up in test failures
     cmd.env("RUST_LOG", "warn");
@@ -436,6 +502,11 @@ pub fn configure_cli_command(cmd: &mut Command) {
 /// * `cmd` - The git Command to configure
 /// * `git_config_path` - Path to git config file (use `/dev/null` or `NULL_DEVICE` for none)
 pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
+    // Defensive: every existing caller is downstream of `configure_cli_command`
+    // (which already stripped these via `isolate_subprocess_env`), but a future
+    // test that spawns `git` from an unprepared parent shouldn't be vulnerable
+    // to an inherited relative `GIT_DIR` redirecting discovery.
+    scrub_git_path_vars(cmd);
     cmd.env("GIT_CONFIG_GLOBAL", git_config_path);
     cmd.env("GIT_CONFIG_SYSTEM", NULL_DEVICE);
     cmd.env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z");
@@ -451,6 +522,10 @@ pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
 /// This is the `Cmd` equivalent of [`configure_git_cmd`]. Use this when building
 /// git commands via the builder pattern (`Cmd::new("git")`).
 pub fn configure_git_env(cmd: Cmd, git_config_path: &Path) -> Cmd {
+    // Defensive `GIT_*` path-var strip — see `configure_git_cmd` for rationale.
+    let cmd = INHERITED_GIT_PATH_VARS
+        .iter()
+        .fold(cmd, |acc, var| acc.env_remove(var));
     cmd.env("GIT_CONFIG_GLOBAL", git_config_path)
         .env("GIT_CONFIG_SYSTEM", NULL_DEVICE)
         .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
@@ -2567,5 +2642,59 @@ mod tests {
         let warnings = validate_ansi_codes(output);
         // Should not warn about ")" since it's just punctuation
         assert!(warnings.is_empty() || !warnings[0].contains("loses"));
+    }
+
+    #[test]
+    fn isolate_subprocess_env_scrubs_git_and_worktrunk_keys() {
+        let mut cmd = Command::new("true");
+        let synthetic_env = [
+            "GIT_DIR".to_string(),
+            "GIT_AUTHOR_DATE".to_string(),
+            "WORKTRUNK_CONFIG_PATH".to_string(),
+            "WORKTRUNK_HISTORY".to_string(),
+            "PATH".to_string(),
+            "HOME".to_string(),
+            "GIT".to_string(),       // No underscore — should not match
+            "WORKTRUNK".to_string(), // No underscore — should not match
+        ];
+        isolate_subprocess_env_from(&mut cmd, None, synthetic_env);
+
+        let removed: HashMap<String, Option<String>> = cmd
+            .get_envs()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.map(|v| v.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+
+        // Scrubbed: GIT_*, WORKTRUNK_* (overwritten path vars also appear here),
+        // NO_COLOR, SHELL, PSModulePath.
+        assert_eq!(removed.get("GIT_DIR"), Some(&None));
+        assert_eq!(removed.get("GIT_AUTHOR_DATE"), Some(&None));
+        assert_eq!(removed.get("WORKTRUNK_HISTORY"), Some(&None));
+        assert_eq!(removed.get("NO_COLOR"), Some(&None));
+
+        // Not scrubbed: vars that don't match either prefix.
+        assert!(!removed.contains_key("PATH"));
+        assert!(!removed.contains_key("HOME"));
+        // No underscore — prefix check requires `GIT_`/`WORKTRUNK_`.
+        assert!(!removed.contains_key("GIT"));
+        assert!(!removed.contains_key("WORKTRUNK"));
+
+        // Path vars get set explicitly to known values.
+        assert_eq!(
+            removed.get("WORKTRUNK_CONFIG_PATH"),
+            Some(&Some(DEFAULT_ISOLATED_USER_CONFIG.to_string()))
+        );
+        assert_eq!(
+            removed.get("WORKTRUNK_SYSTEM_CONFIG_PATH"),
+            Some(&Some(DEFAULT_ISOLATED_SYSTEM_CONFIG.to_string()))
+        );
+        assert_eq!(
+            removed.get("WORKTRUNK_APPROVALS_PATH"),
+            Some(&Some(DEFAULT_ISOLATED_APPROVALS.to_string()))
+        );
     }
 }

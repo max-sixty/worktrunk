@@ -219,7 +219,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             options.warn_about_untracked = stage_mode == super::commit::StageMode::All;
             options.show_no_squash_note = true;
 
-            options.commit(&mut announcer)?;
+            let _ = options.commit(&mut announcer)?;
             true // Committed directly
         }
     } else {
@@ -231,14 +231,14 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // --no-hooks vs declined-approval distinction.
     let squashed = if squash_enabled {
         matches!(
-            super::step_commands::handle_squash(
+            super::step::handle_squash(
                 Some(&target_branch),
                 yes,
                 commit_hooks,
                 Some(stage_mode),
                 &mut announcer,
             )?,
-            super::step_commands::SquashResult::Squashed
+            super::step::SquashResult::Squashed { .. }
         )
     } else {
         false
@@ -248,8 +248,8 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let rebased = if rebase {
         // Auto-rebase onto target
         matches!(
-            super::step_commands::handle_rebase(Some(&target_branch))?,
-            super::step_commands::RebaseResult::Rebased
+            super::step::handle_rebase(Some(&target_branch))?,
+            super::step::RebaseResult::Rebased { .. }
         )
     } else {
         // --no-rebase: verify already rebased, fail if not
@@ -284,10 +284,10 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     });
     if !ff {
         // Create a merge commit on the target branch via commit-tree + update-ref
-        handle_no_ff_merge(Some(&target_branch), operations, &current_branch)?;
+        let _ = handle_no_ff_merge(Some(&target_branch), operations, &current_branch)?;
     } else {
         // Fast-forward push to target branch
-        handle_push(Some(&target_branch), PushKind::MergeFastForward, operations)?;
+        let _ = handle_push(Some(&target_branch), PushKind::MergeFastForward, operations)?;
     }
 
     let removed = finish_after_merge(

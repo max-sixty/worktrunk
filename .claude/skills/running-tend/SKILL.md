@@ -95,6 +95,8 @@ Before opening a `fix/ci-*` PR, classify the failure:
   PR (same behavior as prior test-flake ci-fix runs).
 - **Real regression** — proceed with a fix PR.
 
+**Non-required ≠ transient.** A non-required job (e.g. `collect affected coverage`, `affected tests (linux, advisory)`) can fail from a real regression. The required/non-required distinction is about merge-blocking, not about how the failure is classified. If a deterministic build error (`error[E...]`, "binary not found", "ambiguous candidates", missing target) repeats across consecutive runs of the same shape, it's a real regression even when the job is advisory. Reserve "transient" for non-deterministic causes: `BrokenPipe`, `connection reset`, runner disk full, GitHub API timeouts, host-availability blips.
+
 **Lychee link-check timeouts are always transient** unless the same URL has
 failed on at least two separate runs within the last few days. `.config/lychee.toml`
 already sets `max_retries = 6` and lists known-unreliable hosts; one timeout
@@ -112,6 +114,28 @@ wait — don't open a PR.
 
 Apply the literal suggestion only — change the lines it covers, nothing more.
 If surrounding lines also need updating, note that in your reply.
+
+## PR Review: Don't Self-Dismiss Over Unrelated Test Flakes
+
+If a clearly-unrelated test fails after you've already approved a PR, leave
+the approval in place and post a comment noting the flake. Do **not** dismiss
+your own approval to "gate" on a rerun.
+
+GitHub blocks both `gh run rerun --failed` and per-job rerun
+(`POST /repos/{owner}/{repo}/actions/jobs/{id}/rerun`) with HTTP 403 while
+*any* job in the same workflow run is still `in_progress`. The non-required
+`benchmarks` job routinely runs 80+ minutes after `test (linux|macos|windows)`
+finish, so dismiss-then-wait-then-rerun cascades into a long session for no
+benefit — the maintainer can rerun the failed job directly once `benchmarks`
+clears, or merge regardless if the failure is clearly a flake. Past
+occurrence: PR #2512 ([run 25196909437](https://github.com/max-sixty/worktrunk/actions/runs/25196909437))
+spent ~90 min in a wait-and-rerun loop after dismissing approval over an
+unrelated `step_prune` Windows flake.
+
+The codecov-failure dismissal pattern is different and remains correct:
+`CLAUDE.md` requires explicit user approval before merging with failing
+`codecov/patch`, so dismissing the approval until the coverage gap is
+addressed is intentional.
 
 ## Issue Triage
 
@@ -183,9 +207,16 @@ the full test suite (`cargo run -- hook pre-merge --yes`) and verify
 
 ## Weekly Maintenance: CI Pin Bumps
 
-Bump pinned third-party versions in `.github/workflows/ci.yaml` to track upstream:
+Pinned third-party versions in CI are invisible to Dependabot — it follows `Cargo.toml` deps and `uses: foo@vN` action refs, not inline `version:` strings. They drift unless this step bumps them.
 
-- **`hustcer/setup-nu@v3`** — set `version:` to the latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'` and update all three call sites (`test`, `benchmarks`, `code-coverage`).
+For each weekly run, check upstream and bump:
+
+- **`baptiste0928/cargo-install@v3` blocks** in `.github/workflows/ci.yaml` and `.github/actions/{test,claude}-setup/action.yaml` — every `version: "=X.Y.Z"` against `cargo info <crate>`. Today: `cargo-insta`, `cargo-nextest`, `cargo-llvm-cov`, `cargo-msrv`, `cargo-udeps`, `lychee`, `worktrunk`. The `cargo-affected` install has no version pin (follows default branch) — leave it alone. Verify each crate's `rust-version` against the pinned toolchain and note compatibility in the PR body (see PR #1657 for the format).
+- **`hustcer/setup-nu@v3`** `version:` input — latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'`. Three call sites: `ci.yaml` (`benchmarks`, `code-coverage`) and `actions/test-setup/action.yaml`.
+- **`taiki-e/install-action@v2.x`** `tool: zola@<ver>` in the `check-docs` job — latest from `gh api repos/getzola/zola/releases/latest --jq '.tag_name'`.
+- **Runner images** — `ubuntu-24.04`, `macos-15`, `windows-2022`. Keep `windows-2022` pinned (actions/runner-images#12677 — windows-2025 lacks the D: drive).
+
+Discovery shortcut: a recent green CI run on `main` flags cargo-install drift directly via workflow annotations. `gh run view <run-id> --json jobs --jq '.jobs[].databaseId' | xargs -I{} gh api repos/<owner>/<repo>/check-runs/{}/annotations` returns one warning per outdated pin.
 
 ## Weekly Maintenance: Statusline Cache-Check
 

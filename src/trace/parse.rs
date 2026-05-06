@@ -20,7 +20,7 @@
 
 use std::time::Duration;
 
-/// The kind of trace entry: command execution or instant event.
+/// The kind of trace entry: command execution, instant event, or in-process span.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TraceEntryKind {
     /// A command execution with duration and result
@@ -36,6 +36,15 @@ pub enum TraceEntryKind {
     Instant {
         /// Event name (e.g., "Showed skeleton")
         name: String,
+    },
+    /// An in-process span — a named region of code with a duration.
+    /// Distinct from `Command` so consumers can render subprocess vs.
+    /// in-process work differently.
+    Span {
+        /// Span name (e.g., "build_hook_context")
+        name: String,
+        /// Span duration
+        duration: Duration,
     },
 }
 
@@ -63,13 +72,15 @@ pub enum TraceResult {
 
 impl TraceEntry {
     /// Returns true if the command succeeded.
-    /// Instant events always return true.
+    ///
+    /// Instant events and spans always return true — they record completion of
+    /// in-process work, not subprocess success/failure.
     pub fn is_success(&self) -> bool {
         match &self.kind {
             TraceEntryKind::Command { result, .. } => {
                 matches!(result, TraceResult::Completed { success: true })
             }
-            TraceEntryKind::Instant { .. } => true,
+            TraceEntryKind::Instant { .. } | TraceEntryKind::Span { .. } => true,
         }
     }
 }
@@ -79,9 +90,10 @@ impl TraceEntry {
 /// Returns `None` if the line doesn't match the expected format.
 /// The `[wt-trace]` marker can appear anywhere in the line (to handle log prefixes).
 ///
-/// Supports two entry types:
+/// Supports three entry types:
 /// - Command events: `cmd="..." dur_us=... ok=true/false` or `err="..."`
 /// - Instant events: `event="..."`
+/// - Span events: `span="..." dur_us=...`
 fn parse_line(line: &str) -> Option<TraceEntry> {
     // Find the [wt-trace] marker anywhere in the line
     let marker = "[wt-trace] ";
@@ -92,6 +104,7 @@ fn parse_line(line: &str) -> Option<TraceEntry> {
     let mut context = None;
     let mut command = None;
     let mut event = None;
+    let mut span = None;
     let mut duration = None;
     let mut result = None;
     let mut start_time_us = None;
@@ -130,6 +143,7 @@ fn parse_line(line: &str) -> Option<TraceEntry> {
             "context" => context = Some(value.to_string()),
             "cmd" => command = Some(value.to_string()),
             "event" => event = Some(value.to_string()),
+            "span" => span = Some(value.to_string()),
             "dur_us" => {
                 let us: u64 = value.parse().ok()?;
                 duration = Some(Duration::from_micros(us));
@@ -157,6 +171,12 @@ fn parse_line(line: &str) -> Option<TraceEntry> {
     let kind = if let Some(event_name) = event {
         // Instant event
         TraceEntryKind::Instant { name: event_name }
+    } else if let Some(span_name) = span {
+        // In-process span - requires span and dur
+        TraceEntryKind::Span {
+            name: span_name,
+            duration: duration?,
+        }
     } else {
         // Command event - requires cmd, dur, and result
         TraceEntryKind::Command {
@@ -382,6 +402,37 @@ more noise
         ));
         assert_eq!(entry.start_time_us, None);
         assert_eq!(entry.thread_id, None);
+    }
+
+    // ========================================================================
+    // Span event tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_span_event() {
+        let line = r#"[wt-trace] ts=1736600000000000 tid=3 span="config_load" dur_us=8200"#;
+        let entry = parse_line(line).unwrap();
+
+        assert_eq!(entry.start_time_us, Some(1736600000000000));
+        assert_eq!(entry.thread_id, Some(3));
+        let TraceEntryKind::Span { name, duration } = &entry.kind else {
+            panic!("expected span event, got {:?}", entry.kind);
+        };
+        assert_eq!(name, "config_load");
+        assert_eq!(*duration, Duration::from_micros(8200));
+        assert!(entry.is_success());
+    }
+
+    #[test]
+    fn test_parse_span_minimal() {
+        let line = r#"[wt-trace] span="repo_open" dur_us=1500"#;
+        let entry = parse_line(line).unwrap();
+
+        let TraceEntryKind::Span { name, duration } = &entry.kind else {
+            panic!("expected span");
+        };
+        assert_eq!(name, "repo_open");
+        assert_eq!(*duration, Duration::from_micros(1500));
     }
 
     #[test]

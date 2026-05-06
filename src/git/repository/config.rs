@@ -215,7 +215,10 @@ impl Repository {
 
     /// Check if a hint has been shown in this repo.
     ///
-    /// Hints are stored as `worktrunk.hints.<name> = true`.
+    /// Hints are stored as `worktrunk.hints.<name> = <count>` (an integer
+    /// representing how many times the hint has been shown). The presence of
+    /// the key — regardless of value — means the hint has been shown at least
+    /// once.
     /// TODO: Could move to global git config if we accumulate more global hints.
     pub fn has_shown_hint(&self, name: &str) -> bool {
         self.config_last(&format!("worktrunk.hints.{name}"))
@@ -224,9 +227,37 @@ impl Repository {
             .is_some()
     }
 
-    /// Mark a hint as shown in this repo.
+    /// Return how many times a hint has been shown in this repo.
+    ///
+    /// Returns `0` when the key is missing. Legacy `"true"` values (written
+    /// before the counter migration) parse as `0`, so the next
+    /// [`mark_hint_shown`] increments them to `1` — the same as a fresh hint.
+    /// This loses the "user has seen this before" signal for legacy entries,
+    /// which is acceptable: the only consumer of the count is the
+    /// shell-integration escalation at 5+, and a legacy user merely starts
+    /// their counter from zero. `has_shown_hint` still returns `true` so any
+    /// "first time" branches still skip.
+    ///
+    /// [`mark_hint_shown`]: Self::mark_hint_shown
+    pub fn hint_count(&self, name: &str) -> u32 {
+        self.config_last(&format!("worktrunk.hints.{name}"))
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(0)
+    }
+
+    /// Mark a hint as shown in this repo, incrementing its display counter.
+    ///
+    /// The first call writes `1`; subsequent calls increment. Legacy `"true"`
+    /// values (written before the counter migration) and any unparsable
+    /// content are treated as `0`, so the next call resets to `1` — see
+    /// [`hint_count`] for the rationale.
+    ///
+    /// [`hint_count`]: Self::hint_count
     pub fn mark_hint_shown(&self, name: &str) -> anyhow::Result<()> {
-        self.set_config_value(&format!("worktrunk.hints.{name}"), "true")
+        let next = self.hint_count(name).saturating_add(1);
+        self.set_config_value(&format!("worktrunk.hints.{name}"), &next.to_string())
     }
 
     /// Clear a hint so it will show again.
@@ -270,21 +301,27 @@ impl Repository {
 
     /// Get the default branch name for the repository.
     ///
-    /// **Performance note:** This method may trigger a network call on first invocation
-    /// if the remote HEAD is not cached locally. The result is then cached in git's
-    /// config for subsequent calls. To minimize latency:
-    /// - Defer calling this until after fast, local checks (see e497f0f for example)
-    /// - Consider passing the result as a parameter if needed multiple times
-    /// - For optional operations, provide a fallback (e.g., `.unwrap_or("main")`)
+    /// **Network contract — this is the sole "look it up if missing" helper
+    /// in worktrunk that is allowed to fall through to the wire.** The first
+    /// call per repo may run `git ls-remote` (100 ms–2 s); the result is
+    /// then persisted to `worktrunk.default-branch` and every subsequent
+    /// call is a local cache hit. No other detection helper may add a
+    /// similar fallback. See `CLAUDE.md` → "Network Access" for the policy.
     ///
     /// Detection strategy:
     /// 1. Check worktrunk cache (`git config worktrunk.default-branch`)
     /// 2. Try primary remote's local cache (e.g., `origin/HEAD`)
-    /// 3. Query remote (`git ls-remote`) — may take 100ms-2s
+    /// 3. Query remote (`git ls-remote`) — may take 100 ms–2 s (sole wire fallback)
     /// 4. Infer from local branches if no remote
     ///
-    /// Detection results are cached to `worktrunk.default-branch` for future calls.
-    /// Result is also cached in the shared repo cache (shared across all worktrees).
+    /// Detection results are cached to `worktrunk.default-branch` for future
+    /// calls. Result is also cached in the shared repo cache (shared across
+    /// all worktrees).
+    ///
+    /// To minimize latency on the rare cold-clone case:
+    /// - Defer calling this until after fast, local checks (see e497f0f for an example).
+    /// - Consider passing the result as a parameter if needed multiple times.
+    /// - For optional operations, provide a fallback (e.g., `.unwrap_or("main")`).
     ///
     /// Returns `None` if the default branch cannot be determined.
     pub fn default_branch(&self) -> Option<String> {
@@ -380,6 +417,7 @@ impl Repository {
                 branch,
                 show_create_hint: true,
                 last_fetch_ago: None,
+                pr_mr_platform: self.detect_ref_type(),
             }
             .into());
         }
@@ -512,8 +550,8 @@ impl Repository {
         }
 
         // Batched rev-parse: asks `--is-inside-work-tree` and also pre-warms
-        // the worktree root / git-dir / branch / HEAD-SHA caches, sparing
-        // four later forks on the typical alias path.
+        // the worktree root / git-dir / branch caches, sparing three later
+        // forks on the typical alias path.
         let info = self.current_worktree().prewarm_info().unwrap_or_default();
 
         if let Some(root) = info.root {
@@ -537,18 +575,37 @@ impl Repository {
     ///
     /// Result is cached in the repository's shared cache (same for all clones).
     /// Returns `None` if not in a worktree or if no config file exists.
+    ///
+    /// Returns an owned clone — use [`project_config`](Self::project_config)
+    /// when a borrow suffices, to avoid the clone.
     pub fn load_project_config(&self) -> anyhow::Result<Option<ProjectConfig>> {
+        Ok(self.project_config()?.cloned())
+    }
+
+    /// Borrow the cached project configuration.
+    ///
+    /// Same caching semantics as [`load_project_config`](Self::load_project_config),
+    /// but returns a reference into the cache. Mirrors
+    /// [`user_config`](Self::user_config) so callers that consume both can
+    /// pull them through the same borrow-from-cache shape.
+    ///
+    /// Unlike `user_config`, this does **not** participate in
+    /// [`Repository::prewarm`] — `.config/wt.toml` lives inside the
+    /// worktree, so the read can't fire until git discovery finishes.
+    /// Callers pay a few-tens-of-µs sequential file read on first access,
+    /// and deprecation warnings (if any) emit on that first call.
+    ///
+    /// User and project configs are kept distinct rather than merged
+    /// because downstream consumers (alias loading, hook resolution,
+    /// approval policy) apply per-source rules.
+    pub fn project_config(&self) -> anyhow::Result<Option<&ProjectConfig>> {
         self.cache
             .project_config
-            .get_or_try_init(|| {
-                match self.current_worktree().root() {
-                    Ok(_) => {
-                        ProjectConfig::load(self, true).context("Failed to load project config")
-                    }
-                    Err(_) => Ok(None), // Not in a worktree, no project config
-                }
+            .get_or_try_init(|| match self.current_worktree().root() {
+                Ok(_) => ProjectConfig::load(self, true).context("Failed to load project config"),
+                Err(_) => Ok(None), // Not in a worktree, no project config
             })
-            .cloned()
+            .map(Option::as_ref)
     }
 }
 
@@ -586,5 +643,58 @@ mod tests {
             .unwrap();
         assert!(output.contains("worktrunk.state.feature.marker"));
         assert!(output.contains("worktrunk.state.bugfix.marker"));
+    }
+
+    /// `mark_hint_shown` writes 1 on first call and increments on each
+    /// subsequent call. `hint_count` returns 0 for missing keys and the
+    /// current count otherwise; `clear_hint` resets the counter back to 0.
+    #[test]
+    fn test_hint_count_increments_and_clears() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Missing key -> 0, and "shown" predicate is false.
+        assert_eq!(repo.hint_count("escalating"), 0);
+        assert!(!repo.has_shown_hint("escalating"));
+
+        // First mark records 1.
+        repo.mark_hint_shown("escalating").unwrap();
+        assert_eq!(repo.hint_count("escalating"), 1);
+        assert!(repo.has_shown_hint("escalating"));
+
+        // Subsequent marks increment.
+        repo.mark_hint_shown("escalating").unwrap();
+        assert_eq!(repo.hint_count("escalating"), 2);
+        repo.mark_hint_shown("escalating").unwrap();
+        assert_eq!(repo.hint_count("escalating"), 3);
+
+        // Clearing resets the counter (no `(--unset)` survivors poisoning future reads).
+        assert!(repo.clear_hint("escalating").unwrap());
+        assert_eq!(repo.hint_count("escalating"), 0);
+        assert!(!repo.has_shown_hint("escalating"));
+    }
+
+    /// Legacy `worktrunk.hints.<name> = "true"` values (written before the
+    /// counter migration) parse as 0, so `mark_hint_shown` resets them to 1.
+    /// This is the documented migration choice — a legacy user starts their
+    /// counter from zero, but `has_shown_hint` continues to report `true` so
+    /// any "first-time only" branches still treat them as having seen it.
+    #[test]
+    fn test_hint_count_legacy_true_resets_to_one() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Simulate a pre-migration repo by writing the literal "true" value.
+        repo.set_config("worktrunk.hints.legacy", "true").unwrap();
+        assert!(repo.has_shown_hint("legacy"));
+        assert_eq!(repo.hint_count("legacy"), 0);
+
+        // Next mark normalises to 1 (not 2 — legacy "shown once" is dropped).
+        repo.mark_hint_shown("legacy").unwrap();
+        assert_eq!(repo.hint_count("legacy"), 1);
+
+        // From there, normal increment behaviour resumes.
+        repo.mark_hint_shown("legacy").unwrap();
+        assert_eq!(repo.hint_count("legacy"), 2);
     }
 }

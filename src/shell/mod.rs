@@ -56,6 +56,45 @@ impl Shell {
         matches!(self, Self::Fish | Self::Nushell)
     }
 
+    /// Whether this shell's binary is available on the system (in `$PATH`).
+    ///
+    /// Used to suppress "Skipped" entries in `wt config show` and `wt config shell install`
+    /// for shells the user doesn't have installed (e.g., `nu`, `fish` on a stock zsh-only Mac).
+    /// PATH lookup is the cheapest reliable signal that doesn't depend on rc-file conventions.
+    ///
+    /// Note: `bash` and `zsh` are preinstalled on macOS, so this returns true even when the
+    /// user never uses them. The skipped-entry filter still works because shells with rc files
+    /// land in `configured` rather than `skipped`.
+    pub fn is_installed(&self) -> bool {
+        // Allow tests to override detection. The Nushell variable retains its
+        // historical name (`_ENV`) to avoid churning hundreds of recorded
+        // snapshots; semantically it matches the others.
+        //
+        // Tests always set these via STATIC_TEST_ENV_VARS, so the `which::which`
+        // fallback is the production-only path — exercised on real users'
+        // machines, not in CI. The same pattern existed in the prior
+        // `is_nushell_available()` helper without dedicated coverage.
+        let env_var = match self {
+            Self::Bash => "WORKTRUNK_TEST_BASH_INSTALLED",
+            Self::Zsh => "WORKTRUNK_TEST_ZSH_INSTALLED",
+            Self::Fish => "WORKTRUNK_TEST_FISH_INSTALLED",
+            Self::Nushell => "WORKTRUNK_TEST_NUSHELL_ENV",
+            Self::PowerShell => "WORKTRUNK_TEST_POWERSHELL_INSTALLED",
+        };
+        if let Ok(val) = std::env::var(env_var) {
+            return val == "1";
+        }
+
+        let binaries: &[&str] = match self {
+            Self::Bash => &["bash"],
+            Self::Zsh => &["zsh"],
+            Self::Fish => &["fish"],
+            Self::Nushell => &["nu"],
+            Self::PowerShell => &["pwsh", "powershell"],
+        };
+        binaries.iter().any(|b| which::which(b).is_ok())
+    }
+
     /// Returns the config file paths for this shell.
     ///
     /// The `cmd` parameter affects the Fish functions filename (e.g., `wt.fish` or `git-wt.fish`).

@@ -21,7 +21,7 @@ use minijinja::{Environment, ErrorKind, UndefinedBehavior, Value};
 use regex::Regex;
 use shell_escape::escape;
 
-use crate::git::{HookType, Repository};
+use crate::git::{Diagnostic, HookType, Repository};
 use crate::path::to_posix_path;
 use crate::styling::{
     eprintln, error_message, format_bash_with_gutter, format_with_gutter, hint_message,
@@ -196,19 +196,30 @@ pub fn vars_available_in(scope: ValidationScope) -> Vec<&'static str> {
 /// `(unset)`, surfacing operation-specific gaps (e.g., `target_worktree_path`
 /// during `wt switch -`, `upstream` when the branch doesn't track a remote).
 ///
+/// When `referenced` is `Some`, vars absent from `ctx` *and* not in the set
+/// render as dim `(unused)` — `build_hook_context` only skips computation for
+/// expensive vars, so this fires precisely when the gate saved real work.
+/// Cheap vars are populated unconditionally and always show their value, even
+/// when the body doesn't reference them. `(unset)` is reserved for the
+/// distinct case of a referenced var the operation couldn't supply.
+///
 /// `(unset)` relies on an invariant in `build_hook_context`: optional vars
 /// are omitted from the map rather than inserted as empty strings. If a
 /// future caller starts inserting `""`, revisit the empty-vs-absent
 /// distinction here.
-fn format_variables_table(vars: &[&'static str], ctx: &HashMap<String, String>) -> String {
+fn format_variables_table(
+    vars: &[&'static str],
+    ctx: &HashMap<String, String>,
+    referenced: Option<&BTreeSet<String>>,
+) -> String {
     let max_name = vars.iter().map(|v| v.len()).max().unwrap_or(0);
     vars.iter()
-        .map(|var| {
-            let value = match ctx.get(*var) {
-                Some(v) => v.as_str(),
-                None => "(unset)",
-            };
-            format!("{var:<max_name$} = {value}")
+        .map(|var| match ctx.get(*var) {
+            Some(value) => format!("{var:<max_name$} = {value}"),
+            None if referenced.is_some_and(|r| !r.contains(*var)) => {
+                cformat!("<dim>{var:<max_name$} = (unused)</>")
+            }
+            None => format!("{var:<max_name$} = (unset)"),
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -229,7 +240,7 @@ pub fn format_hook_variables(hook_type: HookType, ctx: &HashMap<String, String>)
         .chain(HOOK_INFRASTRUCTURE_VARS)
         .copied()
         .collect();
-    format_variables_table(&vars, ctx)
+    format_variables_table(&vars, ctx, None)
 }
 
 /// Format the resolved template variables for an alias invocation.
@@ -241,7 +252,15 @@ pub fn format_hook_variables(hook_type: HookType, ctx: &HashMap<String, String>)
 /// `args` is stored as a JSON-encoded `Vec<String>` per the [`ALIAS_ARGS_KEY`]
 /// contract; the table displays it space-joined and shell-escaped so it
 /// matches what `{{ args }}` substitutes in templates.
-pub fn format_alias_variables(ctx: &HashMap<String, String>) -> String {
+///
+/// `referenced` (the set of vars the body actually substitutes) controls
+/// the dim `(unused)` marker for vars the operation skipped computing —
+/// the reader sees what's reachable without paying for values the body
+/// won't substitute.
+pub fn format_alias_variables(
+    ctx: &HashMap<String, String>,
+    referenced: Option<&BTreeSet<String>>,
+) -> String {
     let vars: Vec<&'static str> = ACTIVE_VARS
         .iter()
         .copied()
@@ -255,7 +274,29 @@ pub fn format_alias_variables(ctx: &HashMap<String, String>) -> String {
             .expect("ALIAS_ARGS_KEY is always serialized from a Vec<String>");
         display_ctx.insert(ALIAS_ARGS_KEY.into(), shell_join(&args));
     }
-    format_variables_table(&vars, &display_ctx)
+    format_variables_table(&vars, &display_ctx, referenced)
+}
+
+/// Extend `referenced` with the implicit context-map keys an alias dispatch
+/// needs:
+///
+/// - [`ALIAS_ARGS_KEY`] (`args`) — always present in alias scope (`run_alias`
+///   inserts it after `build_hook_context`), so include it so the verbose
+///   table renders the row.
+/// - `branch` when the body references `vars` — `expand_template` reads
+///   `branch` out of the context map to look up `{{ vars.X }}` from git
+///   config at execution time. Bare `{{ vars }}`, `{{ vars.X }}`, and
+///   `{{ vars["X"] }}` all surface `vars` in `undeclared_variables`.
+///
+/// New implicit dependencies (template-level reads from the context map that
+/// `undeclared_variables` doesn't see) belong here, not at each call site.
+pub fn alias_context_filter(mut referenced: BTreeSet<String>) -> BTreeSet<String> {
+    let needs_branch = referenced.contains("vars");
+    referenced.insert(ALIAS_ARGS_KEY.to_string());
+    if needs_branch {
+        referenced.insert("branch".to_string());
+    }
+    referenced
 }
 
 /// Positional CLI args forwarded from `wt <alias> a b c` into the alias's
@@ -473,6 +514,12 @@ pub struct TemplateExpandError {
 
 impl std::fmt::Display for TemplateExpandError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl Diagnostic for TemplateExpandError {
+    fn render(&self) -> String {
         let mut parts = vec![error_message(&self.message).to_string()];
         if let Some(ref line) = self.source_line {
             parts.push(format_with_gutter(line, None));
@@ -491,7 +538,7 @@ impl std::fmt::Display for TemplateExpandError {
                 .to_string(),
             );
         }
-        write!(f, "{}", parts.join("\n"))
+        parts.join("\n")
     }
 }
 
@@ -572,6 +619,18 @@ fn setup_template_env(repo: &Repository) -> Environment<'static> {
         short_hash(value.as_str().unwrap_or_default())
     });
     env.add_filter("hash_port", |value: String| string_to_port(&value));
+    env.add_filter("dirname", |value: Value| -> String {
+        std::path::Path::new(value.as_str().unwrap_or_default())
+            .parent()
+            .map(|p| to_posix_path(&p.to_string_lossy()))
+            .unwrap_or_default()
+    });
+    env.add_filter("basename", |value: Value| -> String {
+        std::path::Path::new(value.as_str().unwrap_or_default())
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    });
 
     // Register worktree_path_of_branch function for looking up branch worktree paths.
     // Returns raw paths — shell escaping is applied by the formatter at output time.
@@ -710,6 +769,8 @@ pub fn validate_template(
 /// - `sanitize_hash` — Filesystem-safe name with hash suffix so distinct inputs never collide
 /// - `hash` — 3-character base36 hash digest of the input
 /// - `hash_port` — Hash to deterministic port number (10000-19999)
+/// - `dirname` — Strip the last path component (e.g., `/a/b/c` → `/a/b`)
+/// - `basename` — Keep only the last path component (e.g., `/a/b/c` → `c`)
 ///
 /// # Functions
 /// - `worktree_path_of_branch(branch)` — Look up the filesystem path of a branch's worktree
@@ -1057,8 +1118,8 @@ mod tests {
         assert!(err.message.contains("syntax error"), "got: {}", err.message);
         assert!(expand_template("{{ 1 + }}", &vars, false, &test.repo, "test").is_err());
 
-        // Display impl renders source line but no available vars hint for syntax errors
-        assert_snapshot!(err, @"
+        // Diagnostic::render produces source line but no available vars hint for syntax errors
+        assert_snapshot!(crate::git::Diagnostic::render(&err), @"
         [31m✗[39m [31mFailed to expand test: syntax error: unexpected end of input, expected end of variable block @ line 1[39m
         [107m [0m {{ unclosed
         ");
@@ -1082,8 +1143,8 @@ mod tests {
         assert!(err.available_vars.contains(&"remote".to_string()));
         assert_eq!(err.source_line.as_deref(), Some("echo {{ target }}"));
 
-        // Display impl renders source line and available vars hint
-        assert_snapshot!(err, @"
+        // Diagnostic::render produces source line and available vars hint
+        assert_snapshot!(crate::git::Diagnostic::render(&err), @"
         [31m✗[39m [31mFailed to expand test: undefined value @ line 1[39m
         [107m [0m echo {{ target }}
         [2m↳[22m [2mAvailable variables: [4mbranch[24m, [4mremote[24m[22m
@@ -1442,6 +1503,85 @@ mod tests {
         assert!((10000..20000).contains(&r2_port));
 
         assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn test_dirname_and_basename_filters() {
+        let test = test_repo();
+        let mut vars = HashMap::new();
+
+        // Bare repo wrapped in a hidden dir: `dirname | basename` recovers the wrapper name
+        // (the case from #1279 — `{{ repo }}` resolves to `.git`, but the user wants `myrepo`)
+        vars.insert("repo_path", "/projects/myrepo/.git");
+        let result = expand_template(
+            "{{ repo_path | dirname | basename }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(result, "myrepo");
+
+        // Composing into a worktree-path template
+        vars.insert("branch", "feature-auth");
+        let result = expand_template(
+            "{{ repo_path }}/../{{ repo_path | dirname | basename }}.{{ branch | sanitize }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(result, "/projects/myrepo/.git/../myrepo.feature-auth");
+
+        // `dirname` strips the last component
+        vars.insert("repo_path", "/a/b/c");
+        let dirname = expand_template(
+            "{{ repo_path | dirname }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(dirname, "/a/b");
+
+        // `basename` keeps only the last component
+        let basename = expand_template(
+            "{{ repo_path | basename }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(basename, "c");
+
+        // No separator: dirname is empty, basename is the whole input
+        vars.insert("repo_path", "myrepo");
+        assert_eq!(
+            expand_template(
+                "{{ repo_path | dirname }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            ""
+        );
+        assert_eq!(
+            expand_template(
+                "{{ repo_path | basename }}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "myrepo"
+        );
     }
 
     #[test]
@@ -2051,7 +2191,7 @@ mod tests {
         // decodes and shell-renders it to match `{{ args }}` substitution.
         ctx.insert(ALIAS_ARGS_KEY.into(), r#"["a","b c"]"#.into());
 
-        let out = format_alias_variables(&ctx);
+        let out = format_alias_variables(&ctx, None);
         assert!(
             out.contains("args                  = a 'b c'"),
             "got: {out}"
@@ -2066,7 +2206,7 @@ mod tests {
     fn test_format_alias_variables_args_empty() {
         let mut ctx: HashMap<String, String> = HashMap::new();
         ctx.insert(ALIAS_ARGS_KEY.into(), "[]".into());
-        let out = format_alias_variables(&ctx);
+        let out = format_alias_variables(&ctx, None);
         // Empty args render as an empty string after the `=` — distinct from
         // `(unset)`, which means the key was absent entirely. `args` sits last
         // in alias ordering, so the output ends with it.

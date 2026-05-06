@@ -310,7 +310,7 @@ fn format_signal(sig: i32) -> String {
 mod tests {
     use super::*;
     use std::os::unix::process::ExitStatusExt;
-    use worktrunk::git::interrupt_exit_code;
+    use worktrunk::git::ErrorExt;
 
     fn downcast_child_exit(err: &anyhow::Error) -> (i32, Option<i32>, String) {
         match err.downcast_ref::<WorktrunkError>() {
@@ -350,7 +350,7 @@ mod tests {
             assert_eq!(code, expected_code, "exit code for {sig}");
             assert_eq!(message, expected_msg, "message for {sig}");
             assert_eq!(
-                interrupt_exit_code(&err),
+                err.interrupt_exit_code(),
                 Some(expected_code),
                 "interrupt_exit_code for {sig}",
             );
@@ -367,6 +367,6 @@ mod tests {
         assert_eq!(code, 2);
         assert_eq!(message, "command failed with exit code 2: my-step");
         // Non-signal errors must NOT trip the interrupt abort path.
-        assert_eq!(interrupt_exit_code(&err), None);
+        assert_eq!(err.interrupt_exit_code(), None);
     }
 }

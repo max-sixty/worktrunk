@@ -76,7 +76,7 @@ impl CommandEnv {
         let branch = current_wt
             .branch()
             .context("Failed to determine current branch")?;
-        let config = UserConfig::load().context("Failed to load config")?;
+        let config = repo.user_config().clone();
 
         Ok(Self {
             repo,

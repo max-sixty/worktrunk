@@ -310,6 +310,29 @@ impl Merge for MergeConfig {
     }
 }
 
+/// Configuration for the `wt remove` command
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, JsonSchema)]
+pub struct RemoveConfig {
+    /// Delete the branch after removing the worktree (default: true)
+    #[serde(rename = "delete-branch", skip_serializing_if = "Option::is_none")]
+    pub delete_branch: Option<bool>,
+}
+
+impl RemoveConfig {
+    /// Delete the branch after removing the worktree (default: true)
+    pub fn delete_branch(&self) -> bool {
+        self.delete_branch.unwrap_or(true)
+    }
+}
+
+impl Merge for RemoveConfig {
+    fn merge_with(&self, other: &Self) -> Self {
+        Self {
+            delete_branch: other.delete_branch.or(self.delete_branch),
+        }
+    }
+}
+
 /// Configuration for the `wt switch` interactive picker.
 ///
 /// New format under `[switch.picker]`. Replaces the deprecated `[select]` section.
@@ -476,6 +499,9 @@ pub struct UserProjectOverrides {
 
     #[serde(default, skip_serializing_if = "is_default")]
     pub merge: MergeConfig,
+
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub remove: RemoveConfig,
 
     #[serde(default, skip_serializing_if = "is_default")]
     pub switch: SwitchConfig,

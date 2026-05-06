@@ -62,10 +62,13 @@ impl PostRemoveContext {
             .to_string();
 
         let commit = removed_commit.unwrap_or("").to_string();
-        let short_commit = if commit.len() >= 7 {
-            commit[..7].to_string()
+        // Empty commit (no removal SHA recorded) skips the short form rather
+        // than asking git to abbreviate "". For a real SHA, fall back to the
+        // full string only if `rev-parse --short` errors (very rare).
+        let short_commit = if commit.is_empty() {
+            String::new()
         } else {
-            commit.clone()
+            repo.short_sha(&commit).unwrap_or_else(|_| commit.clone())
         };
 
         // Target vars: where the user ends up after removal (primary worktree).

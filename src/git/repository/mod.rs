@@ -22,17 +22,34 @@
 //! for the duration of a single CLI command. [`RepoCache`] exploits this by caching
 //! read-only values so repeated queries hit memory instead of spawning git processes.
 //!
-//! **Lifetime.** A cache is created once per `Repository::at()` call and never
-//! invalidated. There is no expiry, no dirty-tracking, no
-//! manual flush — the cache lives exactly as long as the command.
+//! **Two layers, two scopes.** Cached state lives in either of:
+//! - `RepoCache` — per-`Repository::at()` instance. Most repo-wide values
+//!   (config, branches, worktree inventory) live here.
+//! - Process-wide `LazyLock<DashMap>` statics — `GIT_COMMON_DIR_CACHE`,
+//!   `WORKTREE_ROOTS`, `GIT_DIRS`, `CURRENT_BRANCHES`. The git-discovery
+//!   data they hold is keyed by canonicalized filesystem path, so two
+//!   `Repository` instances pointed at the same path see the same answer.
+//!   This lets [`Repository::prewarm`] populate the maps once at the start
+//!   of `main` and have every later `Repository::current()` (each builds a
+//!   fresh `RepoCache`) reuse the result.
+//!
+//! **Lifetime.** Neither layer is ever invalidated. `RepoCache` lives as
+//! long as the `Repository` it's attached to (typically the command).
+//! Process-wide statics live for the process. For the CLI that's the same
+//! thing — one command per process — but tests run many commands in one
+//! process, so they may observe state from prior test cases (in practice
+//! safe: tests use unique tempdir paths, and the maps are filesystem-keyed).
 //!
 //! **Sharing.** `Repository` holds an `Arc<RepoCache>`, so cloning a `Repository`
 //! (e.g., to pass into parallel worktree operations in `wt list`) shares the same
-//! cache. Callers that need a *separate* cache must call `Repository::at()` again.
+//! cache. Callers that need a *separate* cache must call `Repository::at()` again
+//! — but the process-wide maps are still shared in either case.
 //!
 //! **What is NOT cached.** Values that change during command execution are intentionally
 //! excluded:
 //! - `WorkingTree::is_dirty()` — changes as we stage and commit
+//! - `WorkingTree::head_sha()` — HEAD moves on commit, rebase, or merge; a stale SHA
+//!   would surface in template variables (`{{ commit }}`) for hooks that fire after the move
 //!
 //! [`Repository::list_worktrees`] is cached despite mutating commands adding or
 //! removing worktrees. The cache is safe because no caller reads the list
@@ -52,18 +69,15 @@
 //!   its own mutations through the cache. Use direct git commands for post-mutation
 //!   state.
 //!
-//! **Process-level singletons.** Outside `RepoCache`, several modules use `OnceLock`/`LazyLock`
-//! for process-global singletons that are computed once and never change:
+//! **Other process-level singletons.** Outside `RepoCache` and the
+//! git-discovery caches above, several modules use `OnceLock`/`LazyLock` for
+//! process-global singletons that are *lazy initialization, not caches* —
+//! the container is initialized once and never replaced, with no underlying
+//! external state that could go stale:
 //! - Resource limiters: `CMD_SEMAPHORE` (shell_exec), `HEAVY_OPS_SEMAPHORE` (git),
 //!   `LLM_SEMAPHORE` (summary), `COPY_POOL` (copy)
 //! - Global state: `OUTPUT_STATE` (output), `TRACE` and `OUTPUT` (log_files), `COMMAND_LOG`
 //! - Config: `CONFIG_PATH` (config/user/path), `SHELL_CONFIG`, `GIT_ENV_OVERRIDES` (shell_exec)
-//! - Git discovery: `GIT_COMMON_DIR_CACHE` (below) — memoizes `git rev-parse --git-common-dir`
-//!   across `Repository::at()` calls
-//!
-//! These are lazy initialization, not caches — they have no invalidation concerns
-//! because the container is initialized once and never replaced — unlike `RepoCache`,
-//! there is no risk of reading stale external state.
 //!
 //! The picker also maintains a `PreviewCache` (`Arc<DashMap>` in `commands/picker/items.rs`)
 //! for rendered preview output, scoped to a single picker session.
@@ -89,7 +103,7 @@ use dunce::canonicalize;
 use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
-use super::{DefaultBranchName, GitError, IntegrationReason, LineDiff, WorktreeInfo};
+use super::{CommandError, DefaultBranchName, GitError, LineDiff, WorktreeInfo};
 
 // Re-export types needed by submodules
 pub(super) use super::{
@@ -102,13 +116,16 @@ mod branches;
 mod config;
 mod diff;
 mod integration;
+mod ref_snapshot;
 mod remotes;
 pub mod sha_cache;
 mod working_tree;
 mod worktrees;
 
-// Re-export WorkingTree and Branch
+// Re-export WorkingTree, Branch, IntegrationTargets, and RefSnapshot
 pub use branch::Branch;
+pub use integration::IntegrationTargets;
+pub use ref_snapshot::RefSnapshot;
 pub use working_tree::WorkingTree;
 pub(super) use working_tree::path_to_logging_context;
 
@@ -166,7 +183,14 @@ fn stream_exit_result(
 ///
 /// Contains:
 /// - Repo-wide values (same for all worktrees): is_bare, default_branch, etc.
-/// - Per-worktree values keyed by path: worktree_root, current_branch
+/// - Per-worktree values keyed by path: status_porcelain
+///
+/// Per-worktree git-discovery values that used to live here
+/// (`worktree_roots`, `git_dirs`, `current_branches`) are now process-wide
+/// statics ([`WORKTREE_ROOTS`], [`GIT_DIRS`], [`CURRENT_BRANCHES`]) next to
+/// [`GIT_COMMON_DIR_CACHE`]. Same staleness contract — populated once, never
+/// invalidated — but they survive across `Repository::current()` calls so a
+/// single eager [`Repository::prewarm`] in `main` warms every later instance.
 ///
 /// Wrapped in Arc to allow releasing the outer HashMap lock before accessing
 /// cached values, avoiding deadlocks when cached methods call each other.
@@ -222,66 +246,47 @@ pub(super) struct RepoCache {
     pub(super) repo_path: OnceCell<PathBuf>,
     /// Default branch (main, master, etc.)
     pub(super) default_branch: OnceCell<Option<String>>,
-    /// Effective integration target (local default branch or upstream if ahead)
-    pub(super) integration_target: OnceCell<Option<String>>,
     /// Project identifier derived from remote URL
     pub(super) project_identifier: OnceCell<String>,
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
     /// User config (raw, as loaded from disk).
-    /// Lazily loaded on first access.
+    /// Populated by [`Repository::at`] from the
+    /// [`WORKTRUNK_USER_CONFIG_PRELOAD`] preload when prewarm ran; otherwise
+    /// loaded on first access via [`Repository::user_config`].
     pub(super) user_config: OnceCell<UserConfig>,
     /// Resolved user config (global merged with per-project overrides, defaults applied).
     /// Lazily loaded on first access via `Repository::config()`.
     pub(super) resolved_config: OnceCell<ResolvedConfig>,
     /// Sparse checkout paths (empty if not a sparse checkout)
     pub(super) sparse_checkout_paths: OnceCell<Vec<String>>,
-    /// Merge-base cache: (commit1, commit2) -> merge_base_sha (None = no common ancestor)
+    /// Merge-base cache: (sha1, sha2) -> merge_base_sha (None = no common ancestor).
+    /// Keys are commit SHAs by contract — callers must resolve refs through
+    /// a [`RefSnapshot`] before consulting. The key order is normalized
+    /// (`(min, max)`) since merge-base is symmetric.
     pub(super) merge_base: DashMap<(String, String), Option<String>>,
-    /// Ahead/behind cache: (base_ref, head) -> (ahead, behind).
-    /// Primed in bulk by `batch_ahead_behind()`; populated on demand by
-    /// `ahead_behind()` for keys the batch didn't cover (e.g., HEAD SHAs
-    /// during rebase/merge, or git < 2.36 where the batch is a no-op).
-    pub(super) ahead_behind: DashMap<(String, String), (usize, usize)>,
     /// Effective remote URLs: remote_name -> effective URL (with `url.insteadOf` applied).
     /// Separate from `all_config` because `git remote get-url` applies
     /// `url.insteadOf` rewrites that aren't visible in raw config.
     pub(super) effective_remote_urls: DashMap<String, Option<String>>,
-    /// Resolved refs: unresolved ref (e.g., "main") -> resolved form (e.g., "refs/heads/main")
-    /// or original if not a local branch. Populated by `resolve_preferring_branch()`.
-    pub(super) resolved_refs: DashMap<String, String>,
-    /// Effective integration targets: local_target -> effective ref (may be upstream).
-    /// Cached because `integration_reason()` calls `effective_integration_target()` for
-    /// every branch, but the result depends only on the target ref's relationship with
-    /// its upstream — stable for the duration of a command.
-    pub(super) effective_integration_targets: DashMap<String, String>,
-    /// Integration reason cache: (branch, target) -> (effective_target, reason).
-    /// Populated by `integration_reason()`, avoids redundant `compute_integration_lazy()`
-    /// calls when the same branch is checked multiple times (e.g., step_prune Phase 1
-    /// followed by prepare_worktree_removal).
-    pub(super) integration_reasons: DashMap<(String, String), (String, Option<IntegrationReason>)>,
-
-    /// Tree SHA cache: tree spec (e.g., "refs/heads/main^{tree}") -> SHA.
-    /// The tree SHA for a given ref doesn't change during a command.
-    pub(super) tree_shas: DashMap<String, String>,
-
-    /// Commit SHA cache: ref (e.g., "main", "refs/heads/main") -> commit SHA.
-    /// The commit SHA for a given ref doesn't change during a command.
-    /// Used by `rev_parse_commit()` to key the persistent `sha_cache` by SHA.
-    pub(super) commit_shas: DashMap<String, String>,
 
     /// Local branch inventory: one `git for-each-ref refs/heads/` scan, cached
     /// for the lifetime of the repository. Entries are sorted by most recent
     /// commit first; the inventory also holds a name → index map for O(1)
     /// single-branch lookups. Populated lazily via
-    /// [`Repository::local_branches`] — the first call runs the scan and
-    /// primes `resolved_refs`/`commit_shas` so subsequent ref resolution and
-    /// SHA lookups hit memory.
+    /// [`Repository::local_branches`].
+    ///
+    /// **The `commit_sha` field on each entry is a snapshot at scan time.**
+    /// Code that needs a current SHA must resolve through a [`RefSnapshot`]
+    /// captured at the moment the read happens — not through this inventory.
+    /// The inventory is used for branch-name listing and upstream-tracking
+    /// metadata, both of which are stable for the duration of a command.
     pub(super) local_branches: OnceCell<branches::LocalBranchInventory>,
     /// Remote-tracking branch inventory: one `git for-each-ref refs/remotes/`
     /// scan, cached for the lifetime of the repository. Sorted by most recent
     /// commit first. Populated lazily via [`Repository::remote_branches`].
-    /// Excludes `<remote>/HEAD` symrefs.
+    /// Excludes `<remote>/HEAD` symrefs. Same snapshot-at-scan-time contract
+    /// as [`Self::local_branches`] applies to `commit_sha`.
     pub(super) remote_branches: OnceCell<Vec<RemoteBranch>>,
     /// Worktree inventory: one `git worktree list --porcelain` scan, cached
     /// for the lifetime of the repository. Populated lazily via
@@ -296,18 +301,15 @@ pub(super) struct RepoCache {
     pub(super) diff_stats: DashMap<(String, String), LineDiff>,
 
     // ========== Per-worktree values (keyed by path) ==========
-    /// Per-worktree git directory: worktree_path -> canonicalized git dir
-    /// (e.g., `.git/worktrees/<name>` for linked worktrees, `.git` for main)
-    pub(super) git_dirs: DashMap<PathBuf, PathBuf>,
-    /// Worktree root paths: worktree_path -> canonicalized root
-    pub(super) worktree_roots: DashMap<PathBuf, PathBuf>,
-    /// Current branch per worktree: worktree_path -> branch name (None = detached HEAD)
-    pub(super) current_branches: DashMap<PathBuf, Option<String>>,
-    /// HEAD commit SHA per worktree: worktree_path -> SHA (None = unborn, HEAD unresolvable).
-    /// Primed in bulk by `WorkingTree::prewarm_info()`; lazily resolved on miss via
-    /// `WorkingTree::head_sha()`. Lets alias-context expansion consult the cache
-    /// instead of spawning a fresh `git rev-parse HEAD`.
-    pub(super) head_shas: DashMap<PathBuf, Option<String>>,
+    //
+    // Earlier per-worktree git-discovery maps (`worktree_roots`, `git_dirs`,
+    // `current_branches`) lived here too. They moved out to the process-wide
+    // statics next to [`GIT_COMMON_DIR_CACHE`] so [`Repository::prewarm`] can
+    // populate them once for the cold path and have every later
+    // `Repository::current()` (which builds a fresh `RepoCache`) reuse the
+    // result. The data is filesystem-keyed and process-invariant, so per-Repo
+    // scoping never bought anything.
+    //
     /// Cached `git status --porcelain` output per worktree: worktree_path -> raw porcelain.
     /// Populated by `WorkingTree::status_porcelain_cached()` so parallel tasks
     /// (working-tree diff + conflict detection) share one subprocess per worktree
@@ -356,6 +358,76 @@ static DEFAULT_BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| PathBuf::from("."
 /// callers go through `base_path()`) always passes the same `PathBuf`, so
 /// equality on the raw path is sufficient.
 static GIT_COMMON_DIR_CACHE: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new(DashMap::new);
+
+/// Process-wide map of `worktree_path -> canonicalized worktree root`,
+/// keyed by the canonicalized path used as the cache key (same convention as
+/// [`Repository::worktree_at`] / [`WorkingTree`]).
+///
+/// **Invariant:** `WORKTREE_ROOTS.contains_key(path)` ⇔ `path` is inside a git
+/// work tree. The fallback path `WorkingTree::root` returns when `rev-parse
+/// --show-toplevel` fails (deleted CWD, bare repo root, non-repo dir) is
+/// **not** persisted, which keeps the membership check usable as a
+/// "is-inside-worktree" signal — see [`WorkingTree::prewarm_info`]'s fast path.
+///
+/// Populated by [`Repository::prewarm`] (eager, one fork on the cold path),
+/// [`WorkingTree::prewarm_info`] (lazy via the `rev-parse` batch), and
+/// [`WorkingTree::root`] (per-field on demand).
+pub(super) static WORKTREE_ROOTS: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new(DashMap::new);
+
+/// Process-wide map of `worktree_path -> canonicalized git directory` (e.g.
+/// `.git/worktrees/<name>` for linked worktrees, `.git` for the main worktree).
+///
+/// Populated by [`Repository::prewarm`], [`WorkingTree::prewarm_info`], and
+/// [`WorkingTree::git_dir`].
+pub(super) static GIT_DIRS: LazyLock<DashMap<PathBuf, PathBuf>> = LazyLock::new(DashMap::new);
+
+/// Process-wide map of `worktree_path -> current branch` (`None` = detached
+/// HEAD; missing entry = unborn HEAD or never resolved).
+///
+/// Populated by [`Repository::prewarm`], [`WorkingTree::prewarm_info`], and
+/// [`WorkingTree::branch`]. The cached value is a snapshot at first read; if a
+/// hook checks out a different branch mid-command, the entry stays stale —
+/// same contract that the per-`RepoCache` map carried before consolidation.
+pub(super) static CURRENT_BRANCHES: LazyLock<DashMap<PathBuf, Option<String>>> =
+    LazyLock::new(DashMap::new);
+
+/// Process-wide pre-parsed `git config --list -z` output, keyed by the
+/// discovery path passed to [`Repository::prewarm`].
+///
+/// Populated on the cold path by the `git config --list -z` thread spawned
+/// from [`Repository::prewarm_at`]; consumed by [`Repository::at`] when it
+/// builds a fresh `RepoCache` for that discovery path. The point is to
+/// overlap the rev-parse and config reads — the two big git invocations on
+/// the alias-dispatch critical path — so a plain `wt <alias>` pays for one
+/// git startup instead of two in series.
+///
+/// Best-effort, like the rest of `prewarm`. A failed read leaves the entry
+/// empty and the on-demand path inside [`Repository::all_config`] re-forks
+/// `git config --list -z` exactly as before.
+///
+/// Keyed by raw discovery path (no canonicalization) because the consumer in
+/// [`Repository::at`] holds the same `PathBuf` value the prewarm thread
+/// stored — both originate from `base_path()`. Test paths (`Repository::at`
+/// against tempdirs) bypass prewarm and never collide with this map.
+pub(super) static GIT_CONFIG_PRELOAD: LazyLock<
+    DashMap<PathBuf, indexmap::IndexMap<String, Vec<String>>>,
+> = LazyLock::new(DashMap::new);
+
+/// Process-wide preloaded `UserConfig` (worktrunk's user `wt.toml`),
+/// populated by [`Repository::prewarm_user_config`] from `main`.
+///
+/// [`Repository::at`] clones it into `cache.user_config` so the first
+/// `repo.user_config()` call is a memory hit, removing the ~4 ms TOML parse
+/// from the alias-dispatch critical path.
+///
+/// `OnceLock` (not `DashMap`) because `UserConfig` is process-scoped, not
+/// path-scoped: the path-derivation rule (XDG / `$WORKTRUNK_CONFIG_PATH`)
+/// doesn't change during a process lifetime.
+///
+/// Best-effort: a failed prewarm leaves the lock empty and the on-demand
+/// path inside [`Repository::user_config`] reloads from disk exactly as
+/// before.
+pub(super) static WORKTRUNK_USER_CONFIG_PRELOAD: OnceLock<UserConfig> = OnceLock::new();
 
 /// Initialize the global base path for repository operations.
 ///
@@ -433,11 +505,292 @@ impl Repository {
         let discovery_path = path.into();
         let git_common_dir = Self::resolve_git_common_dir(&discovery_path)?;
 
+        let cache = RepoCache::default();
+        // Consume any `git config --list -z` map preloaded by
+        // `Repository::prewarm` so the first `all_config()` call is a memory
+        // hit. The preload is keyed by the same `discovery_path` value that
+        // prewarm stashed under (both originate from `base_path()`); a miss
+        // (different path, no prewarm, test repo) leaves the OnceCell empty
+        // and the on-demand fork inside `all_config` runs as before.
+        if let Some(entry) = GIT_CONFIG_PRELOAD.get(&discovery_path) {
+            let _ = cache
+                .all_config
+                .set(std::sync::RwLock::new(entry.value().clone()));
+        }
+
+        // Same idea for the worktrunk-side `UserConfig`: if the prewarm
+        // thread loaded it already, clone it into the per-Repository cache so
+        // the first `repo.user_config()` call is a memory hit. A miss (no
+        // prewarm, test repo) leaves the OnceCell empty and the on-demand
+        // path in `user_config()` reloads from disk.
+        if let Some(preloaded) = WORKTRUNK_USER_CONFIG_PRELOAD.get() {
+            let _ = cache.user_config.set(preloaded.clone());
+        }
+
         Ok(Self {
             discovery_path,
             git_common_dir,
-            cache: Arc::new(RepoCache::default()),
+            cache: Arc::new(cache),
         })
+    }
+
+    /// Eagerly populate the process-wide git-discovery caches
+    /// (`GIT_COMMON_DIR_CACHE`, `WORKTREE_ROOTS`, `GIT_DIRS`,
+    /// `CURRENT_BRANCHES`), the git bulk-config preload
+    /// (`GIT_CONFIG_PRELOAD`), and the worktrunk user-config preload
+    /// (`WORKTRUNK_USER_CONFIG_PRELOAD`) for the configured base path.
+    ///
+    /// Called once from `main` after the logger is registered, before
+    /// `init_command_log` and alias dispatch. Three threads run concurrently:
+    ///
+    /// - **rev-parse thread**: a single `git rev-parse` fork that folds the
+    ///   two cold-path rev-parses (`--git-common-dir` from
+    ///   [`Repository::at`] and the `prewarm_info` batch from
+    ///   [`Repository::project_config_path`]) into one.
+    /// - **git-config thread**: a single `git config --list -z` fork that the
+    ///   bulk config map (`Repository::all_config`) would otherwise spawn
+    ///   on first read.
+    /// - **user-config thread**: pure file I/O on `$WORKTRUNK_CONFIG_PATH` /
+    ///   XDG paths, parsing worktrunk's user `wt.toml`. No git or
+    ///   `Repository` involvement, so it overlaps cleanly with both git
+    ///   forks and removes the ~4 ms TOML parse from the alias-dispatch
+    ///   critical path.
+    ///
+    /// The three reads are independent: the git threads start from
+    /// `discovery_path` and let git auto-discover the repo; the user-config
+    /// thread depends only on env vars and XDG paths. Running them in
+    /// parallel saves both the second git startup (~7 ms warm, ~10 ms cold)
+    /// and the user-config TOML parse (~4 ms cold) on the alias-dispatch
+    /// critical path.
+    ///
+    /// **Best-effort.** All three threads reuse the existing fallbacks: a
+    /// failed rev-parse leaves the discovery caches empty (later
+    /// `Repository::resolve_git_common_dir` and `WorkingTree::prewarm_info`
+    /// reforks restore behaviour); a failed git-config read leaves the
+    /// preload empty (later `Repository::all_config` reforks); a failed
+    /// user-config read leaves the preload empty (later `Repository::user_config`
+    /// reloads from disk). We never propagate errors from here.
+    ///
+    /// Two partial-success modes the rev-parse batch handles:
+    /// - **Bare repo at the bare root**: `--show-toplevel` errors but
+    ///   `--git-common-dir` prints first, so `GIT_COMMON_DIR_CACHE` still
+    ///   lands. Per-worktree maps stay empty for that path — same as the
+    ///   existing `WorkingTree::root` fallback contract — so `prewarm_info`
+    ///   reforks once for the not-inside-a-worktree determination. That edge
+    ///   case loses the prewarm benefit but matches the unoptimized baseline.
+    /// - **Unborn HEAD**: every selector emits a line but rev-parse exits
+    ///   non-zero. We populate `WORKTREE_ROOTS` and `GIT_DIRS` but leave
+    ///   `CURRENT_BRANCHES` to the `symbolic-ref` fallback in
+    ///   [`WorkingTree::branch`], matching the existing `prewarm_info`
+    ///   behaviour.
+    ///
+    /// Outside any work tree (`wt` invoked from a non-repo directory) the
+    /// rev-parse batch and the git-config read both fail and we cache
+    /// nothing for them — [`Repository::at`] later runs its own rev-parse
+    /// and surfaces the discovery error. The user-config preload still
+    /// succeeds (it doesn't depend on the repo).
+    pub fn prewarm() {
+        Self::prewarm_at(base_path());
+    }
+
+    /// Path-explicit form of [`Self::prewarm`], factored out so tests can
+    /// drive prewarm against a specific repo without mutating the global
+    /// `BASE_PATH` `OnceLock`.
+    pub(super) fn prewarm_at(discovery_path: &Path) {
+        // Fast path: another caller already ran prewarm (or `Repository::at`
+        // populated GIT_COMMON_DIR_CACHE via the on-demand path). Skip the
+        // fork — the per-worktree maps either have what we need from a prior
+        // prewarm/prewarm_info run, or `prewarm_info` will refork on first use.
+        // The config preloads are gated on the same key: if the rev-parse
+        // result is already cached, the git-config read either ran in a prior
+        // prewarm or will be re-forked on first `all_config` access, and the
+        // user-config preload either landed in a prior prewarm or
+        // `Repository::user_config` will reload it on demand.
+        if GIT_COMMON_DIR_CACHE.contains_key(discovery_path) {
+            return;
+        }
+
+        let _span = crate::trace::Span::new("prewarm");
+
+        // Run the rev-parse, git-config, and user-config reads concurrently
+        // on scoped threads. The two git threads target the same repo and
+        // don't depend on each other's output; the user-config thread is
+        // pure file I/O on XDG paths and doesn't touch git at all.
+        // Overlapping them removes ~one git startup (~7 ms warm, ~10 ms
+        // cold) plus the ~4 ms user-config TOML parse from the
+        // alias-dispatch critical path. Failures in any branch leave the
+        // caches empty and the on-demand callers re-fork — same
+        // best-effort contract `prewarm` always had.
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let _span = crate::trace::Span::new("prewarm_rev_parse");
+                Self::prewarm_rev_parse(discovery_path);
+            });
+            s.spawn(|| {
+                let _span = crate::trace::Span::new("prewarm_git_config");
+                Self::prewarm_git_config(discovery_path);
+            });
+            s.spawn(|| {
+                let _span = crate::trace::Span::new("prewarm_user_config");
+                Self::prewarm_user_config();
+            });
+        });
+    }
+
+    /// Rev-parse half of [`Self::prewarm_at`] — populates
+    /// `GIT_COMMON_DIR_CACHE`, `WORKTREE_ROOTS`, `GIT_DIRS`, and
+    /// `CURRENT_BRANCHES` from a single `git rev-parse` fork. See
+    /// [`Self::prewarm`] for the partial-success contract.
+    fn prewarm_rev_parse(discovery_path: &Path) {
+        // Order matters: `git rev-parse` emits one stdout line per selector in
+        // argument order, and we parse positionally. `--git-common-dir` first
+        // so even when later selectors fail (bare repo at the bare root, no
+        // worktree, …) the common dir still lands.
+        let Ok(output) = Cmd::new("git")
+            .args([
+                "rev-parse",
+                "--git-common-dir",
+                "--is-inside-work-tree",
+                "--show-toplevel",
+                "--git-dir",
+                "--symbolic-full-name",
+                "HEAD",
+            ])
+            .current_dir(discovery_path)
+            .context(path_to_logging_context(discovery_path))
+            .run()
+        else {
+            return;
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut lines = stdout.lines();
+
+        // Line 1: --git-common-dir. Cache even on non-zero exit — git emits
+        // this line before bailing out of `--show-toplevel` in a bare repo.
+        let Some(common_raw) = lines.next() else {
+            return;
+        };
+        let common_path = PathBuf::from(common_raw.trim());
+        let common_absolute = if common_path.is_relative() {
+            discovery_path.join(&common_path)
+        } else {
+            common_path
+        };
+        let Ok(common_resolved) = canonicalize(&common_absolute) else {
+            return;
+        };
+        GIT_COMMON_DIR_CACHE.insert(discovery_path.to_path_buf(), common_resolved);
+
+        // Per-worktree maps key on the canonicalized form of `discovery_path`,
+        // matching what `worktree_at` derives. Use the same fallback as
+        // `worktree_at` so the keys line up (canonicalize when the path
+        // exists, raw otherwise).
+        let worktree_key =
+            canonicalize(discovery_path).unwrap_or_else(|_| discovery_path.to_path_buf());
+
+        // Line 2: --is-inside-work-tree. "false" or missing → leave the
+        // per-worktree maps untouched. The membership invariant on
+        // `WORKTREE_ROOTS` ("contains_key ⇔ inside a worktree") forbids
+        // recording a sentinel here; `WorkingTree::root` and `prewarm_info`
+        // would misclassify the path as inside a worktree on the next call.
+        let is_inside = lines.next().is_some_and(|s| s.trim() == "true");
+        if !is_inside {
+            return;
+        }
+
+        // Line 3: --show-toplevel. Always emits when is_inside=true; mirror
+        // `prewarm_info`'s `self.path` fallback when canonicalize fails.
+        let raw_toplevel = lines.next().unwrap_or("").trim();
+        let canonical_root =
+            canonicalize(PathBuf::from(raw_toplevel)).unwrap_or_else(|_| worktree_key.clone());
+        WORKTREE_ROOTS
+            .entry(worktree_key.clone())
+            .or_insert(canonical_root);
+
+        // Line 4: --git-dir. Resolve relative-to-discovery and canonicalize;
+        // only land it when canonicalize succeeds, matching `prewarm_info`.
+        if let Some(git_dir) = lines.next().and_then(|raw| {
+            let path = PathBuf::from(raw.trim());
+            let absolute = if path.is_relative() {
+                discovery_path.join(&path)
+            } else {
+                path
+            };
+            canonicalize(&absolute).ok()
+        }) {
+            GIT_DIRS.entry(worktree_key.clone()).or_insert(git_dir);
+        }
+
+        // Line 5: --symbolic-full-name HEAD. Only trustworthy when the whole
+        // batch succeeded — on unborn HEAD this lands as the literal string
+        // "HEAD" (indistinguishable from detached HEAD without exit status).
+        // On unborn HEAD we leave `CURRENT_BRANCHES` empty so the
+        // `symbolic-ref --short HEAD` fallback in `WorkingTree::branch`
+        // resolves the unborn branch name.
+        if output.status.success()
+            && let Some(raw) = lines.next()
+        {
+            let branch = raw.trim().strip_prefix("refs/heads/").map(str::to_owned);
+            CURRENT_BRANCHES.entry(worktree_key).or_insert(branch);
+        }
+    }
+
+    /// Git-config half of [`Self::prewarm_at`] — runs `git config --list -z`
+    /// from `discovery_path` and stashes the parsed map in
+    /// [`GIT_CONFIG_PRELOAD`] for [`Repository::at`] to consume.
+    ///
+    /// Runs from `discovery_path` rather than `git_common_dir` (which we
+    /// don't know yet — the rev-parse thread is racing in parallel). Git's
+    /// `config --list` emits the same merged system + global + local config
+    /// from any path inside the repo, including linked worktrees of bare
+    /// repos: linked worktrees and the common dir share one config file, so
+    /// the merged output is identical to the existing `git_common_dir`
+    /// invocation in [`Repository::all_config`].
+    ///
+    /// Failures (non-repo directory, corrupted config) are swallowed; the
+    /// on-demand path inside `all_config` re-forks the same subprocess and
+    /// surfaces the error there.
+    fn prewarm_git_config(discovery_path: &Path) {
+        let Ok(output) = Cmd::new("git")
+            .args(["config", "--list", "-z"])
+            .current_dir(discovery_path)
+            .context(path_to_logging_context(discovery_path))
+            .run()
+        else {
+            return;
+        };
+        if !output.status.success() {
+            return;
+        }
+        let parsed = parse_config_list_z(&output.stdout);
+        GIT_CONFIG_PRELOAD.insert(discovery_path.to_path_buf(), parsed);
+    }
+
+    /// User-config half of [`Self::prewarm_at`] — loads worktrunk's user
+    /// `wt.toml` (and system + env-var layers) and stashes the result in
+    /// [`WORKTRUNK_USER_CONFIG_PRELOAD`] for [`Repository::at`] to clone
+    /// into per-Repository caches.
+    ///
+    /// Pure file I/O on `$WORKTRUNK_CONFIG_PATH` / XDG paths — no git, no
+    /// `Repository`, no dependence on `discovery_path`. Runs as a sibling
+    /// thread to the two git forks so the ~4 ms TOML parse overlaps with
+    /// them instead of falling on the alias-dispatch critical path.
+    ///
+    /// Warnings (parse failures, env-var rejections, validation issues) are
+    /// emitted to stderr inline by [`emit_user_config_warnings`], matching
+    /// the on-demand path in [`Repository::user_config`]. Prewarm runs in
+    /// `main` before alias dispatch, so these warnings emerge before any
+    /// command-specific output and before the per-handler
+    /// [`Repository::project_config`] reads that surface project-config
+    /// warnings.
+    ///
+    /// Best-effort: if `OnceLock::set` races (a second prewarm reentry, or
+    /// a test that already populated the lock) we drop the second value.
+    fn prewarm_user_config() {
+        let (config, warnings) = UserConfig::load_with_warnings();
+        emit_user_config_warnings(&warnings);
+        let _ = WORKTRUNK_USER_CONFIG_PRELOAD.set(config);
     }
 
     /// Resolved user config (global merged with per-project overrides, defaults applied).
@@ -462,51 +815,15 @@ impl Repository {
     /// Each config layer (system file, user file, env vars) degrades
     /// independently — a failure in one preserves data from earlier layers.
     /// Issues are surfaced on stderr so they're visible without `RUST_LOG`.
+    ///
+    /// Typically a memory hit: [`Repository::prewarm`] populates the cache
+    /// from `main` before any command runs. Tests and other callers that
+    /// bypass prewarm fall through to a fresh `UserConfig::load_with_warnings`
+    /// here.
     pub fn user_config(&self) -> &UserConfig {
         self.cache.user_config.get_or_init(|| {
             let (config, warnings) = UserConfig::load_with_warnings();
-            for warning in &warnings {
-                match warning {
-                    LoadError::File { path, label, err } => {
-                        crate::styling::eprintln!(
-                            "{}",
-                            crate::styling::warning_message(format!(
-                                "{label} at {} failed to parse, skipping",
-                                crate::path::format_path_for_display(path),
-                            ))
-                        );
-                        crate::styling::eprintln!(
-                            "{}",
-                            crate::styling::format_with_gutter(&err.to_string(), None)
-                        );
-                    }
-                    LoadError::Env { err, vars } => {
-                        let var_list: Vec<_> = vars
-                            .iter()
-                            .map(|(name, value)| format!("{name}={value}"))
-                            .collect();
-                        crate::styling::eprintln!(
-                            "{}",
-                            crate::styling::warning_message(format!(
-                                "Ignoring env var overrides: {}",
-                                var_list.join(", ")
-                            ))
-                        );
-                        crate::styling::eprintln!(
-                            "{}",
-                            crate::styling::format_with_gutter(err.trim(), None)
-                        );
-                    }
-                    LoadError::Validation(err) => {
-                        crate::styling::eprintln!(
-                            "{}",
-                            crate::styling::warning_message(format!(
-                                "Config validation warning: {err}"
-                            ))
-                        );
-                    }
-                }
-            }
+            emit_user_config_warnings(&warnings);
             config
         })
     }
@@ -533,6 +850,11 @@ impl Repository {
         if let Some(cached) = GIT_COMMON_DIR_CACHE.get(discovery_path) {
             return Ok(cached.clone());
         }
+
+        // Span attribution for the cold path: the rev-parse subprocess gets
+        // its own `[wt-trace] cmd=` record from `Cmd::run`, and this span
+        // captures the surrounding canonicalize + cache-insert work too.
+        let _span = crate::trace::Span::new("resolve_git_common_dir");
 
         let output = Cmd::new("git")
             .args(["rev-parse", "--git-common-dir"])
@@ -967,18 +1289,9 @@ impl Repository {
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // Normalize carriage returns to newlines for consistent output
-            // Git uses \r for progress updates; in non-TTY contexts this causes snapshot instability
-            let stderr = stderr.replace('\r', "\n");
-            // Some git commands print errors to stdout (e.g., `commit` with nothing to commit)
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let error_msg = [stderr.trim(), stdout.trim()]
-                .into_iter()
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n");
-            bail!("{}", error_msg);
+            return Err(
+                super::error::CommandError::from_failed_output("git", args, &output).into(),
+            );
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -1000,6 +1313,24 @@ impl Repository {
     /// ```
     pub fn run_command_check(&self, args: &[&str]) -> anyhow::Result<bool> {
         Ok(self.run_command_output(args)?.status.success())
+    }
+
+    /// Abbreviate a commit SHA for display, honoring `core.abbrev` and
+    /// auto-extending for ambiguous prefixes.
+    ///
+    /// Wraps `git rev-parse --short <sha>`. Use this anywhere a short SHA is
+    /// shown to the user or passed to a hook template — never slice
+    /// `&sha[..7]` directly, since 7 chars regularly collides in large repos
+    /// and ignores the user's `core.abbrev` setting.
+    ///
+    /// For batches (e.g., abbreviating many worktree heads at once), prefer
+    /// folding `%h` into an existing `git log --format` call rather than
+    /// looping this helper. See [`commit_details_many`](Self::commit_details_many).
+    pub fn short_sha(&self, sha: &str) -> anyhow::Result<String> {
+        Ok(self
+            .run_command(&["rev-parse", "--short", sha])?
+            .trim()
+            .to_string())
     }
 
     /// Delay before showing progress output for slow operations.
@@ -1139,23 +1470,39 @@ impl Repository {
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))
     }
 
-    /// Extract structured failure info from a [`Repository::run_command_delayed_stream`] error.
+    /// Extract structured failure info from a command-runner error.
     ///
-    /// Returns `(output, Some(FailedCommand))` if the error is a `StreamCommandError`,
-    /// or `(error_string, None)` for other error types (e.g., spawn failures).
+    /// Returns `(output, Some(FailedCommand))` when the chain carries
+    /// either a `StreamCommandError` (from `run_command_delayed_stream`)
+    /// or a [`super::error::CommandError`] (from `run_command` /
+    /// `WorkingTree::run_command`). Falls back to `(error_string, None)`
+    /// for other error types (e.g., spawn failures).
     pub fn extract_failed_command(
         err: &anyhow::Error,
     ) -> (String, Option<super::error::FailedCommand>) {
-        match err.downcast_ref::<StreamCommandError>() {
-            Some(e) => (
+        if let Some(e) = err.downcast_ref::<StreamCommandError>() {
+            return (
                 e.output.clone(),
                 Some(super::error::FailedCommand {
                     command: e.command.clone(),
                     exit_info: e.exit_info.clone(),
                 }),
-            ),
-            None => (err.to_string(), None),
+            );
         }
+        if let Some(cmd_err) = CommandError::find_in(err) {
+            let exit_info = match cmd_err.exit_code {
+                Some(code) => format!("exit code {code}"),
+                None => "killed by signal".to_string(),
+            };
+            return (
+                cmd_err.combined_output(),
+                Some(super::error::FailedCommand {
+                    command: cmd_err.command_string(),
+                    exit_info,
+                }),
+            );
+        }
+        (err.to_string(), None)
     }
 }
 
@@ -1216,6 +1563,55 @@ fn parse_config_list_z(stdout: &[u8]) -> indexmap::IndexMap<String, Vec<String>>
             .push(value.to_string());
     }
     map
+}
+
+/// Emit `UserConfig::load_with_warnings` warnings to stderr.
+///
+/// Shared by [`Repository::prewarm_user_config`] (preload thread on `main`)
+/// and [`Repository::user_config`] (on-demand path for tests and callers
+/// that bypass prewarm). Both routes go through the same formatting so the
+/// stderr output is byte-identical regardless of which path runs.
+fn emit_user_config_warnings(warnings: &[LoadError]) {
+    for warning in warnings {
+        match warning {
+            LoadError::File { path, label, err } => {
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::warning_message(format!(
+                        "{label} at {} failed to parse, skipping",
+                        crate::path::format_path_for_display(path),
+                    ))
+                );
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::format_with_gutter(&err.to_string(), None)
+                );
+            }
+            LoadError::Env { err, vars } => {
+                let var_list: Vec<_> = vars
+                    .iter()
+                    .map(|(name, value)| format!("{name}={value}"))
+                    .collect();
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::warning_message(format!(
+                        "Ignoring env var overrides: {}",
+                        var_list.join(", ")
+                    ))
+                );
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::format_with_gutter(err.trim(), None)
+                );
+            }
+            LoadError::Validation(err) => {
+                crate::styling::eprintln!(
+                    "{}",
+                    crate::styling::warning_message(format!("Config validation warning: {err}"))
+                );
+            }
+        }
+    }
 }
 
 /// Parse a git boolean config value.

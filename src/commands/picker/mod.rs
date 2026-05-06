@@ -109,9 +109,6 @@ use skim::reader::CommandCollector;
 use worktrunk::git::{Repository, current_or_recover};
 
 use super::command_executor::FailureStrategy;
-use super::handle_switch::{
-    approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks,
-};
 use super::hooks::{HookAnnouncer, execute_hook};
 use super::list::collect;
 use super::list::progressive::RenderTarget;
@@ -119,8 +116,9 @@ use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::template_vars::TemplateVars;
 use super::worktree::hooks::PostRemoveContext;
 use super::worktree::{
-    RemoveResult, SwitchBranchInfo, SwitchResult, execute_switch,
-    offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
+    RemoveResult, SwitchBranchInfo, SwitchResult, approve_switch_hooks, execute_switch,
+    offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch, run_pre_switch_hooks,
+    spawn_switch_background_hooks,
 };
 use crate::commands::command_executor::CommandContext;
 use crate::output::handle_switch_output;
@@ -207,8 +205,10 @@ impl PickerCollector {
                     None, // no display path in TUI context
                 )?;
 
+                let snapshot = repo.capture_refs()?;
                 let output = remove_worktree_with_cleanup(
                     &repo,
+                    &snapshot,
                     worktree_path,
                     RemoveOptions {
                         branch: branch_name.clone(),
@@ -248,8 +248,15 @@ impl PickerCollector {
                 if !deletion_mode.should_keep() {
                     let default_branch = repo.default_branch();
                     let target = default_branch.as_deref().unwrap_or("HEAD");
-                    let _ =
-                        delete_branch_if_safe(repo, branch_name, target, deletion_mode.is_force());
+                    if let Ok(snapshot) = repo.capture_refs() {
+                        let _ = delete_branch_if_safe(
+                            repo,
+                            &snapshot,
+                            branch_name,
+                            target,
+                            deletion_mode.is_force(),
+                        );
+                    }
                 }
             }
         }
@@ -295,6 +302,7 @@ impl CommandCollector for PickerCollector {
                     false,
                     config,
                     caller_path,
+                    None,
                     None,
                 );
 
@@ -376,7 +384,7 @@ pub fn handle_picker(
     if std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_none() && !std::io::stdin().is_terminal() {
         anyhow::bail!("Interactive picker requires an interactive terminal");
     }
-    worktrunk::shell_exec::trace_instant("Picker started");
+    worktrunk::trace::instant("Picker started");
 
     let (repo, is_recovered) = current_or_recover()?;
 
@@ -385,15 +393,15 @@ pub fn handle_picker(
     let change_dir = change_dir_flag.unwrap_or_else(|| config.switch.cd());
     let show_branches = cli_branches || config.list.branches();
     let show_remotes = cli_remotes || config.list.remotes();
-    worktrunk::shell_exec::trace_instant("Picker config resolved");
+    worktrunk::trace::instant("Picker config resolved");
 
     // Initialize preview mode state file (auto-cleanup on drop)
     let state = PreviewState::new();
-    worktrunk::shell_exec::trace_instant("Picker layout detected");
+    worktrunk::trace::instant("Picker layout detected");
 
-    // Prime the current worktree's root / git-dir / branch / HEAD-SHA caches
-    // with one batched `git rev-parse`. Subsumes the two standalone forks that
-    // the speculative preview block below would otherwise make via `branch()`
+    // Prime the current worktree's root / git-dir / branch caches with one
+    // batched `git rev-parse`. Subsumes the two standalone forks that the
+    // speculative preview block below would otherwise make via `branch()`
     // and `root()`, and is also short-circuited when `collect::collect` calls
     // `repo.url_template()` → `load_project_config()` → `project_config_path()`
     // (which runs `prewarm_info` again — now a cache hit).
@@ -473,7 +481,7 @@ pub fn handle_picker(
         }
         estimate
     };
-    worktrunk::shell_exec::trace_instant("Picker estimate computed");
+    worktrunk::trace::instant("Picker estimate computed");
     let preview_window_spec = state
         .initial_layout
         .to_preview_window_spec(num_items_estimate);
@@ -598,7 +606,7 @@ pub fn handle_picker(
         // Legend/controls moved to preview window tabs (render_preview_tabs)
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build skim options: {}", e))?;
-    worktrunk::shell_exec::trace_instant("Picker skim options built");
+    worktrunk::trace::instant("Picker skim options built");
 
     let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
 
@@ -611,7 +619,6 @@ pub fn handle_picker(
             orchestrator: Arc::clone(&orchestrator),
             preview_dims,
             llm_command,
-            repo: repo.clone(),
             summary_hint,
         });
 
@@ -641,7 +648,7 @@ pub fn handle_picker(
             );
         })
         .context("Failed to spawn picker-collect thread")?;
-    worktrunk::shell_exec::trace_instant("Picker collect spawned");
+    worktrunk::trace::instant("Picker collect spawned");
 
     // Drop main-thread copies so the bg thread's `tx` clone is the last
     // sender (its drop is what stops skim's heartbeat).
@@ -717,9 +724,10 @@ pub fn handle_picker(
         } else {
             Repository::current().context("Failed to switch worktree")?
         };
-        // Load config, offering bare repo worktree-path fix if needed.
-        // Reload from disk so mutations are picked up by plan_switch.
-        let mut config = worktrunk::config::UserConfig::load().context("Failed to load config")?;
+        // Clone user out so `offer_bare_repo_worktree_path_fix` can mutate
+        // locally. Project config is loaded on demand by downstream
+        // `run_pre_switch_hooks` / `plan_switch`.
+        let mut config = repo.user_config().clone();
         offer_bare_repo_worktree_path_fix(&repo, &mut config)?;
 
         // Run pre-switch hooks before branch resolution or worktree creation.

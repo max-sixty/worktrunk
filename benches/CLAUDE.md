@@ -4,11 +4,13 @@ See `list.rs` and `time_to_first_output.rs` headers for benchmark groups and run
 
 ## Quick Start
 
-```bash
-# Fast iteration (skip slow benchmarks)
-cargo bench --bench list -- --skip cold --skip real --skip divergent_branches
+Criterion's CLI takes a positional `FILTER` (substring inclusion) and `--exact`. There's no `--skip`; pick a filter that *includes* what you want instead.
 
-# Run specific group
+```bash
+# Fast iteration (one synthetic group, warm cache only)
+cargo bench --bench list skeleton/warm
+
+# Run specific group (all variants)
 cargo bench --bench list many_branches
 
 # GH #461 scenario (200 branches on rust-lang/rust)
@@ -18,8 +20,8 @@ cargo bench --bench list real_repo_many_branches
 cargo bench --bench list
 
 # Time-to-first-output benchmarks
-cargo bench --bench time_to_first_output            # all commands
-cargo bench --bench time_to_first_output -- remove  # just remove
+cargo bench --bench time_to_first_output         # all commands
+cargo bench --bench time_to_first_output remove  # just remove
 ```
 
 ## Rust Repo Caching
@@ -28,16 +30,17 @@ Real repo benchmarks clone rust-lang/rust on first run (~2-5 minutes). The clone
 
 ## Faster Iteration
 
-**Skip slow benchmarks:**
+Criterion has no exclusion flag — narrow the run by picking a substring that matches only the variants you want. Benchmark IDs look like `<group>/<label>/<param>`, e.g. `skeleton/cold/4`, `worktree_scaling/warm/8`, `real_repo_many_branches/warm`.
+
+**Pattern matching (positional `FILTER`):**
 ```bash
-cargo bench --bench list -- --skip cold --skip real
+cargo bench --bench list scaling             # All worktree_scaling/* variants
+cargo bench --bench list warm                # Every benchmark whose ID contains "warm"
+cargo bench --bench list skeleton/warm       # Just skeleton's warm variants
+cargo bench --bench list -- --exact full/cold/4   # One exact ID
 ```
 
-**Pattern matching:**
-```bash
-cargo bench --bench list scaling    # All scaling benchmarks
-cargo bench --bench list -- --skip cold  # Warm cache only
-```
+To skip the slow real-repo and divergent groups, target the synthetic groups directly: `cargo bench --bench list skeleton`, `cargo bench --bench list full`, or `cargo bench --bench list worktree_scaling`. Run them sequentially if you want more than one.
 
 ## WORKTRUNK_FIRST_OUTPUT
 
@@ -85,6 +88,15 @@ Default-branch cache contribution is ~17ms per iteration on a typical-8 syntheti
 (measured: 166ms with default-branch cached → 183ms fully cold). Small enough that
 always clearing it is simpler than introducing a "warm default-branch" bench mode.
 
+**Bench fixtures don't exercise the wire path.** `setup_fake_remote` writes
+`refs/remotes/origin/HEAD` directly into every repo, so a cold-cache iteration
+falls through to the local `<r>/HEAD` lookup (~17 ms above), never to
+`git ls-remote` (100 ms–2 s in the wild). The cold cost we benchmark is the
+*configured-remote* cold cost, not the *fresh-clone* cold cost. A
+`cold_no_remote` mode (extending `invalidate_caches_auto` to also wipe
+`refs/remotes/origin/HEAD`) would close the gap if the wire-path cost is
+worth measuring at CI cadence.
+
 ## Expected Performance
 
 **Modest repos** (500 commits, 100 files):
@@ -124,15 +136,42 @@ cargo run -p wt-perf -- invalidate /tmp/wt-perf-typical-8/main
 
 ### Generating traces
 
-```bash
-# Generate trace.json for Perfetto/Chrome. `--progressive` forces TTY-gated
-# events (Skeleton rendered, First result received) to fire even when stdout
-# is piped.
-RUST_LOG=debug wt list --progressive --branches 2>&1 \
-  | cargo run -p wt-perf -- trace > trace.json
+`wt-perf timeline` runs a `wt` invocation, captures `[wt-trace]` records,
+and renders. Default mode is a sorted text timeline; `--chrome` emits
+Chrome Trace Format JSON for Perfetto/chrome://tracing. `--cold`
+invalidates caches first.
 
+```bash
+# Text timeline of one wt invocation
+cargo run -p wt-perf -- timeline -- list --progressive
+
+# Cold-cache run
+cargo run -p wt-perf -- timeline --cold --repo /tmp/wt-perf-typical-8 -- \
+  -C /tmp/wt-perf-typical-8 list --progressive
+
+# Chrome Trace Format JSON for Perfetto
+cargo run -p wt-perf -- timeline --chrome -- list --progressive > trace.json
 # Open in https://ui.perfetto.dev or chrome://tracing
 ```
+
+`--progressive` is still required: `wt-perf timeline` runs wt with stdout
+piped to /dev/null, so TTY-gated events (`Skeleton rendered`, `First
+result received`) won't fire without it.
+
+For Chrome JSON from a log already captured to disk (e.g. a CI artifact),
+pipe through `wt-perf trace` instead:
+
+```bash
+RUST_LOG=debug wt list --progressive --branches 2> captured.log
+cargo run -p wt-perf -- trace < captured.log > trace.json
+```
+
+The text-timeline summary reports `traced` (first → last `[wt-trace]`
+record, what the spans actually cover) and `wall` (externally-measured
+spawn → wait, the true process duration). The gap between them is
+prelude/epilogue not visible to the trace — process spawn, dyld, code
+that runs before `init_logging` registers the trace epoch, and the exit
+path after the last span drops.
 
 ### Querying with trace_processor
 

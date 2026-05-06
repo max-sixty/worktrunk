@@ -11,11 +11,9 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use skim::prelude::*;
-use worktrunk::git::Repository;
 use worktrunk::styling::{StyledLine, strip_osc8_hyperlinks};
 
 use super::items::{HeaderSkimItem, PreviewCache, WorktreeSkimItem};
-use super::preview::PreviewMode;
 use super::preview_orchestrator::PreviewOrchestrator;
 use crate::commands::list::collect::PickerProgressHandler;
 use crate::commands::list::model::ListItem;
@@ -39,7 +37,6 @@ pub(super) struct PickerHandler {
     pub(super) orchestrator: Arc<PreviewOrchestrator>,
     pub(super) preview_dims: (usize, usize),
     pub(super) llm_command: Option<String>,
-    pub(super) repo: Repository,
     /// Filled into the Summary preview cache for every item when summaries
     /// are disabled — gives the Summary tab something useful instead of a
     /// perpetual "Generating…" placeholder.
@@ -102,7 +99,12 @@ impl PickerProgressHandler for PickerHandler {
             let _ = self.tx.send(Arc::clone(skim_item));
         }
 
-        self.spawn_precompute(&list_items);
+        self.orchestrator.spawn_all_precompute(
+            &list_items,
+            self.preview_dims,
+            self.llm_command.as_deref(),
+            self.summary_hint.as_deref(),
+        );
     }
 
     fn on_update(&self, idx: usize, rendered: String) {
@@ -123,53 +125,6 @@ impl PickerProgressHandler for PickerHandler {
     }
 }
 
-impl PickerHandler {
-    /// Kick off preview + summary pre-compute in the dedicated rayon pool.
-    ///
-    /// Spawn order mirrors the old synchronous path: the first item's modes
-    /// win the first slots (the user lands there and may tab-cycle), then
-    /// mode-major across the rest. Summaries queue last because each LLM
-    /// call can take seconds.
-    fn spawn_precompute(&self, list_items: &[Arc<ListItem>]) {
-        let modes = [
-            PreviewMode::WorkingTree,
-            PreviewMode::Log,
-            PreviewMode::BranchDiff,
-            PreviewMode::UpstreamDiff,
-        ];
-
-        if let Some(first) = list_items.first() {
-            for mode in modes {
-                self.orchestrator
-                    .spawn_preview(Arc::clone(first), mode, self.preview_dims);
-            }
-        }
-        for mode in modes {
-            for item in list_items.iter().skip(1) {
-                self.orchestrator
-                    .spawn_preview(Arc::clone(item), mode, self.preview_dims);
-            }
-        }
-
-        if let Some(llm) = self.llm_command.as_ref() {
-            if let Some(first) = list_items.first() {
-                self.orchestrator
-                    .spawn_summary(Arc::clone(first), llm.clone(), self.repo.clone());
-            }
-            for item in list_items.iter().skip(1) {
-                self.orchestrator
-                    .spawn_summary(Arc::clone(item), llm.clone(), self.repo.clone());
-            }
-        } else if let Some(hint) = self.summary_hint.as_ref() {
-            for item in list_items {
-                let branch = item.branch_name().to_string();
-                self.preview_cache
-                    .insert((branch, PreviewMode::Summary), hint.clone());
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,8 +139,7 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let (tx, rx) = crossbeam_channel::unbounded::<Arc<dyn SkimItem>>();
         let shared_items = Arc::new(Mutex::new(Vec::new()));
-        let repo = test.repo.clone();
-        let orchestrator = Arc::new(PreviewOrchestrator::new(repo.clone()));
+        let orchestrator = Arc::new(PreviewOrchestrator::new(test.repo.clone()));
         let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
         let handler = PickerHandler {
             tx,
@@ -195,7 +149,6 @@ mod tests {
             orchestrator,
             preview_dims: (80, 24),
             llm_command: None,
-            repo,
             summary_hint: Some("disabled".to_string()),
         };
         (handler, test, rx)

@@ -107,8 +107,9 @@ fn test_eval_conditional(repo: TestRepo) {
 }
 
 /// `{{ commit }}` resolves to the running worktree's HEAD SHA on the on-branch
-/// hot path. `build_hook_context` reads the SHA from the cache primed by
-/// `WorkingTree::prewarm_info` instead of firing `git rev-parse <branch>`.
+/// hot path. `build_hook_context` resolves it via `git rev-parse <branch>`
+/// (always fresh from the ref store), so the value tracks any HEAD movement
+/// during the command.
 #[rstest]
 fn test_eval_commit_matches_head_sha(repo: TestRepo) {
     let expected = repo.git_output(&["rev-parse", "HEAD"]);

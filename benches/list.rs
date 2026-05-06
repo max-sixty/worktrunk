@@ -12,20 +12,21 @@
 //       - warm_worktrees_only: no branch enumeration (~600ms)
 //   - timeout_effect: Compare with/without 500ms command timeout on rust repo / GH #461 fix
 //
-// Run examples:
+// Run examples (Criterion takes a positional substring FILTER; no --skip):
 //   cargo bench --bench list                         # All benchmarks
 //   cargo bench --bench list skeleton                # Progressive rendering
 //   cargo bench --bench list real_repo_many_branches # GH #461 scenario (large repo + many branches)
 //   cargo bench --bench list timeout_effect          # Test timeout fix for GH #461
-//   cargo bench --bench list -- --skip cold          # Skip cold cache variants
-//   cargo bench --bench list -- --skip real          # Skip rust repo clone
+//   cargo bench --bench list warm                    # Warm-cache variants (every group's warm rows)
+//   cargo bench --bench list skeleton/warm           # Skeleton group, warm only
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use worktrunk::testing::isolate_subprocess_env;
 use wt_perf::{
     RepoConfig, add_history_spread_branches, add_worktrees, clone_rust_repo, create_repo,
-    invalidate_caches_auto, isolate_cmd, run_git, setup_fake_remote,
+    invalidate_caches_auto, run_git, setup_fake_remote,
 };
 
 /// Benchmark configuration wrapping RepoConfig with cache state.
@@ -74,7 +75,7 @@ fn run_benchmark(
     let cmd_factory = || {
         let mut cmd = Command::new(binary);
         cmd.args(args).current_dir(repo_path);
-        isolate_cmd(&mut cmd, None);
+        isolate_subprocess_env(&mut cmd, None);
         if let Some((key, value)) = env {
             cmd.env(key, value);
         }
@@ -196,7 +197,7 @@ fn bench_real_repo(c: &mut Criterion) {
                     let make_cmd = || {
                         let mut cmd = Command::new(binary);
                         cmd.arg("list").current_dir(&workspace_main);
-                        isolate_cmd(&mut cmd, None);
+                        isolate_subprocess_env(&mut cmd, None);
                         cmd
                     };
 
@@ -333,7 +334,7 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
             let mut cmd = Command::new(binary);
             cmd.args(["list", "--branches"])
                 .current_dir(&workspace_main);
-            isolate_cmd(&mut cmd, None);
+            isolate_subprocess_env(&mut cmd, None);
             cmd.output().unwrap();
         });
     });
@@ -344,7 +345,7 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
         b.iter(|| {
             let mut cmd = Command::new(binary);
             cmd.arg("list").current_dir(&workspace_main); // no --branches
-            isolate_cmd(&mut cmd, None);
+            isolate_subprocess_env(&mut cmd, None);
             cmd.output().unwrap();
         });
     });

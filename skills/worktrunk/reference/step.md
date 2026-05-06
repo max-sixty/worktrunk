@@ -109,17 +109,15 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-#### `--show-prompt`
+#### `--dry-run`
 
-Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+Render the prompt, print the LLM command, generate the message, and exit without staging, running hooks, or committing:
 
 ```bash
-# Inspect the rendered prompt
-$ wt step commit --show-prompt | less
-
-# Pipe to a different LLM
-$ wt step commit --show-prompt | llm -m gpt-5-nano
+$ wt step commit --dry-run
 ```
+
+Three sections are printed: the rendered prompt, the shell command that would invoke the LLM, and the message returned. The LLM call still happens — only the commit is skipped.
 
 ### Command reference
 
@@ -143,13 +141,23 @@ Options:
           - tracked: Stage tracked changes only (like git add -u)
           - none:    Stage nothing, commit only what's already in the index
 
-      --show-prompt
-          Show prompt without running LLM
-
-          Outputs the rendered prompt to stdout for debugging or manual piping.
+      --dry-run
+          Preview prompt, command, and generated message without committing
 
   -h, --help
           Print help (see a summary with '-h')
+
+Automation:
+      --format <FORMAT>
+          Output format
+
+          JSON prints structured result to stdout after the commit completes.
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
 
 Global Options:
   -C <path>
@@ -195,13 +203,15 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-#### `--show-prompt`
+#### `--dry-run`
 
-Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+Render the prompt, print the LLM command, generate the squash message, and exit without resetting, running hooks, or committing:
 
 ```bash
-$ wt step squash --show-prompt | less
+$ wt step squash --dry-run
 ```
+
+Three sections are printed: the rendered prompt, the shell command that would invoke the LLM, and the message returned. The LLM call still happens — only the squash and commit are skipped.
 
 ### Command reference
 
@@ -230,13 +240,23 @@ Options:
           - tracked: Stage tracked changes only (like git add -u)
           - none:    Stage nothing, commit only what's already in the index
 
-      --show-prompt
-          Show prompt without running LLM
-
-          Outputs the rendered prompt to stdout for debugging or manual piping.
+      --dry-run
+          Preview prompt, command, and generated message without squashing
 
   -h, --help
           Print help (see a summary with '-h')
+
+Automation:
+      --format <FORMAT>
+          Output format
+
+          JSON prints structured result to stdout after the squash completes.
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
 
 Global Options:
   -C <path>
@@ -340,7 +360,7 @@ copy = "wt step copy-ignored"
 
 ### What gets copied
 
-All gitignored files are copied by default, except for built-in excluded directories: VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). Tracked files are never touched.
+All gitignored files are copied by default, except for built-in excluded directories: VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.worktrees/`). Tracked files are never touched.
 
 To limit what gets copied further, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
 
@@ -373,7 +393,7 @@ exclude = [".cache/", ".turbo/"]
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
 - Skips existing files by default (safe to re-run)
 - `--force` overwrites existing files in the destination
-- Always skips built-in excluded directories — VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`) — and nested worktrees
+- Always skips built-in excluded directories — VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.worktrees/`) — and nested worktrees
 
 ### Performance
 
@@ -449,6 +469,18 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+
+Automation:
+      --format <FORMAT>
+          Output format
+
+          JSON prints structured result to stdout after the copy completes.
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
 
 Global Options:
   -C <path>
@@ -557,34 +589,36 @@ Run command in each worktree. Executes sequentially with real-time output; conti
 
 A summary of successes and failures is shown at the end. Context JSON is piped to stdin for scripts that need structured data.
 
-### Template variables
+### Arguments
 
-All variables are shell-escaped. See [`wt hook` template variables](https://worktrunk.dev/hook/#template-variables) for the complete list and filters.
-
-### Examples
-
-Check status across all worktrees:
+Arguments after `--` are the program and its arguments — run directly, no shell.
 
 ```bash
 $ wt step for-each -- git status --short
-```
-
-Run npm install in all worktrees:
-
-```bash
 $ wt step for-each -- npm install
 ```
 
-Use branch name in command:
+For pipes, redirects, variables, or globs, wrap in `sh -c`:
 
 ```bash
-$ wt step for-each -- "echo Branch: {{ branch }}"
+$ wt step for-each -- sh -c 'git status | wc -l'
+$ wt step for-each -- sh -c 'echo $HOME && git pull'
 ```
+
+### Template variables
+
+Variables substitute into each argv element before exec. See [`wt hook` template variables](https://worktrunk.dev/hook/#template-variables) for the complete list and filters.
+
+```bash
+$ wt step for-each -- echo 'Branch: {{ branch }}'
+```
+
+### Examples
 
 Pull updates in worktrees with upstreams (skips others):
 
 ```bash
-$ git fetch --prune && wt step for-each -- '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
+$ git fetch --prune && wt step for-each -- sh -c '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
 ```
 
 Note: This command is experimental and may change in future versions.
@@ -876,6 +910,18 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+
+Automation:
+      --format <FORMAT>
+          Output format
+
+          JSON prints structured result to stdout after the relocate completes.
+
+          Possible values:
+          - text: Human-readable text output
+          - json: JSON output
+
+          [default: text]
 
 Global Options:
   -C <path>

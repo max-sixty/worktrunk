@@ -487,6 +487,41 @@ fn test_find_remote_for_repo_insteadof_multiple_remotes(repo: TestRepo) {
     );
 }
 
+/// find_remote_by_url matches a remote regardless of which transport
+/// protocol (ssh vs https) the lookup URL uses, because both URLs are parsed
+/// into (host, owner, repo) before matching. This is what lets `wt switch`
+/// resolve a GitLab fork target whether the user's remote is configured with
+/// SSH and glab returns HTTPS, or vice versa.
+#[rstest]
+fn test_find_remote_by_url_cross_protocol(repo: TestRepo) {
+    // Remote configured with HTTPS
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://gitlab.com/group/subgroup/proj.git",
+    ]);
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+
+    // Lookup with SSH form should still find it
+    let found = git_repo.find_remote_by_url("git@gitlab.com:group/subgroup/proj.git");
+    assert_eq!(found.as_deref(), Some("origin"));
+
+    // And vice versa: re-configure with SSH, look up with HTTPS
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "git@gitlab.com:group/subgroup/proj.git",
+    ]);
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let found = git_repo.find_remote_by_url("https://gitlab.com/group/subgroup/proj.git");
+    assert_eq!(found.as_deref(), Some("origin"));
+}
+
 /// Test find_remote_by_url: resolves through insteadOf.
 #[rstest]
 fn test_find_remote_by_url_insteadof(repo: TestRepo) {

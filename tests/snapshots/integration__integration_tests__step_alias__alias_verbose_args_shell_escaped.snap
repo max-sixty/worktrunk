@@ -13,10 +13,15 @@ info:
     COLUMNS: "500"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMON_DIR: ""
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_DIR: ""
     GIT_EDITOR: ""
+    GIT_INDEX_FILE: ""
+    GIT_OBJECT_DIRECTORY: ""
     GIT_TERMINAL_PROMPT: "0"
+    GIT_WORK_TREE: ""
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
@@ -51,16 +56,16 @@ hello foo bar baz
 [107m [0m branch                = feature
 [107m [0m worktree_path         = _REPO_.feature
 [107m [0m worktree_name         = repo.feature
-[107m [0m commit                = 05a4a45d0b981dad5c27db59dca482836d59f89e
-[107m [0m short_commit          = 05a4a45
-[107m [0m upstream              = (unset)
+[107m [0m [2mcommit                = (unused)[22m
+[107m [0m [2mshort_commit          = (unused)[22m
+[107m [0m [2mupstream              = (unused)[22m
 [107m [0m repo                  = repo
 [107m [0m repo_path             = _REPO_
-[107m [0m owner                 = (unset)
-[107m [0m primary_worktree_path = _REPO_
-[107m [0m default_branch        = main
-[107m [0m remote                = origin
-[107m [0m remote_url            = ../origin.git
+[107m [0m [2mowner                 = (unused)[22m
+[107m [0m [2mprimary_worktree_path = (unused)[22m
+[107m [0m [2mdefault_branch        = (unused)[22m
+[107m [0m [2mremote                = (unused)[22m
+[107m [0m [2mremote_url            = (unused)[22m
 [107m [0m cwd                   = _REPO_.feature
 [107m [0m args                  = foo 'bar baz'
 [36m◎[39m [36mRunning alias [1mgreet[22m[39m

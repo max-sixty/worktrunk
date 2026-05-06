@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use worktrunk::git::Repository;
+use worktrunk::git::{RefType, Repository};
 
 use crate::common::{BareRepoTest, TestRepo};
 
@@ -582,6 +582,51 @@ fn test_primary_remote_url_composition() {
     let r2 = Repository::at(bare.root_path().to_path_buf()).unwrap();
     assert_eq!(r2.primary_remote_url(), None);
     assert!(r2.primary_remote_parsed_url().is_none());
+}
+
+/// `detect_ref_type` resolves the platform's PR/MR reference type from the
+/// primary remote URL. Drives the numeric branch hint in `BranchNotFound`
+/// ("To switch to PR #N, run wt switch pr:N"). The `forge.platform` override
+/// branch is exercised end-to-end via the `platform_for_repo` paths.
+#[test]
+fn test_detect_ref_type() {
+    // GitHub remote → PR
+    let github = TestRepo::new();
+    github.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/max-sixty/worktrunk.git",
+    ]);
+    let r = Repository::at(github.root_path().to_path_buf()).unwrap();
+    assert_eq!(r.detect_ref_type(), Some(RefType::Pr));
+
+    // GitLab remote → MR
+    let gitlab = TestRepo::new();
+    gitlab.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://gitlab.com/owner/repo.git",
+    ]);
+    let r = Repository::at(gitlab.root_path().to_path_buf()).unwrap();
+    assert_eq!(r.detect_ref_type(), Some(RefType::Mr));
+
+    // Unknown host → None
+    let other = TestRepo::new();
+    other.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://example.com/owner/repo.git",
+    ]);
+    let r = Repository::at(other.root_path().to_path_buf()).unwrap();
+    assert_eq!(r.detect_ref_type(), None);
+
+    // No remote → None
+    let empty = TestRepo::new();
+    let r = Repository::at(empty.root_path().to_path_buf()).unwrap();
+    assert_eq!(r.detect_ref_type(), None);
 }
 
 /// `remote_url` for a configured remote round-trips; unknown remotes

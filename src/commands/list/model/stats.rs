@@ -6,6 +6,11 @@
 use worktrunk::git::LineDiff;
 
 /// Commit metadata for a branch or worktree HEAD.
+///
+/// The abbreviated SHA lives on `ListItem::short_sha` so it stays available even
+/// when this struct isn't populated (prunable worktrees, items missing from the
+/// pre-skeleton batch); the fields here are the per-commit data fetched
+/// alongside it in the same `git log` batch.
 #[derive(serde::Serialize, Clone, Default, Debug)]
 pub struct CommitDetails {
     pub timestamp: i64,

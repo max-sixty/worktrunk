@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 
@@ -8,8 +7,9 @@ use clap_complete::engine::{ArgValueCompleter, CompletionCandidate, ValueComplet
 use clap_complete::env::CompleteEnv;
 
 use crate::cli;
+use crate::commands::{AliasMap, load_aliases};
 use crate::display::format_relative_time_short;
-use worktrunk::config::{CommandConfig, ProjectConfig, UserConfig, append_aliases};
+use worktrunk::config::{CommandConfig, ProjectConfig, UserConfig};
 use worktrunk::git::{BranchCategory, HookType, Repository};
 
 /// Handle shell-initiated completion requests via `COMPLETE=$SHELL wt`
@@ -521,23 +521,29 @@ fn inject_alias_subcommands(cmd: Command) -> Command {
     }
 
     let mut cmd = cmd;
-    // Top-level injection: skip aliases that match a top-level built-in.
-    for (name, cmd_config) in &aliases {
+    // Top-level injection: skip aliases that match a top-level built-in. The
+    // help text on the stub uses the representative source's first command
+    // template (user wins over project), matching how the announcement
+    // banner orders the two when both are configured.
+    for (name, entry) in &aliases {
         if cmd.get_subcommands().any(|s| s.get_name() == name.as_str()) {
             continue;
         }
-        cmd = cmd.subcommand(build_alias_completion_command(name, cmd_config));
+        cmd = cmd.subcommand(build_alias_completion_command(name, entry.representative()));
     }
     // Step-level injection: keep historical `wt step <alias>` completions.
     cmd.mut_subcommand("step", |mut step| {
-        for (name, cmd_config) in aliases {
+        for (name, entry) in aliases {
             if step
                 .get_subcommands()
                 .any(|s| s.get_name() == name.as_str())
             {
                 continue;
             }
-            step = step.subcommand(build_alias_completion_command(&name, &cmd_config));
+            step = step.subcommand(build_alias_completion_command(
+                &name,
+                entry.representative(),
+            ));
         }
         step
     })
@@ -567,27 +573,18 @@ fn build_alias_completion_command(name: &str, cmd_config: &CommandConfig) -> Com
         )
 }
 
-/// Load aliases from user and project config for completion.
-///
-/// Merges user and project aliases with append semantics (matching hooks).
-fn load_aliases_for_completion() -> BTreeMap<String, CommandConfig> {
-    let mut aliases = BTreeMap::new();
-
-    if let Ok(repo) = Repository::current() {
-        // User config first
-        if let Ok(user_config) = UserConfig::load() {
-            let project_id = repo.project_identifier().ok();
-            aliases.extend(user_config.aliases(project_id.as_deref()));
-        }
-        // Project config appends
-        if let Ok(Some(project_config)) = ProjectConfig::load(&repo, false) {
-            append_aliases(&mut aliases, &project_config.aliases);
-        }
-    } else if let Ok(user_config) = UserConfig::load() {
-        aliases.extend(user_config.aliases(None));
-    }
-
-    aliases
+/// Load aliases from user and project config for completion. Outside a git
+/// repo, only user config is read (per-project user-config overrides aren't
+/// resolved without a project_id).
+fn load_aliases_for_completion() -> AliasMap {
+    let Ok(user_config) = UserConfig::load() else {
+        return AliasMap::new();
+    };
+    let repo = Repository::current().ok();
+    let project_config = repo
+        .as_ref()
+        .and_then(|r| ProjectConfig::load(r, false).ok().flatten());
+    load_aliases(repo.as_ref(), &user_config, project_config.as_ref())
 }
 
 /// Truncate a template string for use as completion help text.

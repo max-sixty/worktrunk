@@ -1,0 +1,97 @@
+---
+source: tests/integration_tests/merge.rs
+info:
+  program: wt
+  args:
+    - step
+    - commit
+    - "--dry-run"
+  env:
+    APPDATA: "[TEST_CONFIG_HOME]"
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMON_DIR: ""
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_DIR: ""
+    GIT_EDITOR: ""
+    GIT_INDEX_FILE: ""
+    GIT_OBJECT_DIRECTORY: ""
+    GIT_TERMINAL_PROMPT: "0"
+    GIT_WORK_TREE: ""
+    HOME: "[TEST_HOME]"
+    LANG: C
+    LC_ALL: C
+    MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
+    NO_COLOR: ""
+    OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
+    PATH: "[PATH]"
+    PSModulePath: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+[36mPROMPT[39m
+<task>Write a commit message for the staged changes below.</task>
+
+<format>
+- Subject line under 50 chars
+- For material changes, add a blank line then a body paragraph explaining the change
+- Output only the commit message, no quotes or code blocks
+</format>
+
+<style>
+- Imperative mood: "Add feature" not "Added feature"
+- Match recent commit style (conventional commits if used)
+- Describe the change, not the intent or benefit
+</style>
+
+<diffstat>
+ new_file.txt | 1 +
+ 1 file changed, 1 insertion(+)
+
+</diffstat>
+
+<diff>
+diff --git a/new_file.txt b/new_file.txt
+new file mode 100644
+index 0000000..47d2739
+--- /dev/null
++++ b/new_file.txt
+@@ -0,0 +1 @@
++new content
+\ No newline at end of file
+
+</diff>
+
+<context>
+Branch: main
+<recent_commits>
+- Initial commit
+</recent_commits>
+</context>
+
+[36mCOMMAND[39m
+[107m [0m [2m[0m[2m[34msh[0m[2m [0m[2m[36m-c[0m[2m [0m[2m[32m'cat >/dev/null && echo '[0m[2m\'[0m[2m[32m'feat: add new_file'[0m[2m\'[0m[2m[32m''[0m[2m
+
+[36mMESSAGE[39m
+[107m [0m [1mfeat: add new_file[22m
+
+----- stderr -----

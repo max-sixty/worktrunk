@@ -94,7 +94,10 @@ pub fn finish_after_merge(
         None
     };
     if let Some(commit) = feature_commit.as_deref() {
-        feature_vars = feature_vars.with_active_commit(commit);
+        let short = repo
+            .short_sha(commit)
+            .unwrap_or_else(|_| commit.to_string());
+        feature_vars = feature_vars.with_active_commit(commit, &short);
     }
 
     // Finish worktree unless removal is disabled or blocked.
@@ -120,8 +123,16 @@ pub fn finish_after_merge(
         current_wt.ensure_clean("remove worktree after merge", Some(current_branch), false)?;
 
         let worktree_root = current_wt.root()?;
+        // Capture a fresh snapshot AFTER the merge has updated the local
+        // target ref (`update-ref` ran inside `handle_no_ff_merge` /
+        // `handle_push`). Without this, `integration_reason` would observe
+        // pre-merge state and misclassify the just-merged branch as
+        // unmerged — the bug class PR #2507 worked around with
+        // `ref_is_ancestor`.
+        let snapshot = repo.capture_refs()?;
         let (integration_reason, _) = compute_integration_reason(
             repo,
+            &snapshot,
             Some(current_branch),
             Some(target_branch),
             BranchDeletionMode::SafeDelete,

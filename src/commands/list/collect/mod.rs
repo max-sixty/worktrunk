@@ -65,7 +65,7 @@
 //! ├─ is_builtin_fsmonitor_enabled()             (5ms, sequential - gate)
 //! ├─ rayon::scope(
 //! │    ├─ switch_previous()                     (5ms)
-//! │    ├─ integration_target()                  (10ms)
+//! │    ├─ integration_targets()                 (10ms)
 //! │    ├─ start_fsmonitor_daemon × N worktrees  (6ms each, all parallel)
 //! │  )                                          // ~10ms total (max of all spawns)
 //! ├─ populate ListItem.commit from cache        (cache-hit lookups, sub-ms)
@@ -234,7 +234,7 @@ use crossbeam_channel as chan;
 use dunce::canonicalize;
 use once_cell::sync::OnceCell;
 use rayon::prelude::*;
-use worktrunk::git::{LocalBranch, Repository, WorktreeInfo};
+use worktrunk::git::{ErrorExt, LocalBranch, Repository, WorktreeInfo};
 use worktrunk::styling::{
     INFO_SYMBOL, eprintln, format_with_gutter, hint_message, warning_message,
 };
@@ -310,9 +310,21 @@ pub struct CollectOptions {
     /// persisted value degrades silently (empty cells) here rather than
     /// emitting a cascade of "ambiguous argument" errors from every task.
     pub default_branch: Option<String>,
-    /// Integration target (`default_branch`, or its upstream when ahead).
-    /// `None` when the default branch is unset or stale.
-    pub integration_target: Option<String>,
+    /// Integration targets resolved for this list invocation. The diverged
+    /// case carries both local and upstream so per-branch tasks can OR
+    /// over them, matching `Repository::integration_reason`. `None` when
+    /// the default branch is unset or stale.
+    pub integration_targets: Option<worktrunk::git::IntegrationTargets>,
+
+    /// Captured ref state for this list invocation.
+    ///
+    /// Built once during the pre-skeleton phase by
+    /// [`Repository::capture_refs_with_ahead_behind`] and shared (cheaply,
+    /// behind `Arc`) into every task. Tasks resolve target ref names to
+    /// commit SHAs through this snapshot, then call the `_by_sha` variants
+    /// of cached methods — bypassing the ambient ref→SHA cache entirely.
+    /// `None` when capture failed (degraded mode).
+    pub snapshot: Option<std::sync::Arc<worktrunk::git::RefSnapshot>>,
 }
 
 fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
@@ -457,7 +469,7 @@ pub fn collect(
 ) -> anyhow::Result<Option<super::model::ListData>> {
     let show_progress = matches!(render_target, RenderTarget::Table { progressive: true });
     let render_table = matches!(render_target, RenderTarget::Table { .. });
-    worktrunk::shell_exec::trace_instant("List collect started");
+    worktrunk::trace::instant("List collect started");
 
     // Determine what to fetch speculatively in the parallel phase.
     //
@@ -736,9 +748,12 @@ pub fn collect(
         .filter(|sha| *sha != worktrunk::git::NULL_OID)
         .collect();
     let commit_details_map = repo.commit_details_many(&all_shas).unwrap_or_else(|err| {
+        // Surface git's actual stderr (when available via the typed leaf)
+        // rather than our `CommandError` summary.
+        let detail = err.display_message();
         eprintln!(
             "{}",
-            warning_message(cformat!("Failed to batch-fetch commit details: {err}"))
+            warning_message(cformat!("Failed to batch-fetch commit details: {detail}"))
         );
         std::collections::HashMap::new()
     });
@@ -796,6 +811,7 @@ pub fn collect(
             // URL expanded post-skeleton to minimize time-to-skeleton
             ListItem {
                 head: wt.head.clone(),
+                short_sha: String::new(),
                 branch: wt.branch.clone(),
                 commit: None,
                 counts: None,
@@ -870,7 +886,7 @@ pub fn collect(
     // Single-line invariant: use safe width to prevent line wrapping
     let max_width = crate::display::terminal_width();
 
-    // Create collection options from skip set. `integration_target` is
+    // Create collection options from skip set. `integration_targets` is
     // patched in after the parallel phase below extracts it — at this
     // point we haven't yet resolved it, but task spawning doesn't happen
     // until line 1090+ so late population is safe.
@@ -879,7 +895,8 @@ pub fn collect(
         url_template: url_template.clone(),
         llm_command,
         default_branch: default_branch.clone(),
-        integration_target: None,
+        integration_targets: None,
+        snapshot: None,
     };
 
     // Track expected results per item - populated as spawns are queued
@@ -940,7 +957,7 @@ pub fn collect(
             max_width,
         );
         table.render_skeleton()?;
-        worktrunk::shell_exec::trace_instant("Skeleton rendered");
+        worktrunk::trace::instant("Skeleton rendered");
         Some(table)
     } else {
         None
@@ -957,7 +974,7 @@ pub fn collect(
         handler.on_skeleton(all_items.clone(), skeletons, layout.render_header_line());
         // Mirror the `wt list` progressive-table marker so `wt-perf phases`
         // sees the same boundary across both commands.
-        worktrunk::shell_exec::trace_instant("Skeleton rendered");
+        worktrunk::trace::instant("Skeleton rendered");
     }
 
     /// Delay before the `·` loading indicator replaces blank placeholders.
@@ -1004,7 +1021,7 @@ pub fn collect(
     // See: https://gitlab.com/gitlab-org/git/-/merge_requests/148 (scalar's fsmonitor workaround)
     // See: https://github.com/jj-vcs/jj/issues/6440 (jj hit same fsmonitor issue)
     let previous_branch_cell: OnceCell<Option<String>> = OnceCell::new();
-    let integration_target_cell: OnceCell<Option<String>> = OnceCell::new();
+    let snapshot_cell: OnceCell<Option<worktrunk::git::RefSnapshot>> = OnceCell::new();
 
     rayon::scope(|s| {
         // Previous branch lookup (for gutter symbol)
@@ -1012,9 +1029,17 @@ pub fn collect(
             let _ = previous_branch_cell.set(repo.switch_previous());
         });
 
-        // Integration target (upstream if ahead of local, else local)
+        // Capture ref state. One `for-each-ref refs/heads/ refs/remotes/`
+        // plus (when default_branch is known) one `for-each-ref
+        // %(ahead-behind:BASE)` batch. The snapshot replaces the prior
+        // `commit_shas` priming + `batch_ahead_behind` pair: tasks consume
+        // it by SHA, dodging ref→SHA cache staleness.
         s.spawn(|_| {
-            let _ = integration_target_cell.set(repo.integration_target());
+            let snap = match default_branch.as_deref() {
+                Some(db) => repo.capture_refs_with_ahead_behind(db).ok(),
+                None => repo.capture_refs().ok(),
+            };
+            let _ = snapshot_cell.set(snap);
         });
 
         // Fsmonitor daemon starts (one spawn per worktree)
@@ -1027,16 +1052,27 @@ pub fn collect(
 
     // Extract results from cells
     let previous_branch = previous_branch_cell.into_inner().flatten();
-    let integration_target = integration_target_cell.into_inner().flatten();
+    let snapshot = snapshot_cell
+        .into_inner()
+        .flatten()
+        .map(std::sync::Arc::new);
 
-    // Patch integration_target into options now that it's resolved. When
-    // default_branch is None (unset or stale), also null it out — tasks
-    // otherwise see a target derived from the stale value and emit
-    // "ambiguous argument" noise.
-    options.integration_target = options
+    // Resolve integration targets from the snapshot. Same OR semantics
+    // as `Repository::integration_reason` (`primary` + optional
+    // `secondary` only in the diverged case).
+    let integration_targets = snapshot
+        .as_deref()
+        .and_then(|s| repo.integration_targets(s));
+
+    // Patch integration_targets and snapshot into options. When
+    // default_branch is None (unset or stale), null integration_targets
+    // out — tasks otherwise see a target derived from the stale value
+    // and emit "ambiguous argument" noise.
+    options.integration_targets = options
         .default_branch
         .as_ref()
-        .and(integration_target.clone());
+        .and(integration_targets.clone());
+    options.snapshot = snapshot;
 
     // Update is_previous on items
     if let Some(prev) = previous_branch.as_deref() {
@@ -1049,38 +1085,33 @@ pub fn collect(
         }
     }
 
-    // Populate commit details (timestamp + subject) on every item directly
-    // from the pre-skeleton batch map. No per-SHA recovery — if the batch
-    // failed, the warning printed above is the user-visible signal and
-    // Age/Message cells render their placeholder. Prunable worktrees are
-    // skipped because their directory is missing from disk; leaving these
-    // rows at the placeholder matches the old task-queue UX.
+    // Populate commit data on every item directly from the pre-skeleton batch
+    // map. No per-SHA recovery — if the batch failed, the warning printed above
+    // is the user-visible signal and Age/Message cells render their placeholder.
+    //
+    // `short_sha` is populated for every row (including prunable), since it's a
+    // pure SHA derivation that doesn't need the worktree directory. The
+    // timestamp/message bundle is skipped for prunable rows to match the old
+    // task-queue UX where probes against a missing worktree dir failed.
     for item in &mut all_items {
+        let Some((short_sha, timestamp, commit_message)) = commit_details_map.get(&item.head)
+        else {
+            continue;
+        };
+        item.short_sha = short_sha.clone();
         if item.worktree_data().is_some_and(|d| d.is_prunable()) {
             continue;
         }
-        if let Some((timestamp, commit_message)) = commit_details_map.get(&item.head) {
-            item.commit = Some(CommitDetails {
-                timestamp: *timestamp,
-                commit_message: commit_message.clone(),
-            });
-        }
+        item.commit = Some(CommitDetails {
+            timestamp: *timestamp,
+            commit_message: commit_message.clone(),
+        });
     }
 
-    // Batch-fetch ahead/behind counts for all local branches in a single
-    // `git for-each-ref` call. Primes the Repository cache so each
-    // `AheadBehindTask` hits the cache instead of spawning its own
-    // `git rev-list --count`. One git call replaces N.
-    //
-    // Note: `resolved_refs`, `commit_shas`, and upstream tracking info are
-    // already primed by `local_branches()` (called during pre-skeleton
-    // phase), so `Branch::upstream()` is an in-memory lookup from here on.
-    //
-    // On git < 2.36 (no `%(ahead-behind:)` support) or if default_branch is
-    // unknown, skip the batch — individual tasks fall back to direct calls.
-    if let Some(ref db) = default_branch {
-        repo.batch_ahead_behind(db);
-    }
+    // No need to prime the ambient `cache.ahead_behind` here: the
+    // snapshot captured above carries the same batched data, and all
+    // tasks consume it by SHA. (Step 5 deletes `cache.ahead_behind`
+    // entirely.)
 
     // Note: URL template expansion is deferred to task spawning (in collect_worktree_progressive
     // and collect_branch_progressive). This parallelizes the work and minimizes time-to-skeleton.
@@ -1155,9 +1186,9 @@ pub fn collect(
     // worker-thread split lets the drain loop start consuming results on
     // the main thread immediately.
     let tx_worker = tx.clone();
-    worktrunk::shell_exec::trace_instant("Spawning worker thread");
+    worktrunk::trace::instant("Spawning worker thread");
     std::thread::spawn(move || {
-        worktrunk::shell_exec::trace_instant("Parallel execution started");
+        worktrunk::trace::instant("Parallel execution started");
         all_work_items.into_par_iter().for_each(|item| {
             worktrunk::shell_exec::set_command_timeout(command_timeout);
             let result = item.execute();
@@ -1203,13 +1234,18 @@ pub fn collect(
     let reveal_at = (progressive_state.is_some() || progressive_handler.is_some())
         .then_some(placeholder_reveal_at);
 
+    let primary_target = options
+        .integration_targets
+        .as_ref()
+        .map(|t| t.primary.as_str());
+
     let drain_outcome = drain_results(
         rx,
         &mut all_items,
         &mut errors,
         &expected_results,
         drain_deadline,
-        integration_target.as_deref(),
+        primary_target,
         |event| {
             let dim = Style::new().dimmed();
             let total_results = expected_results.count();
@@ -1234,7 +1270,7 @@ pub fn collect(
                         let mut s = state_cell.borrow_mut();
                         if !s.first_result_traced {
                             s.first_result_traced = true;
-                            worktrunk::shell_exec::trace_instant("First result received");
+                            worktrunk::trace::instant("First result received");
                         }
 
                         s.completed_results += 1;
@@ -1313,7 +1349,7 @@ pub fn collect(
         },
         reveal_at,
     );
-    worktrunk::shell_exec::trace_instant("All results drained");
+    worktrunk::trace::instant("All results drained");
 
     // Extract progressive state back out. `progressive_table` is re-bound so
     // post-drain code (finalize / error rendering) works unchanged.
@@ -1379,7 +1415,7 @@ pub fn collect(
     // pre-seeded main_state for unborn/prunable items) still materialize.
     // The call is idempotent — already-resolved gates are skipped.
     for item in all_items.iter_mut() {
-        item.refresh_status_symbols(integration_target.as_deref());
+        item.refresh_status_symbols(primary_target);
     }
 
     // Count errors for summary
@@ -1463,7 +1499,7 @@ pub fn collect(
     // - `RenderTarget::Json`: no stdout rendering; data returned for the
     //   caller to serialize (`wt list --format=json`) or feed into its own
     //   UI (picker via `progressive_handler`)
-    worktrunk::shell_exec::trace_instant("List collect complete");
+    worktrunk::trace::instant("List collect complete");
 
     Ok(Some(super::model::ListData { items }))
 }
@@ -1475,7 +1511,7 @@ pub fn collect(
 /// Sort items by timestamp descending using the pre-fetched commit-details map.
 fn sort_by_timestamp_desc_with_cache<T, F>(
     items: Vec<T>,
-    commit_details: &std::collections::HashMap<String, (i64, String)>,
+    commit_details: &std::collections::HashMap<String, (String, i64, String)>,
     get_sha: F,
 ) -> Vec<T>
 where
@@ -1485,7 +1521,9 @@ where
     let mut with_ts: Vec<_> = items
         .into_iter()
         .map(|item| {
-            let ts = commit_details.get(get_sha(&item)).map_or(0, |(ts, _)| *ts);
+            let ts = commit_details
+                .get(get_sha(&item))
+                .map_or(0, |(_, ts, _)| *ts);
             (item, ts)
         })
         .collect();
@@ -1499,7 +1537,7 @@ fn sort_worktrees_with_cache(
     worktrees: &[WorktreeInfo],
     main_worktree: &WorktreeInfo,
     current_path: Option<&std::path::PathBuf>,
-    commit_details: &std::collections::HashMap<String, (i64, String)>,
+    commit_details: &std::collections::HashMap<String, (String, i64, String)>,
 ) -> Vec<WorktreeInfo> {
     // Embed timestamp and priority in tuple to avoid parallel Vec and index lookups
     let mut with_sort_key: Vec<_> = worktrees
@@ -1512,7 +1550,7 @@ fn sort_worktrees_with_cache(
             } else {
                 2 // Rest by timestamp
             };
-            let ts = commit_details.get(&wt.head).map_or(0, |(ts, _)| *ts);
+            let ts = commit_details.get(&wt.head).map_or(0, |(_, ts, _)| *ts);
             (wt, priority, ts)
         })
         .collect();
@@ -1540,6 +1578,7 @@ pub fn build_worktree_item(
 ) -> ListItem {
     ListItem {
         head: wt.head.clone(),
+        short_sha: String::new(),
         branch: wt.branch.clone(),
         commit: None,
         counts: None,
@@ -1583,23 +1622,28 @@ pub fn populate_item(
     item: &mut ListItem,
     mut options: CollectOptions,
 ) -> anyhow::Result<()> {
-    // Populate commit details (timestamp + subject) directly. The main
-    // `collect()` path batches this across all items pre-skeleton; the
-    // single-item statusline path has no such batch, so fetch the one SHA
-    // here. Skip null OIDs (unborn branches) and prunable worktrees —
-    // matches the behavior in `collect()`. Silent on batch failure: the
-    // statusline is a compact prompt element with no room for warnings, and
-    // `commit.message` / `commit.timestamp` fall through to their defaults.
+    // Populate commit data directly. The main `collect()` path batches this
+    // across all items pre-skeleton; the single-item statusline path has no
+    // such batch, so fetch the one SHA here. Skip null OIDs (unborn branches).
+    // Silent on batch failure: the statusline is a compact prompt element with
+    // no room for warnings, and `commit.message` / `commit.timestamp` fall
+    // through to their defaults.
+    //
+    // `short_sha` populates for every row (including prunable). The
+    // timestamp/message bundle is skipped for prunable rows to match the old
+    // task-queue UX where probes against a missing worktree dir failed.
     let is_prunable = item.worktree_data().is_some_and(|d| d.is_prunable());
     if item.head != worktrunk::git::NULL_OID
-        && !is_prunable
         && let Ok(map) = repo.commit_details_many(&[&item.head])
-        && let Some((timestamp, commit_message)) = map.get(&item.head)
+        && let Some((short_sha, timestamp, commit_message)) = map.get(&item.head)
     {
-        item.commit = Some(CommitDetails {
-            timestamp: *timestamp,
-            commit_message: commit_message.clone(),
-        });
+        item.short_sha = short_sha.clone();
+        if !is_prunable {
+            item.commit = Some(CommitDetails {
+                timestamp: *timestamp,
+                commit_message: commit_message.clone(),
+            });
+        }
     }
 
     // Extract worktree data (skip if not a worktree item)
@@ -1607,20 +1651,26 @@ pub fn populate_item(
         return Ok(());
     };
 
-    // Get integration target for status symbol computation (cached in repo)
-    // None if default branch cannot be determined - status symbols will be skipped
-    let target = repo.integration_target();
-
-    // Populate default_branch / integration_target if the caller didn't.
-    // Tasks read these through `TaskContext`; `None` here tells them to
-    // skip (see collect()'s stale-default-branch path). Single-item callers
-    // like statusline pass `CollectOptions::default()` and expect the
-    // repo-derived values.
+    // Populate default_branch / snapshot / integration_targets if the
+    // caller didn't. Tasks read these through `TaskContext`; `None`
+    // values tell them to skip (see collect()'s stale-default-branch
+    // path). Single-item callers like statusline pass
+    // `CollectOptions::default()` and expect the repo-derived values.
     if options.default_branch.is_none() {
         options.default_branch = repo.default_branch();
     }
-    if options.integration_target.is_none() {
-        options.integration_target = target.clone();
+    if options.snapshot.is_none() {
+        options.snapshot = match options.default_branch.as_deref() {
+            Some(db) => repo.capture_refs_with_ahead_behind(db).ok(),
+            None => repo.capture_refs().ok(),
+        }
+        .map(std::sync::Arc::new);
+    }
+    if options.integration_targets.is_none() {
+        options.integration_targets = options
+            .snapshot
+            .as_deref()
+            .and_then(|s| repo.integration_targets(s));
     }
 
     // Create channel for task results
@@ -1678,7 +1728,10 @@ pub fn populate_item(
         &mut errors,
         &expected_results,
         std::time::Instant::now() + results::DRAIN_TIMEOUT,
-        target.as_deref(),
+        options
+            .integration_targets
+            .as_ref()
+            .map(|t| t.primary.as_str()),
         |_event| {},
         None,
     );
@@ -1707,7 +1760,12 @@ pub fn populate_item(
 
     // Ensure status symbols are refreshed even if all tasks errored
     // (the drain only calls refresh on the success path).
-    item.refresh_status_symbols(target.as_deref());
+    item.refresh_status_symbols(
+        options
+            .integration_targets
+            .as_ref()
+            .map(|t| t.primary.as_str()),
+    );
 
     // Populate display fields (including status_line for statusline command)
     item.finalize_display();

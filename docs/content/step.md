@@ -116,11 +116,13 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-#### `--show-prompt`
+#### `--dry-run`
 
-Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+Render the prompt, print the LLM command, generate the message, and exit without staging, running hooks, or committing:
 
-{{ terminal(cmd="# Inspect the rendered prompt|||wt step commit --show-prompt | less||||||# Pipe to a different LLM|||wt step commit --show-prompt | llm -m gpt-5-nano") }}
+{{ terminal(cmd="wt step commit --dry-run") }}
+
+Three sections are printed: the rendered prompt, the shell command that would invoke the LLM, and the message returned. The LLM call still happens — only the commit is skipped.
 
 ### Command reference
 
@@ -144,13 +146,23 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
           - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
           - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
 
-      <b><span class=c>--show-prompt</span></b>
-          Show prompt without running LLM
-
-          Outputs the rendered prompt to stdout for debugging or manual piping.
+      <b><span class=c>--dry-run</span></b>
+          Preview prompt, command, and generated message without committing
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Automation:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format
+
+          JSON prints structured result to stdout after the commit completes.
+
+          Possible values:
+          - <b><span class=c>text</span></b>: Human-readable text output
+          - <b><span class=c>json</span></b>: JSON output
+
+          [default: text]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -194,11 +206,13 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-#### `--show-prompt`
+#### `--dry-run`
 
-Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+Render the prompt, print the LLM command, generate the squash message, and exit without resetting, running hooks, or committing:
 
-{{ terminal(cmd="wt step squash --show-prompt | less") }}
+{{ terminal(cmd="wt step squash --dry-run") }}
+
+Three sections are printed: the rendered prompt, the shell command that would invoke the LLM, and the message returned. The LLM call still happens — only the squash and commit are skipped.
 
 ### Command reference
 
@@ -227,13 +241,23 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
           - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
           - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
 
-      <b><span class=c>--show-prompt</span></b>
-          Show prompt without running LLM
-
-          Outputs the rendered prompt to stdout for debugging or manual piping.
+      <b><span class=c>--dry-run</span></b>
+          Preview prompt, command, and generated message without squashing
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Automation:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format
+
+          JSON prints structured result to stdout after the squash completes.
+
+          Possible values:
+          - <b><span class=c>text</span></b>: Human-readable text output
+          - <b><span class=c>json</span></b>: JSON output
+
+          [default: text]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -327,7 +351,7 @@ copy = "wt step copy-ignored"
 
 ### What gets copied
 
-All gitignored files are copied by default, except for built-in excluded directories: VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). Tracked files are never touched.
+All gitignored files are copied by default, except for built-in excluded directories: VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.worktrees/`). Tracked files are never touched.
 
 To limit what gets copied further, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
 
@@ -360,7 +384,7 @@ exclude = [".cache/", ".turbo/"]
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
 - Skips existing files by default (safe to re-run)
 - `--force` overwrites existing files in the destination
-- Always skips built-in excluded directories — VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`) — and nested worktrees
+- Always skips built-in excluded directories — VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.worktrees/`) — and nested worktrees
 
 ### Performance
 
@@ -436,6 +460,18 @@ Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]<
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Automation:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format
+
+          JSON prints structured result to stdout after the copy completes.
+
+          Possible values:
+          - <b><span class=c>text</span></b>: Human-readable text output
+          - <b><span class=c>json</span></b>: JSON output
+
+          [default: text]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
@@ -538,27 +574,27 @@ Run command in each worktree. Executes sequentially with real-time output; conti
 
 A summary of successes and failures is shown at the end. Context JSON is piped to stdin for scripts that need structured data.
 
+### Arguments
+
+Arguments after `--` are the program and its arguments — run directly, no shell.
+
+{{ terminal(cmd="wt step for-each -- git status --short|||wt step for-each -- npm install") }}
+
+For pipes, redirects, variables, or globs, wrap in `sh -c`:
+
+{{ terminal(cmd="wt step for-each -- sh -c 'git status | wc -l'|||wt step for-each -- sh -c 'echo $HOME && git pull'") }}
+
 ### Template variables
 
-All variables are shell-escaped. See [`wt hook` template variables](@/hook.md#template-variables) for the complete list and filters.
+Variables substitute into each argv element before exec. See [`wt hook` template variables](@/hook.md#template-variables) for the complete list and filters.
+
+{{ terminal(cmd="wt step for-each -- echo 'Branch: __WT_OPEN__ branch __WT_CLOSE__'") }}
 
 ### Examples
 
-Check status across all worktrees:
-
-{{ terminal(cmd="wt step for-each -- git status --short") }}
-
-Run npm install in all worktrees:
-
-{{ terminal(cmd="wt step for-each -- npm install") }}
-
-Use branch name in command:
-
-{{ terminal(cmd="wt step for-each -- __WT_QUOT__echo Branch: __WT_OPEN__ branch __WT_CLOSE____WT_QUOT__") }}
-
 Pull updates in worktrees with upstreams (skips others):
 
-{{ terminal(cmd="git fetch --prune && wt step for-each -- '[ __WT_QUOT__$(git rev-parse @{u} 2>/dev/null)__WT_QUOT__ ] || exit 0; git pull --autostash'") }}
+{{ terminal(cmd="git fetch --prune && wt step for-each -- sh -c '[ __WT_QUOT__$(git rev-parse @{u} 2>/dev/null)__WT_QUOT__ ] || exit 0; git pull --autostash'") }}
 
 Note: This command is experimental and may change in future versions.
 
@@ -831,6 +867,18 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Automation:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
+          Output format
+
+          JSON prints structured result to stdout after the relocate completes.
+
+          Possible values:
+          - <b><span class=c>text</span></b>: Human-readable text output
+          - <b><span class=c>json</span></b>: JSON output
+
+          [default: text]
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>

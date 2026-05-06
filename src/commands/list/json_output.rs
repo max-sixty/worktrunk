@@ -115,7 +115,8 @@ pub struct JsonCommit {
     /// Full commit SHA
     pub sha: String,
 
-    /// Short commit SHA (7 characters)
+    /// Short commit SHA, abbreviated per `core.abbrev` (auto-extends for
+    /// ambiguous prefixes).
     pub short_sha: String,
 
     /// Commit message (first line)
@@ -244,17 +245,20 @@ impl JsonItem {
         let is_current = worktree_data.is_some_and(|d| d.is_current);
         let is_previous = worktree_data.is_some_and(|d| d.is_previous);
 
-        // Commit info — empty strings for null OID (unborn branches)
-        let (sha, short_sha) = if item.head == worktrunk::git::NULL_OID {
-            (String::new(), String::new())
+        // Commit info — empty strings for null OID (unborn branches). The
+        // short form is fetched in the same `git log --no-walk` batch as the
+        // subject and timestamp (see `commit_details_many`), so it honors
+        // `core.abbrev` and disambiguates without an extra subprocess. Lives on
+        // `ListItem` directly so prunable worktrees still carry it even though
+        // their `commit` (timestamp + message) is intentionally left empty.
+        let sha = if item.head == worktrunk::git::NULL_OID {
+            String::new()
         } else {
-            let sha = item.head.clone();
-            let short_sha = sha[..7.min(sha.len())].to_string();
-            (sha, short_sha)
+            item.head.clone()
         };
         let commit = JsonCommit {
             sha,
-            short_sha,
+            short_sha: item.short_sha.clone(),
             message: item
                 .commit
                 .as_ref()

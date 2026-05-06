@@ -34,8 +34,13 @@ pub enum InternalOp {
 /// Hook commands produce logs at: `{branch}/{source}/{hook-type}/{name}.log`
 /// - Example: `feature/user/post-start/server.log`
 ///
-/// Internal operations produce logs at: `{branch}/internal/{op}.log`
+/// Per-branch internal operations produce logs at: `{branch}/internal/{op}.log`
 /// - Example: `feature/internal/remove.log`
+///
+/// Repo-wide (branch-agnostic) internal operations produce logs at
+/// `internal/{op}.log` directly under the log directory, alongside the other
+/// shared logs (`commands.jsonl`, `trace.log`).
+/// - Example: `internal/trash-sweep.log`
 ///
 /// Branch and hook names are sanitized for filesystem safety via
 /// `sanitize_for_filename`. Already-safe names pass through unchanged; names
@@ -49,8 +54,10 @@ pub enum HookLog {
         hook_type: HookType,
         name: String,
     },
-    /// Internal operation log: `{branch}/internal/{op}.log`
+    /// Per-branch internal operation log: `{branch}/internal/{op}.log`
     Internal(InternalOp),
+    /// Repo-wide internal operation log: `internal/{op}.log` (no branch segment).
+    Shared(InternalOp),
 }
 
 impl HookLog {
@@ -63,27 +70,38 @@ impl HookLog {
         }
     }
 
-    /// Create an internal operation log specification.
+    /// Create a per-branch internal operation log specification.
     pub fn internal(op: InternalOp) -> Self {
         Self::Internal(op)
     }
 
+    /// Create a repo-wide (branch-agnostic) internal operation log specification.
+    pub fn shared(op: InternalOp) -> Self {
+        Self::Shared(op)
+    }
+
     /// Generate the full log path for a branch in the given log directory.
     ///
-    /// Builds the nested path under `{log_dir}/{sanitized-branch}/...`.
+    /// Builds the nested path under `{log_dir}/{sanitized-branch}/...` for
+    /// per-branch variants. The `Shared` variant ignores `branch` and writes
+    /// directly under `{log_dir}/internal/`.
     /// Parent directories must be created by the caller (see `create_detach_log`).
     pub fn path(&self, log_dir: &Path, branch: &str) -> PathBuf {
-        let branch_dir = log_dir.join(sanitize_for_filename(branch));
         match self {
             HookLog::Hook {
                 source,
                 hook_type,
                 name,
-            } => branch_dir
+            } => log_dir
+                .join(sanitize_for_filename(branch))
                 .join(source.to_string())
                 .join(hook_type.to_string())
                 .join(format!("{}.log", sanitize_for_filename(name))),
-            HookLog::Internal(op) => branch_dir.join("internal").join(format!("{op}.log")),
+            HookLog::Internal(op) => log_dir
+                .join(sanitize_for_filename(branch))
+                .join("internal")
+                .join(format!("{op}.log")),
+            HookLog::Shared(op) => log_dir.join("internal").join(format!("{op}.log")),
         }
     }
 }
@@ -139,9 +157,9 @@ fn create_detach_log(
 /// - On Unix: uses `process_group(0)` to create a new process group (survives PTY closure)
 /// - On Windows: uses `CREATE_NEW_PROCESS_GROUP` to detach from console
 ///
-/// Internal ops (`HookLog::Internal`) are run at lowered priority via
-/// [`worktrunk::priority::command`] so their I/O and CPU don't compete with
-/// user-visible work; user hooks run at normal priority.
+/// Internal ops (`HookLog::Internal` and `HookLog::Shared`) are run at lowered
+/// priority via [`worktrunk::priority::command`] so their I/O and CPU don't
+/// compete with user-visible work; user hooks run at normal priority.
 ///
 /// Logs are centralized in the main worktree's `.git/wt/logs/` directory.
 pub fn spawn_detached(
@@ -162,7 +180,7 @@ pub fn spawn_detached(
 
     #[cfg(unix)]
     {
-        let low_priority = matches!(hook_log, HookLog::Internal(_));
+        let low_priority = matches!(hook_log, HookLog::Internal(_) | HookLog::Shared(_));
         spawn_detached_unix(worktree_path, command, log_file, context_json, low_priority)?;
     }
 
@@ -347,7 +365,7 @@ pub fn spawn_detached_exec(
 
     #[cfg(unix)]
     {
-        let low_priority = matches!(hook_log, HookLog::Internal(_));
+        let low_priority = matches!(hook_log, HookLog::Internal(_) | HookLog::Shared(_));
         spawn_detached_exec_unix(
             worktree_path,
             program,
@@ -490,16 +508,16 @@ pub fn sweep_stale_trash(repo: &Repository) {
         .collect();
     let command = format!("rm -rf -- {}", escaped.join(" "));
 
-    // TODO: the sweep is global (not branch-scoped), but `HookLog::path()`
-    // always prefixes with a branch segment, so we pass a fake `"wt"` here.
-    // Cleaner would be a top-level variant resolving to `internal/{op}.log`
-    // alongside the other shared logs (`commands.jsonl`, `trace.log`, etc.).
+    // The sweep is repo-wide (not branch-scoped), so it logs under
+    // `internal/trash-sweep.log` alongside the other shared logs
+    // (`commands.jsonl`, `trace.log`). The branch argument is ignored for the
+    // `Shared` variant.
     if let Err(e) = spawn_detached(
         repo,
         &repo.wt_dir(),
         &command,
-        "wt",
-        &HookLog::internal(InternalOp::TrashSweep),
+        "",
+        &HookLog::shared(InternalOp::TrashSweep),
         None,
     ) {
         log::debug!("Failed to spawn stale trash sweep: {e}");
@@ -887,17 +905,21 @@ mod tests {
             @"/repo/.git/wt/logs/main/project/pre-start/build.log"
         );
 
-        // Internal operation path: {log_dir}/{sanitized-branch}/internal/{op}.log
+        // Per-branch internal operation path: {log_dir}/{sanitized-branch}/internal/{op}.log
         assert_snapshot!(
             HookLog::internal(InternalOp::Remove).path(log_dir, "main").to_slash_lossy(),
             @"/repo/.git/wt/logs/main/internal/remove.log"
         );
 
-        // Non-branch-scoped internal ops (like TrashSweep) use a pseudo-branch
-        // at the top level — `wt remove` calls this with branch = "wt".
+        // Repo-wide (branch-agnostic) internal operation path:
+        // {log_dir}/internal/{op}.log — the branch argument is ignored.
         assert_snapshot!(
-            HookLog::internal(InternalOp::TrashSweep).path(log_dir, "wt").to_slash_lossy(),
-            @"/repo/.git/wt/logs/wt/internal/trash-sweep.log"
+            HookLog::shared(InternalOp::TrashSweep).path(log_dir, "anything").to_slash_lossy(),
+            @"/repo/.git/wt/logs/internal/trash-sweep.log"
+        );
+        assert_snapshot!(
+            HookLog::shared(InternalOp::TrashSweep).path(log_dir, "").to_slash_lossy(),
+            @"/repo/.git/wt/logs/internal/trash-sweep.log"
         );
     }
 

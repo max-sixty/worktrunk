@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -8,12 +8,13 @@ use worktrunk::config::{
     Command, CommandConfig, HookStep, UserConfig, expand_template, format_hook_variables,
     template_references_var, validate_template_syntax,
 };
-use worktrunk::git::{Repository, WorktrunkError, interrupt_exit_code};
+use worktrunk::git::{ErrorExt, Repository, WorktrunkError};
 use worktrunk::path::{format_path_for_display, to_posix_path};
 use worktrunk::styling::{
     eprintln, error_message, format_bash_with_gutter, format_with_gutter, info_message,
     progress_message, verbosity,
 };
+use worktrunk::trace::Span;
 
 use super::format_command_label;
 use super::hook_filter::HookSource;
@@ -78,6 +79,25 @@ pub enum AnnouncePolicy {
 /// `Send + Sync` bounds are required.
 pub type ErrorWrapper = Box<dyn Fn(&PreparedCommand, String, Option<i32>) -> anyhow::Error>;
 
+/// What kind of pipeline a sourced step belongs to.
+///
+/// Supplied at conversion time (`sourced_steps_to_foreground`) so a single
+/// `SourcedStep` shape can be produced by both alias and hook resolution.
+/// Drives the per-step trust model (EXEC passthrough), announce policy,
+/// stdin handling, and error wrapping. Hook-only metadata
+/// (`hook_type`, `display_path`) lives on the `Hook` variant — it's
+/// per-pipeline, not per-step, so the per-step shape stays neutral.
+#[derive(Clone)]
+pub enum PipelineKind {
+    Hook {
+        hook_type: HookType,
+        display_path: Option<PathBuf>,
+    },
+    Alias {
+        name: String,
+    },
+}
+
 /// A pipeline step ready for foreground execution, with rendering / error policy.
 pub struct ForegroundStep {
     pub step: PreparedStep,
@@ -97,6 +117,12 @@ pub struct ForegroundStep {
     pub redirect_stdout_to_stderr: bool,
     /// Wraps a per-command failure into the final error returned to the caller.
     pub error_wrapper: ErrorWrapper,
+    /// Per-step directive passthrough. Trust differs by source — user-source
+    /// alias steps pass EXEC through (the body is the user's own config),
+    /// while project-source steps and all hook steps scrub it. Per-step rather
+    /// than per-pipeline so a merged user+project alias relaxes the user's
+    /// own steps without leaking the project's body into the parent shell.
+    pub directives: DirectivePassthrough,
 }
 
 /// Controls how foreground execution responds to command failures.
@@ -170,9 +196,20 @@ impl<'a> CommandContext<'a> {
 ///
 /// The resulting HashMap is passed to hook commands as JSON on stdin,
 /// and used directly for template variable expansion.
+///
+/// `referenced`, when `Some`, restricts the map to keys named in the set —
+/// vars the body doesn't reference are not computed. Aliases pass their
+/// `referenced_vars_for_config` set (extended via `alias_context_filter`)
+/// so unused git lookups (`var_commit` rev-parse, `var_default_branch` cold
+/// detection, `branch().upstream()`) are skipped, and the verbose
+/// `template variables:` table only lists vars the body actually references.
+/// Hooks pass `None` so every standard var stays available — the child
+/// receives the full context as JSON on stdin and may consume keys that
+/// don't appear in the inline `{{ }}` template (e.g. via `jq`).
 pub fn build_hook_context(
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
+    referenced: Option<&BTreeSet<String>>,
 ) -> Result<HashMap<String, String>> {
     let repo_root = ctx.repo.repo_path()?;
     let repo_name = repo_root
@@ -191,15 +228,18 @@ pub fn build_hook_context(
 
     let repo_path = to_posix_path(&repo_root.to_string_lossy());
 
+    let want = |key: &str| referenced.is_none_or(|r| r.contains(key));
+
+    // Cheap vars (already in scope, no I/O) are populated unconditionally —
+    // skipping them saves no work and would just turn the verbose table's
+    // `(unused)` label into noise. Only the expensive blocks below
+    // (subprocesses, git config / remote lookups) honor `want`.
     let mut map = HashMap::new();
     map.insert("repo".into(), repo_name.into());
     map.insert("branch".into(), ctx.branch_or_head().into());
     map.insert("worktree_name".into(), worktree_name.into());
-
-    // Canonical path variables
     map.insert("repo_path".into(), repo_path.clone());
     map.insert("worktree_path".into(), worktree.clone());
-
     // Deprecated aliases (kept for backward compatibility)
     map.insert("main_worktree".into(), repo_name.into());
     map.insert("repo_root".into(), repo_path);
@@ -210,61 +250,81 @@ pub fn build_hook_context(
     }
 
     // Default branch
-    if let Some(default_branch) = ctx.repo.default_branch() {
-        map.insert("default_branch".into(), default_branch);
+    if want("default_branch") {
+        let _span = Span::new("var_default_branch");
+        if let Some(default_branch) = ctx.repo.default_branch() {
+            map.insert("default_branch".into(), default_branch);
+        }
     }
 
     // Primary worktree path (where established files live)
-    if let Ok(Some(path)) = ctx.repo.primary_worktree() {
-        let path_str = to_posix_path(&path.to_string_lossy());
-        map.insert("primary_worktree_path".into(), path_str.clone());
-        // Deprecated alias
-        map.insert("main_worktree_path".into(), path_str);
+    if want("primary_worktree_path") || want("main_worktree_path") {
+        let _span = Span::new("var_primary_worktree");
+        if let Ok(Some(path)) = ctx.repo.primary_worktree() {
+            let path_str = to_posix_path(&path.to_string_lossy());
+            if want("primary_worktree_path") {
+                map.insert("primary_worktree_path".into(), path_str.clone());
+            }
+            // Deprecated alias
+            if want("main_worktree_path") {
+                map.insert("main_worktree_path".into(), path_str);
+            }
+        }
     }
 
     // Resolve commit from the Active branch, not HEAD at discovery path.
     // This ensures {{ commit }} follows the Active branch even when the
     // CommandContext points to a different worktree than where we're running.
-    // When `ctx.branch` matches the running worktree's current branch — the
-    // alias / hook hot path — reuse the HEAD SHA already cached by
-    // `WorkingTree::prewarm_info` instead of firing a fresh `rev-parse`.
     // Detached HEAD (`ctx.branch == None`) must read HEAD from
     // `ctx.worktree_path`, not the running worktree: `wt step for-each`
     // iterates over sibling worktrees, and a sibling on detached HEAD has a
-    // different HEAD than the worktree `wt` runs in. Cross-worktree contexts
-    // on a branch fall through to `rev-parse <branch>`, which is repo-wide.
-    let running_wt = ctx.repo.current_worktree();
-    let commit = match ctx.branch {
-        Some(branch) if running_wt.branch().ok().flatten().as_deref() != Some(branch) => ctx
-            .repo
-            .run_command(&["rev-parse", branch])
-            .ok()
-            .map(|s| s.trim().to_owned()),
-        Some(_) => running_wt.head_sha().ok().flatten(),
-        None => ctx
-            .repo
-            .worktree_at(ctx.worktree_path)
-            .head_sha()
-            .ok()
-            .flatten(),
-    };
-    if let Some(commit) = commit {
-        if commit.len() >= 7 {
-            map.insert("short_commit".into(), commit[..7].into());
+    // different HEAD than the worktree `wt` runs in. Branched contexts go
+    // through `rev-parse <branch>`, which is repo-wide.
+    if want("commit") || want("short_commit") {
+        let _span = Span::new("var_commit");
+        let commit = match ctx.branch {
+            Some(branch) => ctx
+                .repo
+                .run_command(&["rev-parse", branch])
+                .ok()
+                .map(|s| s.trim().to_owned()),
+            None => ctx
+                .repo
+                .worktree_at(ctx.worktree_path)
+                .head_sha()
+                .ok()
+                .flatten(),
+        };
+        if let Some(commit) = commit {
+            if want("short_commit")
+                && let Ok(short) = ctx.repo.short_sha(&commit)
+            {
+                map.insert("short_commit".into(), short);
+            }
+            if want("commit") {
+                map.insert("commit".into(), commit);
+            }
         }
-        map.insert("commit".into(), commit);
     }
 
-    if let Ok(remote) = ctx.repo.primary_remote() {
-        map.insert("remote".into(), remote.to_string());
-        // Add remote URL for conditional hook execution (e.g., GitLab vs GitHub)
-        if let Some(url) = ctx.repo.remote_url(&remote) {
-            map.insert("remote_url".into(), url);
-        }
-        if let Some(branch) = ctx.branch
-            && let Ok(Some(upstream)) = ctx.repo.branch(branch).upstream()
-        {
-            map.insert("upstream".into(), upstream);
+    if want("remote") || want("remote_url") || want("upstream") {
+        let _span = Span::new("var_remote");
+        if let Ok(remote) = ctx.repo.primary_remote() {
+            if want("remote") {
+                map.insert("remote".into(), remote.to_string());
+            }
+            // Add remote URL for conditional hook execution (e.g., GitLab vs GitHub)
+            if want("remote_url")
+                && let Some(url) = ctx.repo.remote_url(&remote)
+            {
+                map.insert("remote_url".into(), url);
+            }
+            if want("upstream")
+                && let Some(branch) = ctx.branch
+                && let Ok(Some(upstream)) = ctx.repo.branch(branch).upstream()
+            {
+                map.insert("upstream".into(), upstream);
+            }
         }
     }
 
@@ -275,7 +335,9 @@ pub fn build_hook_context(
         to_posix_path(&ctx.worktree_path.to_string_lossy()),
     );
 
-    // Add extra vars (e.g., target branch for merge, base for switch)
+    // Caller-set bindings (e.g., merge target, switch base, alias args).
+    // Aliases pre-filter via `AliasOptions::parse`, hooks pass everything;
+    // either way the value is already computed, so insert unconditionally.
     for (k, v) in extra_vars {
         map.insert((*k).into(), (*v).into());
     }
@@ -363,28 +425,20 @@ pub fn execute_pipeline_foreground(
     steps: &[ForegroundStep],
     repo: &Repository,
     wt_path: &Path,
-    directives: &DirectivePassthrough,
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
     for fg_step in steps {
         match &fg_step.step {
             PreparedStep::Single(cmd) => {
-                run_one_command(cmd, fg_step, repo, wt_path, directives, failure_strategy)?;
+                run_one_command(cmd, fg_step, repo, wt_path, failure_strategy)?;
             }
             PreparedStep::Concurrent(cmds) => {
                 if !fg_step.concurrent {
                     for cmd in cmds {
-                        run_one_command(cmd, fg_step, repo, wt_path, directives, failure_strategy)?;
+                        run_one_command(cmd, fg_step, repo, wt_path, failure_strategy)?;
                     }
                 } else {
-                    run_concurrent_group(
-                        cmds,
-                        fg_step,
-                        repo,
-                        wt_path,
-                        directives,
-                        failure_strategy,
-                    )?;
+                    run_concurrent_group(cmds, fg_step, repo, wt_path, failure_strategy)?;
                 }
             }
         }
@@ -405,16 +459,19 @@ fn run_concurrent_group(
     fg_step: &ForegroundStep,
     repo: &Repository,
     wt_path: &Path,
-    directives: &DirectivePassthrough,
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
+    let directives = &fg_step.directives;
     for cmd in cmds {
         announce_command(cmd, &fg_step.announce);
     }
 
     let expanded: Vec<String> = cmds
         .iter()
-        .map(|cmd| resolve_command_str(cmd, repo))
+        .map(|cmd| {
+            let _span = Span::new(format!("template_render:{}", cmd.label));
+            resolve_command_str(cmd, repo)
+        })
         .collect::<Result<_>>()?;
 
     // Both alias tables and hook tables produce named commands (TOML keys
@@ -467,12 +524,15 @@ fn run_one_command(
     fg_step: &ForegroundStep,
     repo: &Repository,
     wt_path: &Path,
-    directives: &DirectivePassthrough,
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
+    let directives = &fg_step.directives;
     announce_command(cmd, &fg_step.announce);
 
-    let command_str = resolve_command_str(cmd, repo)?;
+    let command_str = {
+        let _span = Span::new(format!("template_render:{}", cmd.label));
+        resolve_command_str(cmd, repo)?
+    };
 
     // Hooks get a documented JSON context on stdin; aliases inherit stdin so
     // interactive children (e.g. `wt switch`'s picker) keep their controlling
@@ -574,7 +634,7 @@ fn handle_command_error(
     error_wrapper: &ErrorWrapper,
     failure_strategy: FailureStrategy,
 ) -> anyhow::Result<()> {
-    if let Some(exit_code) = interrupt_exit_code(&err) {
+    if let Some(exit_code) = err.interrupt_exit_code() {
         return Err(WorktrunkError::AlreadyDisplayed { exit_code }.into());
     }
 
@@ -615,7 +675,7 @@ fn expand_commands(
     source: HookSource,
     lazy_enabled: bool,
 ) -> anyhow::Result<Vec<(Command, String, Option<String>)>> {
-    let mut base_context = build_hook_context(ctx, extra_vars)?;
+    let mut base_context = build_hook_context(ctx, extra_vars, None)?;
 
     // hook_type is always available as a template variable and in JSON context
     base_context.insert("hook_type".into(), hook_type.to_string());

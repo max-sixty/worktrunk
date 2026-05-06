@@ -324,40 +324,31 @@ fn should_auto_configure_powershell() -> bool {
     }
 }
 
-/// Check if nushell is available on the system.
-///
-/// Nushell's `vendor/autoload` directory may not exist even when nushell is installed,
-/// since it was introduced in nushell v0.96.0 and isn't always created by default.
-/// When `nu` is in PATH, we should auto-configure nushell (creating vendor/autoload/
-/// if needed) rather than silently skipping it.
-fn is_nushell_available() -> bool {
-    // Allow tests to override detection (set via Command::env() in integration tests)
-    if let Ok(val) = std::env::var("WORKTRUNK_TEST_NUSHELL_ENV") {
-        return val == "1";
-    }
-
-    which::which("nu").is_ok()
-}
-
 pub fn scan_shell_configs(
     shell_filter: Option<Shell>,
     dry_run: bool,
     cmd: &str,
 ) -> Result<ScanResult, String> {
-    // Base shells to check
-    let mut default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::Nushell];
+    // Iterate every supported shell. Shells the user doesn't have are filtered
+    // out of the Skipped output by `is_installed()` below, matching how
+    // bash/zsh/fish/nushell are handled.
+    let default_shells = vec![
+        Shell::Bash,
+        Shell::Zsh,
+        Shell::Fish,
+        Shell::Nushell,
+        Shell::PowerShell,
+    ];
 
-    // Add PowerShell if we detect we're in a PowerShell-compatible environment.
-    // - Non-Windows: PSModulePath reliably indicates PowerShell Core
-    // - Windows: SHELL not set indicates Windows-native shell (cmd or PowerShell)
+    // Detect whether the user is *running in* PowerShell or Nushell right now.
+    // This unlocks `allow_create` so we'll write a profile/autoload file even
+    // when none exists — needed because PowerShell users may not have a profile
+    // (issue #885) and Nushell's vendor/autoload was introduced in 0.96.0.
+    // - PowerShell (non-Windows): PSModulePath set
+    // - PowerShell (Windows): SHELL absent (Git Bash/MSYS2/Cygwin set it)
+    // - Nushell: `nu` on PATH
     let in_powershell_env = should_auto_configure_powershell();
-    if in_powershell_env {
-        default_shells.push(Shell::PowerShell);
-    }
-
-    // Check if nushell is available on the system (nu binary in PATH).
-    // vendor/autoload/ may not exist yet, but we should still install if nu is available.
-    let nushell_available = is_nushell_available();
+    let nushell_available = Shell::Nushell.is_installed();
 
     let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
@@ -408,8 +399,10 @@ pub fn scan_shell_configs(
                     }
                 }
             }
-        } else if shell_filter.is_none() {
-            // Track skipped shells (only when not explicitly filtering)
+        } else if shell_filter.is_none() && shell.is_installed() {
+            // Track skipped shells (only when not explicitly filtering, and only
+            // when the shell binary is on PATH — otherwise the user almost
+            // certainly doesn't use this shell and the entry is just clutter).
             // For Fish/Nushell, we check for parent directory; for others, the config file
             let skipped_path = if shell.is_wrapper_based() {
                 paths
@@ -423,11 +416,6 @@ pub fn scan_shell_configs(
                 skipped.push((shell, path));
             }
         }
-    }
-
-    if results.is_empty() && shell_filter.is_none() && skipped.is_empty() {
-        // No shells checked at all (shouldn't happen normally)
-        return Err("No shell config files found".to_string());
     }
 
     Ok(ScanResult {

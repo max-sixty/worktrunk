@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::UserConfig;
-use worktrunk::git::{Repository, WorktreeInfo};
+use worktrunk::git::{ErrorExt, Repository, WorktreeInfo};
 use worktrunk::path::{format_path_for_display, paths_match};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, success_message,
@@ -56,7 +56,10 @@ impl RelocationCandidate {
 /// Result of gathering relocation candidates.
 pub struct GatherResult {
     pub candidates: Vec<RelocationCandidate>,
-    pub template_errors: usize,
+    /// Branches whose `worktree-path` template failed to expand. Counted in
+    /// the human-readable text output and surfaced as `skipped` entries with
+    /// `reason: "template_error"` in JSON output.
+    pub template_error_branches: Vec<String>,
 }
 
 /// A candidate that passed pre-checks (not locked, not dirty or committed).
@@ -79,6 +82,21 @@ struct TempRelocation {
     original_path: PathBuf,
 }
 
+/// A worktree that was successfully relocated.
+pub struct RelocatedEntry {
+    pub branch: String,
+    pub from: PathBuf,
+    pub to: PathBuf,
+}
+
+/// A worktree that was skipped during validation or execution. `reason` is a
+/// short stable identifier suitable for JSON / scripting (e.g. `"locked"`,
+/// `"uncommitted"`, `"target_blocked"`).
+pub struct SkippedEntry {
+    pub branch: String,
+    pub reason: &'static str,
+}
+
 /// Executes relocations in dependency order, handling cycles via temp moves.
 ///
 /// Git commands route through `repo.worktree_at(path).run_command(...)` rather
@@ -99,9 +117,19 @@ pub struct RelocationExecutor<'a> {
     temp_relocated: Vec<TempRelocation>,
     /// Temp directory for cycle breaking
     temp_dir: PathBuf,
-    /// Counters for summary
-    pub skipped: usize,
-    pub relocated: usize,
+    /// Per-branch records (used for JSON output and counting).
+    pub relocated_entries: Vec<RelocatedEntry>,
+    pub skipped_entries: Vec<SkippedEntry>,
+}
+
+impl RelocationExecutor<'_> {
+    pub fn relocated_count(&self) -> usize {
+        self.relocated_entries.len()
+    }
+
+    pub fn skipped_count(&self) -> usize {
+        self.skipped_entries.len()
+    }
 }
 
 // ============================================================================
@@ -140,7 +168,7 @@ pub fn gather_candidates(
 
     // Find mismatched worktrees
     let mut candidates = Vec::new();
-    let mut template_errors = 0;
+    let mut template_error_branches: Vec<String> = Vec::new();
 
     for wt in worktrees {
         let Some(branch) = wt.branch.as_deref() else {
@@ -169,15 +197,17 @@ pub fn gather_candidates(
                         "Skipping <bold>{branch}</> due to template error:"
                     ))
                 );
-                eprintln!("{}", e);
-                template_errors += 1;
+                // Render the styled diagnostic block (Display is just the short label).
+                let rendered = e.render_diagnostic().unwrap_or_else(|| e.to_string());
+                eprintln!("{rendered}");
+                template_error_branches.push(branch.to_string());
             }
         }
     }
 
     Ok(GatherResult {
         candidates,
-        template_errors,
+        template_error_branches,
     })
 }
 
@@ -188,7 +218,7 @@ pub fn gather_candidates(
 /// Result of validating candidates.
 pub struct ValidationResult {
     pub validated: Vec<ValidatedCandidate>,
-    pub skipped: usize,
+    pub skipped: Vec<SkippedEntry>,
 }
 
 /// Check each candidate for locked/dirty state and optionally auto-commit.
@@ -202,7 +232,7 @@ pub fn validate_candidates(
     repo_path: &Path,
 ) -> anyhow::Result<ValidationResult> {
     let mut validated = Vec::new();
-    let mut skipped = 0;
+    let mut skipped: Vec<SkippedEntry> = Vec::new();
 
     for candidate in candidates {
         let branch = candidate.branch();
@@ -218,7 +248,10 @@ pub fn validate_candidates(
                 "{}",
                 warning_message(cformat!("Skipping <bold>{branch}</> (locked{reason_text})"))
             );
-            skipped += 1;
+            skipped.push(SkippedEntry {
+                branch: branch.to_string(),
+                reason: "locked",
+            });
             continue;
         }
 
@@ -254,7 +287,10 @@ pub fn validate_candidates(
                         "To auto-commit changes before relocating, use <underline>--commit</>"
                     ))
                 );
-                skipped += 1;
+                skipped.push(SkippedEntry {
+                    branch: branch.to_string(),
+                    reason: "uncommitted",
+                });
                 continue;
             }
         }
@@ -295,7 +331,7 @@ impl<'a> RelocationExecutor<'a> {
         }
 
         let mut blocked: HashSet<usize> = HashSet::new();
-        let mut skipped = 0;
+        let mut skipped_entries: Vec<SkippedEntry> = Vec::new();
 
         // Classify targets and handle blockers
         for (i, candidate) in validated.iter().enumerate() {
@@ -327,7 +363,10 @@ impl<'a> RelocationExecutor<'a> {
                 let hint = cformat!("Relocate or remove <underline>{occupant_name}</> first");
                 eprintln!("{}", hint_message(hint));
                 blocked.insert(i);
-                skipped += 1;
+                skipped_entries.push(SkippedEntry {
+                    branch: branch.to_string(),
+                    reason: "target_is_worktree",
+                });
                 continue;
             }
 
@@ -367,7 +406,10 @@ impl<'a> RelocationExecutor<'a> {
                     ))
                 );
                 blocked.insert(i);
-                skipped += 1;
+                skipped_entries.push(SkippedEntry {
+                    branch: branch.to_string(),
+                    reason: "target_blocked",
+                });
             }
         }
 
@@ -379,8 +421,8 @@ impl<'a> RelocationExecutor<'a> {
             moved: HashSet::new(),
             temp_relocated: Vec::new(),
             temp_dir,
-            skipped,
-            relocated: 0,
+            relocated_entries: Vec::new(),
+            skipped_entries,
         })
     }
 
@@ -413,7 +455,10 @@ impl<'a> RelocationExecutor<'a> {
                         );
                         eprintln!("{}", warning_message(msg));
                         self.blocked.insert(i);
-                        self.skipped += 1;
+                        self.skipped_entries.push(SkippedEntry {
+                            branch: branch.to_string(),
+                            reason: "target_occupied",
+                        });
                     }
                 }
             }
@@ -499,7 +544,11 @@ impl<'a> RelocationExecutor<'a> {
         }
 
         self.moved.insert(idx);
-        self.relocated += 1;
+        self.relocated_entries.push(RelocatedEntry {
+            branch,
+            from: src_path,
+            to: dest_path,
+        });
         Ok(())
     }
 
@@ -613,7 +662,11 @@ impl<'a> RelocationExecutor<'a> {
             let msg = cformat!("Relocated <bold>{branch}</>: {src_display} → {dest_display}");
             eprintln!("{}", success_message(msg));
 
-            self.relocated += 1;
+            self.relocated_entries.push(RelocatedEntry {
+                branch: branch.to_string(),
+                from: temp.original_path,
+                to: candidate.expected_path.clone(),
+            });
         }
 
         Ok(())

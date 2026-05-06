@@ -356,7 +356,8 @@ pub fn work_items_for_worktree(
         item_url,
         llm_command: options.llm_command.clone(),
         default_branch: options.default_branch.clone(),
-        integration_target: options.integration_target.clone(),
+        integration_targets: options.integration_targets.clone(),
+        snapshot: options.snapshot.clone(),
     };
 
     let has_commits = wt.has_commits();
@@ -374,11 +375,9 @@ pub fn work_items_for_worktree(
         TaskKind::UserMarker,
         TaskKind::WorkingTreeConflicts,
         TaskKind::BranchDiff,
-        // TODO: For dirty worktrees, WorkingTreeConflicts already runs merge-tree
-        // (via stash-create + merge-tree). MergeTreeConflicts duplicates that call
-        // against HEAD. Could skip MergeTreeConflicts when WorkingTreeConflicts
-        // produces a non-None answer, but needs result-ordering changes since both
-        // tasks run in parallel today.
+        // MergeTreeConflictsTask peeks the shared porcelain cache and
+        // skips its own merge-tree call when WorkingTreeConflictsTask
+        // will produce an authoritative dirty-tree result.
         TaskKind::MergeTreeConflicts,
         TaskKind::CiStatus,
         TaskKind::WouldMergeAdd,
@@ -468,7 +467,8 @@ pub fn work_items_for_branch(
         item_url: None, // Branches without worktrees don't have URLs
         llm_command: options.llm_command.clone(),
         default_branch: options.default_branch.clone(),
-        integration_target: options.integration_target.clone(),
+        integration_targets: options.integration_targets.clone(),
+        snapshot: options.snapshot.clone(),
     };
 
     let mut items = Vec::with_capacity(11);
@@ -545,7 +545,8 @@ mod tests {
             url_template: Some("http://localhost/{{ branch }}".to_string()),
             llm_command: None,
             default_branch: None,
-            integration_target: None,
+            integration_targets: None,
+            snapshot: None,
         };
 
         let expected_results = Arc::new(ExpectedResults::default());
@@ -589,7 +590,8 @@ mod tests {
             llm_command: None,
             url_template: None,
             default_branch: None,
-            integration_target: None,
+            integration_targets: None,
+            snapshot: None,
         };
 
         let expected_results = Arc::new(ExpectedResults::default());

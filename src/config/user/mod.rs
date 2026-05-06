@@ -28,8 +28,8 @@ pub use path::{
 pub use resolved::ResolvedConfig;
 pub use schema::valid_user_config_keys;
 pub use sections::{
-    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig, StageMode,
-    StepConfig, SwitchConfig, SwitchPickerConfig, UserProjectOverrides,
+    CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig, RemoveConfig,
+    StageMode, StepConfig, SwitchConfig, SwitchPickerConfig, UserProjectOverrides,
 };
 
 /// Describes a problem encountered during config loading. Each variant
@@ -283,7 +283,7 @@ fn load_config_file(
 ///
 /// Environment variables can override config file settings using `WORKTRUNK_` prefix with
 /// `__` separator for nested fields (e.g., `WORKTRUNK_COMMIT__GENERATION__COMMAND`).
-#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UserConfig {
     /// Per-project configuration (approved commands, etc.)
     /// Uses BTreeMap for deterministic serialization order and better diff readability
@@ -313,6 +313,10 @@ pub struct UserConfig {
     /// Configuration for the `wt merge` command
     #[serde(default, skip_serializing_if = "super::is_default")]
     pub merge: sections::MergeConfig,
+
+    /// Configuration for the `wt remove` command
+    #[serde(default, skip_serializing_if = "super::is_default")]
+    pub remove: sections::RemoveConfig,
 
     /// Configuration for the `wt switch` command
     #[serde(default, skip_serializing_if = "super::is_default")]

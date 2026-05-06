@@ -18,11 +18,19 @@ pub struct CommitArgs {
     #[arg(long)]
     pub(crate) stage: Option<crate::commands::commit::StageMode>,
 
-    /// Show prompt without running LLM
-    ///
-    /// Outputs the rendered prompt to stdout for debugging or manual piping.
-    #[arg(long)]
+    /// Preview prompt, command, and generated message without committing
+    #[arg(long, conflicts_with = "show_prompt")]
+    pub(crate) dry_run: bool,
+
+    /// Render prompt to stdout without running LLM
+    #[arg(long, hide = true)]
     pub(crate) show_prompt: bool,
+
+    /// Output format
+    ///
+    /// JSON prints structured result to stdout after the commit completes.
+    #[arg(long, default_value = "text", help_heading = "Automation")]
+    pub(crate) format: crate::cli::SwitchFormat,
 }
 
 #[derive(Args)]
@@ -45,11 +53,19 @@ pub struct SquashArgs {
     #[arg(long)]
     pub(crate) stage: Option<crate::commands::commit::StageMode>,
 
-    /// Show prompt without running LLM
-    ///
-    /// Outputs the rendered prompt to stdout for debugging or manual piping.
-    #[arg(long)]
+    /// Preview prompt, command, and generated message without squashing
+    #[arg(long, conflicts_with = "show_prompt")]
+    pub(crate) dry_run: bool,
+
+    /// Render prompt to stdout without running LLM
+    #[arg(long, hide = true)]
     pub(crate) show_prompt: bool,
+
+    /// Output format
+    ///
+    /// JSON prints structured result to stdout after the squash completes.
+    #[arg(long, default_value = "text", help_heading = "Automation")]
+    pub(crate) format: crate::cli::SwitchFormat,
 }
 
 // Ordering: `wt merge` pipeline steps first (commit → squash → rebase → push),
@@ -88,17 +104,15 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-### `--show-prompt`
+### `--dry-run`
 
-Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+Render the prompt, print the LLM command, generate the message, and exit without staging, running hooks, or committing:
 
 ```console
-# Inspect the rendered prompt
-$ wt step commit --show-prompt | less
-
-# Pipe to a different LLM
-$ wt step commit --show-prompt | llm -m gpt-5-nano
+$ wt step commit --dry-run
 ```
+
+Three sections are printed: the rendered prompt, the shell command that would invoke the LLM, and the message returned. The LLM call still happens — only the commit is skipped.
 "#
     )]
     Commit(CommitArgs),
@@ -132,13 +146,15 @@ Configure the default in user config:
 stage = "tracked"
 ```
 
-### `--show-prompt`
+### `--dry-run`
 
-Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+Render the prompt, print the LLM command, generate the squash message, and exit without resetting, running hooks, or committing:
 
 ```console
-$ wt step squash --show-prompt | less
+$ wt step squash --dry-run
 ```
+
+Three sections are printed: the rendered prompt, the shell command that would invoke the LLM, and the message returned. The LLM call still happens — only the squash and commit are skipped.
 "#
     )]
     Squash(SquashArgs),
@@ -161,6 +177,12 @@ $ wt step rebase develop    # Rebase onto develop
         /// Defaults to default branch.
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
+
+        /// Output format
+        ///
+        /// JSON prints structured result to stdout after the rebase completes.
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// Fast-forward target to current branch
@@ -191,6 +213,12 @@ Similar to `git push . HEAD:<target>`, but uses `receive.denyCurrentBranch=updat
         /// Allow fast-forward (default)
         #[arg(long, overrides_with = "no_ff", hide = true)]
         ff: bool,
+
+        /// Output format
+        ///
+        /// JSON prints structured result to stdout after the push completes.
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// Show all changes since branching
@@ -255,7 +283,7 @@ copy = "wt step copy-ignored"
 
 ## What gets copied
 
-All gitignored files are copied by default, except for built-in excluded directories: VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`). Tracked files are never touched.
+All gitignored files are copied by default, except for built-in excluded directories: VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.worktrees/`). Tracked files are never touched.
 
 To limit what gets copied further, create `.worktreeinclude` with gitignore-style patterns. Files must be **both** gitignored **and** in `.worktreeinclude`:
 
@@ -288,7 +316,7 @@ exclude = [".cache/", ".turbo/"]
 - Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
 - Skips existing files by default (safe to re-run)
 - `--force` overwrites existing files in the destination
-- Always skips built-in excluded directories — VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.pi/`, `.worktrees/`) — and nested worktrees
+- Always skips built-in excluded directories — VCS metadata (`.bzr/`, `.hg/`, `.jj/`, `.pijul/`, `.sl/`, `.svn/`) and tool-state (`.conductor/`, `.entire/`, `.worktrees/`) — and nested worktrees
 
 ## Performance
 
@@ -356,6 +384,12 @@ The `.worktreeinclude` pattern is shared with [Claude Code on desktop](https://c
         /// Overwrite existing files in destination
         #[arg(long)]
         force: bool,
+
+        /// Output format
+        ///
+        /// JSON prints structured result to stdout after the copy completes.
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// \[experimental\] Evaluate a template expression
@@ -421,34 +455,36 @@ Note: This command is experimental and may change in future versions.
     #[command(
         after_long_help = r#"A summary of successes and failures is shown at the end. Context JSON is piped to stdin for scripts that need structured data.
 
-## Template variables
+## Arguments
 
-All variables are shell-escaped. See [`wt hook` template variables](@/hook.md#template-variables) for the complete list and filters.
-
-## Examples
-
-Check status across all worktrees:
+Arguments after `--` are the program and its arguments — run directly, no shell.
 
 ```console
 $ wt step for-each -- git status --short
-```
-
-Run npm install in all worktrees:
-
-```console
 $ wt step for-each -- npm install
 ```
 
-Use branch name in command:
+For pipes, redirects, variables, or globs, wrap in `sh -c`:
 
 ```console
-$ wt step for-each -- "echo Branch: {{ branch }}"
+$ wt step for-each -- sh -c 'git status | wc -l'
+$ wt step for-each -- sh -c 'echo $HOME && git pull'
 ```
+
+## Template variables
+
+Variables substitute into each argv element before exec. See [`wt hook` template variables](@/hook.md#template-variables) for the complete list and filters.
+
+```console
+$ wt step for-each -- echo 'Branch: {{ branch }}'
+```
+
+## Examples
 
 Pull updates in worktrees with upstreams (skips others):
 
 ```console
-$ git fetch --prune && wt step for-each -- '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
+$ git fetch --prune && wt step for-each -- sh -c '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
 ```
 
 Note: This command is experimental and may change in future versions.
@@ -640,6 +676,12 @@ Note: This command is experimental and may change in future versions.
         /// Moves blocking paths to `<path>.bak-<timestamp>`.
         #[arg(long)]
         clobber: bool,
+
+        /// Output format
+        ///
+        /// JSON prints structured result to stdout after the relocate completes.
+        #[arg(long, default_value = "text", help_heading = "Automation")]
+        format: crate::cli::SwitchFormat,
     },
 
     /// Catch-all for alias lookup
