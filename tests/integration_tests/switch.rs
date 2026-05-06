@@ -3755,6 +3755,189 @@ fn test_switch_pr_gitea_forge_platform_override(#[from(repo_with_remote)] repo: 
     });
 }
 
+/// `forge.platform = "gitlab"` with `pr:` should bail and tell the user to use
+/// `mr:` instead — the platform is incompatible with the syntax.
+#[rstest]
+fn test_switch_pr_forge_platform_gitlab_rejects_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    let project_config = repo.root_path().join(".config/wt.toml");
+    fs::create_dir_all(project_config.parent().unwrap()).unwrap();
+    fs::write(&project_config, "[forge]\nplatform = \"gitlab\"\n").unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        assert_cmd_snapshot!("switch_pr_forge_platform_gitlab", cmd);
+    });
+}
+
+/// An invalid `forge.platform` value should warn and fall back to remote-URL
+/// detection (which here parses as a GitHub URL).
+#[rstest]
+fn test_switch_pr_forge_platform_invalid_falls_back(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let project_config = repo.root_path().join(".config/wt.toml");
+    fs::create_dir_all(project_config.parent().unwrap()).unwrap();
+    fs::write(&project_config, "[forge]\nplatform = \"bitbucket\"\n").unwrap();
+
+    let gh_response = r#"{
+        "title": "Detection fallback",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/101"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_forge_platform_invalid", cmd);
+    });
+}
+
+/// Detected GitLab remote with `pr:` should bail and tell the user to use `mr:`.
+#[rstest]
+fn test_switch_pr_gitlab_remote_rejects_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        assert_cmd_snapshot!("switch_pr_gitlab_remote", cmd);
+    });
+}
+
+/// Ambiguous fallback when the remote URL doesn't identify a forge: gh fails,
+/// tea fails, the outer error reports both providers' messages on a single
+/// line. Exercises `flatten_error` and `ambiguous_pr_error`.
+#[rstest]
+fn test_switch_pr_ambiguous_both_providers_fail(#[from(repo_with_remote)] repo: TestRepo) {
+    // Non-GitHub, non-Gitea host so detection returns Ambiguous.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://forge.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "gh");
+    copy_mock_binary(&mock_bin, "tea");
+
+    // Both providers return 404 so each one bails with a plain anyhow error
+    // (not the structured `GitError::CliApiError`). When both errors lack the
+    // `GitError` shape, the ambiguous-error wrapper kicks in and exercises
+    // `flatten_error` + `ambiguous_pr_error`.
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"Not Found","status":"404"}"#).with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"404 Not found"}"#).with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_ambiguous_both_fail", cmd);
+    });
+}
+
+/// Gitea CLI returning 401/Unauthorized hits the dedicated bail message
+/// (covers the auth-error branch in `gitea::fetch_pr_info`).
+#[rstest]
+fn test_switch_pr_gitea_unauthorized(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "tea");
+
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"401 Unauthorized"}"#).with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_unauthorized", cmd);
+    });
+}
+
+/// Gitea CLI returning 403/Forbidden hits the dedicated bail message
+/// (covers the forbidden branch in `gitea::fetch_pr_info`).
+#[rstest]
+fn test_switch_pr_gitea_forbidden(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "tea");
+
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"403 Forbidden"}"#).with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_forbidden", cmd);
+    });
+}
+
 // ============================================================================
 // MR Syntax Tests (mr:<number>) - GitLab
 // ============================================================================
