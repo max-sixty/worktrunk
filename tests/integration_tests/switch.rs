@@ -3846,6 +3846,283 @@ fn test_switch_pr_gitlab_remote_rejects_pr(#[from(repo_with_remote)] repo: TestR
     });
 }
 
+/// Ambiguous fallback where gh succeeds first — tea is never called and the
+/// PR is checked out as a GitHub PR despite the unrecognized host.
+#[rstest]
+fn test_switch_pr_ambiguous_gh_succeeds(#[from(repo_with_remote)] mut repo: TestRepo) {
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://forge.example.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://forge.example.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = r#"{
+        "title": "Ambiguous gh wins",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://forge.example.com/owner/test-repo/pull/101"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_ambiguous_gh_wins", cmd);
+    });
+}
+
+/// Ambiguous fallback where gh's `CliApiError` (a `GitError`) is returned
+/// directly (no `ambiguous_pr_error` wrapper) when tea also fails — exercises
+/// the GitError short-circuit in `resolve_pr_target`.
+#[rstest]
+fn test_switch_pr_ambiguous_tea_returns_cli_error(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://forge.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "gh");
+    copy_mock_binary(&mock_bin, "tea");
+
+    // gh: 404 → bail (anyhow). tea: generic non-categorized error → CliApiError (GitError).
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"Not Found","status":"404"}"#).with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "api",
+            MockResponse::output("internal error\n").with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_ambiguous_tea_cli_error", cmd);
+    });
+}
+
+/// `wt switch -c new --base pr:N` exercises the `resolve_pr_base` ambiguous
+/// fallback (gh fails, tea fails, both wrapped in `ambiguous_pr_error`).
+#[rstest]
+fn test_switch_create_base_pr_ambiguous(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://forge.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "gh");
+    copy_mock_binary(&mock_bin, "tea");
+
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"Not Found","status":"404"}"#).with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"404 Not found"}"#).with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &["--create", "feature-x", "--base", "pr:101"],
+            None,
+        );
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_create_base_pr_ambiguous", cmd);
+    });
+}
+
+/// Gitea API returns malformed JSON — covers the JSON parse error path
+/// in `gitea::fetch_pr_info`.
+#[rstest]
+fn test_switch_pr_gitea_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = setup_mock_tea(&repo, Some("not json {"));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_invalid_json", cmd);
+    });
+}
+
+/// Gitea API returns a 5xx-style generic error (non-404/401/403) — exercises
+/// the generic `cli_api_error` fallback in `gitea::fetch_pr_info`.
+#[rstest]
+fn test_switch_pr_gitea_server_error(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "tea");
+
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"500 Internal Server Error"}"#)
+                .with_stderr("tea: server error\n")
+                .with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_server_error", cmd);
+    });
+}
+
+/// Gitea API returns a PR with no source branch (label and ref both empty)
+/// — exercises the `extract_source_branch` failure path in `fetch_pr_info`.
+#[rstest]
+fn test_switch_pr_gitea_no_source_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Stuck PR",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "",
+            "ref": "",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
+    }"#;
+
+    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_no_source_branch", cmd);
+    });
+}
+
+/// Gitea API returns a PR whose head repo is null (the fork has been deleted).
+/// Covers the `head_repo` `ok_or_else` path in `gitea::fetch_pr_info`.
+#[rstest]
+fn test_switch_pr_gitea_deleted_fork(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Deleted fork PR",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "alice:gone",
+            "ref": "gone",
+            "repo": null
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
+    }"#;
+
+    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_deleted_fork", cmd);
+    });
+}
+
 /// Ambiguous fallback when the remote URL doesn't identify a forge: gh fails,
 /// tea fails, the outer error reports both providers' messages on a single
 /// line. Exercises `flatten_error` and `ambiguous_pr_error`.
