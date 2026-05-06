@@ -3471,8 +3471,11 @@ fn test_codex_plugin_metadata_is_valid_json() {
         &fs::read_to_string(project_root.join(".codex-plugin/plugin.json")).unwrap(),
     )
     .unwrap();
+    // Codex falls back to .claude-plugin/marketplace.json when
+    // .agents/plugins/marketplace.json is absent, so the existing Claude
+    // marketplace doubles as the Codex marketplace.
     let marketplace: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(project_root.join(".agents/plugins/marketplace.json")).unwrap(),
+        &fs::read_to_string(project_root.join(".claude-plugin/marketplace.json")).unwrap(),
     )
     .unwrap();
     let hooks: serde_json::Value = serde_json::from_str(
@@ -3484,7 +3487,7 @@ fn test_codex_plugin_metadata_is_valid_json() {
     assert_eq!(plugin["skills"], "./skills/");
     assert_eq!(plugin["hooks"], "./.codex-plugin/hooks/hooks.json");
     assert_eq!(marketplace["plugins"][0]["name"], "worktrunk");
-    assert_eq!(marketplace["plugins"][0]["source"]["path"], "./");
+    assert_eq!(marketplace["plugins"][0]["source"], "./");
     assert_eq!(
         hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
         "wt config state marker set \"🤖\" >/dev/null 2>&1 || true"
