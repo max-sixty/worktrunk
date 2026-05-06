@@ -3810,6 +3810,25 @@ fn test_switch_pr_forge_platform_invalid_falls_back(#[from(repo_with_remote)] re
     });
 }
 
+/// With no remote URL parseable, provider detection returns Ambiguous (no
+/// auto-pick) and the ambiguous fallback runs. Without `gh` or `tea` mocks
+/// installed both providers fail with a non-`GitError` error, exercising
+/// `ambiguous_pr_error`.
+#[rstest]
+fn test_switch_pr_no_remote_falls_back_to_ambiguous(repo: TestRepo) {
+    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
+        eprintln!("Skipping test: symlinks not available on this system");
+        return;
+    };
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_cli_not_installed_env(&mut cmd, &minimal_bin);
+        assert_cmd_snapshot!("switch_pr_no_remote_ambiguous", cmd);
+    });
+}
+
 /// Detected GitLab remote with `pr:` should bail and tell the user to use `mr:`.
 #[rstest]
 fn test_switch_pr_gitlab_remote_rejects_pr(#[from(repo_with_remote)] repo: TestRepo) {

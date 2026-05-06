@@ -325,6 +325,42 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_source_branch_label_with_empty_branch_falls_through() {
+        // Label "owner:" → split_once gives ("", ""); after trim it's empty,
+        // so the function falls through to the ref-name branch.
+        let head = TeaPrRef {
+            label: "owner:".to_string(),
+            ref_name: "feature-auth".to_string(),
+            repo: None,
+        };
+        assert_eq!(
+            extract_source_branch(&head),
+            Some("feature-auth".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_source_branch_empty_after_strip_returns_none() {
+        // Bare "refs/heads/" strips to empty — no branch name available.
+        let head = TeaPrRef {
+            label: "".to_string(),
+            ref_name: "refs/heads/".to_string(),
+            repo: None,
+        };
+        assert_eq!(extract_source_branch(&head), None);
+    }
+
+    #[test]
+    fn test_extract_source_branch_empty_ref_returns_none() {
+        let head = TeaPrRef {
+            label: "".to_string(),
+            ref_name: "".to_string(),
+            repo: None,
+        };
+        assert_eq!(extract_source_branch(&head), None);
+    }
+
+    #[test]
     fn test_extract_source_branch_skips_deleted_branch_ref() {
         // Gitea uses "pulls/<idx>/head" when the source branch is deleted —
         // not a usable branch name.
