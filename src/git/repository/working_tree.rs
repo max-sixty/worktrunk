@@ -664,7 +664,7 @@ mod tests {
         let outside = tempfile::tempdir().unwrap();
 
         let result = repo.worktree_at(outside.path()).is_linked();
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
     }
 
     #[test]
