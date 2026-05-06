@@ -407,8 +407,15 @@ impl<'a> WorkingTree<'a> {
     /// main worktree, both point to the same `.git` directory.
     ///
     /// For bare repos, all worktrees are "linked" (returns `true`).
+    ///
+    /// A path that isn't inside any git repo (`git rev-parse --git-dir` exits
+    /// non-zero) returns `Ok(false)` — the question is unambiguous and
+    /// propagating that as an error broke `default_branch()` for callers
+    /// whose `current_worktree()` resolves to a non-repo directory (#2624).
     pub fn is_linked(&self) -> anyhow::Result<bool> {
-        let git_dir = self.git_dir()?;
+        let Ok(git_dir) = self.git_dir() else {
+            return Ok(false);
+        };
         let common_dir = self.repo.git_common_dir();
         Ok(git_dir != common_dir)
     }
@@ -642,6 +649,22 @@ mod tests {
         let info = wt.prewarm_info().unwrap();
         assert!(!info.is_inside);
         assert!(info.root.is_none());
+    }
+
+    #[test]
+    fn is_linked_returns_false_for_path_outside_any_git_repo() {
+        // Repro for #2624. `is_linked()` is called with `current_worktree()`
+        // (i.e. the process CWD) in `infer_default_branch_locally`, and
+        // propagating an error from `git rev-parse --git-dir` when that path
+        // isn't in any git repo (e.g. the Nix build sandbox extracts the
+        // source tarball without `.git`) made `default_branch()` bail.
+        // A path outside any worktree is unambiguously not a linked one.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+
+        let result = repo.worktree_at(outside.path()).is_linked();
+        assert_eq!(result.unwrap(), false);
     }
 
     #[test]
