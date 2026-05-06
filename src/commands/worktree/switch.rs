@@ -112,10 +112,13 @@ fn choose_pr_provider(repo: &Repository) -> anyhow::Result<PrProviderChoice> {
         };
     }
 
+    // Use the raw remote URL (not effective) — `insteadOf` rewrites are for
+    // git transport (e.g., redirecting fetches through a local mirror) and
+    // can produce a path that doesn't reflect the real forge host.
     let detected = repo
         .primary_remote()
         .ok()
-        .and_then(|remote| repo.effective_remote_url(&remote))
+        .and_then(|remote| repo.remote_url(&remote))
         .and_then(|url| worktrunk::git::GitRemoteUrl::parse(&url));
 
     let Some(parsed) = detected else {
@@ -133,6 +136,46 @@ fn choose_pr_provider(repo: &Repository) -> anyhow::Result<PrProviderChoice> {
     }
 }
 
+/// Collapse a multi-line, possibly-styled error chain into a single line so
+/// the outer error stays single-line. main.rs's `debug_assert!` panics if a
+/// top-level error has embedded newlines without an explanatory context,
+/// and the rendered Display of `GitError::CliApiError` is a multi-line gutter
+/// block. We iterate the cause chain joining with `: `, strip ANSI, and
+/// replace newlines with spaces.
+fn flatten_error(err: &anyhow::Error) -> String {
+    let mut parts = Vec::new();
+    for cause in err.chain() {
+        let raw = cause.to_string();
+        let stripped = strip_ansi(&raw);
+        let one_line = stripped.replace('\n', " ");
+        let trimmed = one_line.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !trimmed.is_empty() {
+            parts.push(trimmed);
+        }
+    }
+    parts.join(": ")
+}
+
+/// Strip ANSI escape sequences (CSI codes like `\x1b[31m`).
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next();
+            for next in chars.by_ref() {
+                // CSI parameters end at a byte in the range 0x40..=0x7E
+                if ('\x40'..='\x7e').contains(&next) {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn ambiguous_pr_error(
     number: u32,
     context: &str,
@@ -140,7 +183,9 @@ fn ambiguous_pr_error(
     tea_err: anyhow::Error,
 ) -> anyhow::Error {
     anyhow::anyhow!(
-        "Failed to resolve pr:{number} for {context} with both providers; GitHub (gh): {gh_err:#}; Gitea (tea): {tea_err:#}. Hint: set [forge] platform = \"github\" or \"gitea\" in .config/wt.toml to disambiguate.",
+        "Failed to resolve pr:{number} for {context} with both providers; GitHub (gh): {}; Gitea (tea): {}. Hint: set [forge] platform = \"github\" or \"gitea\" in .config/wt.toml to disambiguate.",
+        flatten_error(&gh_err),
+        flatten_error(&tea_err),
     )
 }
 
