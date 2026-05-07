@@ -57,6 +57,42 @@ fn test_picker_dry_run_dumps_cache_json(mut repo: TestRepo) {
     }
 }
 
+/// Verifies that warnings collect emits while running on the picker's bg
+/// thread (here, the stale-default-branch warning) reach stderr — they're
+/// stashed during the run and drained after the dry-run path joins the bg
+/// thread. Direct eprintln from collect would corrupt skim's frame in real
+/// runs.
+#[rstest]
+fn test_picker_dry_run_drains_stashed_warnings(mut repo: TestRepo) {
+    repo.add_worktree("feature-a");
+    // Persist a default branch that doesn't exist locally — collect's
+    // opportunistic stale-default check turns this into a warning.
+    repo.run_git(&["config", "worktrunk.default-branch", "nonexistent"]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch"])
+        .env("WORKTRUNK_PICKER_DRY_RUN", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "dry-run should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
+    assert!(
+        stderr.contains("Configured default branch") && stderr.contains("nonexistent"),
+        "expected stale-default-branch warning on stderr, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("wt config state default-branch clear"),
+        "expected reset hint on stderr, got: {stderr}"
+    );
+}
+
 /// Same as above but with `list.summary=true` and a fake LLM command
 /// configured, to exercise the `spawn_summary` branch in `handle_picker`.
 /// Uses `/bin/cat` as the LLM: it reads stdin and writes it back, so the

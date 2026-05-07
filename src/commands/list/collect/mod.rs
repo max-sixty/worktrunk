@@ -254,7 +254,7 @@ pub(crate) use execution::ExpectedResults;
 use execution::{work_items_for_branch, work_items_for_worktree};
 use results::drain_results;
 use types::DrainOutcome;
-use types::{TaskError, TaskResult};
+use types::{MissingResult, TaskError, TaskResult};
 
 struct TableRenderPlan {
     progressive_table: Option<ProgressiveTable>,
@@ -366,6 +366,12 @@ pub trait PickerProgressHandler: Send + Sync {
     /// skeleton state use the skeleton renderer. The handler writes every
     /// slot — slot writes are idempotent.
     fn on_reveal(&self, rendered: Vec<String>);
+
+    /// Stash a pre-formatted warning line. Skim owns the terminal while
+    /// collect runs on the picker's bg thread, so eprintln from collect
+    /// would corrupt the rendered frame. The picker drains stashed lines
+    /// after `Skim::run_with` returns, when stderr is safe again.
+    fn stash_warning(&self, line: String);
 }
 
 /// Controls how show flags (branches/remotes/full) are determined in [`collect`].
@@ -450,6 +456,67 @@ fn format_stall_footer(
     cformat!(
         "{INFO_SYMBOL} {dim}{footer_base} ({completed}/{total} loaded, no recent progress; {waiting_clause}){dim:#}"
     )
+}
+
+/// Emit the drain-timeout warning + hint when the default 120s
+/// `DRAIN_TIMEOUT` was hit. No-op for `Complete` outcomes or when an
+/// explicit `collect_deadline` was supplied — those are intentional
+/// truncations the caller controls.
+///
+/// Split out so tests can drive it with a synthetic `DrainOutcome::TimedOut`
+/// without spinning up a real 120s drain.
+fn handle_drain_timeout(
+    drain_outcome: DrainOutcome,
+    collect_deadline: Option<std::time::Instant>,
+    emit: &dyn Fn(String),
+) {
+    if collect_deadline.is_none()
+        && let DrainOutcome::TimedOut {
+            received_count,
+            items_with_missing,
+        } = drain_outcome
+    {
+        let diag = format_drain_timeout_diag(received_count, &items_with_missing);
+        emit(warning_message(&diag).to_string());
+        emit(
+            hint_message(cformat!(
+                "A git command likely hung; for details, re-run with <underline>-v</>; for a diagnostic file, re-run with <underline>-vv</>"
+            ))
+            .to_string(),
+        );
+    }
+}
+
+/// Build the drain-timeout diagnostic shown when the default 120s
+/// `DRAIN_TIMEOUT` is hit. Returns the pre-formatted warning text — the
+/// caller wraps it in `warning_message` and routes through the picker stash
+/// or stderr. Pure so tests can exercise it without spinning up a 120s drain.
+fn format_drain_timeout_diag(
+    received_count: usize,
+    items_with_missing: &[MissingResult],
+) -> String {
+    let mut diag = format!(
+        "Listing worktrees timed out after {}s ({received_count} results received)",
+        results::DRAIN_TIMEOUT.as_secs()
+    );
+
+    if !items_with_missing.is_empty() {
+        diag.push_str("; blocked tasks:");
+        let missing_lines: Vec<String> = items_with_missing
+            .iter()
+            .take(5)
+            .map(|result| {
+                let missing_names: Vec<&str> =
+                    result.missing_kinds.iter().map(|k| k.into()).collect();
+                cformat!("<bold>{}</>: {}", result.name, missing_names.join(", "))
+            })
+            .collect();
+        diag.push_str(&format!(
+            "\n{}",
+            format_with_gutter(&missing_lines.join("\n"), None)
+        ));
+    }
+    diag
 }
 
 /// Collect worktree data with rendering driven by `render_target`.
@@ -625,6 +692,19 @@ pub fn collect(
         }
     };
 
+    // The picker (`wt switch`) drives a skim TUI that owns the terminal while
+    // collect runs on a background thread. Any stderr write from collect
+    // would overlay the picker's rendered frame and corrupt skim's clear
+    // math, so warnings go through the handler's stash instead — picker
+    // drains and emits them after `Skim::run_with` returns.
+    let emit_warning = |line: String| {
+        if let Some(h) = progressive_handler.as_ref() {
+            h.stash_warning(line);
+        } else {
+            eprintln!("{line}");
+        }
+    };
+
     // Opportunistic stale-default-branch check: `default_branch` above is
     // the persisted value, now trusted without validation on the hot path.
     // Cross-check against the enumerated branch set and surface a warning
@@ -662,17 +742,17 @@ pub fn collect(
     };
 
     if warn_stale_default && let Some(branch) = default_branch.as_deref() {
-        eprintln!(
-            "{}",
+        emit_warning(
             warning_message(cformat!(
                 "Configured default branch <bold>{branch}</> does not exist locally"
             ))
+            .to_string(),
         );
-        eprintln!(
-            "{}",
+        emit_warning(
             hint_message(cformat!(
                 "To reset, run <underline>wt config state default-branch clear</>"
             ))
+            .to_string(),
         );
     }
 
@@ -751,9 +831,8 @@ pub fn collect(
         // Surface git's actual stderr (when available via the typed leaf)
         // rather than our `CommandError` summary.
         let detail = err.display_message();
-        eprintln!(
-            "{}",
-            warning_message(cformat!("Failed to batch-fetch commit details: {detail}"))
+        emit_warning(
+            warning_message(cformat!("Failed to batch-fetch commit details: {detail}")).to_string(),
         );
         std::collections::HashMap::new()
     });
@@ -1366,47 +1445,11 @@ pub fn collect(
     // final table / finalize / timeout paths must not inherit that.
     placeholder = super::render::PLACEHOLDER;
 
-    // Handle timeout if it occurred.
-    // Budget-based deadlines (collect_deadline) are intentional truncation — don't warn.
-    // Only warn for the default DRAIN_TIMEOUT (120s), which indicates a hung command.
-    if collect_deadline.is_none()
-        && let DrainOutcome::TimedOut {
-            received_count,
-            items_with_missing,
-        } = drain_outcome
-    {
-        // Warning: what happened + gutter showing which tasks blocked
-        let mut diag = format!(
-            "wt list timed out after {}s ({received_count} results received)",
-            results::DRAIN_TIMEOUT.as_secs()
-        );
-
-        if !items_with_missing.is_empty() {
-            diag.push_str("; blocked tasks:");
-            let missing_lines: Vec<String> = items_with_missing
-                .iter()
-                .take(5)
-                .map(|result| {
-                    let missing_names: Vec<&str> =
-                        result.missing_kinds.iter().map(|k| k.into()).collect();
-                    cformat!("<bold>{}</>: {}", result.name, missing_names.join(", "))
-                })
-                .collect();
-            diag.push_str(&format!(
-                "\n{}",
-                format_with_gutter(&missing_lines.join("\n"), None)
-            ));
-        }
-
-        eprintln!("{}", warning_message(&diag));
-
-        eprintln!(
-            "{}",
-            hint_message(cformat!(
-                "A git command likely hung; run <underline>wt list -v</> for details or <underline>wt list -vv</> to create a diagnostic file"
-            ))
-        );
-    }
+    // Handle timeout if it occurred. Budget-based deadlines
+    // (collect_deadline) are intentional truncation — don't warn. Only
+    // warn for the default DRAIN_TIMEOUT (120s), which indicates a hung
+    // command.
+    handle_drain_timeout(drain_outcome, collect_deadline, &emit_warning);
 
     // The drain calls `refresh_status_symbols` after every *successful*
     // result, but items with zero successful results (all tasks errored
@@ -1478,10 +1521,10 @@ pub fn collect(
         }
 
         let warning = warning_parts.join("\n");
-        eprintln!("{}", warning_message(&warning));
+        emit_warning(warning_message(&warning).to_string());
 
         // Show issue reporting hint (free function - doesn't collect diagnostic data)
-        eprintln!("{}", hint_message(crate::diagnostic::issue_hint()));
+        emit_warning(hint_message(crate::diagnostic::issue_hint()).to_string());
     }
 
     // Populate display fields for all items (used by JSON output and statusline)
@@ -1816,6 +1859,103 @@ mod tests {
         insta::assert_snapshot!(
             strip_ansi(&rendered),
             @"○ Showing 3 worktrees (5/12 loaded, no recent progress; waiting on 3 tasks, including ci-status for feat)"
+        );
+    }
+
+    /// Drain timeout diagnostic without per-item breakdown — the early-exit
+    /// path when no items are blocked.
+    #[test]
+    fn test_format_drain_timeout_diag_no_items() {
+        let rendered = format_drain_timeout_diag(7, &[]);
+        insta::assert_snapshot!(
+            strip_ansi(&rendered),
+            @"Listing worktrees timed out after 120s (7 results received)"
+        );
+    }
+
+    /// `handle_drain_timeout` emits both warning + hint when the default
+    /// timeout fires (`collect_deadline: None` + `TimedOut`). Captures
+    /// emissions through the closure to avoid touching real stderr.
+    #[test]
+    fn test_handle_drain_timeout_emits_on_default_timeout() {
+        use std::sync::Mutex;
+        let captured: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let emit = |line: String| captured.lock().unwrap().push(line);
+        let outcome = DrainOutcome::TimedOut {
+            received_count: 4,
+            items_with_missing: vec![],
+        };
+        handle_drain_timeout(outcome, None, &emit);
+        let lines = captured.lock().unwrap();
+        assert_eq!(lines.len(), 2, "expected warning + hint, got: {lines:?}");
+        assert!(
+            strip_ansi(&lines[0]).contains("Listing worktrees timed out after"),
+            "warning line: {}",
+            lines[0]
+        );
+        assert!(
+            strip_ansi(&lines[1]).contains("re-run with -v"),
+            "hint line: {}",
+            lines[1]
+        );
+    }
+
+    /// An explicit `collect_deadline` is intentional truncation — the helper
+    /// must stay silent so user-budgeted deadlines don't surface as bugs.
+    #[test]
+    fn test_handle_drain_timeout_silent_when_deadline_set() {
+        use std::sync::Mutex;
+        let captured: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let emit = |line: String| captured.lock().unwrap().push(line);
+        let outcome = DrainOutcome::TimedOut {
+            received_count: 0,
+            items_with_missing: vec![],
+        };
+        let deadline = std::time::Instant::now();
+        handle_drain_timeout(outcome, Some(deadline), &emit);
+        assert!(
+            captured.lock().unwrap().is_empty(),
+            "expected no emissions for budgeted deadline"
+        );
+    }
+
+    /// `Complete` outcomes are the happy path — the helper must stay silent.
+    #[test]
+    fn test_handle_drain_timeout_silent_on_complete() {
+        use std::sync::Mutex;
+        let captured: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let emit = |line: String| captured.lock().unwrap().push(line);
+        handle_drain_timeout(DrainOutcome::Complete, None, &emit);
+        assert!(
+            captured.lock().unwrap().is_empty(),
+            "expected no emissions for Complete outcome"
+        );
+    }
+
+    /// With blocked items, the diagnostic appends a gutter listing each
+    /// item's missing task kinds. `take(5)` caps the list; cover that here.
+    #[test]
+    fn test_format_drain_timeout_diag_with_blocked_items() {
+        let items = vec![
+            MissingResult {
+                item_idx: 0,
+                name: "feature-a".to_string(),
+                missing_kinds: vec![TaskKind::CiStatus, TaskKind::BranchDiff],
+            },
+            MissingResult {
+                item_idx: 1,
+                name: "feature-b".to_string(),
+                missing_kinds: vec![TaskKind::AheadBehind],
+            },
+        ];
+        let rendered = format_drain_timeout_diag(3, &items);
+        insta::assert_snapshot!(
+            strip_ansi(&rendered),
+            @r"
+        Listing worktrees timed out after 120s (3 results received); blocked tasks:
+          feature-a: ci-status, branch-diff
+          feature-b: ahead-behind
+        "
         );
     }
 

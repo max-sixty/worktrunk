@@ -164,6 +164,24 @@
 
           # Check formatting
           worktrunk-fmt = craneLib.cargoFmt { inherit src; };
+
+          # Run tests inside the nix sandbox. Catches packaging-environment
+          # bugs (#2624 is the canonical example) before nixpkgs maintainers
+          # do — see .github/workflows/nightly.yaml.
+          #
+          # Wider src than the package build: tests need .snap files and
+          # tests/ fixtures (prebuilt _git/ trees, .sh scripts, no-extension
+          # git database files). Default features only — shell-integration-
+          # tests requires zsh/fish/nushell + PTY (see CLAUDE.md → "Shell/PTY
+          # Integration Tests").
+          worktrunk-tests = craneLib.cargoTest (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              src = pkgs.lib.cleanSource ./.;
+              nativeBuildInputs = commonArgs.nativeBuildInputs ++ [ pkgs.git ];
+            }
+          );
         };
 
         packages = {
