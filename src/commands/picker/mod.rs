@@ -547,6 +547,23 @@ pub fn handle_picker(
         .no_info(true) // Hide info line (matched/total counter)
         .preview(Some("".to_string())) // Enable preview (empty string means use SkimItem::preview())
         .preview_window(preview_window_spec)
+        // Force the inline-mode clearing path on exit.
+        //
+        // tuikit only enters the alternate screen when the picker is full
+        // height; at `height: "90%"` we're inline, so `smcup` is never
+        // sent. But its `pause()` still emits `rmcup` whenever the option
+        // `disable_alternate_screen` is false — and unmatched `rmcup`
+        // varies by terminal: a no-op on most macOS terminals, but on some
+        // Linux setups it leaves the picker frame on screen because no
+        // explicit erase ran.
+        //
+        // skim plumbs `disable_alternate_screen = no_clear_start` (see
+        // `skim/src/lib.rs` `Skim::run_with`), so setting `no_clear_start`
+        // here forces pause() down the `cursor_goto + erase_down` branch,
+        // which actually erases the rows skim drew on. The other side
+        // effect, `clear_on_start = false`, is harmless for us — skim
+        // immediately overdraws the rows it allocates.
+        .no_clear_start(true)
         // Color scheme using fzf's --color=light values: dark text (237) on light gray bg (251)
         //
         // Terminal color compatibility is tricky:
