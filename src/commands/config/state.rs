@@ -62,6 +62,38 @@ use crate::display::format_relative_time_short;
 use crate::help_pager::show_help_in_pager;
 use crate::summary::CachedSummary;
 
+// ==================== Picker preview cache shims ====================
+//
+// `commands::picker` is gated `#[cfg(unix)]` (see `commands/mod.rs`), so its
+// preview cache module disappears entirely on Windows. The bundled "git
+// commands cache" category still needs to compile and report consistent
+// counts on every platform — these shims forward to the picker cache on
+// unix and return 0 / `Ok(0)` elsewhere so call sites stay platform-agnostic.
+
+fn picker_preview_count(repo: &Repository) -> usize {
+    #[cfg(unix)]
+    {
+        crate::commands::picker::preview_cache::count_all(repo)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = repo;
+        0
+    }
+}
+
+fn picker_preview_clear(repo: &Repository) -> anyhow::Result<usize> {
+    #[cfg(unix)]
+    {
+        crate::commands::picker::preview_cache::clear_all(repo)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = repo;
+        Ok(0)
+    }
+}
+
 // ==================== Path Helpers ====================
 
 /// Get the user config path, or error if it cannot be determined.
@@ -969,8 +1001,7 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
     // (merge-tree, ancestry, diff-stats) plus rendered picker previews
     // (log, branch-diff, upstream-diff). Surfaced as one user-facing
     // category — see the parity docstring at the top of this file.
-    let cache_cleared =
-        sha_cache::clear_all(&repo)? + crate::commands::picker::preview_cache::clear_all(&repo)?;
+    let cache_cleared = sha_cache::clear_all(&repo)? + picker_preview_clear(&repo)?;
     if cache_cleared > 0 {
         eprintln!(
             "{}",
@@ -1146,9 +1177,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "markers": markers,
         "ci_status": ci_status,
         "summaries": summaries,
-        "git_commands_cache":
-            sha_cache::count_all(repo)
-                + crate::commands::picker::preview_cache::count_all(repo),
+        "git_commands_cache": sha_cache::count_all(repo) + picker_preview_count(repo),
         "vars": vars_data,
         "command_log": command_log,
         "hook_output": hook_output,
@@ -1274,8 +1303,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     // previews) — one user-facing category covering every SHA-keyed disk
     // cache, regardless of which module owns the entries.
     writeln!(out, "{}", format_heading("GIT COMMANDS CACHE", None))?;
-    let cache_count =
-        sha_cache::count_all(repo) + crate::commands::picker::preview_cache::count_all(repo);
+    let cache_count = sha_cache::count_all(repo) + picker_preview_count(repo);
     if cache_count == 0 {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {
