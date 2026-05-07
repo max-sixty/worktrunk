@@ -1,3 +1,4 @@
+use anyhow::Context;
 use clap::CommandFactory;
 use clap_complete::generate;
 use std::io::{self, Write};
@@ -66,8 +67,8 @@ pub fn handle_completions(shell: shell::Shell) -> anyhow::Result<()> {
             let init = shell::ShellInit::with_prefix(shell, cmd_name.clone());
             let code = init
                 .generate()
-                .expect("Failed to generate nushell integration");
-            write!(stdout, "{}", code).expect("Failed to write to stdout");
+                .context("failed to generate nushell integration")?;
+            write!(stdout, "{}", code).context("failed to write to stdout")?;
         }
         shell::Shell::PowerShell => {
             generate(
