@@ -984,9 +984,12 @@ fn setup_snapshot_settings_for_paths_with_home(
 
     // Normalize project root paths in "Binary invoked as:" debug output
     // Tests run cargo which produces paths like /path/to/worktrunk/target/debug/wt
-    // Normalize to [PROJECT_ROOT]/target/debug/wt for deterministic snapshots
+    // Normalize to [PROJECT_ROOT]/target/debug/wt for deterministic snapshots.
+    // Allows any path segments between `target/` and `(debug|release)/wt` so
+    // cross-target builds (e.g. `target/x86_64-unknown-linux-musl/debug/wt`)
+    // also normalize.
     settings.add_filter(
-        r"(Binary invoked as: \x1b\[1m)[^\x1b]+/target/(debug|release)/wt(\x1b\[22m)",
+        r"(Binary invoked as: \x1b\[1m)[^\x1b]+/target/(?:[^/\s]+/)*(debug|release)/wt(\x1b\[22m)",
         "${1}[PROJECT_ROOT]/target/$2/wt$3",
     );
 
@@ -1200,10 +1203,7 @@ pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
     // cargo-affected (`affected/build/`, max-sixty/cargo-affected#12), and
     // cross-target builds (e.g. `target/x86_64-unknown-linux-musl/debug/wt`
     // from the nightly `release-target` matrix).
-    settings.add_filter(
-        r"[^\s]+/target/(?:[^/\s]+/)*(?:debug|release)/wt",
-        "[BIN]",
-    );
+    settings.add_filter(r"[^\s]+/target/(?:[^/\s]+/)*(?:debug|release)/wt", "[BIN]");
 }
 
 // =============================================================================

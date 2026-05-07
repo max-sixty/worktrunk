@@ -78,10 +78,13 @@ jobs:
     # arm64 macOS, and Windows. Without this, a regression on those targets
     # first surfaces at release-tag time, which blocks the release.
     #
-    # Runs the same `--features shell-integration-tests` suite as ci.yaml's
-    # test job, just on a different triple — PTY and shell-wrapper coverage
-    # on arm64-musl and intel-darwin is the strongest signal we don't get
-    # anywhere else.
+    # Runs the integration suite (default features, no
+    # `shell-integration-tests`) — covers file IO, command spawning, and
+    # output rendering on the cross-target triple, which is where
+    # musl-vs-glibc and intel-vs-arm divergence shows up. Shell-integration
+    # PTY tests are intentionally off because they read $SHELL from the
+    # runner env, which resolves differently on `ubuntu-24.04-arm` and
+    # masks musl/arm signal with environment noise.
     strategy:
       fail-fast: false
       matrix:
@@ -112,7 +115,7 @@ jobs:
     - name: 🧪 Tests
       env:
         NEXTEST_NO_INPUT_HANDLER: 1
-      run: cargo nextest run --target ${{ matrix.target }} --features shell-integration-tests
+      run: cargo nextest run --target ${{ matrix.target }}
 
   benchmarks:
     # Full criterion suite. Moved here from ci.yaml — runs ~80 min, was
