@@ -19,6 +19,7 @@ use super::log_formatter::{
 };
 use super::pager::{diff_pager, pipe_through_pager};
 use super::preview::{PreviewMode, PreviewStateData};
+use super::preview_cache;
 
 /// Cache key for pre-computed previews: (branch_name, mode).
 pub(super) type PreviewCacheKey = (String, PreviewMode);
@@ -300,6 +301,12 @@ impl WorktreeSkimItem {
     /// Independent of `item.counts` — `compute_diff_preview`'s empty-diff
     /// fallback covers the ahead=0 case, so the preview is correct even
     /// before the list-row pipeline has populated counts.
+    ///
+    /// The default branch is resolved to its SHA so the disk cache stays
+    /// invariant across `git fetch` (which moves the *ref* but not the
+    /// captured SHA). When resolution fails, we fall through to the
+    /// uncached path with the branch name in the diff range — same git
+    /// behavior as before, just no cache write.
     fn compute_branch_diff_preview(repo: &Repository, item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
         let reset = Reset;
@@ -309,30 +316,63 @@ impl WorktreeSkimItem {
             );
         };
 
-        let merge_base = format!("{}...{}", default_branch, item.head());
-        compute_diff_preview(
+        let base_sha = repo
+            .run_command(&["rev-parse", &default_branch])
+            .ok()
+            .map(|s| s.trim().to_string());
+
+        if let Some(ref base) = base_sha
+            && let Some(cached) = preview_cache::read_branch_diff(repo, base, item.head(), width)
+        {
+            return cached;
+        }
+
+        // Use the resolved SHA in the diff range when available so the
+        // cache key and the diff agree on which commit was the base.
+        let base_ref = base_sha.as_deref().unwrap_or(&default_branch);
+        let merge_base = format!("{base_ref}...{}", item.head());
+        let result = compute_diff_preview(
             repo,
             &["diff", &merge_base],
             &cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no file changes vs <bold>{default_branch}</>{reset}"
             ),
             width,
-        )
+        );
+
+        if let Some(ref base) = base_sha {
+            preview_cache::write_branch_diff(repo, base, item.head(), width, &result);
+        }
+        result
     }
 
     /// Compute Tab 4: Upstream diff preview (ahead/behind vs tracking branch)
     ///
-    /// Independent of `item.upstream` — a single
-    /// `git rev-list --left-right --count HEAD...@{u}` probes both
-    /// existence (non-zero exit when `@{u}` is unresolvable) and counts,
-    /// so the preview is correct even before the list-row pipeline has
-    /// populated upstream.
+    /// Independent of `item.upstream` — `git rev-parse {branch}@{{u}}`
+    /// probes existence (non-zero exit when `@{{u}}` is unresolvable) and
+    /// also yields the upstream SHA for cache keying. The follow-up
+    /// `rev-list --left-right --count` then runs against the resolved SHAs
+    /// so the count and the cached diff agree on which upstream commit was
+    /// in play.
     fn compute_upstream_diff_preview(repo: &Repository, item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
         let reset = Reset;
 
         let upstream_ref = format!("{branch}@{{u}}");
-        let probe_range = format!("{}...{upstream_ref}", item.head());
+        let Ok(upstream_sha_raw) = repo.run_command(&["rev-parse", &upstream_ref]) else {
+            return cformat!(
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no upstream tracking branch\n"
+            );
+        };
+        let upstream_sha = upstream_sha_raw.trim();
+
+        if let Some(cached) =
+            preview_cache::read_upstream_diff(repo, item.head(), upstream_sha, width)
+        {
+            return cached;
+        }
+
+        let probe_range = format!("{}...{upstream_sha}", item.head());
         let Ok(counts) = repo.run_command(&["rev-list", "--left-right", "--count", &probe_range])
         else {
             return cformat!(
@@ -354,14 +394,10 @@ impl WorktreeSkimItem {
             );
         };
 
-        if ahead == 0 && behind == 0 {
-            return cformat!(
-                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is up to date with upstream\n"
-            );
-        }
-
-        if ahead > 0 && behind > 0 {
-            let range = format!("{}...{}", upstream_ref, item.head());
+        let result = if ahead == 0 && behind == 0 {
+            cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is up to date with upstream\n")
+        } else if ahead > 0 && behind > 0 {
+            let range = format!("{upstream_sha}...{}", item.head());
             compute_diff_preview(
                 repo,
                 &["diff", &range],
@@ -371,7 +407,7 @@ impl WorktreeSkimItem {
                 width,
             )
         } else if ahead > 0 {
-            let range = format!("{}...{}", upstream_ref, item.head());
+            let range = format!("{upstream_sha}...{}", item.head());
             compute_diff_preview(
                 repo,
                 &["diff", &range],
@@ -381,7 +417,7 @@ impl WorktreeSkimItem {
                 width,
             )
         } else {
-            let range = format!("{}...{}", item.head(), upstream_ref);
+            let range = format!("{}...{upstream_sha}", item.head());
             compute_diff_preview(
                 repo,
                 &["diff", &range],
@@ -390,12 +426,29 @@ impl WorktreeSkimItem {
                 ),
                 width,
             )
-        }
+        };
+
+        preview_cache::write_upstream_diff(repo, item.head(), upstream_sha, width, &result);
+        result
     }
 
     /// Compute log preview for a worktree item.
     /// This can be called from background threads for pre-computation.
     pub(super) fn compute_log_preview(
+        repo: &Repository,
+        item: &ListItem,
+        width: usize,
+        height: usize,
+    ) -> String {
+        if let Some(cached) = preview_cache::read_log(repo, item.head(), width, height) {
+            return cached;
+        }
+        let result = Self::compute_log_preview_uncached(repo, item, width, height);
+        preview_cache::write_log(repo, item.head(), width, height, &result);
+        result
+    }
+
+    fn compute_log_preview_uncached(
         repo: &Repository,
         item: &ListItem,
         width: usize,
@@ -639,6 +692,89 @@ mod tests {
             output.contains("feat.txt"),
             "expected diff to mention feat.txt, got: {output:?}"
         );
+    }
+
+    #[test]
+    fn branch_diff_cache_short_circuits_recompute() {
+        // Pre-populate the disk cache with a sentinel value, then call
+        // compute — a hit must return the sentinel verbatim instead of
+        // running git diff. Proves the SHA + width key is the lookup path
+        // and that a hit short-circuits before `compute_diff_preview`.
+        let (t, repo) = repo_with_main();
+        repo.run_command(&["checkout", "-b", "feature"]).unwrap();
+        std::fs::write(t.path().join("real.txt"), "real\n").unwrap();
+        repo.run_command(&["add", "real.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "real"]).unwrap();
+        let item = item_at(&repo, "feature");
+
+        let base_sha = repo
+            .run_command(&["rev-parse", "main"])
+            .unwrap()
+            .trim()
+            .to_string();
+        let sentinel = "SENTINEL_FROM_CACHE";
+        super::preview_cache::write_branch_diff(&repo, &base_sha, item.head(), 80, sentinel);
+
+        let output = WorktreeSkimItem::compute_branch_diff_preview(&repo, &item, 80);
+        assert_eq!(output, sentinel, "cache hit must return cached value");
+    }
+
+    #[test]
+    fn branch_diff_cache_writeback_on_miss() {
+        // After a miss, the next call's cache key must be populated. Width
+        // is part of the key, so a different width still misses.
+        let (t, repo) = repo_with_main();
+        repo.run_command(&["checkout", "-b", "feature"]).unwrap();
+        std::fs::write(t.path().join("wb.txt"), "wb\n").unwrap();
+        repo.run_command(&["add", "wb.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "wb"]).unwrap();
+        let item = item_at(&repo, "feature");
+
+        let base_sha = repo
+            .run_command(&["rev-parse", "main"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        assert!(
+            super::preview_cache::read_branch_diff(&repo, &base_sha, item.head(), 80).is_none()
+        );
+        let _ = WorktreeSkimItem::compute_branch_diff_preview(&repo, &item, 80);
+        assert!(
+            super::preview_cache::read_branch_diff(&repo, &base_sha, item.head(), 80).is_some()
+        );
+        // Different width: miss.
+        assert!(
+            super::preview_cache::read_branch_diff(&repo, &base_sha, item.head(), 100).is_none()
+        );
+    }
+
+    #[test]
+    fn log_cache_short_circuits_recompute() {
+        let (_t, repo) = repo_with_main();
+        repo.run_command(&["checkout", "-b", "feature"]).unwrap();
+        let item = item_at(&repo, "feature");
+        let sentinel = "SENTINEL_LOG_VALUE";
+        super::preview_cache::write_log(&repo, item.head(), 80, 24, sentinel);
+
+        let output = WorktreeSkimItem::compute_log_preview(&repo, &item, 80, 24);
+        assert_eq!(output, sentinel);
+    }
+
+    #[test]
+    fn upstream_diff_cache_short_circuits_recompute() {
+        let (_t, repo) = repo_with_tracked_pair();
+        let item = item_at(&repo, "feature");
+        let upstream_sha = repo
+            .run_command(&["rev-parse", "upstream-base"])
+            .unwrap()
+            .trim()
+            .to_string();
+        let sentinel = "SENTINEL_UPSTREAM_VALUE";
+        super::preview_cache::write_upstream_diff(&repo, item.head(), &upstream_sha, 80, sentinel);
+
+        let output = WorktreeSkimItem::compute_upstream_diff_preview(&repo, &item, 80);
+        assert_eq!(output, sentinel);
     }
 
     #[test]

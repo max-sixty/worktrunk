@@ -18,7 +18,10 @@
 //! - Vars (git config `worktrunk.state.<branch>.vars.*`)
 //! - CI status cache (`.git/wt/cache/ci-status/`)
 //! - Summary cache (`.git/wt/cache/summary/`)
-//! - Git commands cache (`.git/wt/cache/{merge-tree-conflicts,is-ancestor,…}/`)
+//! - Git commands cache (`.git/wt/cache/{merge-tree-conflicts,is-ancestor,picker-preview,…}/`)
+//!   — one user-facing category covering every SHA-keyed disk cache, even
+//!   when implementation lives in different modules (`sha_cache` for parsed
+//!   results, `commands::picker::preview_cache` for rendered previews)
 //! - Hints (git config `worktrunk.hints.*`)
 //! - Logs (`.git/wt/logs/`)
 //! - Trash (`.git/wt/trash/`)
@@ -962,14 +965,18 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
         cleared_any = true;
     }
 
-    // Clear git commands cache (merge-tree, ancestry, diff results)
-    let sha_cleared = sha_cache::clear_all(&repo)?;
-    if sha_cleared > 0 {
+    // Clear all SHA-keyed git command caches: parsed results
+    // (merge-tree, ancestry, diff-stats) plus rendered picker previews
+    // (log, branch-diff, upstream-diff). Surfaced as one user-facing
+    // category — see the parity docstring at the top of this file.
+    let cache_cleared =
+        sha_cache::clear_all(&repo)? + crate::commands::picker::preview_cache::clear_all(&repo)?;
+    if cache_cleared > 0 {
         eprintln!(
             "{}",
             success_message(cformat!(
-                "Cleared <bold>{sha_cleared}</> git commands cache entr{}",
-                if sha_cleared == 1 { "y" } else { "ies" }
+                "Cleared <bold>{cache_cleared}</> git commands cache entr{}",
+                if cache_cleared == 1 { "y" } else { "ies" }
             ))
         );
         cleared_any = true;
@@ -1139,7 +1146,9 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "markers": markers,
         "ci_status": ci_status,
         "summaries": summaries,
-        "git_commands_cache": sha_cache::count_all(repo),
+        "git_commands_cache":
+            sha_cache::count_all(repo)
+                + crate::commands::picker::preview_cache::count_all(repo),
         "vars": vars_data,
         "command_log": command_log,
         "hook_output": hook_output,
@@ -1260,17 +1269,21 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     }
     writeln!(out)?;
 
-    // Show git commands cache summary
+    // Show git commands cache summary. Spans both `sha_cache` (parsed
+    // SHA-keyed results) and the picker preview cache (rendered SHA-keyed
+    // previews) — one user-facing category covering every SHA-keyed disk
+    // cache, regardless of which module owns the entries.
     writeln!(out, "{}", format_heading("GIT COMMANDS CACHE", None))?;
-    let sha_count = sha_cache::count_all(repo);
-    if sha_count == 0 {
+    let cache_count =
+        sha_cache::count_all(repo) + crate::commands::picker::preview_cache::count_all(repo);
+    if cache_count == 0 {
         writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {
-        let label = if sha_count == 1 { "entry" } else { "entries" };
+        let label = if cache_count == 1 { "entry" } else { "entries" };
         writeln!(
             out,
             "{}",
-            format_with_gutter(&format!("{sha_count} {label}"), None)
+            format_with_gutter(&format!("{cache_count} {label}"), None)
         )?;
     }
     writeln!(out)?;
