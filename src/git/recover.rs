@@ -287,9 +287,7 @@ mod tests {
         // sandbox, where pkgs.lib.cleanSource strips .git (#2632) — the
         // success branch can't be exercised, and recovery has nothing to
         // recover from either, so the function returns Err.
-        if Repository::current().is_err() {
-            return;
-        }
+        let Ok(_) = Repository::current() else { return };
         let (repo, recovered) = current_or_recover().unwrap();
         assert!(!recovered);
         assert!(repo.repo_path().unwrap().exists());
