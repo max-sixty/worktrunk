@@ -366,6 +366,12 @@ pub trait PickerProgressHandler: Send + Sync {
     /// skeleton state use the skeleton renderer. The handler writes every
     /// slot — slot writes are idempotent.
     fn on_reveal(&self, rendered: Vec<String>);
+
+    /// Stash a pre-formatted warning line. Skim owns the terminal while
+    /// collect runs on the picker's bg thread, so eprintln from collect
+    /// would corrupt the rendered frame. The picker drains stashed lines
+    /// after `Skim::run_with` returns, when stderr is safe again.
+    fn stash_warning(&self, line: String);
 }
 
 /// Controls how show flags (branches/remotes/full) are determined in [`collect`].
@@ -625,6 +631,19 @@ pub fn collect(
         }
     };
 
+    // The picker (`wt switch`) drives a skim TUI that owns the terminal while
+    // collect runs on a background thread. Any stderr write from collect
+    // would overlay the picker's rendered frame and corrupt skim's clear
+    // math, so warnings go through the handler's stash instead — picker
+    // drains and emits them after `Skim::run_with` returns.
+    let emit_warning = |line: String| {
+        if let Some(h) = progressive_handler.as_ref() {
+            h.stash_warning(line);
+        } else {
+            eprintln!("{line}");
+        }
+    };
+
     // Opportunistic stale-default-branch check: `default_branch` above is
     // the persisted value, now trusted without validation on the hot path.
     // Cross-check against the enumerated branch set and surface a warning
@@ -662,17 +681,17 @@ pub fn collect(
     };
 
     if warn_stale_default && let Some(branch) = default_branch.as_deref() {
-        eprintln!(
-            "{}",
+        emit_warning(
             warning_message(cformat!(
                 "Configured default branch <bold>{branch}</> does not exist locally"
             ))
+            .to_string(),
         );
-        eprintln!(
-            "{}",
+        emit_warning(
             hint_message(cformat!(
                 "To reset, run <underline>wt config state default-branch clear</>"
             ))
+            .to_string(),
         );
     }
 
@@ -751,9 +770,8 @@ pub fn collect(
         // Surface git's actual stderr (when available via the typed leaf)
         // rather than our `CommandError` summary.
         let detail = err.display_message();
-        eprintln!(
-            "{}",
-            warning_message(cformat!("Failed to batch-fetch commit details: {detail}"))
+        emit_warning(
+            warning_message(cformat!("Failed to batch-fetch commit details: {detail}")).to_string(),
         );
         std::collections::HashMap::new()
     });
@@ -1377,7 +1395,7 @@ pub fn collect(
     {
         // Warning: what happened + gutter showing which tasks blocked
         let mut diag = format!(
-            "wt list timed out after {}s ({received_count} results received)",
+            "Listing worktrees timed out after {}s ({received_count} results received)",
             results::DRAIN_TIMEOUT.as_secs()
         );
 
@@ -1398,13 +1416,12 @@ pub fn collect(
             ));
         }
 
-        eprintln!("{}", warning_message(&diag));
-
-        eprintln!(
-            "{}",
+        emit_warning(warning_message(&diag).to_string());
+        emit_warning(
             hint_message(cformat!(
-                "A git command likely hung; run <underline>wt list -v</> for details or <underline>wt list -vv</> to create a diagnostic file"
+                "A git command likely hung; for details, re-run with <underline>-v</>; for a diagnostic file, re-run with <underline>-vv</>"
             ))
+            .to_string(),
         );
     }
 
@@ -1478,10 +1495,10 @@ pub fn collect(
         }
 
         let warning = warning_parts.join("\n");
-        eprintln!("{}", warning_message(&warning));
+        emit_warning(warning_message(&warning).to_string());
 
         // Show issue reporting hint (free function - doesn't collect diagnostic data)
-        eprintln!("{}", hint_message(crate::diagnostic::issue_hint()));
+        emit_warning(hint_message(crate::diagnostic::issue_hint()).to_string());
     }
 
     // Populate display fields for all items (used by JSON output and statusline)

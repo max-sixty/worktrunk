@@ -41,6 +41,10 @@ pub(super) struct PickerHandler {
     /// are disabled — gives the Summary tab something useful instead of a
     /// perpetual "Generating…" placeholder.
     pub(super) summary_hint: Option<String>,
+    /// Pre-formatted warning lines stashed by `collect::collect` while skim
+    /// owns the terminal. The picker drains and emits these to stderr after
+    /// `Skim::run_with` returns. Lines are kept in arrival order.
+    pub(super) stashed_warnings: Arc<Mutex<Vec<String>>>,
 }
 
 impl PickerProgressHandler for PickerHandler {
@@ -123,6 +127,10 @@ impl PickerProgressHandler for PickerHandler {
             *slot.lock().unwrap() = strip_osc8_hyperlinks(&line);
         }
     }
+
+    fn stash_warning(&self, line: String) {
+        self.stashed_warnings.lock().unwrap().push(line);
+    }
 }
 
 #[cfg(test)]
@@ -150,6 +158,7 @@ mod tests {
             preview_dims: (80, 24),
             llm_command: None,
             summary_hint: Some("disabled".to_string()),
+            stashed_warnings: Arc::new(Mutex::new(Vec::new())),
         };
         (handler, test, rx)
     }
@@ -226,5 +235,17 @@ mod tests {
         assert_eq!(shared.len(), 3);
         assert_eq!(shared[1].output().as_ref(), "feat-a");
         assert_eq!(shared[2].output().as_ref(), "feat-b");
+    }
+
+    /// `stash_warning` accumulates lines in arrival order so the picker can
+    /// drain them in one shot after skim releases the terminal.
+    #[test]
+    fn stash_warning_preserves_order() {
+        let (handler, _test, _rx) = make_handler();
+        handler.stash_warning("first".into());
+        handler.stash_warning("second".into());
+        handler.stash_warning("third".into());
+        let stash = handler.stashed_warnings.lock().unwrap();
+        assert_eq!(stash.as_slice(), &["first", "second", "third"]);
     }
 }

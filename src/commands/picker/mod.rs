@@ -107,6 +107,7 @@ use anyhow::Context;
 use skim::prelude::*;
 use skim::reader::CommandCollector;
 use worktrunk::git::{Repository, current_or_recover};
+use worktrunk::styling::eprintln;
 
 use super::command_executor::FailureStrategy;
 use super::hooks::{HookAnnouncer, execute_hook};
@@ -610,6 +611,11 @@ pub fn handle_picker(
 
     let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
 
+    // Shared between the bg-thread handler (which pushes warnings while
+    // skim owns the terminal) and the main thread (which drains them after
+    // `Skim::run_with` returns and stderr is safe again).
+    let stashed_warnings: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
     let handler: Arc<dyn collect::PickerProgressHandler> =
         Arc::new(progressive_handler::PickerHandler {
             tx: tx.clone(),
@@ -620,6 +626,7 @@ pub fn handle_picker(
             preview_dims,
             llm_command,
             summary_hint,
+            stashed_warnings: Arc::clone(&stashed_warnings),
         });
 
     // Spawn collect on a background thread. The handler holds the only
@@ -661,6 +668,9 @@ pub fn handle_picker(
         drop(rx);
         let _ = bg_handle.join();
         orchestrator.wait_for_idle();
+        for line in stashed_warnings.lock().unwrap().drain(..) {
+            eprintln!("{line}");
+        }
         println!("{}", orchestrator.dump_cache_json());
         return Ok(());
     }
@@ -674,6 +684,14 @@ pub fn handle_picker(
     // are read-only.
     let output = Skim::run_with(&options, Some(rx));
     drop(bg_handle);
+
+    // Skim has released the terminal — emit any warnings that collect's bg
+    // thread stashed during the run. Late warnings (e.g. drain timeouts)
+    // may still be in flight; we capture whatever has landed by now and let
+    // the rest fall on the floor with the bg thread.
+    for line in stashed_warnings.lock().unwrap().drain(..) {
+        eprintln!("{line}");
+    }
 
     // Handle selection (signal file cleaned up by PreviewState::Drop)
     if let Some(out) = output
