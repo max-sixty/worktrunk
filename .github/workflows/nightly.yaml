@@ -55,16 +55,17 @@ jobs:
     # extracted from a tarball without `.git`.
     #
     # Runs `nix flake check`, which exercises every check defined in
-    # flake.nix — in particular `worktrunk-tests` (cargo test --lib --bins).
-    # Cold builds take ~10-15 min without a binary cache; nightly cadence
-    # absorbs the latency.
+    # flake.nix — in particular `worktrunk-tests`, which runs `cargo test`
+    # with default features (lib + bins + integration + doctests; the
+    # `shell-integration-tests` feature is intentionally off). Cold builds
+    # take ~10-15 min without a binary cache; nightly cadence absorbs it.
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
       uses: actions/checkout@v6
 
     - name: Install Nix
-      uses: cachix/install-nix-action@v30
+      uses: cachix/install-nix-action@v31
       with:
         extra_nix_config: |
           experimental-features = nix-command flakes
