@@ -80,7 +80,7 @@ anyhow = "1.0"
 anstream = "1.0"
 anstyle = "1.0"
 ansi-str = "0.9"
-color-print = "0.3"
+color-print = "0.3.7"
 askama = { version = "0.16", default-features = false, features = ["derive", "std"] }
 chrono = "0.4"
 clap = { version = "4.6", features = ["derive", "unstable-ext", "wrap_help"], optional = true }
