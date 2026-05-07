@@ -465,7 +465,15 @@ impl Repository {
         // - Linked worktrees: HEAD points to CURRENT branch, so skip this heuristic
         // - Normal repos: HEAD points to CURRENT branch, so skip this heuristic
         let is_bare = self.is_bare()?;
-        let in_linked_worktree = self.current_worktree().is_linked()?;
+        // Anchor the linked-worktree probe to this Repository's own
+        // discovery path rather than the process CWD (`current_worktree()`).
+        // The two are identical for `Repository::current()`, but
+        // `Repository::at(p)` is also used for tests and for non-CWD callers
+        // like `wt list`'s pipeline; using CWD there leaks process state
+        // into a query that should be answered relative to `self` (#2624).
+        let in_linked_worktree = self
+            .worktree_at(self.discovery_path().to_path_buf())
+            .is_linked()?;
         if ((is_bare && !in_linked_worktree) || branches.is_empty())
             && let Ok(head_ref) = self.run_command(&["symbolic-ref", "HEAD"])
             && let Some(branch) = head_ref.trim().strip_prefix("refs/heads/")
