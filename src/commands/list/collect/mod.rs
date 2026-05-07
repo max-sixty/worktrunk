@@ -458,6 +458,35 @@ fn format_stall_footer(
     )
 }
 
+/// Emit the drain-timeout warning + hint when the default 120s
+/// `DRAIN_TIMEOUT` was hit. No-op for `Complete` outcomes or when an
+/// explicit `collect_deadline` was supplied — those are intentional
+/// truncations the caller controls.
+///
+/// Split out so tests can drive it with a synthetic `DrainOutcome::TimedOut`
+/// without spinning up a real 120s drain.
+fn handle_drain_timeout(
+    drain_outcome: DrainOutcome,
+    collect_deadline: Option<std::time::Instant>,
+    emit: &dyn Fn(String),
+) {
+    if collect_deadline.is_none()
+        && let DrainOutcome::TimedOut {
+            received_count,
+            items_with_missing,
+        } = drain_outcome
+    {
+        let diag = format_drain_timeout_diag(received_count, &items_with_missing);
+        emit(warning_message(&diag).to_string());
+        emit(
+            hint_message(cformat!(
+                "A git command likely hung; for details, re-run with <underline>-v</>; for a diagnostic file, re-run with <underline>-vv</>"
+            ))
+            .to_string(),
+        );
+    }
+}
+
 /// Build the drain-timeout diagnostic shown when the default 120s
 /// `DRAIN_TIMEOUT` is hit. Returns the pre-formatted warning text — the
 /// caller wraps it in `warning_message` and routes through the picker stash
@@ -1416,24 +1445,11 @@ pub fn collect(
     // final table / finalize / timeout paths must not inherit that.
     placeholder = super::render::PLACEHOLDER;
 
-    // Handle timeout if it occurred.
-    // Budget-based deadlines (collect_deadline) are intentional truncation — don't warn.
-    // Only warn for the default DRAIN_TIMEOUT (120s), which indicates a hung command.
-    if collect_deadline.is_none()
-        && let DrainOutcome::TimedOut {
-            received_count,
-            items_with_missing,
-        } = drain_outcome
-    {
-        let diag = format_drain_timeout_diag(received_count, &items_with_missing);
-        emit_warning(warning_message(&diag).to_string());
-        emit_warning(
-            hint_message(cformat!(
-                "A git command likely hung; for details, re-run with <underline>-v</>; for a diagnostic file, re-run with <underline>-vv</>"
-            ))
-            .to_string(),
-        );
-    }
+    // Handle timeout if it occurred. Budget-based deadlines
+    // (collect_deadline) are intentional truncation — don't warn. Only
+    // warn for the default DRAIN_TIMEOUT (120s), which indicates a hung
+    // command.
+    handle_drain_timeout(drain_outcome, collect_deadline, &emit_warning);
 
     // The drain calls `refresh_status_symbols` after every *successful*
     // result, but items with zero successful results (all tasks errored
@@ -1854,6 +1870,65 @@ mod tests {
         insta::assert_snapshot!(
             strip_ansi(&rendered),
             @"Listing worktrees timed out after 120s (7 results received)"
+        );
+    }
+
+    /// `handle_drain_timeout` emits both warning + hint when the default
+    /// timeout fires (`collect_deadline: None` + `TimedOut`). Captures
+    /// emissions through the closure to avoid touching real stderr.
+    #[test]
+    fn test_handle_drain_timeout_emits_on_default_timeout() {
+        use std::sync::Mutex;
+        let captured: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let emit = |line: String| captured.lock().unwrap().push(line);
+        let outcome = DrainOutcome::TimedOut {
+            received_count: 4,
+            items_with_missing: vec![],
+        };
+        handle_drain_timeout(outcome, None, &emit);
+        let lines = captured.lock().unwrap();
+        assert_eq!(lines.len(), 2, "expected warning + hint, got: {lines:?}");
+        assert!(
+            strip_ansi(&lines[0]).contains("Listing worktrees timed out after"),
+            "warning line: {}",
+            lines[0]
+        );
+        assert!(
+            strip_ansi(&lines[1]).contains("re-run with -v"),
+            "hint line: {}",
+            lines[1]
+        );
+    }
+
+    /// An explicit `collect_deadline` is intentional truncation — the helper
+    /// must stay silent so user-budgeted deadlines don't surface as bugs.
+    #[test]
+    fn test_handle_drain_timeout_silent_when_deadline_set() {
+        use std::sync::Mutex;
+        let captured: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let emit = |line: String| captured.lock().unwrap().push(line);
+        let outcome = DrainOutcome::TimedOut {
+            received_count: 0,
+            items_with_missing: vec![],
+        };
+        let deadline = std::time::Instant::now();
+        handle_drain_timeout(outcome, Some(deadline), &emit);
+        assert!(
+            captured.lock().unwrap().is_empty(),
+            "expected no emissions for budgeted deadline"
+        );
+    }
+
+    /// `Complete` outcomes are the happy path — the helper must stay silent.
+    #[test]
+    fn test_handle_drain_timeout_silent_on_complete() {
+        use std::sync::Mutex;
+        let captured: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let emit = |line: String| captured.lock().unwrap().push(line);
+        handle_drain_timeout(DrainOutcome::Complete, None, &emit);
+        assert!(
+            captured.lock().unwrap().is_empty(),
+            "expected no emissions for Complete outcome"
         );
     }
 
