@@ -876,7 +876,7 @@ pub fn validate_template(
 /// - `hash_port` — Hash to deterministic port number (10000-19999)
 /// - `dirname` — Strip the last path component (e.g., `/a/b/c` → `/a/b`)
 /// - `basename` — Keep only the last path component (e.g., `/a/b/c` → `c`)
-/// - `codename(n)`: deterministic friendly words, e.g. `bright-lantern`
+/// - `codename(n)` — deterministic friendly words, e.g. `bright-lantern`
 ///
 /// # Functions
 /// - `worktree_path_of_branch(branch)` — Look up the filesystem path of a branch's worktree
