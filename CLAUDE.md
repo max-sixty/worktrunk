@@ -36,11 +36,13 @@ Use consistent terminology in documentation, help text, and code comments:
 
 ## Skills
 
-Check `.claude/skills/` for available skills and load those relevant to your task.
+**Load relevant skills before starting work, and reload when scope changes mid-session.**
 
-Key skills:
+Project-local skills in `.claude/skills/`:
 
-- **`writing-user-outputs`** — Required when modifying user-facing messages, hints, warnings, errors, or any terminal output formatting. Documents ANSI color nesting rules, message patterns, and output system architecture.
+- `writing-user-outputs` — load before editing any code that calls `warning_message`, `hint_message`, `error_message`, `info_message`, `eprintln`, or `println`, or that produces strings the user sees (CLI help, progress UI, snapshot text).
+- `running-tend` — operating in CI or writing tend workflows.
+- `release` — cutting a release.
 
 ## Testing
 
