@@ -180,6 +180,55 @@ Suggest an alias when:
 4. Link to the [aliases docs](https://worktrunk.dev/step/#aliases) and
    [tips & patterns](https://worktrunk.dev/tips-patterns/) for further recipes
 
+### Don't fix tests by adding skip guards
+
+When a test fails because production code (or test setup) can't handle some
+scenario E — non-git CWD, missing tool, sandboxed build — fix the production
+code or rework the test setup. Don't add `if !E { return }` to silently bail;
+that removes the safety net while looking like a fix.
+
+Smell list — if you reach for any of these in a triage fix, stop:
+
+- `let Ok(_) = ... else { return };` (or any other early-return skip)
+- `if !path.exists() { return; }` newly added
+- `#[cfg_attr(target_os = "...", ignore)]` or `#[ignore]` newly added
+
+Then ask: what production behavior is broken, and can it be fixed instead?
+If the test itself is the broken thing — relying on inherited environment
+like process CWD or ambient env vars — rework it to set up its own
+environment. Most worktrunk tests already do this via
+`TestRepo::with_initial_commit()` plus a tempdir.
+
+Past occurrence: PR #2633 added a `let Ok(_) = Repository::current() else
+{ return };` guard to `test_current_or_recover_returns_repo_when_cwd_exists`
+so it would pass in the Nix flake build sandbox (which strips `.git`). The
+right fix was either to set up a known git CWD for the test or to harden
+the call site — the same shape PR #2625 used to fix `is_linked` for the
+same root-cause class.
+
+### Same-root-cause-class triage
+
+The "if a PR already addresses the same problem, work on that PR" rule from
+`running-in-ci` keys on the same test (file path / branch overlap). It does
+*not* automatically catch a different test failing for the same underlying
+reason.
+
+When a CI failure has multiple failing tests, group them by root-cause class
+**before** writing a fix. If an outstanding PR addresses any test in that
+class:
+
+1. **Wait** for it to merge, then re-run the failing job — many remaining
+   failures collapse with the upstream fix.
+2. If they don't, **mirror the in-flight PR's approach** (production-code
+   change vs. test rework) for the additional sites — don't open a parallel
+   PR with a different, often weaker, approach.
+
+Past occurrence: PR #2625 was open ~10 hours fixing the "process CWD outside
+any git repo" class via production code. PR #2633 opened a parallel narrow
+PR for a different test in the same class with a test-skip approach
+instead. The triage PR's own body even noted "Same root-cause class as
+#2624" — that's the moment to wait, not to ship.
+
 ## Weekly Maintenance: MSRV & Toolchain
 
 Bump both MSRV and the development toolchain to **latest stable − 1**. When
