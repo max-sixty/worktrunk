@@ -646,11 +646,6 @@ fn test_default_branch_via_c_flag_to_linked_worktree_of_bare_repo() {
     let main_worktree = test.create_worktree("main", "main");
 
     // Make sure there's a commit so refs resolve cleanly.
-    fs::write(main_worktree.join("file.txt"), "hello").unwrap();
-    test.git_command(&main_worktree)
-        .args(["add", "file.txt"])
-        .run()
-        .unwrap();
     test.commit_in(&main_worktree, "init");
 
     let non_repo_cwd = tempfile::tempdir().unwrap();
