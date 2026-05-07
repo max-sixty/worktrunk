@@ -47,9 +47,36 @@ jobs:
     - name: cargo hack check --feature-powerset --no-dev-deps
       run: cargo hack check --feature-powerset --no-dev-deps
 
+  nix-flake:
+    # Build and test under the nix sandbox so packaging-environment bugs
+    # surface before a release / nixpkgs maintainer hits them. See #2624 for
+    # the canonical example: a unit test that depends on the process CWD
+    # being inside a git repo, which fails in the sandbox where source is
+    # extracted from a tarball without `.git`.
+    #
+    # Runs `nix flake check`, which exercises every check defined in
+    # flake.nix — in particular `worktrunk-tests` (cargo test --lib --bins).
+    # Cold builds take ~10-15 min without a binary cache; nightly cadence
+    # absorbs the latency.
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v6
+
+    - name: Install Nix
+      uses: cachix/install-nix-action@v30
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+          access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+    - name: nix flake check
+      run: nix flake check --print-build-logs --keep-going
+
   create-issue-on-nightly-failure:
     needs:
       - feature-powerset
+      - nix-flake
     if: always() && contains(needs.*.result, 'failure') && github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     permissions:
