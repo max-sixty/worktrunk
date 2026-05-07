@@ -131,6 +131,16 @@ use items::{PreviewCache, WorktreeSkimItem};
 use preview::{PreviewLayout, PreviewMode, PreviewState};
 use preview_orchestrator::PreviewOrchestrator;
 
+/// Drain stashed warnings to stderr. Called after skim has released the
+/// terminal (or in the dry-run path after the bg thread joins) — eprintln
+/// during the picker would corrupt skim's frame, so collect routes warnings
+/// through `PickerProgressHandler::stash_warning` and we emit them here.
+fn drain_stashed_warnings(stash: &Mutex<Vec<String>>) {
+    for line in stash.lock().unwrap().drain(..) {
+        eprintln!("{line}");
+    }
+}
+
 /// Action selected by the user in the picker.
 enum PickerAction {
     /// Switch to the selected worktree (Enter key).
@@ -668,9 +678,7 @@ pub fn handle_picker(
         drop(rx);
         let _ = bg_handle.join();
         orchestrator.wait_for_idle();
-        for line in stashed_warnings.lock().unwrap().drain(..) {
-            eprintln!("{line}");
-        }
+        drain_stashed_warnings(&stashed_warnings);
         println!("{}", orchestrator.dump_cache_json());
         return Ok(());
     }
@@ -689,9 +697,7 @@ pub fn handle_picker(
     // thread stashed during the run. Late warnings (e.g. drain timeouts)
     // may still be in flight; we capture whatever has landed by now and let
     // the rest fall on the floor with the bg thread.
-    for line in stashed_warnings.lock().unwrap().drain(..) {
-        eprintln!("{line}");
-    }
+    drain_stashed_warnings(&stashed_warnings);
 
     // Handle selection (signal file cleaned up by PreviewState::Drop)
     if let Some(out) = output
@@ -839,10 +845,29 @@ fn resolve_identifier(
 #[cfg(test)]
 pub mod tests {
     use super::preview::{PreviewLayout, PreviewMode, PreviewStateData};
-    use super::{PickerAction, PickerCollector, resolve_identifier};
+    use super::{PickerAction, PickerCollector, drain_stashed_warnings, resolve_identifier};
     use crate::commands::worktree::RemoveResult;
     use std::fs;
+    use std::sync::Mutex;
     use worktrunk::git::BranchDeletionMode;
+
+    /// Empties the stash and emits each line. Verifies post-skim drain
+    /// semantics without standing up a real picker.
+    #[test]
+    fn drain_stashed_warnings_empties_the_stash() {
+        let stash = Mutex::new(vec!["one".to_string(), "two".to_string()]);
+        drain_stashed_warnings(&stash);
+        assert!(stash.lock().unwrap().is_empty());
+    }
+
+    /// A fresh stash with no warnings is a no-op — exercising the empty path
+    /// keeps the loop body covered when the picker exits cleanly.
+    #[test]
+    fn drain_stashed_warnings_handles_empty_stash() {
+        let stash: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        drain_stashed_warnings(&stash);
+        assert!(stash.lock().unwrap().is_empty());
+    }
 
     #[test]
     fn test_preview_state_data_roundtrip() {
