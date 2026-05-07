@@ -2073,6 +2073,40 @@ fn test_concurrent_hook_post_switch(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_empty_post_switch_table_does_not_panic_with_post_start(repo: TestRepo) {
+    // Regression for #2634: a table with all commands commented out deserializes
+    // as an empty concurrent hook step. Background hook announcement/spawning
+    // must skip it instead of indexing into the empty command list.
+    repo.write_test_config(
+        r#"[post-switch]
+# Empty on purpose.
+
+[post-start]
+marker = "echo 'POST_START_RAN' > post_start_marker.txt"
+"#,
+    );
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--create", "feature", "--yes", "-v"]);
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "wt switch should not panic on an empty post-switch table; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("panicked at"),
+        "stderr should not contain a Rust panic:\n{stderr}"
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let marker = worktree_path.join("post_start_marker.txt");
+    wait_for_file_content(&marker);
+    let content = fs::read_to_string(&marker).unwrap();
+    assert!(content.contains("POST_START_RAN"));
+}
+
+#[rstest]
 fn test_concurrent_hook_with_name_filter(repo: TestRepo) {
     // Write project config with multiple named hooks
     repo.write_project_config(

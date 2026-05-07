@@ -782,10 +782,13 @@ pub fn prepare_steps(
                 result.push(PreparedStep::Single(make_prepared(cmd, json, lazy)));
             }
             HookStep::Concurrent(_) => {
-                let prepared = chunk
+                let prepared: Vec<_> = chunk
                     .into_iter()
                     .map(|(cmd, json, lazy)| make_prepared(cmd, json, lazy))
                     .collect();
+                if prepared.is_empty() {
+                    continue;
+                }
                 result.push(PreparedStep::Concurrent(prepared));
             }
         }
