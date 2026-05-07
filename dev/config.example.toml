@@ -19,7 +19,7 @@
 # - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 # - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
 # - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
-# - `{{ branch | codename(2) }}`: deterministic friendly name (e.g., `bright-lantern`); pair with `| hash` when used as a flat name
+# - `{{ branch | codename(2) }}` — deterministic friendly name (e.g., `bright-lantern`); pair with `| hash` when used as a flat name
 #
 # **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
 #
