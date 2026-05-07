@@ -9,11 +9,13 @@
 //! cached — its inputs include the mutable working tree, which has no cheap
 //! stable hash. Summary has its own cache (`crate::summary`).
 //!
-//! Layout: `.git/wt/cache/picker-preview/{mode}-{sha}[-{sha}]-{w}[-{h}].json`,
-//! where the value is the pre-pager string the matching `compute_*_preview`
-//! returns. The pager step in `compute_and_page_preview` runs on every read,
-//! so changing the configured pager invalidates nothing — the cache is
-//! pager-agnostic.
+//! Layout: `.git/wt/cache/picker-preview/{mode}-{sha}[-{sha}]-{w}[-{h}].json`.
+//! The diff modes cache the pre-pager rendered string; the pager step in
+//! `compute_and_page_preview` runs on every read, so changing the
+//! configured pager invalidates nothing — the cache is pager-agnostic.
+//! The Log mode caches a small struct (raw `git log` output + per-commit
+//! stats) and recomputes the dim/bright split and relative-time formatting
+//! on every render — see [`LogCacheEntry`] for why.
 //!
 //! No explicit invalidation: SHAs are content-addressed, so a `git fetch`
 //! that moves the default branch or upstream produces fresh keys; the LRU
@@ -25,10 +27,35 @@
 //! mechanics, torn-write semantics, and the user-initiated clear error
 //! policy.
 
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 use worktrunk::cache;
 use worktrunk::git::Repository;
 
 const KIND: &str = "picker-preview";
+
+/// Cached payload for the Log preview.
+///
+/// The Log render has two time-varying inputs that must be recomputed on
+/// every call rather than baked into the cache: the dim/bright split (from
+/// `merge-base(default_branch, head)` + `rev-list --right-only`, which
+/// shifts as `main` advances) and the relative-time strings ("5m", "2h",
+/// "3d", computed against `epoch_now()`). To keep the cache key simple
+/// (just `(branch_head_sha, w, h)` — main's SHA stays out so a `git fetch`
+/// doesn't invalidate every entry), we cache the SHA-deterministic
+/// artifacts only: the raw `git log --graph` output (with `%ct` timestamps
+/// embedded) and the per-commit `(insertions, deletions)` map from
+/// `batch_fetch_stats`. The render path re-runs `process_log_with_dimming`
+/// against fresh `unique_commits` and `format_log_output` against
+/// `epoch_now()`, so output stays correct as `main` and wall-clock advance.
+#[derive(Serialize, Deserialize)]
+pub(super) struct LogCacheEntry {
+    pub raw_log: String,
+    /// Empty when `width < TIMESTAMP_WIDTH_THRESHOLD` (the no-timestamp
+    /// path doesn't fetch stats). Keys are full commit SHAs.
+    pub stats: HashMap<String, (usize, usize)>,
+}
 
 /// 500 entries × tens-of-KB rendered diffs ≈ tens of MB. Tunable; the
 /// user-visible knob is `wt config state clear`.
@@ -46,12 +73,12 @@ fn upstream_diff_key(branch_sha: &str, upstream_sha: &str, w: usize) -> String {
     format!("upstream-diff-{branch_sha}-{upstream_sha}-{w}.json")
 }
 
-pub(super) fn read_log(repo: &Repository, sha: &str, w: usize, h: usize) -> Option<String> {
+pub(super) fn read_log(repo: &Repository, sha: &str, w: usize, h: usize) -> Option<LogCacheEntry> {
     cache::read(repo, KIND, &log_key(sha, w, h))
 }
 
-pub(super) fn write_log(repo: &Repository, sha: &str, w: usize, h: usize, value: &str) {
-    cache::write_with_lru(repo, KIND, &log_key(sha, w, h), &value, MAX_ENTRIES);
+pub(super) fn write_log(repo: &Repository, sha: &str, w: usize, h: usize, value: &LogCacheEntry) {
+    cache::write_with_lru(repo, KIND, &log_key(sha, w, h), value, MAX_ENTRIES);
 }
 
 pub(super) fn read_branch_diff(
@@ -122,17 +149,26 @@ mod tests {
     use super::*;
     use worktrunk::testing::TestRepo;
 
+    fn sample_log_entry() -> LogCacheEntry {
+        let mut stats = HashMap::new();
+        stats.insert("abc123".to_string(), (5, 2));
+        LogCacheEntry {
+            raw_log: "raw log content".to_string(),
+            stats,
+        }
+    }
+
     #[test]
     fn log_roundtrip() {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        assert_eq!(read_log(&repo, "deadbeef", 80, 24), None);
-        write_log(&repo, "deadbeef", 80, 24, "rendered log");
-        assert_eq!(
-            read_log(&repo, "deadbeef", 80, 24),
-            Some("rendered log".to_string())
-        );
+        assert!(read_log(&repo, "deadbeef", 80, 24).is_none());
+        write_log(&repo, "deadbeef", 80, 24, &sample_log_entry());
+
+        let read = read_log(&repo, "deadbeef", 80, 24).expect("entry exists");
+        assert_eq!(read.raw_log, "raw log content");
+        assert_eq!(read.stats.get("abc123"), Some(&(5, 2)));
     }
 
     #[test]
@@ -140,11 +176,12 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        write_log(&repo, "deadbeef", 80, 24, "rendered log");
-        // Different width misses — render width affects line wrapping and
-        // timestamp visibility, so cached entries cannot be reused.
-        assert_eq!(read_log(&repo, "deadbeef", 100, 24), None);
-        assert_eq!(read_log(&repo, "deadbeef", 80, 30), None);
+        write_log(&repo, "deadbeef", 80, 24, &sample_log_entry());
+        // Different width misses — render width changes the requested log
+        // format (with vs without timestamps), so cached entries cannot be
+        // reused. Different height misses for the same reason via log_limit.
+        assert!(read_log(&repo, "deadbeef", 100, 24).is_none());
+        assert!(read_log(&repo, "deadbeef", 80, 30).is_none());
     }
 
     #[test]
@@ -152,8 +189,8 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        write_log(&repo, "deadbeef", 80, 24, "rendered log");
-        assert_eq!(read_log(&repo, "cafe", 80, 24), None);
+        write_log(&repo, "deadbeef", 80, 24, &sample_log_entry());
+        assert!(read_log(&repo, "cafe", 80, 24).is_none());
     }
 
     #[test]
@@ -190,11 +227,14 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        write_log(&repo, "x", 80, 24, "log-value");
+        write_log(&repo, "x", 80, 24, &sample_log_entry());
         write_branch_diff(&repo, "x", "x", 80, "branch-diff-value");
         write_upstream_diff(&repo, "x", "x", 80, "upstream-diff-value");
 
-        assert_eq!(read_log(&repo, "x", 80, 24).unwrap(), "log-value");
+        assert_eq!(
+            read_log(&repo, "x", 80, 24).unwrap().raw_log,
+            "raw log content"
+        );
         assert_eq!(
             read_branch_diff(&repo, "x", "x", 80).unwrap(),
             "branch-diff-value"
@@ -211,14 +251,14 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        write_log(&repo, "a", 80, 24, "x");
-        write_log(&repo, "b", 80, 24, "y");
+        write_log(&repo, "a", 80, 24, &sample_log_entry());
+        write_log(&repo, "b", 80, 24, &sample_log_entry());
         write_branch_diff(&repo, "base", "tip", 80, "z");
 
         assert_eq!(count_all(&repo), 3);
         let removed = clear_all(&repo).unwrap();
         assert_eq!(removed, 3);
         assert_eq!(count_all(&repo), 0);
-        assert_eq!(read_log(&repo, "a", 80, 24), None);
+        assert!(read_log(&repo, "a", 80, 24).is_none());
     }
 }
