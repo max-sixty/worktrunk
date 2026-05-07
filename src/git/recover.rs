@@ -282,9 +282,14 @@ mod tests {
 
     #[test]
     fn test_current_or_recover_returns_repo_when_cwd_exists() {
-        // In a test environment, CWD exists, so current_or_recover should succeed
-        // via the normal Repository::current() path (not recovery).
-        // Tests run inside a git repo in CI, so Repository::current() succeeds.
+        // current_or_recover() reads the process CWD via Repository::current().
+        // When tests run outside any git repo — e.g. the Nix flake build
+        // sandbox, where pkgs.lib.cleanSource strips .git (#2632) — the
+        // success branch can't be exercised, and recovery has nothing to
+        // recover from either, so the function returns Err.
+        if Repository::current().is_err() {
+            return;
+        }
         let (repo, recovered) = current_or_recover().unwrap();
         assert!(!recovered);
         assert!(repo.repo_path().unwrap().exists());
