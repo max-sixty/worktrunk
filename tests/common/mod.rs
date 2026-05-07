@@ -585,6 +585,15 @@ fn add_snapshot_path_prelude_filters(settings: &mut insta::Settings) {
     // the project's normal target/ — see max-sixty/cargo-affected#12.
     settings.add_filter(r"/target/affected/build/", "/target/");
 
+    // Normalize cross-target build dirs (target/<triple>/) to target/ when tests
+    // run via `cargo nextest run --target <triple>` — used by the nightly
+    // `release-target` matrix (musl, intel-darwin). Anchored on the vendor
+    // field of a Rust target triple to avoid matching unrelated subdirs.
+    settings.add_filter(
+        r"/target/[a-z0-9_]+-(?:unknown|apple|pc|wasi)-[a-z0-9_-]+/",
+        "/target/",
+    );
+
     // Deliberately no global `\\` → `/` normalization here: it corrupts
     // intentional backslashes (JSON `\u001b` ANSI escapes, shell line
     // continuations) and worktrunk already emits forward-slash paths via
@@ -984,12 +993,9 @@ fn setup_snapshot_settings_for_paths_with_home(
 
     // Normalize project root paths in "Binary invoked as:" debug output
     // Tests run cargo which produces paths like /path/to/worktrunk/target/debug/wt
-    // Normalize to [PROJECT_ROOT]/target/debug/wt for deterministic snapshots.
-    // Allows any path segments between `target/` and `(debug|release)/wt` so
-    // cross-target builds (e.g. `target/x86_64-unknown-linux-musl/debug/wt`)
-    // also normalize.
+    // Normalize to [PROJECT_ROOT]/target/debug/wt for deterministic snapshots
     settings.add_filter(
-        r"(Binary invoked as: \x1b\[1m)[^\x1b]+/target/(?:[^/\s]+/)*(debug|release)/wt(\x1b\[22m)",
+        r"(Binary invoked as: \x1b\[1m)[^\x1b]+/target/(debug|release)/wt(\x1b\[22m)",
         "${1}[PROJECT_ROOT]/target/$2/wt$3",
     );
 
