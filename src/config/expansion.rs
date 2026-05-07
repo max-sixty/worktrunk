@@ -19,6 +19,7 @@ use color_print::cformat;
 use minijinja::value::{Enumerator, Object, ObjectRepr};
 use minijinja::{Environment, ErrorKind, UndefinedBehavior, Value};
 use regex::Regex;
+use sha2::{Digest, Sha256};
 use shell_escape::escape;
 
 use crate::git::{Diagnostic, HookType, Repository};
@@ -356,6 +357,50 @@ fn string_to_port(s: &str) -> u16 {
     10000 + (h.finish() % 10000) as u16
 }
 
+const CODENAME_MAX_WORDS: usize = 8;
+
+const CODENAME_ADJECTIVES: &[&str] = &[
+    "amber", "ample", "arctic", "autumn", "balanced", "balmy", "basic", "blithe", "bold", "breezy",
+    "bright", "brisk", "calm", "careful", "cedar", "cheery", "civil", "clear", "clever", "cloudy",
+    "coastal", "cobalt", "compact", "cool", "copper", "coral", "crisp", "curious", "dapper",
+    "dawn", "deft", "direct", "distant", "double", "dry", "dusky", "early", "earnest", "earthy",
+    "easy", "elder", "even", "exact", "fair", "fancy", "fast", "finer", "firm", "fleet", "fluent",
+    "focal", "fond", "frank", "fresh", "frosty", "gentle", "gilded", "glad", "glossy", "golden",
+    "grand", "green", "happy", "hardy", "hazel", "hearty", "hidden", "hollow", "honest", "humble",
+    "hushed", "icy", "ideal", "ivory", "jade", "jolly", "keen", "kind", "lively", "lofty", "loyal",
+    "lucid", "lucky", "lunar", "maple", "marble", "mellow", "merry", "mild", "misty", "modest",
+    "mossy", "muted", "narrow", "nearby", "neat", "nimble", "noble", "novel", "oaken", "olive",
+    "opal", "open", "orderly", "pale", "patient", "pearl", "plain", "plucky", "polished", "prime",
+    "proud", "quick", "quiet", "rainy", "rapid", "ready", "regal", "remote", "rosy", "round",
+    "royal", "ruddy", "rustic", "sandy", "satin", "scenic", "serene", "sharp", "sheer", "silky",
+    "silver", "simple", "sleek", "smart", "smooth", "snowy", "snug", "solar", "solid", "spry",
+    "stable", "stark", "steady", "still", "stony", "stout", "sturdy", "sunny", "supple", "swift",
+    "tall", "tidal", "tidy", "timely", "tiny", "topaz", "trim", "tropic", "true", "urban", "vast",
+    "velvet", "vivid", "warm", "whole", "wide", "wild", "wise", "witty", "wooden", "woven",
+    "young", "zesty",
+];
+
+const CODENAME_NOUNS: &[&str] = &[
+    "acorn", "anchor", "anvil", "apple", "arbor", "atlas", "badge", "basin", "bay", "beacon",
+    "beam", "bell", "berry", "birch", "blade", "bloom", "bluff", "bolt", "branch", "breeze",
+    "bridge", "brook", "cabin", "cairn", "canyon", "cape", "cedar", "charm", "cliff", "clover",
+    "coast", "cobble", "comet", "cove", "crane", "creek", "crest", "daisy", "dale", "dawn", "den",
+    "dock", "dove", "drift", "drum", "dune", "dusk", "eagle", "ember", "falcon", "fennel", "fern",
+    "ferry", "field", "fig", "finch", "fjord", "flint", "flower", "forest", "forge", "frost",
+    "gale", "garden", "garnet", "gate", "glade", "glen", "grove", "harbor", "haven", "hawk",
+    "hazel", "heath", "hedge", "heron", "hill", "hollow", "horizon", "inlet", "isle", "ivy",
+    "jasper", "juniper", "kettle", "knoll", "lagoon", "lake", "lantern", "larch", "lark", "laurel",
+    "leaf", "ledge", "lily", "linden", "lodge", "loft", "lotus", "maple", "marble", "marsh",
+    "meadow", "mill", "minnow", "moon", "moss", "nest", "newt", "nutmeg", "oak", "oasis", "orchid",
+    "otter", "owl", "palm", "pass", "peach", "peak", "pebble", "pier", "pine", "plover", "plume",
+    "pond", "poppy", "prairie", "prism", "quail", "quarry", "quartz", "rain", "raven", "ravine",
+    "reed", "reef", "ridge", "river", "robin", "rook", "rowan", "sage", "salmon", "shore",
+    "shrike", "sky", "slope", "snow", "sparrow", "spruce", "stag", "star", "stone", "stork",
+    "storm", "strand", "summit", "sycamore", "tern", "terrace", "thistle", "thorn", "thrush",
+    "tide", "timber", "trail", "trout", "tulip", "tundra", "vale", "valley", "veranda", "violet",
+    "willow", "wolf", "wren", "zenith",
+];
+
 /// Sanitize a branch name for use in filesystem paths.
 ///
 /// Replaces path separators (`/` and `\`) with dashes to prevent directory traversal
@@ -462,6 +507,65 @@ pub fn short_hash(s: &str) -> String {
     let c1 = CHARS[((hash / 36) % 36) as usize];
     let c2 = CHARS[((hash / 1296) % 36) as usize];
     String::from_utf8(vec![c0, c1, c2]).unwrap()
+}
+
+fn codename_index(input: &str, position: usize, salt: usize, pool: &str, len: usize) -> usize {
+    // Cast to a fixed-width type so the hash is identical across 32-bit and
+    // 64-bit builds. `usize::to_le_bytes` is architecture-dependent and would
+    // change the on-disk codename for the same branch when users move between
+    // architectures.
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    hasher.update([0]);
+    hasher.update((position as u64).to_le_bytes());
+    hasher.update((salt as u64).to_le_bytes());
+    hasher.update(pool.as_bytes());
+    let digest = hasher.finalize();
+    let mut bytes = [0_u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    (u64::from_le_bytes(bytes) as usize) % len
+}
+
+fn codename(input: &str, words: usize) -> String {
+    let mut parts = Vec::with_capacity(words);
+    let adjective_count = words.saturating_sub(1);
+
+    for position in 0..adjective_count {
+        let mut salt = 0;
+        loop {
+            let index = codename_index(
+                input,
+                position,
+                salt,
+                "adjective",
+                CODENAME_ADJECTIVES.len(),
+            );
+            let word = CODENAME_ADJECTIVES[index];
+            if !parts.contains(&word) || salt >= CODENAME_ADJECTIVES.len() {
+                parts.push(word);
+                break;
+            }
+            salt += 1;
+        }
+    }
+
+    let index = codename_index(input, adjective_count, 0, "noun", CODENAME_NOUNS.len());
+    parts.push(CODENAME_NOUNS[index]);
+    parts.join("-")
+}
+
+fn invalid_filter_arg(message: impl Into<String>) -> minijinja::Error {
+    minijinja::Error::new(ErrorKind::InvalidOperation, message.into())
+}
+
+fn codename_filter(value: Value, words: Option<usize>) -> Result<String, minijinja::Error> {
+    let words = words.unwrap_or(2);
+    if words == 0 || words > CODENAME_MAX_WORDS {
+        return Err(invalid_filter_arg(format!(
+            "codename word count must be between 1 and {CODENAME_MAX_WORDS}"
+        )));
+    }
+    Ok(codename(value.as_str().unwrap_or_default(), words))
 }
 
 /// Redact credentials from URLs for safe logging.
@@ -631,6 +735,7 @@ fn setup_template_env(repo: &Repository) -> Environment<'static> {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default()
     });
+    env.add_filter("codename", codename_filter);
 
     // Register worktree_path_of_branch function for looking up branch worktree paths.
     // Returns raw paths — shell escaping is applied by the formatter at output time.
@@ -771,6 +876,7 @@ pub fn validate_template(
 /// - `hash_port` — Hash to deterministic port number (10000-19999)
 /// - `dirname` — Strip the last path component (e.g., `/a/b/c` → `/a/b`)
 /// - `basename` — Keep only the last path component (e.g., `/a/b/c` → `c`)
+/// - `codename(n)`: deterministic friendly words, e.g. `bright-lantern`
 ///
 /// # Functions
 /// - `worktree_path_of_branch(branch)` — Look up the filesystem path of a branch's worktree
@@ -1464,6 +1570,208 @@ mod tests {
         let empty =
             expand_template("{{ branch | hash }}", &vars, false, &test.repo, "test").unwrap();
         assert_eq!(empty.len(), 3);
+    }
+
+    #[test]
+    fn test_codename_filter() {
+        let test = test_repo();
+        let mut vars = HashMap::new();
+        vars.insert("branch", "feature/very-long-branch-name");
+
+        let default =
+            expand_template("{{ branch | codename }}", &vars, false, &test.repo, "test").unwrap();
+        let explicit_default = expand_template(
+            "{{ branch | codename(2) }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(default, explicit_default);
+        assert_eq!(default.split('-').count(), 2, "got: {default}");
+
+        let one_word = expand_template(
+            "{{ branch | codename(1) }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert!(!one_word.contains('-'), "got: {one_word}");
+        assert!(CODENAME_NOUNS.contains(&one_word.as_str()));
+
+        let three_words = expand_template(
+            "{{ branch | codename(3) }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(three_words.split('-').count(), 3, "got: {three_words}");
+
+        let repeat =
+            expand_template("{{ branch | codename }}", &vars, false, &test.repo, "test").unwrap();
+        assert_eq!(default, repeat);
+
+        vars.insert("branch", "feature/different-name");
+        let other =
+            expand_template("{{ branch | codename }}", &vars, false, &test.repo, "test").unwrap();
+        assert_eq!(other.split('-').count(), 2, "got: {other}");
+
+        vars.insert("branch", "feature/73");
+        let ticket_73 = expand_template(
+            "{{ branch | codename(3) }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        vars.insert("branch", "feature/149");
+        let ticket_149 = expand_template(
+            "{{ branch | codename(3) }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert_ne!(ticket_73, ticket_149);
+    }
+
+    #[test]
+    fn test_codename_filter_rejects_invalid_counts() {
+        let test = test_repo();
+        let mut vars = HashMap::new();
+        vars.insert("branch", "feature");
+
+        let zero = expand_template(
+            "{{ branch | codename(0) }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            zero.contains("codename word count must be between 1 and 8"),
+            "got: {zero}"
+        );
+
+        let too_many = expand_template(
+            "{{ branch | codename(9) }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            too_many.contains("codename word count must be between 1 and 8"),
+            "got: {too_many}"
+        );
+    }
+
+    #[test]
+    fn test_codename_word_lists_are_path_safe() {
+        fn assert_word_list(name: &str, words: &[&str]) {
+            assert!(words.len() >= 160, "{name} should have enough entries");
+            let mut seen = std::collections::HashSet::new();
+            for &word in words {
+                assert!(seen.insert(word), "duplicate {name} word: {word}");
+                assert!(!word.is_empty(), "empty {name} word");
+                assert!(
+                    word.chars().all(|c| c.is_ascii_lowercase()),
+                    "{name} word is not lowercase ASCII: {word}"
+                );
+                assert!(
+                    !word.contains('-') && !word.contains(' '),
+                    "{name} word is not a single path component fragment: {word}"
+                );
+            }
+            for pair in words.windows(2) {
+                assert!(
+                    pair[0] < pair[1],
+                    "{name} list is not sorted: {} should come before {}",
+                    pair[0],
+                    pair[1]
+                );
+            }
+        }
+
+        assert_word_list("adjective", CODENAME_ADJECTIVES);
+        assert_word_list("noun", CODENAME_NOUNS);
+        assert!(CODENAME_ADJECTIVES.len() * CODENAME_NOUNS.len() >= 25_000);
+    }
+
+    /// Pins specific `codename(input, n)` outputs so the on-disk contract
+    /// is impossible to break by accident. Once a user adopts this filter in
+    /// their `worktree-path` template, the indices into `CODENAME_ADJECTIVES`
+    /// and `CODENAME_NOUNS` (and the hash-input layout in `codename_index`)
+    /// become an on-disk identity for every worktree they own. Anything that
+    /// shifts those indices (adding, removing, or reordering a word) or
+    /// changes how the hash is computed produces a different name for the
+    /// same branch on the next `wt switch`, orphaning the existing worktree.
+    ///
+    /// If this test fails:
+    ///
+    /// 1. Stop. Do not update the expected values to silence it.
+    /// 2. Confirm whether you actually intended to change the wordlists or
+    ///    the hash layout. If it was unintentional (a sort, an "improvement",
+    ///    a refactor), revert.
+    /// 3. If the change is intentional, accept that you are breaking every
+    ///    existing user's worktree paths. Coordinate the rollout, document
+    ///    it as a breaking change, and only then update the expected values.
+    #[test]
+    fn test_codename_outputs_are_stable() {
+        // Includes the known `feature/73` vs `feature/149` collision on
+        // `ready-rain`: it is part of the contract until we explicitly
+        // decide otherwise.
+        let cases: &[(&str, usize, &str)] = &[
+            ("main", 1, "dove"),
+            ("feature/auth", 2, "stout-cobble"),
+            ("feature/73", 2, "ready-rain"),
+            ("feature/149", 2, "ready-rain"),
+            ("release/1.0", 3, "green-marble-canyon"),
+            (
+                "hotfix/some-very-long-thing",
+                4,
+                "topaz-hearty-bright-ridge",
+            ),
+        ];
+
+        for (input, n, expected) in cases {
+            let actual = codename(input, *n);
+            assert_eq!(
+                &actual, expected,
+                "\n\
+                 codename({input:?}, {n}) returned {actual:?}, expected {expected:?}.\n\
+                 \n\
+                 Changing CODENAME_ADJECTIVES, CODENAME_NOUNS, or the codename\n\
+                 algorithm BREAKS every existing user's worktree paths derived\n\
+                 from `{{{{ branch | codename(...) }}}}`. See the comment above\n\
+                 this test before updating these expectations.\n"
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_template_accepts_codename_filter() {
+        let test = test_repo();
+        assert!(
+            validate_template(
+                "{{ branch | codename(2) }}",
+                ValidationScope::SwitchExecute,
+                &test.repo,
+                "test"
+            )
+            .is_ok()
+        );
     }
 
     #[test]
