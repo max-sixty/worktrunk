@@ -327,11 +327,10 @@ mod tests {
         // Provide our own search path so the positive case doesn't depend
         // on which standard tools the inherited PATH happens to ship.
         let tmp = tempfile::tempdir().unwrap();
-        let bin_name = if cfg!(windows) {
-            "wt-fake-bin.exe"
-        } else {
-            "wt-fake-bin"
-        };
+        #[cfg(windows)]
+        let bin_name = "wt-fake-bin.exe";
+        #[cfg(not(windows))]
+        let bin_name = "wt-fake-bin";
         let bin_path = tmp.path().join(bin_name);
         std::fs::write(&bin_path, "").unwrap();
         #[cfg(unix)]

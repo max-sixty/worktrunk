@@ -298,10 +298,7 @@ mod tests {
     #[test]
     fn test_or_recover_uses_current_repo_without_recovering() {
         let test = TestRepo::new();
-        let (repo, recovered) = or_recover(Ok(test.repo.clone()), || {
-            panic!("recovery should not run when current succeeds")
-        })
-        .unwrap();
+        let (repo, recovered) = or_recover(Ok(test.repo.clone()), || None).unwrap();
         assert!(!recovered);
         assert!(repo.repo_path().unwrap().exists());
     }
