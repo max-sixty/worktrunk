@@ -23,6 +23,10 @@ fn test_config_init_already_exists(temp_home: TempDir) {
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.arg("config").arg("create");
+        // Run from a directory with no project config so the hint is
+        // deterministic — bare wt_command() otherwise inherits the
+        // worktrunk repo's CWD and would pick up `.config/wt.toml`.
+        cmd.current_dir(temp_home.path());
         set_temp_home_env(&mut cmd, temp_home.path());
         set_xdg_config_path(&mut cmd, temp_home.path());
 
@@ -33,7 +37,7 @@ fn test_config_init_already_exists(temp_home: TempDir) {
 
         ----- stderr -----
         [2m○[22m User config already exists: [1m~/.config/worktrunk/config.toml[22m
-        [2m↳[22m [2mTo view both user and project configs, run [4mwt config show[24m[22m
+        [2m↳[22m [2mTo view, run [4mwt config show[24m. To create a project config, run [4mwt config create --project[24m[22m
         ");
     });
 }
