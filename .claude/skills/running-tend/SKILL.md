@@ -127,10 +127,7 @@ GitHub blocks both `gh run rerun --failed` and per-job rerun
 `benchmarks` job routinely runs 80+ minutes after `test (linux|macos|windows)`
 finish, so dismiss-then-wait-then-rerun cascades into a long session for no
 benefit — the maintainer can rerun the failed job directly once `benchmarks`
-clears, or merge regardless if the failure is clearly a flake. Past
-occurrence: PR #2512 ([run 25196909437](https://github.com/max-sixty/worktrunk/actions/runs/25196909437))
-spent ~90 min in a wait-and-rerun loop after dismissing approval over an
-unrelated `step_prune` Windows flake.
+clears, or merge regardless if the failure is clearly a flake.
 
 The codecov-failure dismissal pattern is different and remains correct:
 `CLAUDE.md` requires explicit user approval before merging with failing
@@ -182,52 +179,25 @@ Suggest an alias when:
 
 ### Don't fix tests by adding skip guards
 
-When a test fails because production code (or test setup) can't handle some
-scenario E — non-git CWD, missing tool, sandboxed build — fix the production
-code or rework the test setup. Don't add `if !E { return }` to silently bail;
-that removes the safety net while looking like a fix.
+When a test fails because production code or test setup can't handle some
+scenario, fix the production code or rework the test setup. Don't add an
+early-return skip — that removes the safety net while looking like a fix.
+If a triage fix reaches for `let Ok(_) = ... else { return };`, a newly-added
+`if !path.exists() { return; }`, or a fresh `#[ignore]`, stop and ask what
+production behavior is actually broken.
 
-Smell list — if you reach for any of these in a triage fix, stop:
-
-- `let Ok(_) = ... else { return };` (or any other early-return skip)
-- `if !path.exists() { return; }` newly added
-- `#[cfg_attr(target_os = "...", ignore)]` or `#[ignore]` newly added
-
-Then ask: what production behavior is broken, and can it be fixed instead?
-If the test itself is the broken thing — relying on inherited environment
-like process CWD or ambient env vars — rework it to set up its own
-environment. Most worktrunk tests already do this via
-`TestRepo::with_initial_commit()` plus a tempdir.
-
-Past occurrence: PR #2633 added a `let Ok(_) = Repository::current() else
-{ return };` guard to `test_current_or_recover_returns_repo_when_cwd_exists`
-so it would pass in the Nix flake build sandbox (which strips `.git`). The
-right fix was either to set up a known git CWD for the test or to harden
-the call site — the same shape PR #2625 used to fix `is_linked` for the
-same root-cause class.
+If the test relies on inherited environment (process CWD, ambient env
+vars), rework it to set up its own — most worktrunk tests already do this
+via `TestRepo::with_initial_commit()` plus a tempdir.
 
 ### Same-root-cause-class triage
 
-The "if a PR already addresses the same problem, work on that PR" rule from
-`running-in-ci` keys on the same test (file path / branch overlap). It does
-*not* automatically catch a different test failing for the same underlying
-reason.
-
-When a CI failure has multiple failing tests, group them by root-cause class
-**before** writing a fix. If an outstanding PR addresses any test in that
-class:
-
-1. **Wait** for it to merge, then re-run the failing job — many remaining
-   failures collapse with the upstream fix.
-2. If they don't, **mirror the in-flight PR's approach** (production-code
-   change vs. test rework) for the additional sites — don't open a parallel
-   PR with a different, often weaker, approach.
-
-Past occurrence: PR #2625 was open ~10 hours fixing the "process CWD outside
-any git repo" class via production code. PR #2633 opened a parallel narrow
-PR for a different test in the same class with a test-skip approach
-instead. The triage PR's own body even noted "Same root-cause class as
-#2624" — that's the moment to wait, not to ship.
+The "work on the existing PR if it addresses the same problem" rule keys
+on the same test. It doesn't catch a different test failing for the same
+underlying reason. Group failing tests by root-cause class before writing
+a fix; if an outstanding PR addresses any test in the class, wait for it
+to merge and re-run, then mirror its approach for any sites still failing
+rather than opening a parallel PR with a weaker fix.
 
 ## Weekly Maintenance: MSRV & Toolchain
 
@@ -293,7 +263,7 @@ Triage each duplicate:
 - **Legitimate** (different cwd, different ref form that can't be normalized,
   intentional double-call across phases) — note in the response and move on.
 - **Cache miss** (same logical operation should hit cache but doesn't) —
-  open an issue or fix it. Past examples: `merge_base("main", "<sha>")` vs
+  open an issue or fix it. Common shapes: `merge_base("main", "<sha>")` vs
   `merge_base("main", "branch")` keying separately;
   `worktree_at(cwd)` vs `worktree_at(porcelain_path)` not canonicalizing.
 
