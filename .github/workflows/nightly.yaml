@@ -9,7 +9,8 @@ name: nightly
 #   - nix-flake: nix flake check (packaging-environment bugs, motivated by #2624)
 #
 # Runs daily on cron, on demand via workflow_dispatch, on pushes to main that
-# touch dependency or toolchain files, and on PRs labelled `nightly`. The
+# touch dependency or toolchain files, and on PRs that either (a) touch the
+# same dependency/toolchain files or (b) carry the `nightly` label. The
 # label is the iteration knob for fixes targeting nightly-only failures
 # (e.g. nix-flake's sandbox suite); without it, contributors had to wait for
 # the cron run or `gh workflow run` manually. The cron still catches drift
@@ -32,10 +33,10 @@ on:
       - '.github/workflows/nightly.yaml'
   pull_request:
     branches: [main]
-    # `labeled` fires when the `nightly` label is added; `synchronize`
-    # re-runs on subsequent pushes while the label is still attached. Each
-    # job below gates on the label so unlabelled PRs (and unrelated label
-    # additions) are no-ops.
+    # `labeled` fires when a label is added (so the `nightly` label can
+    # trigger a run mid-PR); `synchronize` re-runs on subsequent pushes.
+    # The `gate` job below decides whether to actually run, ORing the
+    # label against a Cargo-paths diff check.
     types: [opened, synchronize, reopened, labeled]
 
 concurrency:
@@ -49,16 +50,40 @@ env:
 
 jobs:
   gate:
-    # Single point that filters PR events. Skipped → all downstream jobs
-    # skip via `needs: gate`, which is cheaper than repeating the
-    # conditional on every job. Schedule / workflow_dispatch / push events
-    # always pass through.
-    if: |
-      github.event_name != 'pull_request' ||
-      contains(github.event.pull_request.labels.*.name, 'nightly')
+    # Single point that decides whether to run on PR events. Non-PR events
+    # (cron, workflow_dispatch, push) pass through unconditionally. PR
+    # events run if either the `nightly` label is attached OR the diff
+    # touches one of the listed dependency/toolchain files. The decision
+    # is exposed via `outputs.run`; downstream jobs gate on it.
     runs-on: ubuntu-24.04
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
     steps:
-      - run: 'true'
+      - id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'nightly') }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$HAS_LABEL" == "true" ]]; then
+            echo "run=true (label)"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(gh pr view "$PR" --repo "$REPO" --json files --jq '.files[].path')
+          if echo "$files" | grep -qE '^(Cargo\.toml|Cargo\.lock|rust-toolchain\.toml|\.github/workflows/nightly\.yaml)$'; then
+            echo "run=true (cargo-affecting paths changed)"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false (no `nightly` label, no cargo-affecting paths)"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
 
   feature-powerset:
     # Every combination of cli/syntax-highlighting/shell-integration-tests/
@@ -70,6 +95,7 @@ jobs:
     # worktrunk, or feature unification will mask gating bugs by silently
     # enabling `cli` in the lib build (see tests/helpers/wt-perf/Cargo.toml).
     needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
@@ -101,6 +127,7 @@ jobs:
     # runner env, which resolves differently on `ubuntu-24.04-arm` and
     # masks musl/arm signal with environment noise.
     needs: gate
+    if: needs.gate.outputs.run == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -139,6 +166,7 @@ jobs:
     # benchmarks before merging"). The cron run also appends results to the
     # time-series gist so we have daily perf history on main.
     needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
@@ -199,6 +227,7 @@ jobs:
     # so it's already in the "nightly concern" bucket; rarely flips between
     # PRs touching deps.
     needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
@@ -227,6 +256,7 @@ jobs:
     # lower compatible version that doesn't actually compile if our manifest
     # under-specifies.
     needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
@@ -258,6 +288,7 @@ jobs:
     # `shell-integration-tests` feature is intentionally off). Cold builds
     # take ~10-15 min without a binary cache; nightly cadence absorbs it.
     needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
