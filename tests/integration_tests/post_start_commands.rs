@@ -585,7 +585,12 @@ fn test_post_create_script_reads_json(repo: TestRepo) {
     let scripts_dir = repo.root_path().join("scripts");
     fs::create_dir_all(&scripts_dir).unwrap();
 
-    let script_content = r#"#!/usr/bin/env python3
+    // Resolve `python3` on PATH and bake the absolute path into the shebang.
+    // `#!/usr/bin/env python3` doesn't work in the nix sandbox where
+    // `/usr/bin/env` doesn't exist; the kernel runs the literal interpreter
+    // path, so shebang resolution can't piggyback on PATH directly.
+    let python = which::which("python3").expect("python3 in PATH for test");
+    let script_body = r#"
 import json
 import sys
 
@@ -596,6 +601,7 @@ with open('hook_output.txt', 'w') as f:
     f.write(f"hook_type={ctx['hook_type']}\n")
     f.write(f"hook_name={ctx.get('hook_name', 'unnamed')}\n")
 "#;
+    let script_content = format!("#!{}{}", python.display(), script_body);
     let script_path = scripts_dir.join("setup.py");
     fs::write(&script_path, script_content).unwrap();
     fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();

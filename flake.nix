@@ -179,7 +179,15 @@
             // {
               inherit cargoArtifacts;
               src = pkgs.lib.cleanSource ./.;
-              nativeBuildInputs = commonArgs.nativeBuildInputs ++ [ pkgs.git ];
+              # Tests shell out to a few host tools — `git` for the harness,
+              # `python3` for argv-quoting and post-start fixtures, `ps`
+              # (procps) for the pgid invariant test. Without these on PATH
+              # the sandbox surfaces them as `No such file or directory`.
+              nativeBuildInputs = commonArgs.nativeBuildInputs ++ [
+                pkgs.git
+                pkgs.python3
+                pkgs.procps
+              ];
             }
           );
         };
