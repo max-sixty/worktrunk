@@ -233,7 +233,10 @@ impl WorktreeSkimItem {
         format!("○ {verb} {label}. Press {key} again to refresh.\n")
     }
 
-    /// Compute preview and apply pager for diff modes.
+    /// Compute preview and apply pager for diff modes. Returns the
+    /// display-ready string and (for Log) whether the disk cache was a
+    /// hit — the orchestrator uses the flag to schedule a background
+    /// refresh.
     ///
     /// Both the inline cache-miss path and background pre-computation use this so
     /// that the cache always stores display-ready content (no pager subprocess
@@ -244,34 +247,33 @@ impl WorktreeSkimItem {
         mode: PreviewMode,
         width: usize,
         height: usize,
-    ) -> String {
-        let content = Self::compute_preview(repo, item, mode, width, height);
+    ) -> (String, bool) {
         match mode {
-            PreviewMode::WorkingTree | PreviewMode::BranchDiff | PreviewMode::UpstreamDiff => {
-                if let Some(pager_cmd) = diff_pager() {
-                    pipe_through_pager(&content, pager_cmd, width)
-                } else {
-                    content
-                }
-            }
-            _ => content,
+            PreviewMode::WorkingTree => (
+                Self::page_diff(Self::compute_working_tree_preview(repo, item, width), width),
+                false,
+            ),
+            PreviewMode::Log => Self::compute_log_preview(repo, item, width, height),
+            PreviewMode::BranchDiff => (
+                Self::page_diff(Self::compute_branch_diff_preview(repo, item, width), width),
+                false,
+            ),
+            PreviewMode::UpstreamDiff => (
+                Self::page_diff(
+                    Self::compute_upstream_diff_preview(repo, item, width),
+                    width,
+                ),
+                false,
+            ),
+            PreviewMode::Summary => (Self::loading_placeholder(PreviewMode::Summary), false),
         }
     }
 
-    /// Compute raw preview for any mode.
-    pub(super) fn compute_preview(
-        repo: &Repository,
-        item: &ListItem,
-        mode: PreviewMode,
-        width: usize,
-        height: usize,
-    ) -> String {
-        match mode {
-            PreviewMode::WorkingTree => Self::compute_working_tree_preview(repo, item, width),
-            PreviewMode::Log => Self::compute_log_preview(repo, item, width, height).0,
-            PreviewMode::BranchDiff => Self::compute_branch_diff_preview(repo, item, width),
-            PreviewMode::UpstreamDiff => Self::compute_upstream_diff_preview(repo, item, width),
-            PreviewMode::Summary => Self::loading_placeholder(PreviewMode::Summary),
+    fn page_diff(content: String, width: usize) -> String {
+        if let Some(pager_cmd) = diff_pager() {
+            pipe_through_pager(&content, pager_cmd, width)
+        } else {
+            content
         }
     }
 
@@ -542,19 +544,17 @@ impl WorktreeSkimItem {
             preview_cache::read_log(repo, head, width, height)
         };
         let was_disk_hit = cached.is_some();
-        let entry = match cached {
-            Some(cached) => cached,
-            None => {
-                let Some(fresh) =
-                    Self::compute_log_raw_and_stats(repo, head, log_limit, show_timestamps)
-                else {
-                    // Match prior behavior: empty output on `git log` failure.
-                    return (String::new(), false);
-                };
-                preview_cache::write_log(repo, head, width, height, &fresh);
-                fresh
-            }
-        };
+        // On `git log` failure (effectively unreachable here — merge-base
+        // already validated `head` upstream), fall back to a default
+        // entry. `process_log_with_dimming` + `format_log_output` handle
+        // the empty `raw_log` gracefully and produce empty output, the
+        // same effective behavior as the prior explicit early return.
+        let entry = cached.unwrap_or_else(|| {
+            let fresh = Self::compute_log_raw_and_stats(repo, head, log_limit, show_timestamps)
+                .unwrap_or_default();
+            preview_cache::write_log(repo, head, width, height, &fresh);
+            fresh
+        });
 
         let (processed, _hashes) =
             process_log_with_dimming(&entry.raw_log, unique_commits.as_ref());

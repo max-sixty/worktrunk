@@ -62,7 +62,7 @@ const KIND: &str = "picker-preview";
 /// served on the *current* render is still potentially stale — refresh
 /// is async — but the next visit to the same row reads fresh content.
 /// See `commands::picker::preview_orchestrator::spawn_refresh_thread`.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 pub(super) struct LogCacheEntry {
     pub raw_log: String,
     /// Empty when `width < TIMESTAMP_WIDTH_THRESHOLD` (the no-timestamp

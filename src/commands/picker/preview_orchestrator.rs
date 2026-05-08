@@ -107,23 +107,17 @@ impl PreviewOrchestrator {
             if cache.contains_key(&cache_key) {
                 return;
             }
-            let (value, log_disk_hit) = match mode {
-                // Log doesn't go through the diff pager (see
-                // `compute_and_page_preview`), so calling the
-                // status-reporting variant directly here is equivalent
-                // to going through the dispatcher.
-                PreviewMode::Log => WorktreeSkimItem::compute_log_preview(&repo, &item, w, h),
-                _ => (
-                    WorktreeSkimItem::compute_and_page_preview(&repo, &item, mode, w, h),
-                    false,
-                ),
-            };
+            let (value, log_disk_hit) =
+                WorktreeSkimItem::compute_and_page_preview(&repo, &item, mode, w, h);
             cache.insert(cache_key, value);
             if log_disk_hit {
                 // Increment pending *before* handing off so `wait_for_idle`
                 // can't race past while the task is in flight on the
                 // channel — the refresh thread decrements via
-                // `PendingGuard` after running the task.
+                // `PendingGuard` after running the task. The send always
+                // succeeds: the refresh thread holds the receiver for the
+                // orchestrator's full lifetime, and `&self` here proves
+                // we're alive.
                 pending.fetch_add(1, Ordering::SeqCst);
                 let task = RefreshTask {
                     item: Arc::clone(&item),
@@ -131,13 +125,9 @@ impl PreviewOrchestrator {
                     cache: Arc::clone(&cache),
                     repo: repo.clone(),
                 };
-                if refresh_tx.send(task).is_err() {
-                    // Refresh thread already exited (orchestrator dropped).
-                    // Roll back the pending bump we just added so
-                    // `wait_for_idle` doesn't hang forever waiting for a
-                    // task that will never run.
-                    pending.fetch_sub(1, Ordering::SeqCst);
-                }
+                refresh_tx
+                    .send(task)
+                    .expect("refresh thread receiver alive for orchestrator lifetime");
             }
         });
     }
@@ -280,7 +270,12 @@ fn spawn_refresh_thread(pending: Arc<AtomicUsize>) -> mpsc::Sender<RefreshTask> 
                 } = task;
                 let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let rendered = WorktreeSkimItem::refresh_log_preview(&repo, &item, w, h);
-                    cache.insert((item.branch_name().to_string(), PreviewMode::Log), rendered);
+                    // Skip empty results so a transient `git log` failure
+                    // doesn't poison the in-memory cache with `""` and
+                    // wipe out the value the producer just inserted.
+                    if !rendered.is_empty() {
+                        cache.insert((item.branch_name().to_string(), PreviewMode::Log), rendered);
+                    }
                 }));
             }
         })
