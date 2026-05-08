@@ -80,7 +80,7 @@ Controls where new worktrees are created.
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
 - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
-- `{{ branch | codename(2) }}` — deterministic friendly name (e.g., `bright-lantern`); pair with `| hash` when used as a flat name
+- `{{ branch | codename(2) }}` — deterministic friendly name from a ~1.26M-combo pool (e.g., `malleable-opah`)
 
 **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
 
@@ -96,13 +96,13 @@ Inside the repository (`~/code/myproject/.worktrees/feature-auth`):
 worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
 ```
 
-Friendly branch-derived names (`~/code/myproject.bright-lantern-x7k`):
+Friendly branch-derived names (`~/code/myproject.malleable-opah`):
 
 ```toml
-worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}-{{ branch | hash }}"
+worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}"
 ```
 
-Friendly names with branch identity in a parent directory (`~/code/worktrees/feature-auth/bright-lantern`):
+Friendly names with branch identity in a parent directory (`~/code/worktrees/feature-auth/malleable-opah`):
 
 ```toml
 worktree-path = "{{ repo_path }}/../worktrees/{{ branch | sanitize }}/{{ branch | codename(2) }}"

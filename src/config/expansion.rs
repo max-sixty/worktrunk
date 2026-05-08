@@ -359,47 +359,20 @@ fn string_to_port(s: &str) -> u16 {
 
 const CODENAME_MAX_WORDS: usize = 8;
 
-const CODENAME_ADJECTIVES: &[&str] = &[
-    "amber", "ample", "arctic", "autumn", "balanced", "balmy", "basic", "blithe", "bold", "breezy",
-    "bright", "brisk", "calm", "careful", "cedar", "cheery", "civil", "clear", "clever", "cloudy",
-    "coastal", "cobalt", "compact", "cool", "copper", "coral", "crisp", "curious", "dapper",
-    "dawn", "deft", "direct", "distant", "double", "dry", "dusky", "early", "earnest", "earthy",
-    "easy", "elder", "even", "exact", "fair", "fancy", "fast", "finer", "firm", "fleet", "fluent",
-    "focal", "fond", "frank", "fresh", "frosty", "gentle", "gilded", "glad", "glossy", "golden",
-    "grand", "green", "happy", "hardy", "hazel", "hearty", "hidden", "hollow", "honest", "humble",
-    "hushed", "icy", "ideal", "ivory", "jade", "jolly", "keen", "kind", "lively", "lofty", "loyal",
-    "lucid", "lucky", "lunar", "maple", "marble", "mellow", "merry", "mild", "misty", "modest",
-    "mossy", "muted", "narrow", "nearby", "neat", "nimble", "noble", "novel", "oaken", "olive",
-    "opal", "open", "orderly", "pale", "patient", "pearl", "plain", "plucky", "polished", "prime",
-    "proud", "quick", "quiet", "rainy", "rapid", "ready", "regal", "remote", "rosy", "round",
-    "royal", "ruddy", "rustic", "sandy", "satin", "scenic", "serene", "sharp", "sheer", "silky",
-    "silver", "simple", "sleek", "smart", "smooth", "snowy", "snug", "solar", "solid", "spry",
-    "stable", "stark", "steady", "still", "stony", "stout", "sturdy", "sunny", "supple", "swift",
-    "tall", "tidal", "tidy", "timely", "tiny", "topaz", "trim", "tropic", "true", "urban", "vast",
-    "velvet", "vivid", "warm", "whole", "wide", "wild", "wise", "witty", "wooden", "woven",
-    "young", "zesty",
-];
-
-const CODENAME_NOUNS: &[&str] = &[
-    "acorn", "anchor", "anvil", "apple", "arbor", "atlas", "badge", "basin", "bay", "beacon",
-    "beam", "bell", "berry", "birch", "blade", "bloom", "bluff", "bolt", "branch", "breeze",
-    "bridge", "brook", "cabin", "cairn", "canyon", "cape", "cedar", "charm", "cliff", "clover",
-    "coast", "cobble", "comet", "cove", "crane", "creek", "crest", "daisy", "dale", "dawn", "den",
-    "dock", "dove", "drift", "drum", "dune", "dusk", "eagle", "ember", "falcon", "fennel", "fern",
-    "ferry", "field", "fig", "finch", "fjord", "flint", "flower", "forest", "forge", "frost",
-    "gale", "garden", "garnet", "gate", "glade", "glen", "grove", "harbor", "haven", "hawk",
-    "hazel", "heath", "hedge", "heron", "hill", "hollow", "horizon", "inlet", "isle", "ivy",
-    "jasper", "juniper", "kettle", "knoll", "lagoon", "lake", "lantern", "larch", "lark", "laurel",
-    "leaf", "ledge", "lily", "linden", "lodge", "loft", "lotus", "maple", "marble", "marsh",
-    "meadow", "mill", "minnow", "moon", "moss", "nest", "newt", "nutmeg", "oak", "oasis", "orchid",
-    "otter", "owl", "palm", "pass", "peach", "peak", "pebble", "pier", "pine", "plover", "plume",
-    "pond", "poppy", "prairie", "prism", "quail", "quarry", "quartz", "rain", "raven", "ravine",
-    "reed", "reef", "ridge", "river", "robin", "rook", "rowan", "sage", "salmon", "shore",
-    "shrike", "sky", "slope", "snow", "sparrow", "spruce", "stag", "star", "stone", "stork",
-    "storm", "strand", "summit", "sycamore", "tern", "terrace", "thistle", "thorn", "thrush",
-    "tide", "timber", "trail", "trout", "tulip", "tundra", "vale", "valley", "veranda", "violet",
-    "willow", "wolf", "wren", "zenith",
-];
+/// Wordlists used by [`codename`].
+///
+/// Sourced from `petname::Petnames::medium()` (1198 adjectives, 1052 nouns —
+/// ~1.26M `codename(2)` combinations, ~1.5B for `codename(3)`). The pin in
+/// `Cargo.toml` is `=3.0.0`; bumping it may change, add, or remove words and
+/// would silently shift every existing user's `worktree-path` output. Treat
+/// any upgrade as a breaking change — see `test_codename_outputs_are_stable`.
+///
+/// `petname::Petnames::medium()` is effectively free — its `Cow::Borrowed`
+/// fields point at static slices embedded by the `petnames!` macro — so
+/// re-constructing per call is cheaper than reaching for a `OnceLock`.
+fn codename_words() -> petname::Petnames<'static> {
+    petname::Petnames::medium()
+}
 
 /// Sanitize a branch name for use in filesystem paths.
 ///
@@ -527,21 +500,19 @@ fn codename_index(input: &str, position: usize, salt: usize, pool: &str, len: us
 }
 
 fn codename(input: &str, words: usize) -> String {
+    let lists = codename_words();
+    let adjectives: &[&str] = lists.adjectives.as_ref();
+    let nouns: &[&str] = lists.nouns.as_ref();
+
     let mut parts = Vec::with_capacity(words);
     let adjective_count = words.saturating_sub(1);
 
     for position in 0..adjective_count {
         let mut salt = 0;
         loop {
-            let index = codename_index(
-                input,
-                position,
-                salt,
-                "adjective",
-                CODENAME_ADJECTIVES.len(),
-            );
-            let word = CODENAME_ADJECTIVES[index];
-            if !parts.contains(&word) || salt >= CODENAME_ADJECTIVES.len() {
+            let index = codename_index(input, position, salt, "adjective", adjectives.len());
+            let word = adjectives[index];
+            if !parts.contains(&word) || salt >= adjectives.len() {
                 parts.push(word);
                 break;
             }
@@ -549,8 +520,8 @@ fn codename(input: &str, words: usize) -> String {
         }
     }
 
-    let index = codename_index(input, adjective_count, 0, "noun", CODENAME_NOUNS.len());
-    parts.push(CODENAME_NOUNS[index]);
+    let index = codename_index(input, adjective_count, 0, "noun", nouns.len());
+    parts.push(nouns[index]);
     parts.join("-")
 }
 
@@ -876,7 +847,7 @@ pub fn validate_template(
 /// - `hash_port` — Hash to deterministic port number (10000-19999)
 /// - `dirname` — Strip the last path component (e.g., `/a/b/c` → `/a/b`)
 /// - `basename` — Keep only the last path component (e.g., `/a/b/c` → `c`)
-/// - `codename(n)` — deterministic friendly words, e.g. `bright-lantern`
+/// - `codename(n)` — deterministic friendly words, e.g. `malleable-opah`
 ///
 /// # Functions
 /// - `worktree_path_of_branch(branch)` — Look up the filesystem path of a branch's worktree
@@ -1600,7 +1571,9 @@ mod tests {
         )
         .unwrap();
         assert!(!one_word.contains('-'), "got: {one_word}");
-        assert!(CODENAME_NOUNS.contains(&one_word.as_str()));
+        let lists = codename_words();
+        let nouns: &[&str] = lists.nouns.as_ref();
+        assert!(nouns.contains(&one_word.as_str()));
 
         let three_words = expand_template(
             "{{ branch | codename(3) }}",
@@ -1694,54 +1667,49 @@ mod tests {
                     "{name} word is not a single path component fragment: {word}"
                 );
             }
-            for pair in words.windows(2) {
-                assert!(
-                    pair[0] < pair[1],
-                    "{name} list is not sorted: {} should come before {}",
-                    pair[0],
-                    pair[1]
-                );
-            }
         }
 
-        assert_word_list("adjective", CODENAME_ADJECTIVES);
-        assert_word_list("noun", CODENAME_NOUNS);
-        assert!(CODENAME_ADJECTIVES.len() * CODENAME_NOUNS.len() >= 25_000);
+        let lists = codename_words();
+        let adjectives: &[&str] = lists.adjectives.as_ref();
+        let nouns: &[&str] = lists.nouns.as_ref();
+        assert_word_list("adjective", adjectives);
+        assert_word_list("noun", nouns);
+        // codename(2) cardinality — petname::medium() gives ~1.26M combinations,
+        // so a single adjective+noun pair is enough on its own for typical
+        // worktree counts.
+        assert!(adjectives.len() * nouns.len() >= 1_000_000);
     }
 
     /// Pins specific `codename(input, n)` outputs so the on-disk contract
     /// is impossible to break by accident. Once a user adopts this filter in
-    /// their `worktree-path` template, the indices into `CODENAME_ADJECTIVES`
-    /// and `CODENAME_NOUNS` (and the hash-input layout in `codename_index`)
-    /// become an on-disk identity for every worktree they own. Anything that
-    /// shifts those indices (adding, removing, or reordering a word) or
+    /// their `worktree-path` template, the petname wordlists (and the
+    /// hash-input layout in `codename_index`) become an on-disk identity for
+    /// every worktree they own. Anything that shifts the wordlists (a
+    /// `petname` version bump that adds, removes, or reorders a word) or
     /// changes how the hash is computed produces a different name for the
     /// same branch on the next `wt switch`, orphaning the existing worktree.
     ///
     /// If this test fails:
     ///
     /// 1. Stop. Do not update the expected values to silence it.
-    /// 2. Confirm whether you actually intended to change the wordlists or
-    ///    the hash layout. If it was unintentional (a sort, an "improvement",
-    ///    a refactor), revert.
+    /// 2. Confirm whether you actually intended to change the wordlists
+    ///    (e.g. via a `petname` version bump) or the hash layout. If it was
+    ///    unintentional (a refactor, a Cargo update), revert.
     /// 3. If the change is intentional, accept that you are breaking every
     ///    existing user's worktree paths. Coordinate the rollout, document
     ///    it as a breaking change, and only then update the expected values.
     #[test]
     fn test_codename_outputs_are_stable() {
-        // Includes the known `feature/73` vs `feature/149` collision on
-        // `ready-rain`: it is part of the contract until we explicitly
-        // decide otherwise.
         let cases: &[(&str, usize, &str)] = &[
-            ("main", 1, "dove"),
-            ("feature/auth", 2, "stout-cobble"),
-            ("feature/73", 2, "ready-rain"),
-            ("feature/149", 2, "ready-rain"),
-            ("release/1.0", 3, "green-marble-canyon"),
+            ("main", 1, "gorilla"),
+            ("feature/auth", 2, "malleable-opah"),
+            ("feature/73", 2, "prodigious-shoveler"),
+            ("feature/149", 2, "tuneful-vendace"),
+            ("release/1.0", 3, "intent-equipped-treefrog"),
             (
                 "hotfix/some-very-long-thing",
                 4,
-                "topaz-hearty-bright-ridge",
+                "noteworthy-musical-durable-silkworm",
             ),
         ];
 
@@ -1752,9 +1720,9 @@ mod tests {
                 "\n\
                  codename({input:?}, {n}) returned {actual:?}, expected {expected:?}.\n\
                  \n\
-                 Changing CODENAME_ADJECTIVES, CODENAME_NOUNS, or the codename\n\
-                 algorithm BREAKS every existing user's worktree paths derived\n\
-                 from `{{{{ branch | codename(...) }}}}`. See the comment above\n\
+                 Changing the petname version, or the codename algorithm,\n\
+                 BREAKS every existing user's worktree paths derived from\n\
+                 `{{{{ branch | codename(...) }}}}`. See the comment above\n\
                  this test before updating these expectations.\n"
             );
         }

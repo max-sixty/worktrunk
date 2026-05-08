@@ -181,14 +181,14 @@ Templates support Jinja2 filters for transforming values:
 | `basename` | `{{ repo_path \| basename }}` | Keep only the last path component (`/a/b/c` → `c`) |
 | `codename(n)` | `{{ branch \| codename(2) }}` | Deterministic friendly words |
 
-The `sanitize` filter makes branch names safe for filesystem paths. The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `sanitize_hash` filter produces a filesystem-safe name and appends a 3-character hash suffix when sanitization changed the input, so distinct originals never collide — already-safe names pass through unchanged. The `codename(n)` filter produces deterministic friendly names from an input string: `codename(1)` returns a noun, `codename(2)` returns `adjective-noun`, and higher counts add more adjectives. The pool is small (~30k for `codename(2)`), so pair it with `hash` whenever the codename has to be unique on its own:
+The `sanitize` filter makes branch names safe for filesystem paths. The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `sanitize_hash` filter produces a filesystem-safe name and appends a 3-character hash suffix when sanitization changed the input, so distinct originals never collide — already-safe names pass through unchanged. The `codename(n)` filter produces deterministic friendly names from an input string: `codename(1)` returns a noun, `codename(2)` returns `adjective-noun`, and higher counts add more adjectives. The pool is large (~1.26M combinations for `codename(2)`), so it usually stands alone as a worktree leaf:
 
 ```toml
-# Friendly branch-derived worktree names, e.g. myproject.bright-lantern-x7k
-worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}-{{ branch | hash }}"
+# Friendly branch-derived worktree names, e.g. myproject.malleable-opah
+worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}"
 ```
 
-When the path already has another disambiguator (e.g. the branch name in a parent directory), the codename can stand alone as the leaf:
+When you want both a friendly name and the original branch identity in the path, put the branch name in a parent directory:
 
 ```toml
 worktree-path = "{{ repo_path }}/../worktrees/{{ branch | sanitize }}/{{ branch | codename(2) }}"

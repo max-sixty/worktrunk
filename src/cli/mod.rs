@@ -1375,14 +1375,14 @@ Templates support Jinja2 filters for transforming values:
 | `basename` | `{{ repo_path \| basename }}` | Keep only the last path component (`/a/b/c` → `c`) |
 | `codename(n)` | `{{ branch \| codename(2) }}` | Deterministic friendly words |
 
-The `sanitize` filter makes branch names safe for filesystem paths. The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `sanitize_hash` filter produces a filesystem-safe name and appends a 3-character hash suffix when sanitization changed the input, so distinct originals never collide — already-safe names pass through unchanged. The `codename(n)` filter produces deterministic friendly names from an input string: `codename(1)` returns a noun, `codename(2)` returns `adjective-noun`, and higher counts add more adjectives. The pool is small (~30k for `codename(2)`), so pair it with `hash` whenever the codename has to be unique on its own:
+The `sanitize` filter makes branch names safe for filesystem paths. The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `sanitize_hash` filter produces a filesystem-safe name and appends a 3-character hash suffix when sanitization changed the input, so distinct originals never collide — already-safe names pass through unchanged. The `codename(n)` filter produces deterministic friendly names from an input string: `codename(1)` returns a noun, `codename(2)` returns `adjective-noun`, and higher counts add more adjectives. The pool is large (~1.26M combinations for `codename(2)`), so it usually stands alone as a worktree leaf:
 
 ```toml
-# Friendly branch-derived worktree names, e.g. myproject.bright-lantern-x7k
-worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}-{{ branch | hash }}"
+# Friendly branch-derived worktree names, e.g. myproject.malleable-opah
+worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}"
 ```
 
-When the path already has another disambiguator (e.g. the branch name in a parent directory), the codename can stand alone as the leaf:
+When you want both a friendly name and the original branch identity in the path, put the branch name in a parent directory:
 
 ```toml
 worktree-path = "{{ repo_path }}/../worktrees/{{ branch | sanitize }}/{{ branch | codename(2) }}"
@@ -1613,7 +1613,7 @@ Controls where new worktrees are created.
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
 - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
-- `{{ branch | codename(2) }}` — deterministic friendly name (e.g., `bright-lantern`); pair with `| hash` when used as a flat name
+- `{{ branch | codename(2) }}` — deterministic friendly name from a ~1.26M-combo pool (e.g., `malleable-opah`)
 
 **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
 
@@ -1629,13 +1629,13 @@ Inside the repository (`~/code/myproject/.worktrees/feature-auth`):
 worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
 ```
 
-Friendly branch-derived names (`~/code/myproject.bright-lantern-x7k`):
+Friendly branch-derived names (`~/code/myproject.malleable-opah`):
 
 ```toml
-worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}-{{ branch | hash }}"
+worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}"
 ```
 
-Friendly names with branch identity in a parent directory (`~/code/worktrees/feature-auth/bright-lantern`):
+Friendly names with branch identity in a parent directory (`~/code/worktrees/feature-auth/malleable-opah`):
 
 ```toml
 worktree-path = "{{ repo_path }}/../worktrees/{{ branch | sanitize }}/{{ branch | codename(2) }}"
