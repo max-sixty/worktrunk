@@ -81,7 +81,7 @@ jobs:
             echo "run=true (cargo-affecting paths changed)"
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
-            echo "run=false (no `nightly` label, no cargo-affecting paths)"
+            echo 'run=false (no `nightly` label, no cargo-affecting paths)'
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
 
