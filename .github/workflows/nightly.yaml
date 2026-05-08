@@ -8,9 +8,11 @@ name: nightly
 #   - minimal-versions: cargo check against minimum-version dep resolution
 #   - nix-flake: nix flake check (packaging-environment bugs, motivated by #2624)
 #
-# Runs daily on cron, on demand via workflow_dispatch, and on pushes/PRs that
-# touch dependency or toolchain files — catching cargo-affecting changes at
-# PR time avoids a 24-hour bisect window. The cron run still catches drift
+# Runs daily on cron, on demand via workflow_dispatch, on pushes to main that
+# touch dependency or toolchain files, and on PRs labelled `nightly`. The
+# label is the iteration knob for fixes targeting nightly-only failures
+# (e.g. nix-flake's sandbox suite); without it, contributors had to wait for
+# the cron run or `gh workflow run` manually. The cron still catches drift
 # that's not commit-correlated (registry updates, transitive resolution).
 #
 # Runner versions pinned; see ci.yaml header comment for rationale.
@@ -30,11 +32,11 @@ on:
       - '.github/workflows/nightly.yaml'
   pull_request:
     branches: [main]
-    paths:
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'rust-toolchain.toml'
-      - '.github/workflows/nightly.yaml'
+    # `labeled` fires when the `nightly` label is added; `synchronize`
+    # re-runs on subsequent pushes while the label is still attached. Each
+    # job below gates on the label so unlabelled PRs (and unrelated label
+    # additions) are no-ops.
+    types: [opened, synchronize, reopened, labeled]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -46,6 +48,18 @@ env:
   RUSTFLAGS: -C debuginfo=0
 
 jobs:
+  gate:
+    # Single point that filters PR events. Skipped → all downstream jobs
+    # skip via `needs: gate`, which is cheaper than repeating the
+    # conditional on every job. Schedule / workflow_dispatch / push events
+    # always pass through.
+    if: |
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'nightly')
+    runs-on: ubuntu-24.04
+    steps:
+      - run: 'true'
+
   feature-powerset:
     # Every combination of cli/syntax-highlighting/shell-integration-tests/
     # git-wt should compile. Catches regressions in feature gating — including
@@ -55,6 +69,7 @@ jobs:
     # Workspace members must use `default-features = false` when depending on
     # worktrunk, or feature unification will mask gating bugs by silently
     # enabling `cli` in the lib build (see tests/helpers/wt-perf/Cargo.toml).
+    needs: gate
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
@@ -85,6 +100,7 @@ jobs:
     # PTY tests are intentionally off because they read $SHELL from the
     # runner env, which resolves differently on `ubuntu-24.04-arm` and
     # masks musl/arm signal with environment noise.
+    needs: gate
     strategy:
       fail-fast: false
       matrix:
@@ -122,6 +138,7 @@ jobs:
     # already advisory non-required (CLAUDE.md: "Don't wait for CI
     # benchmarks before merging"). The cron run also appends results to the
     # time-series gist so we have daily perf history on main.
+    needs: gate
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
@@ -181,6 +198,7 @@ jobs:
     # Moved from ci.yaml — `cargo udeps` requires nightly toolchain anyway,
     # so it's already in the "nightly concern" bucket; rarely flips between
     # PRs touching deps.
+    needs: gate
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
@@ -208,6 +226,7 @@ jobs:
     # exists for the same downstream-protection reason) can resolve to a
     # lower compatible version that doesn't actually compile if our manifest
     # under-specifies.
+    needs: gate
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
@@ -238,6 +257,7 @@ jobs:
     # with default features (lib + bins + integration + doctests; the
     # `shell-integration-tests` feature is intentionally off). Cold builds
     # take ~10-15 min without a binary cache; nightly cadence absorbs it.
+    needs: gate
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
