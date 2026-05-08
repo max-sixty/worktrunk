@@ -270,39 +270,34 @@ jobs:
     - name: cargo check
       run: cargo check --workspace --all-targets
 
-  # nix-flake:
-  #   # Build and test under the nix sandbox so packaging-environment bugs
-  #   # surface before a release / nixpkgs maintainer hits them. See #2624 for
-  #   # the canonical example: a unit test that depends on the process CWD
-  #   # being inside a git repo, which fails in the sandbox where source is
-  #   # extracted from a tarball without `.git`.
-  #   #
-  #   # Runs `nix flake check`, which exercises every check defined in
-  #   # flake.nix — in particular `worktrunk-tests`, which runs `cargo test`
-  #   # with default features (lib + bins + integration + doctests; the
-  #   # `shell-integration-tests` feature is intentionally off). Cold builds
-  #   # take ~10-15 min without a binary cache; nightly cadence absorbs it.
-  #   #
-  #   # Temporarily disabled: many sandbox-specific test failures remain
-  #   # (e.g. bare wt_command() inheriting CWD, target/debug-vs-release
-  #   # snapshot hardcoding). Re-enable behind the `nightly` PR label so
-  #   # fixes can iterate without blocking the nightly cron run.
-  #   needs: gate
-  #   if: needs.gate.outputs.run == 'true'
-  #   runs-on: ubuntu-24.04
-  #   steps:
-  #   - name: 📂 Checkout code
-  #     uses: actions/checkout@v6
-  #
-  #   - name: Install Nix
-  #     uses: cachix/install-nix-action@v31
-  #     with:
-  #       extra_nix_config: |
-  #         experimental-features = nix-command flakes
-  #         access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-  #
-  #   - name: nix flake check
-  #     run: nix flake check --print-build-logs --keep-going
+  nix-flake:
+    # Build and test under the nix sandbox so packaging-environment bugs
+    # surface before a release / nixpkgs maintainer hits them. See #2624 for
+    # the canonical example: a unit test that depends on the process CWD
+    # being inside a git repo, which fails in the sandbox where source is
+    # extracted from a tarball without `.git`.
+    #
+    # Runs `nix flake check`, which exercises every check defined in
+    # flake.nix — in particular `worktrunk-tests`, which runs `cargo test`
+    # with default features (lib + bins + integration + doctests; the
+    # `shell-integration-tests` feature is intentionally off). Cold builds
+    # take ~10-15 min without a binary cache; nightly cadence absorbs it.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v6
+
+    - name: Install Nix
+      uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+          access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+    - name: nix flake check
+      run: nix flake check --print-build-logs --keep-going
 
   create-issue-on-nightly-failure:
     needs:
@@ -311,6 +306,7 @@ jobs:
       - benchmarks
       - check-unused-dependencies
       - minimal-versions
+      - nix-flake
     if: always() && contains(needs.*.result, 'failure') && github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     permissions:
