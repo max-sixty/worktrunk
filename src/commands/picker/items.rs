@@ -268,7 +268,7 @@ impl WorktreeSkimItem {
     ) -> String {
         match mode {
             PreviewMode::WorkingTree => Self::compute_working_tree_preview(repo, item, width),
-            PreviewMode::Log => Self::compute_log_preview(repo, item, width, height),
+            PreviewMode::Log => Self::compute_log_preview(repo, item, width, height).0,
             PreviewMode::BranchDiff => Self::compute_branch_diff_preview(repo, item, width),
             PreviewMode::UpstreamDiff => Self::compute_upstream_diff_preview(repo, item, width),
             PreviewMode::Summary => Self::loading_placeholder(PreviewMode::Summary),
@@ -442,12 +442,40 @@ impl WorktreeSkimItem {
     /// key out of `main`'s SHA — a `git fetch` advancing `origin/main`
     /// doesn't invalidate any entry — while preserving correctness as
     /// `main` and wall-clock advance.
+    /// Render the Log preview and report whether the disk cache was hit.
+    /// The orchestrator uses the flag to schedule a background refresh —
+    /// see [`Self::refresh_log_preview`] and the `LogCacheEntry`
+    /// docstring for why decorations baked into `raw_log` need
+    /// refreshing even though the cache key is correct.
     pub(super) fn compute_log_preview(
         repo: &Repository,
         item: &ListItem,
         width: usize,
         height: usize,
+    ) -> (String, bool) {
+        Self::compute_log_preview_inner(repo, item, width, height, false)
+    }
+
+    /// Force-recompute the Log preview, bypassing the disk-cache read but
+    /// writing through. Returns the freshly rendered string. Called by the
+    /// orchestrator's refresh worker after a cache hit so the next visit
+    /// sees decorations that match current ref topology.
+    pub(super) fn refresh_log_preview(
+        repo: &Repository,
+        item: &ListItem,
+        width: usize,
+        height: usize,
     ) -> String {
+        Self::compute_log_preview_inner(repo, item, width, height, true).0
+    }
+
+    fn compute_log_preview_inner(
+        repo: &Repository,
+        item: &ListItem,
+        width: usize,
+        height: usize,
+        force_recompute: bool,
+    ) -> (String, bool) {
         // Minimum preview width to show timestamps (adds ~7 chars: space + 4-char time + space)
         // Note: preview is typically 50% of terminal width, so 50 = 100-col terminal
         const TIMESTAMP_WIDTH_THRESHOLD: usize = 50;
@@ -461,7 +489,10 @@ impl WorktreeSkimItem {
         let branch = item.branch_name();
         let reset = Reset;
         let Some(default_branch) = repo.default_branch() else {
-            return cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits\n");
+            return (
+                cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits\n"),
+                false,
+            );
         };
 
         // merge-base / rev-list run on every call — they're how the
@@ -473,7 +504,10 @@ impl WorktreeSkimItem {
         // the preview is supplementary, users can still select worktrees
         // even if a probe fails.
         let Ok(merge_base_output) = repo.run_command(&["merge-base", &default_branch, head]) else {
-            return cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits\n");
+            return (
+                cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits\n"),
+                false,
+            );
         };
         let merge_base = merge_base_output.trim();
         let is_default_branch = branch == default_branch;
@@ -500,15 +534,22 @@ impl WorktreeSkimItem {
         // Cacheable: the raw `git log --graph` output plus per-commit
         // stats. Both are pure functions of (head, width, height); on a
         // disk-cache hit we skip the `git log` and `git diff-tree` calls
-        // entirely. On miss we compute and write through.
-        let entry = match preview_cache::read_log(repo, head, width, height) {
+        // entirely. On miss we compute and write through. `force_recompute`
+        // bypasses the read (the refresh path) but always writes.
+        let cached = if force_recompute {
+            None
+        } else {
+            preview_cache::read_log(repo, head, width, height)
+        };
+        let was_disk_hit = cached.is_some();
+        let entry = match cached {
             Some(cached) => cached,
             None => {
                 let Some(fresh) =
                     Self::compute_log_raw_and_stats(repo, head, log_limit, show_timestamps)
                 else {
                     // Match prior behavior: empty output on `git log` failure.
-                    return String::new();
+                    return (String::new(), false);
                 };
                 preview_cache::write_log(repo, head, width, height, &fresh);
                 fresh
@@ -517,7 +558,7 @@ impl WorktreeSkimItem {
 
         let (processed, _hashes) =
             process_log_with_dimming(&entry.raw_log, unique_commits.as_ref());
-        if show_timestamps {
+        let rendered = if show_timestamps {
             // `format_log_output` reads `epoch_now()` so relative-time
             // strings ("5m" / "2h" / "3d") track wall-clock on every call,
             // even when serving from cache.
@@ -525,7 +566,8 @@ impl WorktreeSkimItem {
         } else {
             // Strip hash markers (SOH...NUL) since we're not using format_log_output
             strip_hash_markers(&processed)
-        }
+        };
+        (rendered, was_disk_hit)
     }
 
     /// Run `git log --graph` and (when timestamps are shown) `batch_fetch_stats`,
@@ -784,7 +826,7 @@ mod tests {
         let item = item_at(&repo, "feature");
 
         assert!(super::preview_cache::read_log(&repo, item.head(), 80, 24).is_none());
-        let _ = WorktreeSkimItem::compute_log_preview(&repo, &item, 80, 24);
+        let _ = WorktreeSkimItem::compute_log_preview(&repo, &item, 80, 24).0;
         let entry = super::preview_cache::read_log(&repo, item.head(), 80, 24)
             .expect("cache populated after first compute");
         assert!(
@@ -829,7 +871,7 @@ mod tests {
         // which removes that escape. The dim SGR `\x1b[2m` is unsuitable
         // because `format_log_output` already wraps every relative-time
         // column in dim, so it appears even in bright lines.
-        let before = WorktreeSkimItem::compute_log_preview(&repo, &item, 80, 24);
+        let before = WorktreeSkimItem::compute_log_preview(&repo, &item, 80, 24).0;
         let before_subject_line = before
             .lines()
             .find(|l| l.contains("feature commit"))
@@ -847,7 +889,7 @@ mod tests {
             .unwrap();
         repo.run_command(&["checkout", "feature"]).unwrap();
 
-        let after = WorktreeSkimItem::compute_log_preview(&repo, &item, 80, 24);
+        let after = WorktreeSkimItem::compute_log_preview(&repo, &item, 80, 24).0;
         let after_subject_line = after
             .lines()
             .find(|l| l.contains("feature commit"))
