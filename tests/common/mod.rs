@@ -1208,7 +1208,14 @@ pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
     // cargo-affected (`affected/build/`, max-sixty/cargo-affected#12), and
     // cross-target builds (e.g. `target/x86_64-unknown-linux-musl/debug/wt`
     // from the nightly `release-target` matrix).
-    settings.add_filter(r"[^\s]+/target/(?:[^/\s]+/)*(?:debug|release)/wt", "[BIN]");
+    //
+    // Include the literal `[BUILD_MODE]` placeholder so this filter still
+    // collapses to `[BIN]` when the prelude's `target/(debug|release)/wt`
+    // → `target/[BUILD_MODE]/wt` rewrite has already run.
+    settings.add_filter(
+        r"[^\s]+/target/(?:[^/\s]+/)*(?:debug|release|\[BUILD_MODE\])/wt",
+        "[BIN]",
+    );
 }
 
 // =============================================================================
