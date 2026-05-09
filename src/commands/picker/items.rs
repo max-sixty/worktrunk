@@ -552,8 +552,7 @@ impl WorktreeSkimItem {
         // single transient failure suppresses the preview indefinitely.
         let entry = match cached {
             Some(entry) => entry,
-            None => match Self::compute_log_raw_and_stats(repo, head, log_limit, show_timestamps)
-            {
+            None => match Self::compute_log_raw_and_stats(repo, head, log_limit, show_timestamps) {
                 Some(fresh) => {
                     preview_cache::write_log(repo, head, width, height, &fresh);
                     fresh
