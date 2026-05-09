@@ -1295,18 +1295,26 @@ pub fn run_switch(
 
     // Capture source (base) worktree identity BEFORE the switch, so post-switch
     // hooks can reference where the user came from via {{ base }} / {{ base_worktree_path }}.
-    let source_branch = repo
-        .current_worktree()
-        .branch()
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-    let source_path = repo
-        .current_worktree()
-        .root()
-        .ok()
-        .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()))
-        .unwrap_or_default();
+    // Skip when recovered — the source worktree is gone, and `current_worktree()`
+    // resolves to the recovered ancestor (typically the main worktree), which would
+    // misleadingly report main's branch/path as the user's "base".
+    let (source_branch, source_path) = if is_recovered {
+        (String::new(), String::new())
+    } else {
+        let source_branch = repo
+            .current_worktree()
+            .branch()
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let source_path = repo
+            .current_worktree()
+            .root()
+            .ok()
+            .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()))
+            .unwrap_or_default();
+        (source_branch, source_path)
+    };
 
     // Execute the validated plan
     let (result, branch_info) = execute_switch(&repo, plan, config, yes, hooks_approved)?;

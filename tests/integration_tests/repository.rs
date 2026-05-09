@@ -1101,7 +1101,6 @@ fn test_branch_returns_none_for_detached_head() {
 
     // Create a fresh repository instance to avoid cached result
     let repository = Repository::at(&root).unwrap();
-    // Use worktree_at with explicit path, not current_worktree() which uses base_path()
     let wt = repository.worktree_at(&root);
 
     let result = wt.branch();
@@ -1139,7 +1138,6 @@ fn test_branch_returns_branch_name() {
     let repo = TestRepo::new();
     let root = repo.root_path().to_path_buf();
     let repository = Repository::at(&root).unwrap();
-    // Use worktree_at with explicit path, not current_worktree() which uses base_path()
     let wt = repository.worktree_at(&root);
 
     let result = wt.branch();
@@ -1156,7 +1154,6 @@ fn test_branch_caches_result() {
     let repo = TestRepo::new();
     let root = repo.root_path().to_path_buf();
     let repository = Repository::at(&root).unwrap();
-    // Use worktree_at with explicit path, not current_worktree() which uses base_path()
     let wt = repository.worktree_at(&root);
 
     // First call
