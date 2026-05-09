@@ -55,13 +55,13 @@ const KIND: &str = "picker-preview";
 /// another ref starting or stopping pointing at the same commit (most
 /// commonly: a squash merge landing `main` at the cached SHA) would
 /// leave the decoration text stale even though the cache key is still
-/// valid. The orchestrator mitigates this with a background refresh:
-/// every disk-cache hit on the Log mode enqueues a task on a dedicated
-/// thread that re-runs `compute_log_raw_and_stats`, overwrites this
-/// entry, and updates the in-memory `PreviewCache`. The cached entry
-/// served on the *current* render is still potentially stale — refresh
-/// is async — but the next visit to the same row reads fresh content.
-/// See `commands::picker::preview_orchestrator::spawn_refresh_thread`.
+/// valid. The orchestrator mitigates this by enqueuing a background
+/// refresh task on the picker's rayon pool whenever a Log preview hit
+/// the disk cache; the refresh re-runs `compute_log_raw_and_stats`,
+/// overwrites this entry, and updates the in-memory `PreviewCache`.
+/// The cached entry served on the *current* render is still potentially
+/// stale — refresh is async — but the next visit to the same row reads
+/// fresh content. See `commands::picker::preview_orchestrator::spawn_preview`.
 #[derive(Serialize, Deserialize, Default)]
 pub(super) struct LogCacheEntry {
     pub raw_log: String,

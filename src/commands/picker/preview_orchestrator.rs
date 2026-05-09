@@ -8,7 +8,6 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc;
 use std::time::Duration;
 
 use dashmap::DashMap;
@@ -27,29 +26,10 @@ impl Drop for PendingGuard {
     }
 }
 
-/// Work item for the dedicated refresh thread. Carries everything the
-/// thread needs to recompute a Log preview and overwrite both caches —
-/// no shared orchestrator handle, so the thread can outlive any
-/// borrow.
-struct RefreshTask {
-    item: Arc<ListItem>,
-    dims: (usize, usize),
-    cache: PreviewCache,
-    repo: Repository,
-}
-
 pub(super) struct PreviewOrchestrator {
     pub(super) cache: PreviewCache,
     pool: Arc<rayon::ThreadPool>,
     pending: Arc<AtomicUsize>,
-    /// Refresh queue. Sender is cloned into rayon worker closures; the
-    /// receiver is owned by a single std::thread spawned in `new`. Tasks
-    /// land here when a Log preview compute hit the disk cache so the
-    /// `raw_log`'s embedded ref decorations get refreshed (see the
-    /// `LogCacheEntry` docstring). Serial drain on a thread separate from
-    /// the rayon pool means refreshes never compete with foreground
-    /// precompute for worker slots.
-    refresh_tx: mpsc::Sender<RefreshTask>,
     /// Repository used by preview compute. Captured once at construction
     /// so background tasks see a stable repo binding, and so unit tests
     /// can inject a `TestRepo`-rooted `Repository` instead of relying on
@@ -67,13 +47,10 @@ impl PreviewOrchestrator {
                 .build()
                 .expect("failed to build picker preview rayon pool"),
         );
-        let pending = Arc::new(AtomicUsize::new(0));
-        let refresh_tx = spawn_refresh_thread(Arc::clone(&pending));
         Self {
             cache,
             pool,
-            pending,
-            refresh_tx,
+            pending: Arc::new(AtomicUsize::new(0)),
             repo,
         }
     }
@@ -86,11 +63,11 @@ impl PreviewOrchestrator {
     /// `preview()` synchronously and reads via `DashMap::get`) is never
     /// blocked on a shard write held across git/pager subprocesses.
     ///
-    /// Log mode that hits the disk cache also enqueues a refresh task on
-    /// the dedicated refresh thread so the `raw_log`'s embedded
-    /// decorations are recomputed before the next visit. See the
-    /// `LogCacheEntry` docstring for why the disk cache itself is
-    /// SHA-keyed but decoration text drifts.
+    /// Log mode that hits the disk cache also enqueues a refresh task
+    /// (via `pool.spawn_fifo`, so it lands behind in-flight foreground
+    /// precompute) to recompute the embedded ref decorations before the
+    /// next visit. See the `LogCacheEntry` docstring for why the disk
+    /// cache itself is SHA-keyed but decoration text drifts.
     pub(super) fn spawn_preview(
         &self,
         item: Arc<ListItem>,
@@ -100,7 +77,7 @@ impl PreviewOrchestrator {
         let cache = Arc::clone(&self.cache);
         let (w, h) = dims;
         let repo = self.repo.clone();
-        let refresh_tx = self.refresh_tx.clone();
+        let pool = Arc::clone(&self.pool);
         let pending = Arc::clone(&self.pending);
         self.spawn_task(move || {
             let cache_key = (item.branch_name().to_string(), mode);
@@ -111,23 +88,21 @@ impl PreviewOrchestrator {
                 WorktreeSkimItem::compute_and_page_preview(&repo, &item, mode, w, h);
             cache.insert(cache_key, value);
             if log_disk_hit {
-                // Increment pending *before* handing off so `wait_for_idle`
-                // can't race past while the task is in flight on the
-                // channel — the refresh thread decrements via
-                // `PendingGuard` after running the task. The send always
-                // succeeds: the refresh thread holds the receiver for the
-                // orchestrator's full lifetime, and `&self` here proves
-                // we're alive.
                 pending.fetch_add(1, Ordering::SeqCst);
-                let task = RefreshTask {
-                    item: Arc::clone(&item),
-                    dims: (w, h),
-                    cache: Arc::clone(&cache),
-                    repo: repo.clone(),
-                };
-                refresh_tx
-                    .send(task)
-                    .expect("refresh thread receiver alive for orchestrator lifetime");
+                let guard = PendingGuard(Arc::clone(&pending));
+                let item = Arc::clone(&item);
+                let cache = Arc::clone(&cache);
+                let repo = repo.clone();
+                pool.spawn_fifo(move || {
+                    let _g = guard;
+                    let rendered = WorktreeSkimItem::refresh_log_preview(&repo, &item, w, h);
+                    // Skip empty results so a transient `git log` failure
+                    // doesn't poison the in-memory cache with "" and wipe
+                    // out the value the producer just inserted.
+                    if !rendered.is_empty() {
+                        cache.insert((item.branch_name().to_string(), PreviewMode::Log), rendered);
+                    }
+                });
             }
         });
     }
@@ -237,50 +212,6 @@ impl PreviewOrchestrator {
             .collect();
         format!("{{\n  \"entries\": [\n{}\n  ]\n}}", items.join(",\n"))
     }
-}
-
-/// Spawn the dedicated refresh worker thread.
-///
-/// Lifecycle: lives as long as any clone of the returned sender. The
-/// orchestrator holds one sender plus clones one into every rayon
-/// closure that might enqueue a refresh; when the orchestrator is
-/// dropped and all in-flight rayon closures finish, the channel closes
-/// and `recv()` returns `Err`, ending the loop.
-///
-/// Why a separate thread instead of submitting refreshes back into the
-/// rayon pool: rayon has no priority — a refresh task and a
-/// foreground-precompute task on the same pool compete for the same
-/// worker slots, so refreshes can delay first-paint. A serial
-/// dedicated thread guarantees refreshes never preempt rayon workers.
-fn spawn_refresh_thread(pending: Arc<AtomicUsize>) -> mpsc::Sender<RefreshTask> {
-    let (tx, rx) = mpsc::channel::<RefreshTask>();
-    std::thread::Builder::new()
-        .name("picker-preview-refresh".into())
-        .spawn(move || {
-            while let Ok(task) = rx.recv() {
-                // PendingGuard pairs with the producer's `pending.fetch_add(1)`
-                // before sending, so a panic inside the task still
-                // releases the counter and `wait_for_idle` doesn't hang.
-                let _guard = PendingGuard(Arc::clone(&pending));
-                let RefreshTask {
-                    item,
-                    dims: (w, h),
-                    cache,
-                    repo,
-                } = task;
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let rendered = WorktreeSkimItem::refresh_log_preview(&repo, &item, w, h);
-                    // Skip empty results so a transient `git log` failure
-                    // doesn't poison the in-memory cache with `""` and
-                    // wipe out the value the producer just inserted.
-                    if !rendered.is_empty() {
-                        cache.insert((item.branch_name().to_string(), PreviewMode::Log), rendered);
-                    }
-                }));
-            }
-        })
-        .expect("spawn picker-preview-refresh thread");
-    tx
 }
 
 #[cfg(test)]
