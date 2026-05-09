@@ -1623,6 +1623,46 @@ fn test_switch_create_no_hint_with_custom_worktree_path(repo: TestRepo) {
     );
 }
 
+#[rstest]
+fn test_switch_create_uses_codename_in_worktree_path(repo: TestRepo) {
+    repo.write_test_config(
+        r#"worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(3) }}""#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "feature/JIRA-1234",
+            "--format=json",
+            "--no-cd",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch --create should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let path = Path::new(json["path"].as_str().unwrap());
+    let dir_name = path.file_name().unwrap().to_str().unwrap();
+    let repo_prefix = format!(
+        "{}.",
+        repo.root_path().file_name().unwrap().to_str().unwrap()
+    );
+    let codename = dir_name.strip_prefix(&repo_prefix).unwrap();
+
+    assert!(path.exists(), "worktree should exist @ {}", path.display());
+    assert_eq!(codename.split('-').count(), 3, "got: {codename}");
+    assert!(
+        codename.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+        "got: {codename}"
+    );
+}
+
 /// Test that the worktree-path hint is suppressed when a project-specific
 /// worktree-path is configured (not just a global one).
 ///

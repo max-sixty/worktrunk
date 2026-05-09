@@ -139,6 +139,13 @@ schemars = { version = "1.2.1", features = ["derive"] }
 # `.git/wt/cache/summary/`). stdlib's `DefaultHasher` is not guaranteed
 # stable across Rust versions, so we need a deterministic algorithm on disk.
 sha2 = "0.11"
+# Wordlists for the `codename` template filter. PINNED EXACT — bumping this
+# can silently shift every existing user's codename-derived worktree path,
+# orphaning their on-disk worktrees. Coordinate any version change as a
+# breaking-change rollout (see `test_codename_outputs_are_stable` and
+# `src/config/expansion.rs::codename`). We use only the static wordlists,
+# not the random-name generator, so `default-rng` and `clap` stay off.
+petname = { version = "=3.0.0", default-features = false, features = ["default-words"] }
 
 tempfile = "3.27"
 wait-timeout = "0.2"
