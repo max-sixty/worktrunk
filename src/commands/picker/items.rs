@@ -304,11 +304,15 @@ impl WorktreeSkimItem {
     /// fallback covers the ahead=0 case, so the preview is correct even
     /// before the list-row pipeline has populated counts.
     ///
-    /// The default branch is resolved to its SHA so the disk cache stays
-    /// invariant across `git fetch` (which moves the *ref* but not the
-    /// captured SHA). When resolution fails, we fall through to the
-    /// uncached path with the branch name in the diff range — same git
-    /// behavior as before, just no cache write.
+    /// The default branch's SHA comes from [`Repository::default_branch_sha`],
+    /// which sources it from the already-warmed local-branch inventory. N
+    /// parallel preview tasks all share one inventory scan instead of each
+    /// forking `git rev-parse`. The SHA also keeps the disk cache invariant
+    /// across `git fetch` (which moves the *ref* but not the captured SHA).
+    /// When the SHA isn't available (no default branch, or stale config
+    /// pointing at a deleted branch), we fall through to the uncached path
+    /// with the branch name in the diff range — same git behavior as
+    /// before, just no cache read/write.
     fn compute_branch_diff_preview(repo: &Repository, item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
         let reset = Reset;
@@ -318,10 +322,7 @@ impl WorktreeSkimItem {
             );
         };
 
-        let base_sha = repo
-            .run_command(&["rev-parse", &default_branch])
-            .ok()
-            .map(|s| s.trim().to_string());
+        let base_sha = repo.default_branch_sha();
 
         if let Some(ref base) = base_sha
             && let Some(cached) = preview_cache::read_branch_diff(repo, base, item.head(), width)
@@ -772,11 +773,7 @@ mod tests {
         repo.run_command(&["commit", "-m", "real"]).unwrap();
         let item = item_at(&repo, "feature");
 
-        let base_sha = repo
-            .run_command(&["rev-parse", "main"])
-            .unwrap()
-            .trim()
-            .to_string();
+        let base_sha = repo.default_branch_sha().unwrap();
         let sentinel = "SENTINEL_FROM_CACHE";
         super::preview_cache::write_branch_diff(&repo, &base_sha, item.head(), 80, sentinel);
 
@@ -795,11 +792,7 @@ mod tests {
         repo.run_command(&["commit", "-m", "wb"]).unwrap();
         let item = item_at(&repo, "feature");
 
-        let base_sha = repo
-            .run_command(&["rev-parse", "main"])
-            .unwrap()
-            .trim()
-            .to_string();
+        let base_sha = repo.default_branch_sha().unwrap();
 
         assert!(
             super::preview_cache::read_branch_diff(&repo, &base_sha, item.head(), 80).is_none()

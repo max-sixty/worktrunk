@@ -423,6 +423,13 @@ pub fn handle_picker(
     // first-item preview can run in parallel with `collect::collect` below.
     // Wrapped in `Arc` because the progressive handler (running on the
     // collect background thread) also calls `spawn_preview`.
+    //
+    // BranchDiff previews resolve the default branch's SHA via
+    // `Repository::default_branch_sha`, which sources it from the
+    // local-branch inventory cached on the shared `RepoCache`. N parallel
+    // preview tasks share one inventory scan instead of each forking
+    // `git rev-parse`. Read-only for the picker session — see the
+    // accessor's docstring for the staleness contract.
     let orchestrator = Arc::new(PreviewOrchestrator::new(repo.clone()));
     let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
 

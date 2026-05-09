@@ -125,6 +125,41 @@ impl Repository {
         Ok(self.local_branch_inventory()?.get(name))
     }
 
+    /// Commit SHA the default branch points at, sourced from the local-branch
+    /// inventory.
+    ///
+    /// Returns `None` when the default branch can't be determined (see
+    /// [`default_branch`](Self::default_branch)) or when the configured
+    /// default branch isn't a local branch (e.g. stale
+    /// `worktrunk.default-branch` config pointing at a deleted branch). On
+    /// first call, populates the inventory cache via the same single
+    /// `for-each-ref refs/heads/` scan that [`local_branches`] would —
+    /// no extra subprocess.
+    ///
+    /// **Snapshot at first scan; do not use in ref-mutating commands.**
+    /// Same staleness contract as [`local_branches`]: the SHA is captured
+    /// when the inventory is first scanned and never refreshed. Code that
+    /// runs after wt itself has updated `refs/heads/<default>` (e.g.
+    /// `wt merge`'s `git update-ref`) must capture a fresh
+    /// [`crate::git::RefSnapshot`] instead — this accessor will keep
+    /// returning the pre-update SHA. Safe in read-only contexts (the
+    /// interactive picker, list rendering) where wt itself doesn't move
+    /// refs.
+    ///
+    /// Intended for cache keying: when many parallel tasks all need to
+    /// answer "what SHA is the default branch at *right now, for this
+    /// command's worth of work*", this lets them share one inventory scan
+    /// instead of each forking `git rev-parse <name>` independently.
+    ///
+    /// [`local_branches`]: Self::local_branches
+    pub fn default_branch_sha(&self) -> Option<String> {
+        let name = self.default_branch()?;
+        self.local_branch(&name)
+            .ok()
+            .flatten()
+            .map(|b| b.commit_sha.clone())
+    }
+
     /// Access the local-branch inventory (entries + name index).
     fn local_branch_inventory(&self) -> anyhow::Result<&LocalBranchInventory> {
         self.cache
@@ -328,4 +363,64 @@ pub(super) fn parse_remote_branch_line(line: &str) -> Option<RemoteBranch> {
         remote_name: remote_name.to_string(),
         local_name: local_name.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::TestRepo;
+
+    #[test]
+    fn default_branch_sha_returns_inventory_sha() {
+        // The accessor must return the same SHA `git rev-parse <default>`
+        // would, sourced from the local-branch inventory rather than its
+        // own subprocess.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let expected = test.git_output(&["rev-parse", "main"]);
+        assert_eq!(repo.default_branch_sha(), Some(expected));
+    }
+
+    #[test]
+    fn default_branch_sha_none_when_branch_missing_from_inventory() {
+        // Stale `worktrunk.default-branch` config points at a branch that
+        // doesn't exist locally — `default_branch()` returns the configured
+        // name, but `local_branch(name)` finds nothing, so the accessor
+        // returns None. Callers (e.g. the picker's BranchDiff preview)
+        // treat None as "fall through to the uncached path."
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["config", "worktrunk.default-branch", "ghost"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert_eq!(repo.default_branch().as_deref(), Some("ghost"));
+        assert_eq!(repo.default_branch_sha(), None);
+    }
+
+    #[test]
+    fn default_branch_sha_is_snapshot_at_first_scan() {
+        // Documenting the staleness contract: the inventory is scanned once
+        // per `Repository` instance, so a SHA captured before a ref-mutating
+        // operation stays put. Callers in mutating commands must capture a
+        // fresh `RefSnapshot` instead of trusting this accessor across the
+        // mutation.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let before = repo.default_branch_sha().expect("main resolves");
+
+        // Move main forward outside `repo`'s knowledge.
+        std::fs::write(test.root_path().join("after.txt"), "after\n").unwrap();
+        test.run_git(&["add", "after.txt"]);
+        test.run_git(&["commit", "-m", "advance main"]);
+        let real_after = test.git_output(&["rev-parse", "main"]);
+        assert_ne!(before, real_after, "test setup: main should have moved");
+
+        // Same `repo`: the cached inventory still serves the pre-move SHA.
+        assert_eq!(repo.default_branch_sha(), Some(before));
+
+        // A fresh `Repository::at` scans again and sees the new SHA.
+        let repo2 = Repository::at(test.root_path()).unwrap();
+        assert_eq!(repo2.default_branch_sha(), Some(real_after));
+    }
 }

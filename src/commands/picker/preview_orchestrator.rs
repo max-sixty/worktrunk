@@ -34,6 +34,12 @@ pub(super) struct PreviewOrchestrator {
     /// so background tasks see a stable repo binding, and so unit tests
     /// can inject a `TestRepo`-rooted `Repository` instead of relying on
     /// process CWD.
+    ///
+    /// Cloned into each spawned task so they share the underlying
+    /// `Arc<RepoCache>` — including the local-branch inventory that
+    /// [`Repository::default_branch_sha`] reads from. That's how the
+    /// BranchDiff preview avoids forking `git rev-parse` per item:
+    /// the inventory's single `for-each-ref` scan serves every task.
     repo: Repository,
 }
 
