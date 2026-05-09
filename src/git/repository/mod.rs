@@ -893,11 +893,11 @@ impl Repository {
     /// Get a worktree view at this Repository's discovery path.
     ///
     /// This is the primary way to get a [`WorkingTree`] for worktree-specific
-    /// operations. For [`Repository::current()`] the discovery path is the
+    /// operations. For [`Repository::current`] the discovery path is the
     /// process CWD (or `-C` value), so "current" matches its colloquial
-    /// meaning. For [`Repository::at(p)`] the discovery path is `p`, and this
-    /// returns a worktree at `p` rather than at the process CWD — see #2625
-    /// for the bug class that motivated anchoring this to `self`.
+    /// meaning. For [`Repository::at`], the discovery path is the path passed
+    /// in, and this returns a worktree there rather than at the process CWD —
+    /// see #2625 for the bug class that motivated anchoring this to `self`.
     pub fn current_worktree(&self) -> WorkingTree<'_> {
         self.worktree_at(self.discovery_path.clone())
     }

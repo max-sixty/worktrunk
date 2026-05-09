@@ -1219,6 +1219,31 @@ pub(crate) fn spawn_switch_background_hooks(
     announcer.flush()
 }
 
+/// Capture the source worktree's branch and root for `{{ base }}` /
+/// `{{ base_worktree_path }}` in post-switch hooks. Returns empty strings
+/// when recovered from a deleted CWD — the source worktree is gone, and
+/// `current_worktree()` would resolve to the recovered ancestor (typically
+/// the main worktree), which would misleadingly report main's branch/path
+/// as the user's "base".
+fn capture_switch_source(repo: &Repository, is_recovered: bool) -> (String, String) {
+    if is_recovered {
+        return (String::new(), String::new());
+    }
+    let source_branch = repo
+        .current_worktree()
+        .branch()
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let source_path = repo
+        .current_worktree()
+        .root()
+        .ok()
+        .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()))
+        .unwrap_or_default();
+    (source_branch, source_path)
+}
+
 /// Handle the switch command.
 pub fn run_switch(
     opts: SwitchOptions<'_>,
@@ -1295,26 +1320,7 @@ pub fn run_switch(
 
     // Capture source (base) worktree identity BEFORE the switch, so post-switch
     // hooks can reference where the user came from via {{ base }} / {{ base_worktree_path }}.
-    // Skip when recovered — the source worktree is gone, and `current_worktree()`
-    // resolves to the recovered ancestor (typically the main worktree), which would
-    // misleadingly report main's branch/path as the user's "base".
-    let (source_branch, source_path) = if is_recovered {
-        (String::new(), String::new())
-    } else {
-        let source_branch = repo
-            .current_worktree()
-            .branch()
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        let source_path = repo
-            .current_worktree()
-            .root()
-            .ok()
-            .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()))
-            .unwrap_or_default();
-        (source_branch, source_path)
-    };
+    let (source_branch, source_path) = capture_switch_source(&repo, is_recovered);
 
     // Execute the validated plan
     let (result, branch_info) = execute_switch(&repo, plan, config, yes, hooks_approved)?;
@@ -1352,8 +1358,11 @@ pub fn run_switch(
     // Returns path to display in hooks when user's shell won't be in the worktree
     // Also shows worktree-path hint on first --create (before shell integration warning)
     //
-    // When recovered from a deleted worktree, current_dir() and current_worktree().root()
-    // both fail — fall back to repo_path() (the main worktree root).
+    // When the user's CWD has been deleted, `std::env::current_dir()` fails —
+    // fall back to `repo_path()` (the main worktree root). `current_worktree()
+    // .root()` resolves against the Repository's discovery path, which is alive
+    // even after recovery, but we keep the same fallback for any pathological
+    // case where rev-parse fails.
     let fallback_path = repo.repo_path()?.to_path_buf();
     let cwd = std::env::current_dir().unwrap_or(fallback_path.clone());
     let source_root = repo.current_worktree().root().unwrap_or(fallback_path);
@@ -1529,4 +1538,32 @@ fn validate_switch_templates(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use worktrunk::testing::TestRepo;
+
+    #[test]
+    fn capture_switch_source_returns_empty_when_recovered() {
+        // When recovered from a deleted CWD, post-switch hooks must see empty
+        // `{{ base }}` / `{{ base_worktree_path }}` rather than the recovered
+        // ancestor's identity (typically the main worktree's branch/path).
+        let test = TestRepo::with_initial_commit();
+        let (branch, path) = capture_switch_source(&test.repo, true);
+        assert_eq!(branch, "");
+        assert_eq!(path, "");
+    }
+
+    #[test]
+    fn capture_switch_source_returns_branch_and_path_normally() {
+        // When not recovered, the helper reports the current worktree's
+        // identity. This guards against accidental regressions to the
+        // `is_recovered` gate (e.g., always returning empty).
+        let test = TestRepo::with_initial_commit();
+        let (branch, path) = capture_switch_source(&test.repo, false);
+        assert_eq!(branch, "main");
+        assert!(!path.is_empty(), "source_path should be the worktree root");
+    }
 }
