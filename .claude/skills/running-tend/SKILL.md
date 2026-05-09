@@ -115,6 +115,23 @@ wait — don't open a PR.
 Apply the literal suggestion only — change the lines it covers, nothing more.
 If surrounding lines also need updating, note that in your reply.
 
+## PR Review: Don't Restate Mention-Handler Analysis
+
+A maintainer comment that asks a question AND requests a code change triggers both `tend-mention` and (via the resulting push) `tend-review`:
+
+- `tend-mention` handles the comment directly — pushes the fix and posts a reply via `gh pr comment` that often answers the question.
+- `tend-review` fires on the `synchronize` event from the same push and runs the review skill against the new commit.
+
+The review run sees the maintainer's question as still-open (the bot reply landed mid-flight, or seconds before the review was composed) and re-states the same analysis in the review body. From the maintainer's side this reads as the bot answering the same question twice in five minutes — see PR #2655 for the triggering example.
+
+Before composing a review on a `synchronize` event, fetch conversation comments and check for a bot reply that post-dates the most recent maintainer question. If one exists and already addresses the question:
+
+1. Limit the review body to the diff itself — code-level observations, missing tests, doc gaps.
+2. Do not duplicate the analysis from the bot reply, even paraphrased.
+3. If the bot reply did **not** address the question, the review can still answer it (per the bundled review skill).
+
+This applies to the review *body* and *summary*, not just inline comments. The bundled review skill currently scopes the cross-reference rule to inline comments ("cross-reference previous bot comments before posting inline comments") — that's too narrow; the same dedup applies to anything you put in the review.
+
 ## PR Review: Don't Self-Dismiss Over Unrelated Test Flakes
 
 If a clearly-unrelated test fails after you've already approved a PR, leave
