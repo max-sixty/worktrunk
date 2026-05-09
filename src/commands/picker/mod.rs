@@ -77,15 +77,6 @@
 //! # Open trace.json in Perfetto, or run the phase-duration SQL query
 //! # documented in benches/CLAUDE.md §"What's on the critical path?".
 //! ```
-//!
-//! # TODO(picker-perf): dedupe git calls
-//!
-//! `num_items_estimate` and `collect::collect` each call `list_worktrees`.
-//! Pre-seed collect's OnceCells from the main-thread fetch to save one
-//! `git worktree list` on the bg thread's critical path toward skeleton.
-//! (The branch inventory is already shared via `Repository::cache`, so
-//! calling `local_branches()` / `remote_branches()` from both the main
-//! and bg threads runs the scan at most once.)
 
 mod items;
 mod log_formatter;
