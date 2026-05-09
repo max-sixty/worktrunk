@@ -546,20 +546,19 @@ impl WorktreeSkimItem {
         };
         let was_disk_hit = cached.is_some();
         // On `git log` failure (effectively unreachable — merge-base
-        // already validated `head`), bail with an empty preview. We
-        // deliberately don't write through to disk: persisting an empty
-        // `LogCacheEntry` would poison the SHA-keyed disk cache so a
-        // single transient failure suppresses the preview indefinitely.
-        let entry = match cached {
-            Some(entry) => entry,
-            None => match Self::compute_log_raw_and_stats(repo, head, log_limit, show_timestamps) {
-                Some(fresh) => {
-                    preview_cache::write_log(repo, head, width, height, &fresh);
-                    fresh
-                }
-                None => return (String::new(), false),
-            },
-        };
+        // already validated `head`), `unwrap_or_default()` yields an
+        // empty entry which `process_log_with_dimming` + `format_log_output`
+        // render as empty output below. We deliberately skip the disk
+        // write in that case: persisting an empty `LogCacheEntry` would
+        // poison the SHA-keyed cache so a single transient failure
+        // suppresses the preview indefinitely.
+        let entry = cached.unwrap_or_else(|| {
+            let fresh = Self::compute_log_raw_and_stats(repo, head, log_limit, show_timestamps);
+            if let Some(ref f) = fresh {
+                preview_cache::write_log(repo, head, width, height, f);
+            }
+            fresh.unwrap_or_default()
+        });
 
         let (processed, _hashes) =
             process_log_with_dimming(&entry.raw_log, unique_commits.as_ref());
