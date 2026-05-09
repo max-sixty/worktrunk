@@ -153,13 +153,17 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let current_wt = repo.current_worktree();
 
     // Validate --no-commit: requires clean working tree
-    if !commit && current_wt.is_dirty()? {
-        return Err(worktrunk::git::GitError::UncommittedChanges {
-            action: Some("merge with --no-commit".into()),
-            branch: Some(current_branch),
-            force_hint: false,
+    if !commit {
+        let dirty_files = current_wt.dirty_files()?;
+        if !dirty_files.is_empty() {
+            return Err(worktrunk::git::GitError::UncommittedChanges {
+                action: Some("merge with --no-commit".into()),
+                branch: Some(current_branch),
+                force_hint: false,
+                dirty_files,
+            }
+            .into());
         }
-        .into());
     }
 
     // --no-commit implies --no-squash

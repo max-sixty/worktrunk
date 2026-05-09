@@ -332,6 +332,17 @@ impl<'a> WorkingTree<'a> {
         Ok(!stdout.trim().is_empty())
     }
 
+    /// Return the raw `git status --porcelain` lines for a dirty working tree
+    /// (one entry per line, trailing newline stripped, in git's order). Returns
+    /// an empty vec when the tree is clean. Use this where the error message
+    /// should tell the user *what* is dirty — e.g., when constructing
+    /// [`GitError::UncommittedChanges`] in [`Self::ensure_clean`]. The same
+    /// caveats as [`Self::is_dirty`] apply (skip-worktree files are invisible).
+    pub fn dirty_files(&self) -> anyhow::Result<Vec<String>> {
+        let stdout = self.run_command(&["status", "--porcelain"])?;
+        Ok(stdout.lines().map(str::to_owned).collect())
+    }
+
     /// Get the root directory of this worktree (top-level of the working tree).
     ///
     /// Returns the canonicalized absolute path to the top-level directory.
@@ -425,11 +436,13 @@ impl<'a> WorkingTree<'a> {
         branch: Option<&str>,
         force_hint: bool,
     ) -> anyhow::Result<()> {
-        if self.is_dirty()? {
+        let dirty_files = self.dirty_files()?;
+        if !dirty_files.is_empty() {
             return Err(GitError::UncommittedChanges {
                 action: Some(action.into()),
                 branch: branch.map(String::from),
                 force_hint,
+                dirty_files,
             }
             .into());
         }

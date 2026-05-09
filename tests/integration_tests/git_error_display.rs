@@ -234,6 +234,7 @@ fn display_uncommitted_changes() {
         action: Some("remove worktree".into()),
         branch: None,
         force_hint: false,
+        dirty_files: Vec::new(),
     };
 
     assert_snapshot!("uncommitted_changes", err.render());
@@ -245,6 +246,7 @@ fn display_uncommitted_changes_with_branch() {
         action: Some("remove worktree".into()),
         branch: Some("feature-branch".into()),
         force_hint: false,
+        dirty_files: Vec::new(),
     };
 
     assert_snapshot!("uncommitted_changes_with_branch", err.render());
@@ -256,9 +258,22 @@ fn display_uncommitted_changes_with_force_hint() {
         action: Some("remove worktree".into()),
         branch: Some("feature-branch".into()),
         force_hint: true,
+        dirty_files: Vec::new(),
     };
 
     assert_snapshot!("uncommitted_changes_with_force_hint", err.render());
+}
+
+#[test]
+fn display_uncommitted_changes_with_dirty_files() {
+    let err = GitError::UncommittedChanges {
+        action: Some("remove worktree after merge".into()),
+        branch: Some("feature-auth".into()),
+        force_hint: false,
+        dirty_files: vec![" M auth.rs".into(), "?? .DS_Store".into()],
+    };
+
+    assert_snapshot!("uncommitted_changes_with_dirty_files", err.render());
 }
 
 #[test]
