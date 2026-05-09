@@ -444,11 +444,12 @@ impl WorktreeSkimItem {
     /// key out of `main`'s SHA — a `git fetch` advancing `origin/main`
     /// doesn't invalidate any entry — while preserving correctness as
     /// `main` and wall-clock advance.
-    /// Render the Log preview and report whether the disk cache was hit.
-    /// The orchestrator uses the flag to schedule a background refresh —
-    /// see [`Self::refresh_log_preview`] and the `LogCacheEntry`
-    /// docstring for why decorations baked into `raw_log` need
-    /// refreshing even though the cache key is correct.
+    ///
+    /// Returns the rendered preview and a flag for whether the disk cache
+    /// was hit. The orchestrator uses the flag to schedule a background
+    /// refresh — see [`Self::refresh_log_preview`] and the `LogCacheEntry`
+    /// docstring for why decorations baked into `raw_log` need refreshing
+    /// even though the cache key is correct.
     pub(super) fn compute_log_preview(
         repo: &Repository,
         item: &ListItem,
@@ -544,17 +545,22 @@ impl WorktreeSkimItem {
             preview_cache::read_log(repo, head, width, height)
         };
         let was_disk_hit = cached.is_some();
-        // On `git log` failure (effectively unreachable here — merge-base
-        // already validated `head` upstream), fall back to a default
-        // entry. `process_log_with_dimming` + `format_log_output` handle
-        // the empty `raw_log` gracefully and produce empty output, the
-        // same effective behavior as the prior explicit early return.
-        let entry = cached.unwrap_or_else(|| {
-            let fresh = Self::compute_log_raw_and_stats(repo, head, log_limit, show_timestamps)
-                .unwrap_or_default();
-            preview_cache::write_log(repo, head, width, height, &fresh);
-            fresh
-        });
+        // On `git log` failure (effectively unreachable — merge-base
+        // already validated `head`), bail with an empty preview. We
+        // deliberately don't write through to disk: persisting an empty
+        // `LogCacheEntry` would poison the SHA-keyed disk cache so a
+        // single transient failure suppresses the preview indefinitely.
+        let entry = match cached {
+            Some(entry) => entry,
+            None => match Self::compute_log_raw_and_stats(repo, head, log_limit, show_timestamps)
+            {
+                Some(fresh) => {
+                    preview_cache::write_log(repo, head, width, height, &fresh);
+                    fresh
+                }
+                None => return (String::new(), false),
+            },
+        };
 
         let (processed, _hashes) =
             process_log_with_dimming(&entry.raw_log, unique_commits.as_ref());
