@@ -47,6 +47,12 @@ let output = wt_command()
     .output()?;
 ```
 
+`wt_command()`'s default `current_dir` is a process-scoped empty tempdir
+(outside any git repo, no project config) — so a bare `wt_command()` won't
+pick up the test process's inherited CWD. Tests that need a specific CWD
+(e.g., the worktrunk repo root for `readme_sync` help-text capture) must
+call `.current_dir(...)` explicitly.
+
 ### Method reference
 
 | Method | Returns | Use when |
