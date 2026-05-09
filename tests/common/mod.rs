@@ -585,6 +585,15 @@ fn add_snapshot_path_prelude_filters(settings: &mut insta::Settings) {
     // the project's normal target/ — see max-sixty/cargo-affected#12.
     settings.add_filter(r"/target/affected/build/", "/target/");
 
+    // Normalize cross-target build dirs (target/<triple>/) to target/ when tests
+    // run via `cargo nextest run --target <triple>` — used by the nightly
+    // `release-target` matrix (musl, intel-darwin). Anchored on the vendor
+    // field of a Rust target triple to avoid matching unrelated subdirs.
+    settings.add_filter(
+        r"/target/[a-z0-9_]+-(?:unknown|apple|pc|wasi)-[a-z0-9_-]+/",
+        "/target/",
+    );
+
     // Deliberately no global `\\` → `/` normalization here: it corrupts
     // intentional backslashes (JSON `\u001b` ANSI escapes, shell line
     // continuations) and worktrunk already emits forward-slash paths via
@@ -982,13 +991,12 @@ fn setup_snapshot_settings_for_paths_with_home(
         "${1}[VERSION]",
     );
 
-    // Normalize project root paths in "Binary invoked as:" debug output
-    // Tests run cargo which produces paths like /path/to/worktrunk/target/debug/wt
-    // Normalize to [PROJECT_ROOT]/target/debug/wt for deterministic snapshots
-    settings.add_filter(
-        r"(Binary invoked as: \x1b\[1m)[^\x1b]+/target/(debug|release)/wt(\x1b\[22m)",
-        "${1}[PROJECT_ROOT]/target/$2/wt$3",
-    );
+    // Collapse build-mode (debug|release) so snapshots survive both cargo's
+    // debug builds and crane/release builds (notably the nightly nix-flake
+    // sandbox). The pattern is anchored on `/target/.../wt` so it matches
+    // the bin path in "Invoked as:" / "Binary invoked as:" / diagnostic
+    // hint output without touching unrelated `target/` paths.
+    settings.add_filter(r"/target/(debug|release)/wt", "/target/[BUILD_MODE]/wt");
 
     // Normalize shell probe binary paths
     // Shell probe reports the actual binary location which varies by system
@@ -1195,11 +1203,17 @@ pub fn add_pty_filters(settings: &mut insta::Settings) {
 ///
 /// Test binaries are run from the cargo target directory, which varies.
 pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
-    // Match paths ending in target/debug/wt or target/release/wt
-    // Also handles llvm-cov-target used by cargo-llvm-cov and affected/build/
-    // used by cargo-affected (max-sixty/cargo-affected#12)
+    // Match paths ending in target/.../{debug,release}/wt — covers the
+    // default layout (`target/debug/wt`), cargo-llvm-cov (`llvm-cov-target/`),
+    // cargo-affected (`affected/build/`, max-sixty/cargo-affected#12), and
+    // cross-target builds (e.g. `target/x86_64-unknown-linux-musl/debug/wt`
+    // from the nightly `release-target` matrix).
+    //
+    // Include the literal `[BUILD_MODE]` placeholder so this filter still
+    // collapses to `[BIN]` when the prelude's `target/(debug|release)/wt`
+    // → `target/[BUILD_MODE]/wt` rewrite has already run.
     settings.add_filter(
-        r"[^\s]+/target/(?:llvm-cov-target/|affected/build/)?(?:debug|release)/wt",
+        r"[^\s]+/target/(?:[^/\s]+/)*(?:debug|release|\[BUILD_MODE\])/wt",
         "[BIN]",
     );
 }

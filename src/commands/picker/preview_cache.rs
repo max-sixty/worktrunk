@@ -49,7 +49,20 @@ const KIND: &str = "picker-preview";
 /// `batch_fetch_stats`. The render path re-runs `process_log_with_dimming`
 /// against fresh `unique_commits` and `format_log_output` against
 /// `epoch_now()`, so output stays correct as `main` and wall-clock advance.
-#[derive(Serialize, Deserialize)]
+///
+/// `raw_log` also embeds `git log --format=%C(auto)%d` ref decorations
+/// (e.g. `HEAD -> feature, main`), which are *not* SHA-deterministic —
+/// another ref starting or stopping pointing at the same commit (most
+/// commonly: a squash merge landing `main` at the cached SHA) would
+/// leave the decoration text stale even though the cache key is still
+/// valid. The orchestrator mitigates this by enqueuing a background
+/// refresh task on the picker's rayon pool whenever a Log preview hit
+/// the disk cache; the refresh re-runs `compute_log_raw_and_stats`,
+/// overwrites this entry, and updates the in-memory `PreviewCache`.
+/// The cached entry served on the *current* render is still potentially
+/// stale — refresh is async — but the next visit to the same row reads
+/// fresh content. See `commands::picker::preview_orchestrator::spawn_preview`.
+#[derive(Serialize, Deserialize, Default)]
 pub(super) struct LogCacheEntry {
     pub raw_log: String,
     /// Empty when `width < TIMESTAMP_WIDTH_THRESHOLD` (the no-timestamp

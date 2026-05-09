@@ -62,6 +62,12 @@ impl PreviewOrchestrator {
     /// happens outside any DashMap lock so skim's UI thread (which calls
     /// `preview()` synchronously and reads via `DashMap::get`) is never
     /// blocked on a shard write held across git/pager subprocesses.
+    ///
+    /// Log mode that hits the disk cache also enqueues a refresh task
+    /// (via `pool.spawn_fifo`, so it lands behind in-flight foreground
+    /// precompute) to recompute the embedded ref decorations before the
+    /// next visit. See the `LogCacheEntry` docstring for why the disk
+    /// cache itself is SHA-keyed but decoration text drifts.
     pub(super) fn spawn_preview(
         &self,
         item: Arc<ListItem>,
@@ -71,13 +77,33 @@ impl PreviewOrchestrator {
         let cache = Arc::clone(&self.cache);
         let (w, h) = dims;
         let repo = self.repo.clone();
+        let pool = Arc::clone(&self.pool);
+        let pending = Arc::clone(&self.pending);
         self.spawn_task(move || {
             let cache_key = (item.branch_name().to_string(), mode);
             if cache.contains_key(&cache_key) {
                 return;
             }
-            let value = WorktreeSkimItem::compute_and_page_preview(&repo, &item, mode, w, h);
+            let (value, log_disk_hit) =
+                WorktreeSkimItem::compute_and_page_preview(&repo, &item, mode, w, h);
             cache.insert(cache_key, value);
+            if log_disk_hit {
+                pending.fetch_add(1, Ordering::SeqCst);
+                let guard = PendingGuard(Arc::clone(&pending));
+                let item = Arc::clone(&item);
+                let cache = Arc::clone(&cache);
+                let repo = repo.clone();
+                pool.spawn_fifo(move || {
+                    let _g = guard;
+                    let rendered = WorktreeSkimItem::refresh_log_preview(&repo, &item, w, h);
+                    // Skip empty results so a transient `git log` failure
+                    // doesn't poison the in-memory cache with "" and wipe
+                    // out the value the producer just inserted.
+                    if !rendered.is_empty() {
+                        cache.insert((item.branch_name().to_string(), PreviewMode::Log), rendered);
+                    }
+                });
+            }
         });
     }
 
@@ -290,6 +316,79 @@ mod tests {
             orch.cache
                 .contains_key(&("main".to_string(), PreviewMode::Summary)),
             "Summary entry not cached"
+        );
+    }
+
+    /// Disk-cache hit on a Log preview enqueues a background refresh that
+    /// overwrites both the disk file and the in-memory DashMap. Seed the
+    /// disk cache with a stale `LogCacheEntry` containing a marker —
+    /// after `spawn_preview` + `wait_for_idle`, neither cache should
+    /// hold the marker, because the refresh thread re-ran
+    /// `compute_log_raw_and_stats` and wrote real git-log output.
+    ///
+    /// `wait_for_idle` covers the refresh thread's task because the
+    /// producer increments `pending` before sending and the refresh
+    /// thread decrements via `PendingGuard` after running.
+    #[test]
+    fn log_disk_hit_triggers_background_refresh() {
+        let (t, item) = dirty_worktree_item();
+        let repo = Repository::at(t.path()).unwrap();
+
+        let stale = super::super::preview_cache::LogCacheEntry {
+            raw_log: "STALE_MARKER\n".to_string(),
+            stats: std::collections::HashMap::new(),
+        };
+        super::super::preview_cache::write_log(&repo, item.head(), 80, 24, &stale);
+
+        let orch = orch_for(&t);
+        orch.spawn_preview(Arc::clone(&item), PreviewMode::Log, (80, 24));
+        orch.wait_for_idle();
+
+        let disk = super::super::preview_cache::read_log(&repo, item.head(), 80, 24)
+            .expect("disk cache present after refresh");
+        assert!(
+            !disk.raw_log.contains("STALE_MARKER"),
+            "refresh should overwrite stale disk entry, got raw_log: {:?}",
+            disk.raw_log
+        );
+
+        let in_memory = orch
+            .cache
+            .get(&("main".to_string(), PreviewMode::Log))
+            .expect("in-memory entry present")
+            .clone();
+        assert!(
+            !in_memory.contains("STALE_MARKER"),
+            "refresh should overwrite stale in-memory entry, got: {in_memory:?}"
+        );
+    }
+
+    /// Non-Log modes have content-addressed cache keys (BranchDiff is
+    /// `(base_sha, branch_sha, w)`, UpstreamDiff similar) and no
+    /// decoration drift, so a disk-cache hit on those modes must NOT
+    /// enqueue a Log refresh. Seed the disk Log cache with stale content
+    /// and spawn a BranchDiff preview — the disk Log cache must remain
+    /// stale because the refresh thread never received a task.
+    #[test]
+    fn non_log_modes_do_not_trigger_log_refresh() {
+        let (t, item) = dirty_worktree_item();
+        let repo = Repository::at(t.path()).unwrap();
+
+        let stale = super::super::preview_cache::LogCacheEntry {
+            raw_log: "STALE_MARKER\n".to_string(),
+            stats: std::collections::HashMap::new(),
+        };
+        super::super::preview_cache::write_log(&repo, item.head(), 80, 24, &stale);
+
+        let orch = orch_for(&t);
+        orch.spawn_preview(Arc::clone(&item), PreviewMode::BranchDiff, (80, 24));
+        orch.wait_for_idle();
+
+        let disk = super::super::preview_cache::read_log(&repo, item.head(), 80, 24)
+            .expect("disk Log cache untouched");
+        assert_eq!(
+            disk.raw_log, "STALE_MARKER\n",
+            "non-Log spawn must not trigger Log refresh"
         );
     }
 

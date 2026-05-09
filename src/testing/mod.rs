@@ -361,16 +361,37 @@ pub fn scrub_git_path_vars(cmd: &mut Command) {
     }
 }
 
+/// A process-scoped empty directory used as the default `current_dir` for
+/// [`wt_command`]. Created lazily on first use and kept alive for the rest of
+/// the test process; the OS reaps it from the temp dir afterwards (statics
+/// aren't dropped at process exit, so `TempDir::drop` doesn't run).
+///
+/// The dir is guaranteed to be outside any git repository and to have no
+/// `.config/wt.toml`, so `wt` invocations spawned through [`wt_command`] don't
+/// pick up the test process's inherited CWD (which is typically the worktrunk
+/// repo root, with its own `.config/wt.toml` and git history).
+fn isolated_test_cwd() -> &'static Path {
+    static ISOLATED_CWD: std::sync::LazyLock<TempDir> =
+        std::sync::LazyLock::new(|| TempDir::new().expect("create isolated test cwd"));
+    ISOLATED_CWD.path()
+}
+
 /// Create a `wt` CLI command with standardized test environment settings.
 ///
 /// The command has the following guarantees:
 /// - All host `GIT_*` and `WORKTRUNK_*` variables are cleared
 /// - Color output is forced (`CLICOLOR_FORCE=1`) so ANSI styling appears in snapshots
 /// - Terminal width set to 150 columns (`COLUMNS=150`)
+/// - `current_dir` defaults to a process-scoped empty tempdir (not a git repo,
+///   no project config), so `wt` doesn't pick up worktrunk's own
+///   `.config/wt.toml` or detect a git repo from the test process's inherited
+///   CWD. Tests that need a specific CWD must override via
+///   `cmd.current_dir(...)`; `repo.wt_command()` does so automatically.
 #[must_use]
 pub fn wt_command() -> Command {
     let mut cmd = Command::new(wt_bin());
     configure_cli_command(&mut cmd);
+    cmd.current_dir(isolated_test_cwd());
     cmd
 }
 

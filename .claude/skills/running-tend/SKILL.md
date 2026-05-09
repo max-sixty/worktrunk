@@ -127,10 +127,7 @@ GitHub blocks both `gh run rerun --failed` and per-job rerun
 `benchmarks` job routinely runs 80+ minutes after `test (linux|macos|windows)`
 finish, so dismiss-then-wait-then-rerun cascades into a long session for no
 benefit — the maintainer can rerun the failed job directly once `benchmarks`
-clears, or merge regardless if the failure is clearly a flake. Past
-occurrence: PR #2512 ([run 25196909437](https://github.com/max-sixty/worktrunk/actions/runs/25196909437))
-spent ~90 min in a wait-and-rerun loop after dismissing approval over an
-unrelated `step_prune` Windows flake.
+clears, or merge regardless if the failure is clearly a flake.
 
 The codecov-failure dismissal pattern is different and remains correct:
 `CLAUDE.md` requires explicit user approval before merging with failing
@@ -180,6 +177,28 @@ Suggest an alias when:
 4. Link to the [aliases docs](https://worktrunk.dev/step/#aliases) and
    [tips & patterns](https://worktrunk.dev/tips-patterns/) for further recipes
 
+### Don't fix tests by adding skip guards
+
+When a test fails because production code or test setup can't handle some
+scenario, fix the production code or rework the test setup. Don't add an
+early-return skip — that removes the safety net while looking like a fix.
+If a triage fix reaches for `let Ok(_) = ... else { return };`, a newly-added
+`if !path.exists() { return; }`, or a fresh `#[ignore]`, stop and ask what
+production behavior is actually broken.
+
+If the test relies on inherited environment (process CWD, ambient env
+vars), rework it to set up its own — most worktrunk tests already do this
+via `TestRepo::with_initial_commit()` plus a tempdir.
+
+### Same-root-cause-class triage
+
+The "work on the existing PR if it addresses the same problem" rule keys
+on the same test. It doesn't catch a different test failing for the same
+underlying reason. Group failing tests by root-cause class before writing
+a fix; if an outstanding PR addresses any test in the class, wait for it
+to merge and re-run, then mirror its approach for any sites still failing
+rather than opening a parallel PR with a weaker fix.
+
 ## Weekly Maintenance: MSRV & Toolchain
 
 Bump both MSRV and the development toolchain to **latest stable − 1**. When
@@ -211,8 +230,8 @@ Pinned third-party versions in CI are invisible to Dependabot — it follows `Ca
 
 For each weekly run, check upstream and bump:
 
-- **`baptiste0928/cargo-install@v3` blocks** in `.github/workflows/ci.yaml` and `.github/actions/{test,claude}-setup/action.yaml` — every `version: "=X.Y.Z"` against `cargo info <crate>`. Today: `cargo-insta`, `cargo-nextest`, `cargo-llvm-cov`, `cargo-msrv`, `cargo-udeps`, `lychee`, `worktrunk`. The `cargo-affected` install has no version pin (follows default branch) — leave it alone. Verify each crate's `rust-version` against the pinned toolchain and note compatibility in the PR body (see PR #1657 for the format).
-- **`hustcer/setup-nu@v3`** `version:` input — latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'`. Three call sites: `ci.yaml` (`benchmarks`, `code-coverage`) and `actions/test-setup/action.yaml`.
+- **`baptiste0928/cargo-install@v3` blocks** in `.github/workflows/ci.yaml`, `.github/workflows/nightly.yaml`, and `.github/actions/{test,claude}-setup/action.yaml` — every `version: "=X.Y.Z"` against `cargo info <crate>`. Today: `cargo-insta`, `cargo-nextest`, `cargo-llvm-cov`, `cargo-msrv`, `cargo-udeps`, `lychee`, `worktrunk`. The `cargo-affected` install has no version pin (follows default branch) — leave it alone. Verify each crate's `rust-version` against the pinned toolchain and note compatibility in the PR body (see PR #1657 for the format).
+- **`hustcer/setup-nu@v3`** `version:` input — latest from `gh api repos/nushell/nushell/releases/latest --jq '.tag_name'`. Three call sites: `ci.yaml` (`code-coverage`), `nightly.yaml` (`benchmarks`), and `actions/test-setup/action.yaml`.
 - **`taiki-e/install-action@v2.x`** `tool: zola@<ver>` in the `check-docs` job — latest from `gh api repos/getzola/zola/releases/latest --jq '.tag_name'`.
 - **Runner images** — `ubuntu-24.04`, `macos-15`, `windows-2022`. Keep `windows-2022` pinned (actions/runner-images#12677 — windows-2025 lacks the D: drive).
 
@@ -244,7 +263,7 @@ Triage each duplicate:
 - **Legitimate** (different cwd, different ref form that can't be normalized,
   intentional double-call across phases) — note in the response and move on.
 - **Cache miss** (same logical operation should hit cache but doesn't) —
-  open an issue or fix it. Past examples: `merge_base("main", "<sha>")` vs
+  open an issue or fix it. Common shapes: `merge_base("main", "<sha>")` vs
   `merge_base("main", "branch")` keying separately;
   `worktree_at(cwd)` vs `worktree_at(porcelain_path)` not canonicalizing.
 

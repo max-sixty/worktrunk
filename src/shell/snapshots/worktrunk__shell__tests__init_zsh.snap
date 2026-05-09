@@ -42,9 +42,12 @@ if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
                 command "${WORKTRUNK_BIN:-wt}" "${args[@]}" || exit_code=$?
         fi
 
-        # cd file holds a raw path (no shell escaping needed)
+        # cd file holds a raw path (no shell escaping needed).
+        # `builtin cd` bypasses any user `cd` alias or function (e.g. zoxide's
+        # `alias cd=__zoxide_z`) that would otherwise be substituted into this
+        # function body when it's defined. See #2643.
         if [[ -s "$cd_file" ]]; then
-            cd -- "$(<"$cd_file")"
+            builtin cd -- "$(<"$cd_file")"
             local cd_exit=$?
             if [[ $exit_code -eq 0 ]]; then
                 exit_code=$cd_exit

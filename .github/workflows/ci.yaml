@@ -164,30 +164,6 @@ jobs:
     - name: Verify minimum rust version
       run: cargo msrv verify
 
-  check-unused-dependencies:
-    runs-on: ubuntu-24.04
-    needs: changes
-    if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
-    steps:
-    - name: 📂 Checkout code
-      uses: actions/checkout@v6
-
-    # cargo-udeps requires nightly; update date periodically
-    - run: rustup override set nightly-2026-03-01
-
-    - name: 💰 Cache
-      uses: Swatinem/rust-cache@v2
-
-    - uses: baptiste0928/cargo-install@v3
-      with:
-        crate: cargo-udeps
-        version: "=0.1.60"
-
-    - uses: clechasseur/rs-cargo@v5.0.4
-      with:
-        command: udeps
-        args: --all-targets
-
   check-docs:
     runs-on: ubuntu-24.04
     needs: changes
@@ -204,37 +180,6 @@ jobs:
     - name: 🕷️ Build docs
       run: zola build
       working-directory: docs
-
-  benchmarks:
-    runs-on: ubuntu-24.04
-    needs: changes
-    if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
-    steps:
-    - name: 📂 Checkout code
-      uses: actions/checkout@v6
-
-    - name: 💰 Cache
-      uses: Swatinem/rust-cache@v2
-
-    - name: Install shells (zsh, fish)
-      uses: awalsh128/cache-apt-pkgs-action@v1.6.0
-      with:
-        packages: zsh fish
-        version: 1.0
-
-    - name: Install nushell
-      uses: hustcer/setup-nu@v3
-      with:
-        version: '0.112.2'
-
-    - name: 💰 Rust repo cache
-      uses: actions/cache@v5
-      with:
-        path: target/bench-repos
-        key: bench-repos-rust-${{ runner.os }}
-
-    - name: 📊 Run benchmarks
-      run: cargo bench
 
   # cargo-affected: runs only the tests whose recorded coverage overlaps the
   # diff. Advisory at this stage — `test (linux/macos/windows)` still runs the

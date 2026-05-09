@@ -5,7 +5,7 @@ expression: normalize_report(&content)
 ## Diagnostic Report
 
 **Generated:** [TIMESTAMP]
-**Command:** `[PROJECT_ROOT]/target/debug/wt list -vv`
+**Command:** `[PROJECT_ROOT]/target/[BUILD_MODE]/wt list -vv`
 **Result:** Command completed successfully
 
 <details>

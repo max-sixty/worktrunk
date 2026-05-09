@@ -626,7 +626,7 @@ fn normalize_report(content: &str) -> String {
         .unwrap()
         .replace_all(
             &result,
-            "**Command:** `[PROJECT_ROOT]/target/debug/wt list -vv`",
+            "**Command:** `[PROJECT_ROOT]/target/[BUILD_MODE]/wt list -vv`",
         )
         .to_string();
 

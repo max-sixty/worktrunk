@@ -5,7 +5,9 @@
 //! and offers to auto-configure the recommended settings.
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::io::{self, IsTerminal};
+use std::path::PathBuf;
 use std::sync::LazyLock;
 
 use color_print::cformat;
@@ -99,19 +101,18 @@ fn parse_recommended_commands(config: &str) -> HashMap<String, String> {
 }
 
 /// Check if a command is available in PATH.
-///
-/// Uses platform-appropriate method: `where` on Windows, `which` on Unix.
 fn command_exists(cmd: &str) -> bool {
-    #[cfg(windows)]
-    let check_cmd = "where";
-    #[cfg(not(windows))]
-    let check_cmd = "which";
+    command_exists_in(cmd, std::env::var_os("PATH").as_deref())
+}
 
-    worktrunk::shell_exec::Cmd::new(check_cmd)
-        .arg(cmd)
-        .run()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+/// Inner implementation that takes an explicit PATH-style search list.
+///
+/// Split out so tests can verify the lookup against a controlled directory
+/// rather than the inherited PATH, which can omit even `which`/`where` in
+/// minimal sandboxes (e.g., the Nix flake build sandbox).
+fn command_exists_in(cmd: &str, paths: Option<&OsStr>) -> bool {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    which::which_in(cmd, paths, &cwd).is_ok()
 }
 
 /// Format a command string as TOML for display.
@@ -322,18 +323,38 @@ mod tests {
     }
 
     #[test]
-    fn test_command_exists_known_command() {
-        // 'which' (Unix) or 'where' (Windows) should always exist
-        #[cfg(not(windows))]
-        assert!(command_exists("which"));
+    fn test_command_exists_in_finds_binary_on_explicit_path() {
+        // Provide our own search path so the positive case doesn't depend
+        // on which standard tools the inherited PATH happens to ship.
+        let tmp = tempfile::tempdir().unwrap();
         #[cfg(windows)]
-        assert!(command_exists("where"));
+        let bin_name = "wt-fake-bin.exe";
+        #[cfg(not(windows))]
+        let bin_name = "wt-fake-bin";
+        let bin_path = tmp.path().join(bin_name);
+        std::fs::write(&bin_path, "").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        assert!(command_exists_in(bin_name, Some(tmp.path().as_os_str())));
     }
 
     #[test]
     fn test_command_exists_nonexistent() {
         // A command that definitely doesn't exist
         assert!(!command_exists("__nonexistent_command_12345__"));
+    }
+
+    #[test]
+    fn test_command_exists_in_returns_false_when_paths_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(!command_exists_in(
+            "__nonexistent__",
+            Some(tmp.path().as_os_str()),
+        ));
     }
 
     #[test]
