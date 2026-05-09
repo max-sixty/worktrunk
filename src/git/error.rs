@@ -2145,14 +2145,19 @@ mod tests {
 
         // With dirty_files populated — surfaces *which* files block the action.
         // Each line is the raw `git status --porcelain` entry, dim, indented two
-        // columns. Snapshot left empty for `cargo insta test --accept` to fill.
+        // columns.
         let err = GitError::UncommittedChanges {
             action: Some("remove worktree after merge".into()),
             branch: Some("feature-auth".into()),
             force_hint: false,
             dirty_files: vec![" M auth.rs".into(), "?? .DS_Store".into()],
         };
-        assert_snapshot!(err.render());
+        assert_snapshot!(err.render(), @"
+        [31m✗[39m [31mCannot remove worktree after merge: [1mfeature-auth[22m has uncommitted changes[39m
+          [2m M auth.rs[22m
+          [2m?? .DS_Store[22m
+        [2m↳[22m [2mCommit or stash changes first[22m
+        ");
     }
 
     #[test]
