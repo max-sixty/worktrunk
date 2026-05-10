@@ -708,26 +708,64 @@ fn add_placeholder_cleanup_filters(settings: &mut insta::Settings) {
     );
 }
 
+/// Match the parent path of a `test-*` config under the test tempdir, in
+/// either the absolute (`/var/folders/.../.tmp.../`) or tilde
+/// (`~/`, `~/.tmp.../`) form. `format_path_for_display` produces both shapes
+/// — macOS keeps the absolute form (canonicalized HOME `/private/var/...`
+/// doesn't prefix the uncanonicalized config path), Linux strips to a tilde
+/// (HOME == tempdir, prefix matches).
+const TEST_PATH_PREFIX: &str =
+    r"'?(?:~(?:/\.tmp[^/\\']+)?|(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+)[/\\]";
+
 fn add_temp_path_placeholder_filters(settings: &mut insta::Settings) {
     settings.add_filter(
-        r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-config\.toml\.new'?",
+        &format!(r"{TEST_PATH_PREFIX}test-config\.toml\.new'?"),
         "[TEST_CONFIG_NEW]",
     );
     settings.add_filter(
-        r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-config\.toml'?",
+        &format!(r"{TEST_PATH_PREFIX}test-config\.toml'?"),
         "[TEST_CONFIG]",
     );
     settings.add_filter(
-        r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-approvals\.toml'?",
+        &format!(r"{TEST_PATH_PREFIX}test-approvals\.toml'?"),
         "[TEST_APPROVALS]",
-    );
-    settings.add_filter(
-        r"(?:\x1b\[\d+m)+(\[TEST_(?:CONFIG(?:_NEW)?|APPROVALS)\])(?:\x1b\[\d+m)+",
-        "$1",
     );
     settings.add_filter(
         r"(?:[A-Z]:)?/[^\s]+/\.tmp[^/]+/test-gitconfig",
         "[TEST_GIT_CONFIG]",
+    );
+}
+
+/// Strip ANSI codes immediately wrapping a path-redaction placeholder so a
+/// `<bold>{path}</>` source collapses to a clean `[PLACEHOLDER]` in snapshots.
+///
+/// Targeted: only placeholders that name a redacted path — not value
+/// placeholders (`[VERSION]`, `[HASH]`, `[BUILD_MODE]`, `[BINARY_PATH]`) where
+/// bold is meaningful styling we want to assert.
+///
+/// Insta filters apply in insertion order, so this must run *after* every
+/// in-setup substitution that establishes one of these placeholders. Filters
+/// added by tests on top of `setup_snapshot_settings*` are past this point —
+/// they must consume ANSI inline via [`add_path_placeholder_filter`].
+fn add_placeholder_ansi_strip_filter(settings: &mut insta::Settings) {
+    settings.add_filter(
+        r"(?:\x1b\[\d+m)+(\[(?:TEST_(?:CONFIG(?:_NEW)?|APPROVALS|GIT_CONFIG)|PROJECT_ID|TEMP(?:_HOME)?)\])(?:\x1b\[\d+m)+",
+        "$1",
+    );
+}
+
+/// Add a filter substituting `path_pattern` → `placeholder`, consuming any
+/// ANSI codes immediately wrapping the path. Use this for test-specific path
+/// redactions that need to survive a `<bold>` source — the late strip pass in
+/// `setup_snapshot_settings*` runs before test-level filters get a chance.
+pub fn add_path_placeholder_filter(
+    settings: &mut insta::Settings,
+    path_pattern: &str,
+    placeholder: &str,
+) {
+    settings.add_filter(
+        &format!(r"(?:\x1b\[\d+m)*{path_pattern}(?:\x1b\[\d+m)*"),
+        placeholder,
     );
 }
 
@@ -1046,6 +1084,11 @@ fn setup_snapshot_settings_for_paths_with_home(
     settings.add_filter(r#"    CARGO_LLVM_COV_TARGET_DIR: "[^"]+"\n"#, "");
     settings.add_filter(r#"    LLVM_PROFILE_FILE: "[^"]+"\n"#, "");
 
+    // Last so every placeholder established above (e.g. [TEST_CONFIG],
+    // [PROJECT_ID], [TEMP_HOME], [HASH]) is in place when we strip styling
+    // wrappers around it.
+    add_placeholder_ansi_strip_filter(&mut settings);
+
     settings
 }
 
@@ -1094,6 +1137,7 @@ pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
     // Normalize thread IDs in panic messages (vary across runs)
     settings.add_filter(r"thread '([^']+)' \(\d+\)", "thread '$1'");
     add_standard_env_redactions(&mut settings);
+    add_placeholder_ansi_strip_filter(&mut settings);
 
     settings
 }
@@ -1137,6 +1181,7 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
 
     add_standard_env_redactions(&mut settings);
     add_remove_stats_byte_filter(&mut settings);
+    add_placeholder_ansi_strip_filter(&mut settings);
 
     settings
 }
@@ -1225,6 +1270,7 @@ pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::assert_snapshot;
     use rstest::rstest;
 
     #[rstest]
@@ -1241,5 +1287,33 @@ mod tests {
         let output = repo.git_command().args(["log", "--oneline"]).run().unwrap();
         let log = String::from_utf8_lossy(&output.stdout);
         assert_eq!(log.lines().count(), 5);
+    }
+
+    /// Regression: a `<bold>{path}</>` warning has to land on the same snapshot
+    /// regardless of whether `format_path_for_display` returned the absolute
+    /// (macOS) or tilde (Linux) form. The path-substitution filter has to
+    /// catch both alternatives, and the late ANSI-strip pass has to remove the
+    /// styling wrappers around the resulting placeholder.
+    #[test]
+    fn placeholder_strip_collapses_styled_paths_cross_platform() {
+        let mut settings = insta::Settings::new();
+        add_temp_path_placeholder_filters(&mut settings);
+        add_placeholder_ansi_strip_filter(&mut settings);
+
+        // macOS: format_path_for_display falls through to the absolute form
+        // because HOME is canonicalized (/private/var) but the path isn't.
+        let macos = "▲ \x1b[1m/var/folders/abc/T/.tmpXYZ/test-config.toml\x1b[22m failed";
+        // Linux CI: HOME == tempdir, so the prefix strips to a clean tilde
+        // form with no `.tmp...` segment between `~` and the filename.
+        let linux_home_eq_tempdir = "▲ \x1b[1m~/test-config.toml\x1b[22m failed";
+        // Linux dev box: HOME != tempdir but tempdir lives under HOME, so the
+        // tilde form keeps the `.tmpXYZ/` segment.
+        let linux_home_above_tempdir = "▲ \x1b[1m~/.tmpXYZ/test-config.toml\x1b[22m failed";
+
+        settings.bind(|| {
+            assert_snapshot!(macos, @"▲ [TEST_CONFIG] failed");
+            assert_snapshot!(linux_home_eq_tempdir, @"▲ [TEST_CONFIG] failed");
+            assert_snapshot!(linux_home_above_tempdir, @"▲ [TEST_CONFIG] failed");
+        });
     }
 }
