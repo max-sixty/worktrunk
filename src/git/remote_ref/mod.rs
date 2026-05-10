@@ -44,7 +44,7 @@ use std::io::ErrorKind;
 use std::path::Path;
 use std::process::Output;
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 
 use crate::git::error::GitError;
 use crate::git::{RefType, Repository};
@@ -119,6 +119,19 @@ pub(super) fn cli_api_error(ref_type: RefType, message: String, output: &Output)
         stderr: cli_api_error_details(output),
     }
     .into()
+}
+
+/// Extract the host (e.g. `github.com`) from a PR/MR `html_url` returned by
+/// the forge API. Both GitHub and Gitea responses use the same `https://host/...`
+/// shape, so we share the parser.
+pub(super) fn extract_host_from_html_url(html_url: &str) -> anyhow::Result<String> {
+    html_url
+        .strip_prefix("https://")
+        .or_else(|| html_url.strip_prefix("http://"))
+        .and_then(|s| s.split('/').next())
+        .filter(|h| !h.is_empty())
+        .map(String::from)
+        .with_context(|| format!("Failed to parse host from PR URL: {html_url}"))
 }
 
 pub(super) fn cli_config_value(tool: &str, key: &str) -> Option<String> {

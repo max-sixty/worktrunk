@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use super::{
     CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_api_error, cli_config_value,
-    run_cli_api,
+    extract_host_from_html_url, run_cli_api,
 };
 use crate::git::{self, RefType, Repository};
 use crate::shell_exec::Cmd;
@@ -212,25 +212,10 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
         .eq_ignore_ascii_case(&head_repo.owner.login)
         || !base_repo.name.eq_ignore_ascii_case(&head_repo.name);
 
-    let host = response
-        .html_url
-        .strip_prefix("https://")
-        .or_else(|| response.html_url.strip_prefix("http://"))
-        .and_then(|s| s.split('/').next())
-        .filter(|h| !h.is_empty())
-        .with_context(|| format!("Failed to parse host from PR URL: {}", response.html_url))?
-        .to_string();
+    let host = extract_host_from_html_url(&response.html_url)?;
 
-    // Compute fork push URL only for cross-repo PRs
-    let fork_push_url = if is_cross_repo {
-        Some(fork_remote_url(
-            &host,
-            &head_repo.owner.login,
-            &head_repo.name,
-        ))
-    } else {
-        None
-    };
+    let fork_push_url =
+        is_cross_repo.then(|| fork_remote_url(&host, &head_repo.owner.login, &head_repo.name));
 
     Ok(RemoteRefInfo {
         ref_type: RefType::Pr,
