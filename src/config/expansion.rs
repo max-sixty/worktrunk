@@ -496,7 +496,11 @@ fn codename_index(input: &str, position: usize, salt: usize, pool: &str, len: us
     let digest = hasher.finalize();
     let mut bytes = [0_u8; 8];
     bytes.copy_from_slice(&digest[..8]);
-    (u64::from_le_bytes(bytes) as usize) % len
+    // Take the modulo in u64 before narrowing — `as usize` on a 32-bit
+    // build truncates the upper 32 bits and would pick a different word
+    // than 64-bit for the same branch, defeating the whole point of
+    // hashing through a fixed-width type above.
+    (u64::from_le_bytes(bytes) % len as u64) as usize
 }
 
 fn codename(input: &str, words: usize) -> String {
