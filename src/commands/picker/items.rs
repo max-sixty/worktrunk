@@ -503,12 +503,20 @@ impl WorktreeSkimItem {
         // dim/bright split tracks main's current position. See the cache
         // entry docstring for why we keep this off the SHA-keyed disk cache.
         //
-        // Don't switch to `Repository::merge_base` / `default_branch_sha`
-        // here. Both cache against snapshotted SHAs; the dim/bright logic
-        // requires the merge-base call to *re-resolve* the default branch
-        // each render so the styling shifts when main advances. The
-        // `log_cache_dim_split_tracks_main_advance` test below pins this
-        // contract — switching to the cached path makes it fail.
+        // Don't pre-resolve `default_branch` to a SHA via
+        // `Repository::default_branch_sha` here. That accessor is a
+        // snapshot of the local-branch inventory at first scan (see its
+        // docstring) — feeding the snapshot into a merge-base call would
+        // freeze the dim/bright styling at the SHA main pointed at when
+        // the picker started, instead of the current SHA. The
+        // `log_cache_dim_split_tracks_main_advance` test pins this
+        // contract.
+        //
+        // (`Repository::merge_base` is correctness-safe — it re-resolves
+        // ref names through an uncached `git rev-parse` before hitting
+        // its SHA-keyed cache — but it'd cost an extra subprocess per
+        // render on cache miss, with no win since each item's head is
+        // unique.)
         //
         // Error handling note: this code runs in an interactive preview
         // pane. Silent fallbacks beat disruptive errors during navigation;
