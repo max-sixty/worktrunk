@@ -282,30 +282,30 @@ Recommended-LLM commands embedded in our docs name specific models (e.g. `gpt-5.
 |------|------|------|
 | Codex | `gpt-5.1-codex-mini` | https://developers.openai.com/codex/config-reference and https://developers.openai.com/codex/config-basic — look for the recommended `model = …` value and any current `gpt-5.x-codex(-mini\|-max)` variants |
 | Claude Code (`--model=haiku`) | model alias `haiku` | `claude --help` exposes `--model` aliases; the alias is stable across releases, but confirm a "haiku" alias still exists |
-| OpenCode | `anthropic/claude-haiku-4.5 --variant fast` | https://github.com/anthropics/anthropic-sdk-typescript or `gh api repos/anthropics/claude-code/releases/latest` for the current Haiku tag |
+| OpenCode | `anthropic/claude-haiku-4.5 --variant fast` | Anthropic models docs: https://platform.claude.com/docs/en/about-claude/models/overview — the "Model names" table lists the current `claude-haiku-<major>-<minor>` ID |
 | `llm` plugin | `claude-haiku-4.5` | same as above |
 | `aichat` | `claude:claude-haiku-4.5` | same as above |
 
-Anthropic Haiku names follow `claude-haiku-<major>.<minor>`; the latest released Haiku tag in the [`anthropics/claude-code`](https://github.com/anthropics/claude-code) ecosystem is the canonical floor.
+The Anthropic models docs page is the canonical registry — `gh api repos/anthropics/claude-code/releases/latest` returns the Claude Code CLI version (e.g. `v2.1.x`) and `anthropic-sdk-typescript` is an SDK package, neither of which tracks model IDs.
 
 **Also scan for stragglers** outside the example file — these reference the same model names but aren't covered by `parse_recommended_commands`:
 
 ```bash
-grep -rnE "gpt-[0-9][0-9.a-z-]*|claude-(haiku|sonnet|opus)-[0-9.]+" \
-  README.md docs/demos/ \
-  -- ':!docs/demos/dist'
+grep -rnE "gpt-[0-9][0-9.a-z-]*|claude-(haiku|sonnet|opus)-[0-9][0-9.-]*" \
+  README.md docs/demos/
 ```
 
-`docs/demos/build` and `docs/demos/shared/lib.py` carry their own pins (used by the recorded asciinema demos) — bump them to match.
+The `claude-*` portion uses `[0-9][0-9.-]*` (not `[0-9.]+`) so the hyphenated forms used in `docs/demos/shared/lib.py` (e.g. `claude-opus-4-6`) capture in full rather than truncating at the first hyphen. `docs/demos/build` and `docs/demos/shared/lib.py` carry their own pins (used by the recorded asciinema demos) — bump them to match.
 
 **Snapshots and tests to refresh after editing `dev/config.example.toml`:**
 
 ```bash
 cargo insta test --accept -- --test integration test_docs_are_in_sync
 cargo insta test --accept commit_generation
+cargo insta test --accept -- --test integration "test_help"
 ```
 
-The `commit_generation.rs` snapshots inline the recommended commands (`assert_snapshot!(LlmTool::Codex.recommended_config(), …)`) — they fail until accepted. Don't touch the migration snapshots under `src/config/snapshots/` that reference `gpt-4` or older Haiku tags; those are intentionally frozen to test deprecation rewrites.
+`dev/config.example.toml` is embedded into `wt config` long help via `include_str!`, so editing it also dirties `tests/snapshots/integration__integration_tests__help__help_config_long.snap` and `help_config_create.snap` (per [CLAUDE.md](https://github.com/max-sixty/worktrunk/blob/main/CLAUDE.md) → Help text authoring). The `commit_generation.rs` snapshots inline the recommended commands (`assert_snapshot!(LlmTool::Codex.recommended_config(), …)`) — they fail until accepted. Don't touch the migration snapshots under `src/config/snapshots/` that reference `gpt-4` or older Haiku tags; those are intentionally frozen to test deprecation rewrites.
 
 If the upstream check shows the current pin is still recommended, exit silently — no PR. Only open a PR when at least one model needs a real bump.
 
