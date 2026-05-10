@@ -788,7 +788,7 @@ fn test_switch_no_config_commands_skips_post_start_commands(repo: TestRepo) {
 
     fs::write(
         config_dir.join("wt.toml"),
-        format!(r#"post-starts = ["{}"]"#, create_file_cmd),
+        format!(r#"post-start = "{}""#, create_file_cmd),
     )
     .unwrap();
 
@@ -816,6 +816,21 @@ approved-commands = ["{}"]
         &repo,
         &["--create", "no-post-start", "--no-hooks"],
     );
+
+    // post-start runs in the background; with --no-hooks it is never spawned,
+    // but sleep briefly so a regression that incorrectly spawns it has time to
+    // create the marker (per tests/CLAUDE.md "Testing absence").
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
+    let worktree = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("{repo_name}.no-post-start"));
+    assert!(
+        !worktree.join("marker.txt").exists(),
+        "post-start hook should have been skipped, but marker.txt was created"
+    );
 }
 
 #[rstest]
@@ -839,12 +854,12 @@ fn test_switch_no_config_commands_with_existing_worktree(mut repo: TestRepo) {
 fn test_switch_no_config_commands_with_yes(repo: TestRepo) {
     use std::fs;
 
-    // Create project config with a command
+    // Create project config with a command that would create a file
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
     fs::write(
         config_dir.join("wt.toml"),
-        r#"post-starts = ["echo 'test'"]"#,
+        r#"post-start = "echo 'marker' > marker.txt""#,
     )
     .unwrap();
 
@@ -856,6 +871,21 @@ fn test_switch_no_config_commands_with_yes(repo: TestRepo) {
         "switch_no_hooks_with_yes",
         &repo,
         &["--create", "yes-no-hooks", "--yes", "--no-hooks"],
+    );
+
+    // post-start runs in the background; with --no-hooks it is never spawned,
+    // but sleep briefly so a regression that incorrectly spawns it has time to
+    // create the marker (per tests/CLAUDE.md "Testing absence").
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
+    let worktree = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("{repo_name}.yes-no-hooks"));
+    assert!(
+        !worktree.join("marker.txt").exists(),
+        "post-start hook should have been skipped, but marker.txt was created"
     );
 }
 
