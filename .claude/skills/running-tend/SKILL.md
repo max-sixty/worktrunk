@@ -272,42 +272,13 @@ Baseline: ~29 git subprocesses per render on a clean tree; a jump above
 
 ## Weekly Maintenance: LLM Model Names in Docs
 
-Recommended-LLM commands embedded in our docs name specific models (e.g. `gpt-5.1-codex-mini`, `claude-haiku-4.5`). These pins drift as upstream renames or retires models — nothing else in the repo notices, so this step verifies them weekly.
-
-**Single source of truth:** `dev/config.example.toml` (the `## LLM commit messages` section, around the `# ### Claude Code | Codex | OpenCode | llm | aichat` headings). The example file is embedded into `src/cli/mod.rs` via `include_str!` and parsed at runtime by `src/output/commit_generation.rs::parse_recommended_commands`. Do not edit `docs/content/*.md` or `skills/worktrunk/reference/*.md` directly — the `test_docs_are_in_sync` integration test regenerates them from `src/cli/mod.rs`.
-
-**What to check, and against what:**
-
-| Tool | Current pin (verify each run) | Upstream source |
-|------|------|------|
-| Codex | `gpt-5.1-codex-mini` | https://developers.openai.com/codex/config-reference and https://developers.openai.com/codex/config-basic — look for the recommended `model = …` value and any current `gpt-5.x-codex(-mini\|-max)` variants |
-| Claude Code (`--model=haiku`) | model alias `haiku` | `claude --help` exposes `--model` aliases; the alias is stable across releases, but confirm a "haiku" alias still exists |
-| OpenCode | `anthropic/claude-haiku-4.5 --variant fast` | https://docs.anthropic.com/en/docs/about-claude/models — find the latest Haiku model ID (the page lists current and legacy snapshots) |
-| `llm` plugin | `claude-haiku-4.5` | same as above |
-| `aichat` | `claude:claude-haiku-4.5` | same as above |
-
-The Anthropic models docs page is the canonical registry — `gh api repos/anthropics/claude-code/releases/latest` returns the Claude Code CLI version (e.g. `v2.1.x`) and `anthropic-sdk-typescript` is an SDK package, neither of which tracks model IDs.
-
-**Also scan for stragglers** outside the example file — these reference the same model names but aren't covered by `parse_recommended_commands`:
+Grep for current Claude and Codex pins across the example config, README, and demos:
 
 ```bash
-grep -rnE "gpt-[0-9][0-9.a-z-]*|claude-(haiku|sonnet|opus)-[0-9][0-9.-]*" \
-  README.md docs/demos/
+grep -rniE "claude|codex" dev/config.example.toml README.md docs/demos/
 ```
 
-The `claude-*` portion uses `[0-9][0-9.-]*` (not `[0-9.]+`) so the hyphenated forms used in `docs/demos/shared/lib.py` (e.g. `claude-opus-4-6`) capture in full rather than truncating at the first hyphen. `docs/demos/build` and `docs/demos/shared/lib.py` carry their own pins (used by the recorded asciinema demos) — bump them to match.
-
-**Snapshots and tests to refresh after editing `dev/config.example.toml`:**
-
-```bash
-cargo insta test --accept -- --test integration test_docs_are_in_sync
-cargo insta test --accept -- --test integration "test_help"
-cargo insta test --accept commit_generation
-```
-
-`dev/config.example.toml` is embedded into `wt config` long help via `include_str!`, so editing it also dirties `tests/snapshots/integration__integration_tests__help__help_config_long.snap` and `help_config_create.snap` (per [CLAUDE.md](https://github.com/max-sixty/worktrunk/blob/main/CLAUDE.md) → Help text authoring). The `commit_generation.rs` snapshots inline the recommended commands (`assert_snapshot!(LlmTool::Codex.recommended_config(), …)`) — they fail until accepted. Don't touch the migration snapshots under `src/config/snapshots/` that reference `gpt-4` or older Haiku tags; those are intentionally frozen to test deprecation rewrites.
-
-If the upstream check shows the current pin is still recommended, exit silently — no PR. Only open a PR when at least one model needs a real bump.
+Check the latest IDs at <https://docs.anthropic.com/en/docs/about-claude/models> and <https://developers.openai.com/codex/config-reference>. The recommended commit-message commands should use the most recent fastest model from each vendor (Haiku for Anthropic, the smallest current Codex variant for OpenAI).
 
 ## README Date Check
 
