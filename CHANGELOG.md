@@ -32,6 +32,8 @@
 
 - **Claude Code Windows integration uses a cross-platform wrapper**: The plugin's `wt` invocation collided with Windows Terminal's built-in `wt.exe` alias, opening Windows Terminal windows instead of running the wt CLI. A new `wt.sh` wrapper script tries the standard Worktrunk binary names (`wt`, `git-wt`) and dispatches to the right one across pwsh, Git Bash, and WSL. ([#1754](https://github.com/max-sixty/worktrunk/pull/1754), thanks @lucaspimentel)
 
+- **`wt config plugins opencode install` writes to `~/.config/opencode/` on macOS**: The install path fell through to `dirs::config_dir()`, which resolves to `~/Library/Application Support/opencode/` on macOS — but that's OpenCode's *managed* settings directory; user plugins belong under `~/.config/opencode/`. The path now follows OpenCode's documented precedence: `$OPENCODE_CONFIG_DIR > $XDG_CONFIG_HOME/opencode > ~/.config/opencode`. Linux behavior is unchanged. Fixes [#2654](https://github.com/max-sixty/worktrunk/issues/2654). ([#2655](https://github.com/max-sixty/worktrunk/pull/2655), thanks @gwenwindflower for reporting)
+
 ### Documentation
 
 - **cmux workspace integration recipe**: Adds cmux to the *Agent handoffs* section and documents a per-worktree workspace recipe with create/select/close lifecycle hooks. Includes the key gotcha — cmux's socket restricts access to processes with cmux terminal ancestry, so `pre-*` hooks must be used instead of `post-*`. ([#1907](https://github.com/max-sixty/worktrunk/pull/1907), thanks @alvistar)
