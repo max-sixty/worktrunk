@@ -574,6 +574,38 @@ fn test_github_push_url_non_github_forge_returns_none(repo: TestRepo) {
     assert!(git_repo.branch("main").github_push_url().is_none());
 }
 
+/// Test github_push_url: result is cached on the Repository.
+///
+/// `wt list`'s CI-status detection calls `github_push_url` from both
+/// `detect_github` (PR-based) and `detect_github_commit_checks` (branch
+/// fallback) — without caching the underlying `for-each-ref %(push:remotename)`
+/// runs twice for the same branch on the no-PR path (worktrunk#2672).
+/// Mutating the branch's push tracking after the first call must not
+/// change the cached value.
+#[rstest]
+fn test_github_push_url_is_cached(repo: TestRepo) {
+    repo.run_git(&["config", "remote.origin.url", "git@github.com:org/repo.git"]);
+    setup_push_tracking(&repo, "main", "origin");
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let first = git_repo
+        .branch("main")
+        .github_push_url()
+        .expect("first call resolves to a GitHub URL");
+
+    // Remove the push tracking config. A fresh `for-each-ref
+    // %(push:remotename)` would now return empty, so a non-cached
+    // implementation would yield None on the second call.
+    repo.run_git(&["config", "--unset", "branch.main.remote"]);
+    repo.run_git(&["config", "--unset", "branch.main.merge"]);
+
+    let second = git_repo
+        .branch("main")
+        .github_push_url()
+        .expect("second call returns the cached URL");
+    assert_eq!(first, second);
+}
+
 /// Test github_push_url: returns None when insteadOf resolves to GitLab (not GitHub).
 #[rstest]
 fn test_github_push_url_unknown_host_non_github_insteadof(repo: TestRepo) {

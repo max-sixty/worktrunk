@@ -156,6 +156,21 @@ fn scan_locals(repo: &Repository) -> anyhow::Result<Vec<LocalBranch>> {
     let mut branches: Vec<LocalBranch> =
         output.lines().filter_map(parse_local_branch_line).collect();
     branches.sort_by_key(|b| std::cmp::Reverse(b.committer_ts));
+
+    // Populate the local-branch inventory cache as a side-effect so that
+    // subsequent `repo.local_branches()` callers (e.g., `Branch::upstream`
+    // running on a worker thread during `wt list`) hit memory instead of
+    // re-running the same `for-each-ref refs/heads/` scan. `set()` is a
+    // no-op when the cache is already populated, preserving the
+    // first-scan-wins contract documented on `RepoCache.local_branches` —
+    // every later `capture_refs` call still scans fresh, so mutating
+    // commands that need post-update SHAs (e.g. `wt merge`'s post-merge
+    // `capture_refs` in `worktree::finish`) are unaffected.
+    let _ = repo
+        .cache
+        .local_branches
+        .set(super::branches::LocalBranchInventory::new(branches.clone()));
+
     Ok(branches)
 }
 
@@ -311,6 +326,88 @@ mod tests {
             assert_eq!(ahead, 1, "feature is one commit ahead of main");
             assert_eq!(behind, 0);
         }
+    }
+
+    #[test]
+    fn capture_refs_populates_local_branch_cache() {
+        // The local-branch inventory cache is populated as a side-effect
+        // of `capture_refs`, so a subsequent `local_branches()` call on
+        // the same `Repository` reads from memory instead of re-running
+        // `for-each-ref refs/heads/`. The statusline render hits both
+        // entry points: the main thread captures a `RefSnapshot`, then a
+        // worker thread reads `Branch::upstream` (which goes through the
+        // local-branch inventory) — without this side-effect the same
+        // scan ran twice (worktrunk#2672).
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Cache is empty before capture.
+        assert!(repo.cache.local_branches.get().is_none());
+
+        let _snap = repo.capture_refs().unwrap();
+
+        // Capture populates the inventory cache.
+        let inventory = repo
+            .cache
+            .local_branches
+            .get()
+            .expect("capture_refs should populate the local-branch cache");
+        assert!(inventory.entries().iter().any(|b| b.name == "main"));
+
+        // Mutating refs after capture must NOT change what the cache
+        // returns — `local_branches()` reads the populated cell, not the
+        // current ref state.
+        std::fs::write(test.root_path().join("a.txt"), "x\n").unwrap();
+        test.run_git(&["add", "a.txt"]);
+        test.run_git(&["commit", "-m", "advance main"]);
+        let main_after = test.git_output(&["rev-parse", "main"]);
+
+        let cached_main = repo
+            .local_branches()
+            .unwrap()
+            .iter()
+            .find(|b| b.name == "main")
+            .expect("main is cached")
+            .commit_sha
+            .clone();
+        assert_ne!(
+            cached_main, main_after,
+            "test setup: ref must have moved between capture and read"
+        );
+    }
+
+    #[test]
+    fn capture_refs_scans_fresh_when_cache_already_populated() {
+        // Mutation paths (e.g., `wt merge`) call `capture_refs` AFTER
+        // moving a ref, expecting the post-mutation SHA. If the inventory
+        // cache had been populated earlier with the pre-mutation SHA, the
+        // snapshot still has to scan fresh — `set()` is a no-op on the
+        // already-populated cell, but the snapshot itself reflects the
+        // current ref state.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Populate the inventory cache by calling local_branches first.
+        let main_before = repo
+            .local_branches()
+            .unwrap()
+            .iter()
+            .find(|b| b.name == "main")
+            .unwrap()
+            .commit_sha
+            .clone();
+
+        // Move main forward.
+        std::fs::write(test.root_path().join("a.txt"), "x\n").unwrap();
+        test.run_git(&["add", "a.txt"]);
+        test.run_git(&["commit", "-m", "advance main"]);
+        let main_after = test.git_output(&["rev-parse", "main"]);
+        assert_ne!(main_before, main_after);
+
+        // capture_refs sees post-move SHA even though the inventory cache
+        // still holds the pre-move value.
+        let snap = repo.capture_refs().unwrap();
+        assert_eq!(snap.resolve("main"), Some(main_after.as_str()));
     }
 
     #[test]

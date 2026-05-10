@@ -44,7 +44,7 @@ pub(in crate::git) struct LocalBranchInventory {
 }
 
 impl LocalBranchInventory {
-    fn new(entries: Vec<LocalBranch>) -> Self {
+    pub(super) fn new(entries: Vec<LocalBranch>) -> Self {
         let by_name = entries
             .iter()
             .enumerate()
@@ -53,7 +53,7 @@ impl LocalBranchInventory {
         Self { entries, by_name }
     }
 
-    fn entries(&self) -> &[LocalBranch] {
+    pub(super) fn entries(&self) -> &[LocalBranch] {
         &self.entries
     }
 
