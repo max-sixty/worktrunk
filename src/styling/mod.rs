@@ -203,9 +203,9 @@ pub fn fix_dim_after_color_reset(s: &str) -> String {
 mod tests {
     use insta::assert_snapshot;
 
-    use super::*;
     #[cfg(feature = "syntax-highlighting")]
     use super::format::format_bash_with_gutter_at_width;
+    use super::*;
     use anstyle::Style;
     use unicode_width::UnicodeWidthStr;
 
