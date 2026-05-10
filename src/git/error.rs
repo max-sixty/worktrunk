@@ -2207,7 +2207,7 @@ mod tests {
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31mCan't push to local [1mmain[22m branch: conflicting uncommitted changes[39m
-        [2m↳[22m [2mCommit or stash these changes in /tmp/repo first[22m
+        [2m↳[22m [2mCommit or stash these changes in [4m/tmp/repo[24m first[22m
         ");
     }
 
