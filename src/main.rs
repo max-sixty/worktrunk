@@ -533,7 +533,7 @@ fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow:
                     // Exit with error if no shells configured
                     // Show skipped shells first so user knows what was tried
                     if scan_result.configured.is_empty() {
-                        crate::output::print_skipped_shells(&scan_result.skipped)?;
+                        crate::output::print_skipped_shells(&scan_result.skipped);
                         return Err(worktrunk::git::GitError::Other {
                             message: "No shell config files found".into(),
                         }
@@ -543,7 +543,8 @@ fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow:
                     if dry_run {
                         return Ok(());
                     }
-                    crate::output::print_shell_install_result(&scan_result)
+                    crate::output::print_shell_install_result(&scan_result);
+                    Ok(())
                 })
         }
         ConfigShellCommand::Uninstall { shell, dry_run } => {
