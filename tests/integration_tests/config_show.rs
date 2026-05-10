@@ -2347,25 +2347,22 @@ fn test_opencode_uninstall_not_installed(temp_home: TempDir) {
     });
 }
 
-/// Install uses dirs::config_dir() fallback when OPENCODE_CONFIG_DIR is unset.
+/// Install honours `XDG_CONFIG_HOME` when `OPENCODE_CONFIG_DIR` is unset.
 ///
-/// This exercises the `dirs::config_dir()` branch in `opencode_plugins_dir()`
-/// (lines 26-28 of opencode.rs). On Linux with XDG_CONFIG_HOME set, dirs
-/// resolves to `$XDG_CONFIG_HOME`, so the plugin lands at
-/// `{temp_home}/.config/opencode/plugins/worktrunk.ts`.
-///
-/// Linux-only: `dirs::config_dir()` resolves differently per platform
-/// (macOS: `~/Library/Application Support`, Windows: native API), making
-/// the path assertion platform-specific. The core install logic is tested
-/// cross-platform via `OPENCODE_CONFIG_DIR` in other tests.
-#[cfg(target_os = "linux")]
+/// Cross-platform: OpenCode's documented global-config location is
+/// `~/.config/opencode/` (or `$XDG_CONFIG_HOME/opencode/`) on every OS, so the
+/// plugin must land at `{temp_home}/.config/opencode/plugins/worktrunk.ts`
+/// regardless of platform. Previously this test was Linux-only because the
+/// implementation called `dirs::config_dir()`, which on macOS returns
+/// `~/Library/Application Support` (the *managed* settings path, not the
+/// plugin path) — see #2654.
 #[rstest]
-fn test_opencode_install_uses_dirs_fallback(temp_home: TempDir) {
+fn test_opencode_install_uses_xdg_config_home(temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
         set_temp_home_env(&mut cmd, temp_home.path());
-        // Remove OPENCODE_CONFIG_DIR so the code falls through to dirs::config_dir()
+        // Remove OPENCODE_CONFIG_DIR so the code falls through to XDG_CONFIG_HOME
         cmd.env_remove("OPENCODE_CONFIG_DIR");
         cmd.args(["config", "plugins", "opencode", "install", "--yes"]);
 
@@ -2374,12 +2371,46 @@ fn test_opencode_install_uses_dirs_fallback(temp_home: TempDir) {
 
     let canonical_home =
         crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().into());
-    // dirs::config_dir() uses XDG_CONFIG_HOME on Linux → {temp_home}/.config
+    // set_temp_home_env sets XDG_CONFIG_HOME = $HOME/.config
     let plugin_path = canonical_home.join(".config/opencode/plugins/worktrunk.ts");
     assert!(
         plugin_path.exists(),
-        "Plugin file should exist at dirs::config_dir() fallback path: {}",
+        "Plugin file should exist at XDG_CONFIG_HOME fallback path: {}",
         plugin_path.display()
+    );
+}
+
+/// Install defaults to `$HOME/.config/opencode/plugins/` when neither
+/// `OPENCODE_CONFIG_DIR` nor `XDG_CONFIG_HOME` is set.
+///
+/// Cross-platform regression guard for #2654: with the previous
+/// `dirs::config_dir()`-based fallback, this test passed on Linux (XDG default)
+/// but failed on macOS (`~/Library/Application Support`). After the fix, the
+/// fallback is `$HOME/.config/opencode/plugins/worktrunk.ts` on every OS, in
+/// line with OpenCode's own global-config precedence.
+#[rstest]
+fn test_opencode_install_defaults_to_home_dot_config(temp_home: TempDir) {
+    let mut cmd = wt_command();
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env_remove("OPENCODE_CONFIG_DIR");
+    cmd.env_remove("XDG_CONFIG_HOME");
+    cmd.args(["config", "plugins", "opencode", "install", "--yes"]);
+
+    let output = cmd.output().expect("install command should run");
+    assert!(
+        output.status.success(),
+        "install failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let canonical_home =
+        crate::common::canonicalize(temp_home.path()).unwrap_or_else(|_| temp_home.path().into());
+    let plugin_path = canonical_home.join(".config/opencode/plugins/worktrunk.ts");
+    assert!(
+        plugin_path.exists(),
+        "Plugin should default to $HOME/.config/opencode/plugins/worktrunk.ts but file not found at: {}",
+        plugin_path.display(),
     );
 }
 
