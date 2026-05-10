@@ -56,7 +56,7 @@ const KIND: &str = "picker-preview";
 /// commonly: a squash merge landing `main` at the cached SHA) would
 /// leave the decoration text stale even though the cache key is still
 /// valid. The orchestrator mitigates this by enqueuing a background
-/// refresh task on the picker's rayon pool whenever a Log preview hit
+/// refresh task on the global rayon pool whenever a Log preview hit
 /// the disk cache; the refresh re-runs `compute_log_raw_and_stats`,
 /// overwrites this entry, and updates the in-memory `PreviewCache`.
 /// The cached entry served on the *current* render is still potentially

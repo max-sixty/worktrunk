@@ -1,10 +1,15 @@
 //! Background preview pre-compute orchestration.
 //!
-//! Owns the dedicated rayon pool and preview cache for the picker, so the
-//! pre-compute pipeline is testable without standing up skim. The picker
-//! entry point (`run_picker`) uses this for its real spawns; the dry-run
-//! path (`WORKTRUNK_PICKER_DRY_RUN`) uses it to wait for completion and dump the
-//! cache to stdout.
+//! Routes preview tasks to the global rayon pool (shared with the row
+//! pipeline) and tracks the in-memory cache. A single pool lets workers
+//! prefer whichever workload has dominant pressure: row tasks land on
+//! workers' local deques and take priority during drain; preview tasks
+//! sit in the global injector and pick up workers as they free.
+//!
+//! Provides a pending-task counter for the dry-run path
+//! (`WORKTRUNK_PICKER_DRY_RUN`) and tests, both of which want to wait for
+//! all spawned tasks to complete before reading the cache. The picker
+//! entry point (`handle_picker`) uses this for its real spawns.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -18,6 +23,22 @@ use super::preview::PreviewMode;
 use super::summary;
 use crate::commands::list::model::ListItem;
 
+/// The picker's initial preview tab — `WorkingTree`, shown when the
+/// picker opens. Pre-computed for every row at skeleton time so j/k
+/// navigation lands on warm content without paying the 4-mode bulk cost
+/// per row during the row-fill window.
+const INITIAL_MODE: PreviewMode = PreviewMode::WorkingTree;
+
+/// Modes other than [`INITIAL_MODE`]. For the user's landing row (item 0)
+/// these pre-compute at skeleton time alongside `INITIAL_MODE` so
+/// tab-cycling is responsive immediately. For items 1..N they're
+/// deferred until `spawn_deferred_precompute` fires (after row drain).
+const SECONDARY_MODES: [PreviewMode; 3] = [
+    PreviewMode::Log,
+    PreviewMode::BranchDiff,
+    PreviewMode::UpstreamDiff,
+];
+
 struct PendingGuard(Arc<AtomicUsize>);
 
 impl Drop for PendingGuard {
@@ -28,7 +49,6 @@ impl Drop for PendingGuard {
 
 pub(super) struct PreviewOrchestrator {
     pub(super) cache: PreviewCache,
-    pool: Arc<rayon::ThreadPool>,
     pending: Arc<AtomicUsize>,
     /// Repository used by preview compute. Captured once at construction
     /// so background tasks see a stable repo binding, and so unit tests
@@ -39,17 +59,8 @@ pub(super) struct PreviewOrchestrator {
 
 impl PreviewOrchestrator {
     pub(super) fn new(repo: Repository) -> Self {
-        let cache = Arc::new(DashMap::new());
-        let pool = Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(crate::rayon_thread_count())
-                .thread_name(|i| format!("picker-preview-{i}"))
-                .build()
-                .expect("failed to build picker preview rayon pool"),
-        );
         Self {
-            cache,
-            pool,
+            cache: Arc::new(DashMap::new()),
             pending: Arc::new(AtomicUsize::new(0)),
             repo,
         }
@@ -64,10 +75,11 @@ impl PreviewOrchestrator {
     /// blocked on a shard write held across git/pager subprocesses.
     ///
     /// Log mode that hits the disk cache also enqueues a refresh task
-    /// (via `pool.spawn_fifo`, so it lands behind in-flight foreground
-    /// precompute) to recompute the embedded ref decorations before the
-    /// next visit. See the `LogCacheEntry` docstring for why the disk
-    /// cache itself is SHA-keyed but decoration text drifts.
+    /// (via `rayon::spawn_fifo`, so it lands behind in-flight foreground
+    /// precompute submitted with `rayon::spawn`) to recompute the
+    /// embedded ref decorations before the next visit. See the
+    /// `LogCacheEntry` docstring for why the disk cache itself is
+    /// SHA-keyed but decoration text drifts.
     pub(super) fn spawn_preview(
         &self,
         item: Arc<ListItem>,
@@ -77,7 +89,6 @@ impl PreviewOrchestrator {
         let cache = Arc::clone(&self.cache);
         let (w, h) = dims;
         let repo = self.repo.clone();
-        let pool = Arc::clone(&self.pool);
         let pending = Arc::clone(&self.pending);
         self.spawn_task(move || {
             let cache_key = (item.branch_name().to_string(), mode);
@@ -93,7 +104,7 @@ impl PreviewOrchestrator {
                 let item = Arc::clone(&item);
                 let cache = Arc::clone(&cache);
                 let repo = repo.clone();
-                pool.spawn_fifo(move || {
+                rayon::spawn_fifo(move || {
                     let _g = guard;
                     let rendered = WorktreeSkimItem::refresh_log_preview(&repo, &item, w, h);
                     // Skip empty results so a transient `git log` failure
@@ -115,54 +126,87 @@ impl PreviewOrchestrator {
         });
     }
 
-    /// Spawn the full pre-compute fan-out for a freshly published skeleton.
+    /// Spawn the skeleton-time pre-compute tier.
     ///
-    /// Spawn order: the first item's modes win the first slots (the user
-    /// lands there and may tab-cycle), then mode-major across the rest.
-    /// Summaries queue last because each LLM call can take seconds.
+    /// Fires at `on_skeleton`. Two layers of priority:
+    /// - First item × all 4 modes + first item summary — the user lands on
+    ///   row 0 and frequently tab-cycles modes there.
+    /// - Items 1..N × [`INITIAL_MODE`] only — pre-warms the default tab
+    ///   for every row so quick j/k navigation hits cached content,
+    ///   bounded contention with the row pipeline (~N tasks).
     ///
-    /// When `llm_command` is `None` and `summary_hint` is `Some`, the hint
-    /// is written directly into the Summary cache for every item — gives
-    /// the Summary tab something useful instead of a perpetual
-    /// "Generating…" placeholder.
-    pub(super) fn spawn_all_precompute(
+    /// The remaining [`SECONDARY_MODES`] for items 1..N and their summaries
+    /// are deferred to [`Self::spawn_deferred_precompute`], which fires
+    /// after the row pipeline tears down.
+    pub(super) fn spawn_initial_precompute(
         &self,
-        list_items: &[Arc<ListItem>],
+        items: &[Arc<ListItem>],
         preview_dims: (usize, usize),
         llm_command: Option<&str>,
-        summary_hint: Option<&str>,
     ) {
-        let modes = [
-            PreviewMode::WorkingTree,
-            PreviewMode::Log,
-            PreviewMode::BranchDiff,
-            PreviewMode::UpstreamDiff,
-        ];
+        let Some(first) = items.first() else { return };
 
-        if let Some(first) = list_items.first() {
-            for mode in modes {
-                self.spawn_preview(Arc::clone(first), mode, preview_dims);
-            }
+        // First item: all modes + summary.
+        self.spawn_preview(Arc::clone(first), INITIAL_MODE, preview_dims);
+        for mode in SECONDARY_MODES {
+            self.spawn_preview(Arc::clone(first), mode, preview_dims);
         }
-        for mode in modes {
-            for item in list_items.iter().skip(1) {
+        if let Some(llm) = llm_command {
+            self.spawn_summary(Arc::clone(first), llm.to_string(), self.repo.clone());
+        }
+
+        // Items 1..N: default tab only. Other modes wait for drain.
+        for item in items.iter().skip(1) {
+            self.spawn_preview(Arc::clone(item), INITIAL_MODE, preview_dims);
+        }
+    }
+
+    /// Spawn the deferred pre-compute tier for items 1..N.
+    ///
+    /// Fires from the picker handler's `on_collect_complete` hook — i.e.
+    /// after `collect::collect`'s drain ends. The global rayon pool
+    /// serves both the row pipeline and the preview pipeline; deferring
+    /// this tier keeps these submissions out of the global injector
+    /// while row tasks are still landing on workers' local deques. The
+    /// default tab for these rows already fired at skeleton time via
+    /// [`Self::spawn_initial_precompute`]; what's left is
+    /// [`SECONDARY_MODES`] plus summaries.
+    ///
+    /// Spawn order: mode-major across previews, then summaries last —
+    /// each LLM call can take seconds. Called from outside any rayon
+    /// worker (the picker-collect bg thread), so submissions land on
+    /// rayon's FIFO injector and workers pick previews before summaries.
+    pub(super) fn spawn_deferred_precompute(
+        &self,
+        rest: &[Arc<ListItem>],
+        preview_dims: (usize, usize),
+        llm_command: Option<&str>,
+    ) {
+        for mode in SECONDARY_MODES {
+            for item in rest {
                 self.spawn_preview(Arc::clone(item), mode, preview_dims);
             }
         }
-
         if let Some(llm) = llm_command {
-            if let Some(first) = list_items.first() {
-                self.spawn_summary(Arc::clone(first), llm.to_string(), self.repo.clone());
-            }
-            for item in list_items.iter().skip(1) {
+            for item in rest {
                 self.spawn_summary(Arc::clone(item), llm.to_string(), self.repo.clone());
             }
-        } else if let Some(hint) = summary_hint {
-            for item in list_items {
-                let branch = item.branch_name().to_string();
-                self.cache
-                    .insert((branch, PreviewMode::Summary), hint.to_string());
-            }
+        }
+    }
+
+    /// Seed the Summary cache with a static hint for every item.
+    ///
+    /// Used when summaries are disabled — gives the Summary tab something
+    /// useful instead of a perpetual "Generating…" placeholder. Pure
+    /// synchronous `DashMap::insert` calls (zero CPU, no subprocess), so
+    /// this runs at skeleton time for every row regardless of position
+    /// — no contention concern.
+    pub(super) fn seed_summary_hints(&self, items: &[Arc<ListItem>], hint: &str) {
+        for item in items {
+            self.cache.insert(
+                (item.branch_name().to_string(), PreviewMode::Summary),
+                hint.to_string(),
+            );
         }
     }
 
@@ -176,7 +220,11 @@ impl PreviewOrchestrator {
             let _g = guard;
             task();
         };
-        self.pool.spawn(wrapped);
+        // The `pending` counter is independent of which pool the task
+        // lands on, so routing through `rayon::spawn` (global pool, shared
+        // with the row pipeline) doesn't change `wait_for_idle` semantics
+        // in tests or the dry-run path.
+        rayon::spawn(wrapped);
     }
 
     /// Block until all spawned tasks complete.

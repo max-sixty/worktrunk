@@ -23,8 +23,8 @@
 //! 1. `current_or_recover` + config resolution.
 //! 2. `PreviewState::new` — auto-detects Right vs Down layout.
 //! 3. Allocates the `PreviewOrchestrator` and kicks off a *speculative*
-//!    `git diff HEAD` for the current worktree on the preview pool. That bg
-//!    work overlaps with everything below.
+//!    `git diff HEAD` for the current worktree on the global rayon pool.
+//!    That bg work overlaps with everything below.
 //! 4. Computes `num_items_estimate` — `list_worktrees` plus (conditionally)
 //!    `local_branches` / `remote_branches`, capped at
 //!    `MAX_VISIBLE_ITEMS`. Only used to size skim's `preview_window`.
@@ -419,8 +419,9 @@ pub fn handle_picker(
     // (which runs `prewarm_info` again — now a cache hit).
     let _ = repo.current_worktree().prewarm_info();
 
-    // Preview cache + dedicated pool are created up-front so the speculative
-    // first-item preview can run in parallel with `collect::collect` below.
+    // Preview cache is created up-front so the speculative first-item
+    // preview can run in parallel with `collect::collect` below. Tasks
+    // route to the global rayon pool (shared with the row pipeline).
     // Wrapped in `Arc` because the progressive handler (running on the
     // collect background thread) also calls `spawn_preview`.
     let orchestrator = Arc::new(PreviewOrchestrator::new(repo.clone()));
@@ -655,6 +656,7 @@ pub fn handle_picker(
             llm_command,
             summary_hint,
             stashed_warnings: Arc::clone(&stashed_warnings),
+            deferred_items: std::sync::OnceLock::new(),
         });
 
     // Spawn collect on a background thread. The handler holds the only
@@ -691,7 +693,8 @@ pub fn handle_picker(
     drop(handler);
 
     // Dry-run: skim is bypassed. Wait for collect (which spawns previews
-    // via the handler), then for the preview pool, then dump the cache.
+    // via the handler) to finish, then for the orchestrator's pending
+    // tasks to drain on the global rayon pool, then dump the cache.
     if std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_some() {
         drop(rx);
         let _ = bg_handle.join();

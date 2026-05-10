@@ -5,8 +5,17 @@
 //! item's shared `rendered` mutex (in-place redraws picked up by the
 //! heartbeat), and `shared_items` used by `PickerCollector` for alt-r.
 //!
-//! Preview + summary pre-compute kicks off at skeleton time so the first
-//! preview the user opens is already warm.
+//! Preview pre-compute is staged in two tiers:
+//! - `on_skeleton` fires the first item's 4 modes + first-item summary,
+//!   plus the default-tab mode for items 1..N (so quick j/k navigation
+//!   lands on warm content). It also fills the static Summary hint for
+//!   every row when summaries are disabled.
+//! - `on_collect_complete` fires the secondary modes (Log / BranchDiff /
+//!   UpstreamDiff) and summaries for items 1..N once the row pipeline
+//!   has torn down. Preview tasks share the global rayon pool with the
+//!   row pipeline; staging keeps low-priority preview submissions out
+//!   of the global injector while row tasks are still landing on
+//!   workers' local deques during drain.
 
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -45,6 +54,10 @@ pub(super) struct PickerHandler {
     /// owns the terminal. The picker drains and emits these to stderr after
     /// `Skim::run_with` returns. Lines are kept in arrival order.
     pub(super) stashed_warnings: Arc<Mutex<Vec<String>>>,
+    /// Items captured at `on_skeleton` and consumed at `on_collect_complete`
+    /// to fan out the bulk preview pre-compute for items 1..N. Set once
+    /// (`OnceLock`) because skeletons fire exactly once per collect.
+    pub(super) deferred_items: OnceLock<Vec<Arc<ListItem>>>,
 }
 
 impl PickerProgressHandler for PickerHandler {
@@ -103,12 +116,26 @@ impl PickerProgressHandler for PickerHandler {
             let _ = self.tx.send(Arc::clone(skim_item));
         }
 
-        self.orchestrator.spawn_all_precompute(
+        // Tier 1: warm the user's landing row (all modes) and every
+        // other row's default tab. Tier 2 (secondary modes + summaries
+        // for items 1..N) fires from `on_collect_complete` after the row
+        // pipeline tears down — spawning that bulk now would queue ahead
+        // of row tasks in the global injector while workers are still
+        // grinding through the row work.
+        self.orchestrator.spawn_initial_precompute(
             &list_items,
             self.preview_dims,
             self.llm_command.as_deref(),
-            self.summary_hint.as_deref(),
         );
+        // Static Summary hint is a synchronous in-memory insert, no
+        // contention concern. Pre-fill every row at skeleton time so the
+        // Summary tab is usable for any selection immediately.
+        if self.llm_command.is_none()
+            && let Some(hint) = self.summary_hint.as_deref()
+        {
+            self.orchestrator.seed_summary_hints(&list_items, hint);
+        }
+        let _ = self.deferred_items.set(list_items);
     }
 
     fn on_update(&self, idx: usize, rendered: String) {
@@ -130,6 +157,20 @@ impl PickerProgressHandler for PickerHandler {
 
     fn stash_warning(&self, line: String) {
         self.stashed_warnings.lock().unwrap().push(line);
+    }
+
+    fn on_collect_complete(&self) {
+        let Some(items) = self.deferred_items.get() else {
+            return;
+        };
+        if items.len() <= 1 {
+            return;
+        }
+        self.orchestrator.spawn_deferred_precompute(
+            &items[1..],
+            self.preview_dims,
+            self.llm_command.as_deref(),
+        );
     }
 }
 
@@ -159,6 +200,7 @@ mod tests {
             llm_command: None,
             summary_hint: Some("disabled".to_string()),
             stashed_warnings: Arc::new(Mutex::new(Vec::new())),
+            deferred_items: OnceLock::new(),
         };
         (handler, test, rx)
     }
@@ -247,5 +289,145 @@ mod tests {
         handler.stash_warning("third".into());
         let stash = handler.stashed_warnings.lock().unwrap();
         assert_eq!(stash.as_slice(), &["first", "second", "third"]);
+    }
+
+    /// Preview pre-compute is tiered. After `on_skeleton`:
+    /// - First item gets all 4 modes (the user's landing row).
+    /// - Items 1..N get only `WorkingTree` (the picker's initial tab) so
+    ///   quick j/k navigation hits warm content.
+    /// - Secondary modes for items 1..N are deferred until
+    ///   `on_collect_complete` fires.
+    ///
+    /// Summary hint is filled for every item synchronously at skeleton
+    /// time so the Summary tab is usable for any selection immediately.
+    #[test]
+    fn precompute_staging_tiers_match_design() {
+        use super::super::preview::PreviewMode;
+
+        let (handler, _test, _rx) = make_handler();
+        let items = vec![
+            ListItem::new_branch("aaa".into(), "alpha".into()),
+            ListItem::new_branch("bbb".into(), "beta".into()),
+            ListItem::new_branch("ccc".into(), "gamma".into()),
+        ];
+        let rendered = vec!["s1".into(), "s2".into(), "s3".into()];
+
+        handler.on_skeleton(items, rendered, header("hdr"));
+        handler.orchestrator.wait_for_idle();
+
+        // Static Summary hint primed for every item at skeleton time.
+        for branch in ["alpha", "beta", "gamma"] {
+            assert!(
+                handler
+                    .preview_cache
+                    .contains_key(&(branch.into(), PreviewMode::Summary)),
+                "Summary hint should be filled for {branch} at skeleton time"
+            );
+        }
+
+        // First item: all 4 modes spawned at skeleton time.
+        for mode in [
+            PreviewMode::WorkingTree,
+            PreviewMode::Log,
+            PreviewMode::BranchDiff,
+            PreviewMode::UpstreamDiff,
+        ] {
+            assert!(
+                handler.preview_cache.contains_key(&("alpha".into(), mode)),
+                "first item should have {mode:?} cached after on_skeleton"
+            );
+        }
+
+        // Items 1..N: WorkingTree (default tab) cached at skeleton time.
+        for branch in ["beta", "gamma"] {
+            assert!(
+                handler
+                    .preview_cache
+                    .contains_key(&(branch.into(), PreviewMode::WorkingTree)),
+                "{branch}.WorkingTree should be cached after on_skeleton (initial tier)"
+            );
+        }
+
+        // Items 1..N: secondary modes NOT yet spawned (deferred tier).
+        for branch in ["beta", "gamma"] {
+            for mode in [
+                PreviewMode::Log,
+                PreviewMode::BranchDiff,
+                PreviewMode::UpstreamDiff,
+            ] {
+                assert!(
+                    !handler.preview_cache.contains_key(&(branch.into(), mode)),
+                    "{branch}.{mode:?} should NOT be cached before on_collect_complete"
+                );
+            }
+        }
+
+        handler.on_collect_complete();
+        handler.orchestrator.wait_for_idle();
+
+        // After on_collect_complete, every item × every preview mode is cached.
+        for branch in ["alpha", "beta", "gamma"] {
+            for mode in [
+                PreviewMode::WorkingTree,
+                PreviewMode::Log,
+                PreviewMode::BranchDiff,
+                PreviewMode::UpstreamDiff,
+            ] {
+                assert!(
+                    handler.preview_cache.contains_key(&(branch.into(), mode)),
+                    "{branch}.{mode:?} should be cached after on_collect_complete"
+                );
+            }
+        }
+    }
+
+    /// `on_collect_complete` is safe to call when no skeleton ever fired
+    /// (e.g. zero-worktree early return in `collect`) and when only one
+    /// item exists (nothing to defer). The post-conditions assert that no
+    /// extra spawns leak into the cache — a regression that introduces
+    /// work for items 1..N from this hook would surface here.
+    #[test]
+    fn on_collect_complete_is_no_op_when_no_rest_items() {
+        use super::super::preview::PreviewMode;
+
+        // Case 1: never called on_skeleton — cache must remain empty.
+        let (handler, _test, _rx) = make_handler();
+        handler.on_collect_complete();
+        handler.orchestrator.wait_for_idle();
+        assert_eq!(
+            handler.preview_cache.iter().count(),
+            0,
+            "no work should be spawned when on_skeleton never fired"
+        );
+
+        // Case 2: single-item skeleton — first-item phase covered the 4
+        // modes plus the static Summary hint (5 entries total). Nothing
+        // left to defer; on_collect_complete must not add any entries.
+        let (handler, _test, _rx) = make_handler();
+        let items = vec![ListItem::new_branch("aaa".into(), "solo".into())];
+        handler.on_skeleton(items, vec!["s1".into()], header("hdr"));
+        handler.orchestrator.wait_for_idle();
+        let before = handler.preview_cache.iter().count();
+        for mode in [
+            PreviewMode::WorkingTree,
+            PreviewMode::Log,
+            PreviewMode::BranchDiff,
+            PreviewMode::UpstreamDiff,
+            PreviewMode::Summary,
+        ] {
+            assert!(
+                handler.preview_cache.contains_key(&("solo".into(), mode)),
+                "first-item phase should have cached {mode:?}"
+            );
+        }
+        assert_eq!(before, 5, "first-item phase populates exactly 5 entries");
+
+        handler.on_collect_complete();
+        handler.orchestrator.wait_for_idle();
+        assert_eq!(
+            handler.preview_cache.iter().count(),
+            before,
+            "on_collect_complete must not spawn additional work for a single-item skeleton"
+        );
     }
 }

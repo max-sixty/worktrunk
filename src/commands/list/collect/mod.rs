@@ -372,6 +372,18 @@ pub trait PickerProgressHandler: Send + Sync {
     /// would corrupt the rendered frame. The picker drains stashed lines
     /// after `Skim::run_with` returns, when stderr is safe again.
     fn stash_warning(&self, line: String);
+
+    /// Fired once before `collect` returns `Ok(Some(_))`. Lets the picker
+    /// kick off the deferred tier of background work — secondary preview
+    /// modes for items 1..N, and LLM summaries for items 1..N. The
+    /// global rayon pool serves both pipelines; deferring this tier
+    /// until drain-end keeps low-priority preview submissions out of
+    /// the injector while row tasks dominate worker deques.
+    ///
+    /// Not fired on the `WORKTRUNK_SKELETON_ONLY` / `WORKTRUNK_FIRST_OUTPUT`
+    /// benchmark early-exit, nor on the zero-worktree `Ok(None)` return
+    /// (which exits before `on_skeleton`). Default: no-op.
+    fn on_collect_complete(&self) {}
 }
 
 /// Controls how show flags (branches/remotes/full) are determined in [`collect`].
@@ -1543,6 +1555,14 @@ pub fn collect(
     //   caller to serialize (`wt list --format=json`) or feed into its own
     //   UI (picker via `progressive_handler`)
     worktrunk::trace::instant("List collect complete");
+
+    // Fire `on_collect_complete` after the row pipeline has fully torn
+    // down. The picker handler uses this to spawn bulk preview pre-compute
+    // for items 1..N without contending with row tasks. No-op for
+    // non-picker callers (default trait impl).
+    if let Some(handler) = progressive_handler.as_ref() {
+        handler.on_collect_complete();
+    }
 
     Ok(Some(super::model::ListData { items }))
 }
