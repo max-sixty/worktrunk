@@ -26,8 +26,13 @@
 //!
 //! The main thread drains the channel. A signal-listener thread blocks
 //! on `signal_hook::Signals::forever()` for SIGINT/SIGTERM and forwards
-//! with escalation to every live child's process group; closing the
-//! signal-hook handle on shutdown unblocks the listener.
+//! the same signal once to every child's process group; a second press
+//! escalates to SIGKILL across all groups. Closing the signal-hook handle
+//! on shutdown unblocks the listener. The single-shot forward keeps the
+//! cause-of-death signal aligned with the user's intent — a stubborn child
+//! that ignores SIGINT requires a second Ctrl-C, matching `make` / `cargo`
+//! behavior, instead of a per-child SIGINT→SIGTERM→SIGKILL ladder whose
+//! grace windows race with CI scheduling latency.
 //!
 //! All children always run to completion. Per-child exit status is returned
 //! for the caller to fold into a failure, matching alias `thread::scope` and
@@ -429,22 +434,22 @@ fn spawn_signal_forwarder(
     let listener = thread::spawn(move || {
         let mut seen_once = false;
         for sig in signals.forever() {
-            if !seen_once {
-                // First signal: graceful escalation per child
-                // (SIGINT → SIGTERM → SIGKILL with grace windows).
-                seen_once = true;
-                for &pgid in &pgids {
-                    worktrunk::shell_exec::forward_signal_with_escalation(pgid, sig);
-                }
+            // First press: forward the same signal once. Cooperative children
+            // die from it, so `child.wait()` reports a signal that matches the
+            // user's intent. Stubborn children survive — the user presses
+            // Ctrl-C again, taking the SIGKILL branch below.
+            let signal_to_send = if seen_once {
+                nix::sys::signal::Signal::SIGKILL
             } else {
-                // Subsequent signals: user is impatient — SIGKILL every
-                // still-live process group without waiting.
-                for &pgid in &pgids {
-                    let _ = nix::sys::signal::killpg(
-                        nix::unistd::Pid::from_raw(pgid),
-                        nix::sys::signal::Signal::SIGKILL,
-                    );
+                seen_once = true;
+                match sig {
+                    signal_hook::consts::SIGINT => nix::sys::signal::Signal::SIGINT,
+                    signal_hook::consts::SIGTERM => nix::sys::signal::Signal::SIGTERM,
+                    _ => continue,
                 }
+            };
+            for &pgid in &pgids {
+                let _ = nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pgid), signal_to_send);
             }
         }
     });
