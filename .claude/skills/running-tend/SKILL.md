@@ -270,6 +270,45 @@ Triage each duplicate:
 Baseline: ~29 git subprocesses per render on a clean tree; a jump above
 ~32 warrants investigation.
 
+## Weekly Maintenance: LLM Model Names in Docs
+
+Recommended-LLM commands embedded in our docs name specific models (e.g. `gpt-5.1-codex-mini`, `claude-haiku-4.5`). These pins drift as upstream renames or retires models — nothing else in the repo notices, so this step verifies them weekly.
+
+**Single source of truth:** `dev/config.example.toml` (the `## LLM commit messages` section, around the `# ### Claude Code | Codex | OpenCode | llm | aichat` headings). The example file is embedded into `src/cli/mod.rs` via `include_str!` and parsed at runtime by `src/output/commit_generation.rs::parse_recommended_commands`. Do not edit `docs/content/*.md` or `skills/worktrunk/reference/*.md` directly — the `test_docs_are_in_sync` integration test regenerates them from `src/cli/mod.rs`.
+
+**What to check, and against what:**
+
+| Tool | Current pin (verify each run) | Upstream source |
+|------|------|------|
+| Codex | `gpt-5.1-codex-mini` | https://developers.openai.com/codex/config-reference and https://developers.openai.com/codex/config-basic — look for the recommended `model = …` value and any current `gpt-5.x-codex(-mini\|-max)` variants |
+| Claude Code (`--model=haiku`) | model alias `haiku` | `claude --help` exposes `--model` aliases; the alias is stable across releases, but confirm a "haiku" alias still exists |
+| OpenCode | `anthropic/claude-haiku-4.5 --variant fast` | https://github.com/anthropics/anthropic-sdk-typescript or `gh api repos/anthropics/claude-code/releases/latest` for the current Haiku tag |
+| `llm` plugin | `claude-haiku-4.5` | same as above |
+| `aichat` | `claude:claude-haiku-4.5` | same as above |
+
+Anthropic Haiku names follow `claude-haiku-<major>.<minor>`; the latest released Haiku tag in the [`anthropics/claude-code`](https://github.com/anthropics/claude-code) ecosystem is the canonical floor.
+
+**Also scan for stragglers** outside the example file — these reference the same model names but aren't covered by `parse_recommended_commands`:
+
+```bash
+grep -rnE "gpt-[0-9][0-9.a-z-]*|claude-(haiku|sonnet|opus)-[0-9.]+" \
+  README.md docs/demos/ \
+  -- ':!docs/demos/dist'
+```
+
+`docs/demos/build` and `docs/demos/shared/lib.py` carry their own pins (used by the recorded asciinema demos) — bump them to match.
+
+**Snapshots and tests to refresh after editing `dev/config.example.toml`:**
+
+```bash
+cargo insta test --accept -- --test integration test_docs_are_in_sync
+cargo insta test --accept commit_generation
+```
+
+The `commit_generation.rs` snapshots inline the recommended commands (`assert_snapshot!(LlmTool::Codex.recommended_config(), …)`) — they fail until accepted. Don't touch the migration snapshots under `src/config/snapshots/` that reference `gpt-4` or older Haiku tags; those are intentionally frozen to test deprecation rewrites.
+
+If the upstream check shows the current pin is still recommended, exit silently — no PR. Only open a PR when at least one model needs a real bump.
+
 ## README Date Check
 
 The README blockquote opens with a month+year (e.g., "**April 2026**"). During daily
