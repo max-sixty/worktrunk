@@ -282,7 +282,7 @@ Recommended-LLM commands embedded in our docs name specific models (e.g. `gpt-5.
 |------|------|------|
 | Codex | `gpt-5.1-codex-mini` | https://developers.openai.com/codex/config-reference and https://developers.openai.com/codex/config-basic — look for the recommended `model = …` value and any current `gpt-5.x-codex(-mini\|-max)` variants |
 | Claude Code (`--model=haiku`) | model alias `haiku` | `claude --help` exposes `--model` aliases; the alias is stable across releases, but confirm a "haiku" alias still exists |
-| OpenCode | `anthropic/claude-haiku-4.5 --variant fast` | Anthropic models docs: https://platform.claude.com/docs/en/about-claude/models/overview — the "Model names" table lists the current `claude-haiku-<major>-<minor>` ID |
+| OpenCode | `anthropic/claude-haiku-4.5 --variant fast` | https://docs.anthropic.com/en/docs/about-claude/models — find the latest Haiku model ID (the page lists current and legacy snapshots) |
 | `llm` plugin | `claude-haiku-4.5` | same as above |
 | `aichat` | `claude:claude-haiku-4.5` | same as above |
 
@@ -301,8 +301,8 @@ The `claude-*` portion uses `[0-9][0-9.-]*` (not `[0-9.]+`) so the hyphenated fo
 
 ```bash
 cargo insta test --accept -- --test integration test_docs_are_in_sync
-cargo insta test --accept commit_generation
 cargo insta test --accept -- --test integration "test_help"
+cargo insta test --accept commit_generation
 ```
 
 `dev/config.example.toml` is embedded into `wt config` long help via `include_str!`, so editing it also dirties `tests/snapshots/integration__integration_tests__help__help_config_long.snap` and `help_config_create.snap` (per [CLAUDE.md](https://github.com/max-sixty/worktrunk/blob/main/CLAUDE.md) → Help text authoring). The `commit_generation.rs` snapshots inline the recommended commands (`assert_snapshot!(LlmTool::Codex.recommended_config(), …)`) — they fail until accepted. Don't touch the migration snapshots under `src/config/snapshots/` that reference `gpt-4` or older Haiku tags; those are intentionally frozen to test deprecation rewrites.
