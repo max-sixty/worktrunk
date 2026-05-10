@@ -7,7 +7,7 @@ weight = 13
 group = "Commands"
 +++
 
-<!-- ⚠️ AUTO-GENERATED from `wt merge --help-page` — edit cli.rs to update -->
+<!-- ⚠️ AUTO-GENERATED from `wt merge --help-page` — edit src/cli/mod.rs to update -->
 
 Merge current branch into the target branch. Squash & rebase, fast-forward the target branch, remove the worktree.
 

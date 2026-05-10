@@ -7,7 +7,7 @@ weight = 11
 group = "Commands"
 +++
 
-<!-- ⚠️ AUTO-GENERATED from `wt list --help-page` — edit cli.rs to update -->
+<!-- ⚠️ AUTO-GENERATED from `wt list --help-page` — edit src/cli/mod.rs to update -->
 
 List worktrees and their status.
 

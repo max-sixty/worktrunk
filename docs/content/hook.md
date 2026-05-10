@@ -7,7 +7,7 @@ weight = 17
 group = "Commands"
 +++
 
-<!-- ⚠️ AUTO-GENERATED from `wt hook --help-page` — edit cli.rs to update -->
+<!-- ⚠️ AUTO-GENERATED from `wt hook --help-page` — edit src/cli/mod.rs to update -->
 
 Run configured hooks.
 

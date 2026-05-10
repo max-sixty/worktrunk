@@ -7,7 +7,7 @@ weight = 16
 group = "Commands"
 +++
 
-<!-- ⚠️ AUTO-GENERATED from `wt step --help-page` — edit cli.rs to update -->
+<!-- ⚠️ AUTO-GENERATED from `wt step --help-page` — edit src/cli/mod.rs to update -->
 
 Run individual operations. The building blocks of wt merge — commit, squash, rebase, push — plus standalone utilities.
 

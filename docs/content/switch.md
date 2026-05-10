@@ -7,7 +7,7 @@ weight = 10
 group = "Commands"
 +++
 
-<!-- ⚠️ AUTO-GENERATED from `wt switch --help-page` — edit cli.rs to update -->
+<!-- ⚠️ AUTO-GENERATED from `wt switch --help-page` — edit src/cli/mod.rs to update -->
 
 Switch to a worktree; create if needed.
 

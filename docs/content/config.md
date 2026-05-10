@@ -7,7 +7,7 @@ weight = 15
 group = "Commands"
 +++
 
-<!-- ⚠️ AUTO-GENERATED from `wt config --help-page` — edit cli.rs to update -->
+<!-- ⚠️ AUTO-GENERATED from `wt config --help-page` — edit src/cli/mod.rs to update -->
 
 Manage user & project configs. Includes shell integration, hooks, and saved state.
 

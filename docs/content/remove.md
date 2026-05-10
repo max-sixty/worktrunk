@@ -7,7 +7,7 @@ weight = 12
 group = "Commands"
 +++
 
-<!-- ⚠️ AUTO-GENERATED from `wt remove --help-page` — edit cli.rs to update -->
+<!-- ⚠️ AUTO-GENERATED from `wt remove --help-page` — edit src/cli/mod.rs to update -->
 
 Remove worktree; delete branch if merged. Defaults to the current worktree.
 
