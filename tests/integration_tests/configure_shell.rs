@@ -931,7 +931,7 @@ fn test_uninstall_shell_not_found(repo: TestRepo, temp_home: TempDir) {
         ----- stdout -----
 
         ----- stderr -----
-        [33m▲[39m [33mNo shell extension & completions found in ~/.zshrc[39m
+        [33m▲[39m [33mNo shell extension & completions found in [1m~/.zshrc[22m[39m
         ");
     });
 }

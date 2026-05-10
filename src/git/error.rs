@@ -1057,8 +1057,8 @@ impl GitError {
                 write!(
                     f,
                     "\n{}",
-                    hint_message(format!(
-                        "Commit or stash these changes in {path_display} first"
+                    hint_message(cformat!(
+                        "Commit or stash these changes in <underline>{path_display}</> first"
                     ))
                 )
             }

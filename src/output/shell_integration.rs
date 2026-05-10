@@ -531,7 +531,10 @@ pub fn print_shell_uninstall_result(scan_result: &UninstallScanResult, explicit_
         let path = format_path_for_display(path);
         let what = shell_extension_label(*shell);
         if explicit_shell {
-            eprintln!("{}", warning_message(format!("No {what} found in {path}")));
+            eprintln!(
+                "{}",
+                warning_message(cformat!("No {what} found in <bold>{path}</>"))
+            );
         } else {
             eprintln!(
                 "{}",
@@ -552,7 +555,7 @@ pub fn print_shell_uninstall_result(scan_result: &UninstallScanResult, explicit_
         if explicit_shell {
             eprintln!(
                 "{}",
-                warning_message(format!("No completions found in {path}"))
+                warning_message(cformat!("No completions found in <bold>{path}</>"))
             );
         } else {
             eprintln!(

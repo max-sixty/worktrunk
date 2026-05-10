@@ -97,7 +97,7 @@ use once_cell::sync::OnceCell;
 use wait_timeout::ChildExt;
 
 use anyhow::{Context, bail};
-
+use color_print::cformat;
 use dunce::canonicalize;
 
 use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
@@ -1580,11 +1580,11 @@ fn emit_user_config_warnings(warnings: &[LoadError]) {
     for warning in warnings {
         match warning {
             LoadError::File { path, label, err } => {
+                let path_display = crate::path::format_path_for_display(path);
                 crate::styling::eprintln!(
                     "{}",
-                    crate::styling::warning_message(format!(
-                        "{label} at {} failed to parse, skipping",
-                        crate::path::format_path_for_display(path),
+                    crate::styling::warning_message(cformat!(
+                        "{label} @ <bold>{path_display}</> failed to parse, skipping"
                     ))
                 );
                 crate::styling::eprintln!(
