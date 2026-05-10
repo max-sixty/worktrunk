@@ -296,8 +296,8 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
                         SquashResult::NoCommitsAhead(branch) => {
                             eprintln!(
                                 "{}",
-                                info_message(format!(
-                                    "Nothing to squash; no commits ahead of {branch}"
+                                info_message(cformat!(
+                                    "Nothing to squash; no commits ahead of <bold>{branch}</>"
                                 ))
                             );
                         }

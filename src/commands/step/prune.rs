@@ -355,7 +355,11 @@ fn render_dry_run(
     // Sort for deterministic output regardless of channel completion order.
     skipped_young.sort();
     if !skipped_young.is_empty() {
-        let names = skipped_young.join(", ");
+        let names = skipped_young
+            .iter()
+            .map(|n| cformat!("<bold>{n}</>"))
+            .collect::<Vec<_>>()
+            .join(", ");
         eprintln!(
             "{}",
             info_message(format!("Skipped {names} (younger than {min_age})"))
@@ -508,7 +512,9 @@ pub fn step_prune(
                 if !dry_run {
                     eprintln!(
                         "{}",
-                        info_message(format!("Skipped {label} (younger than {min_age})"))
+                        info_message(cformat!(
+                            "Skipped <bold>{label}</> (younger than {min_age})"
+                        ))
                     );
                 }
                 skipped_young.push(label);
@@ -569,7 +575,9 @@ pub fn step_prune(
             if !dry_run {
                 eprintln!(
                     "{}",
-                    info_message(format!("Skipped {branch} (younger than {min_age})"))
+                    info_message(cformat!(
+                        "Skipped <bold>{branch}</> (younger than {min_age})"
+                    ))
                 );
             }
             skipped_young.push(branch.clone());
