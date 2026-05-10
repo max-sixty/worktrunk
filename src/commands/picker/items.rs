@@ -503,6 +503,13 @@ impl WorktreeSkimItem {
         // dim/bright split tracks main's current position. See the cache
         // entry docstring for why we keep this off the SHA-keyed disk cache.
         //
+        // Don't switch to `Repository::merge_base` / `default_branch_sha`
+        // here. Both cache against snapshotted SHAs; the dim/bright logic
+        // requires the merge-base call to *re-resolve* the default branch
+        // each render so the styling shifts when main advances. The
+        // `log_cache_dim_split_tracks_main_advance` test below pins this
+        // contract — switching to the cached path makes it fail.
+        //
         // Error handling note: this code runs in an interactive preview
         // pane. Silent fallbacks beat disruptive errors during navigation;
         // the preview is supplementary, users can still select worktrees
