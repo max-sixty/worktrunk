@@ -159,6 +159,13 @@ impl GitRemoteUrl {
         self.host.to_ascii_lowercase().contains("gitlab")
     }
 
+    /// Check if this URL points to a Gitea host.
+    ///
+    /// Matches gitea.com and self-hosted Gitea instances (e.g., gitea.example.com).
+    pub fn is_gitea(&self) -> bool {
+        self.host.to_ascii_lowercase().contains("gitea")
+    }
+
     /// Check if this URL points to an Azure DevOps host.
     ///
     /// Matches `dev.azure.com`, `ssh.dev.azure.com`, and legacy `*.visualstudio.com` hosts.

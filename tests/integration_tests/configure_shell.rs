@@ -466,6 +466,61 @@ fn test_uninstall_shell_fish_legacy_conf_d_cleanup(repo: TestRepo, temp_home: Te
     );
 }
 
+/// Test that the legacy cleanup warns (but does not fail) when removal errors.
+///
+/// Makes the legacy conf.d directory read-only so `fs::remove_file` returns
+/// EACCES. The install still succeeds via the new `functions/` location and
+/// surfaces a warning naming the legacy file.
+#[rstest]
+#[cfg(unix)]
+fn test_configure_shell_fish_legacy_remove_failure_warns(repo: TestRepo, temp_home: TempDir) {
+    use std::fs::Permissions;
+    use std::os::unix::fs::PermissionsExt;
+
+    let conf_d = temp_home.path().join(".config/fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    let legacy_file = conf_d.join("wt.fish");
+    fs::write(&legacy_file, "wt config shell init fish | source").unwrap();
+
+    // Read-only parent dir → remove of contained file fails with EACCES.
+    fs::set_permissions(&conf_d, Permissions::from_mode(0o555)).unwrap();
+
+    // Skip when running as root — permissions don't restrict.
+    let probe = conf_d.join("__probe");
+    if fs::write(&probe, "").is_ok() {
+        let _ = fs::remove_file(&probe);
+        fs::set_permissions(&conf_d, Permissions::from_mode(0o755)).unwrap();
+        eprintln!("Skipping - running with elevated privileges");
+        return;
+    }
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/fish");
+    cmd.arg("config")
+        .arg("shell")
+        .arg("install")
+        .arg("fish")
+        .arg("--yes")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+
+    // Restore permissions so TempDir cleanup succeeds even if assertions fail.
+    fs::set_permissions(&conf_d, Permissions::from_mode(0o755)).unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "Install should succeed despite legacy cleanup failure, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Failed to remove deprecated") && stderr.contains("conf.d/wt.fish"),
+        "Expected legacy-cleanup warning naming the path; got: {stderr}"
+    );
+}
+
 /// Test that --dry-run does NOT delete legacy fish conf.d file
 ///
 /// Regression test: Previously, --dry-run could delete the legacy file because

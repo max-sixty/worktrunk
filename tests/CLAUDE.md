@@ -334,6 +334,33 @@ fn test_config_loading() {
 
 For environment-dependent tests, use `Command::new()` with `.env()` to set variables in a subprocess, or use the test isolation helpers (`repo.wt_command()`, `wt_command()`).
 
+## Snapshot Filters
+
+### Bold codes around redacted paths
+
+Source code may wrap a path in `<bold>` for terminal styling (e.g., `cformat!("{label} @ <bold>{path}</> failed")`). Setup-side path filters in `tests/common/mod.rs` substitute the path to a placeholder like `[TEST_CONFIG]` or `[PROJECT_ID]`, and a follow-up filter strips ANSI codes immediately wrapping those placeholders so the snapshot reads as a clean `[PLACEHOLDER]`.
+
+The strip filter only fires on placeholders established **before** it. It runs at the end of `setup_snapshot_settings*`, so any path-redaction filter the test adds *after* setup escapes it.
+
+If a test introduces its own placeholder for a path (e.g., `_REPO_/system-config.toml` → `[TEST_SYSTEM_CONFIG_FILE]`), use `add_path_placeholder_filter` so the filter consumes any styling wrappers around the path:
+
+```rust
+// ✅ GOOD: helper wraps the pattern with optional ANSI consumption
+common::add_path_placeholder_filter(
+    &mut settings,
+    r"_REPO_/system-config\.toml",
+    "[TEST_SYSTEM_CONFIG_FILE]",
+);
+
+// ❌ BAD: bare add_filter substitutes only the path, so a `<bold>{path}</>`
+// source leaves `\x1b[1m[TEST_SYSTEM_CONFIG_FILE]\x1b[22m` in the snapshot.
+settings.add_filter(r"_REPO_/system-config\.toml", "[TEST_SYSTEM_CONFIG_FILE]");
+```
+
+The helper wraps the pattern in `(?:\x1b\[\d+m)*` brackets, which eat only the bold open/close immediately adjacent to the path — surrounding color spans (yellow warning, etc.) are preserved.
+
+Setup-side path-redaction placeholders in the strip list (`add_placeholder_ansi_strip_filter` in `tests/common/mod.rs`): `[TEST_CONFIG]`, `[TEST_CONFIG_NEW]`, `[TEST_APPROVALS]`, `[TEST_GIT_CONFIG]`, `[PROJECT_ID]`, `[TEMP_HOME]`, `[TEMP]`. Placeholders that hold a real value (`[VERSION]`, `[HASH]`, `[BUILD_MODE]`, `[BINARY_PATH]`) keep their bold codes so the snapshot still asserts the user-visible styling. The strip pass is invoked at the end of every `setup_*_snapshot_settings` helper, so the contract holds uniformly across `setup_snapshot_settings*`, `setup_home_snapshot_settings`, and `setup_temp_snapshot_settings`.
+
 ## Test Style
 
 ### Snapshot env drift is cosmetic

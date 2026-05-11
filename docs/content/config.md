@@ -402,7 +402,7 @@ Override platform detection for SSH aliases or self-hosted instances:
 
 ```toml
 [forge]
-platform = "github"  # or "gitlab", "azure-devops"
+platform = "github"  # or "gitea" (experimental), "gitlab", "azure-devops"
 hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 ```
 
@@ -924,7 +924,7 @@ CI status cache.
 
 Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
 
-Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `forge.platform = "github"` in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
+Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `forge.platform = "github"` (or `"gitlab"`) in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
 
 Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
 

@@ -270,6 +270,16 @@ Triage each duplicate:
 Baseline: ~29 git subprocesses per render on a clean tree; a jump above
 ~32 warrants investigation.
 
+## Weekly Maintenance: LLM Model Names in Docs
+
+Grep for current Claude and Codex pins across every tracked file:
+
+```bash
+git grep -niE "claude|codex"
+```
+
+Check the latest IDs at <https://docs.anthropic.com/en/docs/about-claude/models> and <https://developers.openai.com/codex/models>. The recommended commit-message commands should use the most recent fastest model from each vendor (Haiku for Anthropic, the smallest current Codex variant for OpenAI).
+
 ## README Date Check
 
 The README blockquote opens with a month+year (e.g., "**April 2026**"). During daily

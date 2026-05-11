@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::display::format_relative_time_short;
-use anyhow::Context;
+use anyhow::{Context, bail};
 use color_print::cformat;
 use dunce::canonicalize;
 use serde::Serialize;
@@ -16,7 +16,8 @@ use worktrunk::config::{
     UserConfig, ValidationScope, expand_template, template_references_var, validate_template,
 };
 use worktrunk::git::remote_ref::{
-    self, AzureDevOpsProvider, GitHubProvider, GitLabProvider, RemoteRefInfo, RemoteRefProvider,
+    self, AzureDevOpsProvider, GitHubProvider, GitLabProvider, GiteaProvider, RemoteRefInfo,
+    RemoteRefProvider,
 };
 use worktrunk::git::{
     GitError, GitRemoteUrl, RefContext, RefType, Repository, SwitchSuggestionCtx,
@@ -50,60 +51,6 @@ struct ResolvedTarget {
     method: CreationMethod,
 }
 
-/// Pick the right `pr:` provider for this repo.
-///
-/// Priority:
-/// 1. `forge.platform` in project config (`"github"` or `"azure-devops"`) — the
-///    explicit override for mixed-remote setups.
-/// 2. Remote URL detection — GitHub wins when any remote is GitHub (preserves
-///    pre-Azure behaviour for repos that grew an Azure mirror later); Azure
-///    wins when no GitHub remote is configured.
-/// 3. Fallback to GitHub when no recognisable remote is configured (preserves
-///    previous error messages from `gh`).
-fn pr_provider_for_repo(repo: &Repository) -> Box<dyn RemoteRefProvider> {
-    if let Some(platform) = repo
-        .load_project_config()
-        .ok()
-        .flatten()
-        .and_then(|c| c.forge_platform().map(str::to_string))
-    {
-        match platform.as_str() {
-            "azure-devops" | "azuredevops" => return Box::new(AzureDevOpsProvider),
-            "github" => return Box::new(GitHubProvider),
-            // GitLab MRs use `mr:`, not `pr:`. Fall through to URL detection
-            // for `"gitlab"` and unrecognised values; warn so the user sees
-            // why their override didn't apply.
-            "gitlab" => {}
-            other => {
-                log::warn!(
-                    "Ignoring `forge.platform = {:?}` for `pr:` shortcut — \
-                     expected one of `github`, `azure-devops`. Falling back to remote-based detection.",
-                    other
-                );
-            }
-        }
-    }
-
-    let any_github = repo
-        .all_remote_urls()
-        .into_iter()
-        .filter_map(|(_, url)| GitRemoteUrl::parse(&url))
-        .any(|u| u.is_github());
-    if any_github {
-        return Box::new(GitHubProvider);
-    }
-    let any_azure = repo
-        .all_remote_urls()
-        .into_iter()
-        .filter_map(|(_, url)| GitRemoteUrl::parse(&url))
-        .any(|u| u.is_azure_devops());
-    if any_azure {
-        Box::new(AzureDevOpsProvider)
-    } else {
-        Box::new(GitHubProvider)
-    }
-}
-
 /// Format PR/MR context for gutter display after fetching.
 ///
 /// Returns two lines for gutter formatting:
@@ -126,6 +73,127 @@ fn format_ref_context(ctx: &impl RefContext) -> String {
         ctx.number(),
         ctx.url()
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PrProviderChoice {
+    GitHub,
+    Gitea,
+    AzureDevOps,
+}
+
+/// Choose which provider should handle `pr:<number>` resolution.
+///
+/// Priority:
+/// 1. `forge.platform` config override (`github` / `gitea` / `azure-devops`)
+/// 2. Primary remote URL detection (host contains `github`/`gitea`/`dev.azure.com`)
+/// 3. CLI auth lookup — if `tea` has a login for this host but `gh` does
+///    not, pick Gitea; otherwise default to GitHub
+///
+/// The default-to-GitHub fall-through means a self-hosted Gitea on a branded
+/// host (e.g. `git.example.com`) without `tea login add` will see a single
+/// GitHub error (with hint to set `forge.platform = "gitea"`), instead of a
+/// wrapped two-provider error.
+fn choose_pr_provider(repo: &Repository) -> anyhow::Result<PrProviderChoice> {
+    if let Some(platform_raw) = repo
+        .load_project_config()
+        .ok()
+        .flatten()
+        .and_then(|c| c.forge_platform().map(str::to_string))
+    {
+        let platform = platform_raw.to_ascii_lowercase();
+        match platform.as_str() {
+            "github" => return Ok(PrProviderChoice::GitHub),
+            "gitea" => return Ok(PrProviderChoice::Gitea),
+            "azure-devops" | "azuredevops" => return Ok(PrProviderChoice::AzureDevOps),
+            "gitlab" => {
+                bail!("forge.platform is set to gitlab; use mr:<number> instead of pr:<number>")
+            }
+            _ => bail!(
+                "Invalid forge.platform value `{platform_raw}` in .config/wt.toml; \
+                 expected one of: github, gitea, gitlab, azure-devops"
+            ),
+        }
+    }
+
+    // GitHub still wins in mixed-remote setups (preserves pre-Gitea/Azure
+    // behaviour for repos that grew a mirror later). Scan every remote so a
+    // non-primary `origin` doesn't hide a GitHub mirror.
+    let all_parsed: Vec<_> = repo
+        .all_remote_urls()
+        .into_iter()
+        .filter_map(|(_, url)| GitRemoteUrl::parse(&url))
+        .collect();
+
+    if all_parsed.iter().any(|u| u.is_github()) {
+        return Ok(PrProviderChoice::GitHub);
+    }
+    if all_parsed.iter().any(|u| u.is_gitea()) {
+        return Ok(PrProviderChoice::Gitea);
+    }
+    if all_parsed.iter().any(|u| u.is_azure_devops()) {
+        return Ok(PrProviderChoice::AzureDevOps);
+    }
+    if all_parsed.iter().any(|u| u.is_gitlab()) {
+        bail!("Detected GitLab remote; use mr:<number> instead of pr:<number>")
+    }
+
+    // No recognisable forge remote. Use the primary remote (raw URL — `insteadOf`
+    // rewrites are for git transport and may not reflect the real forge host)
+    // to ask the CLIs which one is configured for this host. If only `tea` has a
+    // login, pick Gitea; otherwise default to GitHub (the common case, and the
+    // one users get useful errors from when nothing is set up).
+    let Some(host) = repo
+        .primary_remote()
+        .ok()
+        .and_then(|remote| repo.remote_url(&remote))
+        .and_then(|url| GitRemoteUrl::parse(&url))
+        .map(|u| u.host().to_string())
+    else {
+        return Ok(PrProviderChoice::GitHub);
+    };
+
+    if remote_ref::gitea::is_authed_for(&host) && !remote_ref::github::is_authed_for(&host) {
+        Ok(PrProviderChoice::Gitea)
+    } else {
+        Ok(PrProviderChoice::GitHub)
+    }
+}
+
+fn resolve_pr_target(
+    repo: &Repository,
+    number: u32,
+    create: bool,
+    base: Option<&str>,
+) -> anyhow::Result<ResolvedTarget> {
+    if base.is_some() {
+        return Err(GitError::RefBaseConflict {
+            ref_type: RefType::Pr,
+            number,
+        }
+        .into());
+    }
+
+    match choose_pr_provider(repo)? {
+        PrProviderChoice::GitHub => resolve_remote_ref(repo, &GitHubProvider, number, create, base),
+        PrProviderChoice::Gitea => resolve_remote_ref(repo, &GiteaProvider, number, create, base),
+        PrProviderChoice::AzureDevOps => {
+            resolve_remote_ref(repo, &AzureDevOpsProvider, number, create, base)
+        }
+    }
+}
+
+fn resolve_pr_base(
+    repo: &Repository,
+    number: u32,
+) -> anyhow::Result<(String, Option<(String, String)>)> {
+    match choose_pr_provider(repo)? {
+        PrProviderChoice::GitHub => resolve_remote_ref_as_base(repo, &GitHubProvider, number),
+        PrProviderChoice::Gitea => resolve_remote_ref_as_base(repo, &GiteaProvider, number),
+        PrProviderChoice::AzureDevOps => {
+            resolve_remote_ref_as_base(repo, &AzureDevOpsProvider, number)
+        }
+    }
 }
 
 /// Resolve a remote ref (PR or MR) using the unified provider interface.
@@ -217,7 +285,7 @@ fn resolve_fork_ref(
             });
         }
 
-        // Branch exists but doesn't track this ref - try prefixed name (GitHub only)
+        // Branch exists but doesn't track this ref - try prefixed name (GitHub/Gitea)
         if let Some(prefixed) = info.prefixed_local_branch_name() {
             if let Some(prefixed_tracks) = remote_ref::branch_tracks_ref(
                 repo_root,
@@ -384,8 +452,7 @@ fn resolve_base_ref(
     if let Some(suffix) = base.strip_prefix("pr:")
         && let Ok(number) = suffix.parse::<u32>()
     {
-        let provider = pr_provider_for_repo(repo);
-        return resolve_remote_ref_as_base(repo, provider.as_ref(), number);
+        return resolve_pr_base(repo, number);
     }
 
     if let Some(suffix) = base.strip_prefix("mr:")
@@ -460,12 +527,11 @@ fn resolve_switch_target(
     create: bool,
     base: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
-    // Handle pr:<number> syntax — dispatches to GitHub or Azure DevOps based on remotes.
+    // Handle pr:<number> syntax — dispatches to GitHub, Gitea, or Azure DevOps based on remotes.
     if let Some(suffix) = branch.strip_prefix("pr:")
         && let Ok(number) = suffix.parse::<u32>()
     {
-        let provider = pr_provider_for_repo(repo);
-        return resolve_remote_ref(repo, provider.as_ref(), number, create, base);
+        return resolve_pr_target(repo, number, create, base);
     }
 
     // Handle mr:<number> syntax (GitLab MRs)
@@ -1625,7 +1691,7 @@ mod tests {
     }
 
     #[test]
-    fn pr_provider_for_repo_prefers_github_over_azure() {
+    fn choose_pr_provider_prefers_github_over_azure() {
         // Mixed-remote setup: a repo with both a GitHub remote and an Azure
         // DevOps remote falls through to GitHub. Operators with an explicit
         // preference set `forge.platform`.
@@ -1638,12 +1704,14 @@ mod tests {
             "https://dev.azure.com/myorg/proj/_git/myrepo",
         ]);
 
-        let provider = pr_provider_for_repo(&test.repo);
-        assert_eq!(provider.platform_label(), "github");
+        assert_eq!(
+            choose_pr_provider(&test.repo).unwrap(),
+            PrProviderChoice::GitHub
+        );
     }
 
     #[test]
-    fn pr_provider_for_repo_azure_only() {
+    fn choose_pr_provider_azure_only() {
         // Azure-only repo (no GitHub remote) gets the Azure provider.
         let test = TestRepo::with_initial_commit();
         test.run_git(&[
@@ -1653,26 +1721,30 @@ mod tests {
             "https://dev.azure.com/myorg/proj/_git/myrepo",
         ]);
 
-        let provider = pr_provider_for_repo(&test.repo);
-        assert_eq!(provider.platform_label(), "azure-devops");
+        assert_eq!(
+            choose_pr_provider(&test.repo).unwrap(),
+            PrProviderChoice::AzureDevOps
+        );
     }
 
     #[test]
-    fn pr_provider_for_repo_no_recognised_remote() {
+    fn choose_pr_provider_no_recognised_remote() {
         // Falls back to GitHub when no recognisable forge remote exists,
         // preserving the existing error message from `gh`.
         let test = TestRepo::with_initial_commit();
-        let provider = pr_provider_for_repo(&test.repo);
-        assert_eq!(provider.platform_label(), "github");
+        assert_eq!(
+            choose_pr_provider(&test.repo).unwrap(),
+            PrProviderChoice::GitHub
+        );
     }
 
     #[test]
-    fn pr_provider_for_repo_forge_platform_override_wins() {
+    fn choose_pr_provider_forge_platform_override_wins() {
         // The bug worth covering: a mixed-remote repo where the user explicitly
         // pinned `forge.platform = "azure-devops"`. Without the override, the
         // GitHub remote would win — and the user has no way to redirect `pr:N`.
         // A regression that drops the project-config read would flip this
-        // assertion to `"github"`.
+        // assertion to `GitHub`.
         let test = TestRepo::with_initial_commit();
         test.run_git(&["remote", "add", "origin", "https://github.com/myorg/myrepo"]);
         test.run_git(&[
@@ -1683,12 +1755,14 @@ mod tests {
         ]);
         test.write_project_config("[forge]\nplatform = \"azure-devops\"\n");
 
-        let provider = pr_provider_for_repo(&test.repo);
-        assert_eq!(provider.platform_label(), "azure-devops");
+        assert_eq!(
+            choose_pr_provider(&test.repo).unwrap(),
+            PrProviderChoice::AzureDevOps
+        );
     }
 
     #[test]
-    fn pr_provider_for_repo_forge_platform_github_in_azure_only_repo() {
+    fn choose_pr_provider_forge_platform_github_in_azure_only_repo() {
         // Inverse override: Azure-only remotes but `forge.platform = "github"`.
         // Verifies the config arm flips the inferred-from-remotes default.
         let test = TestRepo::with_initial_commit();
@@ -1700,7 +1774,9 @@ mod tests {
         ]);
         test.write_project_config("[forge]\nplatform = \"github\"\n");
 
-        let provider = pr_provider_for_repo(&test.repo);
-        assert_eq!(provider.platform_label(), "github");
+        assert_eq!(
+            choose_pr_provider(&test.repo).unwrap(),
+            PrProviderChoice::GitHub
+        );
     }
 }

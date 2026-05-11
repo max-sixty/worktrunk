@@ -1818,12 +1818,15 @@ fn setup_mock_gh_for_pr(repo: &TestRepo, gh_response: Option<&str>) -> std::path
     mock_bin
 }
 
-/// Configure command environment for mock gh.
-fn configure_mock_gh_env(cmd: &mut std::process::Command, mock_bin: &Path) {
-    // Tell mock-stub where to find config files
+/// Configure command environment for any mock CLI installed in `mock_bin`.
+///
+/// Sets `MOCK_CONFIG_DIR` (so mock-stub finds its config) and prepends
+/// `mock_bin` to `PATH` (so the mock binary is found before any real CLI).
+fn configure_mock_cli_env(cmd: &mut std::process::Command, mock_bin: &Path) {
     cmd.env("MOCK_CONFIG_DIR", mock_bin);
 
-    // Build PATH with mock binary first
+    // Find the actual PATH var name (case-insensitive on Windows) to avoid
+    // creating a duplicate entry with different case.
     let (path_var_name, current_path) = std::env::vars_os()
         .find(|(k, _)| k.eq_ignore_ascii_case("PATH"))
         .map(|(k, v)| (k.to_string_lossy().into_owned(), Some(v)))
@@ -1875,7 +1878,7 @@ fn test_switch_pr_create_conflict(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_create_conflict", cmd);
     });
 }
@@ -1939,7 +1942,7 @@ fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_same_repo", cmd);
     });
 }
@@ -2009,7 +2012,7 @@ fn test_switch_pr_same_repo_limited_refspec(#[from(repo_with_remote)] mut repo: 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_same_repo_limited_refspec", cmd);
     });
 }
@@ -2054,7 +2057,7 @@ fn test_switch_pr_same_repo_no_remote(#[from(repo_with_remote)] repo: TestRepo) 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_same_repo_no_remote", cmd);
     });
 }
@@ -2139,7 +2142,7 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork", cmd);
     });
 }
@@ -2220,7 +2223,7 @@ post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_pa
 
     let mut cmd = repo.wt_command();
     cmd.args(["switch", "pr:42", "--yes"]);
-    configure_mock_gh_env(&mut cmd, &mock_bin);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
     let output = cmd.output().expect("wt switch pr:42 should run");
     assert!(
         output.status.success(),
@@ -2285,7 +2288,7 @@ fn test_switch_pr_fork_no_upstream_remote(#[from(repo_with_remote)] repo: TestRe
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork_no_upstream", cmd);
     });
 }
@@ -2394,7 +2397,7 @@ fn test_switch_pr_fork_gh_default_repo(#[from(repo_with_remote)] repo: TestRepo)
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork_gh_default", cmd);
     });
 }
@@ -2424,7 +2427,7 @@ fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:9999"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_not_found", cmd);
     });
 }
@@ -2456,7 +2459,7 @@ fn test_switch_pr_deleted_fork(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_deleted_fork", cmd);
     });
 }
@@ -2535,7 +2538,7 @@ fn test_switch_base_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
             ],
             None,
         );
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_base_pr_same_repo", cmd);
     });
 }
@@ -2597,7 +2600,7 @@ fn test_switch_base_pr_sets_upstream(#[from(repo_with_remote)] mut repo: TestRep
     cmd.args([
         "switch", "--create", "swa-65", "--base", "pr:2648", "--no-cd",
     ]);
-    configure_mock_gh_env(&mut cmd, &mock_bin);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
     let status = cmd.status().expect("wt switch should run");
     assert!(status.success(), "wt switch failed: {:?}", status);
 
@@ -2706,7 +2709,7 @@ fn test_switch_base_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
             &["--create", "my-work", "--base", "pr:42", "--no-cd"],
             None,
         );
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_base_pr_fork", cmd);
     });
 
@@ -2847,7 +2850,7 @@ fn test_switch_pr_fork_existing_same_pr(#[from(repo_with_remote)] repo: TestRepo
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork_existing_same_pr", cmd);
     });
 }
@@ -2932,7 +2935,7 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork_existing_different_pr", cmd);
     });
 }
@@ -3015,7 +3018,7 @@ fn test_switch_pr_fork_existing_same_pr_wrong_remote(#[from(repo_with_remote)] m
 
     let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
     let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-    configure_mock_gh_env(&mut cmd, &mock_bin);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "switch should succeed");
 
@@ -3099,7 +3102,7 @@ fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork_existing_no_tracking", cmd);
     });
 }
@@ -3184,7 +3187,7 @@ fn test_switch_pr_fork_prefixed_exists_same_pr(#[from(repo_with_remote)] repo: T
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork_prefixed_exists_same_pr", cmd);
     });
 }
@@ -3254,7 +3257,7 @@ fn test_switch_pr_fork_prefixed_exists_different_pr(#[from(repo_with_remote)] re
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork_prefixed_exists_different_pr", cmd);
     });
 }
@@ -3283,7 +3286,7 @@ fn test_switch_pr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_not_authenticated", cmd);
     });
 }
@@ -3314,7 +3317,7 @@ fn test_switch_pr_rate_limit(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_rate_limit", cmd);
     });
 }
@@ -3338,7 +3341,7 @@ fn test_switch_pr_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_invalid_json", cmd);
     });
 }
@@ -3365,7 +3368,7 @@ fn test_switch_pr_network_error(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_network_error", cmd);
     });
 }
@@ -3393,7 +3396,7 @@ fn test_switch_pr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_unknown_error", cmd);
     });
 }
@@ -3433,8 +3436,697 @@ fn test_switch_pr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_empty_branch", cmd);
+    });
+}
+
+// ============================================================================
+// PR Syntax Tests on Gitea remotes
+//
+// These exercise `pr:<N>` against a Gitea remote (host detection picks the
+// `tea` provider; provider selection is in choose_pr_provider). The remote
+// URLs use `gitea.example.com` so `GitRemoteUrl::is_gitea()` matches and the
+// ambiguous fallback is skipped — the runtime calls only the mock `tea`,
+// not real `gh`.
+// ============================================================================
+
+/// Helper to set up mock tea for Gitea PR tests with custom response.
+///
+/// Returns the path to the mock bin directory; pass it to
+/// `configure_mock_cli_env`.
+fn setup_mock_tea(repo: &TestRepo, tea_response: Option<&str>) -> std::path::PathBuf {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "tea");
+
+    if let Some(response) = tea_response {
+        fs::write(mock_bin.join("tea_pr_response.json"), response).unwrap();
+
+        MockConfig::new("tea")
+            .version("tea version development (mock)")
+            .command("api", MockResponse::file("tea_pr_response.json"))
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+    }
+
+    mock_bin
+}
+
+#[rstest]
+fn test_switch_pr_gitea_create_conflict(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "feature-auth",
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
+    }"#;
+
+    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_create_conflict", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_pr_gitea_base_conflict(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--base", "main", "pr:101"], None);
+        assert_cmd_snapshot!("switch_pr_gitea_base_conflict", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_pr_gitea_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "feature-auth",
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
+    }"#;
+
+    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_same_repo", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_pr_gitea_fork(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&["checkout", "-b", "gitea-pr-source"]);
+    fs::write(
+        repo.root_path().join("gitea-pr-file.txt"),
+        "Gitea PR content",
+    )
+    .unwrap();
+    repo.run_git(&["add", "gitea-pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "Gitea PR commit"]);
+
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .run()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "contributor:feature-fix",
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/42"
+    }"#;
+
+    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_fork", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_pr_gitea_not_found(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "tea");
+
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"404 Not found"}"#).with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:9999"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_not_found", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_pr_gitea_tea_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
+        eprintln!("Skipping test: symlinks not available on this system");
+        return;
+    };
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_cli_not_installed_env(&mut cmd, &minimal_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_tea_not_installed", cmd);
+    });
+}
+
+/// `forge.platform = "gitea"` overrides remote-URL detection. With a non-Gitea
+/// URL, the override picks the Gitea provider directly (no ambiguous fallback).
+#[rstest]
+fn test_switch_pr_gitea_forge_platform_override(#[from(repo_with_remote)] repo: TestRepo) {
+    // Non-Gitea-looking URL — without the override we'd hit the ambiguous path.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://git.internal.example.com/owner/test-repo.git",
+    ]);
+
+    let project_config = repo.root_path().join(".config/wt.toml");
+    fs::create_dir_all(project_config.parent().unwrap()).unwrap();
+    fs::write(&project_config, "[forge]\nplatform = \"gitea\"\n").unwrap();
+
+    let tea_response = r#"{
+        "title": "Override test",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "feature-auth",
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://git.internal.example.com/owner/test-repo/pulls/101"
+    }"#;
+
+    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_forge_platform_override", cmd);
+    });
+}
+
+/// `forge.platform = "gitlab"` with `pr:` should bail and tell the user to use
+/// `mr:` instead — the platform is incompatible with the syntax.
+#[rstest]
+fn test_switch_pr_forge_platform_gitlab_rejects_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    let project_config = repo.root_path().join(".config/wt.toml");
+    fs::create_dir_all(project_config.parent().unwrap()).unwrap();
+    fs::write(&project_config, "[forge]\nplatform = \"gitlab\"\n").unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        assert_cmd_snapshot!("switch_pr_forge_platform_gitlab", cmd);
+    });
+}
+
+/// An invalid `forge.platform` value bails with a clear error listing the
+/// accepted values, rather than silently routing somewhere via fall-through.
+#[rstest]
+fn test_switch_pr_forge_platform_invalid_bails(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let project_config = repo.root_path().join(".config/wt.toml");
+    fs::create_dir_all(project_config.parent().unwrap()).unwrap();
+    fs::write(&project_config, "[forge]\nplatform = \"bitbucket\"\n").unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        assert_cmd_snapshot!("switch_pr_forge_platform_invalid_bails", cmd);
+    });
+}
+
+/// With no parseable remote URL, dispatch defaults to GitHub. Without `gh`
+/// installed the GitHub provider bails with the install hint — a single,
+/// readable error rather than a wrapped two-provider message.
+#[rstest]
+fn test_switch_pr_no_remote_defaults_to_github(repo: TestRepo) {
+    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
+        eprintln!("Skipping test: symlinks not available on this system");
+        return;
+    };
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_cli_not_installed_env(&mut cmd, &minimal_bin);
+        assert_cmd_snapshot!("switch_pr_no_remote_defaults_to_github", cmd);
+    });
+}
+
+/// Detected GitLab remote with `pr:` should bail and tell the user to use `mr:`.
+#[rstest]
+fn test_switch_pr_gitlab_remote_rejects_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        assert_cmd_snapshot!("switch_pr_gitlab_remote", cmd);
+    });
+}
+
+/// Self-hosted forge whose hostname doesn't match any URL detection rule, but
+/// `tea` has a login configured for it (via `tea login add`) — dispatch
+/// inspects tea's config file and routes to Gitea.
+#[rstest]
+fn test_switch_pr_self_hosted_tea_authed_dispatches_to_gitea(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://forge.selfhosted.test/owner/test-repo.git",
+    ]);
+
+    let tea_config_dir = repo.home_path().join(".config").join("tea");
+    fs::create_dir_all(&tea_config_dir).unwrap();
+    fs::write(
+        tea_config_dir.join("config.yml"),
+        "logins:\n  - name: selfhosted\n    url: https://forge.selfhosted.test\n    default: true\n",
+    )
+    .unwrap();
+
+    let tea_response = r#"{
+        "title": "Routed via tea config",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "feature-auth",
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://forge.selfhosted.test/owner/test-repo/pulls/101"
+    }"#;
+    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_self_hosted_tea_authed", cmd);
+    });
+}
+
+/// Self-hosted forge with a non-distinctive hostname (`forge.example.com`)
+/// and neither `gh` nor `tea` configured for it — dispatch defaults to
+/// GitHub. The mock `gh api` succeeds, so the PR is checked out and the
+/// user never sees a wrapped error.
+#[rstest]
+fn test_switch_pr_self_hosted_defaults_to_github(#[from(repo_with_remote)] mut repo: TestRepo) {
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://forge.example.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://forge.example.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = r#"{
+        "title": "Self-hosted defaults to gh",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://forge.example.com/owner/test-repo/pull/101"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_self_hosted_defaults_to_github", cmd);
+    });
+}
+
+/// Gitea API returns malformed JSON — covers the JSON parse error path
+/// in `gitea::fetch_pr_info`.
+#[rstest]
+fn test_switch_pr_gitea_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = setup_mock_tea(&repo, Some("not json {"));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_invalid_json", cmd);
+    });
+}
+
+/// Gitea API returns a 5xx-style generic error (non-404/401/403) — exercises
+/// the generic `cli_api_error` fallback in `gitea::fetch_pr_info`.
+#[rstest]
+fn test_switch_pr_gitea_server_error(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "tea");
+
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"500 Internal Server Error"}"#)
+                .with_stderr("tea: server error\n")
+                .with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_server_error", cmd);
+    });
+}
+
+/// Gitea API returns a PR with no source branch (label and ref both empty)
+/// — exercises the `extract_source_branch` failure path in `fetch_pr_info`.
+#[rstest]
+fn test_switch_pr_gitea_no_source_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Stuck PR",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "",
+            "ref": "",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
+    }"#;
+
+    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_no_source_branch", cmd);
+    });
+}
+
+/// Gitea API returns a PR whose head repo is null (the fork has been deleted).
+/// Covers the `head_repo` `ok_or_else` path in `gitea::fetch_pr_info`.
+#[rstest]
+fn test_switch_pr_gitea_deleted_fork(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Deleted fork PR",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "alice:gone",
+            "ref": "gone",
+            "repo": null
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
+    }"#;
+
+    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_deleted_fork", cmd);
+    });
+}
+
+/// Gitea CLI returning 401/Unauthorized hits the dedicated bail message
+/// (covers the auth-error branch in `gitea::fetch_pr_info`).
+#[rstest]
+fn test_switch_pr_gitea_unauthorized(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "tea");
+
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"401 Unauthorized"}"#).with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_unauthorized", cmd);
+    });
+}
+
+/// Gitea CLI returning 403/Forbidden hits the dedicated bail message
+/// (covers the forbidden branch in `gitea::fetch_pr_info`).
+#[rstest]
+fn test_switch_pr_gitea_forbidden(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "tea");
+
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"403 Forbidden"}"#).with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_forbidden", cmd);
     });
 }
 

@@ -632,6 +632,8 @@ Requires `gh` (GitHub), `glab` (GitLab), or `az` with the `azure-devops` extensi
 
 **Forks:** The local branch uses the PR/MR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 
+**Gitea (experimental):** `pr:` is also compatible with Gitea via the `tea` CLI. Set `[forge] platform = "gitea"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Gitea when the remote host contains `gitea` or when `tea login add` has been run for the host.
+
 ## When wt switch fails
 
 - **Branch doesn't exist** — Use `--create`, or check `wt list --branches`
@@ -1934,7 +1936,7 @@ Override platform detection for SSH aliases or self-hosted instances:
 
 ```toml
 [forge]
-platform = "github"  # or "gitlab", "azure-devops"
+platform = "github"  # or "gitea" (experimental), "gitlab", "azure-devops"
 hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 ```
 

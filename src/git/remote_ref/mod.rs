@@ -1,7 +1,7 @@
 //! Unified PR/MR reference resolution.
 //!
-//! This module provides a trait-based architecture for resolving GitHub PRs, GitLab MRs,
-//! and Azure DevOps PRs to local branches. All platforms follow the same workflow:
+//! This module provides a trait-based architecture for resolving GitHub PRs, Gitea PRs,
+//! GitLab MRs, and Azure DevOps PRs to local branches. All platforms follow the same workflow:
 //!
 //! 1. Parse `pr:<number>` or `mr:<number>` syntax
 //! 2. Fetch metadata from the platform API
@@ -30,6 +30,13 @@
 //! Uses `glab api projects/:id/merge_requests/<number>`. Fork MRs require additional
 //! API calls to fetch source/target project URLs.
 //!
+//! ## Gitea (experimental)
+//!
+//! Uses `tea api repos/{owner}/{repo}/pulls/<number>`. Unlike `gh`, `tea`'s
+//! `{owner}`/`{repo}` template expansion depends on local repo context, so the
+//! provider resolves owner/repo from the primary remote URL and passes a
+//! pre-expanded path.
+//!
 //! ## Azure DevOps
 //!
 //! Uses `az repos pr show --id <number> --output json`. Auto-detects the organisation
@@ -37,11 +44,13 @@
 //! (`az extension add --name azure-devops`).
 
 pub mod azure;
+pub mod gitea;
 pub mod github;
 pub mod gitlab;
 mod info;
 
 pub use azure::AzureDevOpsProvider;
+pub use gitea::GiteaProvider;
 pub use github::GitHubProvider;
 pub use gitlab::GitLabProvider;
 pub use info::{PlatformData, RemoteRefInfo};
@@ -50,7 +59,7 @@ use std::io::ErrorKind;
 use std::path::Path;
 use std::process::Output;
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 
 use crate::git::error::GitError;
 use crate::git::{RefType, Repository};
@@ -134,6 +143,19 @@ pub(super) fn cli_api_error(ref_type: RefType, message: String, output: &Output)
     .into()
 }
 
+/// Extract the host (e.g. `github.com`) from a PR/MR `html_url` returned by
+/// the forge API. Both GitHub and Gitea responses use the same `https://host/...`
+/// shape, so we share the parser.
+pub(super) fn extract_host_from_html_url(html_url: &str) -> anyhow::Result<String> {
+    html_url
+        .strip_prefix("https://")
+        .or_else(|| html_url.strip_prefix("http://"))
+        .and_then(|s| s.split('/').next())
+        .filter(|h| !h.is_empty())
+        .map(String::from)
+        .with_context(|| format!("Failed to parse host from PR URL: {html_url}"))
+}
+
 pub(super) fn cli_config_value(tool: &str, key: &str) -> Option<String> {
     Cmd::new(tool)
         .args(["config", "get", key])
@@ -152,9 +174,14 @@ pub(super) fn cli_config_value(tool: &str, key: &str) -> Option<String> {
 pub fn find_remote(repo: &Repository, info: &RemoteRefInfo) -> Result<String, GitError> {
     // Azure DevOps URLs don't fit the host/owner/repo shape that `find_remote_for_repo`
     // assumes (the parser stores `{org}/{project}/_git` in owner). Use the dedicated
-    // Azure matcher for that platform; GitHub and GitLab share the owner/repo match.
+    // Azure matcher for that platform; GitHub, Gitea, and GitLab share the owner/repo match.
     let (matched, owner, repo_name) = match &info.platform_data {
         PlatformData::GitHub {
+            base_owner,
+            base_repo,
+            ..
+        }
+        | PlatformData::Gitea {
             base_owner,
             base_repo,
             ..
@@ -188,6 +215,12 @@ pub fn find_remote(repo: &Repository, info: &RemoteRefInfo) -> Result<String, Gi
                 base_repo,
                 ..
             } => github::fork_remote_url(host, base_owner, base_repo),
+            PlatformData::Gitea {
+                host,
+                base_owner,
+                base_repo,
+                ..
+            } => gitea::fork_remote_url(host, base_owner, base_repo),
             PlatformData::GitLab {
                 host,
                 base_owner,
@@ -243,6 +276,10 @@ mod tests {
         let gh = GitHubProvider;
         assert_eq!(gh.ref_path(123), "pull/123/head");
         assert_eq!(gh.tracking_ref(123), "refs/pull/123/head");
+
+        let ge = GiteaProvider;
+        assert_eq!(ge.ref_path(7), "pull/7/head");
+        assert_eq!(ge.tracking_ref(7), "refs/pull/7/head");
 
         let gl = GitLabProvider;
         assert_eq!(gl.ref_path(42), "merge-requests/42/head");
