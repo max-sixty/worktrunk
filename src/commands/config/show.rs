@@ -751,19 +751,6 @@ fn render_fish_legacy_migration(
     Ok(())
 }
 
-/// Per-shell label distinguishing bash/zsh (inline completions) from
-/// everyone else (no inline completions: fish ships a separate completion
-/// file; nushell and powershell have no completions). Mirrors
-/// `output::shell_integration::shell_extension_label` and the equivalent
-/// switch in `commands::configure_shell`.
-fn what_label(shell: Shell) -> &'static str {
-    if matches!(shell, Shell::Bash | Shell::Zsh) {
-        "shell extension & completions"
-    } else {
-        "shell extension"
-    }
-}
-
 /// Zsh-only: warn when compinit isn't enabled, since the integration
 /// installs completions but they won't load without compinit.
 fn render_zsh_compinit_warning(out: &mut String) -> anyhow::Result<()> {
@@ -848,7 +835,7 @@ fn render_already_configured(
 ) -> anyhow::Result<()> {
     let shell = result.shell;
     let path = format_path_for_display(&result.path);
-    let what = what_label(shell);
+    let what = crate::output::shell_integration::shell_extension_label(shell);
 
     let detection = detection_results
         .iter()
@@ -908,7 +895,7 @@ fn render_would_add_or_create(
 ) -> anyhow::Result<bool> {
     let shell = result.shell;
     let path = format_path_for_display(&result.path);
-    let what = what_label(shell);
+    let what = crate::output::shell_integration::shell_extension_label(shell);
 
     // Fish: prefer migration hint when the legacy conf.d location has
     // working integration — silencing the "Not configured" row.
@@ -1059,8 +1046,8 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     let mut has_any_unmatched = false;
 
     // Show configured and not-configured shells (matching `config shell install` format exactly)
-    // Bash/Zsh: inline completions, show "shell extension & completions"
-    // Fish: separate completion file, show "shell extension" for functions/ and "completions" for completions/
+    // Fish ships completions as a separate file: "shell extension" for functions/ and "completions" for completions/
+    // Every other supported shell wires completions inline with the extension, so they show "shell extension & completions"
     for result in &scan_result.configured {
         match result.action {
             ConfigAction::AlreadyExists => {
