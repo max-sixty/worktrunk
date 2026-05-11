@@ -53,4 +53,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mInvalid forge.platform value `bitbucket` in .config/wt.toml; expected one of: github, gitea, gitlab, azure-devops[39m
+[31m✗[39m [31mInvalid forge.platform value `bitbucket` in .config/wt.toml; expected one of: github, gitlab, gitea, azure-devops[39m

@@ -42,7 +42,7 @@ $ wt switch --create temp --no-hooks       # Skip hooks
 | `^` | Default branch (`main`/`master`) |
 | `@` | Current branch/worktree |
 | `-` | Previous worktree (like `cd -`) |
-| `pr:{N}` | GitHub or Azure DevOps PR #N's branch |
+| `pr:{N}` | GitHub PR #N's branch |
 | `mr:{N}` | GitLab MR !N's branch |
 
 ```bash
@@ -93,18 +93,20 @@ Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <
 
 ## Pull requests and merge requests
 
-The `pr:<number>` and `mr:<number>` shortcuts resolve a PR or MR to its branch. `pr:` dispatches to GitHub or Azure DevOps based on the configured remotes; `mr:` is GitLab. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
+The `pr:<number>` and `mr:<number>` shortcuts resolve a GitHub PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
 
 ```bash
-$ wt switch pr:101                 # GitHub or Azure DevOps PR #101
+$ wt switch pr:101                 # GitHub PR #101
 $ wt switch mr:101                 # GitLab MR !101
 ```
 
-Requires `gh` (GitHub), `glab` (GitLab), or `az` with the `azure-devops` extension (Azure DevOps) to be installed and authenticated. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
+Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
 
 **Forks:** The local branch uses the PR/MR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 
 **Gitea (experimental):** `pr:` is also compatible with Gitea via the `tea` CLI. Set `[forge] platform = "gitea"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Gitea when the remote host contains `gitea` or when `tea login add` has been run for the host.
+
+**Azure DevOps (experimental):** `pr:` also resolves Azure DevOps PRs via the `az` CLI (requires the `azure-devops` extension: `az extension add --name azure-devops`). Set `[forge] platform = "azure-devops"` to opt in, or worktrunk auto-detects when the remote URL is on `dev.azure.com`, `ssh.dev.azure.com`, or `*.visualstudio.com`.
 
 ## When wt switch fails
 
@@ -126,7 +128,7 @@ Arguments:
           Branch name or shortcut
 
           Opens interactive picker if omitted. Shortcuts: '^' (default branch), '-' (previous), '@'
-          (current), 'pr:{N}' (GitHub/Azure DevOps PR), 'mr:{N}' (GitLab MR)
+          (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)
 
   [EXECUTE_ARGS]...
           Additional arguments for --execute command (after --)

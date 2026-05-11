@@ -42,7 +42,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
   [36m[BRANCH][0m
           Branch name or shortcut[0m
           
-          Opens interactive picker if omitted. Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub/Azure DevOps PR), 'mr:{N}' (GitLab MR)[0m
+          Opens interactive picker if omitted. Shortcuts: '^' (default branch), '-' (previous), '@' (current), 'pr:{N}' (GitHub PR), 'mr:{N}' (GitLab MR)[0m
 
   [36m[EXECUTE_ARGS]...[0m
           Additional arguments for --execute command (after --)[0m
@@ -153,13 +153,13 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
 
 [1m[32mShortcuts[0m
 
- Shortcut                Meaning                
- ──────── ───────────────────────────────────── 
- [2m^[0m        Default branch ([2mmain[0m/[2mmaster[0m)          
- [2m@[0m        Current branch/worktree               
- [2m-[0m        Previous worktree (like [2mcd -[0m)         
- [2mpr:{N}[0m   GitHub or Azure DevOps PR #N's branch 
- [2mmr:{N}[0m   GitLab MR !N's branch                 
+ Shortcut            Meaning            
+ ──────── ───────────────────────────── 
+ [2m^[0m        Default branch ([2mmain[0m/[2mmaster[0m)  
+ [2m@[0m        Current branch/worktree       
+ [2m-[0m        Previous worktree (like [2mcd -[0m) 
+ [2mpr:{N}[0m   GitHub PR #N's branch         
+ [2mmr:{N}[0m   GitLab MR !N's branch         
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m-[0m[2m                           # Back to previous[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch ^                           # Default branch worktree[0m[2m[0m
@@ -204,16 +204,18 @@ Available on Unix only (macOS, Linux). On Windows, use [2mwt list[0m or [2mwt
 
 [1m[32mPull requests and merge requests[0m
 
-The [2mpr:<number>[0m and [2mmr:<number>[0m shortcuts resolve a PR or MR to its branch. [2mpr:[0m dispatches to GitHub or Azure DevOps based on the configured remotes; [2mmr:[0m is GitLab. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref ([2mrefs/pull/N/head[0m or [2mrefs/merge-requests/N/head[0m) and configures [2mpushRemote[0m to the fork URL.
+The [2mpr:<number>[0m and [2mmr:<number>[0m shortcuts resolve a GitHub PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref ([2mrefs/pull/N/head[0m or [2mrefs/merge-requests/N/head[0m) and configures [2mpushRemote[0m to the fork URL.
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:101                 # GitHub or Azure DevOps PR #101[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:101                 # GitHub PR #101[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                 # GitLab MR !101[0m[2m[0m
 
-Requires [2mgh[0m (GitHub), [2mglab[0m (GitLab), or [2maz[0m with the [2mazure-devops[0m extension (Azure DevOps) to be installed and authenticated. The [2m--create[0m flag cannot be used with [2mpr:[0m/[2mmr:[0m syntax since the branch already exists.
+Requires [2mgh[0m (GitHub) or [2mglab[0m (GitLab) CLI to be installed and authenticated. The [2m--create[0m flag cannot be used with [2mpr:[0m/[2mmr:[0m syntax since the branch already exists.
 
 [1mForks:[0m The local branch uses the PR/MR's branch name directly (e.g., [2mfeature-fix[0m), so [2mgit push[0m works normally. If a local branch with that name already exists tracking something else, rename it first.
 
 [1mGitea (experimental):[0m [2mpr:[0m is also compatible with Gitea via the [2mtea[0m CLI. Set [2m[forge] platform = "gitea"[0m in [2m.config/wt.toml[0m to opt in; worktrunk also auto-detects Gitea when the remote host contains [2mgitea[0m or when [2mtea login add[0m has been run for the host.
+
+[1mAzure DevOps (experimental):[0m [2mpr:[0m also resolves Azure DevOps PRs via the [2maz[0m CLI (requires the [2mazure-devops[0m extension: [2maz extension add --name azure-devops[0m). Set [2m[forge] platform = "azure-devops"[0m to opt in, or worktrunk auto-detects when the remote URL is on [2mdev.azure.com[0m, [2mssh.dev.azure.com[0m, or [2m*.visualstudio.com[0m.
 
 [1m[32mWhen wt switch fails[0m
 

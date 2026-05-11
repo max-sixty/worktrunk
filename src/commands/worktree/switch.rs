@@ -111,7 +111,7 @@ fn choose_pr_provider(repo: &Repository) -> anyhow::Result<PrProviderChoice> {
             }
             _ => bail!(
                 "Invalid forge.platform value `{platform_raw}` in .config/wt.toml; \
-                 expected one of: github, gitea, gitlab, azure-devops"
+                 expected one of: github, gitlab, gitea, azure-devops"
             ),
         }
     }

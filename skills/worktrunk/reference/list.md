@@ -8,7 +8,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 ## Full mode
 
-`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub, GitLab, and Azure DevOps pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries) of each branch's changes.
+`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries) of each branch's changes.
 
 ## Examples
 
@@ -81,7 +81,7 @@ Note: `main↕` and `main…±` refer to the default branch — the header label
 
 ### CI status
 
-The CI column shows GitHub, GitLab, or Azure DevOps pipeline status:
+The CI column shows GitHub/GitLab pipeline status:
 
 | Indicator | Meaning |
 |-----------|---------|
@@ -94,6 +94,8 @@ The CI column shows GitHub, GitLab, or Azure DevOps pipeline status:
 | (blank) | No upstream or no PR/MR |
 
 CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when unpushed local changes make the status stale. PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
+
+**Azure DevOps (experimental):** CI status is also detected for Azure DevOps repos via the `az` CLI (requires the `azure-devops` extension). Set `[forge] platform = "azure-devops"` to opt in, or worktrunk auto-detects when the remote URL is on `dev.azure.com`, `ssh.dev.azure.com`, or `*.visualstudio.com`.
 
 ### LLM summaries [experimental]
 
