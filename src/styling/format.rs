@@ -681,30 +681,18 @@ mod tests {
 
         // Path with `WTC` embedded (the actual failure shape seen on Windows CI).
         let path = r"D:\tmp\.tmpOuiWTC\repo/../repo.feature";
-        let result = format_bash_with_gutter_at_width(path, 120);
-        assert!(
-            result.ansi_strip().contains("WTC"),
-            "WTC substring should survive round-trip, got: {}",
-            result.ansi_strip()
-        );
-        assert!(
-            !result.ansi_strip().contains("}}"),
-            "no stray `}}` should appear in expanded path, got: {}",
-            result.ansi_strip()
-        );
+        let stripped = format_bash_with_gutter_at_width(path, 120)
+            .ansi_strip()
+            .into_owned();
+        assert!(stripped.contains("WTC"), "{stripped}");
+        assert!(!stripped.contains("}}"), "{stripped}");
 
         // Same with `WTO`.
         let path = "echo /a/b/WTO/c";
-        let result = format_bash_with_gutter_at_width(path, 120);
-        assert!(
-            result.ansi_strip().contains("WTO"),
-            "WTO substring should survive round-trip, got: {}",
-            result.ansi_strip()
-        );
-        assert!(
-            !result.ansi_strip().contains("{{"),
-            "no stray `{{{{` should appear in path, got: {}",
-            result.ansi_strip()
-        );
+        let stripped = format_bash_with_gutter_at_width(path, 120)
+            .ansi_strip()
+            .into_owned();
+        assert!(stripped.contains("WTO"), "{stripped}");
+        assert!(!stripped.contains("{{"), "{stripped}");
     }
 }
