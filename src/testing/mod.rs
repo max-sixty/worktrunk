@@ -295,6 +295,18 @@ const DEFAULT_ISOLATED_APPROVALS: &str = "/nonexistent/wt/approvals.toml";
 /// file doesn't actually exist on test/CI machines.
 const DEFAULT_ISOLATED_SYSTEM_CONFIG: &str = "/etc/xdg/worktrunk/config.toml";
 
+/// LLVM coverage env vars that the parent's `cargo llvm-cov` / `cargo affected`
+/// run sets to point spawned binaries at the right `.profraw` file. Mirrored
+/// in `tests/common/mod.rs::pass_coverage_env_to_pty_cmd` for PTY tests that
+/// `env_clear()`. Keep both lists in sync — dropping `LLVM_PROFILE_FILE` makes
+/// an instrumented child fall back to LLVM's default `default_*.profraw` in
+/// the child's cwd, leaving stray files at the repo root.
+pub const COVERAGE_ENV_VARS: &[&str] = &[
+    "LLVM_PROFILE_FILE",
+    "CARGO_LLVM_COV",
+    "CARGO_LLVM_COV_TARGET_DIR",
+];
+
 /// Prepare a subprocess to run with a clean wt environment.
 ///
 /// Strips every `GIT_*` and `WORKTRUNK_*` from the parent env, plus
@@ -304,6 +316,11 @@ const DEFAULT_ISOLATED_SYSTEM_CONFIG: &str = "/etc/xdg/worktrunk/config.toml";
 /// - `WORKTRUNK_CONFIG_PATH` ← `user_config` (or [`DEFAULT_ISOLATED_USER_CONFIG`])
 /// - `WORKTRUNK_SYSTEM_CONFIG_PATH` ← real XDG location (typically nonexistent on CI)
 /// - `WORKTRUNK_APPROVALS_PATH` ← nonexistent file
+///
+/// Also re-applies [`COVERAGE_ENV_VARS`] from the parent so an instrumented
+/// child writes its `.profraw` to the path `cargo llvm-cov` chose, not to a
+/// `default_*.profraw` in the child's cwd. The re-apply is defensive: a caller
+/// that did `env_clear()` before us would otherwise drop the inherited values.
 ///
 /// Shared by [`configure_cli_command`] (test-side, layers on test
 /// determinism: forced colors, fixed timestamps, log level, etc.) and
@@ -345,6 +362,12 @@ where
         DEFAULT_ISOLATED_SYSTEM_CONFIG,
     );
     cmd.env("WORKTRUNK_APPROVALS_PATH", DEFAULT_ISOLATED_APPROVALS);
+
+    for key in COVERAGE_ENV_VARS {
+        if let Ok(val) = std::env::var(key) {
+            cmd.env(key, val);
+        }
+    }
 }
 
 /// `env_remove` the [`INHERITED_GIT_PATH_VARS`] from `cmd`. Call this on
@@ -495,18 +518,8 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // Not in STATIC_TEST_ENV_VARS because PTY tests need a TERM with valid terminfo.
     cmd.env("TERM", "alacritty");
 
-    // Pass through LLVM coverage profiling environment for subprocess coverage collection.
-    // When running under cargo-llvm-cov, spawned binaries need LLVM_PROFILE_FILE to record
-    // their coverage data. Without this, integration test coverage isn't captured.
-    for key in [
-        "LLVM_PROFILE_FILE",
-        "CARGO_LLVM_COV",
-        "CARGO_LLVM_COV_TARGET_DIR",
-    ] {
-        if let Ok(val) = std::env::var(key) {
-            cmd.env(key, val);
-        }
-    }
+    // LLVM coverage env propagation lives in `isolate_subprocess_env` so bench
+    // callers get the same defense; nothing extra needed here.
 }
 
 /// Configure a git command with isolated environment for testing.
