@@ -889,6 +889,149 @@ fn test_switch_no_config_commands_with_yes(repo: TestRepo) {
     );
 }
 
+/// `wt switch --create <new> --base <other>` resolves `pre-start` / `post-start`
+/// from the base branch's committed `.config/wt.toml` — the worktree these hooks
+/// run in is a checkout of that branch. The primary worktree (cwd) has no
+/// project config at all; only `other-base` does, so a regression that read the
+/// invoking worktree's config would run nothing.
+#[rstest]
+fn test_switch_create_reads_base_branch_config(mut repo: TestRepo) {
+    // Commit a `.config/wt.toml` on `other-base` only (not on `main`).
+    let other_wt = repo.add_worktree("other-base");
+    fs::create_dir_all(other_wt.join(".config")).unwrap();
+    fs::write(
+        other_wt.join(".config/wt.toml"),
+        // `{{ repo_path }}` is the main worktree root regardless of which
+        // worktree the hook runs in, so the markers land where the test reads.
+        r#"pre-start = "echo pre-start-from-base > {{ repo_path }}/pre-start-marker.txt"
+post-start = "echo post-start-from-base > {{ repo_path }}/post-start-marker.txt"
+"#,
+    )
+    .unwrap();
+    repo.run_git_in(&other_wt, &["add", ".config/wt.toml"]);
+    repo.run_git_in(&other_wt, &["commit", "-m", "Add hooks on other-base"]);
+
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "new-feature",
+            "--base",
+            "other-base",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt switch --create failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let pre_marker = repo.root_path().join("pre-start-marker.txt");
+    wait_for_file_content(&pre_marker);
+    assert_eq!(
+        fs::read_to_string(&pre_marker).unwrap().trim(),
+        "pre-start-from-base",
+        "pre-start should run with the base branch's config"
+    );
+    let post_marker = repo.root_path().join("post-start-marker.txt");
+    wait_for_file_content(&post_marker);
+    assert_eq!(
+        fs::read_to_string(&post_marker).unwrap().trim(),
+        "post-start-from-base",
+        "post-start should run with the base branch's config"
+    );
+}
+
+/// `wt switch <existing>` resolves `post-switch` from the destination worktree's
+/// `.config/wt.toml`, not the worktree `wt switch` ran in. Only the destination
+/// has a project config here.
+#[rstest]
+fn test_switch_existing_reads_destination_worktree_config(mut repo: TestRepo) {
+    let dest = repo.add_worktree("dest");
+    fs::create_dir_all(dest.join(".config")).unwrap();
+    fs::write(
+        dest.join(".config/wt.toml"),
+        r#"post-switch = "echo post-switch-from-dest > {{ repo_path }}/post-switch-marker.txt""#,
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "dest", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt switch dest failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let marker = repo.root_path().join("post-switch-marker.txt");
+    wait_for_file_content(&marker);
+    assert_eq!(
+        fs::read_to_string(&marker).unwrap().trim(),
+        "post-switch-from-dest",
+        "post-switch should run with the destination worktree's config"
+    );
+}
+
+/// `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path for *every* config read —
+/// including `wt switch --create`'s base-ref preview — so the override file's
+/// hooks run, not the base branch's committed `.config/wt.toml`.
+#[rstest]
+fn test_switch_create_honors_project_config_path_override(mut repo: TestRepo) {
+    // The base branch carries a committed hook that must be ignored.
+    let other_wt = repo.add_worktree("other-base");
+    fs::create_dir_all(other_wt.join(".config")).unwrap();
+    fs::write(
+        other_wt.join(".config/wt.toml"),
+        r#"post-start = "echo IGNORED-COMMITTED-HOOK > {{ repo_path }}/wrong-marker.txt""#,
+    )
+    .unwrap();
+    repo.run_git_in(&other_wt, &["add", ".config/wt.toml"]);
+    repo.run_git_in(&other_wt, &["commit", "-m", "Committed hook on other-base"]);
+
+    // The override file (outside any worktree) is what should win.
+    let override_path = repo.root_path().parent().unwrap().join("override-wt.toml");
+    fs::write(
+        &override_path,
+        r#"post-start = "echo OVERRIDE-HOOK > {{ repo_path }}/right-marker.txt""#,
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .env("WORKTRUNK_PROJECT_CONFIG_PATH", &override_path)
+        .args([
+            "switch",
+            "--create",
+            "new-feature",
+            "--base",
+            "other-base",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt switch --create failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let right = repo.root_path().join("right-marker.txt");
+    wait_for_file_content(&right);
+    assert_eq!(fs::read_to_string(&right).unwrap().trim(), "OVERRIDE-HOOK");
+    // The base ref's committed hook must never have run.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert!(
+        !repo.root_path().join("wrong-marker.txt").exists(),
+        "the base ref's committed hook must not run when the config path is overridden"
+    );
+}
+
 // --no-verify backward compatibility
 #[rstest]
 fn test_switch_no_verify_deprecated_still_works(repo: TestRepo) {
@@ -2245,6 +2388,123 @@ post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_pa
             "{marker} hook should see canonical pr_number and pr_url variables",
         );
     }
+}
+
+/// `wt switch pr:N` resolves `post-start` etc. from the PR's tree — the fetched
+/// head ref, potentially from a fork — and the approval prompt reads that same
+/// PR config, so what the prompt lists can't diverge from what runs. The local
+/// repo has no project config; only the PR commit does. Without `--yes` the
+/// prompt lists the PR's hook and bails (non-interactive); with `--yes` the
+/// hook executes against the new worktree (a checkout of the PR head).
+#[rstest]
+fn test_switch_pr_reads_pr_ref_config(#[from(repo_with_remote)] repo: TestRepo) {
+    // Fork-PR scenario (mirrors `test_switch_pr_hooks_see_pr_vars`): a
+    // refs/pull/42/head on the bare remote, origin redirected to a GitHub URL,
+    // `gh api` mocked — but the PR commit carries a `.config/wt.toml`.
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    fs::create_dir_all(repo.root_path().join(".config")).unwrap();
+    fs::write(
+        repo.root_path().join(".config/wt.toml"),
+        r#"post-start = "echo PR-CONFIG-HOOK-RAN > {{ repo_path }}/pr-hook-marker.txt""#,
+    )
+    .unwrap();
+    repo.run_git(&["add", "pr-file.txt", ".config/wt.toml"]);
+    repo.run_git(&["commit", "-m", "PR commit with hook config"]);
+
+    let sha = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["rev-parse", "HEAD"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&["push", "origin", &format!("{sha}:refs/pull/42/head")]);
+    // Back on `main`, which never had `.config/wt.toml` committed — `pr-source`
+    // branched off before that commit, so `git checkout main` drops it from the
+    // working tree, leaving the local repo with no project config.
+    repo.run_git(&["checkout", "main"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{bare_url}.insteadOf"),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    // (a) Without `--yes`: the approval prompt prints the PR's command template
+    // to stderr, then bails (stdin is not a TTY in tests). No worktree, no hook.
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:42"]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch pr:42 should run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("PR-CONFIG-HOOK-RAN"),
+        "approval prompt should list the PR ref's post-start hook; stderr:\n{stderr}"
+    );
+    assert!(
+        !output.status.success(),
+        "non-interactive approval should bail without running the hook"
+    );
+    assert!(
+        !repo.root_path().join("pr-hook-marker.txt").exists(),
+        "a declined approval must not run the hook"
+    );
+
+    // (b) With `--yes`: the PR's `post-start` runs against the new worktree.
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:42", "--yes"]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch pr:42 --yes should run");
+    assert!(
+        output.status.success(),
+        "wt switch pr:42 --yes failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let marker = repo.root_path().join("pr-hook-marker.txt");
+    wait_for_file_content(&marker);
+    assert_eq!(
+        fs::read_to_string(&marker).unwrap().trim(),
+        "PR-CONFIG-HOOK-RAN",
+        "post-start should run with the PR ref's config"
+    );
 }
 
 /// Test fork PR when origin points to fork (no remote for base repo)
@@ -4417,11 +4677,11 @@ fn test_switch_pr_azure_az_not_installed(#[from(repo_with_remote)] repo: TestRep
     });
 }
 
-/// `forge.platform = "azure-devops"` overrides remote-URL detection. With a
-/// non-Azure URL, the override picks the Azure provider directly.
+/// `forge.platform = "azure-devops"` selects the Azure provider directly, even
+/// when the remote URL doesn't look like Azure DevOps.
 #[rstest]
-fn test_switch_pr_azure_forge_platform_override(#[from(repo_with_remote)] repo: TestRepo) {
-    // Non-Azure-looking URL — without the override we'd default to GitHub.
+fn test_switch_pr_azure_forge_platform(#[from(repo_with_remote)] repo: TestRepo) {
+    // Non-Azure-looking URL — without `forge.platform` set we'd default to GitHub.
     repo.run_git(&[
         "remote",
         "set-url",
@@ -4453,7 +4713,7 @@ fn test_switch_pr_azure_forge_platform_override(#[from(repo_with_remote)] repo: 
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "pr:101"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
-        assert_cmd_snapshot!("switch_pr_azure_forge_platform_override", cmd);
+        assert_cmd_snapshot!("switch_pr_azure_forge_platform", cmd);
     });
 }
 

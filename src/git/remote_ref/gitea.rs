@@ -295,6 +295,28 @@ fn config_has_login_for(content: &str, target: &str) -> bool {
     })
 }
 
+/// Whether `tea` has *any* login configured (host-agnostic).
+///
+/// Used by `wt config show` diagnostics to report Gitea auth status when the
+/// caller has no specific host in hand. Like [`is_authed_for`], reads tea's
+/// config file directly rather than invoking `tea` (which can trigger an OAuth
+/// refresh on lookup).
+pub fn has_any_login() -> bool {
+    read_tea_config().is_some_and(|content| content_has_any_login(&content))
+}
+
+/// Pure parser: true if any line is a `url:` entry carrying an http(s) URL.
+/// Mirrors the line shape `config_has_login_for` matches, minus the host check.
+fn content_has_any_login(content: &str) -> bool {
+    content.lines().any(|line| {
+        let Some(rest) = line.trim_start().strip_prefix("url:") else {
+            return false;
+        };
+        let value = rest.trim().trim_matches(|c: char| c == '"' || c == '\'');
+        value.starts_with("https://") || value.starts_with("http://")
+    })
+}
+
 /// Read tea's config.yml, honoring `$XDG_CONFIG_HOME` and the legacy
 /// `~/.tea/tea.yml` fallback. Returns None if neither file is readable.
 fn read_tea_config() -> Option<String> {
@@ -512,5 +534,22 @@ mod tests {
         // is line-based and intentionally permissive; document the trade-off
         // by asserting the tea-shaped scheme-prefixed form is required.
         assert!(!config_has_login_for("url: gitea.com\n", "gitea.com"));
+    }
+
+    #[test]
+    fn test_content_has_any_login() {
+        let yaml = r#"logins:
+  - name: gitea-com
+    url: https://gitea.com
+    default: true
+"#;
+        assert!(content_has_any_login(yaml));
+        assert!(content_has_any_login(
+            "    url: \"http://forge.example.com/\"\n"
+        ));
+        // No logins / no scheme-prefixed url.
+        assert!(!content_has_any_login(""));
+        assert!(!content_has_any_login("logins: []\n"));
+        assert!(!content_has_any_login("url: gitea.com\n"));
     }
 }

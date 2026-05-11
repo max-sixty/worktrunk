@@ -1745,6 +1745,57 @@ fn test_merge_primary_on_different_branch_dirty(mut repo: TestRepo) {
     ));
 }
 
+/// `wt merge`'s teardown hooks resolve `.config/wt.toml` from the destination
+/// worktree, not the feature worktree being merged: `post-merge` always (it
+/// runs in the target), and `pre-remove` when the feature worktree has no
+/// `.config/wt.toml` of its own (the same fallback the executor takes). Here
+/// only the destination — `main`'s worktree — carries the config; the feature
+/// branch was created before it was added.
+#[rstest]
+fn test_merge_teardown_hooks_read_destination_worktree_config(mut repo: TestRepo) {
+    use crate::common::wait_for_file_content;
+
+    let feature_wt = repo.add_worktree_with_commit("feature-pm", "feature.txt", "x", "feat: x");
+
+    let pre_remove_marker = repo.root_path().join("pre-remove-ran.txt");
+    let post_merge_marker = repo.root_path().join("post-merge-ran.txt");
+    repo.write_project_config(&format!(
+        r#"pre-remove = "echo 'removing {{{{ branch }}}}' > {}"
+[post-merge]
+sync = "echo 'merged {{{{ branch }}}}' > {}"
+"#,
+        pre_remove_marker.to_slash_lossy(),
+        post_merge_marker.to_slash_lossy(),
+    ));
+    repo.commit("Add merge hooks on main");
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_wt)
+        .args(["merge", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    wait_for_file_content(&post_merge_marker);
+    assert_eq!(
+        std::fs::read_to_string(&post_merge_marker).unwrap().trim(),
+        "merged feature-pm",
+        "post-merge should run with the destination worktree's config"
+    );
+    // pre-remove runs synchronously before removal; the feature worktree has no
+    // `.config/wt.toml`, so it falls back to the destination's.
+    assert_eq!(
+        std::fs::read_to_string(&pre_remove_marker).unwrap().trim(),
+        "removing feature-pm",
+        "pre-remove should fall back to the destination worktree's config"
+    );
+}
+
 #[rstest]
 fn test_merge_race_condition_commit_after_push(mut repo_with_feature_worktree: TestRepo) {
     let repo = &mut repo_with_feature_worktree;

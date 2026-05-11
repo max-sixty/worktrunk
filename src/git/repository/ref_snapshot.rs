@@ -18,8 +18,14 @@
 //! [`Repository::capture_refs`] runs one `git for-each-ref refs/heads/`
 //! plus one `git for-each-ref refs/remotes/` and parses both into a
 //! single `RefSnapshot`. [`Repository::capture_refs_with_ahead_behind`]
-//! additionally runs `for-each-ref ... %(ahead-behind:BASE)` (git ≥ 2.36)
-//! to populate ahead/behind counts in the same snapshot.
+//! additionally populates ahead/behind counts: it reads them from the
+//! persistent SHA-keyed cache (`ahead-behind/` — content-addressed, so
+//! never stale) and only falls back to a `for-each-ref ...
+//! %(ahead-behind:BASE)` batch walk (git ≥ 2.36) when the cache is cold
+//! for this base, seeding the cache from the batch so later runs are pure
+//! reads. Branches that moved since the last run are left out of the
+//! snapshot map — the per-branch `AheadBehindTask` recomputes (and
+//! caches) those by SHA in the parallel pool.
 //!
 //! # Lifetime
 //!
@@ -61,9 +67,11 @@ pub struct RefSnapshot {
 
     /// Ahead/behind counts keyed by `(base, head)` ref names.
     /// Populated only when constructed via
-    /// [`Repository::capture_refs_with_ahead_behind`]; empty otherwise.
-    /// On git < 2.36 the batch fails silently and this stays empty —
-    /// callers that need ahead/behind must fall back to a per-pair query.
+    /// [`Repository::capture_refs_with_ahead_behind`], and even then it
+    /// may be partial: a branch that moved since its last cache write is
+    /// omitted (the per-branch task recomputes it by SHA). On git < 2.36
+    /// a cold base yields an empty map. Callers that need ahead/behind for
+    /// an absent key must fall back to a per-pair query.
     ahead_behind: HashMap<(String, String), (usize, usize)>,
 }
 
@@ -98,8 +106,10 @@ impl RefSnapshot {
     /// Look up cached ahead/behind counts.
     ///
     /// Returns `None` when the snapshot was constructed without ahead/behind
-    /// (the default `capture_refs`) or when the requested pair is missing
-    /// from the batch result.
+    /// (the default `capture_refs`) or when the requested pair is missing —
+    /// either uncomputed (git < 2.36 on a cold base) or omitted because the
+    /// branch moved since its last cache write. Callers fall back to a
+    /// per-pair query (`Repository::ahead_behind_by_sha`).
     pub fn ahead_behind(&self, base: &str, head: &str) -> Option<(usize, usize)> {
         self.ahead_behind
             .get(&(base.to_string(), head.to_string()))
@@ -138,17 +148,166 @@ impl Repository {
 
     /// Capture current ref state plus ahead/behind counts vs `base`.
     ///
-    /// Runs the two ref scans plus one additional `for-each-ref
-    /// --format='%(ahead-behind:BASE)'` pass (git ≥ 2.36). On older git
-    /// the ahead/behind batch fails silently and the snapshot's
-    /// [`RefSnapshot::ahead_behind`] returns `None` for every key —
-    /// callers fall back to per-pair queries.
+    /// Ahead/behind for `(base, branch)` is content-addressed — a pure
+    /// function of the two commit SHAs — so the snapshot map is built from
+    /// the persistent `ahead-behind/` cache. When some branches aren't
+    /// cached (a fresh repo, after `wt config state clear`, or branches
+    /// that moved since their last write) the misses are filled by:
+    /// - a few misses → left out of the map; the per-branch
+    ///   `AheadBehindTask` recomputes (and caches) them by SHA in the
+    ///   parallel pool;
+    /// - everything cold → one unscoped `for-each-ref %(ahead-behind)
+    ///   refs/heads/` walk, results written to the cache;
+    /// - many cold but not all → one `for-each-ref %(ahead-behind)` scoped
+    ///   to the missed refnames, results written to the cache.
+    ///
+    /// The walk computes against `base`'s resolved SHA (not the refname,
+    /// which git could resolve to a different commit) and the cache is
+    /// keyed by the object SHA the batch reports for each branch, so the
+    /// stored value always agrees with what `ahead_behind_by_sha` would
+    /// recompute. Orphan branches (no common ancestor with `base`) are
+    /// normalized to `(0, 0)`, matching `compute_ahead_behind`. On git <
+    /// 2.36 the `%(ahead-behind)` walk yields nothing and the affected
+    /// keys stay absent — callers fall back to per-pair queries.
     pub fn capture_refs_with_ahead_behind(&self, base: &str) -> anyhow::Result<RefSnapshot> {
         let locals = scan_locals(self)?;
         let remotes = scan_remotes(self)?;
-        let ahead_behind = scan_ahead_behind(self, base);
+        let ahead_behind = self.capture_ahead_behind(base, &locals, &remotes);
         Ok(build(locals, remotes, ahead_behind))
     }
+
+    /// Build the `(base, refs/heads/X) -> (ahead, behind)` map for the
+    /// local branches, preferring the persistent SHA-keyed cache and
+    /// reaching for a `for-each-ref %(ahead-behind)` walk only for the
+    /// branches the cache doesn't cover. See
+    /// [`Self::capture_refs_with_ahead_behind`].
+    fn capture_ahead_behind(
+        &self,
+        base: &str,
+        locals: &[LocalBranch],
+        remotes: &[RemoteBranch],
+    ) -> HashMap<(String, String), (usize, usize)> {
+        let full_ref = |b: &LocalBranch| format!("refs/heads/{}", b.name);
+
+        // The cache is SHA-keyed; we need base's SHA, and it's a branch —
+        // so it's among the refs we just scanned. If somehow it isn't, the
+        // cache is unreachable for this run: run the batch against the
+        // refname (git resolves it), key the snapshot map by refname, and
+        // cache nothing.
+        let Some(base_sha) = resolve_sha_from_scan(base, locals, remotes).map(str::to_string)
+        else {
+            return scan_ahead_behind(self, base, None)
+                .into_iter()
+                .map(|(refname, (_obj, counts))| ((base.to_string(), refname), counts))
+                .collect();
+        };
+
+        let mut map = HashMap::new();
+        let mut missed: Vec<&LocalBranch> = Vec::new();
+        for b in locals {
+            match super::sha_cache::ahead_behind(self, &base_sha, &b.commit_sha) {
+                Some(counts) => {
+                    map.insert((base.to_string(), full_ref(b)), counts);
+                }
+                None => missed.push(b),
+            }
+        }
+        if missed.is_empty() {
+            return map;
+        }
+
+        // How to fill the misses:
+        //   - everything cold (fresh repo / after `state clear`) → one
+        //     unscoped `for-each-ref %(ahead-behind:base_sha) refs/heads/`
+        //     walk — a single shared traversal finds every merge-base —
+        //     then seed the cache.
+        //   - only a few cold → leave them out of the map; their
+        //     per-branch task recomputes (and caches) by SHA in the
+        //     parallel pool. That task's orphan check already primes the
+        //     merge-base, so it's two cheap `rev-list --count` calls — no
+        //     base-history walk to redo.
+        //   - many cold but not all → one `for-each-ref
+        //     %(ahead-behind:base_sha)` *scoped to the missed refnames*:
+        //     same shared-traversal win, only over the cold subset.
+        //
+        // The threshold trades the per-pair path's parallelism (it runs
+        // in the pool) against the batch's lower total work (one shared
+        // base-history traversal). A batch here is serial — it blocks the
+        // pool from opening — so reach for it only once "many" cold
+        // branches make the amortization clearly worth the serial cost.
+        // The fully-parallel ideal is to run the batch as a *pool work
+        // item*; see `TODO(ahead-behind-pool)` in `collect/mod.rs`.
+        //
+        // Compute `%(ahead-behind)` against `base_sha`, not the refname:
+        // git resolving `base` itself could land on a different commit (a
+        // tag shadowing the branch), and we'd cache counts that disagree
+        // with `ahead_behind_by_sha(base_sha, ...)`. Key the cache by the
+        // *object SHA the batch saw* (`scan_ahead_behind` returns it) so a
+        // ref that moved between the initial scan and this batch can't
+        // poison the entry either. Orphan branches need normalizing: git's
+        // `%(ahead-behind)` reports the two disjoint history sizes, while
+        // `compute_ahead_behind` — what a cache *miss* recomputes —
+        // returns (0, 0) and signals orphan-ness separately. An orphan's
+        // `behind` is exactly the total commit count of base, so detect it
+        // with one `rev-list --count base_sha` and store (0, 0) instead.
+        let all_cold = missed.len() == locals.len();
+        if !all_cold && missed.len() <= AHEAD_BEHIND_SCOPED_BATCH_MIN_MISSES {
+            return map;
+        }
+        let scoped: Option<Vec<String>> =
+            (!all_cold).then(|| missed.iter().map(|&b| full_ref(b)).collect());
+        let base_total: Option<usize> = self
+            .run_command(&["rev-list", "--count", &base_sha])
+            .ok()
+            .and_then(|s| s.trim().parse().ok());
+        let fresh = scan_ahead_behind(self, &base_sha, scoped.as_deref());
+        // Stage the writes first, then hand them to `put_ahead_behind_bulk`
+        // — one `sweep_lru` at the end, not one per entry. The serial
+        // setup-scope path can't afford N×count_json_files() on a large
+        // branch list.
+        let mut writes: Vec<(&str, &str, (usize, usize))> = Vec::with_capacity(missed.len());
+        for b in &missed {
+            let Some((object_sha, (ahead, behind))) = fresh.get(&full_ref(b)) else {
+                continue;
+            };
+            let counts = if base_total == Some(*behind) {
+                (0, 0) // orphan — match compute_ahead_behind / a cache miss
+            } else {
+                (*ahead, *behind)
+            };
+            writes.push((base_sha.as_str(), object_sha.as_str(), counts));
+            map.insert((base.to_string(), full_ref(b)), counts);
+        }
+        super::sha_cache::put_ahead_behind_bulk(self, writes);
+        map
+    }
+}
+
+/// How many cache misses make a single (serial) `for-each-ref
+/// %(ahead-behind)` over the missed refs worth running here, versus
+/// letting that many per-branch tasks each recompute by SHA in the
+/// parallel pool. Below the threshold the per-pair path wins — it's
+/// parallel, and each task's orphan check has already primed the
+/// merge-base, so it skips re-walking base's history. Above it, one
+/// shared base-history traversal amortizes across the cold subset.
+const AHEAD_BEHIND_SCOPED_BATCH_MIN_MISSES: usize = 8;
+
+/// Resolve a ref name to a commit SHA using only refs already scanned into
+/// `locals`/`remotes` (no subprocess). Accepts short or qualified forms.
+fn resolve_sha_from_scan<'a>(
+    name: &str,
+    locals: &'a [LocalBranch],
+    remotes: &'a [RemoteBranch],
+) -> Option<&'a str> {
+    let local_short = name.strip_prefix("refs/heads/").unwrap_or(name);
+    if let Some(b) = locals.iter().find(|b| b.name == local_short) {
+        return Some(&b.commit_sha);
+    }
+    let remote_short = name.strip_prefix("refs/remotes/").unwrap_or(name);
+    remotes
+        .iter()
+        .find(|r| r.short_name == remote_short)
+        .map(|r| r.commit_sha.as_str())
 }
 
 fn scan_locals(repo: &Repository) -> anyhow::Result<Vec<LocalBranch>> {
@@ -184,29 +343,49 @@ fn scan_remotes(repo: &Repository) -> anyhow::Result<Vec<RemoteBranch>> {
     Ok(branches)
 }
 
-/// Best-effort ahead/behind batch via `for-each-ref %(ahead-behind:BASE)`.
+/// Best-effort ahead/behind batch via
+/// `for-each-ref %(refname) %(objectname) %(ahead-behind:BASE)` — one
+/// shared graph traversal that finds every requested ref's merge-base
+/// against `base` (a refname or, preferably for cache-keying, a SHA) and
+/// counts both sides.
 ///
-/// Failures (git < 2.36, invalid base) return an empty map — callers must
-/// tolerate missing keys.
-fn scan_ahead_behind(repo: &Repository, base: &str) -> HashMap<(String, String), (usize, usize)> {
-    let format = format!("%(refname) %(ahead-behind:{base})");
-    let output =
-        match repo.run_command(&["for-each-ref", &format!("--format={format}"), "refs/heads/"]) {
-            Ok(out) => out,
-            Err(e) => {
-                log::debug!("RefSnapshot ahead/behind batch failed for base {base}: {e}");
-                return HashMap::new();
-            }
-        };
+/// `refs == None` walks all of `refs/heads/`; `Some(refnames)` scopes the
+/// walk to exactly those refs (still one traversal, just that subset).
+/// Returns `refname -> (object_sha, (ahead, behind))` — `object_sha` is
+/// the commit the counts were computed against, so a caller that caches
+/// by SHA keys on *it* rather than on a separately-scanned value a
+/// concurrent ref update could have made stale. Failures (git < 2.36,
+/// invalid base) return an empty map — callers must tolerate missing keys.
+fn scan_ahead_behind(
+    repo: &Repository,
+    base: &str,
+    refs: Option<&[String]>,
+) -> HashMap<String, (String, (usize, usize))> {
+    let format = format!("--format=%(refname) %(objectname) %(ahead-behind:{base})");
+    let mut args: Vec<&str> = vec!["for-each-ref", format.as_str()];
+    match refs {
+        Some(refs) => args.extend(refs.iter().map(String::as_str)),
+        None => args.push("refs/heads/"),
+    }
+    let output = match repo.run_command(&args) {
+        Ok(out) => out,
+        Err(e) => {
+            log::debug!("RefSnapshot ahead/behind batch failed for base {base}: {e}");
+            return HashMap::new();
+        }
+    };
 
     output
         .lines()
         .filter_map(|line| {
-            let mut parts = line.rsplitn(3, ' ');
+            // "<refname> <objectname> <ahead> <behind>" — refnames cannot
+            // contain spaces, so the leftmost chunk is exactly the refname.
+            let mut parts = line.rsplitn(4, ' ');
             let behind: usize = parts.next()?.parse().ok()?;
             let ahead: usize = parts.next()?.parse().ok()?;
-            let full_ref = parts.next()?.to_string();
-            Some(((base.to_string(), full_ref), (ahead, behind)))
+            let object_sha = parts.next()?.to_string();
+            let refname = parts.next()?.to_string();
+            Some((refname, (object_sha, (ahead, behind))))
         })
         .collect()
 }
@@ -326,6 +505,211 @@ mod tests {
             assert_eq!(ahead, 1, "feature is one commit ahead of main");
             assert_eq!(behind, 0);
         }
+    }
+
+    #[test]
+    fn ahead_behind_reads_persistent_cache_on_second_capture() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["checkout", "-b", "feature"]);
+        std::fs::write(test.root_path().join("a.txt"), "x\n").unwrap();
+        test.run_git(&["add", "a.txt"]);
+        test.run_git(&["commit", "-m", "feat"]);
+        test.run_git(&["checkout", "main"]);
+
+        // First capture: cold base → runs the batch walk, seeds the cache.
+        let repo = Repository::at(test.root_path()).unwrap();
+        let first = repo.capture_refs_with_ahead_behind("main").unwrap();
+        // Skip on git < 2.36 where the batch silently yields nothing.
+        let Some((1, 0)) = first.ahead_behind("main", "refs/heads/feature") else {
+            return;
+        };
+
+        // Tamper with the cached entry for (main, feature).
+        let dir = crate::cache::cache_dir(&repo, "ahead-behind");
+        let entries: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_str().is_some_and(|s| s.ends_with(".json")))
+            .collect();
+        // One entry per local branch: main↔main and main↔feature.
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let tampered_path = dir.join(format!("{main_sha}-{feature_sha}.json"));
+        assert!(
+            entries.iter().any(|e| e.path() == tampered_path),
+            "expected a cache entry for (main, feature)"
+        );
+        std::fs::write(&tampered_path, "[7,3]").unwrap();
+
+        // Second capture (fresh repo): every entry is cached → no batch
+        // walk → the map reflects the tampered value.
+        let repo2 = Repository::at(test.root_path()).unwrap();
+        let second = repo2.capture_refs_with_ahead_behind("main").unwrap();
+        assert_eq!(
+            second.ahead_behind("main", "refs/heads/feature"),
+            Some((7, 3)),
+            "second capture should read the (tampered) persistent cache"
+        );
+    }
+
+    #[test]
+    fn ahead_behind_omits_moved_branch_from_partial_snapshot() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["checkout", "-b", "feature"]);
+        std::fs::write(test.root_path().join("a.txt"), "x\n").unwrap();
+        test.run_git(&["add", "a.txt"]);
+        test.run_git(&["commit", "-m", "feat"]);
+        test.run_git(&["checkout", "main"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let first = repo.capture_refs_with_ahead_behind("main").unwrap();
+        // Skip on git < 2.36.
+        if first.ahead_behind("main", "refs/heads/feature").is_none() {
+            return;
+        }
+
+        // Advance feature so its SHA (and thus its cache key) changes; main
+        // stays put, so its cache entry is still a hit.
+        test.run_git(&["checkout", "feature"]);
+        std::fs::write(test.root_path().join("b.txt"), "y\n").unwrap();
+        test.run_git(&["add", "b.txt"]);
+        test.run_git(&["commit", "-m", "feat2"]);
+        test.run_git(&["checkout", "main"]);
+
+        let repo2 = Repository::at(test.root_path()).unwrap();
+        let snap = repo2.capture_refs_with_ahead_behind("main").unwrap();
+        // Partial-warm path: feature moved → omitted from the snapshot map
+        // (its per-branch task recomputes by SHA); main is still present.
+        assert_eq!(snap.ahead_behind("main", "refs/heads/feature"), None);
+        assert_eq!(snap.ahead_behind("main", "refs/heads/main"), Some((0, 0)));
+    }
+
+    #[test]
+    fn ahead_behind_many_misses_uses_scoped_batch() {
+        let test = TestRepo::with_initial_commit();
+        // 10 feature branches, each one (empty) commit ahead of main —
+        // more than `AHEAD_BEHIND_SCOPED_BATCH_MIN_MISSES`.
+        for i in 0..10 {
+            test.run_git(&["checkout", "-b", &format!("feat{i}"), "main"]);
+            test.run_git(&["commit", "--allow-empty", "-m", &format!("c{i}")]);
+        }
+        test.run_git(&["checkout", "main"]);
+
+        // First capture: everything cold → unscoped batch seeds the cache.
+        let repo = Repository::at(test.root_path()).unwrap();
+        let first = repo.capture_refs_with_ahead_behind("main").unwrap();
+        if first.ahead_behind("main", "refs/heads/feat0").is_none() {
+            return; // git < 2.36 — %(ahead-behind) unsupported
+        }
+
+        // Advance every feature branch; main stays put. Now 10 of the 11
+        // local branches miss the cache (main still hits) → "many cold but
+        // not all" → the scoped `for-each-ref %(ahead-behind)` path over
+        // just the 10 missed refnames.
+        for i in 0..10 {
+            test.run_git(&["checkout", &format!("feat{i}")]);
+            test.run_git(&["commit", "--allow-empty", "-m", &format!("c{i}b")]);
+        }
+        test.run_git(&["checkout", "main"]);
+
+        let repo2 = Repository::at(test.root_path()).unwrap();
+        let snap = repo2.capture_refs_with_ahead_behind("main").unwrap();
+        for i in 0..10 {
+            assert_eq!(
+                snap.ahead_behind("main", &format!("refs/heads/feat{i}")),
+                Some((2, 0)),
+                "feat{i} is 2 ahead of main after the scoped re-walk"
+            );
+        }
+        // main never moved → still the (0,0) entry from the first capture.
+        assert_eq!(snap.ahead_behind("main", "refs/heads/main"), Some((0, 0)));
+    }
+
+    #[test]
+    fn ahead_behind_normalizes_orphan_to_zero_in_cache() {
+        let test = TestRepo::with_initial_commit();
+        // An orphan branch: its own root commit, no common ancestor with main.
+        test.run_git(&["checkout", "--orphan", "orphanbr"]);
+        test.run_git(&["rm", "-rfq", "."]);
+        std::fs::write(test.root_path().join("o.txt"), "y\n").unwrap();
+        test.run_git(&["add", "o.txt"]);
+        test.run_git(&["commit", "-m", "orphan root"]);
+        test.run_git(&["checkout", "main"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let snap = repo.capture_refs_with_ahead_behind("main").unwrap();
+        // git < 2.36 — %(ahead-behind) unsupported, nothing seeded.
+        if snap.ahead_behind("main", "refs/heads/main").is_none() {
+            return;
+        }
+
+        // Git's batch reports the two disjoint history sizes for an orphan;
+        // we normalize to (0, 0) so the snapshot — and the persistent
+        // cache entry — agree with `compute_ahead_behind` / a cache miss.
+        assert_eq!(
+            snap.ahead_behind("main", "refs/heads/orphanbr"),
+            Some((0, 0))
+        );
+
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let orphan_sha = test.git_output(&["rev-parse", "orphanbr"]);
+        let cached: (usize, usize) = serde_json::from_str(
+            &std::fs::read_to_string(
+                crate::cache::cache_dir(&repo, "ahead-behind")
+                    .join(format!("{main_sha}-{orphan_sha}.json")),
+            )
+            .expect("orphan pair should be cached"),
+        )
+        .expect("cache entry is a (usize, usize)");
+        assert_eq!(cached, (0, 0));
+    }
+
+    #[test]
+    fn ahead_behind_base_resolves_via_remote_tracking_ref() {
+        let test = TestRepo::with_initial_commit();
+        // A remote-tracking ref with no local branch of the same name —
+        // the base SHA must be resolved from the remotes scan, not locals.
+        let trunk_sha = test.git_output(&["rev-parse", "main"]);
+        test.run_git(&["update-ref", "refs/remotes/origin/trunk", &trunk_sha]);
+        test.run_git(&["checkout", "-b", "feature"]);
+        std::fs::write(test.root_path().join("a.txt"), "x\n").unwrap();
+        test.run_git(&["add", "a.txt"]);
+        test.run_git(&["commit", "-m", "feat"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let snap = repo.capture_refs_with_ahead_behind("origin/trunk").unwrap();
+        let Some((1, 0)) = snap.ahead_behind("origin/trunk", "refs/heads/feature") else {
+            // git < 2.36: batch silently empty; the cache is unreachable
+            // for it, but resolve-via-remote still ran without panicking.
+            return;
+        };
+        // Seeded the SHA cache keyed by the remote ref's SHA.
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+        assert!(
+            crate::cache::cache_dir(&repo, "ahead-behind")
+                .join(format!("{trunk_sha}-{feature_sha}.json"))
+                .exists()
+        );
+    }
+
+    #[test]
+    fn ahead_behind_unresolvable_base_is_harmless() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        // A base that resolves to nothing: no extra subprocess can key the
+        // cache, and the `for-each-ref %(ahead-behind:...)` walk fails too.
+        // The snapshot is still valid, just without ahead/behind.
+        let snap = repo
+            .capture_refs_with_ahead_behind("definitely-not-a-ref")
+            .unwrap();
+        assert_eq!(
+            snap.ahead_behind("definitely-not-a-ref", "refs/heads/main"),
+            None
+        );
+        assert_eq!(
+            snap.resolve("main"),
+            repo.capture_refs().unwrap().resolve("main")
+        );
     }
 
     #[test]

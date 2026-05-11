@@ -1388,6 +1388,47 @@ fn test_config_show_full_version_check_unavailable(mut repo: TestRepo, temp_home
     });
 }
 
+/// `wt config show --full` against a Gitea remote reports the `tea` CLI row.
+#[rstest]
+fn test_config_show_full_gitea_remote(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    // The Gitea diagnostics row only depends on `tea`'s state; mock it as
+    // installed (no login configured in the temp home).
+    repo.setup_mock_tea_installed();
+
+    // The fixture already has an `origin`; point it at a Gitea host.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/example/repo.git",
+    ]);
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"",
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
+        cmd.arg("config")
+            .arg("show")
+            .arg("--full")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[rstest]
 fn test_config_show_github_remote(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output

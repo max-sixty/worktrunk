@@ -377,6 +377,16 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
                 ci_tools.glab_authenticated,
             )?;
         }
+        Some(CiPlatform::Gitea) => {
+            let ci_tools = CiToolsStatus::detect(None);
+            render_ci_tool_status(
+                out,
+                "tea",
+                "Gitea",
+                ci_tools.tea_installed,
+                ci_tools.tea_authenticated,
+            )?;
+        }
         Some(CiPlatform::AzureDevOps) => {
             let ci_tools = CiToolsStatus::detect(None);
             render_ci_tool_status(
@@ -391,7 +401,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
             writeln!(
                 out,
                 "{}",
-                hint_message("CI status requires GitHub, GitLab, or Azure DevOps remote")
+                hint_message("CI status requires GitHub, GitLab, Gitea, or Azure DevOps remote")
             )?;
         }
     }
@@ -741,13 +751,16 @@ fn render_fish_legacy_migration(
     Ok(())
 }
 
-/// Per-shell label distinguishing fish (separate completion file) from
-/// bash/zsh (inline completions).
+/// Per-shell label distinguishing bash/zsh (inline completions) from
+/// everyone else (no inline completions: fish ships a separate completion
+/// file; nushell and powershell have no completions). Mirrors
+/// `output::shell_integration::shell_extension_label` and the equivalent
+/// switch in `commands::configure_shell`.
 fn what_label(shell: Shell) -> &'static str {
-    if matches!(shell, Shell::Fish) {
-        "shell extension"
-    } else {
+    if matches!(shell, Shell::Bash | Shell::Zsh) {
         "shell extension & completions"
+    } else {
+        "shell extension"
     }
 }
 
@@ -1256,11 +1269,18 @@ pub(super) fn render_ci_tool_status(
                 success_message(cformat!("<bold>{tool}</> installed & authenticated"))
             )?;
         } else {
+            // The auth-setup command differs by CLI: `gh`/`glab` use
+            // `<tool> auth login`, `az` uses `az login`, `tea` uses `tea login add`.
+            let auth_command = match tool {
+                "az" => format!("{tool} login"),
+                "tea" => format!("{tool} login add"),
+                _ => format!("{tool} auth login"),
+            };
             writeln!(
                 out,
                 "{}",
                 warning_message(cformat!(
-                    "<bold>{tool}</> installed but not authenticated; run <bold>{tool} auth login</>"
+                    "<bold>{tool}</> installed but not authenticated; run <bold>{auth_command}</>"
                 ))
             )?;
         }

@@ -414,9 +414,10 @@ fn test_list_full_with_gitlab_remote(mut repo: TestRepo) {
 
 #[rstest]
 fn test_list_full_with_gitea_forge_platform(mut repo: TestRepo) {
-    // `forge.platform = "gitea"` is a valid value (the `wt switch pr:` shortcut
-    // uses it), but worktrunk fetches CI status only from GitHub/GitLab. `wt
-    // list` must not warn that the value is "invalid" — it just leaves CI blank.
+    // `forge.platform = "gitea"` resolves to the (experimental) Gitea CI
+    // backend, but without `tea` installed there's nothing to show — CI stays
+    // blank, and `wt list` must not warn that the value is "invalid". (Gitea CI
+    // detection with a mocked `tea` is covered by the `gitea_*` tests below.)
     repo.run_git(&[
         "remote",
         "set-url",
@@ -1049,5 +1050,164 @@ fn test_list_full_with_azure_pipeline_retriable_error(mut repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
         repo.configure_mock_commands(&mut cmd);
         assert_cmd_snapshot!("azure_pipeline_retriable_error", cmd);
+    });
+}
+
+// =============================================================================
+// Gitea CI status tests
+// =============================================================================
+
+/// Set up a repo with a Gitea remote and a `feature` worktree carrying its own
+/// commit (so its HEAD SHA differs from `main`'s, keeping the per-branch
+/// commit-status lookups distinct). Returns the `feature` HEAD SHA.
+fn setup_gitea_repo_with_feature(repo: &mut TestRepo) -> String {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(
+        &feature_wt,
+        "gitea-ci.txt",
+        "gitea ci test",
+        "feat: gitea feature",
+    );
+    setup_tracking_for_all_branches(repo, "origin");
+    branch_sha(repo, "feature")
+}
+
+/// Run a Gitea CI status test with the given `tea api .../pulls` and
+/// `tea api .../commits/{sha}/status` mock responses.
+fn run_gitea_ci_status_test(
+    repo: &mut TestRepo,
+    snapshot_name: &str,
+    head_sha: &str,
+    pulls_json: &str,
+    status_json: &str,
+) {
+    repo.setup_mock_tea_with_ci_data("owner", "test-repo", head_sha, pulls_json, status_json);
+
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!(snapshot_name, cmd);
+    });
+}
+
+/// Build a one-PR `tea api .../pulls` response for the `feature` branch.
+fn gitea_feature_pr_json(head_sha: &str, mergeable: bool) -> String {
+    format!(
+        r#"[{{
+        "mergeable": {mergeable},
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/7",
+        "head": {{
+            "ref": "feature",
+            "sha": "{head_sha}",
+            "repo": {{"owner": {{"login": "owner"}}}}
+        }}
+    }}]"#
+    )
+}
+
+/// An open PR with `mergeable: false` surfaces as a Conflicts indicator
+/// (exercises `detect_gitea_pr`).
+#[rstest]
+fn test_list_full_with_gitea_pr_conflicts(mut repo: TestRepo) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    run_gitea_ci_status_test(
+        &mut repo,
+        "gitea_pr_conflicts",
+        &head_sha,
+        &gitea_feature_pr_json(&head_sha, false),
+        r#"{"state":"","total_count":0}"#,
+    );
+}
+
+/// An open PR's CI state comes from the PR head commit's combined status, and
+/// the indicator links to the PR.
+#[rstest]
+#[case::passed("success", "gitea_pr_passed")]
+#[case::failed("failure", "gitea_pr_failed")]
+#[case::running("pending", "gitea_pr_running")]
+fn test_list_full_with_gitea_pr_status(
+    mut repo: TestRepo,
+    #[case] state: &str,
+    #[case] snapshot_name: &str,
+) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    let status_json = format!(r#"{{"state":"{state}","total_count":2}}"#);
+    run_gitea_ci_status_test(
+        &mut repo,
+        snapshot_name,
+        &head_sha,
+        &gitea_feature_pr_json(&head_sha, true),
+        &status_json,
+    );
+}
+
+/// No PR for the branch falls back to the HEAD commit's combined status
+/// (exercises `detect_gitea_commit_status` and the `failure` state mapping).
+#[rstest]
+fn test_list_full_with_gitea_commit_status(mut repo: TestRepo) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    run_gitea_ci_status_test(
+        &mut repo,
+        "gitea_commit_status",
+        &head_sha,
+        "[]",
+        r#"{"state":"failure","total_count":1}"#,
+    );
+}
+
+/// No PR and no commit statuses → no CI indicator.
+#[rstest]
+fn test_list_full_with_gitea_no_ci(mut repo: TestRepo) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    run_gitea_ci_status_test(
+        &mut repo,
+        "gitea_no_ci",
+        &head_sha,
+        "[]",
+        r#"{"state":"","total_count":0}"#,
+    );
+}
+
+/// A retriable error from `tea api .../pulls` surfaces as an error indicator
+/// rather than NoCI (exercises the `is_retriable_error` branch in
+/// `detect_gitea_pr`).
+#[rstest]
+fn test_list_full_with_gitea_retriable_error(mut repo: TestRepo) {
+    setup_gitea_repo_with_feature(&mut repo);
+    repo.setup_mock_tea_with_detection_error(
+        "Error: GET .../api/v1/repos/owner/test-repo/pulls: 429 Too Many Requests",
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("gitea_retriable_error", cmd);
+    });
+}
+
+/// A retriable error from the commit-status lookup (when no PR exists for the
+/// branch) surfaces as an error indicator (exercises the `is_retriable_error`
+/// branch in `fetch_combined_status`, reached via `detect_gitea_commit_status`).
+#[rstest]
+fn test_list_full_with_gitea_commit_status_retriable_error(mut repo: TestRepo) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    repo.setup_mock_tea_commit_status_error(
+        &head_sha,
+        "Error: GET .../api/v1/repos/owner/test-repo/commits/.../status: 429 Too Many Requests",
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("gitea_commit_status_retriable_error", cmd);
     });
 }

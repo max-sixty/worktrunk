@@ -1,9 +1,9 @@
 //! CI platform identification.
 //!
-//! [`CiPlatform`] names the forge a repository's CI runs on (GitHub, GitLab, or
-//! Azure DevOps). It comes from project config (`forge.platform`, or the
-//! deprecated `ci.platform`) when set, otherwise from the remote URL host — see
-//! [`Repository::ci_platform`].
+//! [`CiPlatform`] names the forge a repository's CI runs on (GitHub, GitLab,
+//! Gitea, or Azure DevOps). It comes from project config (`forge.platform`, or
+//! the deprecated `ci.platform`) when set, otherwise from the remote URL host —
+//! see [`Repository::ci_platform`].
 
 use crate::git::{GitRemoteUrl, Repository};
 
@@ -17,17 +17,22 @@ use crate::git::{GitRemoteUrl, Repository};
 pub enum CiPlatform {
     GitHub,
     GitLab,
+    /// Experimental — Gitea CI status via the `tea` CLI.
+    Gitea,
     #[strum(serialize = "azure-devops", serialize = "azuredevops")]
     AzureDevOps,
 }
 
-/// Identify the CI platform from a remote URL host ("github" / "gitlab" / Azure DevOps).
+/// Identify the CI platform from a remote URL host ("github" / "gitlab" /
+/// "gitea" / Azure DevOps).
 fn platform_from_url(url: &str) -> Option<CiPlatform> {
     let parsed = GitRemoteUrl::parse(url)?;
     if parsed.is_github() {
         Some(CiPlatform::GitHub)
     } else if parsed.is_gitlab() {
         Some(CiPlatform::GitLab)
+    } else if parsed.is_gitea() {
+        Some(CiPlatform::Gitea)
     } else if parsed.is_azure_devops() {
         Some(CiPlatform::AzureDevOps)
     } else {
@@ -72,10 +77,9 @@ impl Repository {
 
     /// The CI platform set in project config (`forge.platform` / `ci.platform`).
     ///
-    /// `None` when unset, set to `gitea` (a valid `forge.platform` for `wt
-    /// switch pr:`, but one worktrunk doesn't fetch CI status from), or
-    /// unrecognized. Resolved once per repository handle, so an unrecognized
-    /// value warns a single time rather than once per branch `wt list` probes.
+    /// `None` when unset or unrecognized. Resolved once per repository handle,
+    /// so an unrecognized value warns a single time rather than once per branch
+    /// `wt list` probes.
     fn configured_ci_platform(&self) -> Option<CiPlatform> {
         *self.cache.configured_ci_platform.get_or_init(|| {
             let raw = self
@@ -84,23 +88,18 @@ impl Repository {
                 .flatten()?
                 .forge_platform()
                 .map(str::to_string)?;
-            if let Ok(platform) = raw.parse::<CiPlatform>() {
-                log::debug!("Using CI platform from config: {platform}");
-                return Some(platform);
+            match raw.parse::<CiPlatform>() {
+                Ok(platform) => {
+                    log::debug!("Using CI platform from config: {platform}");
+                    Some(platform)
+                }
+                Err(_) => {
+                    log::warn!(
+                        "Invalid CI platform in config: '{raw}'. Expected 'github', 'gitlab', 'gitea', or 'azure-devops'."
+                    );
+                    None
+                }
             }
-            // `gitea` is a valid `forge.platform` (the `wt switch pr:` shortcut
-            // uses it), but worktrunk fetches CI status only from GitHub and
-            // GitLab — so it's "no CI status here", not a misconfiguration.
-            if raw.eq_ignore_ascii_case("gitea") {
-                log::debug!(
-                    "forge.platform is 'gitea'; CI status is shown for GitHub and GitLab only"
-                );
-                return None;
-            }
-            log::warn!(
-                "Invalid CI platform in config: '{raw}'. Expected 'github', 'gitlab', 'gitea', or 'azure-devops'."
-            );
-            None
         })
     }
 }
@@ -119,6 +118,7 @@ mod tests {
             "gitlab".parse::<CiPlatform>().ok(),
             Some(CiPlatform::GitLab)
         );
+        assert_eq!("gitea".parse::<CiPlatform>().ok(), Some(CiPlatform::Gitea));
         // Azure DevOps accepts both spellings; `azure-devops` is canonical.
         assert_eq!(
             "azure-devops".parse::<CiPlatform>().ok(),
@@ -162,6 +162,14 @@ mod tests {
             assert_eq!(platform_from_url(url), Some(CiPlatform::GitLab), "{url}");
         }
 
+        // Gitea — gitea.com and self-hosted instances with "gitea" in the host.
+        for url in [
+            "https://gitea.com/owner/repo.git",
+            "git@gitea.example.com:owner/repo.git",
+        ] {
+            assert_eq!(platform_from_url(url), Some(CiPlatform::Gitea), "{url}");
+        }
+
         // Azure DevOps — HTTPS, SSH, and the legacy visualstudio.com host.
         for url in [
             "https://dev.azure.com/myorg/myproject/_git/myrepo",
@@ -175,7 +183,8 @@ mod tests {
             );
         }
 
-        // Unknown forges.
+        // Unknown forges (a Gitea/Forgejo host without "gitea" in the name
+        // needs an explicit `forge.platform` override).
         assert_eq!(
             platform_from_url("https://bitbucket.org/owner/repo.git"),
             None

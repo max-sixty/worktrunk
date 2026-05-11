@@ -1655,6 +1655,55 @@ fn test_uninstall_shell_dry_run_multiple(repo: TestRepo, temp_home: TempDir) {
     );
 }
 
+/// Regression: `--dry-run uninstall nu` (and pwsh by extension) previously
+/// printed `Would remove shell extension & completions for nu`, but Nushell
+/// has no inline completions — only Bash/Zsh do. The other two render paths
+/// (`show_install_preview`, `prompt_for_uninstall_confirmation`) already
+/// keyed off `Shell::Bash | Shell::Zsh`; the dry-run uninstall path was the
+/// odd one out, treating Fish as the only no-completions shell.
+#[rstest]
+fn test_uninstall_shell_dry_run_nushell(repo: TestRepo, temp_home: TempDir) {
+    // Install nushell integration first so dry-run uninstall finds something.
+    let mut install_cmd = wt_command();
+    repo.configure_wt_cmd(&mut install_cmd);
+    set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("SHELL", "/bin/nu");
+    install_cmd
+        .args(["config", "shell", "install", "nu", "--yes"])
+        .current_dir(repo.root_path());
+    let install_output = install_cmd.output().expect("Failed to execute install");
+    assert!(
+        install_output.status.success(),
+        "Install precondition failed:\nstderr: {}",
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/nu");
+    cmd.args(["config", "shell", "uninstall", "nu", "--dry-run"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        output.status.success(),
+        "Dry-run uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("shell extension for") && stderr.contains("nu"),
+        "Dry-run output should label nushell as 'shell extension' (no '& completions'):\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("shell extension & completions for [1mnu")
+            && !stderr.contains("shell extension & completions for nu"),
+        "Nushell must NOT be labeled 'shell extension & completions':\n{stderr}"
+    );
+}
+
 // PTY-based tests for interactive install preview
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod pty_tests {

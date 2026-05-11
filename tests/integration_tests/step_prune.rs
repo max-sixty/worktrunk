@@ -984,3 +984,84 @@ cleanup = "echo done"
     cmd.env("RAYON_NUM_THREADS", "1");
     assert_cmd_snapshot!(cmd);
 }
+
+/// Commit a `pre-remove` hook on the default branch, branch a worktree off that
+/// commit (so it carries the hook in its own `.config/wt.toml`), then drop the
+/// hook from the default branch and advance past the worktree's commit. The
+/// worktree is now integrated (an ancestor of the default branch) and clean,
+/// while the cwd config no longer mentions `pre-remove` — the situation where
+/// prune would otherwise approve against the wrong config. Returns the
+/// worktree path and the marker file the hook writes.
+fn prune_branch_local_pre_remove_setup(
+    repo: &mut TestRepo,
+) -> (std::path::PathBuf, std::path::PathBuf) {
+    use path_slash::PathExt as _;
+
+    let marker = repo.root_path().join("prune-pre-remove-ran.txt");
+    repo.write_project_config(&format!(
+        r#"pre-remove = "echo ran > {}""#,
+        marker.to_slash_lossy()
+    ));
+    repo.commit("Add pre-remove hook");
+    let wt_path = repo.add_worktree("merged-with-hook");
+    repo.write_project_config("# no hooks on the default branch\n");
+    repo.commit("Drop pre-remove hook");
+    (wt_path, marker)
+}
+
+/// `wt step prune`'s approval covers each pruned worktree's own `pre-remove`,
+/// not just the cwd config's. A hook that lives only in a pruned worktree's
+/// branch-local `.config/wt.toml` must be approved before it runs — with no TTY
+/// and no prior approval, prune aborts rather than running it silently.
+#[rstest]
+fn test_prune_branch_local_pre_remove_needs_approval(mut repo: TestRepo) {
+    let (wt_path, marker) = prune_branch_local_pre_remove_setup(&mut repo);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "prune", "--foreground", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "prune should abort when an un-approved branch-local pre-remove is in scope; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("needs approval") && stderr.contains("pre-remove"),
+        "prune should surface the pruned worktree's pre-remove for approval; stderr:\n{stderr}"
+    );
+    assert!(
+        wt_path.exists(),
+        "the worktree must not be removed when approval fails"
+    );
+    assert!(
+        !marker.exists(),
+        "the pre-remove hook must not run without approval"
+    );
+}
+
+/// With `--yes`, `wt step prune` runs the approved `pre-remove` hook from each
+/// pruned worktree's own `.config/wt.toml`.
+#[rstest]
+fn test_prune_runs_branch_local_pre_remove_hook(mut repo: TestRepo) {
+    use crate::common::wait_for_file_content;
+
+    let (wt_path, marker) = prune_branch_local_pre_remove_setup(&mut repo);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "prune", "--foreground", "--yes", "--min-age=0s"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt step prune failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    wait_for_file_content(&marker);
+    assert_eq!(std::fs::read_to_string(&marker).unwrap().trim(), "ran");
+    assert!(!wt_path.exists(), "the merged worktree should be removed");
+}

@@ -750,11 +750,14 @@ pub fn show_uninstall_preview(
                 result.action.description(),
             );
         } else {
-            // Bash/Zsh: inline completions; Fish: separate completion file
-            let what = if matches!(shell, Shell::Fish) {
-                "shell extension"
-            } else {
+            // Only Bash/Zsh ship inline completions alongside the extension;
+            // Fish/Nushell/PowerShell either use a separate completion file
+            // (Fish) or no completions at all. Keep this in sync with
+            // `show_install_preview` and `prompt_for_uninstall_confirmation`.
+            let what = if matches!(shell, Shell::Bash | Shell::Zsh) {
                 "shell extension & completions"
+            } else {
+                "shell extension"
             };
 
             eprintln!(

@@ -764,7 +764,7 @@ fn render_aliases_help_section(
 
     // `cformat!`'s `</>` emits `\e[39m`, which the markdown pass over this
     // output (`wrap_styled_text`) strips — leaving the fg color dangling onto
-    // whatever follows. Terminate each name with a full reset (`\e[0m`, which
+    // the following text. Terminate each name with a full reset (`\e[0m`, which
     // survives that pass) so the comma separators render uncolored, matching
     // how clap closes each `Commands:` entry.
     let reset = anstyle::Reset;
@@ -783,12 +783,9 @@ fn render_aliases_help_section(
 
     let mut out = String::new();
     let _ = writeln!(out, "{}", cformat!("<bold><green>Aliases:</></>"));
-    // Trailing space after the list: `wrap_styled_text` drops a reset that
-    // ends a line, so without a trailing character the last name's color
-    // would bleed onto the "Run …" sentence below.
     let _ = write!(
         out,
-        "  {list} \n\nRun `wt config alias show` for the full definitions."
+        "  {list}\n\nRun `wt config alias show` for the full definitions."
     );
     out
 }
@@ -1525,9 +1522,7 @@ cmd = [
         // The `--help` block is just a comma-separated name list: user/project
         // duplicates collapse to one entry, a name colliding with a built-in
         // is flagged inline (which built-ins shadow depends on the help
-        // context), and a pointer to the full listing follows. There is a
-        // trailing space after the list (load-bearing — keeps the last name's
-        // color from bleeding onto the "Run …" line; see the function).
+        // context), and a pointer to the full listing follows.
         let entries = vec![
             (
                 "commit".to_string(),
@@ -1564,7 +1559,7 @@ cmd = [
             render_aliases_help_section(&sorted, HelpContext::TopLevel).ansi_strip(),
             @"
         Aliases:
-          commit, deploy, list (shadowed by built-in), shared 
+          commit, deploy, list (shadowed by built-in), shared
 
         Run `wt config alias show` for the full definitions.
         "
@@ -1575,7 +1570,7 @@ cmd = [
             render_aliases_help_section(&sorted, HelpContext::Step).ansi_strip(),
             @"
         Aliases:
-          commit (shadowed by built-in), deploy, list, shared 
+          commit (shadowed by built-in), deploy, list, shared
 
         Run `wt config alias show` for the full definitions.
         "

@@ -190,6 +190,16 @@ mod tests {
         render_ci_tool_status(&mut out, "gh", "GitHub", true, false).unwrap();
         assert_snapshot!(out, @"[33m▲[39m [33m[1mgh[22m installed but not authenticated; run [1mgh auth login[22m[39m");
 
+        // The auth-setup command differs by CLI: `tea` uses `tea login add`,
+        // `az` uses `az login`, the rest use `<tool> auth login`.
+        let mut out = String::new();
+        render_ci_tool_status(&mut out, "tea", "Gitea", true, false).unwrap();
+        assert_snapshot!(out, @"[33m▲[39m [33m[1mtea[22m installed but not authenticated; run [1mtea login add[22m[39m");
+
+        let mut out = String::new();
+        render_ci_tool_status(&mut out, "az", "Azure DevOps", true, false).unwrap();
+        assert_snapshot!(out, @"[33m▲[39m [33m[1maz[22m installed but not authenticated; run [1maz login[22m[39m");
+
         // Not installed
         let mut out = String::new();
         render_ci_tool_status(&mut out, "glab", "GitLab", false, false).unwrap();
