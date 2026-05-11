@@ -412,9 +412,11 @@ fn approve_prune_hooks(
             continue;
         };
         let wt = &worktrees[*wt_idx];
-        let wt_repo = match Repository::at(&wt.path) {
-            Ok(r) if r.load_project_config().ok().flatten().is_some() => r,
-            _ => primary_repo.clone(),
+        let wt_at_path = Repository::at(&wt.path)?;
+        let wt_repo = if wt_at_path.load_project_config().ok().flatten().is_some() {
+            wt_at_path
+        } else {
+            primary_repo.clone()
         };
         if let Some(cfg) = wt_repo.load_project_config()? {
             all_commands.extend(collect_commands_for_hooks(&cfg, &[HookType::PreRemove]));

@@ -917,9 +917,11 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 let primary_path = repo.home_path()?;
                 let primary_repo = Repository::at(&primary_path)?;
                 for &wt_path in removed_worktree_paths {
-                    let wt_repo = match Repository::at(wt_path) {
-                        Ok(r) if r.load_project_config().ok().flatten().is_some() => r,
-                        _ => primary_repo.clone(),
+                    let wt_at_path = Repository::at(wt_path)?;
+                    let wt_repo = if wt_at_path.load_project_config().ok().flatten().is_some() {
+                        wt_at_path
+                    } else {
+                        primary_repo.clone()
                     };
                     let ctx = CommandContext::new(
                         &wt_repo,

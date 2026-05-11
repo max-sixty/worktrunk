@@ -1197,9 +1197,17 @@ fn execute_pre_remove_hooks_if_needed(
     // — e.g. it was branched before the project added one — fall back to `repo`
     // so a project-wide `pre-remove` on the default branch still applies. The
     // `wt remove` approval helper in `main.rs` resolves the same config.
-    let pre_remove_repo = match Repository::at(ctx.worktree_path) {
-        Ok(wt_repo) if wt_repo.load_project_config().ok().flatten().is_some() => wt_repo,
-        _ => repo.clone(),
+    //
+    // A `Repository::at` failure means git can't recognize the path as a
+    // worktree — propagate rather than silently fall back, matching the
+    // approval helpers (`main.rs::approve_remove`, `prune::approve_prune_hooks`).
+    // The `UserConfig::load()` silent-skip above is a different case: user
+    // config can be benignly malformed and shouldn't fail a remove.
+    let wt_at_path = Repository::at(ctx.worktree_path)?;
+    let pre_remove_repo = if wt_at_path.load_project_config().ok().flatten().is_some() {
+        wt_at_path
+    } else {
+        repo.clone()
     };
     let command_ctx = CommandContext::new(
         &pre_remove_repo,
