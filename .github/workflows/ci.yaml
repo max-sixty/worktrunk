@@ -105,6 +105,19 @@ jobs:
     - name: 🧪 Pre-merge hooks
       run: wt hook pre-merge --yes insta doctest doc
 
+    # Anything tests leave behind in the working tree is a leak we want to see
+    # before it lands. `target/` is gitignored, so a normal run is clean —
+    # untracked files here mean a test wrote outside its sandbox (the
+    # `default_*.profraw` stray that prompted this guard is the canonical case).
+    - name: 🧹 Verify clean working tree
+      shell: bash
+      run: |
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "::error::tests left files behind in the working tree:"
+          git status --porcelain
+          exit 1
+        fi
+
     - name: 📊 Upload test timing
       if: always()
       uses: actions/upload-artifact@v7

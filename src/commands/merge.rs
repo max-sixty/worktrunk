@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use worktrunk::HookType;
-use worktrunk::config::{Approvals, MergeConfig, ProjectConfig, UserConfig};
+use worktrunk::config::{Approvals, MergeConfig, UserConfig};
 use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, info_message};
 
@@ -11,7 +11,9 @@ use super::command_executor::FailureStrategy;
 use super::commit::{CommitOptions, HookGate};
 use super::context::CommandEnv;
 use super::hooks::{HookAnnouncer, execute_hook};
-use super::project_config::{ApprovableCommand, collect_commands_for_hooks};
+use super::project_config::{
+    ApprovableCommand, collect_commands_for_hooks, collect_remove_hook_commands,
+};
 use super::repository_ext::RepositoryCliExt;
 use super::template_vars::TemplateVars;
 use super::worktree::{
@@ -81,12 +83,13 @@ pub struct MergeOptions<'a> {
 ///
 /// - `pre-commit` / `post-commit` / `pre-merge` → the feature worktree
 ///   (= `repo`'s cwd).
-/// - `post-merge` / `post-remove` / `post-switch` → the merge destination
-///   (`destination_path`); these run after the feature worktree is removed.
-/// - `pre-remove` → the feature worktree if it has a `.config/wt.toml` (it's
-///   still on disk when the hook runs), else the destination — mirroring
-///   `output::handlers::execute_pre_remove_hooks_if_needed`, the executor for
-///   both `wt remove` and `wt merge`'s teardown.
+/// - `post-merge` → the merge destination (`destination_path`).
+/// - `pre-remove` / `post-remove` / `post-switch` (when the feature worktree
+///   is being removed) → resolved by [`collect_remove_hook_commands`], which
+///   reads `pre-remove` from the feature worktree's own `.config/wt.toml`
+///   and `post-remove` / `post-switch` from the destination — mirroring
+///   `output::handlers::execute_pre_remove_hooks_if_needed`. No fallback
+///   between worktrees — each `.config/wt.toml` stands alone.
 fn collect_merge_commands(
     repo: &Repository,
     destination_path: &Path,
@@ -97,7 +100,6 @@ fn collect_merge_commands(
 ) -> anyhow::Result<(Vec<ApprovableCommand>, String)> {
     let mut feature_hooks = Vec::new();
     let mut destination_hooks = Vec::new();
-    let mut needs_pre_remove = false;
 
     // Pre-commit hooks run when a commit will actually be created
     let will_create_commit = repo.current_worktree().is_dirty()? || squash_enabled;
@@ -109,34 +111,27 @@ fn collect_merge_commands(
     if verify {
         feature_hooks.push(HookType::PreMerge);
         destination_hooks.push(HookType::PostMerge);
-        if will_remove {
-            needs_pre_remove = true;
-            destination_hooks.push(HookType::PostRemove);
-            destination_hooks.push(HookType::PostSwitch);
-        }
     }
-
-    let feature_config = repo.load_project_config()?;
-    // Load the destination's config if a destination-bucket hook needs it, or
-    // if `pre-remove` has to fall back to it (the feature worktree has no
-    // `.config/wt.toml` — same fallback the executor takes).
-    let destination_config =
-        if !destination_hooks.is_empty() || (needs_pre_remove && feature_config.is_none()) {
-            ProjectConfig::load(&Repository::at(destination_path)?, true)
-                .context("Failed to load project config")?
-        } else {
-            None
-        };
 
     let mut all_commands = Vec::new();
-    if let Some(cfg) = feature_config.as_ref() {
-        all_commands.extend(collect_commands_for_hooks(cfg, &feature_hooks));
+    if let Some(cfg) = repo.load_project_config()? {
+        all_commands.extend(collect_commands_for_hooks(&cfg, &feature_hooks));
     }
-    if let Some(cfg) = destination_config.as_ref() {
-        all_commands.extend(collect_commands_for_hooks(cfg, &destination_hooks));
-    }
-    if needs_pre_remove && let Some(cfg) = feature_config.as_ref().or(destination_config.as_ref()) {
-        all_commands.extend(collect_commands_for_hooks(cfg, &[HookType::PreRemove]));
+    if !destination_hooks.is_empty() || (verify && will_remove) {
+        let destination_repo = Repository::at(destination_path)?;
+        if !destination_hooks.is_empty()
+            && let Some(cfg) = destination_repo.load_project_config()?
+        {
+            all_commands.extend(collect_commands_for_hooks(&cfg, &destination_hooks));
+        }
+        if verify && will_remove {
+            let current_wt = repo.current_worktree();
+            let feature_path = current_wt.path();
+            all_commands.extend(collect_remove_hook_commands(
+                &destination_repo,
+                &[feature_path],
+            )?);
+        }
     }
 
     Ok((all_commands, repo.project_identifier()?))

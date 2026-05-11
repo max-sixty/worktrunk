@@ -68,6 +68,13 @@
 //! cargo bench --bench time_to_first_output -- switch
 //! ```
 //!
+//! Preview pre-compute workload — spawn → all preview tasks drained,
+//! skim bypassed (criterion, synthetic repo):
+//!
+//! ```bash
+//! cargo bench --bench picker_preview
+//! ```
+//!
 //! Per-phase breakdown on a specific repo (a single trace is usually enough
 //! to spot where time goes; re-run a few times if you want variance):
 //!
@@ -111,7 +118,7 @@ use super::worktree::hooks::PostRemoveContext;
 use super::worktree::{
     RemoveResult, SwitchBranchInfo, SwitchResult, approve_switch_hooks, execute_switch,
     offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch, run_pre_switch_hooks,
-    spawn_switch_background_hooks, switch_hook_project_config,
+    spawn_switch_background_hooks, switch_hook_project_config, validate_switch_templates,
 };
 use crate::commands::command_executor::CommandContext;
 use crate::output::handle_switch_output;
@@ -381,10 +388,14 @@ pub fn handle_picker(
     cli_remotes: bool,
     change_dir_flag: Option<bool>,
 ) -> anyhow::Result<()> {
-    // Interactive picker requires a terminal for the TUI. The dry-run path
-    // bypasses skim entirely, so no TTY is required — useful for tests and
-    // for diagnosing the pre-compute pipeline from scripts.
-    if std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_none() && !std::io::stdin().is_terminal() {
+    // Interactive picker requires a terminal for the TUI. The dry-run and
+    // preview-bench paths bypass skim entirely, so no TTY is required —
+    // useful for tests, for diagnosing the pre-compute pipeline from scripts,
+    // and for benchmarking the preview workload headlessly.
+    let is_dry_run = std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_some();
+    let is_preview_bench = std::env::var_os("WORKTRUNK_PREVIEW_BENCH").is_some();
+    let skip_tui = is_dry_run || is_preview_bench;
+    if !skip_tui && !std::io::stdin().is_terminal() {
         anyhow::bail!("Interactive picker requires an interactive terminal");
     }
     worktrunk::trace::instant("Picker started");
@@ -690,15 +701,21 @@ pub fn handle_picker(
     drop(tx);
     drop(handler);
 
-    // Dry-run: skim is bypassed. Wait for collect (which spawns previews
-    // via the handler) to finish, then for the orchestrator's pending
-    // tasks to drain on the global rayon pool, then dump the cache.
-    if std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_some() {
+    // Dry-run / preview-bench: skim is bypassed. Wait for collect (which
+    // spawns previews via the handler) to finish, then for the orchestrator's
+    // pending tasks to drain on the global rayon pool. Dry-run additionally
+    // drains stashed warnings and dumps the cache inventory; preview-bench
+    // returns immediately so the measured wall clock is just "spawn → all
+    // preview tasks drained", with no JSON serialization or stderr I/O in
+    // the hot path.
+    if skip_tui {
         drop(rx);
         let _ = bg_handle.join();
         orchestrator.wait_for_idle();
-        drain_stashed_warnings(&stashed_warnings);
-        println!("{}", orchestrator.dump_cache_json());
+        if is_dry_run {
+            drain_stashed_warnings(&stashed_warnings);
+            println!("{}", orchestrator.dump_cache_json());
+        }
         return Ok(());
     }
 
@@ -794,6 +811,21 @@ pub fn handle_picker(
             true,
             hook_project_config.as_ref(),
         )?;
+
+        // Pre-flight: validate all templates before mutation (worktree creation).
+        // Without this, picker-create would have the half-state risk that
+        // `wt switch --create` already guards against — a broken template would
+        // fail after `git worktree add`, leaving the worktree behind.
+        validate_switch_templates(
+            &repo,
+            &config,
+            &plan,
+            None,
+            &[],
+            hooks_approved,
+            hook_project_config.as_ref(),
+        )?;
+
         let (result, branch_info) = execute_switch(&repo, plan, &config, false, hooks_approved)?;
 
         // Compute path mismatch lazily (deferred from plan_switch for existing worktrees).
@@ -827,7 +859,6 @@ pub fn handle_picker(
             let template_vars = TemplateVars::for_post_switch(&result, &branch_info, "", "");
             let extra_vars = template_vars.as_extra_vars();
             spawn_switch_background_hooks(
-                &repo,
                 &config,
                 &result,
                 branch_info.branch.as_deref(),

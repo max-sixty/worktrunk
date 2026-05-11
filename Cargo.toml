@@ -204,6 +204,10 @@ harness = false
 name = "remove"
 harness = false
 
+[[bench]]
+name = "picker_preview"
+harness = false
+
 [lints.rust]
 unsafe_code = "forbid"
 

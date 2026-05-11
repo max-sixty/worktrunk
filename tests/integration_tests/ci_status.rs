@@ -1211,3 +1211,52 @@ fn test_list_full_with_gitea_commit_status_retriable_error(mut repo: TestRepo) {
         assert_cmd_snapshot!("gitea_commit_status_retriable_error", cmd);
     });
 }
+
+/// `wt list --remotes --full` resolves Gitea owner/repo from the branch's own
+/// remote, not the primary remote. Two Gitea remotes (`origin` →
+/// `owner/test-repo`, `fork` → `forkowner/test-repo`) plus a remote-only
+/// `fork/feature-remote` ref. The mock answers only `forkowner/test-repo`
+/// requests, so a buggy primary-remote lookup would return no CI; the green
+/// `●` in the snapshot proves `branch.remote` is honored.
+#[rstest]
+fn test_list_remotes_full_with_gitea_remote_branch(mut repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "remote",
+        "add",
+        "fork",
+        "https://gitea.example.com/forkowner/test-repo.git",
+    ]);
+
+    // Build the remote-only `fork/feature-remote` ref in a temporary local
+    // branch (mirroring how `test_list_with_remotes_and_full` does it for
+    // origin), then drop the local copy so the row appears as remote-only.
+    repo.run_git(&["checkout", "-b", "feature-remote"]);
+    std::fs::write(repo.root_path().join("gitea-fork.txt"), "fork content").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "feat: fork feature"]);
+    let head_sha = branch_sha(&repo, "feature-remote");
+    repo.run_git(&["update-ref", "refs/remotes/fork/feature-remote", &head_sha]);
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["branch", "-D", "feature-remote"]);
+
+    repo.setup_mock_tea_with_ci_data(
+        "forkowner",
+        "test-repo",
+        &head_sha,
+        "[]",
+        r#"{"state":"success","total_count":1}"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--remotes", "--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("gitea_remote_branch_uses_branch_remote", cmd);
+    });
+}

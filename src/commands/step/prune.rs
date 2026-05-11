@@ -2,21 +2,20 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context;
 use color_print::cformat;
 use crossbeam_channel as chan;
 use rayon::prelude::*;
-use worktrunk::HookType;
 use worktrunk::config::{Approvals, UserConfig};
 use worktrunk::git::{BranchDeletionMode, RefSnapshot, Repository, WorktreeInfo};
 use worktrunk::styling::{eprintln, hint_message, info_message, println, success_message};
 
 use super::super::command_approval::approve_command_batch;
 use super::super::hooks::HookAnnouncer;
-use super::super::project_config::{ApprovableCommand, collect_commands_for_hooks};
+use super::super::project_config::collect_remove_hook_commands;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use crate::output::handle_remove_output;
 
@@ -383,17 +382,16 @@ fn render_dry_run(
 }
 
 /// Approve the project commands `wt step prune` may run, mirroring the
-/// executors' `.config/wt.toml` resolution.
+/// executors' `.config/wt.toml` resolution via
+/// [`collect_remove_hook_commands`].
 ///
 /// `pre-remove` runs only when a *live linked* worktree is removed (stale-
 /// metadata and orphan-branch removals delete just the branch — no
-/// `pre-remove`/`post-remove`/`post-switch`), and each `pre-remove` runs in,
-/// and resolves its config from, that worktree — falling back to the primary
-/// worktree's config when the removed one carries none, exactly like
-/// `output::handlers::execute_pre_remove_hooks_if_needed`. The integration
-/// checks haven't run yet, so every linked worktree's `pre-remove` is approved
-/// up front — a superset of what executes. `post-remove`/`post-switch` run in
-/// the primary worktree afterwards and are approved once against its config.
+/// `pre-remove`/`post-remove`/`post-switch`). The integration checks haven't
+/// run yet, so every linked worktree is fed to the helper — its `pre-remove`
+/// approval is a superset of what executes. `post-remove` / `post-switch`
+/// resolve from the primary worktree's config (the same helper input). No
+/// fallback between worktrees — each `.config/wt.toml` stands alone.
 ///
 /// Returns `true` when hooks should run, `false` when the user declined.
 fn approve_prune_hooks(
@@ -405,33 +403,14 @@ fn approve_prune_hooks(
     let primary_path = repo.home_path()?;
     let primary_repo = Repository::at(&primary_path)?;
 
-    let mut all_commands: Vec<ApprovableCommand> = Vec::new();
-
-    for item in check_items {
-        let CheckSource::Linked { wt_idx } = &item.source else {
-            continue;
-        };
-        let wt = &worktrees[*wt_idx];
-        let wt_repo = match Repository::at(&wt.path) {
-            Ok(r) if r.load_project_config().ok().flatten().is_some() => r,
-            _ => primary_repo.clone(),
-        };
-        if let Some(cfg) = wt_repo.load_project_config()? {
-            all_commands.extend(collect_commands_for_hooks(&cfg, &[HookType::PreRemove]));
-        }
-    }
-
-    if let Some(cfg) = primary_repo.load_project_config()? {
-        all_commands.extend(collect_commands_for_hooks(
-            &cfg,
-            &[HookType::PostRemove, HookType::PostSwitch],
-        ));
-    }
-
-    // The same template can be reached through several worktrees (most often
-    // via the primary fallback) — show, and remember, each command once.
-    let mut seen = HashSet::new();
-    all_commands.retain(|cmd| seen.insert(cmd.command.template.clone()));
+    let removed_worktree_paths: Vec<&Path> = check_items
+        .iter()
+        .filter_map(|item| match &item.source {
+            CheckSource::Linked { wt_idx } => Some(worktrees[*wt_idx].path.as_path()),
+            _ => None,
+        })
+        .collect();
+    let all_commands = collect_remove_hook_commands(&primary_repo, &removed_worktree_paths)?;
 
     if all_commands.is_empty() {
         return Ok(true);

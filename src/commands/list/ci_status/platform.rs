@@ -69,8 +69,9 @@ fn detect_branch(
         CiPlatform::GitHub => github::detect_github_commit_checks(repo, branch, local_head),
         // GitLab pipelines use the bare branch name (not "origin/feature").
         CiPlatform::GitLab => gitlab::detect_gitlab_pipeline(repo, &branch.name, local_head),
-        // Gitea queries the combined commit status by SHA — branch-independent.
-        CiPlatform::Gitea => gitea::detect_gitea_commit_status(repo, local_head),
+        // Gitea queries the combined commit status by SHA, but owner/repo come
+        // from the branch's own remote (so remote-only rows hit the right repo).
+        CiPlatform::Gitea => gitea::detect_gitea_commit_status(repo, branch, local_head),
         CiPlatform::AzureDevOps => azure::detect_azure_pipeline(repo, &branch.name, local_head),
     }
 }

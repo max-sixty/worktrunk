@@ -22,6 +22,10 @@ cargo bench --bench list
 # Time-to-first-output benchmarks
 cargo bench --bench time_to_first_output         # all commands
 cargo bench --bench time_to_first_output remove  # just remove
+
+# Picker preview pre-compute (wt switch preview workload)
+cargo bench --bench picker_preview               # all variants
+cargo bench --bench picker_preview warm          # warm only
 ```
 
 ## Rust Repo Caching
@@ -50,6 +54,20 @@ startup latency without output rendering or post-output work (mismatch warnings,
 
 Supported commands: `switch`, `remove`, `list`.
 
+## WORKTRUNK_PREVIEW_BENCH
+
+Setting `WORKTRUNK_PREVIEW_BENCH=1` runs `wt switch`'s interactive picker prelude
+end-to-end — collect, speculative spawn, skeleton, initial pre-compute, deferred
+pre-compute — and exits immediately after `PreviewOrchestrator::wait_for_idle()`,
+before skim launches and before any JSON serialization or stderr drain. Used by
+`picker_preview` benchmarks to measure the preview pool workload without standing
+up a PTY. Bypasses the picker's TTY check, like `WORKTRUNK_PICKER_DRY_RUN=1`.
+
+The hot path inside the env-gated block is identical to the dry-run path; only the
+post-drain output (cache JSON dump + stashed-warning drain) is conditional. Keep new
+post-drain work out of the bench path unless it's part of the workload being
+measured.
+
 ## Cache Handling
 
 Worktrunk maintains a persistent SHA-keyed cache at `.git/wt/cache/` plus a git-config
@@ -66,9 +84,14 @@ a cache hit. Invalidate via `criterion::Bencher::iter_batched` with
 
 - `.git/index` (main and linked worktrees)
 - `.git/objects/info/commit-graph*`
-- `.git/packed-refs`
 - `.git/wt/cache/` (all sha_cache kinds + ci-status + summaries)
 - `worktrunk.default-branch` (git config)
+
+`.git/packed-refs` is deliberately preserved: `create_repo_at` runs `git gc`
+at the end of fixture setup, which packs every loose ref into `packed-refs`
+and prunes the loose copies. Deleting that file post-gc leaves the repo with
+no resolvable refs, so any bench that resolves a branch (e.g. the `with_vars`
+alias's `{{ commit }}` template var) blows up partway through warm-up.
 
 User state — `worktrunk.history`, `worktrunk.hints.*`, `worktrunk.state.<branch>.*`,
 `.git/wt/logs/`, `.git/wt/trash/` — is intentionally preserved. It doesn't affect
@@ -81,7 +104,8 @@ setup).
 |---------|------------|-------|
 | `wt list` | Yes | Post-skeleton tasks. Exits early under `WORKTRUNK_SKELETON_ONLY=1` / `WORKTRUNK_FIRST_OUTPUT=1` — those skip the writing phase. |
 | `wt remove` | Yes | `prepare_worktree_removal` → `compute_integration_lazy` writes `is-ancestor` / `has-added-changes` / `merge-add-probe` whenever `BranchDeletionMode` is not `ForceDelete` (CLI `--force` is `force_worktree`, not `--force-delete`). |
-| `wt switch` | No | No sha_cache writers on the switch path. |
+| `wt switch <branch>` | No | No sha_cache writers on the direct-switch path. |
+| `wt switch` (picker) | Yes | Preview pre-compute writes `picker-preview/{log,branch-diff,upstream-diff}-…` entries. Exercised under `WORKTRUNK_PREVIEW_BENCH=1` / `WORKTRUNK_PICKER_DRY_RUN=1`. |
 | `wt` (completion via `COMPLETE=$SHELL`) | No | Only `for-each-ref` + worktree list. |
 
 Default-branch cache contribution is ~17ms per iteration on a typical-8 synthetic repo
