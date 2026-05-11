@@ -1,13 +1,13 @@
 //! CI platform detection.
 //!
-//! Determines whether a repository uses GitHub, GitLab, or Azure DevOps based on
-//! project config override or remote URL detection.
+//! Determines whether a repository uses GitHub, GitLab, Gitea, or Azure DevOps
+//! based on project config override or remote URL detection.
 
 use std::sync::OnceLock;
 
 use worktrunk::git::{GitRemoteUrl, Repository};
 
-use super::{CiBranchName, PrStatus, azure, github, gitlab, tool_available};
+use super::{CiBranchName, PrStatus, azure, gitea, github, gitlab, tool_available};
 
 /// Cached CI tool availability.
 static CI_TOOLS: OnceLock<CiToolsAvailable> = OnceLock::new();
@@ -18,12 +18,13 @@ static CI_TOOLS: OnceLock<CiToolsAvailable> = OnceLock::new();
 /// once per `wt list` invocation rather than once per branch.
 static CONFIGURED_PLATFORM: OnceLock<Option<CiPlatform>> = OnceLock::new();
 
-/// Cached availability of CI CLI tools (`gh`, `glab`, `az`).
+/// Cached availability of CI CLI tools (`gh`, `glab`, `tea`, `az`).
 ///
 /// Probed once on first access via `--version` check.
 struct CiToolsAvailable {
     gh: bool,
     glab: bool,
+    tea: bool,
     az: bool,
 }
 
@@ -32,6 +33,7 @@ impl CiToolsAvailable {
         CI_TOOLS.get_or_init(|| Self {
             gh: tool_available("gh", &["--version"]),
             glab: tool_available("glab", &["--version"]),
+            tea: tool_available("tea", &["--version"]),
             az: tool_available("az", &["--version"]),
         })
     }
@@ -41,12 +43,13 @@ impl CiToolsAvailable {
 ///
 /// Platform is determined by:
 /// 1. Project config `forge.platform` (or deprecated `ci.platform`)
-/// 2. Remote URL detection (searches for "github", "gitlab", or Azure DevOps in hostname)
+/// 2. Remote URL detection (searches for "github", "gitlab", "gitea", or Azure DevOps in hostname)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "lowercase")]
 pub enum CiPlatform {
     GitHub,
     GitLab,
+    Gitea,
     #[strum(serialize = "azure-devops", serialize = "azuredevops")]
     AzureDevOps,
 }
@@ -57,6 +60,7 @@ impl CiPlatform {
         match self {
             Self::GitHub => CiToolsAvailable::get().gh,
             Self::GitLab => CiToolsAvailable::get().glab,
+            Self::Gitea => CiToolsAvailable::get().tea,
             Self::AzureDevOps => CiToolsAvailable::get().az,
         }
     }
@@ -71,6 +75,7 @@ impl CiPlatform {
         match self {
             Self::GitHub => github::detect_github(repo, branch, local_head),
             Self::GitLab => gitlab::detect_gitlab(repo, branch, local_head),
+            Self::Gitea => gitea::detect_gitea_pr(repo, branch, local_head),
             Self::AzureDevOps => azure::detect_azure_pr(repo, branch, local_head),
         }
     }
@@ -86,6 +91,8 @@ impl CiPlatform {
             Self::GitHub => github::detect_github_commit_checks(repo, branch, local_head),
             // GitLab pipeline uses the bare branch name (not "origin/feature")
             Self::GitLab => gitlab::detect_gitlab_pipeline(repo, &branch.name, local_head),
+            // Gitea queries the combined commit status by SHA — branch-independent.
+            Self::Gitea => gitea::detect_gitea_commit_status(repo, local_head),
             Self::AzureDevOps => azure::detect_azure_pipeline(repo, &branch.name, local_head),
         }
     }
@@ -115,14 +122,16 @@ impl CiPlatform {
 
 /// Detect the CI platform from a remote URL.
 ///
-/// Uses [`GitRemoteUrl`] to parse the URL and check the host for "github", "gitlab",
-/// or Azure DevOps.
+/// Uses [`GitRemoteUrl`] to parse the URL and check the host for "github",
+/// "gitlab", "gitea", or Azure DevOps.
 pub fn detect_platform_from_url(url: &str) -> Option<CiPlatform> {
     let parsed = GitRemoteUrl::parse(url)?;
     if parsed.is_github() {
         Some(CiPlatform::GitHub)
     } else if parsed.is_gitlab() {
         Some(CiPlatform::GitLab)
+    } else if parsed.is_gitea() {
+        Some(CiPlatform::Gitea)
     } else if parsed.is_azure_devops() {
         Some(CiPlatform::AzureDevOps)
     } else {
@@ -195,7 +204,7 @@ fn platform_from_config(repo: &Repository) -> Option<CiPlatform> {
             }
             Err(_) => {
                 log::warn!(
-                    "Invalid CI platform in config: '{configured}'. Expected 'github', 'gitlab', or 'azure-devops'."
+                    "Invalid CI platform in config: '{configured}'. Expected 'github', 'gitlab', 'gitea', or 'azure-devops'."
                 );
                 None
             }
@@ -263,7 +272,18 @@ mod tests {
             Some(CiPlatform::GitLab)
         );
 
-        // Unknown platforms
+        // Gitea — gitea.com and self-hosted instances with "gitea" in the host
+        assert_eq!(
+            detect_platform_from_url("https://gitea.com/owner/repo.git"),
+            Some(CiPlatform::Gitea)
+        );
+        assert_eq!(
+            detect_platform_from_url("git@gitea.example.com:owner/repo.git"),
+            Some(CiPlatform::Gitea)
+        );
+
+        // Unknown platforms (Gitea/Forgejo hosts without "gitea" in the name
+        // need an explicit forge.platform override)
         assert_eq!(
             detect_platform_from_url("https://bitbucket.org/owner/repo.git"),
             None
@@ -319,6 +339,12 @@ mod tests {
             "gitlab".parse::<CiPlatform>().ok(),
             Some(CiPlatform::GitLab)
         );
+    }
+
+    #[test]
+    fn test_platform_override_gitea() {
+        // `forge.platform = "gitea"` opts a repo into Gitea CI status detection.
+        assert_eq!("gitea".parse::<CiPlatform>().ok(), Some(CiPlatform::Gitea));
     }
 
     #[test]
