@@ -98,7 +98,7 @@ impl Repository {
                 return None;
             }
             log::warn!(
-                "Invalid CI platform in config: '{raw}'. Expected 'github', 'gitlab', or 'azure-devops'."
+                "Invalid CI platform in config: '{raw}'. Expected 'github', 'gitlab', 'gitea', or 'azure-devops'."
             );
             None
         })
