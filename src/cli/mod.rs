@@ -634,6 +634,8 @@ Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated.
 
 **Gitea (experimental):** `pr:` is also compatible with Gitea via the `tea` CLI. Set `[forge] platform = "gitea"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Gitea when the remote host contains `gitea` or when `tea login add` has been run for the host.
 
+**Azure DevOps (experimental):** `pr:` is also compatible with Azure DevOps via the `az` CLI (with the `azure-devops` extension). Set `[forge] platform = "azure-devops"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Azure DevOps from `dev.azure.com` and `*.visualstudio.com` remotes.
+
 ## When wt switch fails
 
 - **Branch doesn't exist** — Use `--create`, or check `wt list --branches`
@@ -1936,7 +1938,7 @@ Override platform detection for SSH aliases or self-hosted instances:
 
 ```toml
 [forge]
-platform = "github"  # or "gitea" (experimental), "gitlab"
+platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)
 hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 ```
 

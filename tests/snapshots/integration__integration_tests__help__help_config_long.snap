@@ -398,7 +398,7 @@ URL column in [2mwt list[0m (dimmed when port not listening):
 Override platform detection for SSH aliases or self-hosted instances:
 
 [107m [0m [2m[36m[forge][0m
-[107m [0m [2mplatform = [0m[2m[32m"github"[0m[2m  [0m[2m# or "gitea" (experimental), "gitlab"[0m
+[107m [0m [2mplatform = [0m[2m[32m"github"[0m[2m  [0m[2m# or "gitlab", "gitea" (experimental), "azure-devops" (experimental)[0m
 [107m [0m [2mhostname = [0m[2m[32m"github.example.com"[0m[2m  [0m[2m# Example: API host (GHE / self-hosted GitLab)[0m
 
 [1m[32mCopy-ignored excludes[0m
