@@ -39,8 +39,9 @@ pub struct ProjectListConfig {
 
 /// Project-level CI configuration.
 ///
-/// Override CI platform detection when URL-based detection fails (e.g., GitHub
-/// Enterprise or self-hosted GitLab with custom domains).
+/// Names the CI platform explicitly, for repos where URL-based detection can't
+/// determine it (e.g., GitHub Enterprise or self-hosted GitLab with custom
+/// domains).
 ///
 /// # Example
 ///
@@ -50,7 +51,7 @@ pub struct ProjectListConfig {
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct ProjectCiConfig {
-    /// CI platform override. When set, skips URL-based platform detection.
+    /// CI platform. When unset, the platform is detected from the remote URL.
     ///
     /// Values: "github" or "gitlab"
     #[serde(default)]
@@ -59,23 +60,24 @@ pub struct ProjectCiConfig {
 
 /// Project-level forge configuration.
 ///
-/// Override forge detection when URL-based detection fails (e.g., SSH host
-/// aliases, GitHub Enterprise, or self-hosted GitLab with custom domains).
+/// Names the forge explicitly, for repos where URL-based detection can't
+/// determine it (e.g., SSH host aliases, GitHub Enterprise, or self-hosted
+/// GitLab with custom domains).
 ///
 /// # Example
 ///
 /// ```toml
 /// [forge]
-/// platform = "github"              # or "gitea" (experimental), "gitlab"
+/// platform = "github"              # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)
 /// hostname = "github.example.com"  # API hostname for GHE / self-hosted GitLab
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct ProjectForgeConfig {
-    /// Forge platform override. When set, skips URL-based platform detection.
+    /// Forge platform. When unset, the platform is detected from the remote URL.
     ///
-    /// Values: "github", "gitea" (experimental), or "gitlab". The `wt switch
-    /// pr:` shortcut uses `forge.platform` to decide which CLI to invoke
-    /// (`gh`, `tea`, or `glab`).
+    /// Values: "github", "gitlab", "gitea" (experimental), or "azure-devops"
+    /// (experimental). The `wt switch pr:` shortcut uses `forge.platform` to
+    /// decide which CLI to invoke (`gh`, `glab`, `tea`, or `az`).
     #[serde(default)]
     pub platform: Option<String>,
 
@@ -96,14 +98,14 @@ impl ProjectListConfig {
 }
 
 impl ProjectConfig {
-    /// Get the CI platform override if configured.
+    /// The CI platform set in `[ci]`, if any.
     ///
     /// Deprecated: use [`forge_platform()`](Self::forge_platform) instead.
     pub fn ci_platform(&self) -> Option<&str> {
         self.ci.platform.as_deref()
     }
 
-    /// Get the forge platform override, checking `[forge]` first then `[ci]`.
+    /// The configured forge platform, checking `[forge]` first then `[ci]`.
     pub fn forge_platform(&self) -> Option<&str> {
         self.forge
             .platform
@@ -160,11 +162,11 @@ pub struct ProjectConfig {
     #[serde(default, skip_serializing_if = "is_default")]
     pub list: ProjectListConfig,
 
-    /// CI configuration (platform override). Deprecated: use `[forge]` instead.
+    /// CI configuration (platform). Deprecated: use `[forge]` instead.
     #[serde(default, skip_serializing_if = "is_default")]
     pub ci: ProjectCiConfig,
 
-    /// Forge configuration (platform detection override, API hostname)
+    /// Forge configuration (platform, API hostname)
     #[serde(default, skip_serializing_if = "is_default")]
     pub forge: ProjectForgeConfig,
 

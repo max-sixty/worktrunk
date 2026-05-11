@@ -29,6 +29,10 @@ impl RemoteRefProvider for GiteaProvider {
         RefType::Pr
     }
 
+    fn platform_label(&self) -> &'static str {
+        "gitea"
+    }
+
     fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
         fetch_pr_info(number, repo)
     }

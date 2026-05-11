@@ -1,8 +1,10 @@
-//! CI status detection for GitHub and GitLab.
+//! CI status detection for GitHub, GitLab, and Azure DevOps.
 //!
-//! This module provides CI status detection by querying GitHub PRs/workflows
-//! and GitLab MRs/pipelines using their respective CLI tools (`gh` and `glab`).
+//! This module provides CI status detection by querying GitHub PRs/workflows,
+//! GitLab MRs/pipelines, and Azure DevOps PRs/pipelines using their respective
+//! CLI tools (`gh`, `glab`, and `az`).
 
+mod azure;
 mod cache;
 mod github;
 mod gitlab;
@@ -77,7 +79,6 @@ impl CiBranchName {
 
 // Re-export public types
 pub(crate) use cache::CachedCiStatus;
-pub use platform::{CiPlatform, platform_for_repo};
 
 /// Maximum number of PRs/MRs to fetch when filtering by source repository.
 ///
@@ -154,6 +155,10 @@ pub struct CiToolsStatus {
     pub glab_installed: bool,
     /// glab is installed and authenticated
     pub glab_authenticated: bool,
+    /// az is installed (can run --version)
+    pub az_installed: bool,
+    /// az is installed and authenticated (logged in)
+    pub az_authenticated: bool,
 }
 
 impl CiToolsStatus {
@@ -172,11 +177,17 @@ impl CiToolsStatus {
             } else {
                 tool_available("glab", &["auth", "status"])
             };
+        let az_installed = tool_available("az", &["--version"]);
+        // `az account show` exits non-zero when logged out — works whether or not
+        // the azure-devops extension is installed.
+        let az_authenticated = az_installed && tool_available("az", &["account", "show"]);
         Self {
             gh_installed,
             gh_authenticated,
             glab_installed,
             glab_authenticated,
+            az_installed,
+            az_authenticated,
         }
     }
 }
@@ -365,9 +376,9 @@ impl PrStatus {
 
     /// Detect CI status without caching (internal implementation)
     ///
-    /// Platform is determined by project config override or remote URL detection.
-    /// Returns `None` if the platform cannot be determined (user should set
-    /// `forge.platform` in project config for non-standard hostnames).
+    /// Platform is determined from project config (`forge.platform`), falling
+    /// back to the remote URL host. Returns `None` if the platform cannot be
+    /// determined (user should set `forge.platform` for non-standard hostnames).
     /// PR/MR detection always runs. Workflow/pipeline fallback only runs if `has_upstream`.
     fn detect_uncached(
         repo: &Repository,
@@ -375,11 +386,9 @@ impl PrStatus {
         local_head: &str,
         has_upstream: bool,
     ) -> Option<Self> {
-        // Determine platform (config override, branch's remote, or primary remote URL)
-        let platform = platform_for_repo(repo, branch.remote.as_deref());
-
-        match platform {
-            Some(p) => p.detect_ci(repo, branch, local_head, has_upstream),
+        // Determine platform (project config, branch's remote, or primary remote URL).
+        match repo.ci_platform(branch.remote.as_deref()) {
+            Some(p) => platform::detect_ci(p, repo, branch, local_head, has_upstream),
             None => {
                 // Unknown platform — user should set forge.platform in project config
                 log::debug!(

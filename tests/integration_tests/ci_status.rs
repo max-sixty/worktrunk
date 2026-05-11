@@ -329,7 +329,7 @@ fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_list_full_with_platform_override_github(mut repo: TestRepo) {
+fn test_list_full_with_configured_platform_github(mut repo: TestRepo) {
     // Set a non-GitHub remote (bitbucket) as origin - platform won't be auto-detected
     repo.run_git(&[
         "remote",
@@ -338,8 +338,8 @@ fn test_list_full_with_platform_override_github(mut repo: TestRepo) {
         "https://bitbucket.org/test-owner/test-repo.git",
     ]);
 
-    // Add a GitHub remote for PR detection (platform override needs a GitHub remote
-    // to determine which repo's PRs to check)
+    // Add a GitHub remote for PR detection (the configured platform still needs a
+    // GitHub remote to determine which repo's PRs to check)
     repo.run_git(&[
         "remote",
         "add",
@@ -347,7 +347,7 @@ fn test_list_full_with_platform_override_github(mut repo: TestRepo) {
         "https://github.com/test-owner/test-repo.git",
     ]);
 
-    // Set platform override in project config
+    // Set the platform explicitly in project config
     repo.write_project_config(
         r#"
 [ci]
@@ -362,7 +362,7 @@ platform = "github"
     // Get actual commit SHA
     let head_sha = branch_sha(&repo, "feature");
 
-    // Setup mock gh with PR data - this should work because platform is overridden to github
+    // Setup mock gh with PR data - this should work because the platform is set to github
     let pr_json = format!(
         r#"[{{
         "headRefOid": "{}",
@@ -382,7 +382,7 @@ platform = "github"
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
         repo.configure_mock_commands(&mut cmd);
-        // Platform override should force GitHub detection even with bitbucket remote
+        // The configured platform should force GitHub detection even with a bitbucket remote
         assert_cmd_snapshot!(cmd);
     });
 }
@@ -413,7 +413,29 @@ fn test_list_full_with_gitlab_remote(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_list_full_with_invalid_platform_override(mut repo: TestRepo) {
+fn test_list_full_with_gitea_forge_platform(mut repo: TestRepo) {
+    // `forge.platform = "gitea"` is a valid value (the `wt switch pr:` shortcut
+    // uses it), but worktrunk fetches CI status only from GitHub/GitLab. `wt
+    // list` must not warn that the value is "invalid" — it just leaves CI blank.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/test-owner/test-repo.git",
+    ]);
+    repo.write_project_config("[forge]\nplatform = \"gitea\"\n");
+
+    repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_list_full_with_invalid_configured_platform(mut repo: TestRepo) {
     // Set GitHub remote URL
     repo.run_git(&[
         "remote",
@@ -422,7 +444,7 @@ fn test_list_full_with_invalid_platform_override(mut repo: TestRepo) {
         "https://github.com/test-owner/test-repo.git",
     ]);
 
-    // Set INVALID platform override - should warn and fall back to URL detection
+    // Set an invalid platform value - should warn and fall back to URL detection
     repo.write_project_config(
         r#"
 [ci]
@@ -861,5 +883,171 @@ fn test_list_full_with_gitlab_ci_rate_limit(mut repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
         repo.configure_mock_commands(&mut cmd);
         assert_cmd_snapshot!("gitlab_ci_rate_limit", cmd);
+    });
+}
+
+// =============================================================================
+// Azure DevOps CI status tests
+// =============================================================================
+
+/// Set up a repo with an Azure DevOps remote and a `feature` worktree.
+/// Returns the `feature` branch HEAD SHA.
+fn setup_azure_repo_with_feature(repo: &mut TestRepo) -> String {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    ]);
+    repo.add_worktree("feature");
+    setup_tracking_for_all_branches(repo, "origin");
+    branch_sha(repo, "feature")
+}
+
+/// Run an Azure DevOps CI status test with the given `az repos pr list` and
+/// `az pipelines runs list` mock responses.
+fn run_azure_ci_status_test(
+    repo: &mut TestRepo,
+    snapshot_name: &str,
+    pr_list_json: &str,
+    runs_json: &str,
+) {
+    repo.setup_mock_az_with_ci_data(pr_list_json, runs_json);
+
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!(snapshot_name, cmd);
+    });
+}
+
+/// An active PR with `mergeStatus: "conflicts"` surfaces as a Conflicts
+/// indicator (exercises `detect_azure_pr`).
+#[rstest]
+fn test_list_full_with_azure_pr_conflicts(mut repo: TestRepo) {
+    let head_sha = setup_azure_repo_with_feature(&mut repo);
+
+    let pr_list_json = format!(
+        r#"[{{
+        "pullRequestId": 7,
+        "mergeStatus": "conflicts",
+        "lastMergeSourceCommit": {{"commitId": "{}"}},
+        "repository": {{"name": "test-repo", "project": {{"name": "myproject"}}}}
+    }}]"#,
+        head_sha
+    );
+
+    run_azure_ci_status_test(&mut repo, "azure_pr_conflicts", &pr_list_json, "[]");
+}
+
+/// An active PR with `mergeStatus: "queued"` surfaces as a Running indicator.
+#[rstest]
+fn test_list_full_with_azure_pr_queued(mut repo: TestRepo) {
+    let head_sha = setup_azure_repo_with_feature(&mut repo);
+
+    let pr_list_json = format!(
+        r#"[{{
+        "pullRequestId": 7,
+        "mergeStatus": "queued",
+        "lastMergeSourceCommit": {{"commitId": "{}"}},
+        "repository": {{"name": "test-repo", "project": {{"name": "myproject"}}}}
+    }}]"#,
+        head_sha
+    );
+
+    run_azure_ci_status_test(&mut repo, "azure_pr_queued", &pr_list_json, "[]");
+}
+
+/// No PR for the branch falls back to the latest pipeline run
+/// (exercises `detect_azure_pipeline` via `parse_azure_pipeline_status`).
+#[rstest]
+#[case::passed("completed", "succeeded", "azure_pipeline_passed")]
+#[case::failed("completed", "failed", "azure_pipeline_failed")]
+#[case::running("inProgress", "null", "azure_pipeline_running")]
+fn test_list_full_with_azure_pipeline_status(
+    mut repo: TestRepo,
+    #[case] status: &str,
+    #[case] result: &str,
+    #[case] snapshot_name: &str,
+) {
+    let head_sha = setup_azure_repo_with_feature(&mut repo);
+
+    let runs_json = format!(
+        r#"[{{
+        "id": 4242,
+        "status": "{}",
+        "result": {},
+        "sourceVersion": "{}"
+    }}]"#,
+        status,
+        if result == "null" {
+            "null".to_string()
+        } else {
+            format!(r#""{}""#, result)
+        },
+        head_sha
+    );
+
+    run_azure_ci_status_test(&mut repo, snapshot_name, "[]", &runs_json);
+}
+
+/// A pipeline run from a different SHA than local HEAD is marked stale (dimmed).
+#[rstest]
+fn test_list_full_with_azure_stale_pipeline(mut repo: TestRepo) {
+    setup_azure_repo_with_feature(&mut repo);
+
+    let runs_json = r#"[{
+        "id": 4242,
+        "status": "completed",
+        "result": "succeeded",
+        "sourceVersion": "0000000000000000000000000000000000000000"
+    }]"#;
+
+    run_azure_ci_status_test(&mut repo, "azure_stale_pipeline", "[]", runs_json);
+}
+
+/// No PR and no pipeline runs → no CI indicator.
+#[rstest]
+fn test_list_full_with_azure_no_ci(mut repo: TestRepo) {
+    setup_azure_repo_with_feature(&mut repo);
+    run_azure_ci_status_test(&mut repo, "azure_no_ci", "[]", "[]");
+}
+
+/// A retriable error from `az repos pr list` (e.g., HTTP 429) surfaces as an
+/// error indicator rather than NoCI (exercises the `is_retriable_error` branch
+/// in `detect_azure_pr`).
+#[rstest]
+fn test_list_full_with_azure_pr_list_retriable_error(mut repo: TestRepo) {
+    setup_azure_repo_with_feature(&mut repo);
+    repo.setup_mock_az_with_detection_errors(
+        Some("ERROR: HTTP error 429: Too Many Requests"),
+        None,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("azure_pr_list_retriable_error", cmd);
+    });
+}
+
+/// A retriable error from `az pipelines runs list` surfaces as an error
+/// indicator (exercises the `is_retriable_error` branch in
+/// `detect_azure_pipeline`, reached when no PR exists for the branch).
+#[rstest]
+fn test_list_full_with_azure_pipeline_retriable_error(mut repo: TestRepo) {
+    setup_azure_repo_with_feature(&mut repo);
+    repo.setup_mock_az_with_detection_errors(
+        None,
+        Some("ERROR: HTTP error 429: Too Many Requests"),
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("azure_pipeline_retriable_error", cmd);
     });
 }

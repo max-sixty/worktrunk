@@ -395,13 +395,13 @@ URL column in `wt list` (dimmed when port not listening):
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-## Forge platform override
+## Forge platform
 
-Override platform detection for SSH aliases or self-hosted instances:
+Name the forge explicitly for SSH aliases or self-hosted instances, where it can't be detected from the remote URL:
 
 ```toml
 [forge]
-platform = "github"  # or "gitea" (experimental), "gitlab"
+platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)
 hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 ```
 
@@ -655,7 +655,7 @@ Aliases are command templates configured in user (`~/.config/worktrunk/config.to
 
 ### Examples
 
-List all configured aliases:
+Show every configured alias's template:
 ```bash
 $ wt config alias show
 ```
@@ -679,7 +679,7 @@ wt config alias - Inspect and preview aliases
 Usage: wt config alias [OPTIONS] <COMMAND>
 
 Commands:
-  show     Show an alias's template, or list all aliases
+  show     Show an alias's template, or all aliases' templates
   dry-run  Preview an alias invocation with template expansion
 
 Options:
@@ -971,7 +971,7 @@ CI status cache.
 
 Caches GitHub/GitLab CI status for display in [`wt list`](https://worktrunk.dev/list/#ci-status).
 
-Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `forge.platform = "github"` (or `"gitlab"`) in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
+Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from the remote URL; set `forge.platform = "github"` (or `"gitlab"`) in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
 
 Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
 
