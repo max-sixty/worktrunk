@@ -575,14 +575,20 @@ impl Repository {
     /// Uncached — tree resolution is cheap (~1 ms) and stale-prone if memoized
     /// against a moving ref name.
     pub(super) fn rev_parse_tree(&self, spec: &str) -> anyhow::Result<String> {
-        Ok(self.run_command(&["rev-parse", spec])?.trim().to_string())
+        Ok(self
+            .run_command(&["rev-parse", "--verify", "--end-of-options", spec])?
+            .trim()
+            .to_string())
     }
 
     /// Resolve a ref to its commit SHA. Uncached — callers that want
     /// SHA-stable lookups for an entire command should capture a
     /// [`RefSnapshot`] up front and resolve through it.
     pub(super) fn rev_parse_commit(&self, r: &str) -> anyhow::Result<String> {
-        Ok(self.run_command(&["rev-parse", r])?.trim().to_string())
+        Ok(self
+            .run_command(&["rev-parse", "--verify", "--end-of-options", r])?
+            .trim()
+            .to_string())
     }
 
     /// Resolve a ref to its commit SHA, skipping git when the input already
@@ -717,7 +723,10 @@ fn snapshot_resolve(
     if let Some(sha) = snapshot.resolve(name) {
         return Ok(sha.to_string());
     }
-    Ok(repo.run_command(&["rev-parse", name])?.trim().to_string())
+    Ok(repo
+        .run_command(&["rev-parse", "--verify", "--end-of-options", name])?
+        .trim()
+        .to_string())
 }
 
 /// Returns true when `s` is a 40-character hex string — the canonical form

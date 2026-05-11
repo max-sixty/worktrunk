@@ -126,7 +126,7 @@ impl TaskContext {
         }
         Ok(self
             .repo
-            .run_command(&["rev-parse", name])?
+            .run_command(&["rev-parse", "--verify", "--end-of-options", name])?
             .trim()
             .to_string())
     }

@@ -305,7 +305,10 @@ fn resolve_via_snapshot(
     if let Some(sha) = snapshot.resolve(name) {
         return Ok(sha.to_string());
     }
-    Ok(repo.run_command(&["rev-parse", name])?.trim().to_string())
+    Ok(repo
+        .run_command(&["rev-parse", "--verify", "--end-of-options", name])?
+        .trim()
+        .to_string())
 }
 
 /// Category of branch for completion display

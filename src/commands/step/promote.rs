@@ -243,15 +243,23 @@ fn exchange_branches(
     let steps: &[(&worktrunk::git::WorkingTree<'_>, &[&str], &str)] = &[
         (target_wt, &["switch", "--detach"], "detach target"),
         (main_wt, &["switch", "--detach"], "detach main"),
-        (main_wt, &["switch", target_branch], "switch main"),
-        (target_wt, &["switch", main_branch], "switch target"),
+        (
+            main_wt,
+            &["switch", "--end-of-options", target_branch],
+            "switch main",
+        ),
+        (
+            target_wt,
+            &["switch", "--end-of-options", main_branch],
+            "switch target",
+        ),
     ];
 
     for (wt, args, label) in steps {
         if let Err(e) = wt.run_command(args) {
             // Best-effort rollback: try to re-attach both branches.
-            let _ = main_wt.run_command(&["switch", main_branch]);
-            let _ = target_wt.run_command(&["switch", target_branch]);
+            let _ = main_wt.run_command(&["switch", "--end-of-options", main_branch]);
+            let _ = target_wt.run_command(&["switch", "--end-of-options", target_branch]);
             return Err(e.context(format!("branch exchange failed at: {label}")));
         }
     }

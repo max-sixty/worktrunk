@@ -430,7 +430,10 @@ impl RepositoryCliExt for Repository {
         let Some(merge_base) = self.merge_base("HEAD", target)? else {
             return Ok(false);
         };
-        let target_sha = self.run_command(&["rev-parse", target])?.trim().to_string();
+        let target_sha = self
+            .run_command(&["rev-parse", "--verify", "--end-of-options", target])?
+            .trim()
+            .to_string();
 
         if merge_base != target_sha {
             return Ok(false); // Target has advanced past merge-base
@@ -438,7 +441,12 @@ impl RepositoryCliExt for Repository {
 
         // Check for merge commits — if present, history is not linear
         let merge_commits = self
-            .run_command(&["rev-list", "--merges", &format!("{}..HEAD", target)])?
+            .run_command(&[
+                "rev-list",
+                "--merges",
+                "--end-of-options",
+                &format!("{}..HEAD", target),
+            ])?
             .trim()
             .to_string();
 

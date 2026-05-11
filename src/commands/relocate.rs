@@ -565,7 +565,7 @@ impl<'a> RelocationExecutor<'a> {
         let main_wt = self.repo.worktree_at(self.repo.repo_path()?);
 
         main_wt
-            .run_command(&["checkout", default_branch])
+            .run_command(&["checkout", "--end-of-options", default_branch])
             .with_context(|| format!("Failed to checkout default branch '{default_branch}'"))?;
 
         // Try to create worktree; if it fails, rollback to original branch.
@@ -578,7 +578,7 @@ impl<'a> RelocationExecutor<'a> {
             eprintln!("{}", warning_message(rollback_msg));
 
             // Best-effort rollback: log failures but don't mask the original error.
-            let _ = main_wt.run_command(&["checkout", branch]);
+            let _ = main_wt.run_command(&["checkout", "--end-of-options", branch]);
 
             return Err(e).context("Failed to create worktree for main relocation");
         }

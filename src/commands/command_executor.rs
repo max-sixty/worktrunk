@@ -292,7 +292,7 @@ pub fn build_hook_context(
         let commit = match ctx.branch {
             Some(branch) => ctx
                 .repo
-                .run_command(&["rev-parse", branch])
+                .run_command(&["rev-parse", "--verify", "--end-of-options", branch])
                 .ok()
                 .map(|s| s.trim().to_owned()),
             None => ctx

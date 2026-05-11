@@ -14,7 +14,7 @@ impl Repository {
         let _guard = super::super::HEAVY_OPS_SEMAPHORE.acquire();
 
         let range = format!("{}..{}", base, head);
-        let stdout = self.run_command(&["rev-list", "--count", &range])?;
+        let stdout = self.run_command(&["rev-list", "--count", "--end-of-options", &range])?;
 
         stdout
             .trim()
@@ -29,7 +29,8 @@ impl Repository {
     /// is renamed in one branch but has uncommitted changes under the old name).
     pub fn changed_files(&self, base: &str, head: &str) -> anyhow::Result<Vec<String>> {
         let range = format!("{}..{}", base, head);
-        let stdout = self.run_command(&["diff", "--name-status", "-z", &range])?;
+        let stdout =
+            self.run_command(&["diff", "--name-status", "-z", "--end-of-options", &range])?;
 
         // Format: STATUS\0PATH\0 or STATUS\0NEW_PATH\0OLD_PATH\0 for renames/copies
         let mut files = Vec::new();
@@ -113,7 +114,13 @@ impl Repository {
 
     /// Get commit subjects (first line of commit message) from a range.
     pub fn commit_subjects(&self, range: &str) -> anyhow::Result<Vec<String>> {
-        let output = self.run_command(&["log", "--no-show-signature", "--format=%s", range])?;
+        let output = self.run_command(&[
+            "log",
+            "--no-show-signature",
+            "--format=%s",
+            "--end-of-options",
+            range,
+        ])?;
         Ok(output.lines().map(String::from).collect())
     }
 
@@ -137,6 +144,7 @@ impl Repository {
             "--no-merges",
         ];
         if let Some(ref_name) = start_ref {
+            args.push("--end-of-options");
             args.push(ref_name);
         }
         self.run_command(&args).ok().and_then(|output| {

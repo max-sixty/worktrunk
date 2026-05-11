@@ -362,7 +362,9 @@ impl WorktreeSkimItem {
         let reset = Reset;
 
         let upstream_ref = format!("{branch}@{{u}}");
-        let Ok(upstream_sha_raw) = repo.run_command(&["rev-parse", &upstream_ref]) else {
+        let Ok(upstream_sha_raw) =
+            repo.run_command(&["rev-parse", "--verify", "--end-of-options", &upstream_ref])
+        else {
             return cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no upstream tracking branch\n"
             );
@@ -376,8 +378,13 @@ impl WorktreeSkimItem {
         }
 
         let probe_range = format!("{}...{upstream_sha}", item.head());
-        let Ok(counts) = repo.run_command(&["rev-list", "--left-right", "--count", &probe_range])
-        else {
+        let Ok(counts) = repo.run_command(&[
+            "rev-list",
+            "--left-right",
+            "--count",
+            "--end-of-options",
+            &probe_range,
+        ]) else {
             return cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no upstream tracking branch\n"
             );
@@ -522,7 +529,9 @@ impl WorktreeSkimItem {
         // pane. Silent fallbacks beat disruptive errors during navigation;
         // the preview is supplementary, users can still select worktrees
         // even if a probe fails.
-        let Ok(merge_base_output) = repo.run_command(&["merge-base", &default_branch, head]) else {
+        let Ok(merge_base_output) =
+            repo.run_command(&["merge-base", "--end-of-options", &default_branch, head])
+        else {
             return (
                 cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits\n"),
                 false,
