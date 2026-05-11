@@ -587,6 +587,8 @@ Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched a
 
 When called without arguments, `wt switch` opens an interactive picker to browse and select worktrees with live preview.
 
+On Omarchy, the picker reads `~/.config/omarchy/current/theme/colors.toml` each time it opens and uses the active theme's colors. Theme changes apply the next time the picker opens. When that file is unavailable, the picker falls back to Worktrunk's built-in palette.
+
 <!-- demo: wt-switch-picker.gif 1600x800 -->
 **Keybindings:**
 

@@ -174,6 +174,8 @@ Shortcuts also apply to [2m--base[0m. For a fork PR/MR, the head commit is fet
 
 When called without arguments, [2mwt switch[0m opens an interactive picker to browse and select worktrees with live preview.
 
+On Omarchy, the picker reads [2m~/.config/omarchy/current/theme/colors.toml[0m each time it opens and uses the active theme's colors. Theme changes apply the next time the picker opens. When that file is unavailable, the picker falls back to Worktrunk's built-in palette.
+
 [1mKeybindings:[0m
 
       Key                       Action                   
