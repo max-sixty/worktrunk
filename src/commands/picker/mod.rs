@@ -827,7 +827,6 @@ pub fn handle_picker(
             let template_vars = TemplateVars::for_post_switch(&result, &branch_info, "", "");
             let extra_vars = template_vars.as_extra_vars();
             spawn_switch_background_hooks(
-                &repo,
                 &config,
                 &result,
                 branch_info.branch.as_deref(),

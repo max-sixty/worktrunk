@@ -628,19 +628,24 @@ impl Repository {
     /// Unlike [`load_project_config`](Self::load_project_config) this never
     /// touches the working tree and never writes a `.new` migration file —
     /// it must not, since the content comes from an arbitrary ref rather than
-    /// the user's working copy. Returns `None` when the ref has no
-    /// `.config/wt.toml` (git exits non-zero) or the content fails to parse.
+    /// the user's working copy. Returns `Ok(None)` only when the ref has no
+    /// `.config/wt.toml` (git exits non-zero); a present file that fails to
+    /// parse is surfaced as `Err` so the caller can abort rather than silently
+    /// fall through to another config.
     ///
     /// [`project_config_path`]: Self::project_config_path
-    pub fn project_config_at_ref(&self, gitref: &str) -> Option<ProjectConfig> {
+    pub fn project_config_at_ref(&self, gitref: &str) -> anyhow::Result<Option<ProjectConfig>> {
         if std::env::var_os("WORKTRUNK_PROJECT_CONFIG_PATH").is_some() {
-            return self.load_project_config().ok().flatten();
+            return self.load_project_config();
         }
-        let content = self
-            .run_command(&["show", &format!("{gitref}:.config/wt.toml")])
-            .ok()?;
+        let Ok(content) = self.run_command(&["show", &format!("{gitref}:.config/wt.toml")]) else {
+            return Ok(None);
+        };
         let migrated = crate::config::migrate_content(&content);
-        toml::from_str::<ProjectConfig>(&migrated).ok()
+        let config = toml::from_str::<ProjectConfig>(&migrated).with_context(|| {
+            format!("Failed to parse committed `.config/wt.toml` at `{gitref}`")
+        })?;
+        Ok(Some(config))
     }
 }
 
@@ -654,9 +659,9 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        // No `.config/wt.toml` committed yet, and a nonexistent ref → None.
-        assert!(repo.project_config_at_ref("HEAD").is_none());
-        assert!(repo.project_config_at_ref("no-such-ref").is_none());
+        // No `.config/wt.toml` committed yet, and a nonexistent ref → Ok(None).
+        assert!(repo.project_config_at_ref("HEAD").unwrap().is_none());
+        assert!(repo.project_config_at_ref("no-such-ref").unwrap().is_none());
 
         // Commit one and read it back at that branch.
         test.write_project_config(r#"post-start = "echo hi""#);
@@ -664,14 +669,23 @@ mod tests {
         test.run_git(&["commit", "-m", "Add config"]);
         let cfg = repo
             .project_config_at_ref("HEAD")
+            .unwrap()
             .expect("config committed at HEAD");
         assert!(cfg.hooks.post_start.is_some());
 
-        // A committed file that doesn't parse → None (rather than erroring).
+        // A committed file that doesn't parse → Err. Callers must abort rather
+        // than silently fall through to a different config.
         test.write_project_config("this is not [ valid toml");
         test.run_git(&["add", ".config/wt.toml"]);
         test.run_git(&["commit", "-m", "Break config"]);
-        assert!(repo.project_config_at_ref("HEAD").is_none());
+        let err = repo
+            .project_config_at_ref("HEAD")
+            .expect_err("malformed committed config should surface as Err");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("Failed to parse committed `.config/wt.toml`"),
+            "error should name the ref it failed to parse; got: {msg}"
+        );
     }
 
     #[test]

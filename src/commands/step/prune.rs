@@ -388,8 +388,8 @@ fn render_dry_run(
 /// `pre-remove` runs only when a *live linked* worktree is removed (stale-
 /// metadata and orphan-branch removals delete just the branch — no
 /// `pre-remove`/`post-remove`/`post-switch`), and each `pre-remove` runs in,
-/// and resolves its config from, that worktree — falling back to the primary
-/// worktree's config when the removed one carries none, exactly like
+/// and resolves its config from, that worktree — no fallback to the primary
+/// worktree's config, exactly like
 /// `output::handlers::execute_pre_remove_hooks_if_needed`. The integration
 /// checks haven't run yet, so every linked worktree's `pre-remove` is approved
 /// up front — a superset of what executes. `post-remove`/`post-switch` run in
@@ -412,10 +412,7 @@ fn approve_prune_hooks(
             continue;
         };
         let wt = &worktrees[*wt_idx];
-        let wt_repo = match Repository::at(&wt.path) {
-            Ok(r) if r.load_project_config().ok().flatten().is_some() => r,
-            _ => primary_repo.clone(),
-        };
+        let wt_repo = Repository::at(&wt.path)?;
         if let Some(cfg) = wt_repo.load_project_config()? {
             all_commands.extend(collect_commands_for_hooks(&cfg, &[HookType::PreRemove]));
         }
@@ -428,8 +425,9 @@ fn approve_prune_hooks(
         ));
     }
 
-    // The same template can be reached through several worktrees (most often
-    // via the primary fallback) — show, and remember, each command once.
+    // The same `pre-remove` template can appear in several pruned worktrees
+    // (e.g. when each branched off the same commit) — show, and remember,
+    // each command once.
     let mut seen = HashSet::new();
     all_commands.retain(|cmd| seen.insert(cmd.command.template.clone()));
 

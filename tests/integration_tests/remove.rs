@@ -1758,6 +1758,45 @@ fn test_pre_remove_hook_reads_removed_worktree_config(mut repo: TestRepo) {
     );
 }
 
+/// A worktree with a malformed `.config/wt.toml` makes `wt remove` abort with
+/// the parse error in stderr — no silent fall-through to a different config,
+/// and the worktree stays on disk so the user can fix it.
+#[rstest]
+fn test_remove_aborts_on_malformed_worktree_config(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-bad-config");
+    std::fs::create_dir_all(worktree_path.join(".config")).unwrap();
+    std::fs::write(
+        worktree_path.join(".config/wt.toml"),
+        "this is not [ valid toml",
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "--foreground",
+            "--force",
+            "--yes",
+            "feature-bad-config",
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "wt remove should abort on a malformed worktree config; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("wt.toml"),
+        "error should name the offending config file; stderr:\n{stderr}"
+    );
+    assert!(
+        worktree_path.exists(),
+        "worktree should stay on disk so the user can fix the broken config"
+    );
+}
+
 #[rstest]
 fn test_pre_remove_hook_failure_aborts(mut repo: TestRepo) {
     // Create project config with failing hook

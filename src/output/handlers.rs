@@ -1193,14 +1193,12 @@ fn execute_pre_remove_hooks_if_needed(
     // being removed. It's still on disk here (removal happens after this), so
     // resolve the config from there rather than from `repo`, which is rooted at
     // the post-removal working directory (usually the primary worktree, or the
-    // merge destination). If the removed worktree carries no `.config/wt.toml`
-    // — e.g. it was branched before the project added one — fall back to `repo`
-    // so a project-wide `pre-remove` on the default branch still applies. The
-    // `wt remove` approval helper in `main.rs` resolves the same config.
-    let pre_remove_repo = match Repository::at(ctx.worktree_path) {
-        Ok(wt_repo) if wt_repo.load_project_config().ok().flatten().is_some() => wt_repo,
-        _ => repo.clone(),
-    };
+    // merge destination). No fallback to `repo`: if the removed worktree
+    // carries no `.config/wt.toml`, no project `pre-remove` runs. A
+    // present-but-malformed config surfaces as an error from
+    // `load_project_config`, which aborts removal. The `wt remove` approval
+    // helper in `main.rs` resolves the same config.
+    let pre_remove_repo = Repository::at(ctx.worktree_path)?;
     let command_ctx = CommandContext::new(
         &pre_remove_repo,
         &config,

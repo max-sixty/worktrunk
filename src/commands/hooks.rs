@@ -11,14 +11,17 @@
 //! `Repository::project_config_path` keys that off whichever worktree
 //! `ctx.repo` was rooted at. So the rule reduces to **`ctx.repo` is rooted at
 //! the worktree the hook acts on** (not, in general, where `wt` was invoked),
-//! and the construction sites enforce it:
+//! and the construction sites enforce it. Each worktree's `.config/wt.toml`
+//! stands alone — there is no fallback to the primary worktree's config when
+//! the acting worktree has none, and a present-but-malformed config aborts the
+//! operation rather than silently using a different one.
 //!
 //! | Hook | `ctx.repo` rooted at → config from | Set in |
 //! |---|---|---|
-//! | `pre-remove` | the worktree being removed (still on disk at hook time); if it has no `.config/wt.toml`, the post-removal working directory (`RemoveResult.main_path`) — the **primary worktree** for `wt remove` / `wt step prune`, the merge destination for `wt merge` | `output::handlers::execute_pre_remove_hooks_if_needed`; approval mirrors it in `main.rs`'s `approve_remove` (`wt remove`), `merge::collect_merge_commands` (`wt merge`), and `step::prune::approve_prune_hooks` (`wt step prune` — over every worktree it might prune, since the integrated set isn't known until the checks run) |
+//! | `pre-remove` | the worktree being removed (still on disk at hook time) | `output::handlers::execute_pre_remove_hooks_if_needed`; approval mirrors it in `main.rs`'s `approve_remove` (`wt remove`), `merge::collect_merge_commands` (`wt merge`), and `step::prune::approve_prune_hooks` (`wt step prune` — over every worktree it might prune, since the integrated set isn't known until the checks run) |
 //! | `post-merge`, `post-remove`, `post-switch` after a removal | the destination — for `wt merge`, the target branch's worktree (else the primary); for `wt remove` / `wt step prune`, the primary worktree — the removed/feature worktree is gone by then | `worktree::finish::finish_after_merge`, `output::handlers::spawn_hooks_after_remove` (approval mirrored in `merge::collect_merge_commands`, `main.rs`'s `approve_remove`, and `step::prune::approve_prune_hooks`) |
 //! | `pre-commit` / `post-commit` | the worktree being committed — the cwd worktree, or `<b>`'s worktree for `wt step commit --branch <b>` | `commands::commit`, `step::commit` (via `CommandEnv::for_branch`) |
-//! | `wt switch`'s `pre-start` / `post-start` / `post-switch` | the new (`--create`) or destination (`wt switch <existing>`) worktree, where these run; if it has no `.config/wt.toml`, the primary worktree's. For `--create` the target doesn't exist yet at approval time, so the approval prompt and template pre-flight read its base ref's committed `.config/wt.toml` via `git show` (`git fetch`ing a `pr:`/`mr:` fork head first) — the new worktree, once created, is a checkout of that ref | `worktree::switch` — `hook_repo_for_worktree` (execution), `switch_hook_project_config` (approval / pre-flight) |
+//! | `wt switch`'s `pre-start` / `post-start` / `post-switch` | the new (`--create`) or destination (`wt switch <existing>`) worktree, where these run. For `--create` the target doesn't exist yet at approval time, so the approval prompt and template pre-flight read its base ref's committed `.config/wt.toml` via `git show` (`git fetch`ing a `pr:`/`mr:` fork head first) — the new worktree, once created, is a checkout of that ref | `worktree::switch` — `hook_repo_for_worktree` (execution), `switch_hook_project_config` (approval / pre-flight) |
 //! | `pre-switch`, `pre-merge`, `wt hook <type>`, aliases | the worktree `wt` was invoked in (= where they run) | the respective command entry points |
 //!
 //! `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path regardless of the root

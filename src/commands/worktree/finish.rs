@@ -161,7 +161,9 @@ pub fn finish_after_merge(
         // destination (the feature worktree may be gone by now). Bare template
         // vars still point to the Active (feature branch) per the template
         // variable model; those are repo-wide lookups, unaffected by the root.
-        let dest_repo = Repository::at(&destination_path).unwrap_or_else(|_| repo.clone());
+        // No fallback to `repo`: if the destination has no `.config/wt.toml`,
+        // no project `post-merge` runs.
+        let dest_repo = Repository::at(&destination_path)?;
         let ctx = CommandContext::new(
             &dest_repo,
             config,

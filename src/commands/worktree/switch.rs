@@ -1095,10 +1095,10 @@ pub fn execute_switch(
             };
 
             // Execute pre-start commands. The hook resolves its `.config/wt.toml`
-            // from the new worktree (created just above), falling back to the
-            // primary worktree's — see `hook_repo_for_worktree`.
+            // from the new worktree (created just above) — see
+            // `hook_repo_for_worktree`.
             if run_hooks {
-                let hook_repo = hook_repo_for_worktree(repo, &worktree_path);
+                let hook_repo = hook_repo_for_worktree(&worktree_path)?;
                 let ctx =
                     CommandContext::new(&hook_repo, config, Some(&branch), &worktree_path, force);
                 let mut vars = TemplateVars::new()
@@ -1354,10 +1354,11 @@ fn base_ref_for_create(
 /// For an existing destination the worktree is on disk, so its config is read
 /// directly. For `--create` the new worktree is a checkout of the resolved
 /// base ref (or, for `pr:`/`mr:` fork refs, the fetched PR/MR head), so the
-/// committed `.config/wt.toml` at that ref is read via `git show`. In both
-/// cases, if there's no `.config/wt.toml` there, fall back to the primary
-/// worktree's — a project-wide hook on the default branch still applies to a
-/// worktree branched before that hook was added (matching `pre-remove`).
+/// committed `.config/wt.toml` at that ref is read via `git show`. In either
+/// case `Ok(None)` means the destination worktree has no `.config/wt.toml`
+/// at all — no project hooks run; the primary worktree's config is not
+/// consulted. A present-but-malformed config surfaces as `Err` so the user
+/// fixes it rather than silently running a different one.
 ///
 /// May `git fetch` a `pr:`/`mr:` fork head ref — `wt switch pr:`/`mr:` is the
 /// user explicitly invoking network work, so fetching at the approval gate is
@@ -1366,10 +1367,8 @@ pub(crate) fn switch_hook_project_config(
     repo: &Repository,
     plan: &SwitchPlan,
 ) -> anyhow::Result<Option<ProjectConfig>> {
-    let direct = match plan {
-        SwitchPlan::Existing { path, .. } => Repository::at(path)
-            .ok()
-            .and_then(|r| r.load_project_config().ok().flatten()),
+    match plan {
+        SwitchPlan::Existing { path, .. } => Repository::at(path)?.load_project_config(),
         SwitchPlan::Create { method, branch, .. } => {
             let base_ref = match method {
                 CreationMethod::ForkRef {
@@ -1387,32 +1386,16 @@ pub(crate) fn switch_hook_project_config(
             };
             repo.project_config_at_ref(&base_ref)
         }
-    };
-    if direct.is_some() {
-        return Ok(direct);
     }
-
-    // No `.config/wt.toml` at the new/destination worktree (or its base ref) →
-    // fall back to the primary worktree's, so a project-wide hook on the
-    // default branch still applies (matching `pre-remove`).
-    Repository::at(repo.home_path()?)?.load_project_config()
 }
 
 /// The `Repository` whose `.config/wt.toml` a post-switch hook running in
-/// `worktree_path` should read: the new/destination worktree itself when it
-/// carries a `.config/wt.toml`, otherwise the primary worktree (so a
-/// project-wide hook on the default branch still applies). Mirrors
-/// `execute_pre_remove_hooks_if_needed`; the `repo.clone()` arm only triggers
-/// if even the primary worktree can't be opened.
-fn hook_repo_for_worktree(repo: &Repository, worktree_path: &Path) -> Repository {
-    if let Ok(wt_repo) = Repository::at(worktree_path)
-        && wt_repo.load_project_config().ok().flatten().is_some()
-    {
-        return wt_repo;
-    }
-    repo.home_path()
-        .and_then(Repository::at)
-        .unwrap_or_else(|_| repo.clone())
+/// `worktree_path` should read: the new/destination worktree itself. No
+/// fallback — when the worktree has no `.config/wt.toml`, no project hooks
+/// run, matching what [`switch_hook_project_config`] surfaced to the approval
+/// prompt.
+fn hook_repo_for_worktree(worktree_path: &Path) -> anyhow::Result<Repository> {
+    Repository::at(worktree_path)
 }
 
 /// Approve switch hooks upfront and show "Commands declined" if needed.
@@ -1454,7 +1437,6 @@ pub(crate) fn approve_switch_hooks(
 
 /// Spawn post-switch (and post-start for creates) background hooks.
 pub(crate) fn spawn_switch_background_hooks(
-    repo: &Repository,
     config: &UserConfig,
     result: &SwitchResult,
     branch: Option<&str>,
@@ -1463,8 +1445,9 @@ pub(crate) fn spawn_switch_background_hooks(
     hooks_display_path: Option<&Path>,
 ) -> anyhow::Result<()> {
     // Background hooks run in the new/destination worktree and resolve their
-    // `.config/wt.toml` from there (fallback: the primary worktree's).
-    let hook_repo = hook_repo_for_worktree(repo, result.path());
+    // `.config/wt.toml` from there. No fallback — if the worktree has no
+    // `.config/wt.toml`, no project hooks fire.
+    let hook_repo = hook_repo_for_worktree(result.path())?;
     let ctx = CommandContext::new(&hook_repo, config, branch, result.path(), yes);
 
     let mut announcer = HookAnnouncer::new(&hook_repo, config, false);
@@ -1681,7 +1664,6 @@ pub fn run_switch(
     // Batch hooks into a single message when both types are present
     if hooks_approved {
         spawn_switch_background_hooks(
-            &repo,
             config,
             &result,
             branch_info.branch.as_deref(),

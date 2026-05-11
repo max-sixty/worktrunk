@@ -978,6 +978,32 @@ fn test_switch_existing_reads_destination_worktree_config(mut repo: TestRepo) {
     );
 }
 
+/// A destination worktree with a malformed `.config/wt.toml` makes `wt switch
+/// <existing>` abort with the parse error in stderr — no silent fall-through
+/// to a different config. The path is surfaced so the user can find and fix
+/// the offending file.
+#[rstest]
+fn test_switch_existing_aborts_on_malformed_destination_config(mut repo: TestRepo) {
+    let dest = repo.add_worktree("dest");
+    fs::create_dir_all(dest.join(".config")).unwrap();
+    fs::write(dest.join(".config/wt.toml"), "this is not [ valid toml").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "dest", "--yes"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "wt switch should abort on a malformed destination config; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("wt.toml"),
+        "error should name the offending config file; stderr:\n{stderr}"
+    );
+}
+
 /// `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path for *every* config read —
 /// including `wt switch --create`'s base-ref preview — so the override file's
 /// hooks run, not the base branch's committed `.config/wt.toml`.
@@ -2299,10 +2325,24 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
 fn test_switch_pr_hooks_see_pr_vars(#[from(repo_with_remote)] repo: TestRepo) {
     // Set up the same fork-PR scenario as test_switch_pr_fork: a refs/pull/42/head on the
     // bare remote, origin redirected to GitHub-style URL, and `gh api` mocked.
+    // The PR commit carries the project config so the post-switch hooks read it
+    // from the new worktree (a checkout of refs/pull/42/head) directly.
     repo.run_git(&["checkout", "-b", "pr-source"]);
     fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
-    repo.run_git(&["add", "pr-file.txt"]);
-    repo.run_git(&["commit", "-m", "PR commit"]);
+    // Each hook writes its own marker in the primary worktree so we can verify
+    // post-switch + post-start (background) populate pr_number/pr_url too.
+    // {{ repo_path }} is always the main repo's working tree.
+    fs::create_dir_all(repo.root_path().join(".config")).unwrap();
+    fs::write(
+        repo.root_path().join(".config/wt.toml"),
+        r#"pre-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_start.txt"
+post-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_start.txt"
+post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_switch.txt"
+"#,
+    )
+    .unwrap();
+    repo.run_git(&["add", "pr-file.txt", ".config/wt.toml"]);
+    repo.run_git(&["commit", "-m", "PR commit with hook config"]);
 
     let commit_sha = repo
         .git_command()
@@ -2353,16 +2393,6 @@ fn test_switch_pr_hooks_see_pr_vars(#[from(repo_with_remote)] repo: TestRepo) {
         "html_url": "https://github.com/owner/test-repo/pull/42"
     }"#;
     let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
-
-    // Each hook writes its own marker in the primary worktree so we can verify
-    // post-switch + post-start (background) populate pr_number/pr_url too.
-    // {{ repo_path }} is always the main repo's working tree.
-    repo.write_project_config(
-        r#"pre-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_start.txt"
-post-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_start.txt"
-post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_switch.txt"
-"#,
-    );
 
     let mut cmd = repo.wt_command();
     cmd.args(["switch", "pr:42", "--yes"]);

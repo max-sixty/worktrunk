@@ -79,14 +79,11 @@ pub struct MergeOptions<'a> {
 /// Returns (commands, project_identifier). Each hook is approved against the
 /// `.config/wt.toml` of the worktree it runs in (and is resolved from):
 ///
-/// - `pre-commit` / `post-commit` / `pre-merge` → the feature worktree
-///   (= `repo`'s cwd).
+/// - `pre-commit` / `post-commit` / `pre-merge` / `pre-remove` → the feature
+///   worktree (= `repo`'s cwd). `pre-remove` is included here because it runs
+///   before the feature worktree is removed, while it's still on disk.
 /// - `post-merge` / `post-remove` / `post-switch` → the merge destination
 ///   (`destination_path`); these run after the feature worktree is removed.
-/// - `pre-remove` → the feature worktree if it has a `.config/wt.toml` (it's
-///   still on disk when the hook runs), else the destination — mirroring
-///   `output::handlers::execute_pre_remove_hooks_if_needed`, the executor for
-///   both `wt remove` and `wt merge`'s teardown.
 fn collect_merge_commands(
     repo: &Repository,
     destination_path: &Path,
@@ -97,7 +94,6 @@ fn collect_merge_commands(
 ) -> anyhow::Result<(Vec<ApprovableCommand>, String)> {
     let mut feature_hooks = Vec::new();
     let mut destination_hooks = Vec::new();
-    let mut needs_pre_remove = false;
 
     // Pre-commit hooks run when a commit will actually be created
     let will_create_commit = repo.current_worktree().is_dirty()? || squash_enabled;
@@ -110,23 +106,19 @@ fn collect_merge_commands(
         feature_hooks.push(HookType::PreMerge);
         destination_hooks.push(HookType::PostMerge);
         if will_remove {
-            needs_pre_remove = true;
+            feature_hooks.push(HookType::PreRemove);
             destination_hooks.push(HookType::PostRemove);
             destination_hooks.push(HookType::PostSwitch);
         }
     }
 
     let feature_config = repo.load_project_config()?;
-    // Load the destination's config if a destination-bucket hook needs it, or
-    // if `pre-remove` has to fall back to it (the feature worktree has no
-    // `.config/wt.toml` — same fallback the executor takes).
-    let destination_config =
-        if !destination_hooks.is_empty() || (needs_pre_remove && feature_config.is_none()) {
-            ProjectConfig::load(&Repository::at(destination_path)?, true)
-                .context("Failed to load project config")?
-        } else {
-            None
-        };
+    let destination_config = if destination_hooks.is_empty() {
+        None
+    } else {
+        ProjectConfig::load(&Repository::at(destination_path)?, true)
+            .context("Failed to load project config")?
+    };
 
     let mut all_commands = Vec::new();
     if let Some(cfg) = feature_config.as_ref() {
@@ -134,9 +126,6 @@ fn collect_merge_commands(
     }
     if let Some(cfg) = destination_config.as_ref() {
         all_commands.extend(collect_commands_for_hooks(cfg, &destination_hooks));
-    }
-    if needs_pre_remove && let Some(cfg) = feature_config.as_ref().or(destination_config.as_ref()) {
-        all_commands.extend(collect_commands_for_hooks(cfg, &[HookType::PreRemove]));
     }
 
     Ok((all_commands, repo.project_identifier()?))

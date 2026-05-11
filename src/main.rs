@@ -904,12 +904,12 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
 
             // Helper: approve remove hooks. `pre-remove` runs in each worktree
             // being removed and resolves *that* worktree's `.config/wt.toml`
-            // (falling back to the primary worktree's when the removed one has
-            // none — same rule as `execute_pre_remove_hooks_if_needed`), so
-            // it's approved per worktree against that config; `post-remove` and
-            // `post-switch` run in the primary worktree afterwards (the removed
-            // worktree is gone) and are approved once against its config. The
-            // `Repository` rooted at each path is what selects the config — see
+            // (same rule as `execute_pre_remove_hooks_if_needed` — no fallback
+            // to the primary worktree's config), so it's approved per worktree
+            // against that config; `post-remove` and `post-switch` run in the
+            // primary worktree afterwards (the removed worktree is gone) and
+            // are approved once against its config. The `Repository` rooted at
+            // each path is what selects the config — see
             // [`Repository::project_config_path`]. Returns true if every prompt
             // was accepted (or there was nothing to approve).
             let approve_remove = |removed_worktree_paths: &[&Path], yes: bool| -> anyhow::Result<bool> {
@@ -917,10 +917,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 let primary_path = repo.home_path()?;
                 let primary_repo = Repository::at(&primary_path)?;
                 for &wt_path in removed_worktree_paths {
-                    let wt_repo = match Repository::at(wt_path) {
-                        Ok(r) if r.load_project_config().ok().flatten().is_some() => r,
-                        _ => primary_repo.clone(),
-                    };
+                    let wt_repo = Repository::at(wt_path)?;
                     let ctx = CommandContext::new(
                         &wt_repo,
                         &config,
