@@ -163,6 +163,18 @@ pub fn create_repo_at(config: &RepoConfig, base_path: &Path) {
     run_git(&repo_path, &["init", "-b", "main"]);
     run_git(&repo_path, &["config", "user.name", "Benchmark"]);
     run_git(&repo_path, &["config", "user.email", "bench@test.com"]);
+    // Disable all background auto-maintenance: rapid commits in the
+    // build loop trigger detached `git gc` / `git maintenance` runs
+    // whose pack-and-prune steps race the foreground `git add` /
+    // `git commit`, producing intermittent "invalid object ..." /
+    // "unable to create temporary file" / "failed to insert into
+    // database" failures partway through a 500-commit fixture. Modern
+    // git enables both `gc.auto` (loose-object threshold) and
+    // `maintenance.auto` (the post-command hook scheduler) by default,
+    // so we have to silence both.
+    run_git(&repo_path, &["config", "gc.auto", "0"]);
+    run_git(&repo_path, &["config", "gc.autoPackLimit", "0"]);
+    run_git(&repo_path, &["config", "maintenance.auto", "false"]);
 
     // Create initial file structure
     let num_files = config.files.max(1);
@@ -230,6 +242,14 @@ pub fn create_repo_at(config: &RepoConfig, base_path: &Path) {
 
     // Set up fake remote for default branch detection
     setup_fake_remote(&repo_path);
+
+    // Pack objects and write the commit-graph once, after all refs
+    // exist. Auto-maintenance is disabled (see above), so we do this
+    // explicitly — the goal is a mature-repo shape: one packfile, a
+    // commit-graph, no loose-object lookup overhead. Without this,
+    // benches measure cold-clone-shaped repos, which exaggerates
+    // per-object I/O cost relative to what users see on day-N repos.
+    run_git(&repo_path, &["gc"]);
 }
 
 /// Add worktrees to an existing repo using worktrunk naming convention.

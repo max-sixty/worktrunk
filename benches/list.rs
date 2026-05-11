@@ -104,14 +104,14 @@ fn bench_skeleton(c: &mut Criterion) {
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
             let config = BenchConfig::typical(worktrees, cold);
-            let temp = create_repo(&config.repo);
-            let repo_path = temp.path().join("repo");
-            setup_fake_remote(&repo_path);
 
             group.bench_with_input(
                 BenchmarkId::new(config.label(), worktrees),
                 &config,
                 |b, config| {
+                    let temp = create_repo(&config.repo);
+                    let repo_path = temp.path().join("repo");
+                    setup_fake_remote(&repo_path);
                     run_benchmark(
                         b,
                         binary,
@@ -135,14 +135,14 @@ fn bench_full(c: &mut Criterion) {
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
             let config = BenchConfig::typical(worktrees, cold);
-            let temp = create_repo(&config.repo);
-            let repo_path = temp.path().join("repo");
-            setup_fake_remote(&repo_path);
 
             group.bench_with_input(
                 BenchmarkId::new(config.label(), worktrees),
                 &config,
                 |b, config| {
+                    let temp = create_repo(&config.repo);
+                    let repo_path = temp.path().join("repo");
+                    setup_fake_remote(&repo_path);
                     run_benchmark(b, binary, &repo_path, config, &["list"], None);
                 },
             );
@@ -159,14 +159,14 @@ fn bench_worktree_scaling(c: &mut Criterion) {
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
             let config = BenchConfig::typical(worktrees, cold);
-            let temp = create_repo(&config.repo);
-            let repo_path = temp.path().join("repo");
-            run_git(&repo_path, &["status"]);
 
             group.bench_with_input(
                 BenchmarkId::new(config.label(), worktrees),
                 &config,
                 |b, config| {
+                    let temp = create_repo(&config.repo);
+                    let repo_path = temp.path().join("repo");
+                    run_git(&repo_path, &["status"]);
                     run_benchmark(b, binary, &repo_path, config, &["list"], None);
                 },
             );
@@ -228,11 +228,11 @@ fn bench_many_branches(c: &mut Criterion) {
 
     for cold in [false, true] {
         let config = BenchConfig::branches(100, 2, cold);
-        let temp = create_repo(&config.repo);
-        let repo_path = temp.path().join("repo");
-        run_git(&repo_path, &["status"]);
 
         group.bench_function(config.label(), |b| {
+            let temp = create_repo(&config.repo);
+            let repo_path = temp.path().join("repo");
+            run_git(&repo_path, &["status"]);
             run_benchmark(
                 b,
                 binary,
@@ -256,11 +256,11 @@ fn bench_divergent_branches(c: &mut Criterion) {
 
     for cold in [false, true] {
         let config = BenchConfig::many_divergent_branches(cold);
-        let temp = create_repo(&config.repo);
-        let repo_path = temp.path().join("repo");
-        run_git(&repo_path, &["status"]);
 
         group.bench_function(config.label(), |b| {
+            let temp = create_repo(&config.repo);
+            let repo_path = temp.path().join("repo");
+            run_git(&repo_path, &["status"]);
             run_benchmark(
                 b,
                 binary,
@@ -299,8 +299,13 @@ fn setup_rust_workspace_with_branches(temp: &tempfile::TempDir, num_branches: us
 /// regardless of how many refs are queried. Skipping branch enumeration entirely avoids this.
 fn bench_real_repo_many_branches(c: &mut Criterion) {
     let mut group = c.benchmark_group("real_repo_many_branches");
-    group.measurement_time(std::time::Duration::from_secs(60));
-    group.sample_size(10);
+    // rust-lang/rust runs ~3.7s per `wt list --branches` iteration; warm-path
+    // variance is dominated by the slowest single subprocess (a deep
+    // `git merge-base` walking history), not measurement noise, so 5 samples
+    // suffices. A 20s budget is ≈ one iteration per sample (~18s), down from
+    // the ~74s criterion spent filling the old 60s budget.
+    group.measurement_time(std::time::Duration::from_secs(20));
+    group.sample_size(5);
 
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 

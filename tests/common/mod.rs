@@ -553,6 +553,23 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     settings.add_redaction(".env.MOCK_CONFIG_DIR", "[MOCK_CONFIG_DIR]");
     // OpenCode config directory (platform-independent override for tests)
     settings.add_redaction(".env.OPENCODE_CONFIG_DIR", "[TEST_OPENCODE_CONFIG]");
+    // `wt config show --full` tests inject WORKTRUNK_TEST_LATEST_VERSION = the
+    // current crate version (so the version-check line reads "Up to date"), which
+    // would otherwise churn this `info` block on every release bump. Redact any
+    // semver-shaped value to [VERSION]; the "error" sentinel test passes a
+    // non-semver value and is left intact.
+    settings.add_dynamic_redaction(".env.WORKTRUNK_TEST_LATEST_VERSION", |value, _path| {
+        let is_semver = value.as_str().is_some_and(|s| {
+            let mut parts = s.split('.');
+            (0..3).all(|_| parts.next().is_some_and(|p| p.parse::<u32>().is_ok()))
+                && parts.next().is_none()
+        });
+        if is_semver {
+            insta::internals::Content::from("[VERSION]")
+        } else {
+            value
+        }
+    });
 }
 
 fn canonical_home_dir() -> Option<PathBuf> {

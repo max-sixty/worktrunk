@@ -64,7 +64,7 @@ jobs:
     outputs:
       run: ${{ steps.decide.outputs.run }}
     steps:
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         if: github.event_name == 'pull_request'
         id: changes
         with:
@@ -100,7 +100,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2.77.3
+      uses: taiki-e/install-action@v2.77.5
       with:
         tool: cargo-hack
 
@@ -239,7 +239,7 @@ jobs:
         crate: cargo-udeps
         version: "=0.1.61"
 
-    - uses: clechasseur/rs-cargo@v5.0.4
+    - uses: clechasseur/rs-cargo@v5.0.5
       with:
         command: udeps
         args: --all-targets

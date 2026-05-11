@@ -1037,6 +1037,14 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
 /// (often blocked on pipe reads) alongside occasional network requests. 2x CPU
 /// cores lets threads waiting on I/O overlap with compute work without excessive
 /// context-switch overhead.
+///
+/// 3x CPU was benchmarked against `divergent_branches/warm` (branch-heavy) and
+/// `worktree_scaling/warm/8` (worktree-heavy) on packed fixtures. 3x is at or
+/// within noise of the optimum on both workloads; 2x trails by 0-5% (divergent:
+/// 259ms vs 257ms, CIs overlap; worktree: 86.6ms vs 82.4ms, ~5% gap). 4x
+/// regresses on branch-heavy workloads. We stay at 2x because the win is small
+/// in absolute terms (≤ 5ms) and 2x has been validated in production across
+/// hardware we haven't benchmarked.
 pub(crate) fn rayon_thread_count() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get() * 2)
