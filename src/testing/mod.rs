@@ -1947,6 +1947,90 @@ impl TestRepo {
         self.mock_bin_path = Some(mock_bin);
     }
 
+    /// Setup mock `az` that returns configurable PR/pipeline data for Azure DevOps.
+    ///
+    /// Use this for testing Azure DevOps CI status parsing. The mock handles:
+    /// - `az repos pr list` → returns `pr_list_json` (array of PR entries)
+    /// - `az pipelines runs list` → returns `runs_json` (array of pipeline runs)
+    ///
+    /// `az repos pr list` is queried per branch (with `--source-branch`), so the
+    /// same `pr_list_json` is returned for every branch — mirroring how the
+    /// `glab mr list` mock behaves.
+    ///
+    /// # Arguments
+    /// * `pr_list_json` - JSON for `az repos pr list --output json`. Each entry
+    ///   should include `pullRequestId`, optionally `mergeStatus`,
+    ///   `lastMergeSourceCommit.commitId`, and `repository.{name,project.name}`.
+    /// * `runs_json` - JSON for `az pipelines runs list --output json`. Each entry
+    ///   should include `id`, optionally `status`, `result`, and `sourceVersion`.
+    pub fn setup_mock_az_with_ci_data(&mut self, pr_list_json: &str, runs_json: &str) {
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        std::fs::write(mock_bin.join("az_pr_list.json"), pr_list_json).unwrap();
+        std::fs::write(mock_bin.join("az_runs.json"), runs_json).unwrap();
+
+        MockConfig::new("az")
+            .version("azure-cli 2.60.0 (mock)")
+            .command("account", MockResponse::exit(0))
+            .command("repos pr list", MockResponse::file("az_pr_list.json"))
+            .command("pipelines runs list", MockResponse::file("az_runs.json"))
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        // gh/glab mocks fail — platform detection is URL-based, but keep these
+        // present-but-useless so a real gh/glab on PATH can't interfere.
+        MockConfig::new("gh")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+        MockConfig::new("glab")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Setup mock `az` where `az repos pr list` and/or `az pipelines runs list`
+    /// fail with the given stderr (exit code 1).
+    ///
+    /// Used to exercise the `is_retriable_error` branches in `detect_azure_pr`
+    /// and `detect_azure_pipeline`. A `None` argument makes that command return
+    /// an empty JSON array instead of failing.
+    pub fn setup_mock_az_with_detection_errors(
+        &mut self,
+        pr_list_stderr: Option<&str>,
+        runs_stderr: Option<&str>,
+    ) {
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        let pr_list_response = match pr_list_stderr {
+            Some(stderr) => MockResponse::stderr(stderr).with_exit_code(1),
+            None => MockResponse::output("[]"),
+        };
+        let runs_response = match runs_stderr {
+            Some(stderr) => MockResponse::stderr(stderr).with_exit_code(1),
+            None => MockResponse::output("[]"),
+        };
+
+        MockConfig::new("az")
+            .version("azure-cli 2.60.0 (mock)")
+            .command("account", MockResponse::exit(0))
+            .command("repos pr list", pr_list_response)
+            .command("pipelines runs list", runs_response)
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        MockConfig::new("gh")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+        MockConfig::new("glab")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
     /// Configure a command to use mock gh/glab commands
     ///
     /// Must call `setup_mock_gh()` first. Prepends the mock bin directory to PATH

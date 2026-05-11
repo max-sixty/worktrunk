@@ -231,7 +231,7 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
         let stdout_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
         if stderr.contains("does not exist") || stdout_str.contains("does not exist") {
-            bail!("PR #{} not found", pr_number);
+            bail!("Azure DevOps PR #{} not found", pr_number);
         }
         if stderr.contains("login") || stderr.contains("authenticate") {
             bail!("Azure CLI not authenticated; run az login");
