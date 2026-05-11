@@ -19,6 +19,10 @@ impl RemoteRefProvider for AzureDevOpsProvider {
         RefType::Pr
     }
 
+    fn platform_label(&self) -> &'static str {
+        "azure-devops"
+    }
+
     fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
         fetch_pr_info(number, repo)
     }
