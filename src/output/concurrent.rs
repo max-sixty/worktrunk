@@ -607,4 +607,77 @@ mod tests {
         let outcomes = run_concurrent_commands(&[]).expect("no spawn should happen");
         assert!(outcomes.is_empty());
     }
+
+    /// `override_with_originating_signal` table-test: covers the four shapes
+    /// of outcome — `Ok`, non-`WorktrunkError` `Err`, exit-code `Err` (no
+    /// signal), and signal-derived `Err` matching vs differing from the
+    /// originating signal. Only the differing-signal case mutates.
+    #[test]
+    fn test_override_with_originating_signal() {
+        let originating = 2; // SIGINT
+
+        // Ok: untouched.
+        let mut ok: anyhow::Result<()> = Ok(());
+        override_with_originating_signal(&mut ok, originating);
+        assert!(ok.is_ok());
+
+        // Err but not WorktrunkError: untouched.
+        let mut other: anyhow::Result<()> = Err(anyhow::anyhow!("spawn failed"));
+        override_with_originating_signal(&mut other, originating);
+        assert_eq!(other.unwrap_err().to_string(), "spawn failed");
+
+        // ChildProcessExited with no signal (plain non-zero exit): untouched.
+        let mut exit_err: anyhow::Result<()> = Err(WorktrunkError::ChildProcessExited {
+            code: 1,
+            message: "exit status: 1".into(),
+            signal: None,
+        }
+        .into());
+        override_with_originating_signal(&mut exit_err, originating);
+        let err = exit_err.unwrap_err();
+        let we = err.downcast_ref::<WorktrunkError>().unwrap();
+        assert!(matches!(
+            we,
+            WorktrunkError::ChildProcessExited { signal: None, code: 1, .. }
+        ));
+
+        // ChildProcessExited with same signal as originating: untouched.
+        let mut same: anyhow::Result<()> = Err(WorktrunkError::ChildProcessExited {
+            code: 130,
+            message: "terminated by signal 2".into(),
+            signal: Some(2),
+        }
+        .into());
+        override_with_originating_signal(&mut same, originating);
+        let err = same.unwrap_err();
+        let we = err.downcast_ref::<WorktrunkError>().unwrap();
+        assert!(matches!(
+            we,
+            WorktrunkError::ChildProcessExited { signal: Some(2), code: 130, .. }
+        ));
+
+        // ChildProcessExited with different signal (escalation case):
+        // overridden to the originating signal's code/message/signal.
+        let mut escalated: anyhow::Result<()> = Err(WorktrunkError::ChildProcessExited {
+            code: 143,
+            message: "terminated by signal 15".into(),
+            signal: Some(15),
+        }
+        .into());
+        override_with_originating_signal(&mut escalated, originating);
+        let err = escalated.unwrap_err();
+        let we = err.downcast_ref::<WorktrunkError>().unwrap();
+        match we {
+            WorktrunkError::ChildProcessExited {
+                code,
+                message,
+                signal,
+            } => {
+                assert_eq!(*code, 130);
+                assert_eq!(*signal, Some(2));
+                assert_eq!(message, "terminated by signal 2");
+            }
+            _ => panic!("expected ChildProcessExited, got {we:?}"),
+        }
+    }
 }
