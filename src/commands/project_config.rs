@@ -70,9 +70,16 @@ pub fn collect_remove_hook_commands(
     let mut commands: Vec<ApprovableCommand> = Vec::new();
 
     for &wt_path in removed_worktree_paths {
-        let wt_repo = match Repository::at(wt_path) {
-            Ok(r) if r.load_project_config().ok().flatten().is_some() => r,
-            _ => primary_repo.clone(),
+        // A `Repository::at` failure means git can't recognize the path as a
+        // worktree — propagate rather than silently fall back. The fallback
+        // below is for the legitimate "no `.config/wt.toml`" case only, and
+        // matches the executor (`execute_pre_remove_hooks_if_needed` in
+        // `output::handlers`) — see #2708 for the full rationale.
+        let wt_at_path = Repository::at(wt_path)?;
+        let wt_repo = if wt_at_path.load_project_config().ok().flatten().is_some() {
+            wt_at_path
+        } else {
+            primary_repo.clone()
         };
         if let Some(cfg) = wt_repo.load_project_config()? {
             commands.extend(collect_commands_for_hooks(&cfg, &[HookType::PreRemove]));

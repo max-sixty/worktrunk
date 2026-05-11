@@ -1038,6 +1038,103 @@ fn test_switch_picker_create_with_empty_query_fails(mut repo: TestRepo) {
     );
 }
 
+/// Picker-create validates hook templates *before* `git worktree add`, mirroring
+/// the pre-flight that `wt switch --create` already performs.
+///
+/// Without this, a broken `pre-start` template would let the worktree be
+/// created, then fail at expansion time — leaving a half-state that blocks
+/// re-running (the branch already exists). The test commits a syntax-broken
+/// `pre-start` to the user config, fires picker-create, asserts that no branch
+/// or worktree was created, then fixes the template and confirms re-running
+/// succeeds — proving the pre-flight aborts cleanly rather than leaving a
+/// half-created worktree behind.
+#[rstest]
+fn test_switch_picker_create_validates_templates_before_worktree(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Broken `pre-start` in user config: unbalanced `{{` is a minijinja parse
+    // error, so `validate_template` rejects it without needing approvals.
+    // Project config would also trigger the validation path, but it routes
+    // through the approval gate first and would prompt for a TTY response —
+    // user-config hooks are trusted and exercise validation directly.
+    repo.write_test_config(r#"pre-start = "echo {{ unclosed""#);
+
+    let env_vars = repo.test_env_vars();
+
+    let result = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            ("new-feature", None), // Type the branch name
+            ("\x1bc", None),       // Alt-C: create
+        ],
+    );
+
+    assert_ne!(
+        result.exit_code,
+        0,
+        "Expected non-zero exit when pre-start template is broken.\nScreen:\n{}",
+        result.screen()
+    );
+
+    // Branch must not have been created — pre-flight runs before any
+    // `git worktree add` / `git branch`.
+    let branch_output = repo
+        .git_command()
+        .args(["branch", "--list", "new-feature"])
+        .run()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&branch_output.stdout)
+            .trim()
+            .is_empty(),
+        "Branch `new-feature` should NOT exist, got:\n{}",
+        String::from_utf8_lossy(&branch_output.stdout)
+    );
+
+    // Worktree directory must not exist either.
+    let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
+    let worktree_dir = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("{repo_name}.new-feature"));
+    assert!(
+        !worktree_dir.exists(),
+        "Worktree dir {worktree_dir:?} should NOT have been created"
+    );
+
+    // Fix the template and re-run — proves no half-state was left behind.
+    repo.write_test_config(r#"pre-start = "true""#);
+
+    let result = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[("new-feature", None), ("\x1bc", None)],
+    );
+    assert_eq!(
+        result.exit_code,
+        0,
+        "Re-running picker-create with fixed template should succeed.\nScreen:\n{}",
+        result.screen()
+    );
+
+    let branch_output = repo
+        .git_command()
+        .args(["branch", "--list", "new-feature"])
+        .run()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&branch_output.stdout).contains("new-feature"),
+        "Branch `new-feature` should exist after fix"
+    );
+}
+
 #[rstest]
 fn test_switch_picker_switch_to_existing_worktree(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
