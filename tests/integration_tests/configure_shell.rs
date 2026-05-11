@@ -882,7 +882,7 @@ fn test_uninstall_shell(repo: TestRepo, temp_home: TempDir) {
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mNo [4mbash[24m shell extension & completions in ~/.bashrc[22m
         [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions/wt.fish[22m
-        [2m↳[22m [2mNo [4mnu[24m shell extension in ~/.config/nushell/vendor/autoload/wt.nu[22m
+        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.config/nushell/vendor/autoload/wt.nu[22m
         [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions/wt.fish[22m
 
         [32m✓[39m [32mRemoved integration from 1 shell[39m
@@ -939,7 +939,7 @@ fn test_uninstall_shell_multiple(repo: TestRepo, temp_home: TempDir) {
         [32m✓[39m [32mRemoved shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions/wt.fish[22m
-        [2m↳[22m [2mNo [4mnu[24m shell extension in ~/.config/nushell/vendor/autoload/wt.nu[22m
+        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.config/nushell/vendor/autoload/wt.nu[22m
         [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions/wt.fish[22m
 
         [32m✓[39m [32mRemoved integration from 2 shells[39m
@@ -1655,12 +1655,12 @@ fn test_uninstall_shell_dry_run_multiple(repo: TestRepo, temp_home: TempDir) {
     );
 }
 
-/// Regression: `--dry-run uninstall nu` (and pwsh by extension) previously
-/// printed `Would remove shell extension & completions for nu`, but Nushell
-/// has no inline completions — only Bash/Zsh do. The other two render paths
-/// (`show_install_preview`, `prompt_for_uninstall_confirmation`) already
-/// keyed off `Shell::Bash | Shell::Zsh`; the dry-run uninstall path was the
-/// odd one out, treating Fish as the only no-completions shell.
+/// Regression: nushell's wrapper wires completions inline via the
+/// `@complete` attribute on the wrapper's rest parameter, so its
+/// extension does ship completions — only Fish keeps completions in a
+/// separate file. The `--dry-run uninstall` path (and the other four
+/// label sites) must reflect that and label nushell as
+/// `shell extension & completions`.
 #[rstest]
 fn test_uninstall_shell_dry_run_nushell(repo: TestRepo, temp_home: TempDir) {
     // Install nushell integration first so dry-run uninstall finds something.
@@ -1694,13 +1694,8 @@ fn test_uninstall_shell_dry_run_nushell(repo: TestRepo, temp_home: TempDir) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("shell extension for") && stderr.contains("nu"),
-        "Dry-run output should label nushell as 'shell extension' (no '& completions'):\n{stderr}"
-    );
-    assert!(
-        !stderr.contains("shell extension & completions for [1mnu")
-            && !stderr.contains("shell extension & completions for nu"),
-        "Nushell must NOT be labeled 'shell extension & completions':\n{stderr}"
+        stderr.contains("shell extension & completions for") && stderr.contains("nu"),
+        "Dry-run output should label nushell as 'shell extension & completions':\n{stderr}"
     );
 }
 
@@ -1837,7 +1832,7 @@ fn test_configure_shell_nushell(repo: TestRepo, temp_home: TempDir) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Created shell extension for") && stderr.contains("nu"),
+        stderr.contains("Created shell extension & completions for") && stderr.contains("nu"),
         "Output should show nushell was created:\n{}",
         stderr
     );
@@ -1917,7 +1912,7 @@ fn test_uninstall_shell_nushell(repo: TestRepo, temp_home: TempDir) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Removed shell extension for") && stderr.contains("nu"),
+        stderr.contains("Removed shell extension & completions for") && stderr.contains("nu"),
         "Output should show nushell was removed:\n{}",
         stderr
     );
@@ -2042,7 +2037,8 @@ fn test_powershell_env_detection(repo: TestRepo, temp_home: TempDir) {
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Check that PowerShell was configured (not skipped)
     assert!(
-        stderr.contains("Created shell extension for") && stderr.contains("powershell"),
+        stderr.contains("Created shell extension & completions for")
+            && stderr.contains("powershell"),
         "Output should show PowerShell was created:\n{}",
         stderr
     );
@@ -2095,7 +2091,7 @@ fn test_nushell_auto_detection_creates_vendor_autoload(repo: TestRepo, temp_home
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Nushell should be configured, not skipped
     assert!(
-        stderr.contains("Created shell extension for") && stderr.contains("nu"),
+        stderr.contains("Created shell extension & completions for") && stderr.contains("nu"),
         "Nushell should be auto-configured when detected:\n{}",
         stderr
     );

@@ -671,11 +671,12 @@ pub fn show_install_preview(
 
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
-        // Bash/Zsh: inline completions; Fish/PowerShell: separate or no completions
-        let what = if matches!(shell, Shell::Bash | Shell::Zsh) {
-            "shell extension & completions"
-        } else {
+        // Fish ships completions as a separate file (rendered below); every
+        // other supported shell wires completions inline with the extension.
+        let what = if matches!(shell, Shell::Fish) {
             "shell extension"
+        } else {
+            "shell extension & completions"
         };
 
         eprintln!(
@@ -750,14 +751,15 @@ pub fn show_uninstall_preview(
                 result.action.description(),
             );
         } else {
-            // Only Bash/Zsh ship inline completions alongside the extension;
-            // Fish/Nushell/PowerShell either use a separate completion file
-            // (Fish) or no completions at all. Keep this in sync with
-            // `show_install_preview` and `prompt_for_uninstall_confirmation`.
-            let what = if matches!(shell, Shell::Bash | Shell::Zsh) {
-                "shell extension & completions"
-            } else {
+            // Fish ships completions as a separate file (rendered in the
+            // completions loop below); every other supported shell wires
+            // completions inline with the extension. Keep this in sync
+            // with `show_install_preview` and
+            // `prompt_for_uninstall_confirmation`.
+            let what = if matches!(shell, Shell::Fish) {
                 "shell extension"
+            } else {
+                "shell extension & completions"
             };
 
             eprintln!(
@@ -1207,11 +1209,12 @@ fn prompt_for_uninstall_confirmation(
         let bold = Style::new().bold();
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
-        // Bash/Zsh: inline completions; Fish/PowerShell: separate or no completions
-        let what = if matches!(shell, Shell::Bash | Shell::Zsh) {
-            "shell extension & completions"
-        } else {
+        // Fish ships completions as a separate file; every other supported
+        // shell wires completions inline with the extension.
+        let what = if matches!(shell, Shell::Fish) {
             "shell extension"
+        } else {
+            "shell extension & completions"
         };
 
         eprintln!(

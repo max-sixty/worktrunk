@@ -225,11 +225,16 @@ pub fn print_skipped_shells(skipped: &[(worktrunk::shell::Shell, std::path::Path
 }
 
 fn shell_extension_label(shell: Shell) -> &'static str {
-    // For bash/zsh, completions are inline in the init script.
-    if matches!(shell, Shell::Bash | Shell::Zsh) {
-        "shell extension & completions"
-    } else {
+    // Fish is the odd shell out: its completions live in a separate file
+    // (~/.config/fish/completions/) and are rendered on their own line.
+    // Every other supported shell ships completions inline with the
+    // extension — bash/zsh via the init script, nushell via the
+    // `@complete` attribute on the wrapper, and powershell via
+    // `Register-ArgumentCompleter`.
+    if matches!(shell, Shell::Fish) {
         "shell extension"
+    } else {
+        "shell extension & completions"
     }
 }
 
