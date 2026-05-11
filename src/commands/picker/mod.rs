@@ -111,7 +111,7 @@ use super::worktree::hooks::PostRemoveContext;
 use super::worktree::{
     RemoveResult, SwitchBranchInfo, SwitchResult, approve_switch_hooks, execute_switch,
     offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch, run_pre_switch_hooks,
-    spawn_switch_background_hooks, switch_hook_project_config,
+    spawn_switch_background_hooks, switch_hook_project_config, validate_switch_templates,
 };
 use crate::commands::command_executor::CommandContext;
 use crate::output::handle_switch_output;
@@ -794,6 +794,21 @@ pub fn handle_picker(
             true,
             hook_project_config.as_ref(),
         )?;
+
+        // Pre-flight: validate all templates before mutation (worktree creation).
+        // Without this, picker-create would have the half-state risk that
+        // `wt switch --create` already guards against — a broken template would
+        // fail after `git worktree add`, leaving the worktree behind.
+        validate_switch_templates(
+            &repo,
+            &config,
+            &plan,
+            None,
+            &[],
+            hooks_approved,
+            hook_project_config.as_ref(),
+        )?;
+
         let (result, branch_info) = execute_switch(&repo, plan, &config, false, hooks_approved)?;
 
         // Compute path mismatch lazily (deferred from plan_switch for existing worktrees).

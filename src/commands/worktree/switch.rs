@@ -1748,7 +1748,7 @@ pub fn run_switch(
 /// - `--execute` command template (if present)
 /// - `--execute` trailing arg templates (if present)
 /// - Hook templates (pre-start, post-start, post-switch) from user and project config
-fn validate_switch_templates(
+pub(crate) fn validate_switch_templates(
     repo: &Repository,
     config: &UserConfig,
     plan: &SwitchPlan,

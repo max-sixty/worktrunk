@@ -101,7 +101,7 @@ pub use switch::{SwitchOptions, run_switch};
 #[cfg(unix)]
 pub(crate) use switch::{
     approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks,
-    switch_hook_project_config,
+    switch_hook_project_config, validate_switch_templates,
 };
 #[cfg(unix)]
 pub use switch::{execute_switch, plan_switch};

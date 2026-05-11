@@ -638,7 +638,13 @@ impl Repository {
         if std::env::var_os("WORKTRUNK_PROJECT_CONFIG_PATH").is_some() {
             return self.load_project_config();
         }
-        let Ok(content) = self.run_command(&["show", &format!("{gitref}:.config/wt.toml")]) else {
+        // `--end-of-options` keeps a ref like `-foo` from being parsed as a
+        // flag (git's option parser would otherwise reject `-foo:.config/wt.toml`).
+        let Ok(content) = self.run_command(&[
+            "show",
+            "--end-of-options",
+            &format!("{gitref}:.config/wt.toml"),
+        ]) else {
             return Ok(None);
         };
         let migrated = crate::config::migrate_content(&content);
@@ -686,6 +692,32 @@ mod tests {
             msg.contains("Failed to parse committed `.config/wt.toml`"),
             "error should name the ref it failed to parse; got: {msg}"
         );
+    }
+
+    /// A ref literally named `-foo` must round-trip through
+    /// [`project_config_at_ref`] without git's option parser eating the
+    /// leading `-`. Without `--end-of-options`, `git show` would reject
+    /// `-foo:.config/wt.toml` as a flag and the helper would silently
+    /// return `None` even though the file exists on the ref.
+    #[test]
+    fn project_config_at_ref_handles_hyphen_prefixed_ref() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        test.write_project_config(r#"post-start = "echo hi""#);
+        test.run_git(&["add", ".config/wt.toml"]);
+        test.run_git(&["commit", "-m", "Add config"]);
+
+        // `git branch -- -foo` is rejected by recent git, but `update-ref`
+        // happily writes the ref — which is the worst case we want to be
+        // robust against.
+        test.run_git(&["update-ref", "refs/heads/-foo", "HEAD"]);
+
+        let cfg = repo
+            .project_config_at_ref("-foo")
+            .unwrap()
+            .expect("config readable at hyphen-prefixed ref");
+        assert!(cfg.hooks.post_start.is_some());
     }
 
     #[test]

@@ -66,9 +66,14 @@ a cache hit. Invalidate via `criterion::Bencher::iter_batched` with
 
 - `.git/index` (main and linked worktrees)
 - `.git/objects/info/commit-graph*`
-- `.git/packed-refs`
 - `.git/wt/cache/` (all sha_cache kinds + ci-status + summaries)
 - `worktrunk.default-branch` (git config)
+
+`.git/packed-refs` is deliberately preserved: `create_repo_at` runs `git gc`
+at the end of fixture setup, which packs every loose ref into `packed-refs`
+and prunes the loose copies. Deleting that file post-gc leaves the repo with
+no resolvable refs, so any bench that resolves a branch (e.g. the `with_vars`
+alias's `{{ commit }}` template var) blows up partway through warm-up.
 
 User state — `worktrunk.history`, `worktrunk.hints.*`, `worktrunk.state.<branch>.*`,
 `.git/wt/logs/`, `.git/wt/trash/` — is intentionally preserved. It doesn't affect
