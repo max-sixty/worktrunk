@@ -210,6 +210,48 @@ impl Repository {
         None
     }
 
+    /// Find a remote that points to the given Azure DevOps project + repo.
+    ///
+    /// Azure DevOps URLs do not fit the standard `host/owner/repo` shape that
+    /// [`find_remote_for_repo`](Self::find_remote_for_repo) assumes — for
+    /// `https://dev.azure.com/{org}/{project}/_git/{repo}` the parser stores
+    /// `{org}/{project}/_git` in `owner`, and the SSH variant stores `v3/{org}/{project}`.
+    /// Match by `azure_organization()` + `azure_project()` + `repo()` instead, so
+    /// two projects in the same org with the same repo name don't collide.
+    pub fn find_remote_for_azure(
+        &self,
+        organization: &str,
+        project: &str,
+        repo_name: &str,
+    ) -> Option<String> {
+        let matches = |url: &str| -> bool {
+            let Some(parsed) = GitRemoteUrl::parse(url) else {
+                return false;
+            };
+            parsed
+                .azure_organization()
+                .is_some_and(|o| o.eq_ignore_ascii_case(organization))
+                && parsed
+                    .azure_project()
+                    .is_some_and(|p| p.eq_ignore_ascii_case(project))
+                && parsed.repo().eq_ignore_ascii_case(repo_name)
+        };
+
+        for (remote_name, raw_url) in self.all_remote_urls() {
+            if matches(&raw_url) {
+                return Some(remote_name);
+            }
+            if let Some(effective_url) = self.effective_remote_url(&remote_name)
+                && effective_url != raw_url
+                && matches(&effective_url)
+            {
+                return Some(remote_name);
+            }
+        }
+
+        None
+    }
+
     /// Find a remote that points to the same project as the given URL.
     ///
     /// Parses the URL to extract host/owner/repo, then searches configured remotes.

@@ -50,13 +50,40 @@ struct ResolvedTarget {
     method: CreationMethod,
 }
 
-/// Pick the right `pr:` provider based on the repo's remotes.
+/// Pick the right `pr:` provider for this repo.
 ///
-/// Returns [`AzureDevOpsProvider`] if any configured remote URL points at Azure
-/// DevOps, otherwise [`GitHubProvider`]. We always prefer GitHub in mixed setups
-/// since it predates Azure support — operators can override by configuring
-/// `forge.platform` in project config.
+/// Priority:
+/// 1. `forge.platform` in project config (`"github"` or `"azure-devops"`) — the
+///    explicit override for mixed-remote setups.
+/// 2. Remote URL detection — GitHub wins when any remote is GitHub (preserves
+///    pre-Azure behaviour for repos that grew an Azure mirror later); Azure
+///    wins when no GitHub remote is configured.
+/// 3. Fallback to GitHub when no recognisable remote is configured (preserves
+///    previous error messages from `gh`).
 fn pr_provider_for_repo(repo: &Repository) -> Box<dyn RemoteRefProvider> {
+    if let Some(platform) = repo
+        .load_project_config()
+        .ok()
+        .flatten()
+        .and_then(|c| c.forge_platform().map(str::to_string))
+    {
+        match platform.as_str() {
+            "azure-devops" | "azuredevops" => return Box::new(AzureDevOpsProvider),
+            "github" => return Box::new(GitHubProvider),
+            // GitLab MRs use `mr:`, not `pr:`. Fall through to URL detection
+            // for `"gitlab"` and unrecognised values; warn so the user sees
+            // why their override didn't apply.
+            "gitlab" => {}
+            other => {
+                log::warn!(
+                    "Ignoring `forge.platform = {:?}` for `pr:` shortcut — \
+                     expected one of `github`, `azure-devops`. Falling back to remote-based detection.",
+                    other
+                );
+            }
+        }
+    }
+
     let any_github = repo
         .all_remote_urls()
         .into_iter()

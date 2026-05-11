@@ -143,7 +143,10 @@ pub(super) fn cli_config_value(tool: &str, key: &str) -> Option<String> {
 /// The suggested URL in the error respects each platform's configured git
 /// protocol (SSH vs HTTPS).
 pub fn find_remote(repo: &Repository, info: &RemoteRefInfo) -> Result<String, GitError> {
-    let (owner, repo_name) = match &info.platform_data {
+    // Azure DevOps URLs don't fit the host/owner/repo shape that `find_remote_for_repo`
+    // assumes (the parser stores `{org}/{project}/_git` in owner). Use the dedicated
+    // Azure matcher for that platform; GitHub and GitLab share the owner/repo match.
+    let (matched, owner, repo_name) = match &info.platform_data {
         PlatformData::GitHub {
             base_owner,
             base_repo,
@@ -153,42 +156,50 @@ pub fn find_remote(repo: &Repository, info: &RemoteRefInfo) -> Result<String, Gi
             base_owner,
             base_repo,
             ..
-        } => (base_owner.as_str(), base_repo.as_str()),
+        } => (
+            repo.find_remote_for_repo(None, base_owner, base_repo),
+            base_owner.as_str(),
+            base_repo.as_str(),
+        ),
         PlatformData::AzureDevOps {
             organization,
+            project,
             repo_name,
             ..
-        } => (organization.as_str(), repo_name.as_str()),
+        } => (
+            repo.find_remote_for_azure(organization, project, repo_name),
+            organization.as_str(),
+            repo_name.as_str(),
+        ),
     };
 
-    repo.find_remote_for_repo(None, owner, repo_name)
-        .ok_or_else(|| {
-            let suggested_url = match &info.platform_data {
-                PlatformData::GitHub {
-                    host,
-                    base_owner,
-                    base_repo,
-                    ..
-                } => github::fork_remote_url(host, base_owner, base_repo),
-                PlatformData::GitLab {
-                    host,
-                    base_owner,
-                    base_repo,
-                    ..
-                } => gitlab::fork_remote_url(host, base_owner, base_repo),
-                PlatformData::AzureDevOps {
-                    host,
-                    organization,
-                    project,
-                    repo_name,
-                } => azure::fork_remote_url(host, organization, project, repo_name),
-            };
-            GitError::NoRemoteForRepo {
-                owner: owner.to_string(),
-                repo: repo_name.to_string(),
-                suggested_url,
-            }
-        })
+    matched.ok_or_else(|| {
+        let suggested_url = match &info.platform_data {
+            PlatformData::GitHub {
+                host,
+                base_owner,
+                base_repo,
+                ..
+            } => github::fork_remote_url(host, base_owner, base_repo),
+            PlatformData::GitLab {
+                host,
+                base_owner,
+                base_repo,
+                ..
+            } => gitlab::fork_remote_url(host, base_owner, base_repo),
+            PlatformData::AzureDevOps {
+                host,
+                organization,
+                project,
+                repo_name,
+            } => azure::fork_remote_url(host, organization, project, repo_name),
+        };
+        GitError::NoRemoteForRepo {
+            owner: owner.to_string(),
+            repo: repo_name.to_string(),
+            suggested_url,
+        }
+    })
 }
 
 /// Check if a local branch is tracking a specific remote ref.

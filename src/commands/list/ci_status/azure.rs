@@ -4,36 +4,56 @@
 //! Requires the `azure-devops` extension (`az extension add --name azure-devops`).
 
 use serde::Deserialize;
+use worktrunk::git::remote_ref::azure as az_url;
 use worktrunk::git::{GitRemoteUrl, Repository};
 
 use super::{
     CiBranchName, CiSource, CiStatus, PrStatus, is_retriable_error, non_interactive_cmd, parse_json,
 };
 
-/// Get the Azure DevOps `--org` URL by scanning configured remotes.
-fn get_azure_org_url(repo: &Repository) -> Option<String> {
+/// Resolve the Azure DevOps context (host, org, project, `--org` URL) for this
+/// repo's `az` invocations.
+///
+/// Prefers the primary remote so fork workflows hit the right tenant. Falls
+/// back to the first Azure remote found if the primary isn't Azure DevOps.
+/// Returns `None` if no remote points at Azure DevOps.
+fn azure_context(repo: &Repository) -> Option<AzureContext> {
+    let try_remote = |url: &str| -> Option<AzureContext> {
+        let parsed = GitRemoteUrl::parse(url)?;
+        if !parsed.is_azure_devops() {
+            return None;
+        }
+        let host = parsed.host().to_string();
+        let organization = parsed.azure_organization()?.to_string();
+        let project = parsed.azure_project()?.to_string();
+        let org_url = az_url::az_org_url(&host, &organization);
+        Some(AzureContext {
+            host,
+            organization,
+            project,
+            org_url,
+        })
+    };
+
+    if let Ok(remote) = repo.primary_remote()
+        && let Some(url) = repo.effective_remote_url(&remote)
+        && let Some(ctx) = try_remote(&url)
+    {
+        return Some(ctx);
+    }
     for (_, url) in repo.all_remote_urls() {
-        if let Some(parsed) = GitRemoteUrl::parse(&url)
-            && parsed.is_azure_devops()
-            && let Some(org) = parsed.azure_organization()
-        {
-            return Some(format!("https://dev.azure.com/{}", org));
+        if let Some(ctx) = try_remote(&url) {
+            return Some(ctx);
         }
     }
     None
 }
 
-/// Get the Azure DevOps project name by scanning configured remotes.
-fn get_azure_project(repo: &Repository) -> Option<String> {
-    for (_, url) in repo.all_remote_urls() {
-        if let Some(parsed) = GitRemoteUrl::parse(&url)
-            && parsed.is_azure_devops()
-            && let Some(project) = parsed.azure_project()
-        {
-            return Some(project.to_string());
-        }
-    }
-    None
+struct AzureContext {
+    host: String,
+    organization: String,
+    project: String,
+    org_url: String,
 }
 
 /// Detect Azure DevOps PR CI status for a branch.
@@ -45,8 +65,7 @@ pub(super) fn detect_azure_pr(
     local_head: &str,
 ) -> Option<PrStatus> {
     let repo_root = repo.repo_path().ok()?;
-    let org_url = get_azure_org_url(repo)?;
-    let project = get_azure_project(repo)?;
+    let ctx = azure_context(repo)?;
 
     // `az repos pr list --source-branch` expects a full ref name.
     let source_ref = format!("refs/heads/{}", branch.name);
@@ -60,9 +79,9 @@ pub(super) fn detect_azure_pr(
             "--status",
             "active",
             "--project",
-            &project,
+            &ctx.project,
             "--org",
-            &org_url,
+            &ctx.org_url,
             "--output",
             "json",
         ])
@@ -108,7 +127,7 @@ pub(super) fn detect_azure_pr(
         .map(|sha| sha != local_head)
         .unwrap_or(true);
 
-    let url = pr.url_from_web(repo);
+    let url = pr.url_for(&ctx);
 
     Some(PrStatus {
         ci_status,
@@ -121,14 +140,16 @@ pub(super) fn detect_azure_pr(
 /// Detect Azure Pipelines status for a branch (fallback when no PR exists).
 ///
 /// Uses `az pipelines runs list --branch <branch>` to get the most recent run.
+/// Note: `--top 1` returns the most recently queued run, which may be a retry
+/// from a different SHA than `local_head`; `is_stale` flags that case so the UI
+/// can dim the indicator rather than reporting fresh status against stale data.
 pub(super) fn detect_azure_pipeline(
     repo: &Repository,
     branch: &str,
     local_head: &str,
 ) -> Option<PrStatus> {
     let repo_root = repo.repo_path().ok()?;
-    let org_url = get_azure_org_url(repo)?;
-    let project = get_azure_project(repo)?;
+    let ctx = azure_context(repo)?;
 
     let branch_ref = format!("refs/heads/{}", branch);
     let output = match non_interactive_cmd("az")
@@ -141,9 +162,9 @@ pub(super) fn detect_azure_pipeline(
             "--top",
             "1",
             "--project",
-            &project,
+            &ctx.project,
             "--org",
-            &org_url,
+            &ctx.org_url,
             "--output",
             "json",
         ])
@@ -181,10 +202,12 @@ pub(super) fn detect_azure_pipeline(
         .unwrap_or(true);
 
     // The `url` field in the API response is a REST endpoint, not a browser URL —
-    // construct the web URL from org/project/build ID.
-    let web_url = Some(format!(
-        "{}/{}/_build/results?buildId={}",
-        org_url, project, run.id
+    // construct the web URL from the host/org/project/build ID instead.
+    let web_url = Some(az_url::build_web_url(
+        &ctx.host,
+        &ctx.organization,
+        &ctx.project,
+        run.id,
     ));
 
     Some(PrStatus {
@@ -222,12 +245,13 @@ struct AzPrListEntry {
 }
 
 impl AzPrListEntry {
-    fn url_from_web(&self, repo: &Repository) -> Option<String> {
-        let org = get_azure_org_url(repo)?;
-        let org_name = org.strip_prefix("https://dev.azure.com/")?;
-        Some(format!(
-            "https://dev.azure.com/{}/{}/_git/{}/pullrequest/{}",
-            org_name, self.repository.project.name, self.repository.name, self.pull_request_id,
+    fn url_for(&self, ctx: &AzureContext) -> Option<String> {
+        Some(az_url::pr_web_url(
+            &ctx.host,
+            &ctx.organization,
+            &self.repository.project.name,
+            &self.repository.name,
+            self.pull_request_id,
         ))
     }
 }
