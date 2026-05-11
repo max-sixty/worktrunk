@@ -882,7 +882,7 @@ fn test_uninstall_shell(repo: TestRepo, temp_home: TempDir) {
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mNo [4mbash[24m shell extension & completions in ~/.bashrc[22m
         [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions/wt.fish[22m
-        [2m↳[22m [2mNo [4mnu[24m shell extension in ~/.config/nushell/vendor/autoload/wt.nu[22m
+        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.config/nushell/vendor/autoload/wt.nu[22m
         [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions/wt.fish[22m
 
         [32m✓[39m [32mRemoved integration from 1 shell[39m
@@ -939,7 +939,7 @@ fn test_uninstall_shell_multiple(repo: TestRepo, temp_home: TempDir) {
         [32m✓[39m [32mRemoved shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions/wt.fish[22m
-        [2m↳[22m [2mNo [4mnu[24m shell extension in ~/.config/nushell/vendor/autoload/wt.nu[22m
+        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.config/nushell/vendor/autoload/wt.nu[22m
         [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions/wt.fish[22m
 
         [32m✓[39m [32mRemoved integration from 2 shells[39m
@@ -1655,6 +1655,50 @@ fn test_uninstall_shell_dry_run_multiple(repo: TestRepo, temp_home: TempDir) {
     );
 }
 
+/// Regression: nushell's wrapper wires completions inline via the
+/// `@complete` attribute on the wrapper's rest parameter, so its
+/// extension does ship completions — only Fish keeps completions in a
+/// separate file. The `--dry-run uninstall` path (and the other four
+/// label sites) must reflect that and label nushell as
+/// `shell extension & completions`.
+#[rstest]
+fn test_uninstall_shell_dry_run_nushell(repo: TestRepo, temp_home: TempDir) {
+    // Install nushell integration first so dry-run uninstall finds something.
+    let mut install_cmd = wt_command();
+    repo.configure_wt_cmd(&mut install_cmd);
+    set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("SHELL", "/bin/nu");
+    install_cmd
+        .args(["config", "shell", "install", "nu", "--yes"])
+        .current_dir(repo.root_path());
+    let install_output = install_cmd.output().expect("Failed to execute install");
+    assert!(
+        install_output.status.success(),
+        "Install precondition failed:\nstderr: {}",
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/nu");
+    cmd.args(["config", "shell", "uninstall", "nu", "--dry-run"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        output.status.success(),
+        "Dry-run uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("shell extension & completions for") && stderr.contains("nu"),
+        "Dry-run output should label nushell as 'shell extension & completions':\n{stderr}"
+    );
+}
+
 // PTY-based tests for interactive install preview
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 mod pty_tests {
@@ -1757,6 +1801,51 @@ mod pty_tests {
             "File should not be modified when user declines"
         );
     }
+
+    /// Declining the interactive `wt config shell uninstall` prompt
+    /// exercises `prompt_for_uninstall_confirmation` — the one render
+    /// path that neither `--yes` nor `--dry-run` reaches. Verifies the
+    /// preview labels zsh as `shell extension & completions` (matching
+    /// the dedicated `shell_extension_label` helper) and that declining
+    /// leaves the rcfile untouched.
+    #[rstest]
+    fn test_uninstall_preview_declined(repo: TestRepo, temp_home: TempDir) {
+        let zshrc_path = temp_home.path().join(".zshrc");
+        let initial = "# Existing config\nif command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init zsh)\"; fi\n";
+        fs::write(&zshrc_path, initial).unwrap();
+
+        let mut cmd = CommandBuilder::new(wt_bin());
+        cmd.arg("-C");
+        cmd.arg(repo.root_path());
+        cmd.arg("config");
+        cmd.arg("shell");
+        cmd.arg("uninstall");
+        cmd.cwd(repo.root_path());
+
+        configure_pty_command(&mut cmd);
+        cmd.env("HOME", temp_home.path());
+        cmd.env("XDG_CONFIG_HOME", temp_home.path().join(".config"));
+        cmd.env("WORKTRUNK_TEST_BASH_INSTALLED", "0");
+        cmd.env("WORKTRUNK_TEST_ZSH_INSTALLED", "0");
+        cmd.env("WORKTRUNK_TEST_FISH_INSTALLED", "0");
+        cmd.env("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "0");
+        cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
+        cmd.env("SHELL", "/bin/zsh");
+
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
+
+        // Decline → exit code 1, file unchanged.
+        assert_eq!(exit_code, 1);
+        assert!(
+            output.contains("shell extension & completions") && output.contains("zsh"),
+            "Preview should label zsh as 'shell extension & completions':\n{output}"
+        );
+        let content = fs::read_to_string(&zshrc_path).unwrap();
+        assert_eq!(
+            content, initial,
+            "Declining uninstall should leave the rcfile untouched",
+        );
+    }
 }
 
 /// Test installing nushell shell integration
@@ -1788,7 +1877,7 @@ fn test_configure_shell_nushell(repo: TestRepo, temp_home: TempDir) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Created shell extension for") && stderr.contains("nu"),
+        stderr.contains("Created shell extension & completions for") && stderr.contains("nu"),
         "Output should show nushell was created:\n{}",
         stderr
     );
@@ -1868,7 +1957,7 @@ fn test_uninstall_shell_nushell(repo: TestRepo, temp_home: TempDir) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Removed shell extension for") && stderr.contains("nu"),
+        stderr.contains("Removed shell extension & completions for") && stderr.contains("nu"),
         "Output should show nushell was removed:\n{}",
         stderr
     );
@@ -1993,7 +2082,8 @@ fn test_powershell_env_detection(repo: TestRepo, temp_home: TempDir) {
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Check that PowerShell was configured (not skipped)
     assert!(
-        stderr.contains("Created shell extension for") && stderr.contains("powershell"),
+        stderr.contains("Created shell extension & completions for")
+            && stderr.contains("powershell"),
         "Output should show PowerShell was created:\n{}",
         stderr
     );
@@ -2046,7 +2136,7 @@ fn test_nushell_auto_detection_creates_vendor_autoload(repo: TestRepo, temp_home
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Nushell should be configured, not skipped
     assert!(
-        stderr.contains("Created shell extension for") && stderr.contains("nu"),
+        stderr.contains("Created shell extension & completions for") && stderr.contains("nu"),
         "Nushell should be auto-configured when detected:\n{}",
         stderr
     );

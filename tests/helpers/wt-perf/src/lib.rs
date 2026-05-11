@@ -326,7 +326,6 @@ pub fn setup_fake_remote(repo_path: &Path) {
 /// Clears:
 /// - Git's index (main + linked worktrees) — fsmonitor/stat warmup
 /// - Commit graph (`objects/info/commit-graph*`)
-/// - `packed-refs`
 /// - All of `.git/wt/cache/` — worktrunk's persistent SHA-keyed caches
 ///   (merge-tree-conflicts, merge-add-probe, is-ancestor, has-added-changes,
 ///   diff-stats) plus sibling caches (ci-status, summaries)
@@ -355,7 +354,15 @@ pub fn invalidate_caches_auto(repo_path: &Path) {
     let _ = std::fs::remove_file(git_dir.join("objects/info/commit-graph"));
     let _ = std::fs::remove_dir_all(git_dir.join("objects/info/commit-graphs"));
 
-    let _ = std::fs::remove_file(git_dir.join("packed-refs"));
+    // Note: `packed-refs` is intentionally NOT removed. After `create_repo_at`
+    // runs an explicit `git gc`, every loose ref under `refs/heads/`,
+    // `refs/remotes/`, etc. is packed into `packed-refs` and the loose files
+    // are pruned. Deleting `packed-refs` in that state leaves the repo with
+    // no resolvable refs — `rev-parse main` fails, and any bench that reads
+    // through a branch (e.g. the `with_vars` alias's `{{ commit }}` template
+    // var) blows up with a template-expansion error. The file is git's
+    // primary ref storage post-gc, not a cache, so there's no cold-state to
+    // simulate by deleting it.
 
     // All worktrunk persistent caches: every kind dir under wt/cache/.
     let _ = std::fs::remove_dir_all(git_dir.join("wt/cache"));
@@ -544,5 +551,53 @@ pub fn parse_config(s: &str) -> Option<RepoConfig> {
         "divergent" => Some(RepoConfig::many_divergent_branches()),
         "picker-test" => Some(RepoConfig::picker_test()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: `create_repo_at` ends with `git gc`, which packs every loose
+    /// ref into `.git/packed-refs` and prunes the loose copies. A prior version
+    /// of `invalidate_caches_auto` deleted `packed-refs`, which after gc was
+    /// the only copy of `refs/heads/main` — leaving the repo with no resolvable
+    /// refs and breaking the `with_vars` alias bench at `dispatch/with_vars/*`.
+    #[test]
+    fn invalidate_preserves_refs_after_gc() {
+        let temp = create_repo(&RepoConfig {
+            commits_on_main: 1,
+            files: 1,
+            branches: 0,
+            commits_per_branch: 0,
+            worktrees: 1,
+            worktree_commits_ahead: 0,
+            worktree_uncommitted_files: 0,
+        });
+        let repo_path = temp.path().join("repo");
+
+        let rev_parse_main = || {
+            git_command()
+                .args(["rev-parse", "main"])
+                .current_dir(&repo_path)
+                .output()
+                .unwrap()
+        };
+
+        let before = rev_parse_main();
+        assert!(
+            before.status.success(),
+            "setup precondition: `rev-parse main` succeeds"
+        );
+
+        invalidate_caches_auto(&repo_path);
+
+        let after = rev_parse_main();
+        assert!(
+            after.status.success(),
+            "`refs/heads/main` must survive `invalidate_caches_auto` (stderr: {})",
+            String::from_utf8_lossy(&after.stderr)
+        );
+        assert_eq!(before.stdout, after.stdout);
     }
 }

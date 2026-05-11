@@ -202,18 +202,25 @@ impl Repository {
 
     /// SHA-keyed ahead/behind counts.
     ///
-    /// Inputs are commit SHAs. Uncached — counts are typically primed in
-    /// bulk by [`crate::git::RefSnapshot`]'s ahead/behind batch; this is
-    /// the per-pair fallback for snapshot misses or callers that already
-    /// hold SHAs. Returns `(ahead, behind)` where ahead is commits in
-    /// head not in base; orphan branches (no common ancestor) yield
-    /// `(0, 0)` — caller should distinguish via [`Self::merge_base_by_sha`].
+    /// Inputs are commit SHAs. Backed by the persistent SHA-keyed cache
+    /// (`ahead-behind/{base_sha}-{head_sha}.json`) — content-addressed, so
+    /// the entry is never stale. `wt list` populates this per branch (and
+    /// in bulk from a `for-each-ref %(ahead-behind)` batch when most
+    /// entries are cold); subsequent runs are pure cache reads. Returns
+    /// `(ahead, behind)` where ahead is commits in head not in base;
+    /// orphan branches (no common ancestor) yield `(0, 0)` — caller should
+    /// distinguish via [`Self::merge_base_by_sha`].
     pub fn ahead_behind_by_sha(
         &self,
         base_sha: &str,
         head_sha: &str,
     ) -> anyhow::Result<(usize, usize)> {
-        self.compute_ahead_behind(base_sha, head_sha)
+        if let Some(cached) = super::sha_cache::ahead_behind(self, base_sha, head_sha) {
+            return Ok(cached);
+        }
+        let result = self.compute_ahead_behind(base_sha, head_sha)?;
+        super::sha_cache::put_ahead_behind(self, base_sha, head_sha, result);
+        Ok(result)
     }
 
     fn compute_ahead_behind(&self, base: &str, head: &str) -> anyhow::Result<(usize, usize)> {

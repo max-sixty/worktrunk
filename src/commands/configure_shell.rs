@@ -12,6 +12,7 @@ use worktrunk::styling::{
 };
 
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
+use crate::output::shell_integration::shell_extension_label;
 
 pub struct ConfigureResult {
     pub shell: Shell,
@@ -671,12 +672,7 @@ pub fn show_install_preview(
 
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
-        // Bash/Zsh: inline completions; Fish/PowerShell: separate or no completions
-        let what = if matches!(shell, Shell::Bash | Shell::Zsh) {
-            "shell extension & completions"
-        } else {
-            "shell extension"
-        };
+        let what = shell_extension_label(shell);
 
         eprintln!(
             "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
@@ -750,12 +746,7 @@ pub fn show_uninstall_preview(
                 result.action.description(),
             );
         } else {
-            // Bash/Zsh: inline completions; Fish: separate completion file
-            let what = if matches!(shell, Shell::Fish) {
-                "shell extension"
-            } else {
-                "shell extension & completions"
-            };
+            let what = shell_extension_label(shell);
 
             eprintln!(
                 "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
@@ -1204,12 +1195,7 @@ fn prompt_for_uninstall_confirmation(
         let bold = Style::new().bold();
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
-        // Bash/Zsh: inline completions; Fish/PowerShell: separate or no completions
-        let what = if matches!(shell, Shell::Bash | Shell::Zsh) {
-            "shell extension & completions"
-        } else {
-            "shell extension"
-        };
+        let what = shell_extension_label(shell);
 
         eprintln!(
             "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",

@@ -811,6 +811,17 @@ impl Task for UpstreamTask {
         // — for the upstream comparison we want the branch's actual tip,
         // which `branch_ref.commit_sha` carries (snapshot tracks the same
         // value for branch items via the for-each-ref scan).
+        //
+        // `ahead_behind_by_sha` is persistently cached (`ahead-behind/`
+        // SHA-keyed), so warm runs are pure reads. What's still missing is
+        // a *cold-start batch primer* like the one `RefSnapshot` runs for
+        // the `main↕` column (`for-each-ref %(ahead-behind:main)`):
+        // TODO(remote-ahead-behind-batch): on a cold cache, prime this
+        // column in one shot via `for-each-ref --format='%(refname)
+        // %(upstream:track,nobracket)' refs/heads/` (ahead/behind vs each
+        // branch's *own* upstream in a single walk), seed the
+        // `ahead-behind/` cache from it, and let this per-row call fall
+        // through to the read — mirroring `capture_ahead_behind`.
         let upstream_sha = ctx
             .resolve_sha(&upstream_branch)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
