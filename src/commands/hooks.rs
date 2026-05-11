@@ -2,6 +2,32 @@
 //!
 //! See [`super::hook_announcement`] for the announcement format / grammar that
 //! the background path emits before spawning pipelines.
+//!
+//! # Which `.config/wt.toml` a hook reads
+//!
+//! A hook resolves its project config from `ctx.repo.load_project_config()` —
+//! [`execute_hook`], [`prepare_background_pipelines`], and
+//! [`super::command_approval::approve_hooks`] all do this — and
+//! `Repository::project_config_path` keys that off whichever worktree
+//! `ctx.repo` was rooted at. So the rule reduces to **`ctx.repo` is rooted at
+//! the worktree the hook acts on** (not, in general, where `wt` was invoked),
+//! and the construction sites enforce it:
+//!
+//! | Hook | `ctx.repo` rooted at → config from | Set in |
+//! |---|---|---|
+//! | `pre-remove` | the worktree being removed (still on disk at hook time); if it has no `.config/wt.toml`, the post-removal working directory (`RemoveResult.main_path`) — the **primary worktree** for `wt remove`, the merge destination for `wt merge` | `output::handlers::execute_pre_remove_hooks_if_needed`; approval mirrors it in `main.rs` (`wt remove`) and `merge::collect_merge_commands` (`wt merge`) |
+//! | `post-merge`, `post-remove`, `post-switch` after a removal | the destination — for `wt merge`, the target branch's worktree (else the primary); for `wt remove`, the primary worktree — the removed/feature worktree is gone by then | `worktree::finish::finish_after_merge`, `output::handlers::spawn_hooks_after_remove` (and `merge::collect_merge_commands` for approval) |
+//! | `pre-commit` / `post-commit` | the worktree being committed — the cwd worktree, or `<b>`'s worktree for `wt step commit --branch <b>` | `commands::commit`, `step::commit` (via `CommandEnv::for_branch`) |
+//! | `wt switch`'s `pre-start` / `post-start` / `post-switch` | the worktree `wt switch` ran in — the new worktree doesn't exist yet when these are approved, and for `wt switch --create` it's a fresh checkout of that worktree's HEAD anyway | `worktree::switch` |
+//! | `pre-switch`, `pre-merge`, `wt hook <type>`, aliases | the worktree `wt` was invoked in (= where they run) | the respective command entry points |
+//!
+//! `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path regardless of the root
+//! (test isolation). User config (`~/.config/worktrunk/config.toml`) is global
+//! and unaffected. When a hook's worktree and its approval-time stand-in differ
+//! (the `wt switch --create` row), the approval prompt may list slightly
+//! different commands than execute — see that row's note for why it's harmless
+//! in practice; `pre-remove` and the merge/remove `post-*` hooks are approved
+//! against the exact config they execute against.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -395,6 +421,10 @@ pub(crate) fn into_source_groups(flat: Vec<SourcedStep>) -> Vec<Vec<SourcedStep>
 /// Looks up user/project configs, prepares + name-checks steps, and groups
 /// them by source so each source spawns as an independent pipeline. Each
 /// group is returned with its `(hook_type, display_path)` metadata.
+///
+/// Project config comes from `ctx.repo.load_project_config()` — see the
+/// module-level "Which `.config/wt.toml` a hook reads" docs for which worktree
+/// `ctx.repo` is rooted at per hook type.
 pub(crate) fn prepare_background_pipelines<'c>(
     ctx: &CommandContext<'c>,
     hook_type: HookType,
@@ -729,6 +759,10 @@ pub(crate) fn lookup_hook_configs<'a>(
 /// `--no-hooks` reminder. This is the canonical operation-driven entry point;
 /// the only path that should bypass it is `wt hook <type>` (which calls
 /// [`run_hooks_foreground`] directly so failures don't carry the hint).
+///
+/// Project config comes from `ctx.repo.load_project_config()` — see the
+/// module-level "Which `.config/wt.toml` a hook reads" docs for which worktree
+/// `ctx.repo` is rooted at per hook type.
 pub(crate) fn execute_hook(
     ctx: &CommandContext,
     hook_type: HookType,

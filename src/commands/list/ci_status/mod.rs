@@ -81,7 +81,6 @@ impl CiBranchName {
 
 // Re-export public types
 pub(crate) use cache::CachedCiStatus;
-pub use platform::{CiPlatform, platform_for_repo};
 
 /// Maximum number of PRs/MRs to fetch when filtering by source repository.
 ///
@@ -390,9 +389,9 @@ impl PrStatus {
 
     /// Detect CI status without caching (internal implementation)
     ///
-    /// Platform is determined by project config override or remote URL detection.
-    /// Returns `None` if the platform cannot be determined (user should set
-    /// `forge.platform` in project config for non-standard hostnames).
+    /// Platform is determined from project config (`forge.platform`), falling
+    /// back to the remote URL host. Returns `None` if the platform cannot be
+    /// determined (user should set `forge.platform` for non-standard hostnames).
     /// PR/MR detection always runs. Workflow/pipeline fallback only runs if `has_upstream`.
     fn detect_uncached(
         repo: &Repository,
@@ -400,11 +399,9 @@ impl PrStatus {
         local_head: &str,
         has_upstream: bool,
     ) -> Option<Self> {
-        // Determine platform (config override, branch's remote, or primary remote URL)
-        let platform = platform_for_repo(repo, branch.remote.as_deref());
-
-        match platform {
-            Some(p) => p.detect_ci(repo, branch, local_head, has_upstream),
+        // Determine platform (project config, branch's remote, or primary remote URL).
+        match repo.ci_platform(branch.remote.as_deref()) {
+            Some(p) => platform::detect_ci(p, repo, branch, local_head, has_upstream),
             None => {
                 // Unknown platform — user should set forge.platform in project config
                 log::debug!(

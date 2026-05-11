@@ -1,26 +1,20 @@
-//! CI platform detection.
+//! Forge dispatch for CI status detection.
 //!
-//! Determines whether a repository uses GitHub, GitLab, Gitea, or Azure DevOps
-//! based on project config override or remote URL detection.
+//! Given a [`CiPlatform`] (resolved by [`Repository::ci_platform`]), routes to
+//! the GitHub (`gh`), GitLab (`glab`), Gitea (`tea`), or Azure DevOps (`az`)
+//! backend and checks whether that CLI is installed.
 
 use std::sync::OnceLock;
 
-use worktrunk::git::{GitRemoteUrl, Repository};
+use worktrunk::git::{CiPlatform, Repository};
 
 use super::{CiBranchName, PrStatus, azure, gitea, github, gitlab, tool_available};
 
-/// Cached CI tool availability.
-static CI_TOOLS: OnceLock<CiToolsAvailable> = OnceLock::new();
-
-/// CI platform from project config (`forge.platform` / `ci.platform`), cached.
-///
-/// Resolved once per process, so the warning for an unrecognized value fires
-/// once per `wt list` invocation rather than once per branch.
-static CONFIGURED_PLATFORM: OnceLock<Option<CiPlatform>> = OnceLock::new();
-
 /// Cached availability of CI CLI tools (`gh`, `glab`, `tea`, `az`).
 ///
-/// Probed once on first access via `--version` check.
+/// Probed once on first access via a `--version` check.
+static CI_TOOLS: OnceLock<CiToolsAvailable> = OnceLock::new();
+
 struct CiToolsAvailable {
     gh: bool,
     glab: bool,
@@ -39,319 +33,66 @@ impl CiToolsAvailable {
     }
 }
 
-/// CI platform detected from project config override or remote URL.
-///
-/// Platform is determined by:
-/// 1. Project config `forge.platform` (or deprecated `ci.platform`)
-/// 2. Remote URL detection (searches for "github", "gitlab", "gitea", or Azure DevOps in hostname)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString)]
-#[strum(serialize_all = "lowercase")]
-pub enum CiPlatform {
-    GitHub,
-    GitLab,
-    Gitea,
-    #[strum(serialize = "azure-devops", serialize = "azuredevops")]
-    AzureDevOps,
-}
-
-impl CiPlatform {
-    /// Check if the CLI tool for this platform is available (cached).
-    fn is_tool_available(self) -> bool {
-        match self {
-            Self::GitHub => CiToolsAvailable::get().gh,
-            Self::GitLab => CiToolsAvailable::get().glab,
-            Self::Gitea => CiToolsAvailable::get().tea,
-            Self::AzureDevOps => CiToolsAvailable::get().az,
-        }
-    }
-
-    /// Detect CI status from PR/MR.
-    fn detect_pr_mr(
-        self,
-        repo: &Repository,
-        branch: &CiBranchName,
-        local_head: &str,
-    ) -> Option<PrStatus> {
-        match self {
-            Self::GitHub => github::detect_github(repo, branch, local_head),
-            Self::GitLab => gitlab::detect_gitlab(repo, branch, local_head),
-            Self::Gitea => gitea::detect_gitea_pr(repo, branch, local_head),
-            Self::AzureDevOps => azure::detect_azure_pr(repo, branch, local_head),
-        }
-    }
-
-    /// Detect CI status from branch workflow/pipeline (fallback when no PR/MR).
-    fn detect_branch(
-        self,
-        repo: &Repository,
-        branch: &CiBranchName,
-        local_head: &str,
-    ) -> Option<PrStatus> {
-        match self {
-            Self::GitHub => github::detect_github_commit_checks(repo, branch, local_head),
-            // GitLab pipeline uses the bare branch name (not "origin/feature")
-            Self::GitLab => gitlab::detect_gitlab_pipeline(repo, &branch.name, local_head),
-            // Gitea queries the combined commit status by SHA — branch-independent.
-            Self::Gitea => gitea::detect_gitea_commit_status(repo, local_head),
-            Self::AzureDevOps => azure::detect_azure_pipeline(repo, &branch.name, local_head),
-        }
-    }
-
-    /// Detect CI status: PR/MR first, then branch workflow/pipeline if `has_upstream`.
-    ///
-    /// Returns `None` if the CLI tool is not available or no CI status found.
-    pub(super) fn detect_ci(
-        self,
-        repo: &Repository,
-        branch: &CiBranchName,
-        local_head: &str,
-        has_upstream: bool,
-    ) -> Option<PrStatus> {
-        if !self.is_tool_available() {
-            return None;
-        }
-        if let Some(status) = self.detect_pr_mr(repo, branch, local_head) {
-            return Some(status);
-        }
-        if has_upstream {
-            return self.detect_branch(repo, branch, local_head);
-        }
-        None
+/// Whether the CLI tool for this platform is installed (cached).
+fn is_tool_available(platform: CiPlatform) -> bool {
+    match platform {
+        CiPlatform::GitHub => CiToolsAvailable::get().gh,
+        CiPlatform::GitLab => CiToolsAvailable::get().glab,
+        CiPlatform::Gitea => CiToolsAvailable::get().tea,
+        CiPlatform::AzureDevOps => CiToolsAvailable::get().az,
     }
 }
 
-/// Detect the CI platform from a remote URL.
-///
-/// Uses [`GitRemoteUrl`] to parse the URL and check the host for "github",
-/// "gitlab", "gitea", or Azure DevOps.
-pub fn detect_platform_from_url(url: &str) -> Option<CiPlatform> {
-    let parsed = GitRemoteUrl::parse(url)?;
-    if parsed.is_github() {
-        Some(CiPlatform::GitHub)
-    } else if parsed.is_gitlab() {
-        Some(CiPlatform::GitLab)
-    } else if parsed.is_gitea() {
-        Some(CiPlatform::Gitea)
-    } else if parsed.is_azure_devops() {
-        Some(CiPlatform::AzureDevOps)
-    } else {
-        None
+/// Detect CI status from a PR/MR.
+fn detect_pr_mr(
+    platform: CiPlatform,
+    repo: &Repository,
+    branch: &CiBranchName,
+    local_head: &str,
+) -> Option<PrStatus> {
+    match platform {
+        CiPlatform::GitHub => github::detect_github(repo, branch, local_head),
+        CiPlatform::GitLab => gitlab::detect_gitlab(repo, branch, local_head),
+        CiPlatform::Gitea => gitea::detect_gitea_pr(repo, branch, local_head),
+        CiPlatform::AzureDevOps => azure::detect_azure_pr(repo, branch, local_head),
     }
 }
 
-/// Get the CI platform for a repository, optionally prioritizing a specific remote.
+/// Detect CI status from a branch workflow/pipeline (fallback when no PR/MR).
+fn detect_branch(
+    platform: CiPlatform,
+    repo: &Repository,
+    branch: &CiBranchName,
+    local_head: &str,
+) -> Option<PrStatus> {
+    match platform {
+        CiPlatform::GitHub => github::detect_github_commit_checks(repo, branch, local_head),
+        // GitLab pipelines use the bare branch name (not "origin/feature").
+        CiPlatform::GitLab => gitlab::detect_gitlab_pipeline(repo, &branch.name, local_head),
+        // Gitea queries the combined commit status by SHA — branch-independent.
+        CiPlatform::Gitea => gitea::detect_gitea_commit_status(repo, local_head),
+        CiPlatform::AzureDevOps => azure::detect_azure_pipeline(repo, &branch.name, local_head),
+    }
+}
+
+/// Detect CI status: PR/MR first, then branch workflow/pipeline if `has_upstream`.
 ///
-/// Priority order:
-/// 1. Project config `forge.platform` (or deprecated `ci.platform`)
-/// 2. The specific remote's effective URL (if `remote_hint` is provided)
-/// 3. The primary remote's effective URL
-///
-/// For remote branches, pass the branch's remote as `remote_hint` to ensure
-/// the correct platform is detected in mixed-remote repos (e.g., GitHub + GitLab).
-pub fn platform_for_repo(repo: &Repository, remote_hint: Option<&str>) -> Option<CiPlatform> {
-    // Project config takes precedence.
-    if let Some(platform) = platform_from_config(repo) {
-        return Some(platform);
+/// Returns `None` if the CLI tool isn't installed or no CI status is found.
+pub(super) fn detect_ci(
+    platform: CiPlatform,
+    repo: &Repository,
+    branch: &CiBranchName,
+    local_head: &str,
+    has_upstream: bool,
+) -> Option<PrStatus> {
+    if !is_tool_available(platform) {
+        return None;
     }
-
-    // If we have a specific remote hint (e.g., from a remote branch), use that first.
-    // Uses effective URL to handle url.insteadOf aliases.
-    if let Some(remote_name) = remote_hint
-        && let Some(url) = repo.effective_remote_url(remote_name)
-        && let Some(platform) = detect_platform_from_url(&url)
-    {
-        log::debug!(
-            "Detected CI platform {} from remote '{}' (hint)",
-            platform,
-            remote_name
-        );
-        return Some(platform);
+    if let Some(status) = detect_pr_mr(platform, repo, branch, local_head) {
+        return Some(status);
     }
-
-    // Fall back to primary remote's effective URL.
-    if let Some(remote) = repo.primary_remote().ok()
-        && let Some(url) = repo.effective_remote_url(&remote)
-        && let Some(platform) = detect_platform_from_url(&url)
-    {
-        log::debug!("Detected CI platform {} from remote '{}'", platform, remote);
-        return Some(platform);
+    if has_upstream {
+        return detect_branch(platform, repo, branch, local_head);
     }
-
     None
-}
-
-/// Read the CI platform from project config (`forge.platform`, or the
-/// deprecated `ci.platform`), cached for the process.
-///
-/// Returns `None` when nothing is configured or the value is unrecognized. An
-/// unrecognized value logs a warning — and because the result is cached, that
-/// warning fires once per `wt list` invocation rather than once per branch.
-///
-/// The cache is process-wide and so assumes a single repository per process,
-/// which holds for the CLI: `platform_for_repo` is reached only from `wt list`
-/// (per branch) and `wt config show` (once).
-fn platform_from_config(repo: &Repository) -> Option<CiPlatform> {
-    *CONFIGURED_PLATFORM.get_or_init(|| {
-        let configured = repo
-            .load_project_config()
-            .ok()
-            .flatten()
-            .and_then(|c| c.forge_platform().map(str::to_string))?;
-        match configured.parse::<CiPlatform>() {
-            Ok(platform) => {
-                log::debug!("Using CI platform from config: {platform}");
-                Some(platform)
-            }
-            Err(_) => {
-                log::warn!(
-                    "Invalid CI platform in config: '{configured}'. Expected 'github', 'gitlab', 'gitea', or 'azure-devops'."
-                );
-                None
-            }
-        }
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_detect_platform_from_url() {
-        // GitHub - various URL formats
-        assert_eq!(
-            detect_platform_from_url("https://github.com/owner/repo.git"),
-            Some(CiPlatform::GitHub)
-        );
-        assert_eq!(
-            detect_platform_from_url("git@github.com:owner/repo.git"),
-            Some(CiPlatform::GitHub)
-        );
-        assert_eq!(
-            detect_platform_from_url("ssh://git@github.com/owner/repo.git"),
-            Some(CiPlatform::GitHub)
-        );
-
-        // GitHub Enterprise
-        assert_eq!(
-            detect_platform_from_url("https://github.mycompany.com/owner/repo.git"),
-            Some(CiPlatform::GitHub)
-        );
-
-        // GitLab - various URL formats
-        assert_eq!(
-            detect_platform_from_url("https://gitlab.com/owner/repo.git"),
-            Some(CiPlatform::GitLab)
-        );
-        assert_eq!(
-            detect_platform_from_url("git@gitlab.com:owner/repo.git"),
-            Some(CiPlatform::GitLab)
-        );
-
-        // Self-hosted GitLab
-        assert_eq!(
-            detect_platform_from_url("https://gitlab.example.com/owner/repo.git"),
-            Some(CiPlatform::GitLab)
-        );
-
-        // Legacy schemes (http://, git://) - common on self-hosted installations
-        assert_eq!(
-            detect_platform_from_url("http://github.com/owner/repo.git"),
-            Some(CiPlatform::GitHub)
-        );
-        assert_eq!(
-            detect_platform_from_url("git://github.com/owner/repo.git"),
-            Some(CiPlatform::GitHub)
-        );
-        assert_eq!(
-            detect_platform_from_url("http://gitlab.example.com/owner/repo.git"),
-            Some(CiPlatform::GitLab)
-        );
-        assert_eq!(
-            detect_platform_from_url("git://gitlab.mycompany.com/owner/repo.git"),
-            Some(CiPlatform::GitLab)
-        );
-
-        // Gitea — gitea.com and self-hosted instances with "gitea" in the host
-        assert_eq!(
-            detect_platform_from_url("https://gitea.com/owner/repo.git"),
-            Some(CiPlatform::Gitea)
-        );
-        assert_eq!(
-            detect_platform_from_url("git@gitea.example.com:owner/repo.git"),
-            Some(CiPlatform::Gitea)
-        );
-
-        // Unknown platforms (Gitea/Forgejo hosts without "gitea" in the name
-        // need an explicit forge.platform override)
-        assert_eq!(
-            detect_platform_from_url("https://bitbucket.org/owner/repo.git"),
-            None
-        );
-        assert_eq!(
-            detect_platform_from_url("https://codeberg.org/owner/repo.git"),
-            None
-        );
-
-        // Azure DevOps - HTTPS
-        assert_eq!(
-            detect_platform_from_url("https://dev.azure.com/myorg/myproject/_git/myrepo"),
-            Some(CiPlatform::AzureDevOps)
-        );
-        // Azure DevOps - SSH
-        assert_eq!(
-            detect_platform_from_url("git@ssh.dev.azure.com:v3/myorg/myproject/myrepo"),
-            Some(CiPlatform::AzureDevOps)
-        );
-        // Azure DevOps - legacy visualstudio.com
-        assert_eq!(
-            detect_platform_from_url("https://myorg.visualstudio.com/myproject/_git/myrepo"),
-            Some(CiPlatform::AzureDevOps)
-        );
-    }
-
-    #[test]
-    fn test_platform_override_azure_devops() {
-        // Both serializations accepted; canonical is azure-devops
-        assert_eq!(
-            "azure-devops".parse::<CiPlatform>().ok(),
-            Some(CiPlatform::AzureDevOps)
-        );
-        assert_eq!(
-            "azuredevops".parse::<CiPlatform>().ok(),
-            Some(CiPlatform::AzureDevOps)
-        );
-    }
-
-    #[test]
-    fn test_platform_override_github() {
-        // Config override should take precedence over URL detection
-        assert_eq!(
-            "github".parse::<CiPlatform>().ok(),
-            Some(CiPlatform::GitHub)
-        );
-    }
-
-    #[test]
-    fn test_platform_override_gitlab() {
-        // Config override should take precedence over URL detection
-        assert_eq!(
-            "gitlab".parse::<CiPlatform>().ok(),
-            Some(CiPlatform::GitLab)
-        );
-    }
-
-    #[test]
-    fn test_platform_override_gitea() {
-        // `forge.platform = "gitea"` opts a repo into Gitea CI status detection.
-        assert_eq!("gitea".parse::<CiPlatform>().ok(), Some(CiPlatform::Gitea));
-    }
-
-    #[test]
-    fn test_platform_override_invalid() {
-        // Invalid platform strings should not parse
-        assert!("invalid".parse::<CiPlatform>().is_err());
-        assert!("GITHUB".parse::<CiPlatform>().is_err()); // Case-sensitive
-        assert!("GitHub".parse::<CiPlatform>().is_err()); // Case-sensitive
-    }
 }

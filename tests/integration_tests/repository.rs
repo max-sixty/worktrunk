@@ -586,8 +586,8 @@ fn test_primary_remote_url_composition() {
 
 /// `detect_ref_type` resolves the platform's PR/MR reference type from the
 /// primary remote URL. Drives the numeric branch hint in `BranchNotFound`
-/// ("To switch to PR #N, run wt switch pr:N"). The `forge.platform` override
-/// branch is exercised end-to-end via the `platform_for_repo` paths.
+/// ("To switch to PR #N, run wt switch pr:N"). The `forge.platform` config
+/// branch is exercised end-to-end via the `Repository::ci_platform` paths.
 #[test]
 fn test_detect_ref_type() {
     // GitHub remote → PR

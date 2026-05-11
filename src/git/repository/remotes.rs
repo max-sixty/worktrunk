@@ -39,7 +39,7 @@
 //!
 //! | Need | `wt switch pr:N` | `wt list` CI status |
 //! |------|------------------|---------------------|
-//! | Platform | Implicit (`pr:` = GitHub, `mr:` = GitLab) | `platform_for_repo` |
+//! | Platform | Implicit (`pr:` = GitHub, `mr:` = GitLab) | `Repository::ci_platform` |
 //! | Owner/repo | `fetch_pr_info` builds API path | `github_owner_repo` for check-runs API |
 //! | API hostname | `forge.hostname` config, else omit | `forge.hostname` config, else omit |
 //! | Fetch remote | `Repository::find_remote_for_repo` by owner/repo | Not needed |
@@ -51,7 +51,7 @@
 //!
 //! ```toml
 //! [forge]
-//! platform = "github"              # override platform detection
+//! platform = "github"              # forge platform; else detected from URL
 //! hostname = "github.example.com"  # API hostname (GHE / self-hosted GitLab)
 //! ```
 //!
@@ -316,8 +316,8 @@ impl Repository {
     ///
     /// Drives the numeric-branch hint in `BranchNotFound` only — `forge.platform`
     /// is intentionally not consulted here. Honoring it would duplicate
-    /// `platform_for_repo`'s precedence rules; users with that override and an
-    /// opaque remote host fall through to the both-platforms hint.
+    /// `Repository::ci_platform`'s precedence rules; users who set it but have
+    /// an opaque remote host fall through to the both-platforms hint.
     pub fn detect_ref_type(&self) -> Option<RefType> {
         let url = self
             .primary_remote()

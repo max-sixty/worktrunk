@@ -393,9 +393,9 @@ URL column in [2mwt list[0m (dimmed when port not listening):
 [107m [0m [2m[36m[list][0m
 [107m [0m [2murl = [0m[2m[32m"http://localhost:{{ branch | hash_port }}"[0m
 
-[1m[32mForge platform override[0m
+[1m[32mForge platform[0m
 
-Override platform detection for SSH aliases or self-hosted instances:
+Name the forge explicitly for SSH aliases or self-hosted instances, where it can't be detected from the remote URL:
 
 [107m [0m [2m[36m[forge][0m
 [107m [0m [2mplatform = [0m[2m[32m"github"[0m[2m  [0m[2m# or "gitlab", "gitea" (experimental), "azure-devops" (experimental)[0m

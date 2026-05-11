@@ -39,8 +39,9 @@ pub struct ProjectListConfig {
 
 /// Project-level CI configuration.
 ///
-/// Override CI platform detection when URL-based detection fails (e.g., GitHub
-/// Enterprise or self-hosted GitLab with custom domains).
+/// Names the CI platform explicitly, for repos where URL-based detection can't
+/// determine it (e.g., GitHub Enterprise or self-hosted GitLab with custom
+/// domains).
 ///
 /// # Example
 ///
@@ -50,7 +51,7 @@ pub struct ProjectListConfig {
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct ProjectCiConfig {
-    /// CI platform override. When set, skips URL-based platform detection.
+    /// CI platform. When unset, the platform is detected from the remote URL.
     ///
     /// Deprecated alias for `[forge].platform`; same accepted values
     /// ("github", "gitlab", "gitea", "azure-devops").
@@ -60,8 +61,9 @@ pub struct ProjectCiConfig {
 
 /// Project-level forge configuration.
 ///
-/// Override forge detection when URL-based detection fails (e.g., SSH host
-/// aliases, GitHub Enterprise, or self-hosted GitLab with custom domains).
+/// Names the forge explicitly, for repos where URL-based detection can't
+/// determine it (e.g., SSH host aliases, GitHub Enterprise, or self-hosted
+/// GitLab with custom domains).
 ///
 /// # Example
 ///
@@ -72,7 +74,7 @@ pub struct ProjectCiConfig {
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct ProjectForgeConfig {
-    /// Forge platform override. When set, skips URL-based platform detection.
+    /// Forge platform. When unset, the platform is detected from the remote URL.
     ///
     /// Values: "github", "gitlab", "gitea" (experimental), or "azure-devops"
     /// (experimental). Both the `wt switch pr:` shortcut and `wt list --full`
@@ -98,14 +100,14 @@ impl ProjectListConfig {
 }
 
 impl ProjectConfig {
-    /// Get the CI platform override if configured.
+    /// The CI platform set in `[ci]`, if any.
     ///
     /// Deprecated: use [`forge_platform()`](Self::forge_platform) instead.
     pub fn ci_platform(&self) -> Option<&str> {
         self.ci.platform.as_deref()
     }
 
-    /// Get the forge platform override, checking `[forge]` first then `[ci]`.
+    /// The configured forge platform, checking `[forge]` first then `[ci]`.
     pub fn forge_platform(&self) -> Option<&str> {
         self.forge
             .platform
@@ -162,11 +164,11 @@ pub struct ProjectConfig {
     #[serde(default, skip_serializing_if = "is_default")]
     pub list: ProjectListConfig,
 
-    /// CI configuration (platform override). Deprecated: use `[forge]` instead.
+    /// CI configuration (platform). Deprecated: use `[forge]` instead.
     #[serde(default, skip_serializing_if = "is_default")]
     pub ci: ProjectCiConfig,
 
-    /// Forge configuration (platform detection override, API hostname)
+    /// Forge configuration (platform, API hostname)
     #[serde(default, skip_serializing_if = "is_default")]
     pub forge: ProjectForgeConfig,
 

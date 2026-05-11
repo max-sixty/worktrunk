@@ -354,9 +354,9 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# [list][0m
 [107m [0m [2m# url = "http://localhost:{{ branch | hash_port }}"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# ## Forge platform override[0m
+[107m [0m [2m# ## Forge platform[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Override platform detection for SSH aliases or self-hosted instances:[0m
+[107m [0m [2m# Name the forge explicitly for SSH aliases or self-hosted instances, where it can't be detected from the remote URL:[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [forge][0m
 [107m [0m [2m# platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)[0m

@@ -1932,9 +1932,9 @@ URL column in `wt list` (dimmed when port not listening):
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-## Forge platform override
+## Forge platform
 
-Override platform detection for SSH aliases or self-hosted instances:
+Name the forge explicitly for SSH aliases or self-hosted instances, where it can't be detected from the remote URL:
 
 ```toml
 [forge]

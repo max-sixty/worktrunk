@@ -2,14 +2,15 @@
 //!
 //! Introspection and preview for aliases configured in user config
 //! (`~/.config/worktrunk/config.toml`) and project config (`.config/wt.toml`).
-//! `show` with no name lists every configured alias as the `name  command`
-//! `Aliases:` block, via [`render_aliases_section`]. `show <name>` prints the
-//! template text, source-labeled, with one gutter block per alias entry and
-//! `# <name>` comment lines above named pipeline steps. `dry-run`
-//! parses a per-invocation argument vector with the same parser `wt <alias>`
-//! uses, then expands templates using the same context as execution — so
-//! previews match what the real run will do. `show <name>` and `dry-run`
-//! share a layout; only the header verb differs (`:` vs ` would run:`).
+//! `show <name>` prints the template text, source-labeled, with one gutter
+//! block per alias entry and `# <name>` comment lines above named pipeline
+//! steps. `show` with no name prints that block for every configured alias in
+//! name order — equivalent to `wt config alias show <name>` run for each.
+//! `dry-run` parses a per-invocation argument vector with the same parser
+//! `wt <alias>` uses, then expands templates using the same context as
+//! execution — so previews match what the real run will do. `show <name>` and
+//! `dry-run` share a layout; only the header verb differs (`:` vs
+//! ` would run:`).
 //!
 //! ## Why `dry-run` lives here rather than on the alias dispatch
 //!
@@ -32,8 +33,7 @@ use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{format_bash_with_gutter, info_message, println};
 
 use crate::commands::alias::{
-    AliasOptions, HelpContext, TOP_LEVEL_BUILTINS, load_aliases, load_aliases_for_listing,
-    render_aliases_section,
+    AliasOptions, TOP_LEVEL_BUILTINS, load_aliases, load_aliases_for_listing,
 };
 use crate::commands::build_invalid_subcommand_error;
 use crate::commands::command_executor::{
@@ -42,8 +42,8 @@ use crate::commands::command_executor::{
 use crate::commands::did_you_mean;
 use crate::commands::hooks::HookSource;
 
-/// Show the configured template(s) for an alias — or, with no name, list
-/// every configured alias.
+/// Show the configured template(s) for an alias — or, with no name, every
+/// configured alias's template(s).
 ///
 /// When the same name is defined in both user and project config, both
 /// entries are printed (user first, matching runtime execution order).
@@ -69,38 +69,54 @@ pub fn handle_alias_show(name: Option<String>) -> anyhow::Result<()> {
 
     warn_if_shadowed(&name);
 
-    for (i, (cfg, source)) in entries.iter().enumerate() {
-        if i > 0 {
-            println!();
-        }
+    for (cfg, source) in &entries {
         let bodies: Vec<String> = cfg.commands().map(|c| c.template.clone()).collect();
         println!("{}", format_entry(&name, cfg, *source, &bodies, None));
     }
     Ok(())
 }
 
-/// List every configured alias as the styled `name  command` `Aliases:`
-/// block via [`render_aliases_section`]. `wt --help` shows a more compact
-/// names-only variant of the same section (`render_aliases_help_section`)
-/// and points here for this fuller listing.
+/// Show every configured alias's full definition — the same header + gutter
+/// block `wt config alias show <name>` prints, emitted for each alias in name
+/// order (and for each source when a name is defined in both, user first,
+/// matching runtime execution order). `wt --help` shows a compact names-only
+/// list (`render_aliases_help_section`) and points here for these.
 ///
 /// Tolerates running outside a repository (user-config aliases still list,
 /// project-config ones are skipped) and outside a config (prints a note).
 /// Warnings are suppressed: this is a discovery surface, so a deprecated
 /// `wt.toml` shouldn't make `wt config alias show` noisy — `wt config update`
-/// is where deprecations get reported.
+/// is where deprecations get reported. A name shadowed by a top-level
+/// built-in still gets the same stderr warning `wt config alias show <name>`
+/// emits, once per name.
 fn list_aliases() -> anyhow::Result<()> {
     worktrunk::config::suppress_warnings();
-    let aliases = load_aliases_for_listing();
-    if aliases.is_empty() {
+    let entries = load_aliases_for_listing();
+    if entries.is_empty() {
         println!("{}", info_message("No aliases configured"));
         return Ok(());
     }
-    // The `Aliases:` block lists names invoked as `wt <name>`, so annotate
-    // shadowing from the top-level perspective (an alias named `list` is
-    // unreachable; one named `commit` is not — `wt commit` runs it).
-    let section = render_aliases_section(&aliases, HelpContext::TopLevel);
-    crate::help_pager::show_help_in_pager(&format!("{section}\n"), true);
+
+    // `entries` is sorted by (name, source), so a name's entries are adjacent.
+    // Warn once per shadowed name — matching `show <name>`, which warns on the
+    // name, not per entry. The `Aliases:` names are invoked as `wt <name>`, so
+    // shadowing is judged from the top-level perspective (an alias named `list`
+    // is unreachable; one named `commit` is not — `wt commit` runs it).
+    let mut prev_name: Option<&str> = None;
+    for (name, _, _) in &entries {
+        if prev_name != Some(name.as_str()) {
+            warn_if_shadowed(name);
+            prev_name = Some(name);
+        }
+    }
+
+    let mut out = String::new();
+    for (name, cfg, source) in &entries {
+        let bodies: Vec<String> = cfg.commands().map(|c| c.template.clone()).collect();
+        out.push_str(&format_entry(name, cfg, *source, &bodies, None));
+        out.push('\n');
+    }
+    crate::help_pager::show_help_in_pager(&out, true);
     Ok(())
 }
 
@@ -178,10 +194,7 @@ pub fn handle_alias_dry_run(name: String, args: Vec<String>) -> anyhow::Result<(
 
     let routing = format_routing_summary(&opts);
 
-    for (i, (cfg, source)) in entries.iter().enumerate() {
-        if i > 0 {
-            println!();
-        }
+    for (cfg, source) in &entries {
         let bodies: Vec<String> = cfg
             .commands()
             .map(|c| render_preview(&c.template, &context_map, &repo, &name))

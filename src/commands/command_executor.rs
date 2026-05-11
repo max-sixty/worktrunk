@@ -148,6 +148,13 @@ impl FailureStrategy {
 
 #[derive(Clone, Copy, Debug)]
 pub struct CommandContext<'a> {
+    /// The repository, rooted at the worktree this operation acts on.
+    ///
+    /// For hooks this field is load-bearing: `ctx.repo.load_project_config()` is
+    /// how a hook gets its `.config/wt.toml`, so whichever worktree `repo` is
+    /// rooted at decides which file is read. The per-hook mapping (and why each
+    /// construction site picks the root it does) is the spec in the
+    /// [`super::hooks`] module docs.
     pub repo: &'a Repository,
     pub config: &'a UserConfig,
     /// Current branch name, if on a branch (None in detached HEAD state).

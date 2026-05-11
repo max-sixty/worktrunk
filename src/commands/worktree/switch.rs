@@ -85,7 +85,7 @@ enum PrProviderChoice {
 /// Choose which provider should handle `pr:<number>` resolution.
 ///
 /// Priority:
-/// 1. `forge.platform` config override (`github` / `gitea` / `azure-devops`)
+/// 1. `forge.platform` config (`github` / `gitea` / `azure-devops`)
 /// 2. Primary remote URL detection (host contains `github`/`gitea`/`dev.azure.com`)
 /// 3. CLI auth lookup — if `tea` has a login for this host but `gh` does
 ///    not, pick Gitea; otherwise default to GitHub
