@@ -7,7 +7,7 @@
 //!
 //! A hook resolves its project config from `ctx.repo.load_project_config()` —
 //! [`execute_hook`], [`prepare_background_pipelines`], and
-//! [`super::command_approval::approve_hooks`] all do this — and
+//! [`super::command_approval::approve_hooks`] do this — and
 //! `Repository::project_config_path` keys that off whichever worktree
 //! `ctx.repo` was rooted at. So the rule reduces to **`ctx.repo` is rooted at
 //! the worktree the hook acts on** (not, in general, where `wt` was invoked),
@@ -18,17 +18,20 @@
 //! | `pre-remove` | the worktree being removed (still on disk at hook time); if it has no `.config/wt.toml`, the post-removal working directory (`RemoveResult.main_path`) — the **primary worktree** for `wt remove` / `wt step prune`, the merge destination for `wt merge` | `output::handlers::execute_pre_remove_hooks_if_needed`; approval mirrors it in `main.rs`'s `approve_remove` (`wt remove`), `merge::collect_merge_commands` (`wt merge`), and `step::prune::approve_prune_hooks` (`wt step prune` — over every worktree it might prune, since the integrated set isn't known until the checks run) |
 //! | `post-merge`, `post-remove`, `post-switch` after a removal | the destination — for `wt merge`, the target branch's worktree (else the primary); for `wt remove` / `wt step prune`, the primary worktree — the removed/feature worktree is gone by then | `worktree::finish::finish_after_merge`, `output::handlers::spawn_hooks_after_remove` (approval mirrored in `merge::collect_merge_commands`, `main.rs`'s `approve_remove`, and `step::prune::approve_prune_hooks`) |
 //! | `pre-commit` / `post-commit` | the worktree being committed — the cwd worktree, or `<b>`'s worktree for `wt step commit --branch <b>` | `commands::commit`, `step::commit` (via `CommandEnv::for_branch`) |
-//! | `wt switch`'s `pre-start` / `post-start` / `post-switch` | the worktree `wt switch` ran in — the new worktree doesn't exist yet when these are approved, and for `wt switch --create` it's a fresh checkout of that worktree's HEAD anyway | `worktree::switch` |
+//! | `wt switch`'s `pre-start` / `post-start` / `post-switch` | the new (`--create`) or destination (`wt switch <existing>`) worktree, where these run; if it has no `.config/wt.toml`, the primary worktree's. For `--create` the target doesn't exist yet at approval time, so the approval prompt and template pre-flight read its base ref's committed `.config/wt.toml` via `git show` (`git fetch`ing a `pr:`/`mr:` fork head first) — the new worktree, once created, is a checkout of that ref | `worktree::switch` — `hook_repo_for_worktree` (execution), `switch_hook_project_config` (approval / pre-flight) |
 //! | `pre-switch`, `pre-merge`, `wt hook <type>`, aliases | the worktree `wt` was invoked in (= where they run) | the respective command entry points |
 //!
 //! `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path regardless of the root
 //! (test isolation). User config (`~/.config/worktrunk/config.toml`) is global
-//! and unaffected. When a hook's worktree and its approval-time stand-in differ
-//! (the `wt switch --create` row), the approval prompt may list slightly
-//! different commands than execute — see that row's note for why it's harmless
-//! in practice. `pre-remove` and the merge/remove `post-*` hooks are otherwise
-//! approved against the exact config they execute against — the one exception
-//! being `wt step prune`, which over-approves `pre-remove` across every worktree
+//! and unaffected. Every hook is approved against the same `.config/wt.toml`
+//! it executes against — most paths mirror the execution root in their
+//! approval `ctx.repo` (so `approve_hooks` reads the same file); `wt switch`'s
+//! post-switch hooks instead resolve the config out of band
+//! (`worktree::switch::switch_hook_project_config`) — for `--create`, from the
+//! base ref's committed copy via `git show`, since the target worktree
+//! doesn't exist yet — and pass it to
+//! [`super::command_approval::approve_or_skip_with_config`]. The one exception
+//! is `wt step prune`, which over-approves `pre-remove` across every worktree
 //! it might prune (the integrated set isn't known until the checks run), a
 //! superset of what executes.
 
