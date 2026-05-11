@@ -8,6 +8,7 @@
 use std::path::Path;
 
 use serde::Deserialize;
+use worktrunk::path::home_dir;
 
 const FALLBACK_PICKER_COLORS: &str =
     "fg:-1,bg:-1,header:-1,matched:108,current:237,current_bg:251,current_match:108";
@@ -71,15 +72,17 @@ info:{color5},prompt:{color4},cursor:{color1},selected:{color1},header:{color6},
 }
 
 pub(super) fn picker_color_scheme() -> String {
-    omarchy_colors_path()
-        .as_deref()
-        .and_then(OmarchyColors::from_path)
+    picker_color_scheme_from_path(omarchy_colors_path().as_deref())
+}
+
+fn picker_color_scheme_from_path(path: Option<&Path>) -> String {
+    path.and_then(OmarchyColors::from_path)
         .map(|colors| colors.to_skim_color_scheme())
         .unwrap_or_else(|| FALLBACK_PICKER_COLORS.to_string())
 }
 
 fn omarchy_colors_path() -> Option<std::path::PathBuf> {
-    home::home_dir().map(|home| {
+    home_dir().map(|home| {
         home.join(".config")
             .join("omarchy")
             .join("current")
@@ -159,12 +162,8 @@ color8 = "#585b70"
     #[test]
     fn missing_omarchy_colors_falls_back_to_existing_picker_palette() {
         assert_eq!(
-            OmarchyColors::from_path(Path::new("/path/that/does/not/exist")),
-            None
-        );
-        assert_eq!(
-            FALLBACK_PICKER_COLORS,
-            "fg:-1,bg:-1,header:-1,matched:108,current:237,current_bg:251,current_match:108"
+            picker_color_scheme_from_path(Some(Path::new("/path/that/does/not/exist"))),
+            FALLBACK_PICKER_COLORS
         );
     }
 }
