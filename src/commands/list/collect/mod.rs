@@ -151,6 +151,7 @@
 //! | `is-ancestor/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
 //! | `has-added-changes/` | `git::repository::sha_cache` | `{branch_sha}-{target_sha}.json` | Never — content-addressed |
 //! | `diff-stats/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
+//! | `ahead-behind/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
 //! | `ci-status/` | `commands::list::ci_status::cache` | `{branch}.json` | TTL 30–60s + HEAD SHA check |
 //! | `summary/{branch}/` | `summary` | `{diff_hash}.json` | Miss if no file exists for the current hash; siblings pruned on write |
 //!
@@ -158,7 +159,7 @@
 //!
 //! - **SHA-pair**: pure function of two commit SHAs. Never stale, no TTL, no invalidation.
 //!   Used by all `sha_cache` kinds (merge-tree conflicts, merge-add probes, ancestry
-//!   checks, file-change probes, diff stats).
+//!   checks, file-change probes, diff stats, ahead/behind counts).
 //! - **Branch + TTL + HEAD**: external mutable state (CI API, remote refs). TTL bounds
 //!   staleness; the HEAD check invalidates early when the branch moves.
 //! - **Branch + content-addressed hash in filename**: content hash (SHA-256
@@ -177,6 +178,7 @@
 //! | `IsAncestor` | `sha_cache` (is-ancestor) |
 //! | `HasFileChanges` | `sha_cache` (has-added-changes) |
 //! | `BranchDiff` | `sha_cache` (diff-stats, skipped when sparse checkout is active) |
+//! | `AheadBehind` | `sha_cache` (ahead-behind); on a cold base the snapshot pre-fills it from one `for-each-ref %(ahead-behind)` walk |
 //! | `CiStatus` | `ci_status::cache` |
 //! | `SummaryGenerate` | `summary` |
 //!
@@ -184,8 +186,6 @@
 //!
 //! ### Already optimized (not cache candidates)
 //!
-//! - `AheadBehind` — batch-optimized via single `git for-each-ref %(ahead-behind:main)`
-//!   (~11ms for all branches); per-branch tasks read the in-memory cache
 //! - `CommittedTreesMatch` — single `git rev-parse` resolving both tree SHAs (~1ms)
 //! - `Upstream` — upstream names batch-fetched via single `git for-each-ref
 //!   %(upstream:short)`; per-branch tasks read the in-memory cache
@@ -1120,11 +1120,26 @@ pub fn collect(
             let _ = previous_branch_cell.set(repo.switch_previous());
         });
 
-        // Capture ref state. One `for-each-ref refs/heads/ refs/remotes/`
-        // plus (when default_branch is known) one `for-each-ref
-        // %(ahead-behind:BASE)` batch. The snapshot replaces the prior
+        // Capture ref state: `for-each-ref refs/heads/ refs/remotes/`,
+        // plus — when default_branch is known and the per-base
+        // ahead-behind cache doesn't already cover the branches — one
+        // `for-each-ref %(ahead-behind:BASE)` walk (scoped to the cold
+        // subset; warm runs do neither). The snapshot replaces the prior
         // `commit_shas` priming + `batch_ahead_behind` pair: tasks consume
         // it by SHA, dodging ref→SHA cache staleness.
+        //
+        // TODO(ahead-behind-pool): the `%(ahead-behind)` walk that runs
+        // here on a cold cache is serial — it blocks this scope, and the
+        // big task pool can't open until it returns. Nothing downstream of
+        // work-item generation actually needs the ahead/behind *counts*
+        // (only the per-row `AheadBehindTask` reads them, and it has a
+        // per-SHA fallback) — only the cheap `for-each-ref refs/heads/
+        // refs/remotes/` ref scan gates work-item generation. So the walk
+        // could become a single work item in the pool, overlapping the
+        // other ~N workers, instead of a serial prelude. That needs an
+        // inter-task dependency (the per-row tasks would wait on it, or it
+        // would emit their results directly) — the work-item model has
+        // none today.
         s.spawn(|_| {
             let snap = match default_branch.as_deref() {
                 Some(db) => repo.capture_refs_with_ahead_behind(db).ok(),

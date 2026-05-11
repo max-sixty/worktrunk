@@ -9,10 +9,11 @@
 //!
 //! Layout: `.git/wt/cache/{kind}/{key}.json` where `kind` is one of
 //! `merge-tree-conflicts`, `merge-add-probe`, `is-ancestor`,
-//! `has-added-changes`, or `diff-stats`. Symmetric kinds sort the SHA pair
-//! so `(A, B)` and `(B, A)` hit the same entry; asymmetric kinds preserve
-//! ordering. See [`crate::cache`] for read/write/clear mechanics,
-//! torn-write semantics, and the user-initiated clear error policy.
+//! `has-added-changes`, `diff-stats`, or `ahead-behind`. Symmetric kinds
+//! sort the SHA pair so `(A, B)` and `(B, A)` hit the same entry;
+//! asymmetric kinds preserve ordering. See [`crate::cache`] for
+//! read/write/clear mechanics, torn-write semantics, and the
+//! user-initiated clear error policy.
 
 use super::Repository;
 use super::integration::MergeProbeResult;
@@ -29,6 +30,7 @@ const KIND_MERGE_ADD_PROBE: &str = "merge-add-probe";
 const KIND_IS_ANCESTOR: &str = "is-ancestor";
 const KIND_HAS_ADDED_CHANGES: &str = "has-added-changes";
 const KIND_DIFF_STATS: &str = "diff-stats";
+const KIND_AHEAD_BEHIND: &str = "ahead-behind";
 
 /// All cache kind identifiers, used by [`clear_all`].
 const ALL_KINDS: &[&str] = &[
@@ -37,6 +39,7 @@ const ALL_KINDS: &[&str] = &[
     KIND_IS_ANCESTOR,
     KIND_HAS_ADDED_CHANGES,
     KIND_DIFF_STATS,
+    KIND_AHEAD_BEHIND,
 ];
 
 /// Build a symmetric filename from a SHA pair (order-independent).
@@ -180,6 +183,56 @@ pub(super) fn put_diff_stats(repo: &Repository, base_sha: &str, head_sha: &str, 
         &value,
         MAX_ENTRIES_PER_KIND,
     );
+}
+
+// ahead-behind (asymmetric)
+
+/// Look up a cached `ahead_behind(base_sha, head_sha)` result `(ahead, behind)`.
+///
+/// Asymmetric: the counts are relative to `base_sha`, so swapping the
+/// arguments swaps `ahead` and `behind` — a different question, a
+/// different entry. Content-addressed and never stale: the two commit
+/// SHAs fix the merge-base and both rev-list counts.
+pub(super) fn ahead_behind(
+    repo: &Repository,
+    base_sha: &str,
+    head_sha: &str,
+) -> Option<(usize, usize)> {
+    cache::read(repo, KIND_AHEAD_BEHIND, &asymmetric_key(base_sha, head_sha))
+}
+
+/// Store an `ahead_behind(base_sha, head_sha)` result.
+pub(super) fn put_ahead_behind(
+    repo: &Repository,
+    base_sha: &str,
+    head_sha: &str,
+    value: (usize, usize),
+) {
+    cache::write_with_lru(
+        repo,
+        KIND_AHEAD_BEHIND,
+        &asymmetric_key(base_sha, head_sha),
+        &value,
+        MAX_ENTRIES_PER_KIND,
+    );
+}
+
+/// Bulk-write a sequence of `ahead_behind` entries, deferring the LRU
+/// sweep to a single pass at the end. Use this for batch seeding (one
+/// cache kind, many entries) — `put_ahead_behind` goes through
+/// `write_with_lru`, which scans the cache directory on *every* call, so
+/// N successive calls cost O(N · dir_size) wall (and on the serial setup
+/// path that's O(N²) before the worker pool even opens). The bulk form
+/// pays one final `sweep_lru` instead.
+pub(super) fn put_ahead_behind_bulk<'a, I>(repo: &Repository, entries: I)
+where
+    I: IntoIterator<Item = (&'a str, &'a str, (usize, usize))>,
+{
+    let dir = cache::cache_dir(repo, KIND_AHEAD_BEHIND);
+    for (base_sha, head_sha, value) in entries {
+        cache::write_json(&dir.join(asymmetric_key(base_sha, head_sha)), &value);
+    }
+    cache::sweep_lru(&dir, MAX_ENTRIES_PER_KIND);
 }
 
 // Maintenance
@@ -528,6 +581,25 @@ mod tests {
         assert_eq!(diff_stats(&repo, "bbbb", "aaaa"), None);
     }
 
+    #[test]
+    fn test_ahead_behind_roundtrip() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        assert_eq!(ahead_behind(&repo, "aaaa", "bbbb"), None);
+
+        put_ahead_behind(&repo, "aaaa", "bbbb", (3, 5));
+        assert_eq!(ahead_behind(&repo, "aaaa", "bbbb"), Some((3, 5)));
+
+        // Asymmetric: swapped args miss (the question "ahead/behind relative
+        // to bbbb" is distinct from "relative to aaaa")
+        assert_eq!(ahead_behind(&repo, "bbbb", "aaaa"), None);
+
+        // Overwrite with a new value
+        put_ahead_behind(&repo, "aaaa", "bbbb", (0, 0));
+        assert_eq!(ahead_behind(&repo, "aaaa", "bbbb"), Some((0, 0)));
+    }
+
     // Cache consultation: is_ancestor, has_added_changes, branch_diff_stats
 
     #[test]
@@ -586,6 +658,43 @@ mod tests {
 
         let repo2 = Repository::at(test.root_path()).unwrap();
         assert!(!repo2.has_added_changes("feature", "main").unwrap());
+    }
+
+    #[test]
+    fn test_ahead_behind_reads_cache() {
+        let test = TestRepo::with_initial_commit();
+
+        test.run_git(&["checkout", "-b", "feature"]);
+        fs::write(test.root_path().join("new.txt"), "content\n").unwrap();
+        test.run_git(&["add", "new.txt"]);
+        test.run_git(&["commit", "-m", "Feature"]);
+
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Real computation: feature is 1 ahead, 0 behind main
+        assert_eq!(
+            repo.ahead_behind_by_sha(&main_sha, &feature_sha).unwrap(),
+            (1, 0)
+        );
+
+        // Tamper with cache to return different counts
+        let dir = cache::cache_dir(&repo, KIND_AHEAD_BEHIND);
+        let entries: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_str().is_some_and(|s| s.ends_with(".json")))
+            .collect();
+        assert_eq!(entries.len(), 1);
+        fs::write(entries[0].path(), "[9,8]").unwrap();
+
+        let repo2 = Repository::at(test.root_path()).unwrap();
+        assert_eq!(
+            repo2.ahead_behind_by_sha(&main_sha, &feature_sha).unwrap(),
+            (9, 8)
+        );
     }
 
     #[test]
@@ -652,9 +761,10 @@ mod tests {
                 deleted: 0,
             },
         );
+        put_ahead_behind(&repo, "a", "b", (1, 0));
 
         let cleared = clear_all(&repo).unwrap();
-        assert_eq!(cleared, 5, "should clear one entry per kind");
+        assert_eq!(cleared, 6, "should clear one entry per kind");
 
         // All kinds should be empty
         assert_eq!(merge_conflicts(&repo, "a", "b"), None);
@@ -662,5 +772,6 @@ mod tests {
         assert_eq!(is_ancestor(&repo, "a", "b"), None);
         assert_eq!(has_added_changes(&repo, "a", "b"), None);
         assert_eq!(diff_stats(&repo, "a", "b"), None);
+        assert_eq!(ahead_behind(&repo, "a", "b"), None);
     }
 }
