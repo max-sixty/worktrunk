@@ -1,6 +1,8 @@
+use std::path::Path;
+
 use anyhow::Context;
 use worktrunk::HookType;
-use worktrunk::config::{Approvals, MergeConfig, UserConfig};
+use worktrunk::config::{Approvals, MergeConfig, ProjectConfig, UserConfig};
 use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, info_message};
 
@@ -72,45 +74,56 @@ pub struct MergeOptions<'a> {
     pub format: crate::cli::SwitchFormat,
 }
 
-/// Collect all commands that will be executed during merge.
+/// Collect all commands that will be executed during merge, for batch approval.
 ///
-/// Returns (commands, project_identifier) for batch approval.
+/// Returns (commands, project_identifier). Each hook is approved against the
+/// `.config/wt.toml` of the worktree it runs in (and is resolved from): the
+/// feature worktree (= `repo`'s cwd) for `pre-commit`/`post-commit`/`pre-merge`
+/// — and `pre-remove`, which fires while the feature worktree is still on disk;
+/// the merge destination (`destination_path`) for `post-merge`/`post-remove`/
+/// `post-switch`, which run after the feature worktree is removed.
 fn collect_merge_commands(
     repo: &Repository,
+    destination_path: &Path,
     commit: bool,
     verify: bool,
     will_remove: bool,
     squash_enabled: bool,
 ) -> anyhow::Result<(Vec<ApprovableCommand>, String)> {
-    let mut all_commands = Vec::new();
-    let project_config = match repo.load_project_config()? {
-        Some(cfg) => cfg,
-        None => return Ok((all_commands, repo.project_identifier()?)),
-    };
-
-    let mut hooks = Vec::new();
+    let mut feature_hooks = Vec::new();
+    let mut destination_hooks = Vec::new();
 
     // Pre-commit hooks run when a commit will actually be created
     let will_create_commit = repo.current_worktree().is_dirty()? || squash_enabled;
     if commit && verify && will_create_commit {
-        hooks.push(HookType::PreCommit);
-        hooks.push(HookType::PostCommit);
+        feature_hooks.push(HookType::PreCommit);
+        feature_hooks.push(HookType::PostCommit);
     }
 
     if verify {
-        hooks.push(HookType::PreMerge);
-        hooks.push(HookType::PostMerge);
+        feature_hooks.push(HookType::PreMerge);
+        destination_hooks.push(HookType::PostMerge);
         if will_remove {
-            hooks.push(HookType::PreRemove);
-            hooks.push(HookType::PostRemove);
-            hooks.push(HookType::PostSwitch);
+            feature_hooks.push(HookType::PreRemove);
+            destination_hooks.push(HookType::PostRemove);
+            destination_hooks.push(HookType::PostSwitch);
         }
     }
 
-    all_commands.extend(collect_commands_for_hooks(&project_config, &hooks));
+    let mut all_commands = Vec::new();
+    if !feature_hooks.is_empty()
+        && let Some(cfg) = repo.load_project_config()?
+    {
+        all_commands.extend(collect_commands_for_hooks(&cfg, &feature_hooks));
+    }
+    if !destination_hooks.is_empty()
+        && let Some(cfg) = ProjectConfig::load(&Repository::at(destination_path)?, true)
+            .context("Failed to load project config")?
+    {
+        all_commands.extend(collect_commands_for_hooks(&cfg, &destination_hooks));
+    }
 
-    let project_id = repo.project_identifier()?;
-    Ok((all_commands, project_id))
+    Ok((all_commands, repo.project_identifier()?))
 }
 
 pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
@@ -173,6 +186,13 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let target_branch = repo.require_target_branch(target)?;
     // Worktree for target is optional: if present we use it for safety checks and as destination.
     let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
+    // Where `post-merge` / `post-remove` / `post-switch` run (and resolve their
+    // `.config/wt.toml`): the target branch's worktree if it exists, else the
+    // primary worktree. Mirrors `finish_after_merge`'s destination resolution.
+    let destination_path = match &target_worktree_path {
+        Some(path) => path.clone(),
+        None => repo.home_path()?,
+    };
 
     // Quick check for command approval: will removal be attempted?
     // The authoritative guard is prepare_merge_removal (shared with wt remove),
@@ -182,8 +202,14 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let remove_requested = remove && !on_target;
 
     // Collect and approve all commands upfront for batch permission request
-    let (all_commands, project_id) =
-        collect_merge_commands(repo, commit, verify, remove_requested, squash_enabled)?;
+    let (all_commands, project_id) = collect_merge_commands(
+        repo,
+        &destination_path,
+        commit,
+        verify,
+        remove_requested,
+        squash_enabled,
+    )?;
 
     // Approve all commands in a single batch (shows templates, not expanded values)
     let approvals = Approvals::load().context("Failed to load approvals")?;

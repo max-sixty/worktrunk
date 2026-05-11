@@ -204,6 +204,18 @@ pub enum RemoveResult {
 }
 
 impl RemoveResult {
+    /// Path of the removed worktree, if this result removed one.
+    ///
+    /// `None` for branch-only deletions — they have no worktree, so no
+    /// `pre-remove` hook runs and there's no worktree-local `.config/wt.toml`
+    /// to consult.
+    pub fn removed_worktree_path(&self) -> Option<&Path> {
+        match self {
+            RemoveResult::RemovedWorktree { worktree_path, .. } => Some(worktree_path),
+            RemoveResult::BranchOnly { .. } => None,
+        }
+    }
+
     /// Convert to a JSON value for structured output.
     pub fn to_json(&self) -> serde_json::Value {
         match self {

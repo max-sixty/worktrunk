@@ -1745,6 +1745,45 @@ fn test_merge_primary_on_different_branch_dirty(mut repo: TestRepo) {
     ));
 }
 
+/// `post-merge` resolves `.config/wt.toml` from the merge destination (the
+/// target branch's worktree, where it runs), not the feature worktree being
+/// merged. Here only the destination — `main`'s worktree — carries the config;
+/// the feature branch was created before it was added.
+#[rstest]
+fn test_post_merge_hook_reads_destination_worktree_config(mut repo: TestRepo) {
+    use crate::common::wait_for_file_content;
+
+    let feature_wt = repo.add_worktree_with_commit("feature-pm", "feature.txt", "x", "feat: x");
+
+    let marker_file = repo.root_path().join("post-merge-ran.txt");
+    repo.write_project_config(&format!(
+        r#"[post-merge]
+sync = "echo 'merged {{{{ branch }}}}' > {}"
+"#,
+        marker_file.to_slash_lossy()
+    ));
+    repo.commit("Add post-merge hook on main");
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_wt)
+        .args(["merge", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    wait_for_file_content(&marker_file);
+    assert_eq!(
+        std::fs::read_to_string(&marker_file).unwrap().trim(),
+        "merged feature-pm",
+        "post-merge should run with the destination worktree's config"
+    );
+}
+
 #[rstest]
 fn test_merge_race_condition_commit_after_push(mut repo_with_feature_worktree: TestRepo) {
     let repo = &mut repo_with_feature_worktree;

@@ -48,16 +48,19 @@ impl CommandEnv {
 
     /// Load the command environment for a named worktree (by branch name).
     ///
-    /// Resolves the worktree path from the branch name rather than using
-    /// the current working directory.
+    /// Resolves the worktree path from the branch name rather than the current
+    /// directory, and roots `repo` at that worktree — so a command run with
+    /// `--branch <b>` (e.g. `wt step commit --branch <b>`) and its hooks
+    /// (`pre-commit` / `post-commit`) operate on, and resolve `.config/wt.toml`
+    /// from, `<b>`'s worktree rather than the cwd. See the `commands::hooks`
+    /// module docs for the hook config-resolution rule.
     pub fn for_branch(config: UserConfig, branch: &str) -> anyhow::Result<Self> {
-        let repo = Repository::current()?;
-        let worktree_path = repo
+        let worktree_path = Repository::current()?
             .worktree_for_branch(branch)?
             .ok_or_else(|| anyhow::anyhow!("no worktree for branch '{branch}'"))?;
 
         Ok(Self {
-            repo,
+            repo: Repository::at(&worktree_path)?,
             branch: Some(branch.to_string()),
             config,
             worktree_path,

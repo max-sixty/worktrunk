@@ -156,10 +156,19 @@ pub fn finish_after_merge(
     };
 
     if verify {
-        // Post-merge hooks run in the destination worktree (target), but bare vars
-        // point to the Active (feature branch) per the template variable model.
-        // The destination worktree is the execution context (cwd).
-        let ctx = CommandContext::new(repo, config, Some(current_branch), &destination_path, yes);
+        // Post-merge hooks run in the destination worktree (target), and resolve
+        // their `.config/wt.toml` from there — root `ctx.repo` at the
+        // destination (the feature worktree may be gone by now). Bare template
+        // vars still point to the Active (feature branch) per the template
+        // variable model; those are repo-wide lookups, unaffected by the root.
+        let dest_repo = Repository::at(&destination_path).unwrap_or_else(|_| repo.clone());
+        let ctx = CommandContext::new(
+            &dest_repo,
+            config,
+            Some(current_branch),
+            &destination_path,
+            yes,
+        );
         let display_path = if removed {
             crate::output::post_hook_display_path(&destination_path)
         } else {

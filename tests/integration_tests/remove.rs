@@ -1710,6 +1710,54 @@ approved-commands = ["echo 'hook ran' > {}"]
     );
 }
 
+/// `pre-remove` resolves `.config/wt.toml` from the worktree being removed, not
+/// the primary worktree — so a hook added on a feature branch fires even before
+/// that `.config/wt.toml` reaches the default branch. The primary worktree here
+/// has no project config at all; only the removed worktree does.
+#[rstest]
+fn test_pre_remove_hook_reads_removed_worktree_config(mut repo: TestRepo) {
+    use crate::common::wait_for_file_content;
+
+    let worktree_path = repo.add_worktree("feature-local-hook");
+    let marker_file = repo.root_path().join("pre-remove-ran.txt");
+    std::fs::create_dir_all(worktree_path.join(".config")).unwrap();
+    std::fs::write(
+        worktree_path.join(".config/wt.toml"),
+        // `{{ branch }}` proves the hook ran with the removed worktree's context.
+        format!(
+            r#"pre-remove = "echo 'removed branch {{{{ branch }}}}' > {}""#,
+            marker_file.to_slash_lossy()
+        ),
+    )
+    .unwrap();
+
+    // `--force` because `.config/wt.toml` is untracked in the removed worktree;
+    // `--yes` to skip the approval prompt.
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "--foreground",
+            "--force",
+            "--yes",
+            "feature-local-hook",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt remove failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    wait_for_file_content(&marker_file);
+    assert_eq!(
+        std::fs::read_to_string(&marker_file).unwrap().trim(),
+        "removed branch feature-local-hook",
+        "pre-remove should run with the removed worktree's config"
+    );
+}
+
 #[rstest]
 fn test_pre_remove_hook_failure_aborts(mut repo: TestRepo) {
     // Create project config with failing hook

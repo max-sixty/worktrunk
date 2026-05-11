@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::io::Write;
+use std::path::Path;
 
 use anyhow::Context;
 use clap::FromArgMatches;
@@ -893,31 +894,56 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 .into());
             }
 
-            // Resolve current worktree context for hook approval
-            let current_wt = repo.current_worktree();
-            let approve_worktree_path = current_wt.root()?;
-            let approve_branch = current_wt
+            // Branch context for the approval prompt. Templates are shown
+            // unexpanded, so the exact branch is immaterial — `project_id`
+            // (which selects the approvals namespace) doesn't depend on it.
+            let approve_branch = repo
+                .current_worktree()
                 .branch()
                 .context("Failed to determine current branch")?;
 
-            // Helper: approve remove hooks using current worktree context
-            // Returns true if hooks should run (user approved)
-            let approve_remove = |yes: bool| -> anyhow::Result<bool> {
+            // Helper: approve remove hooks. `pre-remove` runs in each worktree
+            // being removed and resolves *that* worktree's `.config/wt.toml`
+            // (falling back to the primary worktree's when the removed one has
+            // none — same rule as `execute_pre_remove_hooks_if_needed`), so
+            // it's approved per worktree against that config; `post-remove` and
+            // `post-switch` run in the primary worktree afterwards (the removed
+            // worktree is gone) and are approved once against its config. The
+            // `Repository` rooted at each path is what selects the config — see
+            // [`Repository::project_config_path`]. Returns true if every prompt
+            // was accepted (or there was nothing to approve).
+            let approve_remove = |removed_worktree_paths: &[&Path], yes: bool| -> anyhow::Result<bool> {
+                let decline_msg = "Commands declined, continuing removal";
+                let primary_path = repo.home_path()?;
+                let primary_repo = || Repository::at(&primary_path).unwrap_or_else(|_| repo.clone());
+                for &wt_path in removed_worktree_paths {
+                    let wt_repo = match Repository::at(wt_path) {
+                        Ok(r) if r.load_project_config().ok().flatten().is_some() => r,
+                        _ => primary_repo(),
+                    };
+                    let ctx = CommandContext::new(
+                        &wt_repo,
+                        &config,
+                        approve_branch.as_deref(),
+                        wt_path,
+                        yes,
+                    );
+                    if !approve_or_skip(&ctx, &[HookType::PreRemove], decline_msg)? {
+                        return Ok(false);
+                    }
+                }
+                let pr = primary_repo();
                 let ctx = CommandContext::new(
-                    &repo,
+                    &pr,
                     &config,
                     approve_branch.as_deref(),
-                    &approve_worktree_path,
+                    &primary_path,
                     yes,
                 );
                 approve_or_skip(
                     &ctx,
-                    &[
-                        HookType::PreRemove,
-                        HookType::PostRemove,
-                        HookType::PostSwitch,
-                    ],
-                    "Commands declined, continuing removal",
+                    &[HookType::PostRemove, HookType::PostSwitch],
+                    decline_msg,
                 )
             };
 
@@ -943,7 +969,8 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 }
 
                 // "Approve at the Gate": approval happens AFTER validation passes
-                let run_hooks = verify && approve_remove(yes)?;
+                let removed_path = result.removed_worktree_path();
+                let run_hooks = verify && approve_remove(removed_path.as_slice(), yes)?;
 
                 let mut announcer = HookAnnouncer::new(&repo, &config, false);
                 handle_remove_output(&result, args.foreground, run_hooks, false, &mut announcer)?;
@@ -977,10 +1004,17 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     return Ok(());
                 }
 
-                // Approve hooks (only if we have valid plans)
-                // TODO(pre-remove-context): Approval context uses current worktree,
-                // but hooks execute in each target worktree.
-                let run_hooks = verify && approve_remove(yes)?;
+                // Approve hooks (only if we have valid plans). Each removed
+                // worktree's `pre-remove` is approved against that worktree's
+                // own config — see `approve_remove` above.
+                let pre_remove_targets: Vec<&Path> = plans
+                    .others
+                    .iter()
+                    .chain(&plans.branch_only)
+                    .chain(plans.current.iter())
+                    .filter_map(|r| r.removed_worktree_path())
+                    .collect();
+                let run_hooks = verify && approve_remove(&pre_remove_targets, yes)?;
 
                 // Execute all validated plans: others first, branch-only next, current last
                 let show_branch =
