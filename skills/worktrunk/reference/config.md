@@ -655,6 +655,11 @@ Aliases are command templates configured in user (`~/.config/worktrunk/config.to
 
 ### Examples
 
+List all configured aliases:
+```bash
+$ wt config alias show
+```
+
 Show the template for `deploy`:
 ```bash
 $ wt config alias show deploy
@@ -674,7 +679,7 @@ wt config alias - Inspect and preview aliases
 Usage: wt config alias [OPTIONS] <COMMAND>
 
 Commands:
-  show     Show an alias's template as configured
+  show     Show an alias's template, or list all aliases
   dry-run  Preview an alias invocation with template expansion
 
 Options:

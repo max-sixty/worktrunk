@@ -2,12 +2,14 @@
 //!
 //! Introspection and preview for aliases configured in user config
 //! (`~/.config/worktrunk/config.toml`) and project config (`.config/wt.toml`).
-//! `show` prints the template text, source-labeled, with one gutter block per
-//! alias entry and `# <name>` comment lines above named pipeline steps.
-//! `dry-run` parses a per-invocation argument vector with the same parser
-//! `wt <alias>` uses, then expands templates using the same context as
-//! execution — so previews match what the real run will do. The two share a
-//! layout; only the header verb differs (`:` vs ` would run:`).
+//! `show` with no name lists every configured alias — the same `Aliases:`
+//! block `wt --help` renders, via [`render_aliases_section`]. `show <name>`
+//! prints the template text, source-labeled, with one gutter block per alias
+//! entry and `# <name>` comment lines above named pipeline steps. `dry-run`
+//! parses a per-invocation argument vector with the same parser `wt <alias>`
+//! uses, then expands templates using the same context as execution — so
+//! previews match what the real run will do. `show <name>` and `dry-run`
+//! share a layout; only the header verb differs (`:` vs ` would run:`).
 //!
 //! ## Why `dry-run` lives here rather than on the alias dispatch
 //!
@@ -29,7 +31,10 @@ use worktrunk::config::{
 use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::styling::{format_bash_with_gutter, info_message, println};
 
-use crate::commands::alias::{AliasOptions, TOP_LEVEL_BUILTINS, load_aliases};
+use crate::commands::alias::{
+    AliasOptions, HelpContext, TOP_LEVEL_BUILTINS, load_aliases, load_aliases_for_listing,
+    render_aliases_section,
+};
 use crate::commands::build_invalid_subcommand_error;
 use crate::commands::command_executor::{
     CommandContext, build_hook_context, expand_shell_template,
@@ -37,11 +42,16 @@ use crate::commands::command_executor::{
 use crate::commands::did_you_mean;
 use crate::commands::hooks::HookSource;
 
-/// Show the configured template(s) for an alias, tagged by source.
+/// Show the configured template(s) for an alias — or, with no name, list
+/// every configured alias.
 ///
 /// When the same name is defined in both user and project config, both
 /// entries are printed (user first, matching runtime execution order).
-pub fn handle_alias_show(name: String) -> anyhow::Result<()> {
+pub fn handle_alias_show(name: Option<String>) -> anyhow::Result<()> {
+    let Some(name) = name else {
+        return list_aliases();
+    };
+
     let repo = Repository::current()?;
     let user_config = repo.user_config();
     let project_config = repo.project_config()?;
@@ -66,6 +76,29 @@ pub fn handle_alias_show(name: String) -> anyhow::Result<()> {
         let bodies: Vec<String> = cfg.commands().map(|c| c.template.clone()).collect();
         println!("{}", format_entry(&name, cfg, *source, &bodies, None));
     }
+    Ok(())
+}
+
+/// List every configured alias as the styled `Aliases:` block — the same
+/// listing `wt --help` renders, reused via [`render_aliases_section`].
+///
+/// Tolerates running outside a repository (user-config aliases still list,
+/// project-config ones are skipped) and outside a config (prints a note).
+/// Warnings are suppressed: this is a discovery surface, so a deprecated
+/// `wt.toml` shouldn't make `wt config alias show` noisy — `wt config update`
+/// is where deprecations get reported.
+fn list_aliases() -> anyhow::Result<()> {
+    worktrunk::config::suppress_warnings();
+    let aliases = load_aliases_for_listing();
+    if aliases.is_empty() {
+        println!("{}", info_message("No aliases configured"));
+        return Ok(());
+    }
+    // The `Aliases:` block lists names invoked as `wt <name>`, so annotate
+    // shadowing from the top-level perspective (an alias named `list` is
+    // unreachable; one named `commit` is not — `wt commit` runs it).
+    let section = render_aliases_section(&aliases, HelpContext::TopLevel);
+    crate::help_pager::show_help_in_pager(&format!("{section}\n"), true);
     Ok(())
 }
 

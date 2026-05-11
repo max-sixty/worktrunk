@@ -744,7 +744,7 @@ pub(crate) fn augment_help(help: &str, context: HelpContext) -> String {
 ///
 /// `context` controls the "shadowed by built-in" annotation — see
 /// [`HelpContext`].
-fn render_aliases_section(
+pub(crate) fn render_aliases_section(
     entries: &[(String, CommandConfig, HookSource)],
     context: HelpContext,
 ) -> String {
@@ -801,18 +801,18 @@ fn render_aliases_section(
 /// separately preserves the individual command text; merging them would
 /// reduce to an uninformative step count when both are unnamed singles.
 ///
-/// The caller (`augment_step_help`) latches `suppress_warnings()` before
-/// reaching here so the standard `UserConfig::load()` stays quiet: no
-/// deprecation warnings, no `.new` file writes, no approved-commands copy.
-/// Project config is parsed directly from TOML rather than via
-/// `ProjectConfig::load` because the `aliases` table has no deprecated forms
-/// — skipping the migration avoids the unrelated warnings entirely.
+/// Callers (`augment_help`, `wt config alias show` with no name) latch
+/// `suppress_warnings()` before reaching here so the standard `UserConfig::load()`
+/// stays quiet: no deprecation warnings, no `.new` file writes, no
+/// approved-commands copy. Project config is parsed directly from TOML rather
+/// than via `ProjectConfig::load` because the `aliases` table has no deprecated
+/// forms — skipping the migration avoids the unrelated warnings entirely.
 ///
 /// Tolerates missing or unloadable config: this is a discovery surface, not
 /// an execution surface, so we'd rather show the built-in commands than
 /// error out when a repo isn't detected or a config file is malformed.
 /// `step_alias` surfaces those errors at execution time.
-fn load_aliases_for_listing() -> Vec<(String, CommandConfig, HookSource)> {
+pub(crate) fn load_aliases_for_listing() -> Vec<(String, CommandConfig, HookSource)> {
     let repo = Repository::current().ok();
     let project_id = repo.as_ref().and_then(|r| r.project_identifier().ok());
 

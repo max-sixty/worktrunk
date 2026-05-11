@@ -1779,6 +1779,59 @@ deploy = "make deploy BRANCH={{ branch }}"
     ));
 }
 
+/// `wt config alias show` with no name lists every configured alias — the same
+/// `Aliases:` block `wt --help` renders. Names defined in both user and project
+/// config show twice (user first), and a name shadowed by a top-level built-in
+/// is annotated.
+#[rstest]
+fn test_config_alias_show_lists_all(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "echo from project"
+"only-project" = "echo p"
+list = "echo custom list"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = "echo from user"
+greet = "echo hi {{ branch }}"
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "config",
+        &["alias", "show"],
+        Some(&feature_path),
+    ));
+}
+
+/// `wt config alias show` with no name and no aliases configured prints a note
+/// rather than an empty `Aliases:` heading.
+#[rstest]
+fn test_config_alias_show_lists_none(mut repo: TestRepo) {
+    repo.commit("Initial commit");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "config",
+        &["alias", "show"],
+        Some(&feature_path),
+    ));
+}
+
 /// Unknown alias name triggers a did-you-mean suggestion. Format mirrors
 /// `wt <typo>` and `wt step <typo>`: clap-native `InvalidSubcommand` with a
 /// `tip:` line — same shape at every alias-typo surface.
