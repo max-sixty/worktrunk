@@ -178,7 +178,7 @@
 //! | `IsAncestor` | `sha_cache` (is-ancestor) |
 //! | `HasFileChanges` | `sha_cache` (has-added-changes) |
 //! | `BranchDiff` | `sha_cache` (diff-stats, skipped when sparse checkout is active) |
-//! | `AheadBehind` | `sha_cache` (ahead-behind); on a cold base the snapshot pre-fills it from one `for-each-ref %(ahead-behind)` walk |
+//! | `AheadBehind`, `Upstream` | `sha_cache` (ahead-behind); on a cold cache both columns are pre-filled from `for-each-ref %(ahead-behind:SHA)` walks — one against the default branch (`main↕`, in `RefSnapshot::capture_ahead_behind`) and one per unique upstream SHA (`Remote⇅`, in `Repository::prime_upstream_ahead_behind_cache`) |
 //! | `CiStatus` | `ci_status::cache` |
 //! | `SummaryGenerate` | `summary` |
 //!
@@ -187,8 +187,6 @@
 //! ### Already optimized (not cache candidates)
 //!
 //! - `CommittedTreesMatch` — single `git rev-parse` resolving both tree SHAs (~1ms)
-//! - `Upstream` — upstream names batch-fetched via single `git for-each-ref
-//!   %(upstream:short)`; per-branch tasks read the in-memory cache
 //!
 //! ### Cached via tree SHA
 //!
@@ -1112,7 +1110,8 @@ pub fn collect(
     // See: https://gitlab.com/gitlab-org/git/-/merge_requests/148 (scalar's fsmonitor workaround)
     // See: https://github.com/jj-vcs/jj/issues/6440 (jj hit same fsmonitor issue)
     let previous_branch_cell: OnceCell<Option<String>> = OnceCell::new();
-    let snapshot_cell: OnceCell<Option<worktrunk::git::RefSnapshot>> = OnceCell::new();
+    let snapshot_cell: OnceCell<Option<std::sync::Arc<worktrunk::git::RefSnapshot>>> =
+        OnceCell::new();
 
     rayon::scope(|s| {
         // Previous branch lookup (for gutter symbol)
@@ -1128,6 +1127,10 @@ pub fn collect(
         // `commit_shas` priming + `batch_ahead_behind` pair: tasks consume
         // it by SHA, dodging ref→SHA cache staleness.
         //
+        // After the snapshot is built, an inner spawn primes the
+        // `Remote⇅` cache off its already-scanned inventories — see the
+        // nested `s.spawn` below for the rationale.
+        //
         // TODO(ahead-behind-pool): the `%(ahead-behind)` walk that runs
         // here on a cold cache is serial — it blocks this scope, and the
         // big task pool can't open until it returns. Nothing downstream of
@@ -1140,11 +1143,66 @@ pub fn collect(
         // inter-task dependency (the per-row tasks would wait on it, or it
         // would emit their results directly) — the work-item model has
         // none today.
-        s.spawn(|_| {
+        s.spawn(|s| {
             let snap = match default_branch.as_deref() {
                 Some(db) => repo.capture_refs_with_ahead_behind(db).ok(),
                 None => repo.capture_refs().ok(),
-            };
+            }
+            .map(std::sync::Arc::new);
+
+            // Prime the `ahead-behind/` SHA-cache for the `Remote⇅`
+            // column, pairing each local branch with its configured
+            // upstream. Mirrors the `main↕` priming inside
+            // `capture_refs_with_ahead_behind`, but per-upstream-group
+            // instead of single-base: one serial `for-each-ref
+            // %(ahead-behind:UPSTREAM_SHA)` walk per unique upstream
+            // that's both cold and above the same threshold.
+            //
+            // Nested inside this spawn (rather than a sibling) so it can
+            // read the snapshot's already-scanned local/remote
+            // inventories — a sibling spawn would race the snapshot's
+            // own scans and (when `--remotes` is off) fire a redundant
+            // `for-each-ref refs/remotes/`. The primer still runs in
+            // parallel with downstream scope work (fsmonitor, etc.); it
+            // just gates on its data dependency.
+            //
+            // Scope to branches that will actually render an
+            // `UpstreamTask` row: with `--branches` that's every local;
+            // without it that's just the worktree-attached subset.
+            // Otherwise plain `wt list` on a repo with many stale
+            // tracking branches would block the worker pool on a serial
+            // batch for rows nobody sees.
+            if let Some(snap_arc) = snap.as_ref() {
+                let snap_for_primer = std::sync::Arc::clone(snap_arc);
+                s.spawn(move |_| {
+                    // Honor `list.task-timeout-ms` for the primer's git
+                    // commands — these are the same `for-each-ref
+                    // %(ahead-behind)` / `rev-list` invocations that
+                    // used to run inside `UpstreamTask`, where the
+                    // worker loop sets the per-thread timeout. Without
+                    // this, `wt list` could sit at the skeleton on a
+                    // pathologically slow git until the (untimed) batch
+                    // returned.
+                    worktrunk::shell_exec::set_command_timeout(command_timeout);
+                    let all_locals = snap_for_primer.local_branches();
+                    let filtered_locals: Vec<LocalBranch>;
+                    let candidates: &[LocalBranch] = if show_branches {
+                        all_locals
+                    } else {
+                        filtered_locals = all_locals
+                            .iter()
+                            .filter(|b| worktree_branches.contains(b.name.as_str()))
+                            .cloned()
+                            .collect();
+                        &filtered_locals
+                    };
+                    repo.prime_upstream_ahead_behind_cache(
+                        candidates,
+                        snap_for_primer.remote_branches(),
+                    );
+                });
+            }
+
             let _ = snapshot_cell.set(snap);
         });
 
@@ -1158,10 +1216,7 @@ pub fn collect(
 
     // Extract results from cells
     let previous_branch = previous_branch_cell.into_inner().flatten();
-    let snapshot = snapshot_cell
-        .into_inner()
-        .flatten()
-        .map(std::sync::Arc::new);
+    let snapshot = snapshot_cell.into_inner().flatten();
 
     // Resolve integration targets from the snapshot. Same OR semantics
     // as `Repository::integration_reason` (`primary` + optional

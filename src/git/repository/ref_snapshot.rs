@@ -292,6 +292,154 @@ impl Repository {
 /// shared base-history traversal amortizes across the cold subset.
 const AHEAD_BEHIND_SCOPED_BATCH_MIN_MISSES: usize = 8;
 
+impl Repository {
+    /// Prime the persistent `ahead-behind/` SHA-cache for the `Remote⇅`
+    /// column of `wt list`. Pairs each local branch with its configured
+    /// upstream and, for the ones the cache doesn't already cover, runs
+    /// one `for-each-ref %(ahead-behind:UPSTREAM_SHA)` walk per unique
+    /// upstream SHA — the same shared-graph-traversal win that
+    /// [`Self::capture_refs_with_ahead_behind`] uses for the `main↕`
+    /// column, scoped to branches sharing one base.
+    ///
+    /// Mirrors the cache-correctness defenses applied in
+    /// [`Self::capture_refs_with_ahead_behind`]:
+    /// `%(ahead-behind:UPSTREAM_SHA)` (not `:UPSTREAM_REFNAME`) so git
+    /// counts against the SHA the cache will be keyed by — a tag
+    /// shadowing the remote-tracking branch can't poison the entry; the
+    /// cache key uses the `%(objectname)` git reports for the branch in
+    /// the same walk, so a branch ref that moved between the initial
+    /// scan and the batch can't poison the entry either; writes flow
+    /// through `sha_cache::put_ahead_behind_bulk` for one `sweep_lru` at
+    /// the end; orphan branches (no common ancestor with their upstream)
+    /// are normalized to `(0, 0)` to match a cache miss in
+    /// [`Self::ahead_behind_by_sha`]. Each unique upstream's
+    /// `rev-list --count` is memoized in a local map so the orphan check
+    /// pays one count per upstream, not one per branch.
+    ///
+    /// Branches without an upstream, or with a `[gone]` upstream
+    /// ([`LocalBranch::upstream_short`] is `None` for both cases — see
+    /// `parse_local_branch_line`), are skipped: nothing to cache. Each
+    /// per-upstream group below the same threshold
+    /// `capture_ahead_behind` uses for the cold-subset batch is also
+    /// skipped — the per-row `UpstreamTask` will recompute those by SHA
+    /// in the parallel pool, which beats blocking the pool on a small
+    /// serial batch. Unlike [`Self::capture_refs_with_ahead_behind`]
+    /// there is no "all cold → unscoped walk" shortcut: each upstream
+    /// group's refs are already the maximal set of branches that track
+    /// it.
+    ///
+    /// Known limitation — distinct-upstream branches:
+    /// when every branch tracks its own remote (each upstream SHA is
+    /// unique), every group has `refs.len() == 1` and the primer skips
+    /// all of them. Those branches fall through to the per-row
+    /// `ahead_behind_by_sha` path in the parallel pool. A `%(upstream:track)`
+    /// walk could batch them in one shot, but git computes that atom
+    /// against the upstream's CURRENT value at walk time, which we
+    /// cannot pin to the SHA the cache will be keyed by — the resulting
+    /// race breaks the cache invariant `compute_ahead_behind` would
+    /// have established on a miss. Live with this until we either (a)
+    /// fan per-group batches out in parallel (turns N size-1 groups
+    /// into one batch wall-time) or (b) find an atom that reports
+    /// ahead/behind against an explicitly supplied per-branch SHA.
+    ///
+    /// Returns the number of cache entries written. Side-effect only;
+    /// no value is threaded through to callers — per-row
+    /// `ahead_behind_by_sha` lookups read the cache.
+    pub fn prime_upstream_ahead_behind_cache(
+        &self,
+        locals: &[LocalBranch],
+        remotes: &[RemoteBranch],
+    ) -> usize {
+        let full_ref = |b: &LocalBranch| format!("refs/heads/{}", b.name);
+
+        // (branch_refname, branch_sha, upstream_sha) for branches with a
+        // resolvable upstream. Skip no-upstream and `[gone]` branches:
+        // `parse_local_branch_line` collapses both into
+        // `upstream_short == None`.
+        let mut candidates: Vec<(String, String, String)> = Vec::new();
+        for b in locals {
+            let Some(upstream_short) = b.upstream_short.as_deref() else {
+                continue;
+            };
+            // `%(upstream:short)` looks like `origin/feature` for a
+            // remote-tracking upstream and like `main` (just the branch
+            // name) when `branch.<x>.remote = .` configures a local
+            // branch as upstream. `resolve_sha_from_scan` checks locals
+            // before remotes on a bare name, covering both cases without
+            // a prefix-prepending step that would mask the local form.
+            let Some(upstream_sha) = resolve_sha_from_scan(upstream_short, locals, remotes) else {
+                continue;
+            };
+            candidates.push((full_ref(b), b.commit_sha.clone(), upstream_sha.to_string()));
+        }
+        if candidates.is_empty() {
+            return 0;
+        }
+
+        // Partition cold vs warm by probing the SHA cache. Warm pairs
+        // need no work — the per-row `UpstreamTask` reads them in
+        // parallel via `ahead_behind_by_sha`.
+        let mut cold_by_upstream: HashMap<String, Vec<String>> = HashMap::new();
+        for (branch_ref, branch_sha, upstream_sha) in &candidates {
+            if super::sha_cache::ahead_behind(self, upstream_sha, branch_sha).is_some() {
+                continue;
+            }
+            cold_by_upstream
+                .entry(upstream_sha.clone())
+                .or_default()
+                .push(branch_ref.clone());
+        }
+        if cold_by_upstream.is_empty() {
+            return 0;
+        }
+
+        // One serial `for-each-ref %(ahead-behind:UPSTREAM_SHA)` per
+        // upstream group, only above the same threshold
+        // `capture_ahead_behind` uses — small groups go through the
+        // parallel per-row path instead. `base_totals` memoizes
+        // `rev-list --count` per upstream so the orphan check is one
+        // count per upstream, not one per branch.
+        let mut writes: Vec<(String, String, (usize, usize))> = Vec::new();
+        let mut base_totals: HashMap<String, Option<usize>> = HashMap::new();
+        for (upstream_sha, refs) in &cold_by_upstream {
+            if refs.len() < AHEAD_BEHIND_SCOPED_BATCH_MIN_MISSES {
+                continue;
+            }
+            let fresh = scan_ahead_behind(self, upstream_sha, Some(refs));
+            if fresh.is_empty() {
+                continue; // git < 2.36 or batch failed
+            }
+            let base_total = *base_totals.entry(upstream_sha.clone()).or_insert_with(|| {
+                self.run_command(&["rev-list", "--count", upstream_sha])
+                    .ok()
+                    .and_then(|s| s.trim().parse().ok())
+            });
+            for branch_ref in refs {
+                let Some((object_sha, (ahead, behind))) = fresh.get(branch_ref) else {
+                    continue;
+                };
+                // Orphan against this upstream: git's `%(ahead-behind)`
+                // reports the two disjoint history sizes; a cache miss
+                // (which calls `compute_ahead_behind`) returns `(0, 0)`.
+                // Detect via `behind == |upstream|`.
+                let counts = if base_total == Some(*behind) {
+                    (0, 0)
+                } else {
+                    (*ahead, *behind)
+                };
+                writes.push((upstream_sha.clone(), object_sha.clone(), counts));
+            }
+        }
+
+        let n = writes.len();
+        super::sha_cache::put_ahead_behind_bulk(
+            self,
+            writes.iter().map(|(u, b, c)| (u.as_str(), b.as_str(), *c)),
+        );
+        n
+    }
+}
+
 /// Resolve a ref name to a commit SHA using only refs already scanned into
 /// `locals`/`remotes` (no subprocess). Accepts short or qualified forms.
 fn resolve_sha_from_scan<'a>(
@@ -807,5 +955,365 @@ mod tests {
         // reports [gone] and upstream_of returns None — same contract as
         // today's Branch::upstream.
         // (This test mainly checks the method exists and doesn't panic.)
+    }
+
+    // Set up a local branch that tracks `origin/<upstream_basename>`. Uses
+    // the bare config-file path so tests stay self-contained: no real
+    // remote, just enough refs and config for git's `%(upstream:short)` to
+    // resolve.
+    fn track(test: &TestRepo, branch: &str, upstream_basename: &str) {
+        test.run_git(&["config", &format!("branch.{branch}.remote"), "origin"]);
+        test.run_git(&[
+            "config",
+            &format!("branch.{branch}.merge"),
+            &format!("refs/heads/{upstream_basename}"),
+        ]);
+    }
+
+    fn ahead_behind_cache_path(repo: &Repository, base_sha: &str, head_sha: &str) -> PathBuf {
+        crate::cache::cache_dir(repo, "ahead-behind").join(format!("{base_sha}-{head_sha}.json"))
+    }
+
+    use std::path::PathBuf;
+
+    #[test]
+    fn prime_upstream_writes_cache_on_cold_run() {
+        // 10 branches all tracking origin/trunk → above
+        // AHEAD_BEHIND_SCOPED_BATCH_MIN_MISSES, single-group scoped batch.
+        let test = TestRepo::with_initial_commit();
+        let trunk_sha = test.git_output(&["rev-parse", "main"]);
+        test.run_git(&["update-ref", "refs/remotes/origin/trunk", &trunk_sha]);
+        for i in 0..10 {
+            test.run_git(&["checkout", "-b", &format!("feat{i}"), "main"]);
+            test.run_git(&["commit", "--allow-empty", "-m", &format!("c{i}")]);
+            track(&test, &format!("feat{i}"), "trunk");
+        }
+        test.run_git(&["checkout", "main"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let locals = repo.local_branches().unwrap().to_vec();
+        let remotes = repo.remote_branches().unwrap().to_vec();
+        let written = repo.prime_upstream_ahead_behind_cache(&locals, &remotes);
+
+        // Skip on git < 2.36 where the batch silently yields nothing.
+        if written == 0 {
+            return;
+        }
+        assert_eq!(written, 10, "one cache entry per tracking branch");
+
+        // Each (trunk_sha, feat{i}_sha) pair lives on disk and reflects the
+        // real (1, 0) — `ahead_behind_by_sha` would compute the same.
+        for i in 0..10 {
+            let feat_sha = test.git_output(&["rev-parse", &format!("feat{i}")]);
+            assert_eq!(
+                repo.ahead_behind_by_sha(&trunk_sha, &feat_sha).unwrap(),
+                (1, 0),
+                "feat{i} is 1 ahead, 0 behind origin/trunk"
+            );
+            assert!(
+                ahead_behind_cache_path(&repo, &trunk_sha, &feat_sha).exists(),
+                "cache entry must exist for (trunk, feat{i})"
+            );
+        }
+    }
+
+    #[test]
+    fn prime_upstream_warm_cache_skips_walk() {
+        // Same setup as the cold test, but on the second call every entry
+        // is cached → primer writes nothing (and tampering with the cache
+        // survives — proving we didn't re-run the batch).
+        let test = TestRepo::with_initial_commit();
+        let trunk_sha = test.git_output(&["rev-parse", "main"]);
+        test.run_git(&["update-ref", "refs/remotes/origin/trunk", &trunk_sha]);
+        for i in 0..10 {
+            test.run_git(&["checkout", "-b", &format!("feat{i}"), "main"]);
+            test.run_git(&["commit", "--allow-empty", "-m", &format!("c{i}")]);
+            track(&test, &format!("feat{i}"), "trunk");
+        }
+        test.run_git(&["checkout", "main"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let locals: Vec<_> = repo.local_branches().unwrap().to_vec();
+        let remotes: Vec<_> = repo.remote_branches().unwrap().to_vec();
+        let written = repo.prime_upstream_ahead_behind_cache(&locals, &remotes);
+        if written == 0 {
+            return; // git < 2.36
+        }
+
+        // Tamper with one entry; a second prime that re-ran the batch
+        // would overwrite it.
+        let feat0_sha = test.git_output(&["rev-parse", "feat0"]);
+        let tampered = ahead_behind_cache_path(&repo, &trunk_sha, &feat0_sha);
+        std::fs::write(&tampered, "[7,3]").unwrap();
+
+        let repo2 = Repository::at(test.root_path()).unwrap();
+        let locals2 = repo2.local_branches().unwrap().to_vec();
+        let remotes2 = repo2.remote_branches().unwrap().to_vec();
+        let second_written = repo2.prime_upstream_ahead_behind_cache(&locals2, &remotes2);
+        assert_eq!(
+            second_written, 0,
+            "everything cached → no batch and no writes"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&tampered).unwrap(),
+            "[7,3]",
+            "warm-cache run must not overwrite the tampered value"
+        );
+    }
+
+    #[test]
+    fn prime_upstream_below_threshold_leaves_cache_cold() {
+        // Only 1 branch tracks origin/trunk → below
+        // AHEAD_BEHIND_SCOPED_BATCH_MIN_MISSES; primer leaves it for the
+        // per-row task's parallel `ahead_behind_by_sha`.
+        let test = TestRepo::with_initial_commit();
+        let trunk_sha = test.git_output(&["rev-parse", "main"]);
+        test.run_git(&["update-ref", "refs/remotes/origin/trunk", &trunk_sha]);
+        test.run_git(&["checkout", "-b", "feat", "main"]);
+        test.run_git(&["commit", "--allow-empty", "-m", "c"]);
+        track(&test, "feat", "trunk");
+        test.run_git(&["checkout", "main"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let locals = repo.local_branches().unwrap().to_vec();
+        let remotes = repo.remote_branches().unwrap().to_vec();
+        let written = repo.prime_upstream_ahead_behind_cache(&locals, &remotes);
+        assert_eq!(written, 0, "below threshold → no batch, no writes");
+
+        let feat_sha = test.git_output(&["rev-parse", "feat"]);
+        assert!(
+            !ahead_behind_cache_path(&repo, &trunk_sha, &feat_sha).exists(),
+            "primer must not seed below-threshold groups"
+        );
+    }
+
+    #[test]
+    fn prime_upstream_skips_no_upstream_branches() {
+        // 10 branches without any upstream config → nothing to cache.
+        let test = TestRepo::with_initial_commit();
+        for i in 0..10 {
+            test.run_git(&["checkout", "-b", &format!("feat{i}"), "main"]);
+            test.run_git(&["commit", "--allow-empty", "-m", &format!("c{i}")]);
+        }
+        test.run_git(&["checkout", "main"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let locals = repo.local_branches().unwrap().to_vec();
+        let remotes = repo.remote_branches().unwrap().to_vec();
+        let written = repo.prime_upstream_ahead_behind_cache(&locals, &remotes);
+        assert_eq!(written, 0, "no upstream → no candidates → no writes");
+        assert!(
+            !crate::cache::cache_dir(&repo, "ahead-behind").exists()
+                || std::fs::read_dir(crate::cache::cache_dir(&repo, "ahead-behind"))
+                    .unwrap()
+                    .next()
+                    .is_none(),
+            "ahead-behind cache dir must stay empty"
+        );
+    }
+
+    #[test]
+    fn prime_upstream_skips_gone_upstream() {
+        // Branches with `branch.X.remote/merge` set but the corresponding
+        // `refs/remotes/origin/<basename>` missing → `[gone]` track state →
+        // `parse_local_branch_line` collapses to `upstream_short = None`,
+        // so the primer skips them too.
+        let test = TestRepo::with_initial_commit();
+        for i in 0..10 {
+            test.run_git(&["checkout", "-b", &format!("gone{i}"), "main"]);
+            test.run_git(&["commit", "--allow-empty", "-m", &format!("c{i}")]);
+            track(&test, &format!("gone{i}"), "this-is-deleted-elsewhere");
+        }
+        test.run_git(&["checkout", "main"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let locals = repo.local_branches().unwrap().to_vec();
+        let remotes = repo.remote_branches().unwrap().to_vec();
+        let written = repo.prime_upstream_ahead_behind_cache(&locals, &remotes);
+        assert_eq!(
+            written, 0,
+            "[gone] upstream → upstream_short = None → no candidates"
+        );
+    }
+
+    #[test]
+    fn prime_upstream_normalizes_orphan_to_zero() {
+        // 9 normal tracking branches plus one orphan branch that also
+        // tracks origin/trunk. The orphan's `%(ahead-behind)` reports the
+        // two disjoint history sizes; the primer must store `(0, 0)` to
+        // match `compute_ahead_behind` / a cache miss.
+        let test = TestRepo::with_initial_commit();
+        // Advance main a few commits so origin/trunk has a non-trivial
+        // total — this is what the orphan check compares against.
+        for i in 0..3 {
+            test.run_git(&["commit", "--allow-empty", "-m", &format!("m{i}")]);
+        }
+        let trunk_sha = test.git_output(&["rev-parse", "main"]);
+        test.run_git(&["update-ref", "refs/remotes/origin/trunk", &trunk_sha]);
+
+        for i in 0..9 {
+            test.run_git(&["checkout", "-b", &format!("feat{i}"), "main"]);
+            test.run_git(&["commit", "--allow-empty", "-m", &format!("c{i}")]);
+            track(&test, &format!("feat{i}"), "trunk");
+        }
+
+        // Orphan branch — no common ancestor with main.
+        test.run_git(&["checkout", "--orphan", "orphanbr"]);
+        test.run_git(&["rm", "-rfq", "."]);
+        std::fs::write(test.root_path().join("o.txt"), "y\n").unwrap();
+        test.run_git(&["add", "o.txt"]);
+        test.run_git(&["commit", "-m", "orphan root"]);
+        track(&test, "orphanbr", "trunk");
+        test.run_git(&["checkout", "main"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let locals = repo.local_branches().unwrap().to_vec();
+        let remotes = repo.remote_branches().unwrap().to_vec();
+        let written = repo.prime_upstream_ahead_behind_cache(&locals, &remotes);
+        if written == 0 {
+            return; // git < 2.36
+        }
+
+        let orphan_sha = test.git_output(&["rev-parse", "orphanbr"]);
+        let cached: (usize, usize) = serde_json::from_str(
+            &std::fs::read_to_string(ahead_behind_cache_path(&repo, &trunk_sha, &orphan_sha))
+                .expect("orphan pair should be cached"),
+        )
+        .expect("cache entry is a (usize, usize)");
+        assert_eq!(
+            cached,
+            (0, 0),
+            "orphan-vs-upstream must normalize to compute_ahead_behind's (0, 0)"
+        );
+        // Sanity-check parity with the per-pair API.
+        assert_eq!(
+            repo.ahead_behind_by_sha(&trunk_sha, &orphan_sha).unwrap(),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn prime_upstream_groups_by_unique_upstream_sha() {
+        // Two upstream groups, both above threshold. Each group runs its
+        // own scoped `for-each-ref` walk; entries land under separate
+        // base-SHA keys.
+        let test = TestRepo::with_initial_commit();
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        test.run_git(&["update-ref", "refs/remotes/origin/trunkA", &main_sha]);
+        // Advance main, then point trunkB at the new tip — distinct SHA.
+        test.run_git(&["commit", "--allow-empty", "-m", "advance-main"]);
+        let main_sha2 = test.git_output(&["rev-parse", "main"]);
+        assert_ne!(main_sha, main_sha2);
+        test.run_git(&["update-ref", "refs/remotes/origin/trunkB", &main_sha2]);
+
+        for i in 0..8 {
+            test.run_git(&["checkout", "-b", &format!("a{i}"), "main"]);
+            test.run_git(&["commit", "--allow-empty", "-m", &format!("a{i}")]);
+            track(&test, &format!("a{i}"), "trunkA");
+        }
+        for i in 0..8 {
+            test.run_git(&["checkout", "-b", &format!("b{i}"), "main"]);
+            test.run_git(&["commit", "--allow-empty", "-m", &format!("b{i}")]);
+            track(&test, &format!("b{i}"), "trunkB");
+        }
+        test.run_git(&["checkout", "main"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let locals = repo.local_branches().unwrap().to_vec();
+        let remotes = repo.remote_branches().unwrap().to_vec();
+        let written = repo.prime_upstream_ahead_behind_cache(&locals, &remotes);
+        if written == 0 {
+            return; // git < 2.36
+        }
+        assert_eq!(written, 16, "8 entries per upstream group, two groups");
+
+        for i in 0..8 {
+            let a_sha = test.git_output(&["rev-parse", &format!("a{i}")]);
+            assert!(
+                ahead_behind_cache_path(&repo, &main_sha, &a_sha).exists(),
+                "a{i} entry keyed by trunkA (main_sha)"
+            );
+            let b_sha = test.git_output(&["rev-parse", &format!("b{i}")]);
+            assert!(
+                ahead_behind_cache_path(&repo, &main_sha2, &b_sha).exists(),
+                "b{i} entry keyed by trunkB (main_sha2)"
+            );
+        }
+    }
+
+    #[test]
+    fn prime_upstream_resolves_local_upstream() {
+        // `branch.X.remote = .` makes another LOCAL branch the upstream;
+        // `%(upstream:short)` is then just the branch name (e.g., `main`)
+        // with no `origin/` prefix. The primer must still find its SHA
+        // via the local-branch inventory and seed the cache; otherwise a
+        // documented fallback silently does nothing.
+        let test = TestRepo::with_initial_commit();
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        for i in 0..10 {
+            test.run_git(&["checkout", "-b", &format!("feat{i}"), "main"]);
+            test.run_git(&["commit", "--allow-empty", "-m", &format!("c{i}")]);
+            // `.` means "this repo": the upstream is the local branch
+            // matched by `branch.<x>.merge`.
+            test.run_git(&["config", &format!("branch.feat{i}.remote"), "."]);
+            test.run_git(&[
+                "config",
+                &format!("branch.feat{i}.merge"),
+                "refs/heads/main",
+            ]);
+        }
+        test.run_git(&["checkout", "main"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let locals = repo.local_branches().unwrap().to_vec();
+        let remotes = repo.remote_branches().unwrap().to_vec();
+        let written = repo.prime_upstream_ahead_behind_cache(&locals, &remotes);
+        if written == 0 {
+            return; // git < 2.36
+        }
+        assert_eq!(written, 10, "local-upstream branches must be cached too");
+
+        for i in 0..10 {
+            let feat_sha = test.git_output(&["rev-parse", &format!("feat{i}")]);
+            assert!(
+                ahead_behind_cache_path(&repo, &main_sha, &feat_sha).exists(),
+                "feat{i} keyed against main_sha (local upstream)"
+            );
+        }
+    }
+
+    #[test]
+    fn prime_upstream_caches_equal_branch_as_zero() {
+        // Branch whose tip equals its upstream → (0, 0). The cache key
+        // uses the same SHA for both base and head (a-a.json), and a
+        // later `ahead_behind_by_sha` of the equal pair must hit it.
+        let test = TestRepo::with_initial_commit();
+        let trunk_sha = test.git_output(&["rev-parse", "main"]);
+        test.run_git(&["update-ref", "refs/remotes/origin/trunk", &trunk_sha]);
+        for i in 0..10 {
+            // Each branch is created from main and stays equal to it.
+            test.run_git(&["branch", &format!("eq{i}"), "main"]);
+            track(&test, &format!("eq{i}"), "trunk");
+        }
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let locals = repo.local_branches().unwrap().to_vec();
+        let remotes = repo.remote_branches().unwrap().to_vec();
+        let written = repo.prime_upstream_ahead_behind_cache(&locals, &remotes);
+        if written == 0 {
+            return; // git < 2.36
+        }
+        // 10 equal-to-trunk branches plus main itself (if main has an
+        // upstream, but we didn't track it here) — assert at least the 10.
+        assert!(
+            written >= 10,
+            "all 10 equal branches must be cached (got {written})"
+        );
+        let cache_path = ahead_behind_cache_path(&repo, &trunk_sha, &trunk_sha);
+        assert_eq!(
+            std::fs::read_to_string(&cache_path).unwrap(),
+            "[0,0]",
+            "equal branch must cache as (0, 0) — same SHA on both sides"
+        );
     }
 }

@@ -813,15 +813,14 @@ impl Task for UpstreamTask {
         // value for branch items via the for-each-ref scan).
         //
         // `ahead_behind_by_sha` is persistently cached (`ahead-behind/`
-        // SHA-keyed), so warm runs are pure reads. What's still missing is
-        // a *cold-start batch primer* like the one `RefSnapshot` runs for
-        // the `main↕` column (`for-each-ref %(ahead-behind:main)`):
-        // TODO(remote-ahead-behind-batch): on a cold cache, prime this
-        // column in one shot via `for-each-ref --format='%(refname)
-        // %(upstream:track,nobracket)' refs/heads/` (ahead/behind vs each
-        // branch's *own* upstream in a single walk), seed the
-        // `ahead-behind/` cache from it, and let this per-row call fall
-        // through to the read — mirroring `capture_ahead_behind`.
+        // SHA-keyed), so warm runs are pure reads. Cold runs are also
+        // primed up front: `Repository::prime_upstream_ahead_behind_cache`
+        // runs in the same post-skeleton `rayon::scope` as the snapshot
+        // capture and pre-fills the cache via one `for-each-ref
+        // %(ahead-behind:UPSTREAM_SHA)` walk per unique upstream — same
+        // shared-graph-traversal win that `capture_ahead_behind` uses for
+        // the `main↕` column. This per-row call then falls through to a
+        // cache read.
         let upstream_sha = ctx
             .resolve_sha(&upstream_branch)
             .map_err(|e| ctx.error(Self::KIND, &e))?;
