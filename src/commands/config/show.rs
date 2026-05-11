@@ -741,13 +741,16 @@ fn render_fish_legacy_migration(
     Ok(())
 }
 
-/// Per-shell label distinguishing fish (separate completion file) from
-/// bash/zsh (inline completions).
+/// Per-shell label distinguishing bash/zsh (inline completions) from
+/// everyone else (no inline completions: fish ships a separate completion
+/// file; nushell and powershell have no completions). Mirrors
+/// `output::shell_integration::shell_extension_label` and the equivalent
+/// switch in `commands::configure_shell`.
 fn what_label(shell: Shell) -> &'static str {
-    if matches!(shell, Shell::Fish) {
-        "shell extension"
-    } else {
+    if matches!(shell, Shell::Bash | Shell::Zsh) {
         "shell extension & completions"
+    } else {
+        "shell extension"
     }
 }
 
