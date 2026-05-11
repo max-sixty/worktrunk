@@ -133,3 +133,40 @@ fn test_picker_dry_run_with_summary(mut repo: TestRepo) {
         "expected at least one Summary entry, got: {stdout}"
     );
 }
+
+/// `WORKTRUNK_PREVIEW_BENCH=1` shares the dry-run early-exit path but
+/// suppresses the JSON dump and stashed-warning drain so the benchmark
+/// measures just the preview-pool workload (spawn → all preview tasks
+/// drained). Asserts the env-gated branch produces no stdout/stderr,
+/// keeping the bench's hot path I/O-free.
+#[rstest]
+fn test_picker_preview_bench_produces_no_output(mut repo: TestRepo) {
+    repo.add_worktree("feature-a");
+    // Persist a default branch that doesn't exist locally — under dry-run
+    // this becomes a stale-default warning on stderr; under preview-bench
+    // the warning must stay stashed so I/O isn't part of the measurement.
+    repo.run_git(&["config", "worktrunk.default-branch", "nonexistent"]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch"])
+        .env("WORKTRUNK_PREVIEW_BENCH", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "preview-bench should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "preview-bench must not write to stdout; got: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "preview-bench must not write to stderr; got: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

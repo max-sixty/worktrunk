@@ -68,6 +68,13 @@
 //! cargo bench --bench time_to_first_output -- switch
 //! ```
 //!
+//! Preview pre-compute workload — spawn → all preview tasks drained,
+//! skim bypassed (criterion, synthetic repo):
+//!
+//! ```bash
+//! cargo bench --bench picker_preview
+//! ```
+//!
 //! Per-phase breakdown on a specific repo (a single trace is usually enough
 //! to spot where time goes; re-run a few times if you want variance):
 //!
@@ -381,10 +388,14 @@ pub fn handle_picker(
     cli_remotes: bool,
     change_dir_flag: Option<bool>,
 ) -> anyhow::Result<()> {
-    // Interactive picker requires a terminal for the TUI. The dry-run path
-    // bypasses skim entirely, so no TTY is required — useful for tests and
-    // for diagnosing the pre-compute pipeline from scripts.
-    if std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_none() && !std::io::stdin().is_terminal() {
+    // Interactive picker requires a terminal for the TUI. The dry-run and
+    // preview-bench paths bypass skim entirely, so no TTY is required —
+    // useful for tests, for diagnosing the pre-compute pipeline from scripts,
+    // and for benchmarking the preview workload headlessly.
+    let is_dry_run = std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_some();
+    let is_preview_bench = std::env::var_os("WORKTRUNK_PREVIEW_BENCH").is_some();
+    let skip_tui = is_dry_run || is_preview_bench;
+    if !skip_tui && !std::io::stdin().is_terminal() {
         anyhow::bail!("Interactive picker requires an interactive terminal");
     }
     worktrunk::trace::instant("Picker started");
@@ -690,15 +701,21 @@ pub fn handle_picker(
     drop(tx);
     drop(handler);
 
-    // Dry-run: skim is bypassed. Wait for collect (which spawns previews
-    // via the handler) to finish, then for the orchestrator's pending
-    // tasks to drain on the global rayon pool, then dump the cache.
-    if std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_some() {
+    // Dry-run / preview-bench: skim is bypassed. Wait for collect (which
+    // spawns previews via the handler) to finish, then for the orchestrator's
+    // pending tasks to drain on the global rayon pool. Dry-run additionally
+    // drains stashed warnings and dumps the cache inventory; preview-bench
+    // returns immediately so the measured wall clock is just "spawn → all
+    // preview tasks drained", with no JSON serialization or stderr I/O in
+    // the hot path.
+    if skip_tui {
         drop(rx);
         let _ = bg_handle.join();
         orchestrator.wait_for_idle();
-        drain_stashed_warnings(&stashed_warnings);
-        println!("{}", orchestrator.dump_cache_json());
+        if is_dry_run {
+            drain_stashed_warnings(&stashed_warnings);
+            println!("{}", orchestrator.dump_cache_json());
+        }
         return Ok(());
     }
 
