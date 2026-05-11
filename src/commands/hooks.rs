@@ -15,7 +15,7 @@
 //!
 //! | Hook | `ctx.repo` rooted at → config from | Set in |
 //! |---|---|---|
-//! | `pre-remove` | the worktree being removed (still on disk at hook time); if it has no `.config/wt.toml`, the **primary worktree** | `output::handlers::execute_pre_remove_hooks_if_needed` (and the `wt remove` approval helper in `main.rs`) |
+//! | `pre-remove` | the worktree being removed (still on disk at hook time); if it has no `.config/wt.toml`, the post-removal working directory (`RemoveResult.main_path`) — the **primary worktree** for `wt remove`, the merge destination for `wt merge` | `output::handlers::execute_pre_remove_hooks_if_needed`; approval mirrors it in `main.rs` (`wt remove`) and `merge::collect_merge_commands` (`wt merge`) |
 //! | `post-merge`, `post-remove`, `post-switch` after a removal | the destination — for `wt merge`, the target branch's worktree (else the primary); for `wt remove`, the primary worktree — the removed/feature worktree is gone by then | `worktree::finish::finish_after_merge`, `output::handlers::spawn_hooks_after_remove` (and `merge::collect_merge_commands` for approval) |
 //! | `pre-commit` / `post-commit` | the worktree being committed — the cwd worktree, or `<b>`'s worktree for `wt step commit --branch <b>` | `commands::commit`, `step::commit` (via `CommandEnv::for_branch`) |
 //! | `wt switch`'s `pre-start` / `post-start` / `post-switch` | the worktree `wt switch` ran in — the new worktree doesn't exist yet when these are approved, and for `wt switch --create` it's a fresh checkout of that worktree's HEAD anyway | `worktree::switch` |
