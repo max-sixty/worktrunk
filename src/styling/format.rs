@@ -143,7 +143,8 @@ pub fn format_with_gutter(content: &str, max_width: Option<usize>) -> String {
 /// 2. These injected codes create visual discontinuity when styled text wraps
 ///
 /// Additionally, wrap_ansi may split between styled content and its reset code,
-/// leaving [0m at the start of continuation lines. We move these to line ends.
+/// leaving [0m at the start of continuation lines. We strip those leading resets.
+/// (A [0m that ends a line is left in place — wrap_ansi keeps line-final resets.)
 ///
 /// IMPORTANT: wrap_ansi only restores foreground colors on continuation lines,
 /// not text attributes like dim. We detect this and prepend dim (\x1b[2m) to
