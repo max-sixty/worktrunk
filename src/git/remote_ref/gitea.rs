@@ -241,6 +241,64 @@ pub fn fork_remote_url(host: &str, owner: &str, repo: &str) -> String {
     format!("https://{}/{}/{}.git", host, owner, repo)
 }
 
+/// Whether `tea` has a login configured for `host`.
+///
+/// Used by the switch dispatcher to decide which provider to try when the
+/// remote URL doesn't unambiguously identify the forge. Reads tea's config
+/// file directly — `$XDG_CONFIG_HOME/tea/config.yml` (default
+/// `~/.config/tea/config.yml`) with legacy fallback `~/.tea/tea.yml` — and
+/// returns true if any `logins[].url` parses to the same host. Pure local
+/// I/O; never invokes `tea` (which can trigger an OAuth refresh on lookup).
+pub fn is_authed_for(host: &str) -> bool {
+    read_tea_config().is_some_and(|content| config_has_login_for(&content, host))
+}
+
+/// Pure parser: scan tea's `config.yml` content for a `logins[].url` whose
+/// host matches `target`. Extracted from `is_authed_for` so the YAML-shaped
+/// matching can be unit-tested without touching the filesystem or env vars.
+fn config_has_login_for(content: &str, target: &str) -> bool {
+    content.lines().any(|line| {
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed.strip_prefix("url:") else {
+            return false;
+        };
+        let value = rest.trim().trim_matches(|c: char| c == '"' || c == '\'');
+        let Some(without_scheme) = value
+            .strip_prefix("https://")
+            .or_else(|| value.strip_prefix("http://"))
+        else {
+            return false;
+        };
+        let host = without_scheme.split(['/', '?', '#']).next().unwrap_or("");
+        host.eq_ignore_ascii_case(target)
+    })
+}
+
+/// Read tea's config.yml, honoring `$XDG_CONFIG_HOME` and the legacy
+/// `~/.tea/tea.yml` fallback. Returns None if neither file is readable.
+fn read_tea_config() -> Option<String> {
+    let xdg = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from);
+    let home = dirs::home_dir();
+
+    let primary = xdg
+        .clone()
+        .or_else(|| home.as_ref().map(|h| h.join(".config")))
+        .map(|base| base.join("tea").join("config.yml"));
+    if let Some(path) = primary
+        && let Ok(content) = std::fs::read_to_string(&path)
+    {
+        return Some(content);
+    }
+
+    let legacy = home.map(|h| h.join(".tea").join("tea.yml"));
+    if let Some(path) = legacy
+        && let Ok(content) = std::fs::read_to_string(&path)
+    {
+        return Some(content);
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,5 +415,32 @@ mod tests {
             repo: None,
         };
         assert_eq!(extract_source_branch(&head), None);
+    }
+
+    #[test]
+    fn test_config_has_login_for_matches_known_hosts() {
+        // tea writes one entry per `tea login add`. Match by host extracted
+        // from the URL — case-insensitive, scheme-agnostic, ignores trailing
+        // path/query.
+        let yaml = r#"logins:
+  - name: gitea-com
+    url: https://gitea.com
+    default: true
+  - name: selfhosted
+    url: "https://forge.example.com/"
+  - name: with-path
+    url: http://other.test/api/v1
+"#;
+        assert!(config_has_login_for(yaml, "gitea.com"));
+        assert!(config_has_login_for(yaml, "GITEA.COM"));
+        assert!(config_has_login_for(yaml, "forge.example.com"));
+        assert!(config_has_login_for(yaml, "other.test"));
+        assert!(!config_has_login_for(yaml, "not-configured.test"));
+        // Empty config has no logins.
+        assert!(!config_has_login_for("", "gitea.com"));
+        // Stray `url:` outside a logins entry must not match — but the parser
+        // is line-based and intentionally permissive; document the trade-off
+        // by asserting the tea-shaped scheme-prefixed form is required.
+        assert!(!config_has_login_for("url: gitea.com\n", "gitea.com"));
     }
 }

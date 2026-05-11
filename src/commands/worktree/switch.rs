@@ -77,15 +77,20 @@ fn format_ref_context(ctx: &impl RefContext) -> String {
 enum PrProviderChoice {
     GitHub,
     Gitea,
-    Ambiguous,
 }
 
 /// Choose which provider should handle `pr:<number>` resolution.
 ///
 /// Priority:
 /// 1. `forge.platform` config override
-/// 2. Primary remote URL detection
-/// 3. Ambiguous fallback (try `gh`, then `tea`)
+/// 2. Primary remote URL detection (host contains `github`/`gitea`)
+/// 3. CLI auth lookup — if `tea` has a login for this host but `gh` does
+///    not, pick Gitea; otherwise default to GitHub
+///
+/// The default-to-GitHub fall-through means a self-hosted Gitea on a branded
+/// host (e.g. `git.example.com`) without `tea login add` will see a single
+/// GitHub error (with hint to set `forge.platform = "gitea"`), instead of a
+/// wrapped two-provider error.
 fn choose_pr_provider(repo: &Repository) -> anyhow::Result<PrProviderChoice> {
     if let Some(platform_raw) = repo
         .load_project_config()
@@ -94,9 +99,9 @@ fn choose_pr_provider(repo: &Repository) -> anyhow::Result<PrProviderChoice> {
         .and_then(|c| c.forge_platform().map(str::to_string))
     {
         let platform = platform_raw.to_ascii_lowercase();
-        return match platform.as_str() {
-            "github" => Ok(PrProviderChoice::GitHub),
-            "gitea" => Ok(PrProviderChoice::Gitea),
+        match platform.as_str() {
+            "github" => return Ok(PrProviderChoice::GitHub),
+            "gitea" => return Ok(PrProviderChoice::Gitea),
             "gitlab" => {
                 bail!("forge.platform is set to gitlab; use mr:<number> instead of pr:<number>")
             }
@@ -107,9 +112,9 @@ fn choose_pr_provider(repo: &Repository) -> anyhow::Result<PrProviderChoice> {
                         "Invalid forge.platform value <bold>{platform_raw}</>; expected github, gitea, or gitlab. Falling back to remote detection."
                     ))
                 );
-                Ok(PrProviderChoice::Ambiguous)
+                // Continue to URL/CLI detection below.
             }
-        };
+        }
     }
 
     // Use the raw remote URL (not effective) — `insteadOf` rewrites are for
@@ -122,52 +127,30 @@ fn choose_pr_provider(repo: &Repository) -> anyhow::Result<PrProviderChoice> {
         .and_then(|url| worktrunk::git::GitRemoteUrl::parse(&url));
 
     let Some(parsed) = detected else {
-        return Ok(PrProviderChoice::Ambiguous);
+        return Ok(PrProviderChoice::GitHub);
     };
 
     if parsed.is_github() {
-        Ok(PrProviderChoice::GitHub)
-    } else if parsed.is_gitlab() {
+        return Ok(PrProviderChoice::GitHub);
+    }
+    if parsed.is_gitlab() {
         bail!("Detected GitLab remote; use mr:<number> instead of pr:<number>")
-    } else if parsed.is_gitea() {
+    }
+    if parsed.is_gitea() {
+        return Ok(PrProviderChoice::Gitea);
+    }
+
+    // Self-hosted forge with a non-distinctive hostname. Ask the CLIs which
+    // one is configured for this host. If only `tea` has a login, pick Gitea;
+    // otherwise default to GitHub (the common case, and the one users get
+    // useful errors from when nothing is set up).
+    if remote_ref::gitea::is_authed_for(parsed.host())
+        && !remote_ref::github::is_authed_for(parsed.host())
+    {
         Ok(PrProviderChoice::Gitea)
     } else {
-        Ok(PrProviderChoice::Ambiguous)
+        Ok(PrProviderChoice::GitHub)
     }
-}
-
-/// Collapse a multi-line, possibly-styled error chain into a single line so
-/// the outer error stays single-line. main.rs's `debug_assert!` panics if a
-/// top-level error has embedded newlines without an explanatory context,
-/// and the rendered Display of `GitError::CliApiError` is a multi-line gutter
-/// block. We iterate the cause chain joining with `: `, strip ANSI, and
-/// collapse whitespace runs (including newlines).
-fn flatten_error(err: &anyhow::Error) -> String {
-    use ansi_str::AnsiStr;
-
-    let mut parts = Vec::new();
-    for cause in err.chain() {
-        let raw = cause.to_string();
-        let stripped = raw.ansi_strip();
-        let trimmed = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
-        if !trimmed.is_empty() {
-            parts.push(trimmed);
-        }
-    }
-    parts.join(": ")
-}
-
-fn ambiguous_pr_error(
-    number: u32,
-    context: &str,
-    gh_err: anyhow::Error,
-    tea_err: anyhow::Error,
-) -> anyhow::Error {
-    anyhow::anyhow!(
-        "Failed to resolve pr:{number} for {context} with both providers; GitHub (gh): {}; Gitea (tea): {}. Hint: set [forge] platform = \"github\" or \"gitea\" in .config/wt.toml to disambiguate.",
-        flatten_error(&gh_err),
-        flatten_error(&tea_err),
-    )
 }
 
 fn resolve_pr_target(
@@ -187,21 +170,6 @@ fn resolve_pr_target(
     match choose_pr_provider(repo)? {
         PrProviderChoice::GitHub => resolve_remote_ref(repo, &GitHubProvider, number, create, base),
         PrProviderChoice::Gitea => resolve_remote_ref(repo, &GiteaProvider, number, create, base),
-        PrProviderChoice::Ambiguous => {
-            match resolve_remote_ref(repo, &GitHubProvider, number, create, base) {
-                Ok(target) => Ok(target),
-                Err(gh_err) => match resolve_remote_ref(repo, &GiteaProvider, number, create, base)
-                {
-                    Ok(target) => Ok(target),
-                    Err(tea_err) => {
-                        if tea_err.downcast_ref::<GitError>().is_some() {
-                            return Err(tea_err);
-                        }
-                        Err(ambiguous_pr_error(number, "switch target", gh_err, tea_err))
-                    }
-                },
-            }
-        }
     }
 }
 
@@ -212,15 +180,6 @@ fn resolve_pr_base(
     match choose_pr_provider(repo)? {
         PrProviderChoice::GitHub => resolve_remote_ref_as_base(repo, &GitHubProvider, number),
         PrProviderChoice::Gitea => resolve_remote_ref_as_base(repo, &GiteaProvider, number),
-        PrProviderChoice::Ambiguous => {
-            match resolve_remote_ref_as_base(repo, &GitHubProvider, number) {
-                Ok(base) => Ok(base),
-                Err(gh_err) => match resolve_remote_ref_as_base(repo, &GiteaProvider, number) {
-                    Ok(base) => Ok(base),
-                    Err(tea_err) => Err(ambiguous_pr_error(number, "--base", gh_err, tea_err)),
-                },
-            }
-        }
     }
 }
 

@@ -3806,16 +3806,15 @@ fn test_switch_pr_forge_platform_invalid_falls_back(#[from(repo_with_remote)] re
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "pr:101"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
-        assert_cmd_snapshot!("switch_pr_forge_platform_invalid", cmd);
+        assert_cmd_snapshot!("switch_pr_forge_platform_invalid_defaults", cmd);
     });
 }
 
-/// With no remote URL parseable, provider detection returns Ambiguous (no
-/// auto-pick) and the ambiguous fallback runs. Without `gh` or `tea` mocks
-/// installed both providers fail with a non-`GitError` error, exercising
-/// `ambiguous_pr_error`.
+/// With no parseable remote URL, dispatch defaults to GitHub. Without `gh`
+/// installed the GitHub provider bails with the install hint — a single,
+/// readable error rather than a wrapped two-provider message.
 #[rstest]
-fn test_switch_pr_no_remote_falls_back_to_ambiguous(repo: TestRepo) {
+fn test_switch_pr_no_remote_defaults_to_github(repo: TestRepo) {
     let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
         eprintln!("Skipping test: symlinks not available on this system");
         return;
@@ -3825,7 +3824,7 @@ fn test_switch_pr_no_remote_falls_back_to_ambiguous(repo: TestRepo) {
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
         configure_cli_not_installed_env(&mut cmd, &minimal_bin);
-        assert_cmd_snapshot!("switch_pr_no_remote_ambiguous", cmd);
+        assert_cmd_snapshot!("switch_pr_no_remote_defaults_to_github", cmd);
     });
 }
 
@@ -3846,10 +3845,61 @@ fn test_switch_pr_gitlab_remote_rejects_pr(#[from(repo_with_remote)] repo: TestR
     });
 }
 
-/// Ambiguous fallback where gh succeeds first — tea is never called and the
-/// PR is checked out as a GitHub PR despite the unrecognized host.
+/// Self-hosted forge whose hostname doesn't match any URL detection rule, but
+/// `tea` has a login configured for it (via `tea login add`) — dispatch
+/// inspects tea's config file and routes to Gitea.
 #[rstest]
-fn test_switch_pr_ambiguous_gh_succeeds(#[from(repo_with_remote)] mut repo: TestRepo) {
+fn test_switch_pr_self_hosted_tea_authed_dispatches_to_gitea(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://forge.selfhosted.test/owner/test-repo.git",
+    ]);
+
+    let tea_config_dir = repo.home_path().join(".config").join("tea");
+    fs::create_dir_all(&tea_config_dir).unwrap();
+    fs::write(
+        tea_config_dir.join("config.yml"),
+        "logins:\n  - name: selfhosted\n    url: https://forge.selfhosted.test\n    default: true\n",
+    )
+    .unwrap();
+
+    let tea_response = r#"{
+        "title": "Routed via tea config",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "feature-auth",
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://forge.selfhosted.test/owner/test-repo/pulls/101"
+    }"#;
+    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_self_hosted_tea_authed", cmd);
+    });
+}
+
+/// Self-hosted forge with a non-distinctive hostname (`forge.example.com`)
+/// and neither `gh` nor `tea` configured for it — dispatch defaults to
+/// GitHub. The mock `gh api` succeeds, so the PR is checked out and the
+/// user never sees a wrapped error.
+#[rstest]
+fn test_switch_pr_self_hosted_defaults_to_github(#[from(repo_with_remote)] mut repo: TestRepo) {
     repo.add_worktree("feature-auth");
     repo.run_git(&["push", "origin", "feature-auth"]);
 
@@ -3877,7 +3927,7 @@ fn test_switch_pr_ambiguous_gh_succeeds(#[from(repo_with_remote)] mut repo: Test
     ]);
 
     let gh_response = r#"{
-        "title": "Ambiguous gh wins",
+        "title": "Self-hosted defaults to gh",
         "user": {"login": "alice"},
         "state": "open",
         "draft": false,
@@ -3897,96 +3947,7 @@ fn test_switch_pr_ambiguous_gh_succeeds(#[from(repo_with_remote)] mut repo: Test
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
-        assert_cmd_snapshot!("switch_pr_ambiguous_gh_wins", cmd);
-    });
-}
-
-/// Ambiguous fallback where gh's `CliApiError` (a `GitError`) is returned
-/// directly (no `ambiguous_pr_error` wrapper) when tea also fails — exercises
-/// the GitError short-circuit in `resolve_pr_target`.
-#[rstest]
-fn test_switch_pr_ambiguous_tea_returns_cli_error(#[from(repo_with_remote)] repo: TestRepo) {
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://forge.example.com/owner/test-repo.git",
-    ]);
-
-    let mock_bin = repo.root_path().join("mock-bin");
-    fs::create_dir_all(&mock_bin).unwrap();
-    copy_mock_binary(&mock_bin, "gh");
-    copy_mock_binary(&mock_bin, "tea");
-
-    // gh: 404 → bail (anyhow). tea: generic non-categorized error → CliApiError (GitError).
-    MockConfig::new("gh")
-        .version("gh version 2.0.0 (mock)")
-        .command(
-            "api",
-            MockResponse::output(r#"{"message":"Not Found","status":"404"}"#).with_exit_code(1),
-        )
-        .command("_default", MockResponse::exit(1))
-        .write(&mock_bin);
-    MockConfig::new("tea")
-        .version("tea version development (mock)")
-        .command(
-            "api",
-            MockResponse::output("internal error\n").with_exit_code(1),
-        )
-        .command("_default", MockResponse::exit(1))
-        .write(&mock_bin);
-
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_cli_env(&mut cmd, &mock_bin);
-        assert_cmd_snapshot!("switch_pr_ambiguous_tea_cli_error", cmd);
-    });
-}
-
-/// `wt switch -c new --base pr:N` exercises the `resolve_pr_base` ambiguous
-/// fallback (gh fails, tea fails, both wrapped in `ambiguous_pr_error`).
-#[rstest]
-fn test_switch_create_base_pr_ambiguous(#[from(repo_with_remote)] repo: TestRepo) {
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://forge.example.com/owner/test-repo.git",
-    ]);
-
-    let mock_bin = repo.root_path().join("mock-bin");
-    fs::create_dir_all(&mock_bin).unwrap();
-    copy_mock_binary(&mock_bin, "gh");
-    copy_mock_binary(&mock_bin, "tea");
-
-    MockConfig::new("gh")
-        .version("gh version 2.0.0 (mock)")
-        .command(
-            "api",
-            MockResponse::output(r#"{"message":"Not Found","status":"404"}"#).with_exit_code(1),
-        )
-        .command("_default", MockResponse::exit(1))
-        .write(&mock_bin);
-    MockConfig::new("tea")
-        .version("tea version development (mock)")
-        .command(
-            "api",
-            MockResponse::output(r#"{"message":"404 Not found"}"#).with_exit_code(1),
-        )
-        .command("_default", MockResponse::exit(1))
-        .write(&mock_bin);
-
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(
-            &repo,
-            "switch",
-            &["--create", "feature-x", "--base", "pr:101"],
-            None,
-        );
-        configure_mock_cli_env(&mut cmd, &mock_bin);
-        assert_cmd_snapshot!("switch_create_base_pr_ambiguous", cmd);
+        assert_cmd_snapshot!("switch_pr_self_hosted_defaults_to_github", cmd);
     });
 }
 
@@ -4120,53 +4081,6 @@ fn test_switch_pr_gitea_deleted_fork(#[from(repo_with_remote)] repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_gitea_deleted_fork", cmd);
-    });
-}
-
-/// Ambiguous fallback when the remote URL doesn't identify a forge: gh fails,
-/// tea fails, the outer error reports both providers' messages on a single
-/// line. Exercises `flatten_error` and `ambiguous_pr_error`.
-#[rstest]
-fn test_switch_pr_ambiguous_both_providers_fail(#[from(repo_with_remote)] repo: TestRepo) {
-    // Non-GitHub, non-Gitea host so detection returns Ambiguous.
-    repo.run_git(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://forge.example.com/owner/test-repo.git",
-    ]);
-
-    let mock_bin = repo.root_path().join("mock-bin");
-    fs::create_dir_all(&mock_bin).unwrap();
-    copy_mock_binary(&mock_bin, "gh");
-    copy_mock_binary(&mock_bin, "tea");
-
-    // Both providers return 404 so each one bails with a plain anyhow error
-    // (not the structured `GitError::CliApiError`). When both errors lack the
-    // `GitError` shape, the ambiguous-error wrapper kicks in and exercises
-    // `flatten_error` + `ambiguous_pr_error`.
-    MockConfig::new("gh")
-        .version("gh version 2.0.0 (mock)")
-        .command(
-            "api",
-            MockResponse::output(r#"{"message":"Not Found","status":"404"}"#).with_exit_code(1),
-        )
-        .command("_default", MockResponse::exit(1))
-        .write(&mock_bin);
-    MockConfig::new("tea")
-        .version("tea version development (mock)")
-        .command(
-            "api",
-            MockResponse::output(r#"{"message":"404 Not found"}"#).with_exit_code(1),
-        )
-        .command("_default", MockResponse::exit(1))
-        .write(&mock_bin);
-
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_cli_env(&mut cmd, &mock_bin);
-        assert_cmd_snapshot!("switch_pr_ambiguous_both_fail", cmd);
     });
 }
 

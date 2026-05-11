@@ -54,5 +54,4 @@ exit_code: 1
 
 ----- stderr -----
 [36m◎[39m [36mFetching PR #101...[39m
-[36m◎[39m [36mFetching PR #101...[39m
-[31m✗[39m [31mFailed to resolve pr:101 for switch target with both providers; GitHub (gh): PR #101 not found on owner/test-repo (origin). If the PR is on a different repository, run `gh repo set-default` to set the default or configure a different primary remote.; Gitea (tea): Gitea PR #101 not found on owner/test-repo. Hint: set [forge] platform = "github" or "gitea" in .config/wt.toml to disambiguate.[39m
+[31m✗[39m [31mCannot parse remote URL: ../origin.git[39m

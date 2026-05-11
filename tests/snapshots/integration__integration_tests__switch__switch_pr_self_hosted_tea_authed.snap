@@ -54,5 +54,8 @@ exit_code: 1
 
 ----- stderr -----
 [36m◎[39m [36mFetching PR #101...[39m
-[36m◎[39m [36mFetching PR #101...[39m
-[31m✗[39m [31mFailed to resolve pr:101 for switch target with both providers; GitHub (gh): Cannot parse remote URL: ../origin.git; Gitea (tea): Cannot parse remote URL: ../origin.git. Hint: set [forge] platform = "github" or "gitea" in .config/wt.toml to disambiguate.[39m
+[107m [0m [1mRouted via tea config[22m (#101)
+[107m [0m by @alice · open · feature-auth · [90mhttps://forge.selfhosted.test/owner/test-repo/pulls/101[39m
+[36m◎[39m [36mFetching [1mfeature-auth[22m from origin...[39m
+[31m✗[39m [31mFailed to fetch branch [1mfeature-auth[22m from origin[39m
+[107m [0m fatal: unable to access 'https://forge.selfhosted.test/owner/test-repo.git/': Could not resolve host: forge.selfhosted.test

@@ -243,6 +243,22 @@ fn use_ssh_protocol() -> bool {
     cli_config_value("gh", "git_protocol").as_deref() == Some("ssh")
 }
 
+/// Whether `gh` has an authentication token configured for `host`.
+///
+/// Used by the switch dispatcher to decide which provider to try when the
+/// remote URL doesn't unambiguously identify the forge (e.g. self-hosted on
+/// `git.example.com`). `gh auth token --hostname <host>` reads from
+/// `~/.config/gh/hosts.yml` and the OS keyring — no network. Returns `false`
+/// if `gh` is not installed.
+pub fn is_authed_for(host: &str) -> bool {
+    Cmd::new("gh")
+        .args(["auth", "token", "--hostname", host])
+        .env("GH_PROMPT_DISABLED", "1")
+        .run()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// Construct the remote URL for a fork repository.
 pub fn fork_remote_url(host: &str, owner: &str, repo: &str) -> String {
     if use_ssh_protocol() {
