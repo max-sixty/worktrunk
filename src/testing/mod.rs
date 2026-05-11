@@ -2049,7 +2049,7 @@ impl TestRepo {
     /// Setup mock `tea` that returns configurable Gitea PR / commit-status data.
     ///
     /// Use this for testing Gitea CI status parsing. The mock handles:
-    /// - `tea api repos/{owner}/{repo}/pulls?state=open&limit=20` → `pulls_json`
+    /// - `tea api repos/{owner}/{repo}/pulls?state=open` → `pulls_json`
     /// - `tea api repos/{owner}/{repo}/commits/{head_sha}/status` → `status_json`
     ///
     /// `owner`/`repo_name`/`head_sha` are needed because mock-stub matches the
@@ -2079,8 +2079,7 @@ impl TestRepo {
         std::fs::write(mock_bin.join("tea_pulls.json"), pulls_json).unwrap();
         std::fs::write(mock_bin.join("tea_status.json"), status_json).unwrap();
 
-        // `limit=20` mirrors MAX_PRS_TO_FETCH in src/commands/list/ci_status.
-        let pulls_path = format!("api repos/{owner}/{repo_name}/pulls?state=open&limit=20");
+        let pulls_path = format!("api repos/{owner}/{repo_name}/pulls?state=open");
         let status_path = format!("api repos/{owner}/{repo_name}/commits/{head_sha}/status");
 
         MockConfig::new("tea")
@@ -2140,7 +2139,7 @@ impl TestRepo {
         MockConfig::new("tea")
             .version("tea version development (mock)")
             .command(
-                "api repos/owner/test-repo/pulls?state=open&limit=20",
+                "api repos/owner/test-repo/pulls?state=open",
                 MockResponse::file("tea_pulls.json"),
             )
             .command(

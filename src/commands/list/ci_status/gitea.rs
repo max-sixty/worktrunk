@@ -7,8 +7,9 @@
 //!   commit status (`state` + `total_count`). Both Gitea Actions and external
 //!   CI report into commit statuses, so this is the pass/fail/pending rollup —
 //!   the equivalent of GitHub's check-runs API.
-//! - `GET /repos/{owner}/{repo}/pulls?state=open` lists open PRs; each PR
-//!   carries `mergeable`, which surfaces merge conflicts.
+//! - `GET /repos/{owner}/{repo}/pulls?state=open` lists open PRs (the `state`
+//!   filter is required — the endpoint returns *all* states by default); each
+//!   PR carries `mergeable`, which surfaces merge conflicts.
 //!
 //! ## Two paths (mirrors [`super::azure`])
 //!
@@ -25,8 +26,8 @@
 //!
 //! ## Known limitations (experimental)
 //!
-//! - Only the first [`MAX_PRS_TO_FETCH`] open PRs are inspected; in a repo with
-//!   more open PRs than that for the same branch name, ours could be missed.
+//! - Only the first page of open PRs (Gitea's default page size, newest-first)
+//!   is inspected; in a repo with many open PRs, ours could fall off the page.
 //! - The PR lookup queries the primary remote's repo only, so PRs opened from a
 //!   fork (head repo owner ≠ that repo's owner) aren't matched.
 //! - `mergeable` is computed asynchronously by Gitea, so a freshly-opened PR can
@@ -38,8 +39,7 @@ use std::process::Output;
 use worktrunk::git::{Repository, parse_owner_repo};
 
 use super::{
-    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrStatus, is_retriable_error,
-    non_interactive_cmd, parse_json,
+    CiBranchName, CiSource, CiStatus, PrStatus, is_retriable_error, non_interactive_cmd, parse_json,
 };
 
 /// Resolve `(owner, repo)` for this repo's Gitea remote.
@@ -104,9 +104,8 @@ fn fetch_combined_status(
 /// Detect Gitea PR CI status for a branch.
 ///
 /// Lists open PRs (`tea api repos/{owner}/{repo}/pulls?state=open`), finds the
-/// one whose head branch matches `branch.name` and (leniently) whose head repo
-/// owner matches the queried repo's owner, then reports conflicts (`mergeable`)
-/// and the head commit's combined CI status.
+/// one whose head branch matches `branch.name`, then reports conflicts
+/// (`mergeable`) and the head commit's combined CI status.
 pub(super) fn detect_gitea_pr(
     repo: &Repository,
     branch: &CiBranchName,
@@ -114,7 +113,8 @@ pub(super) fn detect_gitea_pr(
 ) -> Option<PrStatus> {
     let (owner, repo_name) = gitea_owner_repo(repo)?;
 
-    let path = format!("repos/{owner}/{repo_name}/pulls?state=open&limit={MAX_PRS_TO_FETCH}");
+    // `state=open` is required: the pulls list returns all states by default.
+    let path = format!("repos/{owner}/{repo_name}/pulls?state=open");
     let output = tea_api(repo, &path)?;
     if !output.status.success() {
         return is_retriable_error(&error_text(&output)).then(PrStatus::error);
@@ -122,9 +122,10 @@ pub(super) fn detect_gitea_pr(
 
     let prs: Vec<GiteaPr> = parse_json(&output.stdout, "tea api pulls", &branch.full_name)?;
 
-    // Match by head branch name; if the head repo owner is present it must match
-    // the queried repo's owner (missing owner ⇒ potential match, mirroring the
-    // GitHub path).
+    // Match by head branch name; require the head repo owner (when present) to
+    // be the repo we queried — same-repo PRs only, since this branch looks at
+    // the primary remote alone (fork PRs are out of scope). A missing owner is
+    // treated as a potential match, as in the GitHub path.
     let pr = prs.iter().find(|pr| {
         pr.head.ref_name == branch.name
             && pr
@@ -180,8 +181,11 @@ pub(super) fn detect_gitea_commit_status(repo: &Repository, local_head: &str) ->
 
 /// Map a Gitea combined-status `state` to [`CiStatus`].
 ///
-/// Gitea's worst-state-wins ordering is `error > failure > warning > pending >
-/// success`; an empty state (no statuses) returns `None`.
+/// Gitea collapses the per-commit statuses into one combined value — in
+/// practice `success` / `pending` / `failure` (a status-less commit reports
+/// `pending`, which the caller already excludes via `total_count == 0`).
+/// `error` and `warning` are per-status values handled defensively in case a
+/// Gitea version surfaces them here; unknown values map to `None`.
 fn parse_gitea_status_state(state: &str) -> Option<CiStatus> {
     match state {
         "success" => Some(CiStatus::Passed),
