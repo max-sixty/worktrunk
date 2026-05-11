@@ -638,7 +638,11 @@ mod tests {
         let we = err.downcast_ref::<WorktrunkError>().unwrap();
         assert!(matches!(
             we,
-            WorktrunkError::ChildProcessExited { signal: None, code: 1, .. }
+            WorktrunkError::ChildProcessExited {
+                signal: None,
+                code: 1,
+                ..
+            }
         ));
 
         // ChildProcessExited with same signal as originating: untouched.
@@ -653,7 +657,11 @@ mod tests {
         let we = err.downcast_ref::<WorktrunkError>().unwrap();
         assert!(matches!(
             we,
-            WorktrunkError::ChildProcessExited { signal: Some(2), code: 130, .. }
+            WorktrunkError::ChildProcessExited {
+                signal: Some(2),
+                code: 130,
+                ..
+            }
         ));
 
         // ChildProcessExited with different signal (escalation case):
