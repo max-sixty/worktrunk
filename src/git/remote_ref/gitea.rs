@@ -207,33 +207,46 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
 /// Prefers `label` (Gitea returns `owner:branch` for forks, `branch` otherwise).
 /// Falls back to `ref`, which Gitea returns as the bare branch name (e.g.
 /// `feature-auth`); the `refs/heads/` strip handles Gitea instances that
-/// happen to return a fully-qualified ref. `pulls/<idx>/head` from
-/// branch-deleted PRs is excluded because it's a tracking ref, not a branch.
+/// happen to return a fully-qualified ref.
+///
+/// Gitea returns placeholders rather than nulls when the source branch is gone:
+/// `label = "unknown repository"` and `ref = "refs/pull/<n>/head"` (or
+/// `pulls/<n>/head`). These look like strings, but they're not branches we can
+/// fetch — reject them so `fetch_pr_info` bails with the deleted-source error.
 fn extract_source_branch(head: &TeaPrRef) -> Option<String> {
     if !head.label.is_empty() {
-        let branch = head
+        let candidate = head
             .label
             .split_once(':')
             .map(|(_, b)| b)
             .unwrap_or(&head.label)
             .trim();
-        if !branch.is_empty() {
-            return Some(branch.to_string());
+        if is_real_branch_name(candidate) {
+            return Some(candidate.to_string());
         }
     }
 
-    if head.ref_name.is_empty() || head.ref_name.starts_with("pulls/") {
-        return None;
-    }
-    let branch = head
+    let candidate = head
         .ref_name
         .strip_prefix("refs/heads/")
-        .unwrap_or(&head.ref_name);
-    if branch.is_empty() {
-        None
+        .unwrap_or(&head.ref_name)
+        .trim();
+    if is_real_branch_name(candidate) {
+        Some(candidate.to_string())
     } else {
-        Some(branch.to_string())
+        None
     }
+}
+
+/// A branch name candidate is real when it's non-empty, has no whitespace
+/// (placeholders like `"unknown repository"` carry a space), and isn't a
+/// PR-tracking ref like `refs/pull/<n>/head` or `pulls/<n>/head`.
+fn is_real_branch_name(s: &str) -> bool {
+    !s.is_empty()
+        && !s.contains(char::is_whitespace)
+        && !s.starts_with("refs/")
+        && !s.starts_with("pulls/")
+        && !s.starts_with("pull/")
 }
 
 /// Construct the remote URL for a Gitea repository.
@@ -412,6 +425,37 @@ mod tests {
         let head = TeaPrRef {
             label: "".to_string(),
             ref_name: "pulls/42/head".to_string(),
+            repo: None,
+        };
+        assert_eq!(extract_source_branch(&head), None);
+    }
+
+    #[test]
+    fn test_extract_source_branch_rejects_placeholders() {
+        // Deleted-source PRs: Gitea returns "unknown repository" as the label
+        // (contains a space, not a real branch name) and "refs/pull/<n>/head"
+        // as the ref (a tracking ref, not a branch). Both must be rejected so
+        // fetch_pr_info bails with the deleted-source error rather than
+        // proceeding to fetch an invalid branch.
+        let head = TeaPrRef {
+            label: "unknown repository".to_string(),
+            ref_name: "refs/pull/42/head".to_string(),
+            repo: None,
+        };
+        assert_eq!(extract_source_branch(&head), None);
+
+        // Same but with the bare `pull/<n>/head` form some Gitea versions emit.
+        let head = TeaPrRef {
+            label: "".to_string(),
+            ref_name: "pull/42/head".to_string(),
+            repo: None,
+        };
+        assert_eq!(extract_source_branch(&head), None);
+
+        // A bare `refs/pull/...` in the label (no `:` separator) must also fail.
+        let head = TeaPrRef {
+            label: "refs/pull/42/head".to_string(),
+            ref_name: "".to_string(),
             repo: None,
         };
         assert_eq!(extract_source_branch(&head), None);

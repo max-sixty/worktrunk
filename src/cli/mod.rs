@@ -1936,7 +1936,7 @@ Override platform detection for SSH aliases or self-hosted instances:
 
 ```toml
 [forge]
-platform = "github"  # or "gitlab"
+platform = "github"  # or "gitea" (experimental), "gitlab"
 hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 ```
 

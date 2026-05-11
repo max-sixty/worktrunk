@@ -66,14 +66,16 @@ pub struct ProjectCiConfig {
 ///
 /// ```toml
 /// [forge]
-/// platform = "github"              # or "gitlab"
+/// platform = "github"              # or "gitea" (experimental), "gitlab"
 /// hostname = "github.example.com"  # API hostname for GHE / self-hosted GitLab
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct ProjectForgeConfig {
     /// Forge platform override. When set, skips URL-based platform detection.
     ///
-    /// Values: "github" or "gitlab"
+    /// Values: "github", "gitea" (experimental), or "gitlab". The `wt switch
+    /// pr:` shortcut uses `forge.platform` to decide which CLI to invoke
+    /// (`gh`, `tea`, or `glab`).
     #[serde(default)]
     pub platform: Option<String>,
 
