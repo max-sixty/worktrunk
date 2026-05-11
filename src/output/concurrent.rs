@@ -36,6 +36,10 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, Stdio};
+#[cfg(unix)]
+use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::Instant;
@@ -165,12 +169,52 @@ pub fn run_concurrent_commands(
     }
 
     #[cfg(unix)]
-    {
-        // All children have exited — shut the signal forwarder down.
-        signal_thread.stop();
+    let originating_signal = {
+        // All children have exited — shut the signal forwarder down. Returns
+        // the first signal the forwarder observed (None if no signal arrived).
+        signal_thread.stop()
+    };
+    #[cfg(not(unix))]
+    let originating_signal: Option<i32> = None;
+
+    // If wt's forwarder escalated SIGINT → SIGTERM → SIGKILL, a child may have
+    // died from SIGTERM (or SIGKILL) even though the user only sent SIGINT.
+    // From the user's outside view, the originating signal is what they sent;
+    // wt's internal escalation is an implementation detail that shouldn't
+    // surface as a different exit code (e.g., 143 instead of 130). Override
+    // each child's reported signal with the originating signal so wt's
+    // `exit_code()` and `interrupt_exit_code()` reflect the user's intent.
+    if let Some(orig) = originating_signal {
+        for outcome in &mut outcomes {
+            override_with_originating_signal(outcome, orig);
+        }
     }
 
     Ok(outcomes)
+}
+
+/// Replace a child's signal-derived `ChildProcessExited` error with one whose
+/// `signal` / `code` / `message` reflect the originating signal wt received
+/// (rather than whichever signal the forwarder's escalation chain ultimately
+/// killed the child with). No-op if the outcome isn't a signal-derived error.
+fn override_with_originating_signal(outcome: &mut anyhow::Result<()>, originating: i32) {
+    let Err(err) = outcome else { return };
+    let Some(WorktrunkError::ChildProcessExited {
+        signal: Some(child_sig),
+        ..
+    }) = err.downcast_ref::<WorktrunkError>()
+    else {
+        return;
+    };
+    if *child_sig == originating {
+        return;
+    }
+    *outcome = Err(WorktrunkError::ChildProcessExited {
+        code: 128 + originating,
+        message: format!("terminated by signal {originating}"),
+        signal: Some(originating),
+    }
+    .into());
 }
 
 /// Serial fallback for `WORKTRUNK_TEST_SERIAL_CONCURRENT`.
@@ -408,15 +452,24 @@ fn render_prefix(index: usize, label: &str, width: usize) -> String {
 struct SignalForwarder {
     handle: signal_hook::iterator::Handle,
     listener: thread::JoinHandle<()>,
+    /// First signal the forwarder observed, or 0 if none arrived. Lets the
+    /// caller report the user's originating signal (e.g., SIGINT) as wt's
+    /// exit code even when escalation ultimately killed the child with a
+    /// later signal (e.g., SIGTERM/SIGKILL).
+    originating_signal: Arc<AtomicI32>,
 }
 
 #[cfg(unix)]
 impl SignalForwarder {
-    fn stop(self) {
+    fn stop(self) -> Option<i32> {
         // Closing the signal-hook handle unblocks `Signals::forever()` so
         // the listener thread returns; join it to avoid a leak.
         self.handle.close();
         let _ = self.listener.join();
+        match self.originating_signal.load(Ordering::SeqCst) {
+            0 => None,
+            sig => Some(sig),
+        }
     }
 }
 
@@ -426,9 +479,16 @@ fn spawn_signal_forwarder(
     pgids: Vec<i32>,
 ) -> SignalForwarder {
     let handle = signals.handle();
+    let originating_signal = Arc::new(AtomicI32::new(0));
+    let originating = Arc::clone(&originating_signal);
     let listener = thread::spawn(move || {
         let mut seen_once = false;
         for sig in signals.forever() {
+            // Record the user's first signal so the caller can report it as
+            // wt's exit code regardless of any internal escalation. Only the
+            // first wins — later signals here are either the user impatiently
+            // re-pressing Ctrl-C or wt's own escalation chain firing.
+            let _ = originating.compare_exchange(0, sig, Ordering::SeqCst, Ordering::SeqCst);
             if !seen_once {
                 // First signal: graceful escalation per child
                 // (SIGINT → SIGTERM → SIGKILL with grace windows).
@@ -449,7 +509,11 @@ fn spawn_signal_forwarder(
         }
     });
 
-    SignalForwarder { handle, listener }
+    SignalForwarder {
+        handle,
+        listener,
+        originating_signal,
+    }
 }
 
 #[cfg(test)]
