@@ -2,10 +2,10 @@
 //!
 //! Introspection and preview for aliases configured in user config
 //! (`~/.config/worktrunk/config.toml`) and project config (`.config/wt.toml`).
-//! `show` with no name lists every configured alias — the same `Aliases:`
-//! block `wt --help` renders, via [`render_aliases_section`]. `show <name>`
-//! prints the template text, source-labeled, with one gutter block per alias
-//! entry and `# <name>` comment lines above named pipeline steps. `dry-run`
+//! `show` with no name lists every configured alias as the `name  command`
+//! `Aliases:` block, via [`render_aliases_section`]. `show <name>` prints the
+//! template text, source-labeled, with one gutter block per alias entry and
+//! `# <name>` comment lines above named pipeline steps. `dry-run`
 //! parses a per-invocation argument vector with the same parser `wt <alias>`
 //! uses, then expands templates using the same context as execution — so
 //! previews match what the real run will do. `show <name>` and `dry-run`
@@ -79,8 +79,10 @@ pub fn handle_alias_show(name: Option<String>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// List every configured alias as the styled `Aliases:` block — the same
-/// listing `wt --help` renders, reused via [`render_aliases_section`].
+/// List every configured alias as the styled `name  command` `Aliases:`
+/// block via [`render_aliases_section`]. `wt --help` shows a more compact
+/// names-only variant of the same section (`render_aliases_help_section`)
+/// and points here for this fuller listing.
 ///
 /// Tolerates running outside a repository (user-config aliases still list,
 /// project-config ones are skipped) and outside a config (prints a note).
