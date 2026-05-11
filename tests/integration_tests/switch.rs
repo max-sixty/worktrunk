@@ -3711,11 +3711,11 @@ fn test_switch_pr_gitea_tea_not_installed(#[from(repo_with_remote)] repo: TestRe
     });
 }
 
-/// `forge.platform = "gitea"` overrides remote-URL detection. With a non-Gitea
-/// URL, the override picks the Gitea provider directly (no ambiguous fallback).
+/// `forge.platform = "gitea"` selects the Gitea provider directly, even when
+/// the remote URL doesn't look like Gitea (no ambiguous two-provider fallback).
 #[rstest]
-fn test_switch_pr_gitea_forge_platform_override(#[from(repo_with_remote)] repo: TestRepo) {
-    // Non-Gitea-looking URL — without the override we'd hit the ambiguous path.
+fn test_switch_pr_gitea_forge_platform(#[from(repo_with_remote)] repo: TestRepo) {
+    // Non-Gitea-looking URL — without `forge.platform` set we'd hit the ambiguous path.
     repo.run_git(&[
         "remote",
         "set-url",
@@ -3751,7 +3751,7 @@ fn test_switch_pr_gitea_forge_platform_override(#[from(repo_with_remote)] repo: 
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "pr:101"], None);
         configure_mock_cli_env(&mut cmd, &mock_bin);
-        assert_cmd_snapshot!("switch_pr_gitea_forge_platform_override", cmd);
+        assert_cmd_snapshot!("switch_pr_gitea_forge_platform", cmd);
     });
 }
 

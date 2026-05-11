@@ -12,7 +12,7 @@ use color_print::cformat;
 use worktrunk::config::{
     ProjectConfig, UserConfig, default_system_config_path, system_config_path,
 };
-use worktrunk::git::{ErrorExt, Repository};
+use worktrunk::git::{CiPlatform, ErrorExt, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{FileDetectionResult, Shell, scan_for_detection_details};
 use worktrunk::shell_exec::Cmd;
@@ -24,7 +24,7 @@ use worktrunk::styling::{
 use super::state::require_user_config_path;
 use crate::cli::{SwitchFormat, version_str};
 use crate::commands::configure_shell::{ConfigAction, ConfigureResult, scan_shell_configs};
-use crate::commands::list::ci_status::{CiPlatform, CiToolsStatus, platform_for_repo};
+use crate::commands::list::ci_status::CiToolsStatus;
 use crate::help_pager::show_help_in_pager;
 use crate::llm::test_commit_generation;
 use crate::output;
@@ -354,11 +354,9 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
 fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("DIAGNOSTICS", None))?;
 
-    // Check CI tool based on detected platform (with config override support)
+    // Check the CI tool for this repo's platform (project config, else remote URL).
     let repo = Repository::current()?;
-    let platform = platform_for_repo(&repo, None);
-
-    match platform {
+    match repo.ci_platform(None) {
         Some(CiPlatform::GitHub) => {
             let ci_tools = CiToolsStatus::detect(None);
             render_ci_tool_status(

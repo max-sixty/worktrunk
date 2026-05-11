@@ -329,7 +329,7 @@ fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_list_full_with_platform_override_github(mut repo: TestRepo) {
+fn test_list_full_with_configured_platform_github(mut repo: TestRepo) {
     // Set a non-GitHub remote (bitbucket) as origin - platform won't be auto-detected
     repo.run_git(&[
         "remote",
@@ -338,8 +338,8 @@ fn test_list_full_with_platform_override_github(mut repo: TestRepo) {
         "https://bitbucket.org/test-owner/test-repo.git",
     ]);
 
-    // Add a GitHub remote for PR detection (platform override needs a GitHub remote
-    // to determine which repo's PRs to check)
+    // Add a GitHub remote for PR detection (the configured platform still needs a
+    // GitHub remote to determine which repo's PRs to check)
     repo.run_git(&[
         "remote",
         "add",
@@ -347,7 +347,7 @@ fn test_list_full_with_platform_override_github(mut repo: TestRepo) {
         "https://github.com/test-owner/test-repo.git",
     ]);
 
-    // Set platform override in project config
+    // Set the platform explicitly in project config
     repo.write_project_config(
         r#"
 [ci]
@@ -362,7 +362,7 @@ platform = "github"
     // Get actual commit SHA
     let head_sha = branch_sha(&repo, "feature");
 
-    // Setup mock gh with PR data - this should work because platform is overridden to github
+    // Setup mock gh with PR data - this should work because the platform is set to github
     let pr_json = format!(
         r#"[{{
         "headRefOid": "{}",
@@ -382,7 +382,7 @@ platform = "github"
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
         repo.configure_mock_commands(&mut cmd);
-        // Platform override should force GitHub detection even with bitbucket remote
+        // The configured platform should force GitHub detection even with a bitbucket remote
         assert_cmd_snapshot!(cmd);
     });
 }
@@ -413,7 +413,29 @@ fn test_list_full_with_gitlab_remote(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_list_full_with_invalid_platform_override(mut repo: TestRepo) {
+fn test_list_full_with_gitea_forge_platform(mut repo: TestRepo) {
+    // `forge.platform = "gitea"` is a valid value (the `wt switch pr:` shortcut
+    // uses it), but worktrunk fetches CI status only from GitHub/GitLab. `wt
+    // list` must not warn that the value is "invalid" — it just leaves CI blank.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/test-owner/test-repo.git",
+    ]);
+    repo.write_project_config("[forge]\nplatform = \"gitea\"\n");
+
+    repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_list_full_with_invalid_configured_platform(mut repo: TestRepo) {
     // Set GitHub remote URL
     repo.run_git(&[
         "remote",
@@ -422,7 +444,7 @@ fn test_list_full_with_invalid_platform_override(mut repo: TestRepo) {
         "https://github.com/test-owner/test-repo.git",
     ]);
 
-    // Set INVALID platform override - should warn and fall back to URL detection
+    // Set an invalid platform value - should warn and fall back to URL detection
     repo.write_project_config(
         r#"
 [ci]
