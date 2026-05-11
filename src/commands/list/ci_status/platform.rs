@@ -12,6 +12,12 @@ use super::{CiBranchName, PrStatus, github, gitlab, tool_available};
 /// Cached CI tool availability.
 static CI_TOOLS: OnceLock<CiToolsAvailable> = OnceLock::new();
 
+/// Cached resolution of the project-config CI platform override.
+///
+/// Resolved once per process, so the warning for an unrecognized value fires
+/// once per `wt list` invocation rather than once per branch.
+static CONFIG_PLATFORM_OVERRIDE: OnceLock<Option<CiPlatform>> = OnceLock::new();
+
 /// Cached availability of CI CLI tools (`gh`, `glab`).
 ///
 /// Probed once on first access via `--version` check.
@@ -124,21 +130,9 @@ pub fn detect_platform_from_url(url: &str) -> Option<CiPlatform> {
 /// For remote branches, pass the branch's remote as `remote_hint` to ensure
 /// the correct platform is detected in mixed-remote repos (e.g., GitHub + GitLab).
 pub fn platform_for_repo(repo: &Repository, remote_hint: Option<&str>) -> Option<CiPlatform> {
-    // Config override takes precedence
-    if let Some(platform_str) = repo
-        .load_project_config()
-        .ok()
-        .flatten()
-        .and_then(|c| c.forge_platform().map(str::to_string))
-    {
-        if let Ok(platform) = platform_str.parse::<CiPlatform>() {
-            log::debug!("Using CI platform from config override: {}", platform);
-            return Some(platform);
-        }
-        log::warn!(
-            "Invalid CI platform in config: '{}'. Expected 'github' or 'gitlab'.",
-            platform_str
-        );
+    // Config override takes precedence.
+    if let Some(platform) = config_platform_override(repo) {
+        return Some(platform);
     }
 
     // If we have a specific remote hint (e.g., from a remote branch), use that first.
@@ -165,6 +159,38 @@ pub fn platform_for_repo(repo: &Repository, remote_hint: Option<&str>) -> Option
     }
 
     None
+}
+
+/// Resolve the project-config CI platform override (`forge.platform`, or the
+/// deprecated `ci.platform`), cached for the process.
+///
+/// Returns `None` when no override is set or the value is unrecognized. An
+/// unrecognized value logs a warning — and because the result is cached, that
+/// warning fires once per `wt list` invocation rather than once per branch.
+///
+/// The cache is process-wide and so assumes a single repository per process,
+/// which holds for the CLI: `platform_for_repo` is reached only from `wt list`
+/// (per branch) and `wt config show` (once).
+fn config_platform_override(repo: &Repository) -> Option<CiPlatform> {
+    *CONFIG_PLATFORM_OVERRIDE.get_or_init(|| {
+        let platform_str = repo
+            .load_project_config()
+            .ok()
+            .flatten()
+            .and_then(|c| c.forge_platform().map(str::to_string))?;
+        match platform_str.parse::<CiPlatform>() {
+            Ok(platform) => {
+                log::debug!("Using CI platform from config override: {platform}");
+                Some(platform)
+            }
+            Err(_) => {
+                log::warn!(
+                    "Invalid CI platform in config: '{platform_str}'. Expected 'github' or 'gitlab'."
+                );
+                None
+            }
+        }
+    })
 }
 
 #[cfg(test)]
