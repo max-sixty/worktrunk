@@ -1801,6 +1801,51 @@ mod pty_tests {
             "File should not be modified when user declines"
         );
     }
+
+    /// Declining the interactive `wt config shell uninstall` prompt
+    /// exercises `prompt_for_uninstall_confirmation` — the one render
+    /// path that neither `--yes` nor `--dry-run` reaches. Verifies the
+    /// preview labels zsh as `shell extension & completions` (matching
+    /// the dedicated `shell_extension_label` helper) and that declining
+    /// leaves the rcfile untouched.
+    #[rstest]
+    fn test_uninstall_preview_declined(repo: TestRepo, temp_home: TempDir) {
+        let zshrc_path = temp_home.path().join(".zshrc");
+        let initial = "# Existing config\nif command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init zsh)\"; fi\n";
+        fs::write(&zshrc_path, initial).unwrap();
+
+        let mut cmd = CommandBuilder::new(wt_bin());
+        cmd.arg("-C");
+        cmd.arg(repo.root_path());
+        cmd.arg("config");
+        cmd.arg("shell");
+        cmd.arg("uninstall");
+        cmd.cwd(repo.root_path());
+
+        configure_pty_command(&mut cmd);
+        cmd.env("HOME", temp_home.path());
+        cmd.env("XDG_CONFIG_HOME", temp_home.path().join(".config"));
+        cmd.env("WORKTRUNK_TEST_BASH_INSTALLED", "0");
+        cmd.env("WORKTRUNK_TEST_ZSH_INSTALLED", "0");
+        cmd.env("WORKTRUNK_TEST_FISH_INSTALLED", "0");
+        cmd.env("WORKTRUNK_TEST_POWERSHELL_INSTALLED", "0");
+        cmd.env("WORKTRUNK_TEST_NUSHELL_ENV", "0");
+        cmd.env("SHELL", "/bin/zsh");
+
+        let (output, exit_code) = exec_cmd_in_pty_prompted(cmd, &["n\n"], "[y/N");
+
+        // Decline → exit code 1, file unchanged.
+        assert_eq!(exit_code, 1);
+        assert!(
+            output.contains("shell extension & completions") && output.contains("zsh"),
+            "Preview should label zsh as 'shell extension & completions':\n{output}"
+        );
+        let content = fs::read_to_string(&zshrc_path).unwrap();
+        assert_eq!(
+            content, initial,
+            "Declining uninstall should leave the rcfile untouched",
+        );
+    }
 }
 
 /// Test installing nushell shell integration

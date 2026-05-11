@@ -224,13 +224,14 @@ pub fn print_skipped_shells(skipped: &[(worktrunk::shell::Shell, std::path::Path
     }
 }
 
-fn shell_extension_label(shell: Shell) -> &'static str {
-    // Fish is the odd shell out: its completions live in a separate file
-    // (~/.config/fish/completions/) and are rendered on their own line.
-    // Every other supported shell ships completions inline with the
-    // extension — bash/zsh via the init script, nushell via the
-    // `@complete` attribute on the wrapper, and powershell via
-    // `Register-ArgumentCompleter`.
+/// Per-shell label distinguishing Fish (its completions live in a
+/// separate file under `~/.config/fish/completions/` rendered on its own
+/// line) from every other supported shell, which ships completions
+/// inline with the extension — bash/zsh via the init script, nushell via
+/// the `@complete` attribute on the wrapper, and powershell via
+/// `Register-ArgumentCompleter`. Single source of truth so the label
+/// can't drift across the install/uninstall/preview/config-show paths.
+pub(crate) fn shell_extension_label(shell: Shell) -> &'static str {
     if matches!(shell, Shell::Fish) {
         "shell extension"
     } else {

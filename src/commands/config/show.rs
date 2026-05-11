@@ -751,22 +751,6 @@ fn render_fish_legacy_migration(
     Ok(())
 }
 
-/// Per-shell label distinguishing Fish (its completions live in a
-/// separate file under `~/.config/fish/completions/` and are rendered on
-/// their own line) from every other supported shell, which ships
-/// completions inline with the extension — bash/zsh via the init script,
-/// nushell via the `@complete` attribute on the wrapper, and powershell
-/// via `Register-ArgumentCompleter`. Mirrors
-/// `output::shell_integration::shell_extension_label` and the equivalent
-/// switch in `commands::configure_shell`.
-fn what_label(shell: Shell) -> &'static str {
-    if matches!(shell, Shell::Fish) {
-        "shell extension"
-    } else {
-        "shell extension & completions"
-    }
-}
-
 /// Zsh-only: warn when compinit isn't enabled, since the integration
 /// installs completions but they won't load without compinit.
 fn render_zsh_compinit_warning(out: &mut String) -> anyhow::Result<()> {
@@ -851,7 +835,7 @@ fn render_already_configured(
 ) -> anyhow::Result<()> {
     let shell = result.shell;
     let path = format_path_for_display(&result.path);
-    let what = what_label(shell);
+    let what = crate::output::shell_integration::shell_extension_label(shell);
 
     let detection = detection_results
         .iter()
@@ -911,7 +895,7 @@ fn render_would_add_or_create(
 ) -> anyhow::Result<bool> {
     let shell = result.shell;
     let path = format_path_for_display(&result.path);
-    let what = what_label(shell);
+    let what = crate::output::shell_integration::shell_extension_label(shell);
 
     // Fish: prefer migration hint when the legacy conf.d location has
     // working integration — silencing the "Not configured" row.
