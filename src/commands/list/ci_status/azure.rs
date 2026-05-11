@@ -287,6 +287,59 @@ struct AzPipelineRun {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use worktrunk::testing::TestRepo;
+
+    /// `azure_context` first walks the branch's remote, then scans every
+    /// configured remote for any Azure URL — covering the case where a
+    /// branch tracks (or the primary remote is) something non-Azure but
+    /// another remote is the real Azure DevOps mirror.
+    #[test]
+    fn test_azure_context_falls_back_to_all_remote_urls() {
+        let test = TestRepo::with_initial_commit();
+        // Primary remote isn't Azure — the branch-aware path returns None.
+        test.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/owner/test-repo.git",
+        ]);
+        // Secondary Azure remote — the all_remote_urls scan must find this.
+        test.run_git(&[
+            "remote",
+            "add",
+            "azure",
+            "https://dev.azure.com/myorg/myproject/_git/myrepo",
+        ]);
+        let repo = Repository::at(test.root_path()).unwrap();
+        let branch = CiBranchName {
+            full_name: "ghost-local".to_string(),
+            remote: None,
+            name: "ghost-local".to_string(),
+        };
+
+        let ctx = azure_context(&repo, &branch).expect("scan should find the azure remote");
+        assert_eq!(ctx.organization, "myorg");
+        assert_eq!(ctx.project, "myproject");
+    }
+
+    /// No Azure remote anywhere → `None`.
+    #[test]
+    fn test_azure_context_returns_none_without_azure_remote() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/owner/test-repo.git",
+        ]);
+        let repo = Repository::at(test.root_path()).unwrap();
+        let branch = CiBranchName {
+            full_name: "ghost-local".to_string(),
+            remote: None,
+            name: "ghost-local".to_string(),
+        };
+        assert!(azure_context(&repo, &branch).is_none());
+    }
 
     #[test]
     fn test_parse_azure_pipeline_status() {

@@ -618,4 +618,51 @@ mod tests {
         // Just verify it doesn't panic and returns a style
         let _ = format!("{style}test{style:#}");
     }
+
+    /// Build a synthetic non-success `Output` with the given stderr/stdout
+    /// bodies — `Command::output()` is the only "real" constructor and
+    /// would require spawning a process. Status uses `ExitStatus::default()`
+    /// (success), but the retriable-error helpers ignore status and only
+    /// look at the bytes.
+    fn fake_output(stderr: &str, stdout: &str) -> Output {
+        Output {
+            status: Default::default(),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    /// `output_error_text` must combine both streams — `tea` routes API
+    /// errors to stdout while transport errors land on stderr, so a
+    /// stderr-only sniff would miss rate-limit messages from the JSON body.
+    #[test]
+    fn test_output_error_text_combines_streams() {
+        let out = fake_output("transport: connection reset", r#"{"message":"rate limit"}"#);
+        let text = output_error_text(&out);
+        assert!(text.contains("transport: connection reset"));
+        assert!(text.contains("rate limit"));
+    }
+
+    /// `retriable_pr_error` returns `Some(PrStatus::error())` when either
+    /// stream contains a retriable marker, and `None` otherwise — the
+    /// fall-through case where `?` propagates "no CI status".
+    #[test]
+    fn test_retriable_pr_error_routing() {
+        // Retriable from stderr.
+        let out = fake_output("HTTP 429 Too Many Requests", "");
+        let status = retriable_pr_error(&out).expect("retriable should yield Some");
+        assert_eq!(status.ci_status, CiStatus::Error);
+
+        // Retriable from stdout (the `tea` shape).
+        let out = fake_output("", r#"{"message":"rate limit exceeded"}"#);
+        assert!(retriable_pr_error(&out).is_some());
+
+        // Non-retriable failure → None, so caller's `?` falls through.
+        let out = fake_output("not found", "");
+        assert!(retriable_pr_error(&out).is_none());
+
+        // No body at all → None.
+        let out = fake_output("", "");
+        assert!(retriable_pr_error(&out).is_none());
+    }
 }
