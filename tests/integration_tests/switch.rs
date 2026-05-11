@@ -3770,10 +3770,10 @@ fn test_switch_pr_forge_platform_gitlab_rejects_pr(#[from(repo_with_remote)] rep
     });
 }
 
-/// An invalid `forge.platform` value should warn and fall back to remote-URL
-/// detection (which here parses as a GitHub URL).
+/// An invalid `forge.platform` value bails with a clear error listing the
+/// accepted values, rather than silently routing somewhere via fall-through.
 #[rstest]
-fn test_switch_pr_forge_platform_invalid_falls_back(#[from(repo_with_remote)] repo: TestRepo) {
+fn test_switch_pr_forge_platform_invalid_bails(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&[
         "remote",
         "set-url",
@@ -3785,28 +3785,10 @@ fn test_switch_pr_forge_platform_invalid_falls_back(#[from(repo_with_remote)] re
     fs::create_dir_all(project_config.parent().unwrap()).unwrap();
     fs::write(&project_config, "[forge]\nplatform = \"bitbucket\"\n").unwrap();
 
-    let gh_response = r#"{
-        "title": "Detection fallback",
-        "user": {"login": "alice"},
-        "state": "open",
-        "draft": false,
-        "head": {
-            "ref": "feature-auth",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
-        },
-        "base": {
-            "ref": "main",
-            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
-        },
-        "html_url": "https://github.com/owner/test-repo/pull/101"
-    }"#;
-    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
-
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "pr:101"], None);
-        configure_mock_cli_env(&mut cmd, &mock_bin);
-        assert_cmd_snapshot!("switch_pr_forge_platform_invalid_defaults", cmd);
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        assert_cmd_snapshot!("switch_pr_forge_platform_invalid_bails", cmd);
     });
 }
 

@@ -4,7 +4,6 @@ info:
   program: wt
   args:
     - switch
-    - "--create"
     - "pr:101"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
@@ -54,9 +53,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mInvalid forge.platform value [1mbitbucket[22m; expected github, gitea, or gitlab. Falling back to remote detection.[39m
-[36m◎[39m [36mFetching PR #101...[39m
-[107m [0m [1mDetection fallback[22m (#101)
-[107m [0m by @alice · open · feature-auth · [90mhttps://github.com/owner/test-repo/pull/101[39m
-[31m✗[39m [31mCannot create branch for [1mpr:101[22m — PR already has branch [1mfeature-auth[22m[39m
-[2m↳[22m [2mTo switch to it: [4mwt switch pr:101[24m[22m
+[31m✗[39m [31mInvalid forge.platform value `bitbucket` in .config/wt.toml; expected one of: github, gitea, gitlab[39m

@@ -105,15 +105,10 @@ fn choose_pr_provider(repo: &Repository) -> anyhow::Result<PrProviderChoice> {
             "gitlab" => {
                 bail!("forge.platform is set to gitlab; use mr:<number> instead of pr:<number>")
             }
-            _ => {
-                eprintln!(
-                    "{}",
-                    warning_message(cformat!(
-                        "Invalid forge.platform value <bold>{platform_raw}</>; expected github, gitea, or gitlab. Falling back to remote detection."
-                    ))
-                );
-                // Continue to URL/CLI detection below.
-            }
+            _ => bail!(
+                "Invalid forge.platform value `{platform_raw}` in .config/wt.toml; \
+                 expected one of: github, gitea, gitlab"
+            ),
         }
     }
 
