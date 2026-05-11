@@ -314,15 +314,15 @@ Skips gracefully if the statusline is already configured."#
 // dry-run previews the expansion for a given invocation.
 #[derive(Subcommand)]
 pub enum ConfigAliasCommand {
-    /// Show an alias's template, or list all aliases
+    /// Show an alias's template, or all aliases' templates
     #[command(
-        after_long_help = r#"With no name, lists every configured alias — name, source, and a one-line summary — the same `Aliases:` block `wt --help` shows.
+        after_long_help = r#"With a name, prints each pipeline step's raw template indented with a gutter, tagged by source (user / project). Duplicate names defined in both configs show as two entries in runtime order (user first, then project).
 
-With a name, prints each pipeline step's raw template indented with a gutter, tagged by source (user / project). Duplicate names defined in both configs show as two entries, runtime order (user first, then project).
+With no name, prints that block for every configured alias in name order — equivalent to running `wt config alias show <name>` for each. `wt --help` shows a compact names-only list and points here.
 
 ## Examples
 
-List all configured aliases:
+Show every alias's template:
 ```console
 $ wt config alias show
 ```
@@ -333,7 +333,7 @@ $ wt config alias show deploy
 ```"#
     )]
     Show {
-        /// Alias name (omit to list all)
+        /// Alias name (omit to show all)
         #[arg(add = crate::completion::alias_name_completer())]
         name: Option<String>,
     },
@@ -501,7 +501,7 @@ Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval
 
 ## Examples
 
-List all configured aliases:
+Show every configured alias's template:
 ```console
 $ wt config alias show
 ```

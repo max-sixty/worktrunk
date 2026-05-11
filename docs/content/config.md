@@ -644,7 +644,7 @@ Aliases are command templates configured in user (`~/.config/worktrunk/config.to
 
 ### Examples
 
-List all configured aliases:
+Show every configured alias's template:
 {{ terminal(cmd="wt config alias show") }}
 
 Show the template for `deploy`:
@@ -661,7 +661,7 @@ wt config alias - Inspect and preview aliases
 Usage: <b><span class=c>wt config alias</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>show</span></b>     Show an alias&#39;s template, or list all aliases
+  <b><span class=c>show</span></b>     Show an alias&#39;s template, or all aliases&#39; templates
   <b><span class=c>dry-run</span></b>  Preview an alias invocation with template expansion
 
 <b><span class=g>Options:</span></b>
