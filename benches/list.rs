@@ -299,8 +299,13 @@ fn setup_rust_workspace_with_branches(temp: &tempfile::TempDir, num_branches: us
 /// regardless of how many refs are queried. Skipping branch enumeration entirely avoids this.
 fn bench_real_repo_many_branches(c: &mut Criterion) {
     let mut group = c.benchmark_group("real_repo_many_branches");
-    group.measurement_time(std::time::Duration::from_secs(60));
-    group.sample_size(10);
+    // rust-lang/rust runs ~3.7s per `wt list --branches` iteration; warm-path
+    // variance is dominated by the slowest single subprocess (a deep
+    // `git merge-base` walking history), not measurement noise, so 5 samples
+    // suffices. A 20s budget is ≈ one iteration per sample (~18s), down from
+    // the ~74s criterion spent filling the old 60s budget.
+    group.measurement_time(std::time::Duration::from_secs(20));
+    group.sample_size(5);
 
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
