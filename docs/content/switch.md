@@ -47,7 +47,7 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 | `^` | Default branch (`main`/`master`) |
 | `@` | Current branch/worktree |
 | `-` | Previous worktree (like `cd -`) |
-| `pr:{N}` | GitHub/Gitea PR #N's branch |
+| `pr:{N}` | GitHub PR #N's branch |
 | `mr:{N}` | GitLab MR !N's branch |
 
 {{ terminal(cmd="wt switch -                           # Back to previous|||wt switch ^                           # Default branch worktree|||wt switch --create fix --base=@       # Branch from current HEAD|||wt switch --create fix --base=pr:123  # Branch from PR #123's head|||wt switch pr:123                      # PR #123's branch|||wt switch mr:101                      # MR !101's branch") }}
@@ -98,13 +98,15 @@ Available on Unix only (macOS, Linux). On Windows, use `wt list` or `wt switch <
 
 ## Pull requests and merge requests
 
-The `pr:<number>` and `mr:<number>` shortcuts resolve a GitHub/Gitea PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
+The `pr:<number>` and `mr:<number>` shortcuts resolve a GitHub PR or GitLab MR to its branch. For same-repo PRs/MRs, worktrunk switches to the branch directly. For fork PRs/MRs, it fetches the ref (`refs/pull/N/head` or `refs/merge-requests/N/head`) and configures `pushRemote` to the fork URL.
 
-{{ terminal(cmd="wt switch pr:101                 # GitHub/Gitea PR #101|||wt switch mr:101                 # GitLab MR !101") }}
+{{ terminal(cmd="wt switch pr:101                 # GitHub PR #101|||wt switch mr:101                 # GitLab MR !101") }}
 
-Requires `gh` (GitHub), `tea` (Gitea), or `glab` (GitLab) CLI to be installed and authenticated. `pr:` auto-detects GitHub vs Gitea from config/remote, and falls back to trying both providers when ambiguous. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
+Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
 
 **Forks:** The local branch uses the PR/MR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
+
+**Gitea (experimental):** `pr:` is also compatible with Gitea via the `tea` CLI. Set `[forge] platform = "gitea"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Gitea when the remote host contains `gitea` or when `tea login add` has been run for the host.
 
 ## When wt switch fails
 
@@ -132,7 +134,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Branch name or shortcut
 
           Opens interactive picker if omitted. Shortcuts: &#39;^&#39; (default branch), &#39;-&#39; (previous), &#39;@&#39;
-          (current), &#39;pr:{N}&#39; (GitHub/Gitea PR), &#39;mr:{N}&#39; (GitLab MR)
+          (current), &#39;pr:{N}&#39; (GitHub PR), &#39;mr:{N}&#39; (GitLab MR)
 
   <span class=c>[EXECUTE_ARGS]...</span>
           Additional arguments for --execute command (after --)
