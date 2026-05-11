@@ -254,6 +254,7 @@ struct GiteaOwner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use worktrunk::testing::TestRepo;
 
     #[test]
     fn test_parse_gitea_status_state() {
@@ -264,5 +265,77 @@ mod tests {
         assert_eq!(parse_gitea_status_state("warning"), Some(CiStatus::Failed));
         assert_eq!(parse_gitea_status_state(""), None);
         assert_eq!(parse_gitea_status_state("bogus"), None);
+    }
+
+    /// Local branches (no `branch.remote`) walk the `else` arm — primary
+    /// remote's raw URL. Asserts directly against `gitea_owner_repo_for_branch`
+    /// so coverage doesn't depend on the spawn-based `tea --version` probe in
+    /// the integration tests.
+    #[test]
+    fn test_gitea_owner_repo_for_branch_local_uses_primary_remote() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://gitea.example.com/owner/test-repo.git",
+        ]);
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let branch = CiBranchName {
+            full_name: "main".to_string(),
+            remote: None,
+            name: "main".to_string(),
+        };
+        assert_eq!(
+            gitea_owner_repo_for_branch(&repo, &branch),
+            Some(("owner".to_string(), "test-repo".to_string()))
+        );
+    }
+
+    /// A branch whose remote has no URL (e.g., a stale ref to a deleted
+    /// remote) propagates `None` through the `?` on the if-else expression.
+    #[test]
+    fn test_gitea_owner_repo_for_branch_returns_none_when_remote_missing() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let branch = CiBranchName {
+            full_name: "ghost/feature".to_string(),
+            remote: Some("ghost".to_string()),
+            name: "feature".to_string(),
+        };
+        assert_eq!(gitea_owner_repo_for_branch(&repo, &branch), None);
+    }
+
+    /// Remote-branch refs walk the `if` arm — branch.remote's effective URL.
+    /// In a mixed-remote repo, this must pick the branch's remote, not the
+    /// primary one.
+    #[test]
+    fn test_gitea_owner_repo_for_branch_remote_uses_branch_remote() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://gitea.example.com/owner/test-repo.git",
+        ]);
+        test.run_git(&[
+            "remote",
+            "add",
+            "fork",
+            "https://gitea.example.com/forkowner/test-repo.git",
+        ]);
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let branch = CiBranchName {
+            full_name: "fork/feature".to_string(),
+            remote: Some("fork".to_string()),
+            name: "feature".to_string(),
+        };
+        assert_eq!(
+            gitea_owner_repo_for_branch(&repo, &branch),
+            Some(("forkowner".to_string(), "test-repo".to_string()))
+        );
     }
 }
