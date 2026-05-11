@@ -28,8 +28,9 @@
 //!
 //! - Only the first page of open PRs (Gitea's default page size, newest-first)
 //!   is inspected; in a repo with many open PRs, ours could fall off the page.
-//! - The PR lookup queries the primary remote's repo only, so PRs opened from a
-//!   fork (head repo owner ≠ that repo's owner) aren't matched.
+//! - PRs opened from a fork (head repo owner ≠ the queried repo's owner) aren't
+//!   matched — owner/repo comes from the branch's own remote, not the upstream
+//!   the PR targets.
 //! - `mergeable` is computed asynchronously by Gitea, so a freshly-opened PR can
 //!   briefly report a false conflict until the check completes (self-corrects
 //!   when the cache expires).
@@ -42,15 +43,28 @@ use super::{
     CiBranchName, CiSource, CiStatus, PrStatus, is_retriable_error, non_interactive_cmd, parse_json,
 };
 
-/// Resolve `(owner, repo)` for this repo's Gitea remote.
+/// Resolve `(owner, repo)` for the branch's effective Gitea remote.
 ///
-/// Platform is already known to be Gitea, so we extract owner/repo from the
-/// primary remote's raw URL (not the `insteadOf`-rewritten one — `tea` talks to
-/// the upstream host, not a local alias target) without re-checking the host.
-/// Mirrors `git::remote_ref::gitea`'s resolution for the `pr:` shortcut.
-fn gitea_owner_repo(repo: &Repository) -> Option<(String, String)> {
-    let remote = repo.primary_remote().ok()?;
-    let url = repo.remote_url(&remote)?;
+/// For a remote branch ref (e.g. `gitea/feature`), reads the branch's own
+/// remote — so a `wt list --remotes --full` row queries the right repo in a
+/// mixed-remote setup. Uses [`Repository::effective_remote_url`] to honor
+/// `url.insteadOf` rewrites, matching the GitHub path's
+/// `github_owner_repo_for_branch`.
+///
+/// For a local branch (no `branch.remote`), falls back to the primary remote's
+/// *raw* URL — matching `git::remote_ref::gitea`'s `pr:` resolver. The raw URL
+/// is enough here: only owner/repo (the path) are read, and `tea` resolves the
+/// host from its own login config rather than the URL we pass.
+fn gitea_owner_repo_for_branch(
+    repo: &Repository,
+    branch: &CiBranchName,
+) -> Option<(String, String)> {
+    let url = if let Some(remote_name) = &branch.remote {
+        repo.effective_remote_url(remote_name)
+    } else {
+        let remote = repo.primary_remote().ok()?;
+        repo.remote_url(&remote)
+    }?;
     parse_owner_repo(&url)
 }
 
@@ -111,7 +125,7 @@ pub(super) fn detect_gitea_pr(
     branch: &CiBranchName,
     local_head: &str,
 ) -> Option<PrStatus> {
-    let (owner, repo_name) = gitea_owner_repo(repo)?;
+    let (owner, repo_name) = gitea_owner_repo_for_branch(repo, branch)?;
 
     // `state=open` is required: the pulls list returns all states by default.
     let path = format!("repos/{owner}/{repo_name}/pulls?state=open");
@@ -168,8 +182,12 @@ pub(super) fn detect_gitea_pr(
 ///
 /// Queries the combined commit status of `local_head` directly, so the result
 /// is never stale.
-pub(super) fn detect_gitea_commit_status(repo: &Repository, local_head: &str) -> Option<PrStatus> {
-    let (owner, repo_name) = gitea_owner_repo(repo)?;
+pub(super) fn detect_gitea_commit_status(
+    repo: &Repository,
+    branch: &CiBranchName,
+    local_head: &str,
+) -> Option<PrStatus> {
+    let (owner, repo_name) = gitea_owner_repo_for_branch(repo, branch)?;
     let ci_status = fetch_combined_status(repo, &owner, &repo_name, local_head)?;
     Some(PrStatus {
         ci_status,
@@ -236,6 +254,7 @@ struct GiteaOwner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use worktrunk::testing::TestRepo;
 
     #[test]
     fn test_parse_gitea_status_state() {
@@ -246,5 +265,77 @@ mod tests {
         assert_eq!(parse_gitea_status_state("warning"), Some(CiStatus::Failed));
         assert_eq!(parse_gitea_status_state(""), None);
         assert_eq!(parse_gitea_status_state("bogus"), None);
+    }
+
+    /// Local branches (no `branch.remote`) walk the `else` arm — primary
+    /// remote's raw URL. Asserts directly against `gitea_owner_repo_for_branch`
+    /// so coverage doesn't depend on the spawn-based `tea --version` probe in
+    /// the integration tests.
+    #[test]
+    fn test_gitea_owner_repo_for_branch_local_uses_primary_remote() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://gitea.example.com/owner/test-repo.git",
+        ]);
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let branch = CiBranchName {
+            full_name: "main".to_string(),
+            remote: None,
+            name: "main".to_string(),
+        };
+        assert_eq!(
+            gitea_owner_repo_for_branch(&repo, &branch),
+            Some(("owner".to_string(), "test-repo".to_string()))
+        );
+    }
+
+    /// A branch whose remote has no URL (e.g., a stale ref to a deleted
+    /// remote) propagates `None` through the `?` on the if-else expression.
+    #[test]
+    fn test_gitea_owner_repo_for_branch_returns_none_when_remote_missing() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let branch = CiBranchName {
+            full_name: "ghost/feature".to_string(),
+            remote: Some("ghost".to_string()),
+            name: "feature".to_string(),
+        };
+        assert_eq!(gitea_owner_repo_for_branch(&repo, &branch), None);
+    }
+
+    /// Remote-branch refs walk the `if` arm — branch.remote's effective URL.
+    /// In a mixed-remote repo, this must pick the branch's remote, not the
+    /// primary one.
+    #[test]
+    fn test_gitea_owner_repo_for_branch_remote_uses_branch_remote() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://gitea.example.com/owner/test-repo.git",
+        ]);
+        test.run_git(&[
+            "remote",
+            "add",
+            "fork",
+            "https://gitea.example.com/forkowner/test-repo.git",
+        ]);
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let branch = CiBranchName {
+            full_name: "fork/feature".to_string(),
+            remote: Some("fork".to_string()),
+            name: "feature".to_string(),
+        };
+        assert_eq!(
+            gitea_owner_repo_for_branch(&repo, &branch),
+            Some(("forkowner".to_string(), "test-repo".to_string()))
+        );
     }
 }

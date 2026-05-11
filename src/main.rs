@@ -7,7 +7,7 @@ use clap::FromArgMatches;
 use clap::error::ErrorKind as ClapErrorKind;
 use color_print::{ceprintln, cformat};
 use std::process;
-use worktrunk::config::{UserConfig, set_config_path};
+use worktrunk::config::{Approvals, UserConfig, set_config_path};
 use worktrunk::git::{
     ErrorExt, Repository, ResolvedWorktree, WorktrunkError, current_or_recover, cwd_removed_hint,
     set_base_path,
@@ -16,9 +16,9 @@ use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, hint_message, info_message, warning_message,
 };
 
-use commands::command_approval::approve_or_skip;
-use commands::command_executor::CommandContext;
+use commands::command_approval::approve_command_batch;
 use commands::hooks::HookAnnouncer;
+use commands::project_config::collect_remove_hook_commands;
 use commands::worktree::RemoveResult;
 
 mod cli;
@@ -71,7 +71,6 @@ use cli::{
     ListSubcommand, LogsAction, MarkerAction, MergeArgs, PreviousBranchAction, RemoveArgs,
     StateCommand, StepCommand, SwitchArgs, SwitchFormat, VarsAction,
 };
-use worktrunk::HookType;
 
 /// Render a clap error to stderr, appending a wt-specific nested-subcommand
 /// tip when the unknown name matches something under `wt step` / `wt hook`
@@ -894,53 +893,30 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 .into());
             }
 
-            // Branch context for the approval prompt. Templates are shown
-            // unexpanded, so the exact branch is immaterial — `project_id`
-            // (which selects the approvals namespace) doesn't depend on it.
-            let approve_branch = repo
-                .current_worktree()
-                .branch()
-                .context("Failed to determine current branch")?;
-
-            // Helper: approve remove hooks. `pre-remove` runs in each worktree
-            // being removed and resolves *that* worktree's `.config/wt.toml`
-            // (same rule as `execute_pre_remove_hooks_if_needed` — no fallback
-            // to the primary worktree's config), so it's approved per worktree
-            // against that config; `post-remove` and `post-switch` run in the
-            // primary worktree afterwards (the removed worktree is gone) and
-            // are approved once against its config. The `Repository` rooted at
-            // each path is what selects the config — see
-            // [`Repository::project_config_path`]. Returns true if every prompt
-            // was accepted (or there was nothing to approve).
+            // Helper: approve every command the removal will run, in one batch.
+            // `pre-remove` runs in — and resolves its `.config/wt.toml` from —
+            // each worktree being removed (no fallback to the primary worktree's
+            // config, same rule as `execute_pre_remove_hooks_if_needed`);
+            // `post-remove` and `post-switch` run in the primary worktree
+            // afterwards and resolve their config from there. The shared helper
+            // assembles both, dedup'd by template. Returns `true` when the prompt
+            // was accepted or there was nothing to approve.
             let approve_remove = |removed_worktree_paths: &[&Path], yes: bool| -> anyhow::Result<bool> {
-                let decline_msg = "Commands declined, continuing removal";
                 let primary_path = repo.home_path()?;
                 let primary_repo = Repository::at(&primary_path)?;
-                for &wt_path in removed_worktree_paths {
-                    let wt_repo = Repository::at(wt_path)?;
-                    let ctx = CommandContext::new(
-                        &wt_repo,
-                        &config,
-                        approve_branch.as_deref(),
-                        wt_path,
-                        yes,
-                    );
-                    if !approve_or_skip(&ctx, &[HookType::PreRemove], decline_msg)? {
-                        return Ok(false);
-                    }
+                let commands =
+                    collect_remove_hook_commands(&primary_repo, removed_worktree_paths)?;
+                if commands.is_empty() {
+                    return Ok(true);
                 }
-                let ctx = CommandContext::new(
-                    &primary_repo,
-                    &config,
-                    approve_branch.as_deref(),
-                    &primary_path,
-                    yes,
-                );
-                approve_or_skip(
-                    &ctx,
-                    &[HookType::PostRemove, HookType::PostSwitch],
-                    decline_msg,
-                )
+                let project_id = repo.project_identifier()?;
+                let approvals = Approvals::load().context("Failed to load approvals")?;
+                let approved =
+                    approve_command_batch(&commands, &project_id, &approvals, yes, false)?;
+                if !approved {
+                    eprintln!("{}", info_message("Commands declined, continuing removal"));
+                }
+                Ok(approved)
             };
 
             let branches = args.branches;
