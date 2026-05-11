@@ -896,14 +896,7 @@ fn add_project_id_filters(settings: &mut insta::Settings) {
 /// This extracts the common settings configuration while allowing the
 /// `assert_cmd_snapshot!` macro to remain in test files for correct module path capture.
 pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
-    setup_snapshot_settings_impl(repo.root_path(), None)
-}
-
-/// Internal implementation that optionally includes temp_home filter.
-/// The temp_home filter MUST be added before PROJECT_ID filters to take precedence.
-fn setup_snapshot_settings_impl(root: &Path, temp_home: Option<&Path>) -> insta::Settings {
-    let worktrees = HashMap::new(); // Caller doesn't need worktree filters
-    setup_snapshot_settings_for_paths_with_home(root, &worktrees, temp_home)
+    setup_snapshot_settings_for_paths_with_home(repo.root_path(), &HashMap::new(), None)
 }
 
 /// Full snapshot settings - path filters AND ANSI cleanup.
@@ -1097,11 +1090,14 @@ fn setup_snapshot_settings_for_paths_with_home(
 /// This extends `setup_snapshot_settings` by adding a filter for the temporary home directory.
 /// Use this for tests that need both a TestRepo and a temporary home (for user config testing).
 ///
-/// IMPORTANT: The temp_home filter is passed to setup_snapshot_settings_impl so it gets added
-/// BEFORE the generic [PROJECT_ID] filters. Otherwise, paths like /tmp/.tmpXXX/.config/worktrunk/config.toml
-/// would match [PROJECT_ID] first.
+/// IMPORTANT: The temp_home filter is added BEFORE the generic [PROJECT_ID] filters.
+/// Otherwise, paths like /tmp/.tmpXXX/.config/worktrunk/config.toml would match [PROJECT_ID] first.
 pub fn setup_snapshot_settings_with_home(repo: &TestRepo, temp_home: &TempDir) -> insta::Settings {
-    setup_snapshot_settings_impl(repo.root_path(), Some(temp_home.path()))
+    setup_snapshot_settings_for_paths_with_home(
+        repo.root_path(),
+        &HashMap::new(),
+        Some(temp_home.path()),
+    )
 }
 
 /// Create configured insta Settings for snapshot tests with only a temporary home directory
@@ -1119,7 +1115,7 @@ pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
         "[TEMP_HOME]",
     );
     settings.add_filter(r"\\", "/");
-    // Filter out PowerShell lines (see main filter in setup_snapshot_settings_impl for details)
+    // Filter out PowerShell lines (see main filter in setup_snapshot_settings_for_paths_with_home for details)
     settings.add_filter(r"(?m)^.*[Pp]owershell(?:\x1b\[[0-9;]*m)*:.*\n", "");
     settings.add_filter(r"(?m)^.*No .*powershell.* shell extension.*\n", "");
     settings.add_filter(r"(?m)^.*shell init powershell.*\n", "");
