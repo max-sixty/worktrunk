@@ -1797,6 +1797,51 @@ fn test_remove_aborts_on_malformed_worktree_config(mut repo: TestRepo) {
     );
 }
 
+/// Removing a worktree that has no `.config/wt.toml` does NOT fall back to the
+/// primary worktree's config — neither for execution (per #2714) nor for
+/// approval (the shared `collect_remove_hook_commands` helper). Without `--yes`
+/// and without prior approval, the command must succeed (the approval prompt
+/// has no commands to surface) rather than block on the primary's `pre-remove`.
+#[rstest]
+fn test_remove_no_fallback_to_primary_pre_remove(mut repo: TestRepo) {
+    // Add the feature worktree first, off HEAD, so it doesn't carry the
+    // uncommitted config below.
+    let worktree_path = repo.add_worktree("feature-no-config");
+    let marker_file = repo.root_path().join("pre-remove-ran.txt");
+
+    // Primary worktree only — uncommitted, so `feature-no-config` doesn't
+    // inherit it.
+    repo.write_project_config(&format!(
+        r#"pre-remove = "echo ran > {}""#,
+        marker_file.to_slash_lossy()
+    ));
+
+    // No `--yes`: with the bug, the approval helper would surface the primary's
+    // `pre-remove` and `wt remove` would abort with "needs approval" because
+    // tests don't have a TTY. With the fix, the prompt is empty and removal
+    // proceeds. `--force` because the feature branch is unmerged.
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "--force", "feature-no-config"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "wt remove should succeed when the removed worktree has no \
+         .config/wt.toml — no fallback to the primary's; stderr:\n{stderr}"
+    );
+    assert!(
+        !worktree_path.exists(),
+        "feature worktree should be removed"
+    );
+    assert!(
+        !marker_file.exists(),
+        "primary's pre-remove must not fire when the removed worktree has \
+         no .config/wt.toml"
+    );
+}
+
 #[rstest]
 fn test_pre_remove_hook_failure_aborts(mut repo: TestRepo) {
     // Create project config with failing hook
