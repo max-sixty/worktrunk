@@ -782,7 +782,7 @@ fn render_fish_completion_status(out: &mut String, cmd: &str) -> anyhow::Result<
         )?;
     } else {
         let warning = warning_message(cformat!(
-            "<bold>{shell}</>: Completions not configured @ {completion_display}"
+            "<bold>{shell}</>: Completions not configured @ <bold>{completion_display}</>"
         ));
         let hint = hint_message(cformat!(
             "To configure completions, run <underline>{cmd} config shell install {shell}</>"
@@ -901,7 +901,7 @@ fn render_would_add_or_create(
     // so the generic "To configure" summary stays silent.
     if shell.is_wrapper_based() && matches!(result.action, ConfigAction::WouldAdd) {
         let warning = warning_message(cformat!(
-            "<bold>{shell}</>: Outdated shell extension @ {path}"
+            "<bold>{shell}</>: Outdated shell extension @ <bold>{path}</>"
         ));
         let hint = hint_message(cformat!(
             "To update, run <underline>{cmd} config shell install {shell}</>"

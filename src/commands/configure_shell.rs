@@ -165,8 +165,8 @@ fn cleanup_legacy_fish_conf_d(configured: &[ConfigureResult], cmd: &str) -> Vec<
             // Warn but don't fail - the new integration will still work
             eprintln!(
                 "{}",
-                warning_message(format!(
-                    "Failed to remove deprecated {}: {e}",
+                warning_message(color_print::cformat!(
+                    "Failed to remove deprecated <bold>{}</>: {e}",
                     format_path_for_display(&legacy_path)
                 ))
             );

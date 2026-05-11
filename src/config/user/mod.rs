@@ -437,8 +437,8 @@ impl UserConfig {
         {
             crate::styling::eprintln!(
                 "{}",
-                crate::styling::warning_message(format!(
-                    "Config file not found: {}",
+                crate::styling::warning_message(color_print::cformat!(
+                    "Config file not found: <bold>{}</>",
                     crate::path::format_path_for_display(config_path)
                 ))
             );
