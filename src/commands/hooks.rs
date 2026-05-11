@@ -15,8 +15,8 @@
 //!
 //! | Hook | `ctx.repo` rooted at → config from | Set in |
 //! |---|---|---|
-//! | `pre-remove` | the worktree being removed (still on disk at hook time); if it has no `.config/wt.toml`, the post-removal working directory (`RemoveResult.main_path`) — the **primary worktree** for `wt remove` / `wt step prune`, the merge destination for `wt merge` | `output::handlers::execute_pre_remove_hooks_if_needed`; approval mirrors it in `main.rs`'s `approve_remove` (`wt remove`), `merge::collect_merge_commands` (`wt merge`), and `step::prune::approve_prune_hooks` (`wt step prune` — over every worktree it might prune, since the integrated set isn't known until the checks run) |
-//! | `post-merge`, `post-remove`, `post-switch` after a removal | the destination — for `wt merge`, the target branch's worktree (else the primary); for `wt remove` / `wt step prune`, the primary worktree — the removed/feature worktree is gone by then | `worktree::finish::finish_after_merge`, `output::handlers::spawn_hooks_after_remove` (approval mirrored in `merge::collect_merge_commands`, `main.rs`'s `approve_remove`, and `step::prune::approve_prune_hooks`) |
+//! | `pre-remove` | the worktree being removed (still on disk at hook time); if it has no `.config/wt.toml`, the post-removal working directory (`RemoveResult.main_path`) — the **primary worktree** for `wt remove` / `wt step prune`, the merge destination for `wt merge` | `output::handlers::execute_pre_remove_hooks_if_needed`; the three approval call sites (`main.rs`'s `approve_remove` for `wt remove`, `merge::collect_merge_commands` for `wt merge`, `step::prune::approve_prune_hooks` for `wt step prune`) all delegate to [`super::project_config::collect_remove_hook_commands`], which mirrors the executor's fallback |
+//! | `post-merge`, `post-remove`, `post-switch` after a removal | the destination — for `wt merge`, the target branch's worktree (else the primary); for `wt remove` / `wt step prune`, the primary worktree — the removed/feature worktree is gone by then | `worktree::finish::finish_after_merge`, `output::handlers::spawn_hooks_after_remove` (approval of `post-remove`/`post-switch` for the three remove flows runs through [`super::project_config::collect_remove_hook_commands`]; `post-merge` is added by `merge::collect_merge_commands` directly) |
 //! | `pre-commit` / `post-commit` | the worktree being committed — the cwd worktree, or `<b>`'s worktree for `wt step commit --branch <b>` | `commands::commit`, `step::commit` (via `CommandEnv::for_branch`) |
 //! | `wt switch`'s `pre-start` / `post-start` / `post-switch` | the worktree `wt switch` ran in — the new worktree doesn't exist yet when these are approved, and for `wt switch --create` it's a fresh checkout of that worktree's HEAD anyway | `worktree::switch` |
 //! | `pre-switch`, `pre-merge`, `wt hook <type>`, aliases | the worktree `wt` was invoked in (= where they run) | the respective command entry points |
@@ -28,9 +28,10 @@
 //! different commands than execute — see that row's note for why it's harmless
 //! in practice. `pre-remove` and the merge/remove `post-*` hooks are otherwise
 //! approved against the exact config they execute against — the one exception
-//! being `wt step prune`, which over-approves `pre-remove` across every worktree
-//! it might prune (the integrated set isn't known until the checks run), a
-//! superset of what executes.
+//! being `wt step prune`, which calls
+//! [`super::project_config::collect_remove_hook_commands`] over every linked
+//! worktree it might prune (the integrated set isn't known until the checks
+//! run), a superset of what executes.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

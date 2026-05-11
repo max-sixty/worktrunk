@@ -1,7 +1,9 @@
+use std::collections::HashSet;
 use std::fmt;
+use std::path::Path;
 
 use worktrunk::config::{Command, ProjectConfig};
-use worktrunk::git::HookType;
+use worktrunk::git::{HookType, Repository};
 
 /// What triggered a project command — determines the label in approval prompts.
 #[derive(Clone)]
@@ -41,6 +43,53 @@ pub fn collect_commands_for_hooks(
         }
     }
     commands
+}
+
+/// Collect the project commands that run as part of removing a set of worktrees.
+///
+/// Each `pre-remove` reads the removed worktree's `.config/wt.toml`, falling
+/// back to `primary_repo`'s config when the removed worktree carries none —
+/// mirroring `output::handlers::execute_pre_remove_hooks_if_needed`, the
+/// executor that runs the hook. `post-remove` and `post-switch` always read
+/// `primary_repo`'s config (the removed worktree is gone by the time they
+/// fire). For `wt merge`, `primary_repo` is the merge destination — same
+/// fallback rule, different "primary".
+///
+/// Templates are deduped: when several removed worktrees fall back to
+/// `primary_repo`'s config, the same `pre-remove` command would otherwise
+/// appear in the approval prompt once per worktree.
+///
+/// Callers feed the result into [`super::command_approval::approve_command_batch`].
+/// `wt merge` prepends its own `pre-commit` / `post-commit` / `pre-merge` /
+/// `post-merge` commands to the same batch; `wt remove` and `wt step prune`
+/// approve the helper's output on its own.
+pub fn collect_remove_hook_commands(
+    primary_repo: &Repository,
+    removed_worktree_paths: &[&Path],
+) -> anyhow::Result<Vec<ApprovableCommand>> {
+    let mut commands: Vec<ApprovableCommand> = Vec::new();
+
+    for &wt_path in removed_worktree_paths {
+        let wt_repo = match Repository::at(wt_path) {
+            Ok(r) if r.load_project_config().ok().flatten().is_some() => r,
+            _ => primary_repo.clone(),
+        };
+        if let Some(cfg) = wt_repo.load_project_config()? {
+            commands.extend(collect_commands_for_hooks(&cfg, &[HookType::PreRemove]));
+        }
+    }
+
+    if let Some(cfg) = primary_repo.load_project_config()? {
+        commands.extend(collect_commands_for_hooks(
+            &cfg,
+            &[HookType::PostRemove, HookType::PostSwitch],
+        ));
+    }
+
+    let mut seen = HashSet::new();
+    commands.retain(|cmd| seen.insert(cmd.command.template.clone()));
+
+    Ok(commands)
 }
 
 /// Collect commands for every project-config alias, in `BTreeMap` (alphabetical) order.
