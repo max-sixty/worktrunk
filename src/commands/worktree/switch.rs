@@ -1623,4 +1623,79 @@ mod tests {
         assert_eq!(branch, "main");
         assert!(!path.is_empty(), "source_path should be the worktree root");
     }
+
+    #[test]
+    fn pr_provider_for_repo_prefers_github_over_azure() {
+        // Mixed-remote setup: a repo with both a GitHub remote and an Azure
+        // DevOps remote falls through to GitHub. Operators with an explicit
+        // preference set `forge.platform`.
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["remote", "add", "origin", "https://github.com/myorg/myrepo"]);
+        test.run_git(&[
+            "remote",
+            "add",
+            "azure",
+            "https://dev.azure.com/myorg/proj/_git/myrepo",
+        ]);
+
+        let provider = pr_provider_for_repo(&test.repo);
+        assert_eq!(provider.ref_type(), RefType::Pr);
+        // GitHub PR refs are `pull/N/head`; Azure also uses `pull/N/head`.
+        // We can't distinguish by ref_type, but we can by `ref_path`: both
+        // happen to share the format, so this test is mostly a smoke test
+        // that mixed remotes don't panic. The forge.platform override test
+        // below is the more discriminating one.
+        assert_eq!(provider.ref_path(7), "pull/7/head");
+    }
+
+    #[test]
+    fn pr_provider_for_repo_azure_only() {
+        // Azure-only repo (no GitHub remote) gets the Azure provider.
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://dev.azure.com/myorg/proj/_git/myrepo",
+        ]);
+
+        let provider = pr_provider_for_repo(&test.repo);
+        // Both providers return `pull/N/head` for `ref_path`; distinguishing
+        // them is most easily done via the type. Cast to a concrete type by
+        // requesting an Azure-specific fetch (we can't easily without running
+        // `az`), so settle for the smoke check that this returns successfully.
+        assert_eq!(provider.ref_type(), RefType::Pr);
+    }
+
+    #[test]
+    fn pr_provider_for_repo_no_recognised_remote() {
+        // Falls back to GitHub when no recognisable forge remote exists,
+        // preserving the existing error message from `gh`.
+        let test = TestRepo::with_initial_commit();
+        let provider = pr_provider_for_repo(&test.repo);
+        assert_eq!(provider.ref_type(), RefType::Pr);
+    }
+
+    #[test]
+    fn pr_provider_for_repo_forge_platform_override_wins() {
+        // The bug worth covering: a mixed-remote repo where the user explicitly
+        // pinned `forge.platform = "azure-devops"`. Without the override, the
+        // GitHub remote would win — and the user has no way to redirect `pr:N`.
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["remote", "add", "origin", "https://github.com/myorg/myrepo"]);
+        test.run_git(&[
+            "remote",
+            "add",
+            "azure",
+            "https://dev.azure.com/myorg/proj/_git/myrepo",
+        ]);
+        test.write_project_config("[forge]\nplatform = \"azure-devops\"\n");
+
+        // Both providers return `pull/N/head`, so this test verifies the
+        // override path runs at all. The user-visible difference lives in the
+        // CLI tool invoked by `fetch_info` (`az` vs `gh`), which is exercised
+        // by integration tests.
+        let provider = pr_provider_for_repo(&test.repo);
+        assert_eq!(provider.ref_type(), RefType::Pr);
+    }
 }

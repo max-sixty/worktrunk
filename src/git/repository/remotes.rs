@@ -411,3 +411,118 @@ impl Repository {
             .map(|r| r.local_name.clone())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::testing::TestRepo;
+
+    #[test]
+    fn test_find_remote_for_azure_dev_azure() {
+        let t = TestRepo::new();
+        t.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://dev.azure.com/myorg/myproject/_git/myrepo",
+        ]);
+
+        // Matching org/project/repo finds the remote.
+        assert_eq!(
+            t.repo.find_remote_for_azure("myorg", "myproject", "myrepo"),
+            Some("origin".to_string())
+        );
+
+        // Wrong project — Azure orgs can hold many projects with the same repo name.
+        assert_eq!(
+            t.repo
+                .find_remote_for_azure("myorg", "wrong-project", "myrepo"),
+            None
+        );
+
+        // Wrong repo.
+        assert_eq!(
+            t.repo
+                .find_remote_for_azure("myorg", "myproject", "wrong-repo"),
+            None
+        );
+
+        // Wrong org.
+        assert_eq!(
+            t.repo
+                .find_remote_for_azure("other-org", "myproject", "myrepo"),
+            None
+        );
+
+        // Case-insensitive across all three components.
+        assert_eq!(
+            t.repo.find_remote_for_azure("MYORG", "MyProject", "MyRepo"),
+            Some("origin".to_string())
+        );
+    }
+
+    #[test]
+    fn test_find_remote_for_azure_ssh_form() {
+        // SSH form: git@ssh.dev.azure.com:v3/{org}/{project}/{repo}
+        let t = TestRepo::new();
+        t.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "git@ssh.dev.azure.com:v3/myorg/myproject/myrepo",
+        ]);
+
+        assert_eq!(
+            t.repo.find_remote_for_azure("myorg", "myproject", "myrepo"),
+            Some("origin".to_string())
+        );
+    }
+
+    #[test]
+    fn test_find_remote_for_azure_visualstudio() {
+        // Legacy *.visualstudio.com form: org is in the hostname.
+        let t = TestRepo::new();
+        t.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://myorg.visualstudio.com/myproject/_git/myrepo",
+        ]);
+
+        assert_eq!(
+            t.repo.find_remote_for_azure("myorg", "myproject", "myrepo"),
+            Some("origin".to_string())
+        );
+    }
+
+    #[test]
+    fn test_find_remote_for_azure_multiple_remotes() {
+        // A repo with both an Azure DevOps fork and a GitHub mirror — the Azure
+        // matcher must skip the GitHub remote without false-positive matching.
+        let t = TestRepo::new();
+        t.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://dev.azure.com/myorg/myproject/_git/myrepo",
+        ]);
+        t.run_git(&["remote", "add", "github", "https://github.com/myorg/myrepo"]);
+
+        assert_eq!(
+            t.repo.find_remote_for_azure("myorg", "myproject", "myrepo"),
+            Some("origin".to_string())
+        );
+    }
+
+    #[test]
+    fn test_find_remote_for_azure_no_azure_remote() {
+        // GitHub-only repo: Azure matcher should find nothing.
+        let t = TestRepo::new();
+        t.run_git(&["remote", "add", "origin", "https://github.com/myorg/myrepo"]);
+
+        assert_eq!(
+            t.repo
+                .find_remote_for_azure("myorg", "anyproject", "myrepo"),
+            None
+        );
+    }
+}
