@@ -104,14 +104,14 @@ fn bench_skeleton(c: &mut Criterion) {
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
             let config = BenchConfig::typical(worktrees, cold);
-            let temp = create_repo(&config.repo);
-            let repo_path = temp.path().join("repo");
-            setup_fake_remote(&repo_path);
 
             group.bench_with_input(
                 BenchmarkId::new(config.label(), worktrees),
                 &config,
                 |b, config| {
+                    let temp = create_repo(&config.repo);
+                    let repo_path = temp.path().join("repo");
+                    setup_fake_remote(&repo_path);
                     run_benchmark(
                         b,
                         binary,
@@ -135,14 +135,14 @@ fn bench_full(c: &mut Criterion) {
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
             let config = BenchConfig::typical(worktrees, cold);
-            let temp = create_repo(&config.repo);
-            let repo_path = temp.path().join("repo");
-            setup_fake_remote(&repo_path);
 
             group.bench_with_input(
                 BenchmarkId::new(config.label(), worktrees),
                 &config,
                 |b, config| {
+                    let temp = create_repo(&config.repo);
+                    let repo_path = temp.path().join("repo");
+                    setup_fake_remote(&repo_path);
                     run_benchmark(b, binary, &repo_path, config, &["list"], None);
                 },
             );
@@ -159,14 +159,14 @@ fn bench_worktree_scaling(c: &mut Criterion) {
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
             let config = BenchConfig::typical(worktrees, cold);
-            let temp = create_repo(&config.repo);
-            let repo_path = temp.path().join("repo");
-            run_git(&repo_path, &["status"]);
 
             group.bench_with_input(
                 BenchmarkId::new(config.label(), worktrees),
                 &config,
                 |b, config| {
+                    let temp = create_repo(&config.repo);
+                    let repo_path = temp.path().join("repo");
+                    run_git(&repo_path, &["status"]);
                     run_benchmark(b, binary, &repo_path, config, &["list"], None);
                 },
             );
@@ -228,11 +228,11 @@ fn bench_many_branches(c: &mut Criterion) {
 
     for cold in [false, true] {
         let config = BenchConfig::branches(100, 2, cold);
-        let temp = create_repo(&config.repo);
-        let repo_path = temp.path().join("repo");
-        run_git(&repo_path, &["status"]);
 
         group.bench_function(config.label(), |b| {
+            let temp = create_repo(&config.repo);
+            let repo_path = temp.path().join("repo");
+            run_git(&repo_path, &["status"]);
             run_benchmark(
                 b,
                 binary,
@@ -256,11 +256,11 @@ fn bench_divergent_branches(c: &mut Criterion) {
 
     for cold in [false, true] {
         let config = BenchConfig::many_divergent_branches(cold);
-        let temp = create_repo(&config.repo);
-        let repo_path = temp.path().join("repo");
-        run_git(&repo_path, &["status"]);
 
         group.bench_function(config.label(), |b| {
+            let temp = create_repo(&config.repo);
+            let repo_path = temp.path().join("repo");
+            run_git(&repo_path, &["status"]);
             run_benchmark(
                 b,
                 binary,
