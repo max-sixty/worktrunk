@@ -54,4 +54,4 @@ exit_code: 1
 
 ----- stderr -----
 [36m◎[39m [36mFetching PR #101...[39m
-[31m✗[39m [31mGitea PR #101 has no source branch in head.label/head.ref; the PR may be in an invalid state[39m
+[31m✗[39m [31mGitea PR #101 has no usable source branch — head.label/head.ref carry placeholders, so the PR may be in an invalid state[39m

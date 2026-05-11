@@ -29,6 +29,13 @@
 //!
 //! Uses `glab api projects/:id/merge_requests/<number>`. Fork MRs require additional
 //! API calls to fetch source/target project URLs.
+//!
+//! ## Gitea (experimental)
+//!
+//! Uses `tea api repos/{owner}/{repo}/pulls/<number>`. Unlike `gh`, `tea`'s
+//! `{owner}`/`{repo}` template expansion depends on local repo context, so the
+//! provider resolves owner/repo from the primary remote URL and passes a
+//! pre-expanded path.
 
 pub mod gitea;
 pub mod github;

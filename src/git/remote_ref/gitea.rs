@@ -149,19 +149,20 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
         )
     })?;
 
-    let source_branch = extract_source_branch(&response.head).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Gitea PR #{} has no source branch in head.label/head.ref; \
-             the PR may be in an invalid state",
-            pr_number
-        )
-    })?;
-
+    // Check head.repo before extract_source_branch so deleted-source PRs hit
+    // the specific "source repository was deleted" message instead of falling
+    // back to the generic "no source branch" path.
     let base_repo = response.base.repo.context(
         "Gitea PR base repository is null; this is unexpected and may indicate a Gitea API issue",
     )?;
 
-    let head_repo = response.head.repo.ok_or_else(|| {
+    let TeaPrRef {
+        label: head_label,
+        ref_name: head_ref_name,
+        repo: head_repo_opt,
+    } = response.head;
+
+    let head_repo = head_repo_opt.ok_or_else(|| {
         anyhow::anyhow!(
             "Gitea PR #{} source repository was deleted. \
              The fork that this PR was opened from no longer exists, \
@@ -169,6 +170,15 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
             pr_number
         )
     })?;
+
+    let source_branch =
+        extract_source_branch_from_parts(&head_label, &head_ref_name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Gitea PR #{} has no usable source branch — head.label/head.ref \
+                 carry placeholders, so the PR may be in an invalid state",
+                pr_number
+            )
+        })?;
 
     let is_cross_repo = !base_repo
         .owner
@@ -209,33 +219,27 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
 /// `feature-auth`); the `refs/heads/` strip handles Gitea instances that
 /// happen to return a fully-qualified ref.
 ///
-/// Gitea returns placeholders rather than nulls when the source branch is gone:
-/// `label = "unknown repository"` and `ref = "refs/pull/<n>/head"` (or
-/// `pulls/<n>/head`). These look like strings, but they're not branches we can
-/// fetch — reject them so `fetch_pr_info` bails with the deleted-source error.
-fn extract_source_branch(head: &TeaPrRef) -> Option<String> {
-    if !head.label.is_empty() {
-        let candidate = head
-            .label
+/// When `head.repo` is null Gitea may still emit placeholder strings here
+/// (`label = "unknown repository"`, `ref = "refs/pull/<n>/head"`). `fetch_pr_info`
+/// checks `head.repo` before calling us, so by the time this runs we expect a
+/// real branch name; placeholders that slip through return None and bail.
+fn extract_source_branch_from_parts(label: &str, ref_name: &str) -> Option<String> {
+    if !label.is_empty() {
+        let candidate = label
             .split_once(':')
             .map(|(_, b)| b)
-            .unwrap_or(&head.label)
+            .unwrap_or(label)
             .trim();
         if is_real_branch_name(candidate) {
             return Some(candidate.to_string());
         }
     }
 
-    let candidate = head
-        .ref_name
+    let candidate = ref_name
         .strip_prefix("refs/heads/")
-        .unwrap_or(&head.ref_name)
+        .unwrap_or(ref_name)
         .trim();
-    if is_real_branch_name(candidate) {
-        Some(candidate.to_string())
-    } else {
-        None
-    }
+    is_real_branch_name(candidate).then(|| candidate.to_string())
 }
 
 /// A branch name candidate is real when it's non-empty, has no whitespace
@@ -337,7 +341,7 @@ mod tests {
             repo: None,
         };
         assert_eq!(
-            extract_source_branch(&head),
+            extract_source_branch_from_parts(&head.label, &head.ref_name),
             Some("feature-auth".to_string())
         );
     }
@@ -350,7 +354,7 @@ mod tests {
             repo: None,
         };
         assert_eq!(
-            extract_source_branch(&head),
+            extract_source_branch_from_parts(&head.label, &head.ref_name),
             Some("feature-auth".to_string())
         );
     }
@@ -364,7 +368,7 @@ mod tests {
             repo: None,
         };
         assert_eq!(
-            extract_source_branch(&head),
+            extract_source_branch_from_parts(&head.label, &head.ref_name),
             Some("feature-auth".to_string())
         );
     }
@@ -377,7 +381,7 @@ mod tests {
             repo: None,
         };
         assert_eq!(
-            extract_source_branch(&head),
+            extract_source_branch_from_parts(&head.label, &head.ref_name),
             Some("feature-auth".to_string())
         );
     }
@@ -392,7 +396,7 @@ mod tests {
             repo: None,
         };
         assert_eq!(
-            extract_source_branch(&head),
+            extract_source_branch_from_parts(&head.label, &head.ref_name),
             Some("feature-auth".to_string())
         );
     }
@@ -405,7 +409,10 @@ mod tests {
             ref_name: "refs/heads/".to_string(),
             repo: None,
         };
-        assert_eq!(extract_source_branch(&head), None);
+        assert_eq!(
+            extract_source_branch_from_parts(&head.label, &head.ref_name),
+            None
+        );
     }
 
     #[test]
@@ -415,7 +422,10 @@ mod tests {
             ref_name: "".to_string(),
             repo: None,
         };
-        assert_eq!(extract_source_branch(&head), None);
+        assert_eq!(
+            extract_source_branch_from_parts(&head.label, &head.ref_name),
+            None
+        );
     }
 
     #[test]
@@ -427,7 +437,10 @@ mod tests {
             ref_name: "pulls/42/head".to_string(),
             repo: None,
         };
-        assert_eq!(extract_source_branch(&head), None);
+        assert_eq!(
+            extract_source_branch_from_parts(&head.label, &head.ref_name),
+            None
+        );
     }
 
     #[test]
@@ -442,7 +455,10 @@ mod tests {
             ref_name: "refs/pull/42/head".to_string(),
             repo: None,
         };
-        assert_eq!(extract_source_branch(&head), None);
+        assert_eq!(
+            extract_source_branch_from_parts(&head.label, &head.ref_name),
+            None
+        );
 
         // Same but with the bare `pull/<n>/head` form some Gitea versions emit.
         let head = TeaPrRef {
@@ -450,7 +466,10 @@ mod tests {
             ref_name: "pull/42/head".to_string(),
             repo: None,
         };
-        assert_eq!(extract_source_branch(&head), None);
+        assert_eq!(
+            extract_source_branch_from_parts(&head.label, &head.ref_name),
+            None
+        );
 
         // A bare `refs/pull/...` in the label (no `:` separator) must also fail.
         let head = TeaPrRef {
@@ -458,7 +477,10 @@ mod tests {
             ref_name: "".to_string(),
             repo: None,
         };
-        assert_eq!(extract_source_branch(&head), None);
+        assert_eq!(
+            extract_source_branch_from_parts(&head.label, &head.ref_name),
+            None
+        );
     }
 
     #[test]
