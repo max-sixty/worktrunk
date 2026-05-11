@@ -16,10 +16,11 @@ use worktrunk::config::{
     UserConfig, ValidationScope, expand_template, template_references_var, validate_template,
 };
 use worktrunk::git::remote_ref::{
-    self, GitHubProvider, GitLabProvider, RemoteRefInfo, RemoteRefProvider,
+    self, AzureDevOpsProvider, GitHubProvider, GitLabProvider, RemoteRefInfo, RemoteRefProvider,
 };
 use worktrunk::git::{
-    GitError, RefContext, RefType, Repository, SwitchSuggestionCtx, current_or_recover,
+    GitError, GitRemoteUrl, RefContext, RefType, Repository, SwitchSuggestionCtx,
+    current_or_recover,
 };
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, suggest_command,
@@ -47,6 +48,33 @@ struct ResolvedTarget {
     branch: String,
     /// How to create the worktree
     method: CreationMethod,
+}
+
+/// Pick the right `pr:` provider based on the repo's remotes.
+///
+/// Returns [`AzureDevOpsProvider`] if any configured remote URL points at Azure
+/// DevOps, otherwise [`GitHubProvider`]. We always prefer GitHub in mixed setups
+/// since it predates Azure support — operators can override by configuring
+/// `forge.platform` in project config.
+fn pr_provider_for_repo(repo: &Repository) -> Box<dyn RemoteRefProvider> {
+    let any_github = repo
+        .all_remote_urls()
+        .into_iter()
+        .filter_map(|(_, url)| GitRemoteUrl::parse(&url))
+        .any(|u| u.is_github());
+    if any_github {
+        return Box::new(GitHubProvider);
+    }
+    let any_azure = repo
+        .all_remote_urls()
+        .into_iter()
+        .filter_map(|(_, url)| GitRemoteUrl::parse(&url))
+        .any(|u| u.is_azure_devops());
+    if any_azure {
+        Box::new(AzureDevOpsProvider)
+    } else {
+        Box::new(GitHubProvider)
+    }
 }
 
 /// Format PR/MR context for gutter display after fetching.
@@ -329,7 +357,8 @@ fn resolve_base_ref(
     if let Some(suffix) = base.strip_prefix("pr:")
         && let Ok(number) = suffix.parse::<u32>()
     {
-        return resolve_remote_ref_as_base(repo, &GitHubProvider, number);
+        let provider = pr_provider_for_repo(repo);
+        return resolve_remote_ref_as_base(repo, provider.as_ref(), number);
     }
 
     if let Some(suffix) = base.strip_prefix("mr:")
@@ -404,11 +433,12 @@ fn resolve_switch_target(
     create: bool,
     base: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
-    // Handle pr:<number> syntax
+    // Handle pr:<number> syntax — dispatches to GitHub or Azure DevOps based on remotes.
     if let Some(suffix) = branch.strip_prefix("pr:")
         && let Ok(number) = suffix.parse::<u32>()
     {
-        return resolve_remote_ref(repo, &GitHubProvider, number, create, base);
+        let provider = pr_provider_for_repo(repo);
+        return resolve_remote_ref(repo, provider.as_ref(), number, create, base);
     }
 
     // Handle mr:<number> syntax (GitLab MRs)

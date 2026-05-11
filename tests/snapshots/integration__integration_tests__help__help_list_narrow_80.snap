@@ -19,13 +19,17 @@ info:
     WORKTRUNK_APPROVALS_PATH: /nonexistent/wt/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml
     WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
 success: true
 exit_code: 0
@@ -87,9 +91,9 @@ git operations complete.
 
 [1m[32mFull mode[0m
 
-[2m--full[0m adds columns that require network access or LLM calls: CI status 
-(GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and 
-LLM-generated summaries of each branch's changes.
+[2m--full[0m adds columns that require network access or LLM calls: CI status (GitHub,
+ GitLab, and Azure DevOps pipeline pass/fail), line diffs since the merge-base, 
+and LLM-generated summaries of each branch's changes.
 
 [1m[32mExamples[0m
 
@@ -172,7 +176,7 @@ Note: [2mmain↕[0m and [2mmain…±[0m refer to the default branch — the 
 
 [32mCI status[0m
 
-The CI column shows GitHub/GitLab pipeline status:
+The CI column shows GitHub, GitLab, or Azure DevOps pipeline status:
 
  Indicator              Meaning              
  ───────── ───────────────────────────────── 

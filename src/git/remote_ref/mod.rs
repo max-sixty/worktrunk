@@ -1,7 +1,7 @@
 //! Unified PR/MR reference resolution.
 //!
-//! This module provides a trait-based architecture for resolving GitHub PRs and GitLab MRs
-//! to local branches. Both platforms follow the same workflow:
+//! This module provides a trait-based architecture for resolving GitHub PRs, GitLab MRs,
+//! and Azure DevOps PRs to local branches. All platforms follow the same workflow:
 //!
 //! 1. Parse `pr:<number>` or `mr:<number>` syntax
 //! 2. Fetch metadata from the platform API
@@ -29,11 +29,19 @@
 //!
 //! Uses `glab api projects/:id/merge_requests/<number>`. Fork MRs require additional
 //! API calls to fetch source/target project URLs.
+//!
+//! ## Azure DevOps
+//!
+//! Uses `az repos pr show --id <number> --output json`. Auto-detects the organisation
+//! from configured Azure DevOps remotes. Requires the `azure-devops` extension
+//! (`az extension add --name azure-devops`).
 
+pub mod azure;
 pub mod github;
 pub mod gitlab;
 mod info;
 
+pub use azure::AzureDevOpsProvider;
 pub use github::GitHubProvider;
 pub use gitlab::GitLabProvider;
 pub use info::{PlatformData, RemoteRefInfo};
@@ -146,6 +154,11 @@ pub fn find_remote(repo: &Repository, info: &RemoteRefInfo) -> Result<String, Gi
             base_repo,
             ..
         } => (base_owner.as_str(), base_repo.as_str()),
+        PlatformData::AzureDevOps {
+            organization,
+            repo_name,
+            ..
+        } => (organization.as_str(), repo_name.as_str()),
     };
 
     repo.find_remote_for_repo(None, owner, repo_name)
@@ -163,6 +176,12 @@ pub fn find_remote(repo: &Repository, info: &RemoteRefInfo) -> Result<String, Gi
                     base_repo,
                     ..
                 } => gitlab::fork_remote_url(host, base_owner, base_repo),
+                PlatformData::AzureDevOps {
+                    host,
+                    organization,
+                    project,
+                    repo_name,
+                } => azure::fork_remote_url(host, organization, project, repo_name),
             };
             GitError::NoRemoteForRepo {
                 owner: owner.to_string(),

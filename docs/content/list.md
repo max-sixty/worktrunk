@@ -24,7 +24,7 @@ The table renders progressively: branch names, paths, and commit hashes appear i
 
 ## Full mode
 
-`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub/GitLab pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries) of each branch's changes.
+`--full` adds columns that require network access or LLM calls: [CI status](#ci-status) (GitHub, GitLab, and Azure DevOps pipeline pass/fail), line diffs since the merge-base, and [LLM-generated summaries](#llm-summaries) of each branch's changes.
 
 ## Examples
 
@@ -92,7 +92,7 @@ Note: `main↕` and `main…±` refer to the default branch — the header label
 
 ### CI status
 
-The CI column shows GitHub/GitLab pipeline status:
+The CI column shows GitHub, GitLab, or Azure DevOps pipeline status:
 
 | Indicator | Meaning |
 |-----------|---------|
