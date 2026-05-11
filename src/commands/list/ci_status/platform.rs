@@ -1,16 +1,16 @@
 //! Forge dispatch for CI status detection.
 //!
 //! Given a [`CiPlatform`] (resolved by [`Repository::ci_platform`]), routes to
-//! the GitHub (`gh`), GitLab (`glab`), or Azure DevOps (`az`) backend and
-//! checks whether that CLI is installed.
+//! the GitHub (`gh`), GitLab (`glab`), Gitea (`tea`), or Azure DevOps (`az`)
+//! backend and checks whether that CLI is installed.
 
 use std::sync::OnceLock;
 
 use worktrunk::git::{CiPlatform, Repository};
 
-use super::{CiBranchName, PrStatus, azure, github, gitlab, tool_available};
+use super::{CiBranchName, PrStatus, azure, gitea, github, gitlab, tool_available};
 
-/// Cached availability of CI CLI tools (`gh`, `glab`, `az`).
+/// Cached availability of CI CLI tools (`gh`, `glab`, `tea`, `az`).
 ///
 /// Probed once on first access via a `--version` check.
 static CI_TOOLS: OnceLock<CiToolsAvailable> = OnceLock::new();
@@ -18,6 +18,7 @@ static CI_TOOLS: OnceLock<CiToolsAvailable> = OnceLock::new();
 struct CiToolsAvailable {
     gh: bool,
     glab: bool,
+    tea: bool,
     az: bool,
 }
 
@@ -26,6 +27,7 @@ impl CiToolsAvailable {
         CI_TOOLS.get_or_init(|| Self {
             gh: tool_available("gh", &["--version"]),
             glab: tool_available("glab", &["--version"]),
+            tea: tool_available("tea", &["--version"]),
             az: tool_available("az", &["--version"]),
         })
     }
@@ -36,6 +38,7 @@ fn is_tool_available(platform: CiPlatform) -> bool {
     match platform {
         CiPlatform::GitHub => CiToolsAvailable::get().gh,
         CiPlatform::GitLab => CiToolsAvailable::get().glab,
+        CiPlatform::Gitea => CiToolsAvailable::get().tea,
         CiPlatform::AzureDevOps => CiToolsAvailable::get().az,
     }
 }
@@ -50,6 +53,7 @@ fn detect_pr_mr(
     match platform {
         CiPlatform::GitHub => github::detect_github(repo, branch, local_head),
         CiPlatform::GitLab => gitlab::detect_gitlab(repo, branch, local_head),
+        CiPlatform::Gitea => gitea::detect_gitea_pr(repo, branch, local_head),
         CiPlatform::AzureDevOps => azure::detect_azure_pr(repo, branch, local_head),
     }
 }
@@ -65,6 +69,8 @@ fn detect_branch(
         CiPlatform::GitHub => github::detect_github_commit_checks(repo, branch, local_head),
         // GitLab pipelines use the bare branch name (not "origin/feature").
         CiPlatform::GitLab => gitlab::detect_gitlab_pipeline(repo, &branch.name, local_head),
+        // Gitea queries the combined commit status by SHA — branch-independent.
+        CiPlatform::Gitea => gitea::detect_gitea_commit_status(repo, local_head),
         CiPlatform::AzureDevOps => azure::detect_azure_pipeline(repo, &branch.name, local_head),
     }
 }

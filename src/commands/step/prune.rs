@@ -10,13 +10,13 @@ use color_print::cformat;
 use crossbeam_channel as chan;
 use rayon::prelude::*;
 use worktrunk::HookType;
-use worktrunk::config::UserConfig;
+use worktrunk::config::{Approvals, UserConfig};
 use worktrunk::git::{BranchDeletionMode, RefSnapshot, Repository, WorktreeInfo};
 use worktrunk::styling::{eprintln, hint_message, info_message, println, success_message};
 
-use super::super::command_approval::approve_or_skip;
-use super::super::context::CommandEnv;
+use super::super::command_approval::approve_command_batch;
 use super::super::hooks::HookAnnouncer;
+use super::super::project_config::{ApprovableCommand, collect_commands_for_hooks};
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use crate::output::handle_remove_output;
 
@@ -382,6 +382,70 @@ fn render_dry_run(
     Ok(())
 }
 
+/// Approve the project commands `wt step prune` may run, mirroring the
+/// executors' `.config/wt.toml` resolution.
+///
+/// `pre-remove` runs only when a *live linked* worktree is removed (stale-
+/// metadata and orphan-branch removals delete just the branch — no
+/// `pre-remove`/`post-remove`/`post-switch`), and each `pre-remove` runs in,
+/// and resolves its config from, that worktree — falling back to the primary
+/// worktree's config when the removed one carries none, exactly like
+/// `output::handlers::execute_pre_remove_hooks_if_needed`. The integration
+/// checks haven't run yet, so every linked worktree's `pre-remove` is approved
+/// up front — a superset of what executes. `post-remove`/`post-switch` run in
+/// the primary worktree afterwards and are approved once against its config.
+///
+/// Returns `true` when hooks should run, `false` when the user declined.
+fn approve_prune_hooks(
+    repo: &Repository,
+    worktrees: &[WorktreeInfo],
+    check_items: &[CheckItem],
+    yes: bool,
+) -> anyhow::Result<bool> {
+    let primary_path = repo.home_path()?;
+    let primary_repo = Repository::at(&primary_path)?;
+
+    let mut all_commands: Vec<ApprovableCommand> = Vec::new();
+
+    for item in check_items {
+        let CheckSource::Linked { wt_idx } = &item.source else {
+            continue;
+        };
+        let wt = &worktrees[*wt_idx];
+        let wt_repo = match Repository::at(&wt.path) {
+            Ok(r) if r.load_project_config().ok().flatten().is_some() => r,
+            _ => primary_repo.clone(),
+        };
+        if let Some(cfg) = wt_repo.load_project_config()? {
+            all_commands.extend(collect_commands_for_hooks(&cfg, &[HookType::PreRemove]));
+        }
+    }
+
+    if let Some(cfg) = primary_repo.load_project_config()? {
+        all_commands.extend(collect_commands_for_hooks(
+            &cfg,
+            &[HookType::PostRemove, HookType::PostSwitch],
+        ));
+    }
+
+    // The same template can be reached through several worktrees (most often
+    // via the primary fallback) — show, and remember, each command once.
+    let mut seen = HashSet::new();
+    all_commands.retain(|cmd| seen.insert(cmd.command.template.clone()));
+
+    if all_commands.is_empty() {
+        return Ok(true);
+    }
+
+    let project_id = repo.project_identifier()?;
+    let approvals = Approvals::load().context("Failed to load approvals")?;
+    let approved = approve_command_batch(&all_commands, &project_id, &approvals, yes, false)?;
+    if !approved {
+        eprintln!("{}", info_message("Commands declined, continuing removal"));
+    }
+    Ok(approved)
+}
+
 /// Remove worktrees and branches integrated into the default branch.
 ///
 /// Handles four cases: live worktrees with branches (removed + branch deleted),
@@ -424,28 +488,22 @@ pub fn step_prune(
 
     let default_branch = repo.default_branch();
 
+    // Build the candidate set before approval: `approve_prune_hooks` needs the
+    // linked worktrees prune might remove (each `pre-remove` is approved against
+    // that worktree's own config). The integration checks below narrow this to
+    // the actually-pruned set.
+    let check_items = gather_check_items(&repo, worktrees, default_branch.as_deref())?;
+
     // For non-dry-run, approve hooks upfront so we can remove inline.
     let run_hooks = if dry_run {
         false // unused in dry-run path
     } else {
-        let env = CommandEnv::for_action_branchless()?;
-        let ctx = env.context(yes);
-        approve_or_skip(
-            &ctx,
-            &[
-                HookType::PreRemove,
-                HookType::PostRemove,
-                HookType::PostSwitch,
-            ],
-            "Commands declined, continuing removal",
-        )?
+        approve_prune_hooks(&repo, worktrees, &check_items, yes)?
     };
 
     let mut removed: Vec<Candidate> = Vec::new();
     let mut deferred_current: Option<Candidate> = None;
     let mut skipped_young: Vec<String> = Vec::new();
-
-    let check_items = gather_check_items(&repo, worktrees, default_branch.as_deref())?;
 
     // Parallel integration checks with inline removals.
     //
