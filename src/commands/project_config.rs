@@ -47,17 +47,19 @@ pub fn collect_commands_for_hooks(
 
 /// Collect the project commands that run as part of removing a set of worktrees.
 ///
-/// Each `pre-remove` reads the removed worktree's `.config/wt.toml`, falling
-/// back to `primary_repo`'s config when the removed worktree carries none —
-/// mirroring `output::handlers::execute_pre_remove_hooks_if_needed`, the
-/// executor that runs the hook. `post-remove` and `post-switch` always read
-/// `primary_repo`'s config (the removed worktree is gone by the time they
-/// fire). For `wt merge`, `primary_repo` is the merge destination — same
-/// fallback rule, different "primary".
+/// Each `pre-remove` reads the removed worktree's own `.config/wt.toml` — no
+/// fallback to `primary_repo`'s config, mirroring
+/// `output::handlers::execute_pre_remove_hooks_if_needed`, the executor that
+/// runs the hook. `post-remove` and `post-switch` always read `primary_repo`'s
+/// config (the removed worktree is gone by the time they fire). For `wt merge`,
+/// `primary_repo` is the merge destination — same rule, different "primary".
 ///
-/// Templates are deduped: when several removed worktrees fall back to
-/// `primary_repo`'s config, the same `pre-remove` command would otherwise
-/// appear in the approval prompt once per worktree.
+/// A present-but-malformed worktree config surfaces as an error so the user
+/// fixes it rather than silently running a different one.
+///
+/// Templates are deduped: when several removed worktrees define the same
+/// `pre-remove` template, the approval prompt shows it once rather than once
+/// per worktree.
 ///
 /// Callers feed the result into [`super::command_approval::approve_command_batch`].
 /// `wt merge` prepends its own `pre-commit` / `post-commit` / `pre-merge` /
@@ -71,16 +73,8 @@ pub fn collect_remove_hook_commands(
 
     for &wt_path in removed_worktree_paths {
         // A `Repository::at` failure means git can't recognize the path as a
-        // worktree — propagate rather than silently fall back. The fallback
-        // below is for the legitimate "no `.config/wt.toml`" case only, and
-        // matches the executor (`execute_pre_remove_hooks_if_needed` in
-        // `output::handlers`) — see #2708 for the full rationale.
-        let wt_at_path = Repository::at(wt_path)?;
-        let wt_repo = if wt_at_path.load_project_config().ok().flatten().is_some() {
-            wt_at_path
-        } else {
-            primary_repo.clone()
-        };
+        // worktree — propagate rather than silently fall back. See #2708.
+        let wt_repo = Repository::at(wt_path)?;
         if let Some(cfg) = wt_repo.load_project_config()? {
             commands.extend(collect_commands_for_hooks(&cfg, &[HookType::PreRemove]));
         }
