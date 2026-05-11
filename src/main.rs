@@ -915,11 +915,11 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
             let approve_remove = |removed_worktree_paths: &[&Path], yes: bool| -> anyhow::Result<bool> {
                 let decline_msg = "Commands declined, continuing removal";
                 let primary_path = repo.home_path()?;
-                let primary_repo = || Repository::at(&primary_path).unwrap_or_else(|_| repo.clone());
+                let primary_repo = Repository::at(&primary_path)?;
                 for &wt_path in removed_worktree_paths {
                     let wt_repo = match Repository::at(wt_path) {
                         Ok(r) if r.load_project_config().ok().flatten().is_some() => r,
-                        _ => primary_repo(),
+                        _ => primary_repo.clone(),
                     };
                     let ctx = CommandContext::new(
                         &wt_repo,
@@ -932,9 +932,8 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                         return Ok(false);
                     }
                 }
-                let pr = primary_repo();
                 let ctx = CommandContext::new(
-                    &pr,
+                    &primary_repo,
                     &config,
                     approve_branch.as_deref(),
                     &primary_path,
