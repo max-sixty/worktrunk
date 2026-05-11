@@ -446,16 +446,16 @@ pub fn configure_pty_command(cmd: &mut portable_pty::CommandBuilder) {
 /// Pass through LLVM coverage profiling environment to a portable_pty::CommandBuilder.
 ///
 /// PTY tests use `cmd.env_clear()` for isolation, which removes LLVM_PROFILE_FILE.
-/// Without this, spawned binaries can't write coverage data.
+/// Without this, an instrumented child writes `default_*.profraw` into its cwd
+/// (i.e. the repo root for tests that don't override it) instead of the path
+/// `cargo llvm-cov` chose. The non-PTY equivalent lives inside
+/// `worktrunk::testing::isolate_subprocess_env`; both paths share
+/// [`worktrunk::testing::COVERAGE_ENV_VARS`].
 ///
 /// Use `configure_pty_command()` for the full setup, or call this directly if you
 /// need custom env_clear handling (e.g., shell-specific env vars).
 pub fn pass_coverage_env_to_pty_cmd(cmd: &mut portable_pty::CommandBuilder) {
-    for key in [
-        "LLVM_PROFILE_FILE",
-        "CARGO_LLVM_COV",
-        "CARGO_LLVM_COV_TARGET_DIR",
-    ] {
+    for key in worktrunk::testing::COVERAGE_ENV_VARS {
         if let Ok(val) = std::env::var(key) {
             cmd.env(key, val);
         }
