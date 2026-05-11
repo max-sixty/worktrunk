@@ -224,6 +224,24 @@ pub fn wrap_styled_text(styled: &str, max_width: usize) -> Vec<String> {
     result
 }
 
+/// Pick a `(open, close)` placeholder pair whose strings are guaranteed not to
+/// appear as substrings of `content`. Starts from the short base `WTO`/`WTC`
+/// and suffix-extends with a hex counter until both candidates are absent —
+/// the round-trip restore phase replaces these substrings with `{{`/`}}`, so a
+/// real collision (e.g., a tempdir name containing `WTC`) would corrupt output.
+#[cfg(feature = "syntax-highlighting")]
+fn unique_template_placeholders(content: &str) -> (String, String) {
+    let mut open = String::from("WTO");
+    let mut close = String::from("WTC");
+    let mut suffix: u32 = 0;
+    while content.contains(&open) || content.contains(&close) {
+        suffix = suffix.checked_add(1).expect("placeholder suffix exhausted");
+        open = format!("WTO{suffix:X}");
+        close = format!("WTC{suffix:X}");
+    }
+    (open, close)
+}
+
 #[cfg(feature = "syntax-highlighting")]
 fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) -> String {
     // Normalize line endings: CRLF to LF, and trim trailing newlines.
@@ -240,14 +258,19 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
     // existing quotes (e.g., `"{{ var }}"` → `""WTO" var "WTC""` with double quotes,
     // or `'text {{ var }}'` → `'text 'WTO'...'WTC''` with single quotes).
     //
-    // TPL_CLOSE gets a trailing space so tree-sitter doesn't merge it with adjacent
-    // path characters (e.g., `}}/path` → `WTC/path` would be one "function" token,
-    // giving the path the wrong color). The space is stripped during restoration.
-    const TPL_OPEN: &str = "WTO";
-    const TPL_CLOSE: &str = "WTC";
+    // Close placeholder gets a trailing space so tree-sitter doesn't merge it with
+    // adjacent path characters (e.g., `}}/path` → `WTC/path` would be one "function"
+    // token, giving the path the wrong color). The space is stripped during restoration.
+    //
+    // Placeholders must not appear as substrings of `content` — otherwise the
+    // restore phase would mangle them into `{{`/`}}`. The base pair `WTO`/`WTC`
+    // is 3 alphabetic chars, so any 6-char alphabetic tempdir name has a
+    // non-trivial chance of containing one (`OuiWTC` was the case that hit
+    // Windows CI). Suffix-extend until we find a collision-free pair.
+    let (tpl_open, tpl_close) = unique_template_placeholders(content);
     let normalized = content
-        .replace("{{", TPL_OPEN)
-        .replace("}}", &format!("{TPL_CLOSE} "));
+        .replace("{{", &tpl_open)
+        .replace("}}", &format!("{tpl_close} "));
     let content = normalized.as_str();
 
     let gutter = super::GUTTER;
@@ -300,7 +323,7 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
     let mut pending_highlight: Option<usize> = None;
     let mut active_style: Option<anstyle::Style> = None;
     let mut ate_tpl_boundary = false;
-    let close_with_space = format!("{TPL_CLOSE} ");
+    let close_with_space = format!("{tpl_close} ");
 
     for event in highlights {
         match event.unwrap() {
@@ -318,7 +341,7 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
                     // Apply pending highlight style. Skip for pure placeholder tokens —
                     // tree-sitter sees e.g. `WTC` as a "function" but that's meaningless;
                     // placeholder restoration handles the styling.
-                    let is_placeholder = text == TPL_CLOSE || text == TPL_OPEN;
+                    let is_placeholder = text == tpl_close || text == tpl_open;
                     if let Some(idx) = pending_highlight.take()
                         && let Some(name) = highlight_names.get(idx)
                         && let Some(style) = bash_token_style(name)
@@ -333,22 +356,22 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
                     // text — no ANSI injection needed since `{{ }}` inherits the style.
                     // Otherwise, inject string styling and restore the active context.
                     //
-                    // Replace "WTC " before "WTC" to consume the boundary space when
-                    // both land in the same Source event (e.g., inside a string token).
-                    let has_placeholder = text.contains(TPL_OPEN) || text.contains(TPL_CLOSE);
-                    let ends_with_close = text.ends_with(TPL_CLOSE);
+                    // Replace close-with-space before bare close to consume the boundary
+                    // space when both land in the same Source event (e.g., inside a string).
+                    let has_placeholder = text.contains(&tpl_open) || text.contains(&tpl_close);
+                    let ends_with_close = text.ends_with(&tpl_close);
                     let text = if !has_placeholder {
                         text.to_string()
                     } else if active_style == Some(string_style) {
-                        text.replace(TPL_OPEN, "{{")
+                        text.replace(&tpl_open, "{{")
                             .replace(&close_with_space, "}}")
-                            .replace(TPL_CLOSE, "}}")
+                            .replace(&tpl_close, "}}")
                     } else {
                         let restore = format!("{reset}{}", active_style.unwrap_or(dim));
                         let close_repl = format!("{reset}{string_style}}}}}{restore}");
-                        text.replace(TPL_OPEN, &format!("{reset}{string_style}{{{{{restore}"))
+                        text.replace(&tpl_open, &format!("{reset}{string_style}{{{{{restore}"))
                             .replace(&close_with_space, &close_repl)
-                            .replace(TPL_CLOSE, &close_repl)
+                            .replace(&tpl_close, &close_repl)
                     };
 
                     if ends_with_close {
@@ -644,5 +667,44 @@ mod tests {
         }
 
         assert_snapshot!(output, @"[function:echo] {{ branch }} [operator:&&] [function:mkdir] {{ path }}");
+    }
+
+    /// Regression: content containing the base `WTC`/`WTO` placeholder substrings
+    /// (e.g., a Windows tempdir name whose 6 random alphabetic chars happen to
+    /// include `WTC`) round-trips through the highlighter unchanged. Without the
+    /// `unique_template_placeholders` guard, the restore phase would replace the
+    /// `WTC` inside the path with `}}` and corrupt the output.
+    #[test]
+    #[cfg(feature = "syntax-highlighting")]
+    fn test_content_containing_placeholder_substring_is_preserved() {
+        use ansi_str::AnsiStr;
+
+        // Path with `WTC` embedded (the actual failure shape seen on Windows CI).
+        let path = r"D:\tmp\.tmpOuiWTC\repo/../repo.feature";
+        let result = format_bash_with_gutter_at_width(path, 120);
+        assert!(
+            result.ansi_strip().contains("WTC"),
+            "WTC substring should survive round-trip, got: {}",
+            result.ansi_strip()
+        );
+        assert!(
+            !result.ansi_strip().contains("}}"),
+            "no stray `}}` should appear in expanded path, got: {}",
+            result.ansi_strip()
+        );
+
+        // Same with `WTO`.
+        let path = "echo /a/b/WTO/c";
+        let result = format_bash_with_gutter_at_width(path, 120);
+        assert!(
+            result.ansi_strip().contains("WTO"),
+            "WTO substring should survive round-trip, got: {}",
+            result.ansi_strip()
+        );
+        assert!(
+            !result.ansi_strip().contains("{{"),
+            "no stray `{{{{` should appear in path, got: {}",
+            result.ansi_strip()
+        );
     }
 }
