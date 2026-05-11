@@ -1,8 +1,8 @@
 //! CI platform identification.
 //!
-//! [`CiPlatform`] names the forge a repository's CI runs on (GitHub or GitLab).
-//! It comes from project config (`forge.platform`, or the deprecated
-//! `ci.platform`) when set, otherwise from the remote URL host — see
+//! [`CiPlatform`] names the forge a repository's CI runs on (GitHub, GitLab, or
+//! Azure DevOps). It comes from project config (`forge.platform`, or the
+//! deprecated `ci.platform`) when set, otherwise from the remote URL host — see
 //! [`Repository::ci_platform`].
 
 use crate::git::{GitRemoteUrl, Repository};
@@ -17,15 +17,19 @@ use crate::git::{GitRemoteUrl, Repository};
 pub enum CiPlatform {
     GitHub,
     GitLab,
+    #[strum(serialize = "azure-devops", serialize = "azuredevops")]
+    AzureDevOps,
 }
 
-/// Identify the CI platform from a remote URL host ("github" / "gitlab").
+/// Identify the CI platform from a remote URL host ("github" / "gitlab" / Azure DevOps).
 fn platform_from_url(url: &str) -> Option<CiPlatform> {
     let parsed = GitRemoteUrl::parse(url)?;
     if parsed.is_github() {
         Some(CiPlatform::GitHub)
     } else if parsed.is_gitlab() {
         Some(CiPlatform::GitLab)
+    } else if parsed.is_azure_devops() {
+        Some(CiPlatform::AzureDevOps)
     } else {
         None
     }
@@ -93,7 +97,9 @@ impl Repository {
                 );
                 return None;
             }
-            log::warn!("Invalid CI platform in config: '{raw}'. Expected 'github' or 'gitlab'.");
+            log::warn!(
+                "Invalid CI platform in config: '{raw}'. Expected 'github', 'gitlab', or 'azure-devops'."
+            );
             None
         })
     }
@@ -112,6 +118,15 @@ mod tests {
         assert_eq!(
             "gitlab".parse::<CiPlatform>().ok(),
             Some(CiPlatform::GitLab)
+        );
+        // Azure DevOps accepts both spellings; `azure-devops` is canonical.
+        assert_eq!(
+            "azure-devops".parse::<CiPlatform>().ok(),
+            Some(CiPlatform::AzureDevOps)
+        );
+        assert_eq!(
+            "azuredevops".parse::<CiPlatform>().ok(),
+            Some(CiPlatform::AzureDevOps)
         );
         assert_eq!(CiPlatform::GitHub.to_string(), "github");
         assert_eq!(CiPlatform::GitLab.to_string(), "gitlab");
@@ -145,6 +160,19 @@ mod tests {
             "git://gitlab.mycompany.com/owner/repo.git",
         ] {
             assert_eq!(platform_from_url(url), Some(CiPlatform::GitLab), "{url}");
+        }
+
+        // Azure DevOps — HTTPS, SSH, and the legacy visualstudio.com host.
+        for url in [
+            "https://dev.azure.com/myorg/myproject/_git/myrepo",
+            "git@ssh.dev.azure.com:v3/myorg/myproject/myrepo",
+            "https://myorg.visualstudio.com/myproject/_git/myrepo",
+        ] {
+            assert_eq!(
+                platform_from_url(url),
+                Some(CiPlatform::AzureDevOps),
+                "{url}"
+            );
         }
 
         // Unknown forges.

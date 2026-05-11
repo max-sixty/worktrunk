@@ -359,7 +359,7 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# Name the forge explicitly for SSH aliases or self-hosted instances, where it can't be detected from the remote URL:[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [forge][0m
-[107m [0m [2m# platform = "github"  # or "gitea" (experimental), "gitlab"[0m
+[107m [0m [2m# platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)[0m
 [107m [0m [2m# hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Copy-ignored excludes[0m

@@ -885,3 +885,169 @@ fn test_list_full_with_gitlab_ci_rate_limit(mut repo: TestRepo) {
         assert_cmd_snapshot!("gitlab_ci_rate_limit", cmd);
     });
 }
+
+// =============================================================================
+// Azure DevOps CI status tests
+// =============================================================================
+
+/// Set up a repo with an Azure DevOps remote and a `feature` worktree.
+/// Returns the `feature` branch HEAD SHA.
+fn setup_azure_repo_with_feature(repo: &mut TestRepo) -> String {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    ]);
+    repo.add_worktree("feature");
+    setup_tracking_for_all_branches(repo, "origin");
+    branch_sha(repo, "feature")
+}
+
+/// Run an Azure DevOps CI status test with the given `az repos pr list` and
+/// `az pipelines runs list` mock responses.
+fn run_azure_ci_status_test(
+    repo: &mut TestRepo,
+    snapshot_name: &str,
+    pr_list_json: &str,
+    runs_json: &str,
+) {
+    repo.setup_mock_az_with_ci_data(pr_list_json, runs_json);
+
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!(snapshot_name, cmd);
+    });
+}
+
+/// An active PR with `mergeStatus: "conflicts"` surfaces as a Conflicts
+/// indicator (exercises `detect_azure_pr`).
+#[rstest]
+fn test_list_full_with_azure_pr_conflicts(mut repo: TestRepo) {
+    let head_sha = setup_azure_repo_with_feature(&mut repo);
+
+    let pr_list_json = format!(
+        r#"[{{
+        "pullRequestId": 7,
+        "mergeStatus": "conflicts",
+        "lastMergeSourceCommit": {{"commitId": "{}"}},
+        "repository": {{"name": "test-repo", "project": {{"name": "myproject"}}}}
+    }}]"#,
+        head_sha
+    );
+
+    run_azure_ci_status_test(&mut repo, "azure_pr_conflicts", &pr_list_json, "[]");
+}
+
+/// An active PR with `mergeStatus: "queued"` surfaces as a Running indicator.
+#[rstest]
+fn test_list_full_with_azure_pr_queued(mut repo: TestRepo) {
+    let head_sha = setup_azure_repo_with_feature(&mut repo);
+
+    let pr_list_json = format!(
+        r#"[{{
+        "pullRequestId": 7,
+        "mergeStatus": "queued",
+        "lastMergeSourceCommit": {{"commitId": "{}"}},
+        "repository": {{"name": "test-repo", "project": {{"name": "myproject"}}}}
+    }}]"#,
+        head_sha
+    );
+
+    run_azure_ci_status_test(&mut repo, "azure_pr_queued", &pr_list_json, "[]");
+}
+
+/// No PR for the branch falls back to the latest pipeline run
+/// (exercises `detect_azure_pipeline` via `parse_azure_pipeline_status`).
+#[rstest]
+#[case::passed("completed", "succeeded", "azure_pipeline_passed")]
+#[case::failed("completed", "failed", "azure_pipeline_failed")]
+#[case::running("inProgress", "null", "azure_pipeline_running")]
+fn test_list_full_with_azure_pipeline_status(
+    mut repo: TestRepo,
+    #[case] status: &str,
+    #[case] result: &str,
+    #[case] snapshot_name: &str,
+) {
+    let head_sha = setup_azure_repo_with_feature(&mut repo);
+
+    let runs_json = format!(
+        r#"[{{
+        "id": 4242,
+        "status": "{}",
+        "result": {},
+        "sourceVersion": "{}"
+    }}]"#,
+        status,
+        if result == "null" {
+            "null".to_string()
+        } else {
+            format!(r#""{}""#, result)
+        },
+        head_sha
+    );
+
+    run_azure_ci_status_test(&mut repo, snapshot_name, "[]", &runs_json);
+}
+
+/// A pipeline run from a different SHA than local HEAD is marked stale (dimmed).
+#[rstest]
+fn test_list_full_with_azure_stale_pipeline(mut repo: TestRepo) {
+    setup_azure_repo_with_feature(&mut repo);
+
+    let runs_json = r#"[{
+        "id": 4242,
+        "status": "completed",
+        "result": "succeeded",
+        "sourceVersion": "0000000000000000000000000000000000000000"
+    }]"#;
+
+    run_azure_ci_status_test(&mut repo, "azure_stale_pipeline", "[]", runs_json);
+}
+
+/// No PR and no pipeline runs → no CI indicator.
+#[rstest]
+fn test_list_full_with_azure_no_ci(mut repo: TestRepo) {
+    setup_azure_repo_with_feature(&mut repo);
+    run_azure_ci_status_test(&mut repo, "azure_no_ci", "[]", "[]");
+}
+
+/// A retriable error from `az repos pr list` (e.g., HTTP 429) surfaces as an
+/// error indicator rather than NoCI (exercises the `is_retriable_error` branch
+/// in `detect_azure_pr`).
+#[rstest]
+fn test_list_full_with_azure_pr_list_retriable_error(mut repo: TestRepo) {
+    setup_azure_repo_with_feature(&mut repo);
+    repo.setup_mock_az_with_detection_errors(
+        Some("ERROR: HTTP error 429: Too Many Requests"),
+        None,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("azure_pr_list_retriable_error", cmd);
+    });
+}
+
+/// A retriable error from `az pipelines runs list` surfaces as an error
+/// indicator (exercises the `is_retriable_error` branch in
+/// `detect_azure_pipeline`, reached when no PR exists for the branch).
+#[rstest]
+fn test_list_full_with_azure_pipeline_retriable_error(mut repo: TestRepo) {
+    setup_azure_repo_with_feature(&mut repo);
+    repo.setup_mock_az_with_detection_errors(
+        None,
+        Some("ERROR: HTTP error 429: Too Many Requests"),
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("azure_pipeline_retriable_error", cmd);
+    });
+}

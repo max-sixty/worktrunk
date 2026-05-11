@@ -698,8 +698,8 @@ pub(crate) enum HelpContext {
 /// This is the help-rendering counterpart to `inject_hook_subcommands` for
 /// aliases. Hooks use Command-tree injection because they have a fixed
 /// schema clap can render faithfully; aliases use text-splicing because the
-/// template body is the content, and the `Aliases:` block carries display
-/// signals (source marker, shadowed-by-builtin) that have no clap analogue.
+/// `Aliases:` block is a name list plus a shadowed-by-builtin flag and a
+/// pointer to `wt config alias show`, none of which has a clap analogue.
 pub(crate) fn augment_help(help: &str, context: HelpContext) -> String {
     // Help must not emit deprecation/unknown-field warnings or write `.new`
     // migration files as a side effect of rendering the alias list.
@@ -716,7 +716,7 @@ pub(crate) fn augment_help(help: &str, context: HelpContext) -> String {
     // rendered output. The search prefix is derived from the same style
     // clap uses (our `help_styles().get_header()`), so if the header
     // styling changes both sides move together.
-    let aliases_section = render_aliases_section(&aliases, context);
+    let aliases_section = render_aliases_help_section(&aliases, context);
     let options_heading = format!(
         "{}Options:",
         crate::cli::help_styles().get_header().render()
@@ -791,6 +791,69 @@ pub(crate) fn render_aliases_section(
             name_styled = cformat!("<bold><cyan>{name}</></>"),
         );
     }
+    out
+}
+
+/// Format the configured aliases as a compact name list for `wt --help` /
+/// `wt step --help`.
+///
+/// Unlike [`render_aliases_section`] (which `wt config alias show` reuses for
+/// the full per-alias listing), this shows only the names — `--help` is for
+/// orientation, not inspection. A name that collides with a built-in is
+/// flagged inline because the alias never runs via that path; `context`
+/// selects which built-ins shadow (see [`HelpContext`]). A name defined in
+/// both user and project config still appears once — `wt config alias show
+/// <name>` is where the two pipelines are distinguished. Matches clap's
+/// "Commands:" styling (bold+green heading, bold+cyan names) so the section
+/// blends in. Returns the block without leading or trailing blank lines —
+/// the caller positions it.
+fn render_aliases_help_section(
+    entries: &[(String, CommandConfig, HookSource)],
+    context: HelpContext,
+) -> String {
+    use std::fmt::Write as _;
+
+    let shadowed_names: &[&str] = match context {
+        HelpContext::TopLevel => TOP_LEVEL_BUILTINS,
+        HelpContext::Step => BUILTIN_STEP_COMMANDS,
+    };
+
+    // `entries` is sorted by (name, source); collapse user/project duplicates.
+    let mut names: Vec<&str> = Vec::new();
+    for (name, _, _) in entries {
+        if names.last() != Some(&name.as_str()) {
+            names.push(name);
+        }
+    }
+
+    // `cformat!`'s `</>` emits `\e[39m`, which the markdown pass over this
+    // output (`wrap_styled_text`) strips — leaving the fg color dangling onto
+    // whatever follows. Terminate each name with a full reset (`\e[0m`, which
+    // survives that pass) so the comma separators render uncolored, matching
+    // how clap closes each `Commands:` entry.
+    let reset = anstyle::Reset;
+    let list = names
+        .iter()
+        .map(|&name| {
+            let styled = if shadowed_names.contains(&name) {
+                cformat!("<bold><cyan>{name}</></> <yellow>(shadowed by built-in)</>")
+            } else {
+                cformat!("<bold><cyan>{name}</></>")
+            };
+            format!("{styled}{reset}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let mut out = String::new();
+    let _ = writeln!(out, "{}", cformat!("<bold><green>Aliases:</></>"));
+    // Trailing space after the list: `wrap_styled_text` drops a reset that
+    // ends a line, so without a trailing character the last name's color
+    // would bleed onto the "Run …" sentence below.
+    let _ = write!(
+        out,
+        "  {list} \n\nRun `wt config alias show` for the full definitions."
+    );
     out
 }
 
@@ -1680,5 +1743,67 @@ test = "cargo test"
           deploy  make deploy
           list    ls (shadowed by built-in)
         ");
+    }
+
+    #[test]
+    fn test_render_aliases_help_section() {
+        // The `--help` block is just a comma-separated name list: user/project
+        // duplicates collapse to one entry, a name colliding with a built-in
+        // is flagged inline (which built-ins shadow depends on the help
+        // context), and a pointer to the full listing follows. There is a
+        // trailing space after the list (load-bearing — keeps the last name's
+        // color from bleeding onto the "Run …" line; see the function).
+        let entries = vec![
+            (
+                "commit".to_string(),
+                cfg_from_toml(r#"cmd = "git commit""#),
+                HookSource::User,
+            ),
+            (
+                "deploy".to_string(),
+                cfg_from_toml(r#"cmd = "make deploy""#),
+                HookSource::User,
+            ),
+            (
+                "list".to_string(),
+                cfg_from_toml(r#"cmd = "ls""#),
+                HookSource::User,
+            ),
+            (
+                "shared".to_string(),
+                cfg_from_toml(r#"cmd = "echo u""#),
+                HookSource::User,
+            ),
+            (
+                "shared".to_string(),
+                cfg_from_toml(r#"cmd = "echo p""#),
+                HookSource::Project,
+            ),
+        ];
+        let mut sorted = entries;
+        sorted.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(&b.2)));
+
+        // Top level: `list` shadows the `wt list` built-in. `commit` is a
+        // step-only built-in — `wt commit` still runs the alias.
+        insta::assert_snapshot!(
+            render_aliases_help_section(&sorted, HelpContext::TopLevel).ansi_strip(),
+            @"
+        Aliases:
+          commit, deploy, list (shadowed by built-in), shared 
+
+        Run `wt config alias show` for the full definitions.
+        "
+        );
+
+        // Under `wt step`: `commit` shadows `wt step commit`; `list` does not.
+        insta::assert_snapshot!(
+            render_aliases_help_section(&sorted, HelpContext::Step).ansi_strip(),
+            @"
+        Aliases:
+          commit (shadowed by built-in), deploy, list, shared 
+
+        Run `wt config alias show` for the full definitions.
+        "
+        );
     }
 }

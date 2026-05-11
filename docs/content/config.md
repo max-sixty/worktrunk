@@ -402,7 +402,7 @@ Name the forge explicitly for SSH aliases or self-hosted instances, where it can
 
 ```toml
 [forge]
-platform = "github"  # or "gitea" (experimental), "gitlab"
+platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)
 hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 ```
 

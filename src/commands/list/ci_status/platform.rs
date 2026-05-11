@@ -1,16 +1,16 @@
 //! Forge dispatch for CI status detection.
 //!
 //! Given a [`CiPlatform`] (resolved by [`Repository::ci_platform`]), routes to
-//! the GitHub (`gh`) or GitLab (`glab`) backend and checks whether that CLI is
-//! installed.
+//! the GitHub (`gh`), GitLab (`glab`), or Azure DevOps (`az`) backend and
+//! checks whether that CLI is installed.
 
 use std::sync::OnceLock;
 
 use worktrunk::git::{CiPlatform, Repository};
 
-use super::{CiBranchName, PrStatus, github, gitlab, tool_available};
+use super::{CiBranchName, PrStatus, azure, github, gitlab, tool_available};
 
-/// Cached availability of CI CLI tools (`gh`, `glab`).
+/// Cached availability of CI CLI tools (`gh`, `glab`, `az`).
 ///
 /// Probed once on first access via a `--version` check.
 static CI_TOOLS: OnceLock<CiToolsAvailable> = OnceLock::new();
@@ -18,6 +18,7 @@ static CI_TOOLS: OnceLock<CiToolsAvailable> = OnceLock::new();
 struct CiToolsAvailable {
     gh: bool,
     glab: bool,
+    az: bool,
 }
 
 impl CiToolsAvailable {
@@ -25,6 +26,7 @@ impl CiToolsAvailable {
         CI_TOOLS.get_or_init(|| Self {
             gh: tool_available("gh", &["--version"]),
             glab: tool_available("glab", &["--version"]),
+            az: tool_available("az", &["--version"]),
         })
     }
 }
@@ -34,6 +36,7 @@ fn is_tool_available(platform: CiPlatform) -> bool {
     match platform {
         CiPlatform::GitHub => CiToolsAvailable::get().gh,
         CiPlatform::GitLab => CiToolsAvailable::get().glab,
+        CiPlatform::AzureDevOps => CiToolsAvailable::get().az,
     }
 }
 
@@ -47,6 +50,7 @@ fn detect_pr_mr(
     match platform {
         CiPlatform::GitHub => github::detect_github(repo, branch, local_head),
         CiPlatform::GitLab => gitlab::detect_gitlab(repo, branch, local_head),
+        CiPlatform::AzureDevOps => azure::detect_azure_pr(repo, branch, local_head),
     }
 }
 
@@ -61,6 +65,7 @@ fn detect_branch(
         CiPlatform::GitHub => github::detect_github_commit_checks(repo, branch, local_head),
         // GitLab pipelines use the bare branch name (not "origin/feature").
         CiPlatform::GitLab => gitlab::detect_gitlab_pipeline(repo, &branch.name, local_head),
+        CiPlatform::AzureDevOps => azure::detect_azure_pipeline(repo, &branch.name, local_head),
     }
 }
 

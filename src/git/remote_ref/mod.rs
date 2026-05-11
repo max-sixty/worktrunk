@@ -1,7 +1,7 @@
 //! Unified PR/MR reference resolution.
 //!
-//! This module provides a trait-based architecture for resolving GitHub/Gitea PRs and GitLab MRs
-//! to local branches. Both platforms follow the same workflow:
+//! This module provides a trait-based architecture for resolving GitHub PRs, Gitea PRs,
+//! GitLab MRs, and Azure DevOps PRs to local branches. All platforms follow the same workflow:
 //!
 //! 1. Parse `pr:<number>` or `mr:<number>` syntax
 //! 2. Fetch metadata from the platform API
@@ -36,12 +36,20 @@
 //! `{owner}`/`{repo}` template expansion depends on local repo context, so the
 //! provider resolves owner/repo from the primary remote URL and passes a
 //! pre-expanded path.
+//!
+//! ## Azure DevOps
+//!
+//! Uses `az repos pr show --id <number> --output json`. Auto-detects the organisation
+//! from configured Azure DevOps remotes. Requires the `azure-devops` extension
+//! (`az extension add --name azure-devops`).
 
+pub mod azure;
 pub mod gitea;
 pub mod github;
 pub mod gitlab;
 mod info;
 
+pub use azure::AzureDevOpsProvider;
 pub use gitea::GiteaProvider;
 pub use github::GitHubProvider;
 pub use gitlab::GitLabProvider;
@@ -59,11 +67,18 @@ use crate::shell_exec::Cmd;
 
 /// Provider trait for platform-specific PR/MR operations.
 ///
-/// Each platform (GitHub, GitLab) implements this trait to provide
-/// unified access to PR/MR metadata and ref paths.
+/// Each platform (GitHub, GitLab, Azure DevOps) implements this trait to
+/// provide unified access to PR/MR metadata and ref paths.
 pub trait RemoteRefProvider {
     /// The reference type this provider handles.
     fn ref_type(&self) -> RefType;
+
+    /// Short, stable identifier for the platform — `"github"`, `"gitlab"`, or
+    /// `"azure-devops"`. Useful for diagnostic logging and for tests that need
+    /// to verify which provider was selected (the other trait methods don't
+    /// distinguish GitHub from Azure DevOps — both use `RefType::Pr` and
+    /// `pull/{N}/head`).
+    fn platform_label(&self) -> &'static str;
 
     /// Fetch ref information from the platform API.
     ///
@@ -157,7 +172,10 @@ pub(super) fn cli_config_value(tool: &str, key: &str) -> Option<String> {
 /// The suggested URL in the error respects each platform's configured git
 /// protocol (SSH vs HTTPS).
 pub fn find_remote(repo: &Repository, info: &RemoteRefInfo) -> Result<String, GitError> {
-    let (owner, repo_name) = match &info.platform_data {
+    // Azure DevOps URLs don't fit the host/owner/repo shape that `find_remote_for_repo`
+    // assumes (the parser stores `{org}/{project}/_git` in owner). Use the dedicated
+    // Azure matcher for that platform; GitHub, Gitea, and GitLab share the owner/repo match.
+    let (matched, owner, repo_name) = match &info.platform_data {
         PlatformData::GitHub {
             base_owner,
             base_repo,
@@ -172,37 +190,56 @@ pub fn find_remote(repo: &Repository, info: &RemoteRefInfo) -> Result<String, Gi
             base_owner,
             base_repo,
             ..
-        } => (base_owner.as_str(), base_repo.as_str()),
+        } => (
+            repo.find_remote_for_repo(None, base_owner, base_repo),
+            base_owner.as_str(),
+            base_repo.as_str(),
+        ),
+        PlatformData::AzureDevOps {
+            organization,
+            project,
+            repo_name,
+            ..
+        } => (
+            repo.find_remote_for_azure(organization, project, repo_name),
+            organization.as_str(),
+            repo_name.as_str(),
+        ),
     };
 
-    repo.find_remote_for_repo(None, owner, repo_name)
-        .ok_or_else(|| {
-            let suggested_url = match &info.platform_data {
-                PlatformData::GitHub {
-                    host,
-                    base_owner,
-                    base_repo,
-                    ..
-                } => github::fork_remote_url(host, base_owner, base_repo),
-                PlatformData::Gitea {
-                    host,
-                    base_owner,
-                    base_repo,
-                    ..
-                } => gitea::fork_remote_url(host, base_owner, base_repo),
-                PlatformData::GitLab {
-                    host,
-                    base_owner,
-                    base_repo,
-                    ..
-                } => gitlab::fork_remote_url(host, base_owner, base_repo),
-            };
-            GitError::NoRemoteForRepo {
-                owner: owner.to_string(),
-                repo: repo_name.to_string(),
-                suggested_url,
-            }
-        })
+    matched.ok_or_else(|| {
+        let suggested_url = match &info.platform_data {
+            PlatformData::GitHub {
+                host,
+                base_owner,
+                base_repo,
+                ..
+            } => github::fork_remote_url(host, base_owner, base_repo),
+            PlatformData::Gitea {
+                host,
+                base_owner,
+                base_repo,
+                ..
+            } => gitea::fork_remote_url(host, base_owner, base_repo),
+            PlatformData::GitLab {
+                host,
+                base_owner,
+                base_repo,
+                ..
+            } => gitlab::fork_remote_url(host, base_owner, base_repo),
+            PlatformData::AzureDevOps {
+                host,
+                organization,
+                project,
+                repo_name,
+            } => azure::fork_remote_url(host, organization, project, repo_name),
+        };
+        GitError::NoRemoteForRepo {
+            owner: owner.to_string(),
+            repo: repo_name.to_string(),
+            suggested_url,
+        }
+    })
 }
 
 /// Check if a local branch is tracking a specific remote ref.
