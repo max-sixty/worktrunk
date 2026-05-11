@@ -53,7 +53,8 @@ pub struct ProjectListConfig {
 pub struct ProjectCiConfig {
     /// CI platform. When unset, the platform is detected from the remote URL.
     ///
-    /// Values: "github" or "gitlab"
+    /// Deprecated alias for `[forge].platform`; same accepted values
+    /// ("github", "gitlab", "gitea", "azure-devops").
     #[serde(default)]
     pub platform: Option<String>,
 }
@@ -76,8 +77,9 @@ pub struct ProjectForgeConfig {
     /// Forge platform. When unset, the platform is detected from the remote URL.
     ///
     /// Values: "github", "gitlab", "gitea" (experimental), or "azure-devops"
-    /// (experimental). The `wt switch pr:` shortcut uses `forge.platform` to
-    /// decide which CLI to invoke (`gh`, `glab`, `tea`, or `az`).
+    /// (experimental). Both the `wt switch pr:` shortcut and `wt list --full`
+    /// CI status detection use `forge.platform` to pick the forge CLI (`gh`,
+    /// `glab`, `tea`, or `az`).
     #[serde(default)]
     pub platform: Option<String>,
 

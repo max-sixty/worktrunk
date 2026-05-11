@@ -1,11 +1,13 @@
-//! CI status detection for GitHub, GitLab, and Azure DevOps.
+//! CI status detection for GitHub, GitLab, Gitea, and Azure DevOps.
 //!
 //! This module provides CI status detection by querying GitHub PRs/workflows,
-//! GitLab MRs/pipelines, and Azure DevOps PRs/pipelines using their respective
-//! CLI tools (`gh`, `glab`, and `az`).
+//! GitLab MRs/pipelines, Gitea PRs/commit-statuses, and Azure DevOps
+//! PRs/pipelines using their respective CLI tools (`gh`, `glab`, `tea`, and
+//! `az`).
 
 mod azure;
 mod cache;
+mod gitea;
 mod github;
 mod gitlab;
 mod platform;
@@ -155,6 +157,10 @@ pub struct CiToolsStatus {
     pub glab_installed: bool,
     /// glab is installed and authenticated
     pub glab_authenticated: bool,
+    /// tea is installed (can run --version)
+    pub tea_installed: bool,
+    /// tea is installed and has a login configured
+    pub tea_authenticated: bool,
     /// az is installed (can run --version)
     pub az_installed: bool,
     /// az is installed and authenticated (logged in)
@@ -177,6 +183,11 @@ impl CiToolsStatus {
             } else {
                 tool_available("glab", &["auth", "status"])
             };
+        let tea_installed = tool_available("tea", &["--version"]);
+        // `tea` stores logins in its config file; reading it (rather than
+        // invoking `tea`) avoids the OAuth-refresh side effect a `tea` lookup
+        // can trigger. See `git::remote_ref::gitea`.
+        let tea_authenticated = tea_installed && worktrunk::git::remote_ref::gitea::has_any_login();
         let az_installed = tool_available("az", &["--version"]);
         // `az account show` exits non-zero when logged out — works whether or not
         // the azure-devops extension is installed.
@@ -186,6 +197,8 @@ impl CiToolsStatus {
             gh_authenticated,
             glab_installed,
             glab_authenticated,
+            tea_installed,
+            tea_authenticated,
             az_installed,
             az_authenticated,
         }
@@ -313,7 +326,7 @@ impl PrStatus {
         }
     }
 
-    /// Detect CI status for a branch using gh/glab CLI
+    /// Detect CI status for a branch using the forge CLI (`gh`/`glab`/`tea`/`az`)
     /// First tries to find PR/MR status, then falls back to workflow/pipeline runs
     /// Returns None if no CI found or CLI tools unavailable
     ///

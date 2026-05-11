@@ -1665,6 +1665,21 @@ impl TestRepo {
         self.mock_bin_path = Some(mock_bin);
     }
 
+    /// Add a mock `tea` (installed, no login) to the existing mock bin.
+    ///
+    /// Call this after `setup_mock_ci_tools_unauthenticated()` to make
+    /// `wt config show --full` against a Gitea remote deterministic — the
+    /// Gitea diagnostics row only depends on `tea`'s state.
+    pub fn setup_mock_tea_installed(&mut self) {
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+        MockConfig::new("tea")
+            .version("tea version development (mock)")
+            .write(mock_bin);
+    }
+
     /// Setup mock `claude` CLI as installed
     ///
     /// Call this after setup_mock_ci_tools_unauthenticated() to simulate
@@ -2027,6 +2042,118 @@ impl TestRepo {
         MockConfig::new("glab")
             .command("_default", MockResponse::exit(1))
             .write(&mock_bin);
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Setup mock `tea` that returns configurable Gitea PR / commit-status data.
+    ///
+    /// Use this for testing Gitea CI status parsing. The mock handles:
+    /// - `tea api repos/{owner}/{repo}/pulls?state=open` → `pulls_json`
+    /// - `tea api repos/{owner}/{repo}/commits/{head_sha}/status` → `status_json`
+    ///
+    /// `owner`/`repo_name`/`head_sha` are needed because mock-stub matches the
+    /// invocation's leading arguments verbatim, and `tea api <path>` passes the
+    /// whole API path as a single argument — so the exact path string must be
+    /// registered.
+    ///
+    /// # Arguments
+    /// * `owner`, `repo_name` - the Gitea repo the test's remote points at.
+    /// * `head_sha` - the SHA used for the `commits/{sha}/status` lookup
+    ///   (the feature branch's HEAD; also the PR head SHA in `pulls_json`).
+    /// * `pulls_json` - JSON array for `tea api .../pulls`. Each entry should
+    ///   include `mergeable`, `html_url`, and `head.{ref,sha,repo.owner.login}`.
+    /// * `status_json` - JSON object for `tea api .../commits/{sha}/status`,
+    ///   with `state` and `total_count`.
+    pub fn setup_mock_tea_with_ci_data(
+        &mut self,
+        owner: &str,
+        repo_name: &str,
+        head_sha: &str,
+        pulls_json: &str,
+        status_json: &str,
+    ) {
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        std::fs::write(mock_bin.join("tea_pulls.json"), pulls_json).unwrap();
+        std::fs::write(mock_bin.join("tea_status.json"), status_json).unwrap();
+
+        let pulls_path = format!("api repos/{owner}/{repo_name}/pulls?state=open");
+        let status_path = format!("api repos/{owner}/{repo_name}/commits/{head_sha}/status");
+
+        MockConfig::new("tea")
+            .version("tea version development (mock)")
+            .command(&pulls_path, MockResponse::file("tea_pulls.json"))
+            .command(&status_path, MockResponse::file("tea_status.json"))
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        // Other CI tools fail — platform detection is URL-based, but keep these
+        // present-but-useless so a real tool on PATH can't interfere.
+        for tool in ["gh", "glab", "az"] {
+            MockConfig::new(tool)
+                .command("_default", MockResponse::exit(1))
+                .write(&mock_bin);
+        }
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Setup mock `tea` where every `tea api` call fails with the given stderr
+    /// (exit code 1).
+    ///
+    /// Used to exercise the `is_retriable_error` branch in `detect_gitea_pr`.
+    pub fn setup_mock_tea_with_detection_error(&mut self, stderr: &str) {
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        MockConfig::new("tea")
+            .version("tea version development (mock)")
+            .command("api", MockResponse::stderr(stderr).with_exit_code(1))
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        for tool in ["gh", "glab", "az"] {
+            MockConfig::new(tool)
+                .command("_default", MockResponse::exit(1))
+                .write(&mock_bin);
+        }
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Setup mock `tea` for the Gitea commit-status fallback (no PR): the
+    /// `pulls` list returns `[]`, and the `commits/{head_sha}/status` lookup
+    /// fails with `stderr` (exit code 1). Assumes the repo's remote points at
+    /// `owner/test-repo`.
+    ///
+    /// Used to exercise the `is_retriable_error` branch in
+    /// `fetch_combined_status`.
+    pub fn setup_mock_tea_commit_status_error(&mut self, head_sha: &str, stderr: &str) {
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        std::fs::write(mock_bin.join("tea_pulls.json"), "[]").unwrap();
+
+        MockConfig::new("tea")
+            .version("tea version development (mock)")
+            .command(
+                "api repos/owner/test-repo/pulls?state=open",
+                MockResponse::file("tea_pulls.json"),
+            )
+            .command(
+                &format!("api repos/owner/test-repo/commits/{head_sha}/status"),
+                MockResponse::stderr(stderr).with_exit_code(1),
+            )
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        for tool in ["gh", "glab", "az"] {
+            MockConfig::new(tool)
+                .command("_default", MockResponse::exit(1))
+                .write(&mock_bin);
+        }
 
         self.mock_bin_path = Some(mock_bin);
     }
