@@ -111,7 +111,7 @@ use super::worktree::hooks::PostRemoveContext;
 use super::worktree::{
     RemoveResult, SwitchBranchInfo, SwitchResult, approve_switch_hooks, execute_switch,
     offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch, run_pre_switch_hooks,
-    spawn_switch_background_hooks,
+    spawn_switch_background_hooks, switch_hook_project_config,
 };
 use crate::commands::command_executor::CommandContext;
 use crate::output::handle_switch_output;
@@ -782,7 +782,18 @@ pub fn handle_picker(
 
         // Switch to existing worktree or create new one
         let plan = plan_switch(&repo, &identifier, should_create, None, false, &config)?;
-        let hooks_approved = approve_switch_hooks(&repo, &config, &plan, false, true)?;
+        // Resolve the config the post-switch hooks will run against (the
+        // new/destination worktree's, or for `--create` the base ref's) so the
+        // approval prompt lists the exact commands `execute_switch` will run.
+        let hook_project_config = switch_hook_project_config(&repo, &plan)?;
+        let hooks_approved = approve_switch_hooks(
+            &repo,
+            &config,
+            &plan,
+            false,
+            true,
+            hook_project_config.as_ref(),
+        )?;
         let (result, branch_info) = execute_switch(&repo, plan, &config, false, hooks_approved)?;
 
         // Compute path mismatch lazily (deferred from plan_switch for existing worktrees).

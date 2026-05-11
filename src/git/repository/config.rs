@@ -613,12 +613,66 @@ impl Repository {
             })
             .map(Option::as_ref)
     }
+
+    /// Parse `.config/wt.toml` as committed at `gitref` (a branch name,
+    /// `FETCH_HEAD`, a SHA, …), applying the structural TOML migration so
+    /// deprecated patterns still parse.
+    ///
+    /// Used to preview the project config a not-yet-created worktree will
+    /// check out: `wt switch --create`'s hook-approval prompt and template
+    /// pre-flight read the base ref this way so they match what the
+    /// post-switch hooks execute against once the worktree exists (a checkout
+    /// of that ref). `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path
+    /// regardless of the ref, the same as [`project_config_path`].
+    ///
+    /// Unlike [`load_project_config`](Self::load_project_config) this never
+    /// touches the working tree and never writes a `.new` migration file —
+    /// it must not, since the content comes from an arbitrary ref rather than
+    /// the user's working copy. Returns `None` when the ref has no
+    /// `.config/wt.toml` (git exits non-zero) or the content fails to parse.
+    ///
+    /// [`project_config_path`]: Self::project_config_path
+    pub fn project_config_at_ref(&self, gitref: &str) -> Option<ProjectConfig> {
+        if std::env::var_os("WORKTRUNK_PROJECT_CONFIG_PATH").is_some() {
+            return self.load_project_config().ok().flatten();
+        }
+        let content = self
+            .run_command(&["show", &format!("{gitref}:.config/wt.toml")])
+            .ok()?;
+        let migrated = crate::config::migrate_content(&content);
+        toml::from_str::<ProjectConfig>(&migrated).ok()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::testing::TestRepo;
+
+    #[test]
+    fn project_config_at_ref_reads_committed_config() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // No `.config/wt.toml` committed yet, and a nonexistent ref → None.
+        assert!(repo.project_config_at_ref("HEAD").is_none());
+        assert!(repo.project_config_at_ref("no-such-ref").is_none());
+
+        // Commit one and read it back at that branch.
+        test.write_project_config(r#"post-start = "echo hi""#);
+        test.run_git(&["add", ".config/wt.toml"]);
+        test.run_git(&["commit", "-m", "Add config"]);
+        let cfg = repo
+            .project_config_at_ref("HEAD")
+            .expect("config committed at HEAD");
+        assert!(cfg.hooks.post_start.is_some());
+
+        // A committed file that doesn't parse → None (rather than erroring).
+        test.write_project_config("this is not [ valid toml");
+        test.run_git(&["add", ".config/wt.toml"]);
+        test.run_git(&["commit", "-m", "Break config"]);
+        assert!(repo.project_config_at_ref("HEAD").is_none());
+    }
 
     #[test]
     fn test_get_config_regexp_no_match_returns_empty() {
