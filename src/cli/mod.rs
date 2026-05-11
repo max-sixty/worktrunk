@@ -634,7 +634,7 @@ Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated.
 
 **Gitea (experimental):** `pr:` is also compatible with Gitea via the `tea` CLI. Set `[forge] platform = "gitea"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Gitea when the remote host contains `gitea` or when `tea login add` has been run for the host.
 
-**Azure DevOps (experimental):** `pr:` also resolves Azure DevOps PRs via the `az` CLI (requires the `azure-devops` extension: `az extension add --name azure-devops`). Set `[forge] platform = "azure-devops"` to opt in, or worktrunk auto-detects when the remote URL is on `dev.azure.com`, `ssh.dev.azure.com`, or `*.visualstudio.com`.
+**Azure DevOps (experimental):** `pr:` is also compatible with Azure DevOps via the `az` CLI (with the `azure-devops` extension). Set `[forge] platform = "azure-devops"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Azure DevOps from `dev.azure.com` and `*.visualstudio.com` remotes.
 
 ## When wt switch fails
 
@@ -751,8 +751,6 @@ The CI column shows GitHub/GitLab pipeline status:
 | (blank) | No upstream or no PR/MR |
 
 CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when unpushed local changes make the status stale. PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with `--remotes` — get CI status detection. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
-
-**Azure DevOps (experimental):** CI status is also detected for Azure DevOps repos via the `az` CLI (requires the `azure-devops` extension). Set `[forge] platform = "azure-devops"` to opt in, or worktrunk auto-detects when the remote URL is on `dev.azure.com`, `ssh.dev.azure.com`, or `*.visualstudio.com`.
 
 ### LLM summaries [experimental]
 

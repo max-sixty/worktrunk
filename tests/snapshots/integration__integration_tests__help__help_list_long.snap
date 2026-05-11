@@ -163,8 +163,6 @@ The CI column shows GitHub/GitLab pipeline status:
 
 CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when unpushed local changes make the status stale. PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank; remote-only branches — visible with [2m--remotes[0m — get CI status detection. Results are cached for 30-60 seconds; use [2mwt config state[0m to view or clear.
 
-[1mAzure DevOps (experimental):[0m CI status is also detected for Azure DevOps repos via the [2maz[0m CLI (requires the [2mazure-devops[0m extension). Set [2m[forge] platform = "azure-devops"[0m to opt in, or worktrunk auto-detects when the remote URL is on [2mdev.azure.com[0m, [2mssh.dev.azure.com[0m, or [2m*.visualstudio.com[0m.
-
 [32mLLM summaries [experimental][0m
 
 Reuses the [2mcommit.generation[0m command — the same LLM that generates commit messages. Enable with [2msummary = true[0m in [2m[list][0m config; requires [2m--full[0m. Results are cached until the branch's diff changes.

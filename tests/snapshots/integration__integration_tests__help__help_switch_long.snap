@@ -215,7 +215,7 @@ Requires [2mgh[0m (GitHub) or [2mglab[0m (GitLab) CLI to be installed and au
 
 [1mGitea (experimental):[0m [2mpr:[0m is also compatible with Gitea via the [2mtea[0m CLI. Set [2m[forge] platform = "gitea"[0m in [2m.config/wt.toml[0m to opt in; worktrunk also auto-detects Gitea when the remote host contains [2mgitea[0m or when [2mtea login add[0m has been run for the host.
 
-[1mAzure DevOps (experimental):[0m [2mpr:[0m also resolves Azure DevOps PRs via the [2maz[0m CLI (requires the [2mazure-devops[0m extension: [2maz extension add --name azure-devops[0m). Set [2m[forge] platform = "azure-devops"[0m to opt in, or worktrunk auto-detects when the remote URL is on [2mdev.azure.com[0m, [2mssh.dev.azure.com[0m, or [2m*.visualstudio.com[0m.
+[1mAzure DevOps (experimental):[0m [2mpr:[0m is also compatible with Azure DevOps via the [2maz[0m CLI (with the [2mazure-devops[0m extension). Set [2m[forge] platform = "azure-devops"[0m in [2m.config/wt.toml[0m to opt in; worktrunk also auto-detects Azure DevOps from [2mdev.azure.com[0m and [2m*.visualstudio.com[0m remotes.
 
 [1m[32mWhen wt switch fails[0m
 
