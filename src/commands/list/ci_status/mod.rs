@@ -17,7 +17,7 @@ use std::process::Output;
 use anstyle::{AnsiColor, Color, Style};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use worktrunk::git::{BranchRef, GitRemoteUrl, Repository, parse_owner_repo};
+use worktrunk::git::{BranchRef, Repository, parse_owner_repo};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::utils::epoch_now;
 
@@ -152,9 +152,22 @@ fn retriable_pr_error(output: &Output) -> Option<PrStatus> {
     is_retriable_error(&output_error_text(output)).then(PrStatus::error)
 }
 
-/// Resolve `(owner, repo)` for a branch's effective remote, scoped to the
-/// given platform.
+/// Resolve `(owner, repo)` for a branch's effective remote.
 ///
+/// Thin wrapper over [`branch_remote_url`] + [`parse_owner_repo`]. The
+/// platform was already chosen upstream by [`Repository::ci_platform`] —
+/// either from explicit `forge.platform` config or from the URL host —
+/// so backends don't re-filter here. Re-checking via the host heuristic
+/// (`is_gitea` / `is_github`) would silently drop legitimate hosts that
+/// rely on the explicit override (e.g. `codeberg.org` for Forgejo,
+/// `git.mycompany.com` for self-hosted GHE).
+fn branch_owner_repo(repo: &Repository, branch: &CiBranchName) -> Option<(String, String)> {
+    parse_owner_repo(&branch_remote_url(repo, branch)?)
+}
+
+/// Resolve the effective URL for a branch's remote without parsing.
+///
+/// Resolution chain:
 /// - Remote-branch refs (`origin/feature`) read from the branch's own
 ///   remote via [`Repository::effective_remote_url`] (honors
 ///   `url.insteadOf` rewrites).
@@ -163,26 +176,9 @@ fn retriable_pr_error(output: &Output) -> Option<PrStatus> {
 ///   falling back to the repo's primary remote so a tracking-less branch
 ///   still resolves.
 ///
-/// `is_platform` filters out URLs that don't belong to the calling backend
-/// (e.g., a primary github remote alongside an azure secondary): the
-/// platform was selected upstream from one remote, so a different remote
-/// must not be queried with mismatched API shapes.
-fn branch_owner_repo_for_platform(
-    repo: &Repository,
-    branch: &CiBranchName,
-    is_platform: impl Fn(&GitRemoteUrl) -> bool,
-) -> Option<(String, String)> {
-    let url = branch_remote_url(repo, branch)?;
-    let parsed = GitRemoteUrl::parse(&url)?;
-    is_platform(&parsed).then_some(())?;
-    parse_owner_repo(&url)
-}
-
-/// Resolve the effective URL for a branch's remote without parsing.
-///
-/// See [`branch_owner_repo_for_platform`] for the resolution chain — this is
-/// the URL-only primitive backends compose with their own URL parsers
-/// (Azure DevOps' org/project shape doesn't fit `parse_owner_repo`).
+/// Backends with their own URL parser (e.g. Azure DevOps' org/project shape)
+/// compose this directly; backends that want `(owner, repo)` use
+/// [`branch_owner_repo`].
 fn branch_remote_url(repo: &Repository, branch: &CiBranchName) -> Option<String> {
     if let Some(remote_name) = &branch.remote {
         repo.effective_remote_url(remote_name)
