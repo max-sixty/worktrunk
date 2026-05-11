@@ -178,6 +178,20 @@ fn bench_worktree_scaling(c: &mut Criterion) {
 
 fn bench_real_repo(c: &mut Criterion) {
     let mut group = c.benchmark_group("real_repo");
+    // `wt list` on rust-lang/rust runs ~2s warm — dominated by one deep
+    // `git for-each-ref %(ahead-behind:main)` walk — and several times
+    // that for cold/8, where each iteration also rebuilds eight 59k-entry
+    // indexes via `git status`. Warm-path variance is that slowest single
+    // subprocess, not measurement noise, so the inherited 30-sample / 15s
+    // default just burns time: at >1s/iter Criterion can't fit 30 samples
+    // in 15s, so it runs 30 single-iteration samples regardless. 10 is
+    // Criterion's minimum (`sample_size` < 10 panics); the 20s budget
+    // caps the cheap warm variants at ≤2 iterations per sample. Cuts the
+    // group's measured time ~3× — the expensive cold variants drop from
+    // 30 iterations to 10.
+    group.measurement_time(std::time::Duration::from_secs(20));
+    group.sample_size(10);
+
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
     for worktrees in [1, 4, 8] {
@@ -301,11 +315,12 @@ fn bench_real_repo_many_branches(c: &mut Criterion) {
     let mut group = c.benchmark_group("real_repo_many_branches");
     // rust-lang/rust runs ~3.7s per `wt list --branches` iteration; warm-path
     // variance is dominated by the slowest single subprocess (a deep
-    // `git merge-base` walking history), not measurement noise, so 5 samples
-    // suffices. A 20s budget is ≈ one iteration per sample (~18s), down from
-    // the ~74s criterion spent filling the old 60s budget.
+    // `git merge-base` walking history), not measurement noise, so 10 samples
+    // (criterion's minimum — `sample_size` < 10 panics) suffices. A 20s budget
+    // is ≈ one iteration per sample (~37s/function), down from the
+    // ~74s/function criterion spent filling the old 60s budget.
     group.measurement_time(std::time::Duration::from_secs(20));
-    group.sample_size(5);
+    group.sample_size(10);
 
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
