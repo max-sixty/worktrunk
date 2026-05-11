@@ -86,6 +86,7 @@ pub(crate) mod preview_cache;
 mod preview_orchestrator;
 mod progressive_handler;
 mod summary;
+mod theme;
 
 use std::cell::RefCell;
 use std::io::IsTerminal;
@@ -122,6 +123,7 @@ use worktrunk::git::{
 use items::{PreviewCache, WorktreeSkimItem};
 use preview::{PreviewLayout, PreviewMode, PreviewState};
 use preview_orchestrator::PreviewOrchestrator;
+use theme::picker_color_scheme;
 
 /// Drain stashed warnings to stderr. Called after skim has released the
 /// terminal (or in the dry-run path after the bg thread joins) — eprintln
@@ -575,23 +577,7 @@ pub fn handle_picker(
         // effect, `clear_on_start = false`, is harmless for us — skim
         // immediately overdraws the rows it allocates.
         .no_clear_start(true)
-        // Color scheme using fzf's --color=light values: dark text (237) on light gray bg (251)
-        //
-        // Terminal color compatibility is tricky:
-        // - current_bg:254 (original): too bright on dark terminals, washes out text
-        // - current_bg:236 (fzf dark): too dark on light terminals, jarring contrast
-        // - current_bg:251 + current:-1: light bg works on both, but unstyled text
-        //   becomes unreadable on dark terminals (light-on-light)
-        // - current_bg:251 + current:237: fzf's light theme, best compromise
-        //
-        // The light theme works universally because:
-        // - On dark terminals: light gray highlight stands out clearly
-        // - On light terminals: light gray is subtle but visible
-        // - Dark text (237) ensures readability regardless of terminal theme
-        .color(Some(
-            "fg:-1,bg:-1,header:-1,matched:108,current:237,current_bg:251,current_match:108"
-                .to_string(),
-        ))
+        .color(Some(picker_color_scheme()))
         .cmd_collector(Rc::new(RefCell::new(collector)) as Rc<RefCell<dyn CommandCollector>>)
         .bind(vec![
             // Mode switching (1/2/3/4/5 keys change preview content)
