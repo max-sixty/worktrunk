@@ -1,7 +1,5 @@
 //! Branch - a handle for branch-specific git operations.
 
-use crate::git::GitRemoteUrl;
-
 use super::Repository;
 
 /// A handle for running git commands on a specific branch.
@@ -143,10 +141,10 @@ impl<'a> Branch<'a> {
     /// Returns `None` if no push remote is configured or the remote has no URL.
     ///
     /// Result is cached on `RepoCache.push_remote_urls`. The CI-status detector
-    /// calls `github_push_url` from both `detect_github` (PR-based) and
-    /// `detect_github_commit_checks` (branch fallback), so without the cache the
-    /// `for-each-ref` runs twice for the same branch on the no-PR path.
-    fn push_remote_url(&self) -> Option<String> {
+    /// calls this from both the PR-based path and the branch fallback, so
+    /// without the cache the `for-each-ref` runs twice for the same branch
+    /// on the no-PR path.
+    pub fn push_remote_url(&self) -> Option<String> {
         self.repo
             .cache
             .push_remote_urls
@@ -173,19 +171,5 @@ impl<'a> Branch<'a> {
                 }
             })
             .clone()
-    }
-
-    /// Get the GitHub URL for this branch's push remote, if it's a GitHub URL.
-    ///
-    /// Returns the push remote URL if configured and pointing to GitHub,
-    /// otherwise returns `None`. Handles `url.insteadOf` aliases via
-    /// `effective_remote_url` (cached).
-    ///
-    /// Handles both remote-name and URL-based pushremotes (the latter is set by
-    /// `gh pr checkout` for fork PRs).
-    pub fn github_push_url(&self) -> Option<String> {
-        let url = self.push_remote_url()?;
-        let parsed = GitRemoteUrl::parse(&url)?;
-        parsed.is_github().then_some(url)
     }
 }

@@ -3,36 +3,22 @@
 //! Detects CI status from GitHub PRs and workflow runs using the `gh` CLI.
 
 use serde::Deserialize;
-use worktrunk::git::{Repository, parse_owner_repo};
+use worktrunk::git::{GitRemoteUrl, Repository};
 
 use super::{
-    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrStatus, is_retriable_error,
-    non_interactive_cmd, parse_json,
+    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrStatus, branch_owner_repo_for_platform,
+    non_interactive_cmd, parse_json, retriable_pr_error,
 };
 
-/// Get the owner and repo name from the primary remote.
+/// Get the owner and repo name for the branch's effective GitHub remote.
 ///
-/// Used for GitHub API calls that require `repos/{owner}/{repo}/...` paths.
-/// Platform is already known to be GitHub when this runs, so we extract
-/// directly from the primary remote's raw URL without checking the hostname.
-fn github_owner_repo(repo: &Repository) -> Option<(String, String)> {
-    let remote = repo.primary_remote().ok()?;
-    let url = repo.remote_url(&remote)?;
-    parse_owner_repo(&url)
-}
-
-/// Get the owner and repo name for the branch's effective push destination.
+/// Resolves through the shared `branch_remote_url` chain (branch.remote →
+/// push remote → primary), filtered to GitHub URLs.
 fn github_owner_repo_for_branch(
     repo: &Repository,
     branch: &CiBranchName,
 ) -> Option<(String, String)> {
-    let url = if let Some(remote_name) = &branch.remote {
-        repo.effective_remote_url(remote_name)
-    } else {
-        repo.branch(&branch.name).github_push_url()
-    }?;
-
-    parse_owner_repo(&url)
+    branch_owner_repo_for_platform(repo, branch, GitRemoteUrl::is_github)
 }
 
 /// Detect GitHub PR CI status for a branch.
@@ -110,11 +96,7 @@ pub(super) fn detect_github(
     };
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if is_retriable_error(&stderr) {
-            return Some(PrStatus::error());
-        }
-        return None;
+        return retriable_pr_error(&output);
     }
 
     // gh pr list returns an array - find the first PR from our origin
@@ -171,8 +153,7 @@ pub(super) fn detect_github_commit_checks(
     local_head: &str,
 ) -> Option<PrStatus> {
     let repo_root = repo.current_worktree().root().ok()?;
-    let (owner, repo_name) =
-        github_owner_repo_for_branch(repo, branch).or_else(|| github_owner_repo(repo))?;
+    let (owner, repo_name) = github_owner_repo_for_branch(repo, branch)?;
 
     // Only pass --hostname when explicitly configured (for GHE / self-hosted)
     let hostname = repo
@@ -206,11 +187,7 @@ pub(super) fn detect_github_commit_checks(
     };
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if is_retriable_error(&stderr) {
-            return Some(PrStatus::error());
-        }
-        return None;
+        return retriable_pr_error(&output);
     }
 
     let checks: Vec<GitHubCheck> = parse_json(&output.stdout, "gh api check-runs", local_head)?;

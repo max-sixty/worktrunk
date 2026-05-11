@@ -8,17 +8,21 @@ use worktrunk::git::remote_ref::azure as az_url;
 use worktrunk::git::{GitRemoteUrl, Repository};
 
 use super::{
-    CiBranchName, CiSource, CiStatus, PrStatus, is_retriable_error, non_interactive_cmd, parse_json,
+    CiBranchName, CiSource, CiStatus, PrStatus, branch_remote_url, non_interactive_cmd, parse_json,
+    retriable_pr_error,
 };
 
 /// Resolve the Azure DevOps context (host, org, project, `--org` URL) for this
-/// repo's `az` invocations.
+/// branch's `az` invocations.
 ///
-/// Prefers the primary remote so fork workflows hit the right tenant. Falls
-/// back to the first Azure remote found if the primary isn't Azure DevOps.
+/// Walks the shared [`branch_remote_url`] chain first — so a remote-branch
+/// row from `wt list --remotes --full` queries the right tenant in
+/// multi-org setups. Falls back to scanning every configured remote for
+/// any Azure URL when the resolved remote isn't Azure DevOps (e.g., a
+/// branch tracks a non-Azure mirror but another remote is the real one).
 /// Returns `None` if no remote points at Azure DevOps.
-fn azure_context(repo: &Repository) -> Option<AzureContext> {
-    let try_remote = |url: &str| -> Option<AzureContext> {
+fn azure_context(repo: &Repository, branch: &CiBranchName) -> Option<AzureContext> {
+    let try_url = |url: &str| -> Option<AzureContext> {
         let parsed = GitRemoteUrl::parse(url)?;
         if !parsed.is_azure_devops() {
             return None;
@@ -35,14 +39,13 @@ fn azure_context(repo: &Repository) -> Option<AzureContext> {
         })
     };
 
-    if let Ok(remote) = repo.primary_remote()
-        && let Some(url) = repo.effective_remote_url(&remote)
-        && let Some(ctx) = try_remote(&url)
+    if let Some(url) = branch_remote_url(repo, branch)
+        && let Some(ctx) = try_url(&url)
     {
         return Some(ctx);
     }
     for (_, url) in repo.all_remote_urls() {
-        if let Some(ctx) = try_remote(&url) {
+        if let Some(ctx) = try_url(&url) {
             return Some(ctx);
         }
     }
@@ -65,7 +68,7 @@ pub(super) fn detect_azure_pr(
     local_head: &str,
 ) -> Option<PrStatus> {
     let repo_root = repo.repo_path().ok()?;
-    let ctx = azure_context(repo)?;
+    let ctx = azure_context(repo, branch)?;
 
     // `az repos pr list --source-branch` expects a full ref name.
     let source_ref = format!("refs/heads/{}", branch.name);
@@ -100,11 +103,7 @@ pub(super) fn detect_azure_pr(
     };
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if is_retriable_error(&stderr) {
-            return Some(PrStatus::error());
-        }
-        return None;
+        return retriable_pr_error(&output);
     }
 
     let pr_list: Vec<AzPrListEntry> =
@@ -145,13 +144,13 @@ pub(super) fn detect_azure_pr(
 /// can dim the indicator rather than reporting fresh status against stale data.
 pub(super) fn detect_azure_pipeline(
     repo: &Repository,
-    branch: &str,
+    branch: &CiBranchName,
     local_head: &str,
 ) -> Option<PrStatus> {
     let repo_root = repo.repo_path().ok()?;
-    let ctx = azure_context(repo)?;
+    let ctx = azure_context(repo, branch)?;
 
-    let branch_ref = format!("refs/heads/{}", branch);
+    let branch_ref = format!("refs/heads/{}", branch.name);
     let output = match non_interactive_cmd("az")
         .args([
             "pipelines",
@@ -175,7 +174,7 @@ pub(super) fn detect_azure_pipeline(
         Err(e) => {
             log::warn!(
                 "az pipelines runs list failed to execute for branch {}: {}",
-                branch,
+                branch.full_name,
                 e
             );
             return None;
@@ -183,14 +182,11 @@ pub(super) fn detect_azure_pipeline(
     };
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if is_retriable_error(&stderr) {
-            return Some(PrStatus::error());
-        }
-        return None;
+        return retriable_pr_error(&output);
     }
 
-    let runs: Vec<AzPipelineRun> = parse_json(&output.stdout, "az pipelines runs list", branch)?;
+    let runs: Vec<AzPipelineRun> =
+        parse_json(&output.stdout, "az pipelines runs list", &branch.full_name)?;
     let run = runs.first()?;
 
     let ci_status = parse_azure_pipeline_status(run.status.as_deref(), run.result.as_deref());

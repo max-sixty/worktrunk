@@ -72,7 +72,7 @@ fn detect_branch(
         // Gitea queries the combined commit status by SHA, but owner/repo come
         // from the branch's own remote (so remote-only rows hit the right repo).
         CiPlatform::Gitea => gitea::detect_gitea_commit_status(repo, branch, local_head),
-        CiPlatform::AzureDevOps => azure::detect_azure_pipeline(repo, &branch.name, local_head),
+        CiPlatform::AzureDevOps => azure::detect_azure_pipeline(repo, branch, local_head),
     }
 }
 

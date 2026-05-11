@@ -12,10 +12,12 @@ mod github;
 mod gitlab;
 mod platform;
 
+use std::process::Output;
+
 use anstyle::{AnsiColor, Color, Style};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use worktrunk::git::{BranchRef, Repository};
+use worktrunk::git::{BranchRef, GitRemoteUrl, Repository, parse_owner_repo};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::utils::epoch_now;
 
@@ -128,6 +130,68 @@ fn parse_json<T: DeserializeOwned>(stdout: &[u8], command: &str, branch: &str) -
     serde_json::from_slice(stdout)
         .map_err(|e| log::warn!("Failed to parse {} JSON for {}: {}", command, branch, e))
         .ok()
+}
+
+/// Combine stderr and stdout for retriable-error sniffing.
+///
+/// Some CLIs (notably `tea`) report API errors as JSON on stdout while
+/// transport errors land on stderr — checking both avoids missing retriable
+/// errors when the tool routes them differently.
+fn output_error_text(output: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    )
+}
+
+/// If a non-success `Output` indicates a retriable failure, surface it as a
+/// PR-status warning. Returns `None` for non-retriable failures so callers
+/// can `?` it to fall through to "no CI status".
+fn retriable_pr_error(output: &Output) -> Option<PrStatus> {
+    is_retriable_error(&output_error_text(output)).then(PrStatus::error)
+}
+
+/// Resolve `(owner, repo)` for a branch's effective remote, scoped to the
+/// given platform.
+///
+/// - Remote-branch refs (`origin/feature`) read from the branch's own
+///   remote via [`Repository::effective_remote_url`] (honors
+///   `url.insteadOf` rewrites).
+/// - Local branches prefer the branch's push destination
+///   (`branch.<n>.pushRemote` → `remote.pushDefault` → tracking remote),
+///   falling back to the repo's primary remote so a tracking-less branch
+///   still resolves.
+///
+/// `is_platform` filters out URLs that don't belong to the calling backend
+/// (e.g., a primary github remote alongside an azure secondary): the
+/// platform was selected upstream from one remote, so a different remote
+/// must not be queried with mismatched API shapes.
+fn branch_owner_repo_for_platform(
+    repo: &Repository,
+    branch: &CiBranchName,
+    is_platform: impl Fn(&GitRemoteUrl) -> bool,
+) -> Option<(String, String)> {
+    let url = branch_remote_url(repo, branch)?;
+    let parsed = GitRemoteUrl::parse(&url)?;
+    is_platform(&parsed).then_some(())?;
+    parse_owner_repo(&url)
+}
+
+/// Resolve the effective URL for a branch's remote without parsing.
+///
+/// See [`branch_owner_repo_for_platform`] for the resolution chain — this is
+/// the URL-only primitive backends compose with their own URL parsers
+/// (Azure DevOps' org/project shape doesn't fit `parse_owner_repo`).
+fn branch_remote_url(repo: &Repository, branch: &CiBranchName) -> Option<String> {
+    if let Some(remote_name) = &branch.remote {
+        repo.effective_remote_url(remote_name)
+    } else {
+        repo.branch(&branch.name).push_remote_url().or_else(|| {
+            let remote = repo.primary_remote().ok()?;
+            repo.effective_remote_url(&remote)
+        })
+    }
 }
 
 /// Check if stderr indicates a retriable error (rate limit, network issues)
