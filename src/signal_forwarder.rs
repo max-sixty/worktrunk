@@ -1,5 +1,10 @@
 //! Forwards SIGINT/SIGTERM from `wt` to its foreground children.
 //!
+//! Unix-only — the whole module is `#[cfg(unix)]` at the `pub mod`
+//! declaration in `lib.rs`. Windows has no process groups or POSIX
+//! signals; `Cmd::stream` and the concurrent executor simply don't
+//! forward there.
+//!
 //! `wt` runs many child processes. When the kernel delivers a tty-initiated
 //! signal (Ctrl-C, hangup) to wt's foreground process group, every process
 //! in that pgroup receives it directly — but `wt` isolates some children in
@@ -46,29 +51,21 @@
 //! Both modes record the first observed signal so `wt`'s exit code matches
 //! what the user pressed, not whichever signal escalation ended up using.
 
-#[cfg(unix)]
 use std::sync::Arc;
-#[cfg(unix)]
 use std::sync::atomic::{AtomicI32, Ordering};
-#[cfg(unix)]
 use std::thread;
 
-#[cfg(unix)]
 use signal_hook::consts::{SIGINT, SIGTERM};
-#[cfg(unix)]
 use signal_hook::iterator::{Handle, Signals};
 
-#[cfg(unix)]
 use crate::shell_exec::{forward_signal_to_pid, forward_signal_with_escalation};
 
 /// Pre-spawn signal handler. Install before spawning any child so signals
 /// arriving mid-spawn are queued rather than default-killing `wt`.
-#[cfg(unix)]
 pub struct ForegroundSignals {
     signals: Signals,
 }
 
-#[cfg(unix)]
 impl ForegroundSignals {
     /// Register `wt`'s SIGINT/SIGTERM handler. Errors only if the
     /// `signal_hook` registration itself fails (extremely rare).
@@ -148,7 +145,6 @@ impl ForegroundSignals {
 /// Record `sig` as the originating signal if nothing has been recorded yet.
 /// Returns `true` when this call won the race (i.e., `sig` is the first
 /// signal observed). The 0 sentinel is safe — POSIX signals are >= 1.
-#[cfg(unix)]
 fn record_originating(slot: &AtomicI32, sig: i32) -> bool {
     slot.compare_exchange(0, sig, Ordering::SeqCst, Ordering::SeqCst)
         .is_ok()
@@ -159,14 +155,12 @@ fn record_originating(slot: &AtomicI32, sig: i32) -> bool {
 /// Call [`stop`] after every child has been waited on.
 ///
 /// [`stop`]: ActiveForwarder::stop
-#[cfg(unix)]
 pub struct ActiveForwarder {
     handle: Handle,
     listener: thread::JoinHandle<()>,
     originating: Arc<AtomicI32>,
 }
 
-#[cfg(unix)]
 impl ActiveForwarder {
     /// Tear the listener down and return the user's originating signal,
     /// or `None` if no SIGINT/SIGTERM was received.
