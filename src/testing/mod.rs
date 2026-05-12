@@ -2934,10 +2934,7 @@ mod tests {
             resolved_path.file_name().and_then(|n| n.to_str()),
             Some("cov-%m_%p.profraw"),
         );
-        assert!(
-            expected_dir.is_dir(),
-            "fallback should have created {}",
-            expected_dir.display(),
-        );
+        // The fallback creates the dir if absent.
+        assert!(expected_dir.is_dir());
     }
 }
