@@ -244,15 +244,6 @@ if msg.contains("no merge base") { return Ok(true); }
 
 When no structured alternative exists, document the fragility inline.
 
-### Ref Arguments and Git's Option Parser
-
-A ref that starts with `-` (a branch literally named `-foo` — `git update-ref refs/heads/-foo HEAD` makes one) is parsed as a flag by git's option parser. Worktrunk hands user-supplied refs to git everywhere (`--base <ref>`, branch args, `<remote>/<branch>`), so guard the ones whose value isn't provably safe:
-
-- Most subcommands: put `--end-of-options` before the positional — `["rev-list", "--count", "--end-of-options", &range]`. `git log` wants it *after* every other flag (everything following becomes positional).
-- `git rev-parse`: use `--verify --end-of-options`, not plain `--end-of-options` — rev-parse echoes recognized switches, so the bare form prints the literal `--end-of-options` to stdout ahead of the SHA. `--verify` forces single-revision strict mode (one SHA, no echo), so it can't cover the two-ref `rev-parse <a> <b>` form — leave those unguarded.
-
-A ref that's provably a SHA (`merge_base` output), wrapped as `refs/heads/{ref}`, or a hardcoded `HEAD` needs nothing.
-
 ### Network Access
 
 **Policy:** worktrunk is local-first. The network is touched only when the user asked for it. The single exception is the *first* call to `Repository::default_branch()` per repo, which may fall through to `git ls-remote` to discover the default branch name; the result caches in `worktrunk.default-branch` and every subsequent call is local. No other detection helper may add a similar fallback.

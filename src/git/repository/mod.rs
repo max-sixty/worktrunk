@@ -1290,6 +1290,19 @@ impl Repository {
     /// Executes the git command with this repository's discovery path as the working directory.
     /// For repo-wide operations, any path within the repo works.
     ///
+    /// # Passing refs
+    ///
+    /// A ref that starts with `-` (e.g. a branch literally named `-foo`,
+    /// which `git update-ref refs/heads/-foo HEAD` will write) is parsed as a
+    /// flag. When the ref's value isn't provably safe — a SHA, a
+    /// `refs/heads/{}` wrap, a hardcoded `HEAD` — put `--end-of-options`
+    /// before it, *after* every other flag (everything following becomes
+    /// positional, so `git log` rejects later flags). For `git rev-parse`,
+    /// use `--verify --end-of-options`: plain `--end-of-options` makes
+    /// rev-parse echo the literal marker to stdout ahead of the SHA, and
+    /// `--verify` forces single-revision strict mode — so it can't cover the
+    /// two-ref `rev-parse <a> <b>` form, which stays unguarded.
+    ///
     /// # Examples
     /// ```no_run
     /// use worktrunk::git::Repository;
