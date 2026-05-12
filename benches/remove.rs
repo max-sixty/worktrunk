@@ -114,7 +114,10 @@ fn bench_remove_e2e(c: &mut Criterion) {
     // Invalidates caches per iteration so the timing reflects first-invocation
     // TTFO — `prepare_worktree_removal` writes to `.git/wt/cache/` via
     // `compute_integration_lazy`, and reusing it across iterations would
-    // measure warm-cache cost instead.
+    // measure warm-cache cost instead. `BatchSize::PerIteration` (not
+    // `SmallInput`) so the setup actually runs before every measured iter —
+    // under `SmallInput`, criterion calls `setup` once per batch and runs
+    // the timed routines back-to-back, leaving only iter 1 cold per batch.
     group.bench_function("first_output", |b| {
         b.iter_batched(
             || invalidate_caches_auto(&repo_no_hooks),
@@ -131,7 +134,7 @@ fn bench_remove_e2e(c: &mut Criterion) {
                     String::from_utf8_lossy(&output.stderr)
                 );
             },
-            criterion::BatchSize::SmallInput,
+            criterion::BatchSize::PerIteration,
         );
     });
 
