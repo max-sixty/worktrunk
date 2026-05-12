@@ -19,10 +19,6 @@ default-run = "wt"
 # Allow releases from any branch (GitHub Actions uses detached HEAD)
 allow-branch = ["*"]
 consolidate-commits = true
-pre-release-replacements = [
-    # Update skill version in frontmatter
-    { file = "skills/worktrunk/SKILL.md", search = "version: [0-9.]+", replace = "version: {{version}}" },
-]
 
 [package.metadata.cargo-udeps.ignore]
 # Used only on Windows (#[cfg(windows)] in src/shell_exec.rs)
