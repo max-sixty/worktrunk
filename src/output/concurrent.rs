@@ -36,10 +36,6 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, Stdio};
-#[cfg(unix)]
-use std::sync::Arc;
-#[cfg(unix)]
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::Instant;
@@ -52,6 +48,8 @@ use worktrunk::shell_exec::{
     DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR, ShellConfig,
     scrub_directive_env_vars,
 };
+#[cfg(unix)]
+use worktrunk::signal_forwarder::ForegroundSignals;
 use worktrunk::styling::stderr;
 
 use super::handlers::DirectivePassthrough;
@@ -96,10 +94,7 @@ pub fn run_concurrent_commands(
     // wt (which would orphan already-spawned children, since each runs in
     // its own process group and wouldn't see the tty's Ctrl-C broadcast).
     #[cfg(unix)]
-    let signals = {
-        use signal_hook::consts::{SIGINT, SIGTERM};
-        signal_hook::iterator::Signals::new([SIGINT, SIGTERM])?
-    };
+    let signals = ForegroundSignals::install()?;
 
     // Spawn each child and record its start time for commands.jsonl. If any
     // spawn fails partway, kill and reap every child we already spawned —
@@ -141,8 +136,7 @@ pub fn run_concurrent_commands(
     // the spawn loop was queued and will be delivered on the thread's first
     // poll.
     #[cfg(unix)]
-    let signal_thread = spawn_signal_forwarder(
-        signals,
+    let signal_thread = signals.forward_to_pgids(
         children
             .iter()
             .map(|c| c.child.id() as i32)
@@ -446,74 +440,6 @@ fn render_prefix(index: usize, label: &str, width: usize) -> String {
         .fg_color(Some(Color::Ansi(palette[index % palette.len()])))
         .bold();
     format!("{style}{label:<width$}{style:#} │ ")
-}
-
-#[cfg(unix)]
-struct SignalForwarder {
-    handle: signal_hook::iterator::Handle,
-    listener: thread::JoinHandle<()>,
-    /// First signal the forwarder observed, or 0 if none arrived. Lets the
-    /// caller report the user's originating signal (e.g., SIGINT) as wt's
-    /// exit code even when escalation ultimately killed the child with a
-    /// later signal (e.g., SIGTERM/SIGKILL).
-    originating_signal: Arc<AtomicI32>,
-}
-
-#[cfg(unix)]
-impl SignalForwarder {
-    fn stop(self) -> Option<i32> {
-        // Closing the signal-hook handle unblocks `Signals::forever()` so
-        // the listener thread returns; join it to avoid a leak.
-        self.handle.close();
-        let _ = self.listener.join();
-        match self.originating_signal.load(Ordering::SeqCst) {
-            0 => None,
-            sig => Some(sig),
-        }
-    }
-}
-
-#[cfg(unix)]
-fn spawn_signal_forwarder(
-    mut signals: signal_hook::iterator::Signals,
-    pgids: Vec<i32>,
-) -> SignalForwarder {
-    let handle = signals.handle();
-    let originating_signal = Arc::new(AtomicI32::new(0));
-    let originating = Arc::clone(&originating_signal);
-    let listener = thread::spawn(move || {
-        let mut seen_once = false;
-        for sig in signals.forever() {
-            // Record the user's first signal so the caller can report it as
-            // wt's exit code regardless of any internal escalation. Only the
-            // first wins — later signals here are either the user impatiently
-            // re-pressing Ctrl-C or wt's own escalation chain firing.
-            let _ = originating.compare_exchange(0, sig, Ordering::SeqCst, Ordering::SeqCst);
-            if !seen_once {
-                // First signal: graceful escalation per child
-                // (SIGINT → SIGTERM → SIGKILL with grace windows).
-                seen_once = true;
-                for &pgid in &pgids {
-                    worktrunk::shell_exec::forward_signal_with_escalation(pgid, sig);
-                }
-            } else {
-                // Subsequent signals: user is impatient — SIGKILL every
-                // still-live process group without waiting.
-                for &pgid in &pgids {
-                    let _ = nix::sys::signal::killpg(
-                        nix::unistd::Pid::from_raw(pgid),
-                        nix::sys::signal::Signal::SIGKILL,
-                    );
-                }
-            }
-        }
-    });
-
-    SignalForwarder {
-        handle,
-        listener,
-        originating_signal,
-    }
 }
 
 #[cfg(test)]

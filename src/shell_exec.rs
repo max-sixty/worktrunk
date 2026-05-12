@@ -1192,11 +1192,7 @@ impl Cmd {
     /// Returns error if command exits with non-zero status.
     pub fn stream(mut self) -> anyhow::Result<()> {
         #[cfg(unix)]
-        use {
-            signal_hook::consts::{SIGINT, SIGPIPE, SIGTERM},
-            signal_hook::iterator::Signals,
-            std::os::unix::process::CommandExt,
-        };
+        use {signal_hook::consts::SIGPIPE, std::os::unix::process::CommandExt};
 
         // Shell-wrapped commands don't use args (the command string is the full command)
         assert!(
@@ -1246,9 +1242,11 @@ impl Cmd {
             self.stdin_cfg.unwrap_or_else(std::process::Stdio::null)
         };
 
+        // Install the SIGINT/SIGTERM handler BEFORE spawn so a signal arriving
+        // mid-spawn is queued, not default-killed.
         #[cfg(unix)]
         let signals = if self.forward_signals {
-            Some(Signals::new([SIGINT, SIGTERM])?)
+            Some(crate::signal_forwarder::ForegroundSignals::install()?)
         } else {
             None
         };
@@ -1297,68 +1295,19 @@ impl Cmd {
         }
         // stdin handle is dropped here, closing the pipe
 
-        // Wait for child. With signal forwarding, a listener thread blocks
-        // on `Signals::forever()` and forwards SIGINT/SIGTERM to the child;
-        // the main thread blocks on `child.wait()`. After wait returns we
-        // close the signal handle (which unblocks `forever()`) and join
-        // the listener.
+        // Start the listener now that the child PID is known. The handler
+        // installed pre-spawn has been queueing signals; the listener
+        // processes any queued signal on its first poll.
         #[cfg(unix)]
-        let listener_state = signals.map(|mut signals| {
-            let child_pid = child.id() as i32;
-            let share_parent_pgroup = self.share_parent_pgroup;
-            let handle = signals.handle();
-            // Sentinel 0 = no signal yet (POSIX signals are >= 1). First
-            // signal wins via compare_exchange; subsequent signals are
-            // dropped, matching the prior loop's first-signal-only semantics.
-            // Re-press escalation lives inside `forward_signal_with_escalation`
-            // (SIGINT → SIGTERM → SIGKILL with grace windows).
-            let seen = std::sync::Arc::new(std::sync::atomic::AtomicI32::new(0));
-            let listener = {
-                let seen = std::sync::Arc::clone(&seen);
-                std::thread::spawn(move || {
-                    for sig in signals.forever() {
-                        if seen
-                            .compare_exchange(
-                                0,
-                                sig,
-                                std::sync::atomic::Ordering::Relaxed,
-                                std::sync::atomic::Ordering::Relaxed,
-                            )
-                            .is_ok()
-                        {
-                            if share_parent_pgroup {
-                                // Shared-pgroup mode: tty-initiated signals
-                                // (Ctrl-C, hangup) already hit the child via
-                                // kernel fg-pgroup delivery. Forward by PID
-                                // anyway so externally-delivered signals
-                                // (e.g. `kill -TERM <wt-pid>`) also reach the
-                                // child — they otherwise stop at wt. Single
-                                // shot, no escalation: if the user chose
-                                // SIGTERM, an unsolicited SIGKILL would skip
-                                // the child's tty restore (raw-mode reset,
-                                // cursor-show) and leave the terminal wedged.
-                                forward_signal_to_pid(child_pid, sig);
-                            } else {
-                                forward_signal_with_escalation(child_pid, sig);
-                            }
-                        }
-                    }
-                })
-            };
-            (handle, listener, seen)
-        });
+        let forwarder =
+            signals.map(|s| s.forward_to_pid(child.id() as i32, self.share_parent_pgroup));
 
         let wait_result = child.wait();
 
         // Always tear down the listener, even on wait error, so the
         // signal-hook handle is released and the thread doesn't leak.
         #[cfg(unix)]
-        let seen_signal = listener_state.and_then(|(handle, listener, seen)| {
-            handle.close();
-            let _ = listener.join();
-            let sig = seen.load(std::sync::atomic::Ordering::Relaxed);
-            (sig != 0).then_some(sig)
-        });
+        let seen_signal = forwarder.and_then(|f| f.stop());
 
         let status = match wait_result {
             Ok(status) => status,
@@ -1458,7 +1407,7 @@ fn wait_for_exit(pgid: i32, grace: std::time::Duration) -> bool {
 /// externally-delivered signals (e.g. `kill -TERM <wt-pid>`). No escalation:
 /// see the call site in `Cmd::stream` for the rationale.
 #[cfg(unix)]
-fn forward_signal_to_pid(pid: i32, sig: i32) {
+pub fn forward_signal_to_pid(pid: i32, sig: i32) {
     let nix_sig = match sig {
         signal_hook::consts::SIGINT => nix::sys::signal::Signal::SIGINT,
         signal_hook::consts::SIGTERM => nix::sys::signal::Signal::SIGTERM,

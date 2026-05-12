@@ -19,6 +19,7 @@ pub mod progress;
 pub mod remove_dir;
 pub mod shell;
 pub mod shell_exec;
+pub mod signal_forwarder;
 pub mod styling;
 pub mod sync;
 pub mod trace;
