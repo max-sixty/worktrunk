@@ -37,6 +37,14 @@ use std::path::Path;
 /// `tests/helpers/mock-stub/Cargo.toml`.
 fn mock_stub_binary() -> std::path::PathBuf {
     let path = super::workspace_bin("mock-stub");
+    assert_mock_stub_present(&path);
+    path
+}
+
+/// Panic with build instructions if `path` (the resolved mock-stub location)
+/// doesn't exist. Split out so a unit test can drive the missing-binary arm
+/// without depending on whether the real binary happens to be built.
+fn assert_mock_stub_present(path: &Path) {
     assert!(
         path.exists(),
         "mock-stub binary not found at {}\n\n\
@@ -46,7 +54,6 @@ fn mock_stub_binary() -> std::path::PathBuf {
          \n  cargo llvm-cov nextest --features shell-integration-tests --test integration ...\n",
         path.display(),
     );
-    path
 }
 
 /// Builder for mock command configuration.
@@ -414,5 +421,11 @@ mod tests {
 
         #[cfg(windows)]
         assert!(bin_dir.join("test-cmd.exe").exists());
+    }
+
+    #[test]
+    #[should_panic(expected = "mock-stub binary not found at")]
+    fn assert_mock_stub_present_panics_when_absent() {
+        assert_mock_stub_present(Path::new("/nonexistent/mock-stub"));
     }
 }
