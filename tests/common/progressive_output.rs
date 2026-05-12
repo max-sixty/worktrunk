@@ -556,8 +556,13 @@ fn configure_pty_environment(cmd: &mut CommandBuilder, repo: &TestRepo) {
 
     // Pass through LLVM coverage profiling environment for subprocess coverage collection.
     // When running under cargo-llvm-cov, spawned binaries need LLVM_PROFILE_FILE to record
-    // their coverage data.
-    for key in worktrunk::testing::COVERAGE_ENV_VARS {
+    // their coverage data; otherwise, point it at a temp-dir default so an
+    // instrumented child can't write `default_*.profraw` into the repo root.
+    cmd.env(
+        "LLVM_PROFILE_FILE",
+        worktrunk::testing::default_llvm_profile_file(),
+    );
+    for key in ["CARGO_LLVM_COV", "CARGO_LLVM_COV_TARGET_DIR"] {
         if let Ok(val) = std::env::var(key) {
             cmd.env(key, val);
         }

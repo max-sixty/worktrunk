@@ -307,6 +307,28 @@ pub const COVERAGE_ENV_VARS: &[&str] = &[
     "CARGO_LLVM_COV_TARGET_DIR",
 ];
 
+/// Resolve the `LLVM_PROFILE_FILE` value to set on test subprocesses.
+///
+/// Returns the inherited value when the parent is running under
+/// `cargo llvm-cov` (so coverage data lands where the runner expects). When
+/// nothing is inherited, returns a per-binary, per-pid path under the system
+/// temp dir so an instrumented child (e.g. a stale `mock-stub` left
+/// instrumented by an earlier coverage build) can't fall back to writing
+/// `default_<hash>_<pid>.profraw` into the subprocess's cwd. That cwd is the
+/// test worktree for any `wt list` snapshot that spawns a mock, and a stray
+/// profraw there flips `wt list` to "1 with changes" and flakes the snapshot.
+///
+/// The `%m` and `%p` placeholders are expanded by the LLVM runtime in the
+/// instrumented child; uninstrumented children ignore the env var entirely.
+pub fn default_llvm_profile_file() -> std::ffi::OsString {
+    if let Some(inherited) = std::env::var_os("LLVM_PROFILE_FILE") {
+        return inherited;
+    }
+    let dir = std::env::temp_dir().join("wt-test-profraw");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("cov-%m_%p.profraw").into_os_string()
+}
+
 /// Prepare a subprocess to run with a clean wt environment.
 ///
 /// Strips every `GIT_*` and `WORKTRUNK_*` from the parent env, plus
@@ -363,7 +385,12 @@ where
     );
     cmd.env("WORKTRUNK_APPROVALS_PATH", DEFAULT_ISOLATED_APPROVALS);
 
-    for key in COVERAGE_ENV_VARS {
+    // Always set LLVM_PROFILE_FILE — to the inherited value under coverage,
+    // or to a temp-dir default otherwise — so an instrumented child never
+    // falls back to writing `default_*.profraw` into its cwd. See
+    // [`default_llvm_profile_file`] for the rationale.
+    cmd.env("LLVM_PROFILE_FILE", default_llvm_profile_file());
+    for key in ["CARGO_LLVM_COV", "CARGO_LLVM_COV_TARGET_DIR"] {
         if let Ok(val) = std::env::var(key) {
             cmd.env(key, val);
         }
