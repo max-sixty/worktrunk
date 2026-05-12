@@ -177,7 +177,7 @@ fn try_remove(
         }
     };
     let mut announcer = HookAnnouncer::new(repo, config, true);
-    handle_remove_output(&plan, foreground, run_hooks, true, &mut announcer)?;
+    handle_remove_output(&plan, foreground, run_hooks, true, false, &mut announcer)?;
     announcer.flush()?;
     Ok(true)
 }

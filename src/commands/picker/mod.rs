@@ -96,7 +96,7 @@ mod summary;
 
 use std::cell::RefCell;
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
@@ -105,26 +105,23 @@ use anyhow::Context;
 // bounded/unbounded/Sender are re-exported by skim::prelude
 use skim::prelude::*;
 use skim::reader::CommandCollector;
+use worktrunk::config::Approvals;
 use worktrunk::git::{Repository, current_or_recover};
 use worktrunk::styling::eprintln;
 
-use super::command_executor::FailureStrategy;
-use super::hooks::{HookAnnouncer, execute_hook};
+use super::hooks::HookAnnouncer;
 use super::list::collect;
 use super::list::progressive::RenderTarget;
+use super::project_config::collect_remove_hook_commands;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::template_vars::TemplateVars;
-use super::worktree::hooks::PostRemoveContext;
 use super::worktree::{
     RemoveResult, SwitchBranchInfo, SwitchResult, approve_switch_hooks, execute_switch,
     offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch, run_pre_switch_hooks,
     spawn_switch_background_hooks, switch_hook_project_config, validate_switch_templates,
 };
-use crate::commands::command_executor::CommandContext;
-use crate::output::handle_switch_output;
-use worktrunk::git::{
-    BranchDeletionMode, RemoveOptions, delete_branch_if_safe, remove_worktree_with_cleanup,
-};
+use crate::output::{handle_remove_output, handle_switch_output};
+use worktrunk::git::{BranchDeletionMode, delete_branch_if_safe};
 
 use items::{PreviewCache, WorktreeSkimItem};
 use preview::{PreviewLayout, PreviewMode, PreviewState};
@@ -165,101 +162,57 @@ struct PickerCollector {
     items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
     signal_path: PathBuf,
     repo: Repository,
+    /// Approvals snapshot, loaded once at picker startup. A queued removal runs
+    /// its `pre-remove` / `post-remove` / `post-switch` hooks only when every
+    /// one is in here — the picker can't show an approval prompt mid-render, so
+    /// unapproved project commands are skipped, never run. See
+    /// [`removal_hooks_approved`].
+    approvals: Arc<Approvals>,
 }
 
 impl PickerCollector {
-    /// Execute removal in background: pre-remove hooks + worktree + branch + post-remove hooks.
+    /// Execute a queued removal in the background.
     ///
-    /// Called from a background thread after the picker optimistically removes the item
-    /// from the list. The entire operation runs off skim's event loop so the TUI stays
-    /// responsive. If pre-remove hooks fail, the removal is aborted (but the item is
-    /// already gone from the picker — a tradeoff until we can show in-progress state).
+    /// A `RemovedWorktree` result goes through [`handle_remove_output`] in its
+    /// silent (TUI) mode — the git worktree removal with no `wt`-generated
+    /// messages, spinner, or `cd` directive (skim owns the terminal). Its
+    /// `pre-remove` / `post-remove` / `post-switch` hooks run only when they're
+    /// already approved ([`removal_hooks_approved`] — a read-only `Approvals`
+    /// check, no prompt): the picker can't prompt mid-render, so unapproved
+    /// project commands are skipped, never run. (A hook that *does* run still
+    /// streams its own output to stderr, like any hook — a rough edge of
+    /// removing inside the picker.) A `BranchOnly` result just deletes the
+    /// branch if it's safe to.
     ///
-    /// `repo` is only used for `BranchOnly` deletion. `RemovedWorktree` constructs
-    /// its own from `main_path` (which may differ from the picker's startup repo in
-    /// bare-repo setups).
-    fn do_removal(repo: &Repository, result: &RemoveResult) -> anyhow::Result<()> {
+    /// Called from a background thread after the picker optimistically removes
+    /// the item from the list, so the whole operation runs off skim's event loop
+    /// and the TUI stays responsive. A removal failure is logged; the item stays
+    /// gone from the picker — a tradeoff until we can show in-progress state.
+    ///
+    /// `repo` is only used for `BranchOnly` deletion; `RemovedWorktree` removal
+    /// is rooted at `main_path` (which may differ from the picker's startup repo
+    /// in bare-repo setups).
+    fn do_removal(
+        repo: &Repository,
+        result: &RemoveResult,
+        approvals: &Approvals,
+    ) -> anyhow::Result<()> {
         match result {
             RemoveResult::RemovedWorktree {
                 main_path,
                 worktree_path,
-                branch_name,
-                deletion_mode,
-                target_branch,
-                force_worktree,
-                removed_commit,
-                removed_project_config,
                 ..
             } => {
                 let main_repo = Repository::at(main_path)?;
-                let config = main_repo.user_config();
-                let hook_branch = branch_name.as_deref().unwrap_or("HEAD");
-
-                // Run pre-remove hooks (synchronously in this background thread).
-                // Rooted at the removed worktree so its `.config/wt.toml` is the
-                // one that fires — same rule as `wt remove`'s
-                // `execute_pre_remove_hooks_if_needed`. Non-zero exit aborts the
-                // removal, matching `wt remove` semantics.
-                let target_ref = main_repo
-                    .worktree_at(main_path)
-                    .branch()
-                    .ok()
-                    .flatten()
-                    .unwrap_or_default();
-                let template_vars = TemplateVars::new()
-                    .with_target(&target_ref)
-                    .with_target_worktree_path(main_path);
-                let removed_repo = Repository::at(worktree_path)?;
-                let pre_ctx = CommandContext::new(
-                    &removed_repo,
-                    config,
-                    Some(hook_branch),
-                    worktree_path,
-                    false,
-                );
-                execute_hook(
-                    &pre_ctx,
-                    worktrunk::HookType::PreRemove,
-                    &template_vars.as_extra_vars(),
-                    FailureStrategy::FailFast,
-                    None, // no display path in TUI context
-                )?;
-
-                let snapshot = main_repo.capture_refs()?;
-                let output = remove_worktree_with_cleanup(
-                    &main_repo,
-                    &snapshot,
-                    worktree_path,
-                    RemoveOptions {
-                        branch: branch_name.clone(),
-                        deletion_mode: *deletion_mode,
-                        target_branch: target_branch.clone(),
-                        force_worktree: *force_worktree,
-                    },
-                )?;
-                if let Some(staged) = output.staged_path {
-                    let _ = std::fs::remove_dir_all(&staged);
-                }
-
-                // Spawn post-remove hooks in background. The removed worktree
-                // is gone, so its `.config/wt.toml` comes from the snapshot —
-                // same source the `wt remove` / `wt merge` teardown paths use.
-                let post_ctx =
-                    CommandContext::new(&main_repo, config, Some(hook_branch), main_path, false);
-                let remove_vars = PostRemoveContext::new(
-                    worktree_path,
-                    removed_commit.as_deref(),
-                    main_path,
-                    &main_repo,
-                );
-                let extra_vars = remove_vars.extra_vars(hook_branch);
-                let mut announcer = HookAnnouncer::new(&main_repo, config, false);
-                announcer.register_with_project_config(
-                    &post_ctx,
-                    removed_project_config.as_deref(),
-                    worktrunk::HookType::PostRemove,
-                    &extra_vars,
-                    None, // no display path in TUI context
+                let verify = removal_hooks_approved(&main_repo, worktree_path, approvals)?;
+                let mut announcer = HookAnnouncer::new(&main_repo, main_repo.user_config(), false);
+                handle_remove_output(
+                    result,
+                    /* foreground */ true,
+                    verify,
+                    /* quiet */ true,
+                    /* silent */ true,
+                    &mut announcer,
                 )?;
                 announcer.flush()?;
             }
@@ -358,10 +311,11 @@ impl CommandCollector for PickerCollector {
                         // Defer actual git removal to a background thread so skim's
                         // event loop stays responsive.
                         let repo = self.repo.clone();
+                        let approvals = Arc::clone(&self.approvals);
                         let _ = std::thread::Builder::new()
                             .name(format!("picker-remove-{selected_output}"))
                             .spawn(move || {
-                                if let Err(e) = Self::do_removal(&repo, &result) {
+                                if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
                                     log::warn!(
                                         "picker: failed to remove '{selected_output}': {e:#}"
                                     );
@@ -394,6 +348,29 @@ impl CommandCollector for PickerCollector {
         let (tx_interrupt, _rx_interrupt) = bounded(1);
         (rx, tx_interrupt)
     }
+}
+
+/// Whether every `pre-remove` / `post-remove` / `post-switch` command this
+/// removal would run is already approved — a read-only check, no prompt.
+///
+/// `wt remove` / `wt merge` collect the same command set and prompt for it at
+/// the gate. The picker can't prompt mid-render, so it runs the removal's hooks
+/// only when they're already approved (e.g. from a prior `wt remove` /
+/// `wt merge`) and skips them otherwise — unapproved project commands must
+/// never run. See CLAUDE.md → "Project Commands Run Only After Approval".
+fn removal_hooks_approved(
+    main_repo: &Repository,
+    worktree_path: &Path,
+    approvals: &Approvals,
+) -> anyhow::Result<bool> {
+    let commands = collect_remove_hook_commands(main_repo, &[worktree_path])?;
+    if commands.is_empty() {
+        return Ok(true); // nothing to run — `verify` is moot
+    }
+    let project_id = main_repo.project_identifier()?;
+    Ok(commands
+        .iter()
+        .all(|c| approvals.is_command_approved(&project_id, &c.command.template)))
 }
 
 pub fn handle_picker(
@@ -555,10 +532,15 @@ pub fn handle_picker(
     // Cleaned up in PreviewState::Drop.
     let signal_path = state.path.with_extension("remove");
 
+    // Approvals snapshot for the session — alt-r removals consult it (read-only)
+    // to decide whether their hooks may run; see `removal_hooks_approved`.
+    let approvals = Arc::new(Approvals::load().context("Failed to load approvals")?);
+
     let collector = PickerCollector {
         items: Arc::clone(&shared_items),
         signal_path: signal_path.clone(),
         repo: repo.clone(),
+        approvals,
     };
 
     let signal_path_escaped =
@@ -919,10 +901,14 @@ fn resolve_identifier(
 #[cfg(test)]
 pub mod tests {
     use super::preview::{PreviewLayout, PreviewMode, PreviewStateData};
-    use super::{PickerAction, PickerCollector, drain_stashed_warnings, resolve_identifier};
+    use super::{
+        PickerAction, PickerCollector, drain_stashed_warnings, removal_hooks_approved,
+        resolve_identifier,
+    };
     use crate::commands::worktree::RemoveResult;
     use std::fs;
     use std::sync::Mutex;
+    use worktrunk::config::Approvals;
     use worktrunk::git::BranchDeletionMode;
 
     /// Empties the stash and emits each line. Verifies post-skim drain
@@ -1013,7 +999,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_execute_removal_removes_worktree_and_branch() {
+    fn test_do_removal_removes_worktree_and_branch() {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         let repo = worktrunk::git::Repository::at(test.path()).unwrap();
         let wt_dir = tempfile::tempdir().unwrap();
@@ -1043,7 +1029,7 @@ pub mod tests {
             removed_project_config: None,
         };
 
-        PickerCollector::do_removal(&repo, &result).unwrap();
+        PickerCollector::do_removal(&repo, &result, &Approvals::default()).unwrap();
         assert!(!wt_path.exists(), "worktree should be removed");
 
         let output = repo.run_command(&["branch", "--list", "feature"]).unwrap();
@@ -1065,7 +1051,7 @@ pub mod tests {
             target_branch: None,
             integration_reason: None,
         };
-        PickerCollector::do_removal(&repo, &result).unwrap();
+        PickerCollector::do_removal(&repo, &result, &Approvals::default()).unwrap();
 
         let output = repo.run_command(&["branch", "--list", "feature"]).unwrap();
         assert!(output.is_empty(), "integrated branch should be deleted");
@@ -1091,7 +1077,7 @@ pub mod tests {
             target_branch: None,
             integration_reason: None,
         };
-        PickerCollector::do_removal(&repo, &result).unwrap();
+        PickerCollector::do_removal(&repo, &result, &Approvals::default()).unwrap();
 
         // Branch should be retained — SafeDelete won't delete unmerged branches
         let output = repo.run_command(&["branch", "--list", "unmerged"]).unwrap();
@@ -1140,8 +1126,63 @@ pub mod tests {
             removed_project_config: None,
         };
 
-        PickerCollector::do_removal(&repo, &result).unwrap();
+        PickerCollector::do_removal(&repo, &result, &Approvals::default()).unwrap();
         assert!(!wt_path.exists(), "detached worktree should be removed");
+    }
+
+    /// A `pre-remove` hook the user hasn't approved must not run when the
+    /// picker removes the worktree — the picker can't prompt mid-render, so
+    /// unapproved project commands are skipped. The git removal still happens.
+    #[test]
+    fn test_do_removal_skips_unapproved_pre_remove_hook() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt_path = wt_dir.path().join("feature");
+        repo.run_command(&[
+            "worktree",
+            "add",
+            "-b",
+            "feature",
+            wt_path.to_str().unwrap(),
+        ])
+        .unwrap();
+
+        // A `pre-remove` hook in the removed worktree's `.config/wt.toml` that
+        // would write a marker (outside the worktree) if it ever ran.
+        let marker_dir = tempfile::tempdir().unwrap();
+        let marker = marker_dir.path().join("pre-remove-ran");
+        fs::create_dir_all(wt_path.join(".config")).unwrap();
+        fs::write(
+            wt_path.join(".config/wt.toml"),
+            format!("pre-remove = {:?}\n", format!("touch {}", marker.display())),
+        )
+        .unwrap();
+
+        let result = RemoveResult::RemovedWorktree {
+            main_path: test.path().to_path_buf(),
+            worktree_path: wt_path.clone(),
+            changed_directory: false,
+            branch_name: Some("feature".to_string()),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            target_branch: Some("main".to_string()),
+            integration_reason: None,
+            force_worktree: false,
+            expected_path: None,
+            removed_commit: None,
+            removed_project_config: None,
+        };
+
+        // Empty approvals → the hook is unapproved.
+        let approvals = Approvals::default();
+        assert!(
+            !removal_hooks_approved(&repo, &wt_path, &approvals).unwrap(),
+            "an unapproved pre-remove hook is not approved"
+        );
+
+        PickerCollector::do_removal(&repo, &result, &approvals).unwrap();
+        assert!(!wt_path.exists(), "worktree should be removed");
+        assert!(!marker.exists(), "unapproved pre-remove hook must not run");
     }
 
     // Note: skim's `as_any().downcast_ref::<WorktreeSkimItem>()` fails at

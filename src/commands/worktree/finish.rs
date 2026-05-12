@@ -162,7 +162,14 @@ pub fn finish_after_merge(
             removed_commit: feature_commit.clone(),
             removed_project_config,
         };
-        crate::output::handle_remove_output(&remove_result, false, verify, false, announcer)?;
+        crate::output::handle_remove_output(
+            &remove_result,
+            false,
+            verify,
+            false,
+            false,
+            announcer,
+        )?;
         true
     };
 

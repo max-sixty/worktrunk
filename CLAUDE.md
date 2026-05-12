@@ -267,6 +267,14 @@ When no structured alternative exists, document the fragility inline.
 
 When adding a new code path that loops over child processes, call `.interrupt_exit_code()` on per-iteration errors and break.
 
+### Project Commands Run Only After Approval
+
+**Policy:** project-defined commands — `pre-*` / `post-*` hooks, `[aliases]`, `--execute` bodies from project config — are arbitrary code shipped in a repo the user may have just cloned, so they run only after the approval system (`Approvals` plus `approve_command_batch` / `approve_or_skip` in `src/commands/command_approval.rs`) clears them. Never build a code path that runs project commands without that gate. A context that can't prompt for approval — a TUI mid-render, a background recovery path — must consult the approval state read-only and run only the already-approved commands, skipping the rest: `commands::picker::do_removal` checks `Approvals` (no prompt) and passes `verify` to `handle_remove_output` accordingly.
+
+**Why:** the gate is the only thing between `git clone && wt switch` and a `post-switch` hook running `curl … | sh`. A "we already validated the operation, so run the hooks too" shortcut turns every command that touches project config into remote code execution.
+
+**Implementation:** the operation entry points (`wt remove` / `wt merge` / `wt step prune` / `wt switch`) approve the command set up front, then thread the answer through as `verify` / `run_hooks`; when it's false, `execute_pre_remove_hooks_if_needed`, `spawn_hooks_after_remove`, and the switch/merge equivalents early-return. Gate first, run second — never the reverse.
+
 ## Hook Output Logs
 
 Hook output logs are centralized in `.git/wt/logs/` (main worktree's git directory). Per-branch logs live in subtrees; same operation on same branch overwrites the previous log.

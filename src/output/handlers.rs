@@ -731,11 +731,22 @@ pub fn execute_user_command(command: &str, display_path: Option<&Path>) -> anyho
 /// hook announce lines include the branch name for batch-context disambiguation.
 /// When `quiet` is true (prune context), suppresses informational messages
 /// like "No worktree found for branch X" that are noise in batch operations.
+///
+/// When `silent` is true (the TUI picker — this runs while skim owns the
+/// terminal), a `RemovedWorktree` result is removed with no progress/success
+/// messages, no trash-cleanup spinner, and no `cd` directive: just the git
+/// removal plus the usual `verify`-gated `pre-remove` / `post-remove` /
+/// `post-switch` hooks. (The picker can't prompt for approval mid-render, so it
+/// passes `verify` from a read-only `Approvals` check — see `do_removal`.) The
+/// removal runs inline regardless of `foreground` (there's no detached `rm` to
+/// background to). `silent` has no effect on `BranchOnly` results — the picker
+/// handles that arm itself.
 pub fn handle_remove_output(
     result: &RemoveResult,
     foreground: bool,
     verify: bool,
     quiet: bool,
+    silent: bool,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     match result {
@@ -766,6 +777,7 @@ pub fn handle_remove_output(
                 removed_project_config: removed_project_config.as_deref(),
                 foreground,
                 verify,
+                silent,
             },
             announcer,
         ),
@@ -1180,6 +1192,10 @@ struct RemovedWorktreeOutputContext<'a> {
     removed_project_config: Option<&'a ProjectConfig>,
     foreground: bool,
     verify: bool,
+    /// TUI (picker) path: do the git removal and hook registration but emit no
+    /// progress/success messages, no trash-cleanup spinner, and no `cd`
+    /// directive — see [`handle_remove_output`].
+    silent: bool,
 }
 
 fn execute_pre_remove_hooks_if_needed(
@@ -1431,6 +1447,15 @@ fn handle_removed_worktree_output(
     let repo = worktrunk::git::Repository::at(ctx.main_path)?;
 
     execute_pre_remove_hooks_if_needed(&repo, &ctx)?;
+
+    // TUI (picker) path: the removal runs in a background thread while skim
+    // owns the terminal, so no messages, no spinner, no `cd` directive (the
+    // picker manages its own cwd). The git removal runs inline — same as the
+    // foreground path, minus the chrome.
+    if ctx.silent {
+        return remove_removed_worktree_silently(&repo, &ctx, announcer);
+    }
+
     prepare_remove_directory_change(ctx.main_path, ctx.changed_directory)?;
 
     // Handle detached HEAD case (no branch known)
@@ -1443,6 +1468,45 @@ fn handle_removed_worktree_output(
     } else {
         handle_named_removed_worktree_background(&repo, &ctx, branch_name, announcer)
     }
+}
+
+/// Remove a `RemovedWorktree` worktree with no terminal output — the TUI
+/// (`wt switch` picker) path of [`handle_remove_output`].
+///
+/// `pre-remove` has already run (when it was approved — `verify`), and the
+/// caller skipped the `cd` directive (the picker manages its own process cwd).
+/// This does the synchronous git worktree removal and registers `post-remove` /
+/// `post-switch` hooks onto `announcer`, but with no progress/success message
+/// and no trash-cleanup spinner — `eprintln!` while skim owns the terminal
+/// would corrupt the frame. A removal failure propagates as-is (the picker logs
+/// it); there's no TTY to render the foreground path's nicer "remaining
+/// entries" error against.
+fn remove_removed_worktree_silently(
+    repo: &Repository,
+    ctx: &RemovedWorktreeOutputContext<'_>,
+    announcer: &mut HookAnnouncer<'_>,
+) -> anyhow::Result<()> {
+    let snapshot = repo.capture_refs()?;
+    let output = remove_worktree_with_cleanup(
+        repo,
+        &snapshot,
+        ctx.worktree_path,
+        RemoveOptions {
+            branch: ctx.branch_name.map(String::from),
+            deletion_mode: ctx.deletion_mode,
+            target_branch: ctx.target_branch.map(String::from),
+            force_worktree: ctx.force_worktree,
+        },
+    )?;
+    if let Some(staged) = output.staged_path {
+        // Best-effort, same as the fast-path cleanup in the foreground handler
+        // but without the TTY spinner (`cleanup_staged_with_progress`).
+        let _ = std::fs::remove_dir_all(&staged);
+    }
+
+    // Post-remove (and post-switch when the picker cd'd away) hooks — registered
+    // onto the caller's announcer, which `flush`es after this returns.
+    spawn_hooks_after_remove(repo, ctx, ctx.branch_name.unwrap_or("HEAD"), announcer)
 }
 
 /// Run a shell command with streaming output, signal forwarding, and ANSI reset.

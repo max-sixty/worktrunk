@@ -945,7 +945,14 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 let run_hooks = verify && approve_remove(removed_path.as_slice(), yes)?;
 
                 let mut announcer = HookAnnouncer::new(&repo, &config, false);
-                handle_remove_output(&result, args.foreground, run_hooks, false, &mut announcer)?;
+                handle_remove_output(
+                    &result,
+                    args.foreground,
+                    run_hooks,
+                    false,
+                    false,
+                    &mut announcer,
+                )?;
                 announcer.flush()?;
                 if json_mode {
                     let json = serde_json::json!([result.to_json()]);
@@ -997,6 +1004,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                         result,
                         args.foreground,
                         run_hooks,
+                        false,
                         false,
                         &mut announcer,
                     )?;
