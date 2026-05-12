@@ -736,6 +736,33 @@ fn is_hex_commit_sha(s: &str) -> bool {
 }
 
 #[cfg(test)]
+mod snapshot_resolve_tests {
+    use super::*;
+    use crate::testing::TestRepo;
+
+    /// Exercises the `git rev-parse` fallback when the snapshot doesn't
+    /// carry the ref (e.g. `HEAD`, tags, raw SHAs). The protective
+    /// `--verify --end-of-options` is on this call site too — keep this
+    /// test honest about what shape rev-parse returns.
+    #[test]
+    fn falls_back_to_rev_parse_for_refs_not_in_snapshot() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let snapshot = repo.capture_refs().unwrap();
+
+        // `HEAD` isn't captured into the snapshot; the fallback resolves it
+        // through git, producing the same SHA HEAD points at.
+        let head_sha_via_fallback = snapshot_resolve(&repo, &snapshot, "HEAD").unwrap();
+        let head_sha_direct = repo.run_command(&["rev-parse", "HEAD"]).unwrap();
+        assert_eq!(head_sha_via_fallback, head_sha_direct.trim());
+
+        // Bogus ref → error (not a confusing "unknown option" — `--verify`
+        // surfaces a clean "Needed a single revision" / "bad revision").
+        assert!(snapshot_resolve(&repo, &snapshot, "no-such-ref").is_err());
+    }
+}
+
+#[cfg(test)]
 mod hex_sha_tests {
     use super::is_hex_commit_sha;
 
