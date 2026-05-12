@@ -6,6 +6,7 @@ Git worktree management CLI integration with activity tracking.
 
 1. **Configuration skill** — Guides LLM-powered commit message setup, project hooks (pre-start, pre-merge), and worktree path customization
 2. **Activity tracking** — Shows which branches have active Claude sessions via indicators in `wt list`
+3. **`/wt-switch-create` command** — Creates a worktrunk worktree and moves the current Claude session into it
 
 ## Examples
 
@@ -22,3 +23,7 @@ The configuration skill guides through configuring an AI tool (Claude Code, Code
 **Add pre-start hooks to run npm install automatically**
 
 The skill configures `.config/wt.toml` with project hooks. Pre-start hooks run when creating worktrees, pre-merge hooks validate before merging.
+
+**Start work in a fresh worktree**
+
+`/wt-switch-create fix-auth Investigate the 5-minute session timeout` creates a `fix-auth` worktree in worktrunk's normal sibling layout (`<repo>.fix-auth/`), switches the session into it, and starts the task there. On session exit the worktree is offered for removal — a worktree with uncommitted changes is kept rather than removed.

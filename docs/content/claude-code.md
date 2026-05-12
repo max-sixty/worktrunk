@@ -7,11 +7,12 @@ weight = 23
 group = "Reference"
 +++
 
-The worktrunk Claude Code plugin provides three features:
+The worktrunk Claude Code plugin provides four features:
 
 1. **Configuration skill** — Documentation Claude Code can read, so it can help set up LLM commits, hooks, and troubleshoot issues
 2. **Worktree isolation** — When Claude Code agents create isolated worktrees, the plugin routes creation and removal through `wt` instead of raw `git`
 3. **Activity tracking** — Status markers in `wt list` showing which worktrees have active Claude sessions (🤖 working, 💬 waiting)
+4. **`/wt-switch-create` command** — Creates a worktrunk worktree and moves the current Claude session into it
 
 ## Installation
 
@@ -69,6 +70,12 @@ Set status markers manually for any workflow:
 ## Worktree isolation
 
 Claude Code agents can run in isolated worktrees (`isolation: "worktree"`). By default, Claude Code creates these with `git worktree add`. The plugin's `WorktreeCreate` and `WorktreeRemove` hooks route this through `wt switch --create` and `wt remove` instead, so worktrees created by agents get worktrunk's naming conventions, hooks, and lifecycle management.
+
+## `/wt-switch-create` command
+
+`/wt-switch-create <branch> [task...]` starts work in a fresh worktree without leaving the session. It creates (or re-enters) the named worktrunk worktree — sibling layout `<repo>.<branch>/`, not `.claude/worktrees/` — switches the session's working directory into it, then runs the rest of the arguments as the task there. The command rides the same `WorktreeCreate` hook as agent isolation, so the worktree gets worktrunk's naming, hooks, and lifecycle.
+
+On session exit the worktree is offered for removal via the `WorktreeRemove` hook; one with uncommitted changes is kept rather than removed.
 
 ## Statusline
 
