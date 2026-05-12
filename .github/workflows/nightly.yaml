@@ -100,7 +100,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2.77.5
+      uses: taiki-e/install-action@v2.77.6
       with:
         tool: cargo-hack
 
