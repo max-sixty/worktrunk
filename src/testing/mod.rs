@@ -2092,7 +2092,9 @@ impl TestRepo {
         std::fs::write(mock_bin.join("tea_pulls.json"), pulls_json).unwrap();
         std::fs::write(mock_bin.join("tea_status.json"), status_json).unwrap();
 
-        let pulls_path = format!("api repos/{owner}/{repo_name}/pulls?state=open");
+        // Keep `&limit=20` in sync with `MAX_PRS_TO_FETCH` in
+        // `src/commands/list/ci_status/mod.rs`.
+        let pulls_path = format!("api repos/{owner}/{repo_name}/pulls?state=open&limit=20");
         let status_path = format!("api repos/{owner}/{repo_name}/commits/{head_sha}/status");
 
         MockConfig::new("tea")
@@ -2152,7 +2154,9 @@ impl TestRepo {
         MockConfig::new("tea")
             .version("tea version development (mock)")
             .command(
-                "api repos/owner/test-repo/pulls?state=open",
+                // Keep `&limit=20` in sync with `MAX_PRS_TO_FETCH` in
+                // `src/commands/list/ci_status/mod.rs`.
+                "api repos/owner/test-repo/pulls?state=open&limit=20",
                 MockResponse::file("tea_pulls.json"),
             )
             .command(

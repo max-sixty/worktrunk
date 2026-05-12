@@ -1,47 +1,15 @@
 //! Gitea CI status detection.
 //!
-//! Detects CI status from Gitea pull requests and commit statuses using the
-//! `tea` CLI. Gitea's API is GitHub-compatible:
-//!
-//! - `GET /repos/{owner}/{repo}/commits/{sha}/status` returns a *combined*
-//!   commit status (`state` + `total_count`). Both Gitea Actions and external
-//!   CI report into commit statuses, so this is the pass/fail/pending rollup —
-//!   the equivalent of GitHub's check-runs API.
-//! - `GET /repos/{owner}/{repo}/pulls?state=open` lists open PRs (the `state`
-//!   filter is required — the endpoint returns *all* states by default); each
-//!   PR carries `mergeable`, which surfaces merge conflicts.
-//!
-//! ## Two paths (mirrors [`super::azure`])
-//!
-//! - [`detect_gitea_pr`] — finds an open PR whose head branch matches, surfaces
-//!   conflicts from `mergeable` and the real CI state from the PR head commit's
-//!   combined status, and yields the PR's `html_url` for the clickable
-//!   indicator.
-//! - [`detect_gitea_commit_status`] — the branch fallback when no PR exists:
-//!   queries the combined status of the local HEAD SHA.
-//!
-//! When a PR exists, two API calls are made (pulls list + combined status);
-//! results are cached for 30–60s by the caller, so `wt list` over many branches
-//! doesn't refetch.
-//!
-//! ## Known limitations (experimental)
-//!
-//! - Only the first page of open PRs (Gitea's default page size, newest-first)
-//!   is inspected; in a repo with many open PRs, ours could fall off the page.
-//! - PRs opened from a fork (head repo owner ≠ the queried repo's owner) aren't
-//!   matched — owner/repo comes from the branch's own remote, not the upstream
-//!   the PR targets.
-//! - `mergeable` is computed asynchronously by Gitea, so a freshly-opened PR can
-//!   briefly report a false conflict until the check completes (self-corrects
-//!   when the cache expires).
+//! Detects CI status from Gitea PRs and commit statuses using the `tea` CLI.
+//! Experimental.
 
 use serde::Deserialize;
 use std::process::Output;
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, parse_owner_repo};
 
 use super::{
-    CiBranchName, CiSource, CiStatus, PrStatus, branch_owner_repo, is_retriable_error,
-    non_interactive_cmd, output_error_text, parse_json, retriable_pr_error,
+    CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrStatus, branch_owner_repo,
+    is_retriable_error, non_interactive_cmd, output_error_text, parse_json, retriable_pr_error,
 };
 
 /// Run `tea api <path>` from the worktree root.
@@ -85,18 +53,25 @@ fn fetch_combined_status(
 
 /// Detect Gitea PR CI status for a branch.
 ///
-/// Lists open PRs (`tea api repos/{owner}/{repo}/pulls?state=open`), finds the
-/// one whose head branch matches `branch.name`, then reports conflicts
-/// (`mergeable`) and the head commit's combined CI status.
+/// Lists open PRs on the primary remote, finds the one whose head branch +
+/// head owner matches, then reports conflicts (`mergeable`) and the head
+/// commit's combined CI status.
 pub(super) fn detect_gitea_pr(
     repo: &Repository,
     branch: &CiBranchName,
     local_head: &str,
 ) -> Option<PrStatus> {
-    let (owner, repo_name) = branch_owner_repo(repo, branch)?;
+    // Query the primary remote (typically the upstream), then filter by the
+    // branch's push owner — same pattern as github.rs, so fork PRs match.
+    let primary_remote = repo.primary_remote().ok()?;
+    let primary_url = repo.effective_remote_url(&primary_remote)?;
+    let (query_owner, query_repo) = parse_owner_repo(&primary_url)?;
+    let branch_owner = branch_owner_repo(repo, branch).map(|(owner, _)| owner)?;
 
-    // `state=open` is required: the pulls list returns all states by default.
-    let path = format!("repos/{owner}/{repo_name}/pulls?state=open");
+    // `state=open` required (default returns all states); `limit` matches the
+    // github backend's MAX_PRS_TO_FETCH so both have identical page semantics.
+    let path =
+        format!("repos/{query_owner}/{query_repo}/pulls?state=open&limit={MAX_PRS_TO_FETCH}");
     let output = tea_api(repo, &path)?;
     if !output.status.success() {
         return retriable_pr_error(&output);
@@ -104,28 +79,28 @@ pub(super) fn detect_gitea_pr(
 
     let prs: Vec<GiteaPr> = parse_json(&output.stdout, "tea api pulls", &branch.full_name)?;
 
-    // Match by head branch name; require the head repo owner (when present) to
-    // be the repo we queried — same-repo PRs only, since the resolver scopes
-    // owner/repo to the branch's own remote (fork PRs are out of scope; see
-    // the module-level "Known limitations"). A missing owner is treated as a
-    // potential match, as in the GitHub path.
+    // Match by head branch + head owner. Missing owner → potential match,
+    // mirroring github.rs.
     let pr = prs.iter().find(|pr| {
         pr.head.ref_name == branch.name
             && pr
                 .head
                 .repo
                 .as_ref()
-                .map(|r| r.owner.login.eq_ignore_ascii_case(&owner))
+                .map(|r| r.owner.login.eq_ignore_ascii_case(&branch_owner))
                 .unwrap_or(true)
     })?;
 
     let base_status = fetch_combined_status(
         repo,
-        &owner,
-        &repo_name,
+        &query_owner,
+        &query_repo,
         pr.head.sha.as_deref().unwrap_or(local_head),
     )
     .unwrap_or(CiStatus::NoCI);
+    // `mergeable` is computed asynchronously by Gitea — a freshly-opened PR
+    // can briefly report `Some(false)` until the check completes (self-
+    // corrects when the cache expires).
     let ci_status = if pr.mergeable == Some(false) {
         CiStatus::Conflicts
     } else {

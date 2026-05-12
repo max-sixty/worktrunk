@@ -1212,12 +1212,15 @@ fn test_list_full_with_gitea_commit_status_retriable_error(mut repo: TestRepo) {
     });
 }
 
-/// `wt list --remotes --full` resolves Gitea owner/repo from the branch's own
-/// remote, not the primary remote. Two Gitea remotes (`origin` →
-/// `owner/test-repo`, `fork` → `forkowner/test-repo`) plus a remote-only
-/// `fork/feature-remote` ref. The mock answers only `forkowner/test-repo`
-/// requests, so a buggy primary-remote lookup would return no CI; the green
-/// `●` in the snapshot proves `branch.remote` is honored.
+/// `wt list --remotes --full` exercises the commit-status fallback for a
+/// remote-only branch and proves it queries the branch's own remote, not the
+/// primary one. Two Gitea remotes (`origin` → `owner/test-repo`, `fork` →
+/// `forkowner/test-repo`) plus a remote-only `fork/feature-remote` ref. The
+/// mock answers only `forkowner/test-repo` SHA-status requests, so a primary-
+/// remote lookup in the fallback would return no CI; the green `●` in the
+/// snapshot proves the SHA-status path honors `branch.remote`. (The PR path
+/// intentionally uses the primary remote, mirroring the `gh` backend; for this
+/// branch it returns no PR and we fall through to the SHA-status path.)
 #[rstest]
 fn test_list_remotes_full_with_gitea_remote_branch(mut repo: TestRepo) {
     repo.run_git(&[
