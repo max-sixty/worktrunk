@@ -39,9 +39,7 @@ use std::collections::HashMap;
 
 use anyhow::bail;
 
-use super::branches::{
-    LOCAL_BRANCH_FORMAT, REMOTE_BRANCH_FORMAT, parse_local_branch_line, parse_remote_branch_line,
-};
+use super::branches::LocalBranchInventory;
 use super::{LocalBranch, RemoteBranch, Repository};
 
 /// An immutable snapshot of repository ref state.
@@ -459,10 +457,7 @@ fn resolve_sha_from_scan<'a>(
 }
 
 fn scan_locals(repo: &Repository) -> anyhow::Result<Vec<LocalBranch>> {
-    let output = repo.run_command(&["for-each-ref", LOCAL_BRANCH_FORMAT, "refs/heads/"])?;
-    let mut branches: Vec<LocalBranch> =
-        output.lines().filter_map(parse_local_branch_line).collect();
-    branches.sort_by_key(|b| std::cmp::Reverse(b.committer_ts));
+    let branches = repo.scan_local_branch_records()?;
 
     // Populate the local-branch inventory cache as a side-effect so that
     // subsequent `repo.local_branches()` callers (e.g., `Branch::upstream`
@@ -476,18 +471,26 @@ fn scan_locals(repo: &Repository) -> anyhow::Result<Vec<LocalBranch>> {
     let _ = repo
         .cache
         .local_branches
-        .set(super::branches::LocalBranchInventory::new(branches.clone()));
+        .set(LocalBranchInventory::new(branches.clone()));
 
     Ok(branches)
 }
 
 fn scan_remotes(repo: &Repository) -> anyhow::Result<Vec<RemoteBranch>> {
-    let output = repo.run_command(&["for-each-ref", REMOTE_BRANCH_FORMAT, "refs/remotes/"])?;
-    let mut branches: Vec<RemoteBranch> = output
-        .lines()
-        .filter_map(parse_remote_branch_line)
-        .collect();
-    branches.sort_by_key(|b| std::cmp::Reverse(b.committer_ts));
+    let branches = repo.scan_remote_branch_records()?;
+
+    // Populate the remote-branch inventory cache as a side-effect so that
+    // subsequent `repo.remote_branches()` callers (e.g., picker preview
+    // sizing, `Branch::upstream`, `branches_for_completion`) hit memory
+    // instead of re-running the same `for-each-ref refs/remotes/` scan.
+    // Mirrors the side-effect in `scan_locals`: `set()` is a no-op when
+    // the cache is already populated, preserving the first-scan-wins
+    // contract documented on `RepoCache.remote_branches` — every later
+    // `capture_refs` call still scans fresh, so any future ref-mutating
+    // command that touches `refs/remotes/` and then captures a new
+    // snapshot is unaffected.
+    let _ = repo.cache.remote_branches.set(branches.clone());
+
     Ok(branches)
 }
 
@@ -940,6 +943,67 @@ mod tests {
         // still holds the pre-move value.
         let snap = repo.capture_refs().unwrap();
         assert_eq!(snap.resolve("main"), Some(main_after.as_str()));
+    }
+
+    #[test]
+    fn capture_refs_populates_remote_branch_cache() {
+        // Mirrors `capture_refs_populates_local_branch_cache`: the
+        // snapshot's `scan_remotes` populates `cache.remote_branches` as
+        // a side-effect, so a subsequent `Repository::remote_branches()`
+        // call on the same `Repository` reads from memory instead of
+        // re-running `for-each-ref refs/remotes/`.
+        let test = TestRepo::with_initial_commit();
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        test.run_git(&["update-ref", "refs/remotes/origin/trunk", &main_sha]);
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Cache is empty before capture.
+        assert!(repo.cache.remote_branches.get().is_none());
+
+        let _snap = repo.capture_refs().unwrap();
+
+        // Capture populated the inventory cache.
+        let inventory = repo
+            .cache
+            .remote_branches
+            .get()
+            .expect("capture_refs should populate the remote-branch cache");
+        assert!(inventory.iter().any(|r| r.short_name == "origin/trunk"));
+
+        // Mutating refs after capture must NOT change what the cache
+        // returns — `remote_branches()` reads the populated cell, not
+        // the current ref state.
+        std::fs::write(test.root_path().join("a.txt"), "x\n").unwrap();
+        test.run_git(&["add", "a.txt"]);
+        test.run_git(&["commit", "-m", "advance main"]);
+        let advanced = test.git_output(&["rev-parse", "main"]);
+        test.run_git(&["update-ref", "refs/remotes/origin/trunk", &advanced]);
+
+        let cached_trunk = repo
+            .remote_branches()
+            .unwrap()
+            .iter()
+            .find(|r| r.short_name == "origin/trunk")
+            .expect("origin/trunk is cached")
+            .commit_sha
+            .clone();
+        assert_ne!(
+            cached_trunk, advanced,
+            "test setup: remote ref must have moved between capture and read"
+        );
+
+        // A fresh `Repository::at` scans again and sees the new SHA.
+        let repo2 = Repository::at(test.root_path()).unwrap();
+        let _snap2 = repo2.capture_refs().unwrap();
+        let fresh_trunk = repo2
+            .remote_branches()
+            .unwrap()
+            .iter()
+            .find(|r| r.short_name == "origin/trunk")
+            .unwrap()
+            .commit_sha
+            .clone();
+        assert_eq!(fresh_trunk, advanced);
     }
 
     #[test]
