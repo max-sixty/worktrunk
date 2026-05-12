@@ -139,6 +139,16 @@ pub fn finish_after_merge(
         );
         let expected_path = path_mismatch(repo, current_branch, &worktree_root, config);
 
+        // Snapshot the feature worktree's `.config/wt.toml` before removal so
+        // `post-remove` can read it after the directory is gone — same
+        // mechanism as `prepare_worktree_removal`. The repo is already rooted
+        // at the feature worktree (`current_wt`), so `load_project_config`
+        // reads from there. Parse errors propagate here because they'd abort
+        // `wt merge` upfront (no removal happens yet, so the executor's
+        // re-read path that handles them on the `wt remove` side isn't
+        // reachable from this call).
+        let removed_project_config = repo.load_project_config()?.map(Box::new);
+
         let remove_result = RemoveResult::RemovedWorktree {
             main_path: destination_path.clone(),
             worktree_path: worktree_root,
@@ -150,6 +160,7 @@ pub fn finish_after_merge(
             force_worktree: false,
             expected_path,
             removed_commit: feature_commit.clone(),
+            removed_project_config,
         };
         crate::output::handle_remove_output(&remove_result, false, verify, false, announcer)?;
         true

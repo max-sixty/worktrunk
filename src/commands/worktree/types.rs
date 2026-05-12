@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
+use worktrunk::config::ProjectConfig;
 use worktrunk::git::{BranchDeletionMode, RefType};
 
 /// Flags indicating which merge operations occurred
@@ -182,6 +183,16 @@ pub enum RemoveResult {
         /// Used for post-remove hook template variables so they reference the
         /// removed worktree's state, not the execution context.
         removed_commit: Option<String>,
+        /// The removed worktree's `.config/wt.toml`, snapshotted before
+        /// deletion. `pre-remove` reads it on disk (the worktree is still
+        /// there); `post-remove` reads this snapshot (the worktree is gone by
+        /// then). `None` when the removed worktree had no `.config/wt.toml`.
+        /// Both hooks are *about* the removed worktree — see the spec in
+        /// `commands::hooks` "Which `.config/wt.toml` a hook reads".
+        ///
+        /// Boxed because `ProjectConfig` is ~600 bytes and would otherwise
+        /// dominate the variant size (clippy `large_enum_variant`).
+        removed_project_config: Option<Box<ProjectConfig>>,
     },
     /// Branch exists but has no worktree - attempt branch deletion only.
     ///
@@ -357,6 +368,7 @@ mod tests {
             force_worktree: false,
             expected_path: None,
             removed_commit: Some("abc1234567890".to_string()),
+            removed_project_config: None,
         };
         match result {
             RemoveResult::RemovedWorktree {
@@ -370,6 +382,7 @@ mod tests {
                 force_worktree,
                 expected_path,
                 removed_commit,
+                removed_project_config: _,
             } => {
                 assert_eq!(main_path.to_str().unwrap(), "/main");
                 assert_eq!(worktree_path.to_str().unwrap(), "/worktree");
@@ -455,6 +468,7 @@ mod tests {
             force_worktree: true,
             expected_path: None,
             removed_commit: None, // Detached HEAD may not have meaningful commit
+            removed_project_config: None,
         };
         match result {
             RemoveResult::RemovedWorktree {

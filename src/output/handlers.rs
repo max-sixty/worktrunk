@@ -11,13 +11,13 @@ use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
 
 use crate::commands::command_executor::CommandContext;
 use crate::commands::command_executor::FailureStrategy;
-use crate::commands::hooks::{HookAnnouncer, execute_hook, prepare_background_pipelines};
+use crate::commands::hooks::{HookAnnouncer, execute_hook};
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
 };
 use crate::commands::worktree::hooks::PostRemoveContext;
 use crate::commands::worktree::{RemoveResult, SwitchBranchInfo, SwitchResult};
-use worktrunk::config::UserConfig;
+use worktrunk::config::{ProjectConfig, UserConfig};
 use worktrunk::git::ErrorExt;
 use worktrunk::git::GitError;
 use worktrunk::git::IntegrationReason;
@@ -750,6 +750,7 @@ pub fn handle_remove_output(
             force_worktree,
             expected_path,
             removed_commit,
+            removed_project_config,
         } => handle_removed_worktree_output(
             RemovedWorktreeOutputContext {
                 main_path,
@@ -762,6 +763,7 @@ pub fn handle_remove_output(
                 force_worktree: *force_worktree,
                 expected_path: expected_path.as_deref(),
                 removed_commit: removed_commit.as_deref(),
+                removed_project_config: removed_project_config.as_deref(),
                 foreground,
                 verify,
             },
@@ -920,9 +922,14 @@ fn spawn_hooks_after_remove(
     // branch since both post-remove and post-switch are consequences of that removal.
     let remove_ctx = CommandContext::new(repo, &config, Some(removed_branch), ctx.main_path, false);
 
-    // Collect post-remove and post-switch hooks for a single combined announcement.
-    let mut pipelines = prepare_background_pipelines(
+    // `post-remove` is *about* the removed worktree, so its project config
+    // comes from the snapshot taken before removal — the worktree itself is
+    // gone by now. `post-switch` is *about* the destination worktree (where
+    // the user landed), so its config loads from `remove_ctx` (rooted at
+    // `ctx.main_path`) the normal way.
+    announcer.register_with_project_config(
         &remove_ctx,
+        ctx.removed_project_config,
         worktrunk::HookType::PostRemove,
         &extra_vars,
         display_path,
@@ -930,24 +937,18 @@ fn spawn_hooks_after_remove(
 
     // Post-switch: only when the user actually changed directory.
     // Uses its own context with the destination branch for template variables.
-    // dest_branch hoisted so it outlives the pipelines vec.
-    let dest_branch = if ctx.changed_directory {
-        Some(repo.worktree_at(ctx.main_path).branch()?)
-    } else {
-        None
-    };
-    if let Some(ref dest_branch) = dest_branch {
+    if ctx.changed_directory {
+        let dest_branch = repo.worktree_at(ctx.main_path).branch()?;
         let switch_ctx =
             CommandContext::new(repo, &config, dest_branch.as_deref(), ctx.main_path, false);
-        pipelines.extend(prepare_background_pipelines(
+        announcer.register(
             &switch_ctx,
             worktrunk::HookType::PostSwitch,
             &[],
             display_path,
-        )?);
+        )?;
     }
 
-    announcer.extend(pipelines);
     Ok(())
 }
 
@@ -1173,6 +1174,10 @@ struct RemovedWorktreeOutputContext<'a> {
     force_worktree: bool,
     expected_path: Option<&'a Path>,
     removed_commit: Option<&'a str>,
+    /// The removed worktree's `.config/wt.toml`, snapshotted before removal.
+    /// Used by `post-remove` (the worktree is gone by the time it runs);
+    /// `pre-remove` reads the same file on disk via `Repository::at`.
+    removed_project_config: Option<&'a ProjectConfig>,
     foreground: bool,
     verify: bool,
 }

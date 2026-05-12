@@ -47,19 +47,19 @@ pub fn collect_commands_for_hooks(
 
 /// Collect the project commands that run as part of removing a set of worktrees.
 ///
-/// Each `pre-remove` reads the removed worktree's own `.config/wt.toml` — no
-/// fallback to `primary_repo`'s config, mirroring
-/// `output::handlers::execute_pre_remove_hooks_if_needed`, the executor that
-/// runs the hook. `post-remove` and `post-switch` always read `primary_repo`'s
-/// config (the removed worktree is gone by the time they fire). For `wt merge`,
+/// Each `pre-remove` and `post-remove` reads the removed worktree's own
+/// `.config/wt.toml` — both hooks are *about* that worktree, and at approval
+/// time it's still on disk. `post-switch` reads `primary_repo`'s config (the
+/// post-removal working directory, where the user lands). For `wt merge`,
 /// `primary_repo` is the merge destination — same rule, different "primary".
 ///
-/// A present-but-malformed worktree config surfaces as an error so the user
+/// No fallback to another worktree's config, mirroring the executors
+/// (`output::handlers::execute_pre_remove_hooks_if_needed` and the
+/// `post-remove` snapshot path in `spawn_hooks_after_remove`). A
+/// present-but-malformed worktree config surfaces as an error so the user
 /// fixes it rather than silently running a different one.
 ///
-/// Templates are deduped: when several removed worktrees define the same
-/// `pre-remove` template, the approval prompt shows it once rather than once
-/// per worktree.
+/// Templates are deduped so the approval prompt shows each command once.
 ///
 /// Callers feed the result into [`super::command_approval::approve_command_batch`].
 /// `wt merge` prepends its own `pre-commit` / `post-commit` / `pre-merge` /
@@ -76,15 +76,15 @@ pub fn collect_remove_hook_commands(
         // worktree — propagate rather than silently fall back. See #2708.
         let wt_repo = Repository::at(wt_path)?;
         if let Some(cfg) = wt_repo.load_project_config()? {
-            commands.extend(collect_commands_for_hooks(&cfg, &[HookType::PreRemove]));
+            commands.extend(collect_commands_for_hooks(
+                &cfg,
+                &[HookType::PreRemove, HookType::PostRemove],
+            ));
         }
     }
 
     if let Some(cfg) = primary_repo.load_project_config()? {
-        commands.extend(collect_commands_for_hooks(
-            &cfg,
-            &[HookType::PostRemove, HookType::PostSwitch],
-        ));
+        commands.extend(collect_commands_for_hooks(&cfg, &[HookType::PostSwitch]));
     }
 
     let mut seen = HashSet::new();

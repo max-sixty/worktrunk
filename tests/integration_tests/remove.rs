@@ -1758,6 +1758,59 @@ fn test_pre_remove_hook_reads_removed_worktree_config(mut repo: TestRepo) {
     );
 }
 
+/// `post-remove` reads the *removed* worktree's `.config/wt.toml`, even though
+/// the worktree is gone by the time the hook runs. The config is snapshotted
+/// before removal and threaded through `RemoveResult` to the executor —
+/// symmetric with `pre-remove`, which reads the same file from disk while it's
+/// still there. Both hooks are *about* the removed worktree.
+#[rstest]
+fn test_post_remove_hook_reads_removed_worktree_config(mut repo: TestRepo) {
+    use crate::common::wait_for_file_content;
+
+    let worktree_path = repo.add_worktree("feature-local-hook");
+    let marker_file = repo.root_path().join("post-remove-ran.txt");
+    std::fs::create_dir_all(worktree_path.join(".config")).unwrap();
+    std::fs::write(
+        worktree_path.join(".config/wt.toml"),
+        // `{{ branch }}` proves the hook ran with the removed worktree's
+        // template context; the marker living outside the removed worktree
+        // (in the primary) lets us assert it after the worktree is gone.
+        format!(
+            r#"post-remove = "echo 'post-remove of {{{{ branch }}}}' > {}""#,
+            marker_file.to_slash_lossy()
+        ),
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "--foreground",
+            "--force",
+            "--yes",
+            "feature-local-hook",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt remove failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    wait_for_file_content(&marker_file);
+    assert_eq!(
+        std::fs::read_to_string(&marker_file).unwrap().trim(),
+        "post-remove of feature-local-hook",
+        "post-remove should run with the removed worktree's config, snapshotted before removal"
+    );
+    assert!(
+        !worktree_path.exists(),
+        "feature worktree should be removed"
+    );
+}
+
 /// A worktree with a malformed `.config/wt.toml` makes `wt remove` abort with
 /// the parse error in stderr — no silent fall-through to a different config,
 /// and the worktree stays on disk so the user can fix it.

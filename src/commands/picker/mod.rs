@@ -188,15 +188,19 @@ impl PickerCollector {
                 target_branch,
                 force_worktree,
                 removed_commit,
+                removed_project_config,
                 ..
             } => {
-                let repo = Repository::at(main_path)?;
-                let config = repo.user_config();
+                let main_repo = Repository::at(main_path)?;
+                let config = main_repo.user_config();
                 let hook_branch = branch_name.as_deref().unwrap_or("HEAD");
 
                 // Run pre-remove hooks (synchronously in this background thread).
-                // Non-zero exit aborts the removal, matching `wt remove` semantics.
-                let target_ref = repo
+                // Rooted at the removed worktree so its `.config/wt.toml` is the
+                // one that fires — same rule as `wt remove`'s
+                // `execute_pre_remove_hooks_if_needed`. Non-zero exit aborts the
+                // removal, matching `wt remove` semantics.
+                let target_ref = main_repo
                     .worktree_at(main_path)
                     .branch()
                     .ok()
@@ -205,8 +209,14 @@ impl PickerCollector {
                 let template_vars = TemplateVars::new()
                     .with_target(&target_ref)
                     .with_target_worktree_path(main_path);
-                let pre_ctx =
-                    CommandContext::new(&repo, config, Some(hook_branch), worktree_path, false);
+                let removed_repo = Repository::at(worktree_path)?;
+                let pre_ctx = CommandContext::new(
+                    &removed_repo,
+                    config,
+                    Some(hook_branch),
+                    worktree_path,
+                    false,
+                );
                 execute_hook(
                     &pre_ctx,
                     worktrunk::HookType::PreRemove,
@@ -215,9 +225,9 @@ impl PickerCollector {
                     None, // no display path in TUI context
                 )?;
 
-                let snapshot = repo.capture_refs()?;
+                let snapshot = main_repo.capture_refs()?;
                 let output = remove_worktree_with_cleanup(
-                    &repo,
+                    &main_repo,
                     &snapshot,
                     worktree_path,
                     RemoveOptions {
@@ -231,19 +241,22 @@ impl PickerCollector {
                     let _ = std::fs::remove_dir_all(&staged);
                 }
 
-                // Spawn post-remove hooks in background (log to files, no terminal output).
+                // Spawn post-remove hooks in background. The removed worktree
+                // is gone, so its `.config/wt.toml` comes from the snapshot —
+                // same source the `wt remove` / `wt merge` teardown paths use.
                 let post_ctx =
-                    CommandContext::new(&repo, config, Some(hook_branch), main_path, false);
+                    CommandContext::new(&main_repo, config, Some(hook_branch), main_path, false);
                 let remove_vars = PostRemoveContext::new(
                     worktree_path,
                     removed_commit.as_deref(),
                     main_path,
-                    &repo,
+                    &main_repo,
                 );
                 let extra_vars = remove_vars.extra_vars(hook_branch);
-                let mut announcer = HookAnnouncer::new(&repo, config, false);
-                announcer.register(
+                let mut announcer = HookAnnouncer::new(&main_repo, config, false);
+                announcer.register_with_project_config(
                     &post_ctx,
+                    removed_project_config.as_deref(),
                     worktrunk::HookType::PostRemove,
                     &extra_vars,
                     None, // no display path in TUI context
@@ -1027,6 +1040,7 @@ pub mod tests {
             force_worktree: false,
             expected_path: None,
             removed_commit: None,
+            removed_project_config: None,
         };
 
         PickerCollector::do_removal(&repo, &result).unwrap();
@@ -1123,6 +1137,7 @@ pub mod tests {
             force_worktree: false,
             expected_path: None,
             removed_commit: None,
+            removed_project_config: None,
         };
 
         PickerCollector::do_removal(&repo, &result).unwrap();
