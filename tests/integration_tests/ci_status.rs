@@ -1263,3 +1263,69 @@ fn test_list_remotes_full_with_gitea_remote_branch(mut repo: TestRepo) {
         assert_cmd_snapshot!("gitea_remote_branch_uses_branch_remote", cmd);
     });
 }
+
+/// A PR opened from a fork (head owner ≠ the queried upstream owner) is
+/// matched: `wt list --full` lists the *primary* remote's open PRs and filters
+/// by the branch's push owner against `head.repo.owner.login`. Two Gitea
+/// remotes (`origin` → `upstream/test-repo`, `fork` → `forkowner/test-repo`)
+/// and the `feature` branch pushes to `fork`. The mock returns two open PRs for
+/// the `feature` ref — a decoy from `other-owner` that must be filtered out and
+/// the real one from `forkowner` — and answers the upstream's commit-status
+/// lookup with `success`. The green `●` proves the fork PR matched; a revert to
+/// querying/filtering by the branch's own remote would query `forkowner`'s
+/// (unmocked) `/pulls` and lose the indicator. Mirrors the GitHub backend's
+/// `test_list_full_filters_by_repo_owner`.
+#[rstest]
+fn test_list_full_with_gitea_fork_pr(mut repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/upstream/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "remote",
+        "add",
+        "fork",
+        "https://gitea.example.com/forkowner/test-repo.git",
+    ]);
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(
+        &feature_wt,
+        "gitea-fork-ci.txt",
+        "gitea fork ci test",
+        "feat: gitea fork feature",
+    );
+    setup_tracking_for_all_branches(&repo, "fork");
+    let head_sha = branch_sha(&repo, "feature");
+
+    let pulls_json = format!(
+        r#"[
+        {{
+            "mergeable": true,
+            "html_url": "https://gitea.example.com/upstream/test-repo/pulls/98",
+            "head": {{"ref": "feature", "sha": "wrong_sha", "repo": {{"owner": {{"login": "other-owner"}}}}}}
+        }},
+        {{
+            "mergeable": true,
+            "html_url": "https://gitea.example.com/upstream/test-repo/pulls/7",
+            "head": {{"ref": "feature", "sha": "{head_sha}", "repo": {{"owner": {{"login": "forkowner"}}}}}}
+        }}
+    ]"#
+    );
+
+    repo.setup_mock_tea_with_ci_data(
+        "upstream",
+        "test-repo",
+        &head_sha,
+        &pulls_json,
+        r#"{"state":"success","total_count":1}"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("gitea_fork_pr", cmd);
+    });
+}
