@@ -295,17 +295,12 @@ const DEFAULT_ISOLATED_APPROVALS: &str = "/nonexistent/wt/approvals.toml";
 /// file doesn't actually exist on test/CI machines.
 const DEFAULT_ISOLATED_SYSTEM_CONFIG: &str = "/etc/xdg/worktrunk/config.toml";
 
-/// LLVM coverage env vars that the parent's `cargo llvm-cov` / `cargo affected`
-/// run sets to point spawned binaries at the right `.profraw` file. Mirrored
-/// in `tests/common/mod.rs::pass_coverage_env_to_pty_cmd` for PTY tests that
-/// `env_clear()`. Keep both lists in sync — dropping `LLVM_PROFILE_FILE` makes
-/// an instrumented child fall back to LLVM's default `default_*.profraw` in
-/// the child's cwd, leaving stray files at the repo root.
-pub const COVERAGE_ENV_VARS: &[&str] = &[
-    "LLVM_PROFILE_FILE",
-    "CARGO_LLVM_COV",
-    "CARGO_LLVM_COV_TARGET_DIR",
-];
+/// `cargo llvm-cov` / `cargo affected` coverage env vars that propagate
+/// verbatim from parent to test subprocesses. `LLVM_PROFILE_FILE` is *not*
+/// in this list — it's resolved by [`default_llvm_profile_file`] so an
+/// instrumented child writing to its cwd is impossible even when nothing's
+/// inherited. Mirrored at the PTY call sites in `tests/common/`.
+pub const COVERAGE_ENV_VARS: &[&str] = &["CARGO_LLVM_COV", "CARGO_LLVM_COV_TARGET_DIR"];
 
 /// Resolve the `LLVM_PROFILE_FILE` value to set on test subprocesses.
 ///
@@ -321,7 +316,16 @@ pub const COVERAGE_ENV_VARS: &[&str] = &[
 /// The `%m` and `%p` placeholders are expanded by the LLVM runtime in the
 /// instrumented child; uninstrumented children ignore the env var entirely.
 pub fn default_llvm_profile_file() -> std::ffi::OsString {
-    if let Some(inherited) = std::env::var_os("LLVM_PROFILE_FILE") {
+    default_llvm_profile_file_with(std::env::var_os("LLVM_PROFILE_FILE"))
+}
+
+/// Inner form of [`default_llvm_profile_file`] that takes the inherited value
+/// as a parameter instead of reading [`std::env::var_os`]. CI always runs
+/// under `cargo llvm-cov`, so the production caller always takes the
+/// inherited branch — this split lets a unit test exercise the fallback
+/// without mutating process env (which races with parallel tests).
+fn default_llvm_profile_file_with(inherited: Option<std::ffi::OsString>) -> std::ffi::OsString {
+    if let Some(inherited) = inherited {
         return inherited;
     }
     let dir = std::env::temp_dir().join("wt-test-profraw");
@@ -339,10 +343,12 @@ pub fn default_llvm_profile_file() -> std::ffi::OsString {
 /// - `WORKTRUNK_SYSTEM_CONFIG_PATH` ← real XDG location (typically nonexistent on CI)
 /// - `WORKTRUNK_APPROVALS_PATH` ← nonexistent file
 ///
-/// Also re-applies [`COVERAGE_ENV_VARS`] from the parent so an instrumented
-/// child writes its `.profraw` to the path `cargo llvm-cov` chose, not to a
-/// `default_*.profraw` in the child's cwd. The re-apply is defensive: a caller
-/// that did `env_clear()` before us would otherwise drop the inherited values.
+/// Also sets `LLVM_PROFILE_FILE` via [`default_llvm_profile_file`] and
+/// re-applies [`COVERAGE_ENV_VARS`] from the parent so an instrumented child
+/// writes its `.profraw` to the path `cargo llvm-cov` chose (or to a temp-dir
+/// fallback when nothing's inherited), not to a `default_*.profraw` in the
+/// child's cwd. The re-apply is defensive: a caller that did `env_clear()`
+/// before us would otherwise drop the inherited values.
 ///
 /// Shared by [`configure_cli_command`] (test-side, layers on test
 /// determinism: forced colors, fixed timestamps, log level, etc.) and
@@ -390,7 +396,7 @@ where
     // falls back to writing `default_*.profraw` into its cwd. See
     // [`default_llvm_profile_file`] for the rationale.
     cmd.env("LLVM_PROFILE_FILE", default_llvm_profile_file());
-    for key in ["CARGO_LLVM_COV", "CARGO_LLVM_COV_TARGET_DIR"] {
+    for key in COVERAGE_ENV_VARS {
         if let Ok(val) = std::env::var(key) {
             cmd.env(key, val);
         }
@@ -2904,6 +2910,34 @@ mod tests {
         assert_eq!(
             removed.get("WORKTRUNK_APPROVALS_PATH"),
             Some(&Some(DEFAULT_ISOLATED_APPROVALS.to_string()))
+        );
+    }
+
+    #[test]
+    fn default_llvm_profile_file_with_inherited_value_returns_it_verbatim() {
+        let inherited = std::ffi::OsString::from("/cov/expected-%p.profraw");
+        let resolved = default_llvm_profile_file_with(Some(inherited.clone()));
+        assert_eq!(resolved, inherited);
+    }
+
+    #[test]
+    fn default_llvm_profile_file_falls_back_to_temp_dir_when_uninherited() {
+        let resolved = default_llvm_profile_file_with(None);
+        let expected_dir = std::env::temp_dir().join("wt-test-profraw");
+        // The returned path is `<temp>/wt-test-profraw/cov-%m_%p.profraw`. We
+        // assert the parent dir lives under temp and the file name carries the
+        // LLVM templating placeholders — the runtime expands those in the
+        // instrumented child, so the literal `%m_%p` in this string is correct.
+        let resolved_path = std::path::PathBuf::from(&resolved);
+        assert_eq!(resolved_path.parent(), Some(expected_dir.as_path()));
+        assert_eq!(
+            resolved_path.file_name().and_then(|n| n.to_str()),
+            Some("cov-%m_%p.profraw"),
+        );
+        assert!(
+            expected_dir.is_dir(),
+            "fallback should have created {}",
+            expected_dir.display(),
         );
     }
 }

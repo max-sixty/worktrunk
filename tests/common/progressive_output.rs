@@ -562,7 +562,7 @@ fn configure_pty_environment(cmd: &mut CommandBuilder, repo: &TestRepo) {
         "LLVM_PROFILE_FILE",
         worktrunk::testing::default_llvm_profile_file(),
     );
-    for key in ["CARGO_LLVM_COV", "CARGO_LLVM_COV_TARGET_DIR"] {
+    for key in worktrunk::testing::COVERAGE_ENV_VARS {
         if let Ok(val) = std::env::var(key) {
             cmd.env(key, val);
         }
