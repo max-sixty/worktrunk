@@ -87,10 +87,11 @@ Artifact paths: `-home-runner-work-worktrunk-worktrunk/<session-id>.jsonl`
 Before opening a `fix/ci-*` PR, classify the failure:
 
 - **Transient infrastructure** (link-check timeouts, apt-get flakes, GitHub
-  outages, runner disk issues, codecov upload blips) — do **not** create a
-  PR. The maintainer will rerun CI. Comment on the run or exit silently; a
-  permanent config change for a one-off timeout is churn the maintainer will
-  close.
+  outages, runner disk issues, codecov upload blips) — permitted
+  dispositions are (1) comment on the run, or (2) exit silently. Do not
+  open a PR, an audit issue, or any other artifact. The maintainer will
+  rerun CI; a permanent config change for a one-off timeout is churn the
+  maintainer will close.
 - **Flaky test** (known-flaky or first-seen PTY/shell test) — exit without a
   PR (same behavior as prior test-flake ci-fix runs).
 - **Real regression** — proceed with a fix PR.
