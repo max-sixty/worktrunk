@@ -389,8 +389,9 @@ fn render_dry_run(
 /// metadata and orphan-branch removals delete just the branch — no
 /// `pre-remove`/`post-remove`/`post-switch`). The integration checks haven't
 /// run yet, so every linked worktree is fed to the helper — its `pre-remove`
-/// approval is a superset of what executes. `post-remove` / `post-switch`
-/// resolve from the primary worktree's config (the same helper input). No
+/// approval is a superset of what executes. `post-switch` resolves from the
+/// primary worktree's config: a prune candidate is never the primary worktree,
+/// so each removal's `RemoveResult::destination_path()` is `home_path()`. No
 /// fallback between worktrees — each `.config/wt.toml` stands alone.
 ///
 /// Returns `true` when hooks should run, `false` when the user declined.
@@ -401,7 +402,6 @@ fn approve_prune_hooks(
     yes: bool,
 ) -> anyhow::Result<bool> {
     let primary_path = repo.home_path()?;
-    let primary_repo = Repository::at(&primary_path)?;
 
     let removed_worktree_paths: Vec<&Path> = check_items
         .iter()
@@ -410,7 +410,8 @@ fn approve_prune_hooks(
             _ => None,
         })
         .collect();
-    let all_commands = collect_remove_hook_commands(&primary_repo, &removed_worktree_paths)?;
+    let all_commands =
+        collect_remove_hook_commands(&removed_worktree_paths, &[primary_path.as_path()])?;
 
     if all_commands.is_empty() {
         return Ok(true);

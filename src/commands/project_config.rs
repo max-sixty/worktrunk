@@ -49,9 +49,13 @@ pub fn collect_commands_for_hooks(
 ///
 /// Each `pre-remove` and `post-remove` reads the removed worktree's own
 /// `.config/wt.toml` — both hooks are *about* that worktree, and at approval
-/// time it's still on disk. `post-switch` reads `primary_repo`'s config (the
-/// post-removal working directory, where the user lands). For `wt merge`,
-/// `primary_repo` is the merge destination — same rule, different "primary".
+/// time it's still on disk. `post-switch` reads the destination worktree's
+/// config — the post-removal working directory the user lands in, which
+/// `prepare_worktree_removal` records as [`super::worktree::RemoveResult`]'s
+/// `main_path` (the primary worktree, except cwd when the primary worktree is
+/// itself being removed; the merge destination for `wt merge`). Pass those
+/// `destination_path()`s in — the gate must read the same config the executor
+/// will (`output::handlers::spawn_hooks_after_remove`).
 ///
 /// No fallback to another worktree's config, mirroring the executors
 /// (`output::handlers::execute_pre_remove_hooks_if_needed` and the
@@ -59,15 +63,17 @@ pub fn collect_commands_for_hooks(
 /// present-but-malformed worktree config surfaces as an error so the user
 /// fixes it rather than silently running a different one.
 ///
-/// Templates are deduped so the approval prompt shows each command once.
+/// Templates are deduped so the approval prompt shows each command once — so
+/// `destination_paths` may contain duplicates (the common case: every removal
+/// lands in the same primary worktree).
 ///
 /// Callers feed the result into [`super::command_approval::approve_command_batch`].
 /// `wt merge` prepends its own `pre-commit` / `post-commit` / `pre-merge` /
 /// `post-merge` commands to the same batch; `wt remove` and `wt step prune`
 /// approve the helper's output on its own.
 pub fn collect_remove_hook_commands(
-    primary_repo: &Repository,
     removed_worktree_paths: &[&Path],
+    destination_paths: &[&Path],
 ) -> anyhow::Result<Vec<ApprovableCommand>> {
     let mut commands: Vec<ApprovableCommand> = Vec::new();
 
@@ -83,8 +89,19 @@ pub fn collect_remove_hook_commands(
         }
     }
 
-    if let Some(cfg) = primary_repo.load_project_config()? {
-        commands.extend(collect_commands_for_hooks(&cfg, &[HookType::PostSwitch]));
+    // `destination_paths` is usually one worktree repeated (every removal lands
+    // in the same primary) — read each one's config at most once.
+    let mut seen_dests: HashSet<&Path> = HashSet::new();
+    for &dest_path in destination_paths {
+        if !seen_dests.insert(dest_path) {
+            continue;
+        }
+        // Propagate a `Repository::at` failure rather than silently skipping
+        // — same as the removed-worktree loop above. See #2708.
+        let dest_repo = Repository::at(dest_path)?;
+        if let Some(cfg) = dest_repo.load_project_config()? {
+            commands.extend(collect_commands_for_hooks(&cfg, &[HookType::PostSwitch]));
+        }
     }
 
     let mut seen = HashSet::new();

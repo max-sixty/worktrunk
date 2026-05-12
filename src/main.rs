@@ -894,30 +894,33 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
             }
 
             // Helper: approve every command the removal will run, in one batch.
-            // `pre-remove` runs in — and resolves its `.config/wt.toml` from —
-            // each worktree being removed (no fallback to the primary worktree's
-            // config, same rule as `execute_pre_remove_hooks_if_needed`);
-            // `post-remove` and `post-switch` run in the primary worktree
-            // afterwards and resolve their config from there. The shared helper
-            // assembles both, dedup'd by template. Returns `true` when the prompt
-            // was accepted or there was nothing to approve.
-            let approve_remove = |removed_worktree_paths: &[&Path], yes: bool| -> anyhow::Result<bool> {
-                let primary_path = repo.home_path()?;
-                let primary_repo = Repository::at(&primary_path)?;
-                let commands =
-                    collect_remove_hook_commands(&primary_repo, removed_worktree_paths)?;
-                if commands.is_empty() {
-                    return Ok(true);
-                }
-                let project_id = repo.project_identifier()?;
-                let approvals = Approvals::load().context("Failed to load approvals")?;
-                let approved =
-                    approve_command_batch(&commands, &project_id, &approvals, yes, false)?;
-                if !approved {
-                    eprintln!("{}", info_message("Commands declined, continuing removal"));
-                }
-                Ok(approved)
-            };
+            // `pre-remove` / `post-remove` resolve their `.config/wt.toml` from
+            // each worktree being removed (`removed_worktree_paths`); `post-switch`
+            // resolves from each removal's post-removal destination
+            // (`destination_paths` — `RemoveResult::destination_path()`, normally
+            // the primary worktree, cwd when the primary worktree is itself the
+            // removal target). No fallback between worktrees, same rule as the
+            // executors. The shared helper assembles them all, dedup'd by template.
+            // Returns `true` when the prompt was accepted or there was nothing to
+            // approve.
+            let approve_remove =
+                |removed_worktree_paths: &[&Path], destination_paths: &[&Path], yes: bool| -> anyhow::Result<bool> {
+                    let commands = collect_remove_hook_commands(
+                        removed_worktree_paths,
+                        destination_paths,
+                    )?;
+                    if commands.is_empty() {
+                        return Ok(true);
+                    }
+                    let project_id = repo.project_identifier()?;
+                    let approvals = Approvals::load().context("Failed to load approvals")?;
+                    let approved =
+                        approve_command_batch(&commands, &project_id, &approvals, yes, false)?;
+                    if !approved {
+                        eprintln!("{}", info_message("Commands declined, continuing removal"));
+                    }
+                    Ok(approved)
+                };
 
             let branches = args.branches;
 
@@ -941,8 +944,12 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 }
 
                 // "Approve at the Gate": approval happens AFTER validation passes
-                let removed_path = result.removed_worktree_path();
-                let run_hooks = verify && approve_remove(removed_path.as_slice(), yes)?;
+                let run_hooks = verify
+                    && approve_remove(
+                        result.removed_worktree_path().as_slice(),
+                        result.destination_path().as_slice(),
+                        yes,
+                    )?;
 
                 let mut announcer = HookAnnouncer::new(&repo, &config, false);
                 handle_remove_output(
@@ -984,16 +991,24 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 }
 
                 // Approve hooks (only if we have valid plans). Each removed
-                // worktree's `pre-remove` is approved against that worktree's
-                // own config — see `approve_remove` above.
-                let pre_remove_targets: Vec<&Path> = plans
-                    .others
-                    .iter()
-                    .chain(&plans.branch_only)
-                    .chain(plans.current.iter())
-                    .filter_map(|r| r.removed_worktree_path())
-                    .collect();
-                let run_hooks = verify && approve_remove(&pre_remove_targets, yes)?;
+                // worktree's `pre-remove` / `post-remove` is approved against
+                // that worktree's config, and its `post-switch` against the
+                // worktree the user lands in — see `approve_remove` above.
+                // (`destination_targets` is mostly the primary worktree
+                // repeated; the helper dedups by template.)
+                let all_plans = || {
+                    plans
+                        .others
+                        .iter()
+                        .chain(&plans.branch_only)
+                        .chain(plans.current.iter())
+                };
+                let removed_targets: Vec<&Path> =
+                    all_plans().filter_map(|r| r.removed_worktree_path()).collect();
+                let destination_targets: Vec<&Path> =
+                    all_plans().filter_map(|r| r.destination_path()).collect();
+                let run_hooks =
+                    verify && approve_remove(&removed_targets, &destination_targets, yes)?;
 
                 // Execute all validated plans: others first, branch-only next, current last
                 let show_branch =

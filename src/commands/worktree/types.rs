@@ -227,6 +227,17 @@ impl RemoveResult {
         }
     }
 
+    /// Post-removal working directory — where the user lands, and the worktree
+    /// whose `.config/wt.toml` `post-switch` reads. `None` for branch-only
+    /// deletions (no worktree was removed, so nothing was switched away from).
+    /// See the `main_path` field docs on [`RemoveResult::RemovedWorktree`].
+    pub fn destination_path(&self) -> Option<&Path> {
+        match self {
+            RemoveResult::RemovedWorktree { main_path, .. } => Some(main_path),
+            RemoveResult::BranchOnly { .. } => None,
+        }
+    }
+
     /// Convert to a JSON value for structured output.
     pub fn to_json(&self) -> serde_json::Value {
         match self {

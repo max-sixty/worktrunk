@@ -204,7 +204,8 @@ impl PickerCollector {
                 ..
             } => {
                 let main_repo = Repository::at(main_path)?;
-                let verify = removal_hooks_approved(&main_repo, worktree_path, approvals)?;
+                let verify =
+                    removal_hooks_approved(&main_repo, main_path, worktree_path, approvals)?;
                 let mut announcer = HookAnnouncer::new(&main_repo, main_repo.user_config(), false);
                 handle_remove_output(
                     result,
@@ -353,17 +354,21 @@ impl CommandCollector for PickerCollector {
 /// Whether every `pre-remove` / `post-remove` / `post-switch` command this
 /// removal would run is already approved — a read-only check, no prompt.
 ///
-/// `wt remove` / `wt merge` collect the same command set and prompt for it at
-/// the gate. The picker can't prompt mid-render, so it runs the removal's hooks
-/// only when they're already approved (e.g. from a prior `wt remove` /
-/// `wt merge`) and skips them otherwise — unapproved project commands must
-/// never run. See CLAUDE.md → "Project Commands Run Only After Approval".
+/// `main_path` is the post-removal destination (where `post-switch` reads its
+/// config, same as the executor); `worktree_path` is the worktree being
+/// removed (where `pre-remove` / `post-remove` read theirs). `wt remove` /
+/// `wt merge` collect the same command set and prompt for it at the gate; the
+/// picker can't prompt mid-render, so it runs the removal's hooks only when
+/// they're already approved (e.g. from a prior `wt remove` / `wt merge`) and
+/// skips them otherwise — unapproved project commands must never run. See
+/// CLAUDE.md → "Project Commands Run Only After Approval".
 fn removal_hooks_approved(
     main_repo: &Repository,
+    main_path: &Path,
     worktree_path: &Path,
     approvals: &Approvals,
 ) -> anyhow::Result<bool> {
-    let commands = collect_remove_hook_commands(main_repo, &[worktree_path])?;
+    let commands = collect_remove_hook_commands(&[worktree_path], &[main_path])?;
     if commands.is_empty() {
         return Ok(true); // nothing to run — `verify` is moot
     }
@@ -1176,7 +1181,7 @@ pub mod tests {
         // Empty approvals → the hook is unapproved.
         let approvals = Approvals::default();
         assert!(
-            !removal_hooks_approved(&repo, &wt_path, &approvals).unwrap(),
+            !removal_hooks_approved(&repo, test.path(), &wt_path, &approvals).unwrap(),
             "an unapproved pre-remove hook is not approved"
         );
 

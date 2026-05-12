@@ -127,9 +127,11 @@ fn collect_merge_commands(
         if verify && will_remove {
             let current_wt = repo.current_worktree();
             let feature_path = current_wt.path();
+            // The feature worktree is removed; the user lands in the merge
+            // destination, so `post-switch` reads `destination_path`'s config.
             all_commands.extend(collect_remove_hook_commands(
-                &destination_repo,
                 &[feature_path],
+                &[destination_path],
             )?);
         }
     }
