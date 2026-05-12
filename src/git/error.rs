@@ -366,13 +366,16 @@ impl SwitchSuggestionCtx {
 ///
 /// # Usage
 ///
-/// ```ignore
-/// // Return a typed error
-/// return Err(GitError::DetachedHead { action: Some("merge".into()) }.into());
+/// ```
+/// use worktrunk::git::GitError;
 ///
-/// // Pattern match on errors
-/// if let Some(GitError::BranchAlreadyExists { branch }) = err.downcast_ref() {
-///     println!("Branch {} exists", branch);
+/// // A typed error converts into a type-erased one (in real code, into `anyhow::Error`).
+/// let err: Box<dyn std::error::Error> =
+///     GitError::DetachedHead { action: Some("merge".into()) }.into();
+///
+/// // Recover the typed error to branch on the variant.
+/// if let Some(GitError::BranchAlreadyExists { branch }) = err.downcast_ref::<GitError>() {
+///     println!("branch {branch} already exists");
 /// }
 /// ```
 #[derive(Debug, Clone)]

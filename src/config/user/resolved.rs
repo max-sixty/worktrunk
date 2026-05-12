@@ -16,13 +16,17 @@ use super::sections::{
 /// on each config to get values with defaults applied.
 ///
 /// # Example
-/// ```ignore
-/// let resolved = config.resolved(project);
+/// ```
+/// use worktrunk::config::UserConfig;
+///
+/// let config = UserConfig::default();
+/// let resolved = config.resolved(None);                     // or Some(project_id)
 /// let full = resolved.list.full();                          // bool, default applied
 /// let squash = resolved.merge.squash();                     // bool, default applied
 /// let stage = resolved.commit.stage();                      // StageMode, default applied
 /// let pager = resolved.switch_picker.pager();               // Option<&str>
-/// let cd = resolved.switch.cd();                              // bool, default applied
+/// let cd = resolved.switch.cd();                            // bool, default applied
+/// # let _ = (full, squash, stage, pager, cd);
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedConfig {

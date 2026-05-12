@@ -541,23 +541,31 @@ fn run_with_timeout_impl(
 /// # Examples
 ///
 /// Capture output:
-/// ```ignore
+/// ```no_run
+/// use worktrunk::shell_exec::Cmd;
+/// # fn example(repo_path: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 /// let output = Cmd::new("git")
 ///     .args(["status", "--porcelain"])
 ///     .current_dir(&repo_path)
 ///     .context("my-worktree")
 ///     .run()?;
+/// # let _ = output;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// Stream output (hooks, interactive):
-/// ```ignore
+/// ```no_run
 /// use std::process::Stdio;
-///
+/// use worktrunk::shell_exec::Cmd;
+/// # fn example(repo_path: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 /// Cmd::shell("npm run build")
 ///     .current_dir(&repo_path)
 ///     .stdout(Stdio::from(std::io::stderr()))
 ///     .forward_signals()
 ///     .stream()?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct Cmd {
     /// Program name or shell command string (if shell_wrap is true)

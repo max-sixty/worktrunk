@@ -10,12 +10,16 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```no_run
+//! use worktrunk::git::Repository;
 //! use worktrunk::git::remote_ref::{GitHubProvider, RemoteRefProvider};
-//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let repo = Repository::at(".")?;
 //! let provider = GitHubProvider;
 //! let info = provider.fetch_info(123, &repo)?;
 //! println!("PR #{}: {}", info.number, info.title);
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Platform-Specific Notes
