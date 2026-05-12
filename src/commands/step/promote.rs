@@ -231,9 +231,11 @@ fn print_promote_announcement(is_restoring: bool, default_branch: Option<&str>) 
 /// Exchange branches between two worktrees.
 ///
 /// Steps: detach target → detach main → switch main → switch target.
-/// Both worktrees must be clean (verified by caller). On failure, attempts
-/// best-effort rollback — but failure here is near-impossible given the
-/// preconditions (`ensure_clean` passed, branches exist, detach released locks).
+/// Both worktrees must be clean (verified by caller). Failure here is
+/// near-impossible given the preconditions (`ensure_clean` passed, branches
+/// exist, detach released locks); if it does happen, the caller surfaces the
+/// error and the worktrees may be left in a detached state for the user to
+/// resolve manually.
 fn exchange_branches(
     main_wt: &worktrunk::git::WorkingTree<'_>,
     main_branch: &str,
@@ -256,12 +258,8 @@ fn exchange_branches(
     ];
 
     for (wt, args, label) in steps {
-        if let Err(e) = wt.run_command(args) {
-            // Best-effort rollback: try to re-attach both branches.
-            let _ = main_wt.run_command(&["switch", "--end-of-options", main_branch]);
-            let _ = target_wt.run_command(&["switch", "--end-of-options", target_branch]);
-            return Err(e.context(format!("branch exchange failed at: {label}")));
-        }
+        wt.run_command(args)
+            .with_context(|| format!("branch exchange failed at: {label}"))?;
     }
 
     Ok(())

@@ -96,6 +96,7 @@ impl Repository {
             .run_command(&[
                 "rev-parse",
                 "--verify",
+                "--end-of-options",
                 &format!("{}^{{commit}}", reference),
             ])
             .is_ok())
