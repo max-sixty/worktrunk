@@ -129,10 +129,16 @@ fn bench_dispatch(c: &mut Criterion) {
                         );
                     };
                     if cold {
+                        // `PerIteration` so every measured run is actually
+                        // cold — `build_hook_context` resolves the default
+                        // branch, which writes `worktrunk.default-branch`
+                        // and would be a cache hit on iters 2-N under
+                        // `SmallInput`. See `benches/CLAUDE.md` →
+                        // "Cache Handling" for the full rationale.
                         b.iter_batched(
                             || invalidate_caches_auto(&repo_path),
                             |_| run(),
-                            criterion::BatchSize::SmallInput,
+                            criterion::BatchSize::PerIteration,
                         );
                     } else {
                         b.iter(run);
