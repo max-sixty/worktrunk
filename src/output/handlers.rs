@@ -1487,17 +1487,13 @@ fn remove_removed_worktree_silently(
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
     let snapshot = repo.capture_refs()?;
-    let output = remove_worktree_with_cleanup(
-        repo,
-        &snapshot,
-        ctx.worktree_path,
-        RemoveOptions {
-            branch: ctx.branch_name.map(String::from),
-            deletion_mode: ctx.deletion_mode,
-            target_branch: ctx.target_branch.map(String::from),
-            force_worktree: ctx.force_worktree,
-        },
-    )?;
+    let options = RemoveOptions {
+        branch: ctx.branch_name.map(String::from),
+        deletion_mode: ctx.deletion_mode,
+        target_branch: ctx.target_branch.map(String::from),
+        force_worktree: ctx.force_worktree,
+    };
+    let output = remove_worktree_with_cleanup(repo, &snapshot, ctx.worktree_path, options)?;
     if let Some(staged) = output.staged_path {
         // Best-effort, same as the fast-path cleanup in the foreground handler
         // but without the TTY spinner (`cleanup_staged_with_progress`).

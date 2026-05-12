@@ -36,6 +36,7 @@ use crate::commands::repository_ext::{
     check_not_default_branch, compute_integration_reason, is_primary_worktree,
 };
 use crate::commands::template_vars::TemplateVars;
+use crate::output::{handle_remove_output, post_hook_display_path, pre_hook_display_path};
 
 /// Inputs to [`finish_after_merge`]. Owned by the caller; this struct just
 /// bundles them so the function signature stays readable.
@@ -162,14 +163,7 @@ pub fn finish_after_merge(
             removed_commit: feature_commit.clone(),
             removed_project_config,
         };
-        crate::output::handle_remove_output(
-            &remove_result,
-            false,
-            verify,
-            false,
-            false,
-            announcer,
-        )?;
+        handle_remove_output(&remove_result, false, verify, false, false, announcer)?;
         true
     };
 
@@ -190,9 +184,9 @@ pub fn finish_after_merge(
             yes,
         );
         let display_path = if removed {
-            crate::output::post_hook_display_path(&destination_path)
+            post_hook_display_path(&destination_path)
         } else {
-            crate::output::pre_hook_display_path(&destination_path)
+            pre_hook_display_path(&destination_path)
         };
 
         let mut vars = feature_vars.with_target(target_branch);
