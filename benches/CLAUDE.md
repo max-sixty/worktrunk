@@ -80,6 +80,18 @@ a cache hit. Invalidate via `criterion::Bencher::iter_batched` with
 `wt_perf::invalidate_caches_auto` as the setup closure (see the cold-cache variants in
 `benches/list.rs` and `benches/remove.rs` for the pattern).
 
+**Pass `BatchSize::PerIteration`, not `BatchSize::SmallInput`.** When the setup
+invalidates a cache that the routine repopulates, the batch size matters:
+`SmallInput` calls `setup()` once per batch up front, then times the routines
+back-to-back inside one timing window, so only iter 1 per batch is actually cold
+— iters 2-N hit a cache that the previous iter just populated. The reported
+"cold" median is a warm-biased average. `PerIteration` runs `setup → time(routine)`
+per iter, so every measured iter is genuinely cold. The setup is far cheaper than
+a `wt` subprocess, so per-iter `Instant::now` overhead doesn't dominate. When the
+fix landed across `list.rs` / `remove.rs` / `time_to_first_output.rs`, cold variance
+tightened (e.g. `first_output/remove` spread 2.4ms → 0.65ms) and the median rose
+to its true cold cost (e.g. `remove_e2e/first_output` 48ms → 86ms).
+
 `invalidate_caches_auto` clears:
 
 - `.git/index` (main and linked worktrees)

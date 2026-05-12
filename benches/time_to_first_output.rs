@@ -43,7 +43,11 @@ fn bench_first_output(c: &mut Criterion) {
     // on the first invocation. Without invalidation between iterations, iter 1
     // is cold and iter 2+ read from cache — the reported timing would be warm
     // cache, which doesn't reflect the first-invocation TTFO a user sees.
-    // Invalidate via `iter_batched` so every iteration starts cold.
+    // Invalidate via `iter_batched` so every iteration starts cold; use
+    // `BatchSize::PerIteration` (not `SmallInput`) so setup runs immediately
+    // before every measured iter — under `SmallInput`, criterion would run
+    // setup once per batch and time the routines back-to-back, leaving only
+    // iter 1 actually cold per batch.
     group.bench_function("remove", |b| {
         b.iter_batched(
             || invalidate_caches_auto(&repo_path),
@@ -58,7 +62,7 @@ fn bench_first_output(c: &mut Criterion) {
                     String::from_utf8_lossy(&output.stderr)
                 );
             },
-            criterion::BatchSize::SmallInput,
+            criterion::BatchSize::PerIteration,
         );
     });
 

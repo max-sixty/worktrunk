@@ -83,12 +83,19 @@ fn run_benchmark(
     };
 
     if config.cold_cache {
+        // `BatchSize::PerIteration` (not `SmallInput`): under `SmallInput`,
+        // criterion calls `setup` for an entire batch up front and then runs
+        // the timed routines back-to-back — so only the first `wt` per batch
+        // is cold and the rest hit a freshly populated `.git/wt/cache/`,
+        // biasing "cold" warm. `PerIteration` invalidates immediately before
+        // every measured iteration; the setup is far cheaper than a `wt`
+        // subprocess, so per-iter `Instant::now` overhead doesn't dominate.
         b.iter_batched(
             || invalidate_caches_auto(repo_path),
             |_| {
                 cmd_factory().output().unwrap();
             },
-            criterion::BatchSize::SmallInput,
+            criterion::BatchSize::PerIteration,
         );
     } else {
         b.iter(|| {
@@ -216,12 +223,14 @@ fn bench_real_repo(c: &mut Criterion) {
                     };
 
                     if cold {
+                        // `PerIteration` so every measured run is actually
+                        // cold — see `run_benchmark` above for the rationale.
                         b.iter_batched(
                             || invalidate_caches_auto(&workspace_main),
                             |_| {
                                 make_cmd().output().unwrap();
                             },
-                            criterion::BatchSize::SmallInput,
+                            criterion::BatchSize::PerIteration,
                         );
                     } else {
                         b.iter(|| {
