@@ -123,7 +123,7 @@ fn assert_valid_abort_exit_code(exit_code: i32) {
 
 /// Check if skim is ready (shows "> " prompt indicating it's accepting input)
 fn is_skim_ready(screen_content: &str) -> bool {
-    // Skim shows "> " at the start when ready, and displays item count like "1/3"
+    // Skim shows "> " at the start of the prompt line when accepting input.
     screen_content.starts_with("> ") || screen_content.contains("\n> ")
 }
 
@@ -555,12 +555,19 @@ fn switch_picker_settings(repo: &TestRepo) -> insta::Settings {
     // \A anchors to absolute start of string, matching only the first line.
     settings.add_filter(r"\A> [^\n]*", "> [QUERY]");
 
-    // Skim count indicators (matched/total) at end of lines.
-    // Normalize leading whitespace too — skim right-aligns the count with padding
-    // that varies based on unicode character width calculations across platforms.
-    // The tab header line may have the count jammed against "summary" (no space)
-    // or even truncate "summary" when skim's width_cjk() treats ambiguous-width
-    // unicode symbols (±, …, ⇅) as double-width, consuming extra columns.
+    // Skim's previewer overlays its vertical scroll indicator (`{vscroll_offset}/
+    // {content.len()}`) at the right edge of the preview pane's first line, in
+    // reverse video — see `skim::previewer::Previewer::draw`. We don't see the
+    // reverse-video attribute (vt100's `rows()` strips it), so it lands on screen
+    // as bare `N/M` overlapping the tab header text. content.len() varies with
+    // terminal width and preview content height, so normalize it to a fixed
+    // placeholder.
+    //
+    // The previewer right-aligns the indicator at `screen_width - len - 1` and
+    // can land flush against the truncated `summary` tab label (e.g.
+    // `summa1/28`) — width_cjk's treatment of ambiguous-width glyphs (±, …, ⇅)
+    // shifts how much of `5: summary` survives truncation. Strip leading
+    // whitespace too so the placeholder is stable across that variance.
     settings.add_filter(r"(?m)summary?\w*\s*\d+/\d+[ \t]*$", "summary [N/M]");
     settings.add_filter(r"(?m)\s+\d+/\d+[ \t]*$", " [N/M]");
 
