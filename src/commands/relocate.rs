@@ -575,7 +575,7 @@ impl<'a> RelocationExecutor<'a> {
 
         let dest = candidate.expected_path.to_string_lossy();
         main_wt
-            .run_command(&["worktree", "add", &dest, branch])
+            .run_command(&["worktree", "add", "--end-of-options", &dest, branch])
             .context("Failed to create worktree for main relocation")?;
 
         Ok(())
