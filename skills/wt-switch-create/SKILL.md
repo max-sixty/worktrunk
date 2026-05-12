@@ -2,8 +2,6 @@
 name: wt-switch-create
 description: Create a new worktrunk worktree and switch this session's working directory into it. Use when launching a session that should work in its own worktree (e.g. `/wt-switch-create my-branch <task>`), or mid-session to move work into a fresh branch.
 argument-hint: "<branch-name> [task...]"
-license: MIT OR Apache-2.0
-compatibility: Requires the worktrunk CLI (https://worktrunk.dev) and this plugin's WorktreeCreate hook
 ---
 
 Arguments: `$ARGUMENTS`. The **first whitespace-delimited token** is the branch
