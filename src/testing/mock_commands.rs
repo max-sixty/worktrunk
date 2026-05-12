@@ -18,9 +18,35 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-/// Path to the mock-stub binary, built by `cargo test`.
+/// Path to the mock-stub binary.
+///
+/// `workspace.default-members` builds it under an unfiltered `cargo test` /
+/// `cargo nextest run`, and `.config/nextest.toml`'s setup-script builds it
+/// under filtered nextest (including `cargo llvm-cov nextest`). A bare
+/// `cargo test --test integration` builds neither path — a target filter
+/// overrides `default-members`, and `cargo test` ignores nextest setup-scripts
+/// — so the binary is absent on a clean `target/`, and always absent under
+/// `cargo llvm-cov --test integration` since cargo-llvm-cov uses its own
+/// target dir. Asserting here surfaces the fix; the alternative is an opaque
+/// failure later inside a mock spawn (ENOENT on a dangling symlink, or a
+/// silently-dropped CI indicator when `tool_available("tea")` returns false).
+///
+/// Folding the helper bins back into the worktrunk crate would let
+/// `cargo test --test integration` build them automatically and delete this
+/// whole layer — it's blocked on cargo-dist; see `.config/nextest.toml` and
+/// `tests/helpers/mock-stub/Cargo.toml`.
 fn mock_stub_binary() -> std::path::PathBuf {
-    super::workspace_bin("mock-stub")
+    let path = super::workspace_bin("mock-stub");
+    assert!(
+        path.exists(),
+        "mock-stub binary not found at {}\n\n\
+         Build it once with `cargo build -p mock-stub`, or use a runner that builds\n\
+         the test helper bins:\n\
+         \n  cargo nextest run --features shell-integration-tests --test integration ...\
+         \n  cargo llvm-cov nextest --features shell-integration-tests --test integration ...\n",
+        path.display(),
+    );
+    path
 }
 
 /// Builder for mock command configuration.

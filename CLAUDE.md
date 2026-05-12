@@ -67,6 +67,8 @@ cargo test --test integration           # integration tests (no shell tests)
 cargo test --test integration --features shell-integration-tests  # with shell tests
 ```
 
+A filtered `--test integration` run on a fresh `target/` panics with "mock-stub binary not found" — a target filter skips the helper-bin build. Fix: `cargo build -p mock-stub`, or use `cargo nextest run` / `cargo llvm-cov nextest`.
+
 ### Claude Code Web Environment
 
 Run `task setup-web` to install required shells (zsh, fish, nushell), `gh`, and other dev tools. Install `task` first if needed:
