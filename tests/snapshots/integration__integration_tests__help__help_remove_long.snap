@@ -11,6 +11,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    LLVM_PROFILE_FILE: /var/folders/v3/8k5q0_6j3_q6gl4h8czr66sh0000gn/T/wt-test-profraw/cov-%m_%p.profraw
     NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
@@ -19,13 +20,17 @@ info:
     WORKTRUNK_APPROVALS_PATH: /nonexistent/wt/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml
     WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
 success: true
 exit_code: 0
@@ -121,7 +126,7 @@ Worktrunk checks six conditions (in order of cost):
 3. [1mNo added changes[0m — Three-dot diff ([2mtarget...branch[0m) is empty. Shows [2m⊂[0m.
 4. [1mTrees match[0m — Branch tree SHA equals target tree SHA. Shows [2m⊂[0m.
 5. [1mMerge adds nothing[0m — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced with changes to different files. Shows [2m⊂[0m.
-6. [1mPatch-id match[0m — Branch's entire diff matches a single squash-merge commit on target. Fallback for when the simulated merge conflicts because target later modified the same files the branch touched. Shows [2m⊂[0m.
+6. [1mPatch-id match[0m — Branch's entire diff matches a single squash-merge commit on target. Fallback for when the simulated merge conflicts because target later modified the same files the branch touched. Shows [2m⊂[0m. The default-branch walk is capped so a single check stays fast; a squash merge with hundreds of commits landed since the merge point falls outside the cap and needs [2m-D[0m to remove.
 
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., [2morigin/main[0m) when strictly ahead.
 
