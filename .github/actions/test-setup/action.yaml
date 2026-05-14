@@ -21,6 +21,16 @@ runs:
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
+      with:
+        # Don't cache ~/.cargo/bin. The runner-image rustup binary acts as
+        # the cargo/rustc/rustup proxy; restoring a stale copy on top of a
+        # new image leaves the proxy resolving as `rustup-init`, breaking
+        # `cargo install` (only exposed when the install is a cache miss).
+        # Tools we need are installed via baptiste0928/cargo-install into a
+        # separate `--root`, so nothing else in here relies on ~/.cargo/bin.
+        cache-bin: false
+        # Bumped to invalidate caches that already include the stale bin.
+        prefix-key: v1-rust
 
     - name: Install shells (zsh, fish) - Ubuntu
       if: runner.os == 'Linux'
