@@ -268,15 +268,6 @@ fn test_statusline_claude_code_missing_context_window(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        // No gauge symbol (○◔◑◕●) should appear
-        assert!(
-            !output.contains('○')
-                && !output.contains('◔')
-                && !output.contains('◑')
-                && !output.contains('◕')
-                && !output.contains('●'),
-            "No gauge should appear when context_window is missing: {output}"
-        );
         assert_snapshot!(output, @"[PATH]  main  [2m^[22m[2m|[22m  | Opus");
     });
 }
