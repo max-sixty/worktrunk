@@ -1,0 +1,5 @@
+{
+  "name": "worktrunk",
+  "version": "0.1.0",
+  "description": "Activity tracking for Worktrunk: shows 🤖 (working) and 💬 (waiting) markers in `wt list` for branches with active Gemini CLI sessions."
+}

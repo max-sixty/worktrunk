@@ -1,0 +1,34 @@
+{
+  "hooks": {
+    "BeforeAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${extensionPath}/hooks/wt.sh\" config state marker set 🤖 || true"
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${extensionPath}/hooks/wt.sh\" config state marker set 💬 || true"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${extensionPath}/hooks/wt.sh\" config state marker clear || true"
+          }
+        ]
+      }
+    ]
+  }
+}
