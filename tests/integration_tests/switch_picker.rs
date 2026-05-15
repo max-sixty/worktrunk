@@ -1185,8 +1185,20 @@ fn test_switch_picker_switch_to_existing_worktree(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            ("target", None, Some(1)), // Filter to "target-branch"
-            ("\r", None, None),        // Enter to switch
+            // Gate on the preview-pane text that's emitted only after skim's
+            // selection has moved to target-branch. This is a stronger signal
+            // than `expected_rows: Some(1)`: under heavy macOS load skim's row
+            // redraw can lag the matcher even though the selection cursor and
+            // preview pane have already advanced — and Enter selects the
+            // current cursor item regardless of which rows are still painted.
+            // (#2334/#2729 chased the same matcher lag via the row-count gate;
+            // that gate just times out under the lag instead of riding it.)
+            (
+                "target",
+                Some("target-branch has no uncommitted changes"),
+                None,
+            ),
+            ("\r", None, None), // Enter to switch
         ],
     );
 
@@ -1221,52 +1233,6 @@ fn directive_files_for_pty() -> (PathBuf, PathBuf, (tempfile::TempPath, tempfile
 }
 
 #[rstest]
-fn test_switch_picker_no_cd_suppresses_directive(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    repo.run_git(&["remote", "remove", "origin"]);
-
-    // Create a worktree to switch to
-    repo.add_worktree("target-branch");
-
-    let (cd_path, exec_path, _guard) = directive_files_for_pty();
-
-    let mut env_vars = repo.test_env_vars();
-    env_vars.push((
-        "WORKTRUNK_DIRECTIVE_CD_FILE".to_string(),
-        cd_path.display().to_string(),
-    ));
-    env_vars.push((
-        "WORKTRUNK_DIRECTIVE_EXEC_FILE".to_string(),
-        exec_path.display().to_string(),
-    ));
-
-    // Run `wt switch --no-cd`, select "target-branch" via picker, press Enter
-    let result = exec_in_pty_with_input_expectations(
-        wt_bin().to_str().unwrap(),
-        &["switch", "--no-cd"],
-        repo.root_path(),
-        &env_vars,
-        &[
-            ("target", None, Some(1)), // Filter to "target-branch"
-            ("\r", None, None),        // Enter to switch
-        ],
-    );
-
-    assert_eq!(
-        result.exit_code, 0,
-        "Expected exit code 0 for successful switch"
-    );
-
-    // Verify CD file is empty (no path written with --no-cd)
-    let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
-    assert!(
-        cd_content.trim().is_empty(),
-        "CD file should be empty with --no-cd via picker, got: {}",
-        cd_content
-    );
-}
-
-#[rstest]
 fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
@@ -1293,8 +1259,14 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            ("target", None, Some(1)), // Filter to "target-branch"
-            ("\r", None, None),        // Enter to switch
+            // Preview-pane gate: see test_switch_picker_switch_to_existing_worktree
+            // for the rationale (matcher-driven row redraw can lag the cursor).
+            (
+                "target",
+                Some("target-branch has no uncommitted changes"),
+                None,
+            ),
+            ("\r", None, None), // Enter to switch
         ],
     );
 
@@ -1339,8 +1311,14 @@ fn test_switch_picker_no_cd_prints_branch_without_switching(mut repo: TestRepo) 
         repo.root_path(),
         &env_vars,
         &[
-            ("target", None, Some(1)), // Filter to "target-branch"
-            ("\r", None, None),        // Enter to select
+            // Preview-pane gate: see test_switch_picker_switch_to_existing_worktree
+            // for the rationale (matcher-driven row redraw can lag the cursor).
+            (
+                "target",
+                Some("target-branch has no uncommitted changes"),
+                None,
+            ),
+            ("\r", None, None), // Enter to select
         ],
     );
 
