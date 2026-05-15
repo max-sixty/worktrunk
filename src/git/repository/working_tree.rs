@@ -457,6 +457,49 @@ impl<'a> WorkingTree<'a> {
         Ok(LineDiff::from_shortstat(&stdout))
     }
 
+    /// Working-tree diff stats vs HEAD that also count untracked files,
+    /// matching the diff `wt step diff` shows.
+    ///
+    /// Registers untracked files in a [`TempIndex`] via
+    /// `git add --intent-to-add .`, then runs `git diff --shortstat HEAD`
+    /// against that temp index. The real index is untouched.
+    pub fn working_tree_diff_stats_with_untracked(&self) -> anyhow::Result<LineDiff> {
+        let idx = self.temp_index()?;
+        idx.git(["add", "--intent-to-add", "."])
+            .run()
+            .context("Failed to register untracked files")?;
+        let output = idx
+            .git(["diff", "--shortstat", "HEAD"])
+            .run()
+            .context("Failed to compute working-tree diff stats")?;
+        Ok(LineDiff::from_shortstat(&String::from_utf8_lossy(
+            &output.stdout,
+        )))
+    }
+
+    /// Open a working copy of this worktree's index for staging
+    /// operations that must not mutate the real index. See
+    /// [`TempIndex`] for the rationale and call sites.
+    pub fn temp_index(&self) -> anyhow::Result<TempIndex> {
+        let git_dir = self.git_dir()?;
+        let worktree_root = self.root()?;
+        let real_index = git_dir.join("index");
+        let log_ctx = path_to_logging_context(self.path());
+
+        let temp = tempfile::NamedTempFile::new().context("Failed to create temporary index")?;
+        std::fs::copy(&real_index, temp.path()).context("Failed to copy index file")?;
+        // Validate UTF-8 once so `TempIndex::path` is infallible.
+        temp.path()
+            .to_str()
+            .context("Temporary index path is not valid UTF-8")?;
+
+        Ok(TempIndex {
+            temp,
+            worktree_root,
+            log_ctx,
+        })
+    }
+
     /// Determine whether there are staged changes in the index.
     ///
     /// Returns `Ok(true)` when staged changes are present, `Ok(false)` otherwise.
@@ -539,6 +582,55 @@ impl<'a> WorkingTree<'a> {
         .context("Failed to create backup ref")?;
 
         self.repo().short_sha(&backup_sha)
+    }
+}
+
+/// A temporary copy of a worktree's index, plus the bits needed to run
+/// `git` commands against it.
+///
+/// Built by [`WorkingTree::temp_index`]. Drop deletes the temp file.
+///
+/// Some operations need to "stage something" — register untracked files,
+/// or `git add -A` everything — to feed a follow-up `git diff` /
+/// `git write-tree` / `git diff --shortstat`. Doing that against the real
+/// index would mutate the user's staging state. The trick is to copy the
+/// real index, point `GIT_INDEX_FILE` at the copy, and run those
+/// operations there. Today the callers are
+/// [`WorkingTree::working_tree_diff_stats_with_untracked`] (HEAD± with
+/// untracked, used by `wt list --full` / `wt statusline`),
+/// `WorkingTreeConflictsTask` (write-tree of dirty + untracked, for
+/// merge-conflict probing), and `wt step diff` (diff vs target merge-base
+/// with untracked).
+pub struct TempIndex {
+    temp: tempfile::NamedTempFile,
+    worktree_root: PathBuf,
+    log_ctx: String,
+}
+
+impl TempIndex {
+    /// UTF-8 path to the temp index file. Validated at construction.
+    pub fn path(&self) -> &str {
+        self.temp
+            .path()
+            .to_str()
+            .expect("validated in temp_index()")
+    }
+
+    /// Build a `git` command pointed at this temp index.
+    ///
+    /// Wires `current_dir` to the worktree root, the worktree's logging
+    /// context, and `GIT_INDEX_FILE`. The caller adds the subcommand and
+    /// chooses `.run()` / `.stream()`.
+    pub fn git<I, S>(&self, args: I) -> Cmd
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Cmd::new("git")
+            .args(args)
+            .current_dir(&self.worktree_root)
+            .context(self.log_ctx.clone())
+            .env("GIT_INDEX_FILE", self.path())
     }
 }
 
@@ -733,5 +825,40 @@ mod tests {
         // `head_sha()` returns None on unborn HEAD — `rev-parse HEAD` errors,
         // mapped to None so detached and unborn callers look the same.
         assert!(wt.head_sha().unwrap().is_none());
+    }
+
+    #[test]
+    fn working_tree_diff_stats_with_untracked_counts_untracked_and_preserves_real_index() {
+        // Two-line untracked file plus a one-line tracked modification:
+        // the with-untracked variant must sum both, while the real index
+        // must remain byte-identical (the temp-index trick is the
+        // mechanism — this test guards that contract).
+        let test = TestRepo::with_initial_commit();
+        std::fs::write(test.root_path().join("tracked.txt"), "old\n").unwrap();
+        test.run_git(&["add", "tracked.txt"]);
+        test.run_git(&["commit", "-m", "add tracked"]);
+
+        std::fs::write(test.root_path().join("tracked.txt"), "new\n").unwrap();
+        std::fs::write(test.root_path().join("untracked.txt"), "a\nb\n").unwrap();
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let wt = repo.worktree_at(test.root_path());
+        let real_index = wt.git_dir().unwrap().join("index");
+        let index_before = std::fs::read(&real_index).unwrap();
+
+        // Tracked-only path skips the untracked file entirely.
+        let tracked_only = wt.working_tree_diff_stats().unwrap();
+        assert_eq!(tracked_only.added, 1);
+        assert_eq!(tracked_only.deleted, 1);
+
+        let with_untracked = wt.working_tree_diff_stats_with_untracked().unwrap();
+        assert_eq!(with_untracked.added, 3, "1 modified line + 2 untracked");
+        assert_eq!(with_untracked.deleted, 1);
+
+        let index_after = std::fs::read(&real_index).unwrap();
+        assert_eq!(
+            index_before, index_after,
+            "real index must not be mutated by the temp-index path"
+        );
     }
 }

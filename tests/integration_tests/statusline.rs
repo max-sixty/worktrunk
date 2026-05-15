@@ -110,7 +110,7 @@ fn test_statusline_basic(repo: TestRepo) {
 fn test_statusline_with_changes(repo: TestRepo) {
     add_uncommitted_changes(&repo);
     let output = run_statusline(&repo, &[], None);
-    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m");
+    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+1");
 }
 
 #[rstest]
@@ -171,7 +171,7 @@ fn test_statusline_claude_code_full_context(repo: TestRepo) {
 
     let output = run_statusline(&repo, &["--format=claude-code"], Some(&json));
     claude_code_snapshot_settings().bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [36m?[0m[2m^[22m[2m|[22m  | Opus");
+        assert_snapshot!(output, @"[PATH]  main  [36m?[0m[2m^[22m[2m|[22m  @[32m+1[0m  | Opus");
     });
 }
 
@@ -365,7 +365,7 @@ url = "http://{{ branch }}.localhost:3000"
 
     let output = run_statusline(&repo, &[], None);
     // Shows `?` because writing project config creates uncommitted file
-    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m  http://main.localhost:3000");
+    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m[2m|[22m  @[32m+2[0m  http://main.localhost:3000");
 }
 
 #[rstest]

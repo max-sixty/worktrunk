@@ -323,6 +323,11 @@ pub struct CollectOptions {
     /// of cached methods — bypassing the ambient ref→SHA cache entirely.
     /// `None` when capture failed (degraded mode).
     pub snapshot: Option<std::sync::Arc<worktrunk::git::RefSnapshot>>,
+
+    /// Whether `WorkingTreeDiffTask` should include untracked files in
+    /// `HEAD±`. Set by `wt list --full` and `wt statusline`; consumed
+    /// in `tasks.rs` where the cost/cutover rationale lives.
+    pub include_untracked_in_working_diff: bool,
 }
 
 fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
@@ -644,6 +649,7 @@ pub fn collect(
         collect_deadline,
         list_width,
         progressive_handler,
+        include_untracked_in_working_diff,
     ) = match show_config {
         ShowConfig::Resolved {
             show_branches,
@@ -661,6 +667,10 @@ pub fn collect(
             collect_deadline,
             list_width,
             progressive_handler,
+            // Picker is the only `Resolved` caller and runs the same fast
+            // bucket as default `wt list` (skips BranchDiff/CiStatus), so
+            // it also opts out of the untracked-inclusive working diff.
+            false,
         ),
         ShowConfig::DeferredToParallel {
             cli_branches,
@@ -698,6 +708,7 @@ pub fn collect(
                 collect_deadline,
                 None,
                 None,
+                show_full,
             )
         }
     };
@@ -986,6 +997,7 @@ pub fn collect(
         default_branch: default_branch.clone(),
         integration_targets: None,
         snapshot: None,
+        include_untracked_in_working_diff,
     };
 
     // Track expected results per item - populated as spawns are queued

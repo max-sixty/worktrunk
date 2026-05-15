@@ -303,6 +303,12 @@ fn run_json() -> Result<()> {
     // Build collect options with URL template (compute everything for complete data)
     let options = CollectOptions {
         url_template,
+        // Match `wt list --full`: include untracked files in the working
+        // diff (`HEAD±`) so the segment counts the same lines `wt step
+        // diff` would show. Statusline already runs the full task set;
+        // this keeps the diff number consistent with the rest of the
+        // statusline data.
+        include_untracked_in_working_diff: true,
         ..Default::default()
     };
 
@@ -408,6 +414,12 @@ fn git_status_segments(
     // Build collect options with URL template
     let options = CollectOptions {
         url_template,
+        // Match `wt list --full`: include untracked files in the working
+        // diff (`HEAD±`) so the segment counts the same lines `wt step
+        // diff` would show. Statusline already runs the full task set;
+        // this keeps the diff number consistent with the rest of the
+        // statusline data.
+        include_untracked_in_working_diff: true,
         ..Default::default()
     };
 
