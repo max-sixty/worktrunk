@@ -24,7 +24,7 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
-    LLVM_PROFILE_FILE: /var/folders/v3/8k5q0_6j3_q6gl4h8czr66sh0000gn/T/wt-test-profraw/cov-%m_%p.profraw
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     NO_COLOR: ""
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
