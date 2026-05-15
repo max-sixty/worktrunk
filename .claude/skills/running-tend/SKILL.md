@@ -12,6 +12,13 @@ CLI for managing git worktrees). The generic skills (`tend-running-in-ci`,
 `tend-review`, `tend-triage`, etc.) provide the workflow framework;
 this skill adds worktrunk conventions.
 
+## Filing issues in other repos
+
+Standing exception granted: file directly in agent-equipped targets (per
+**Filing Issues in Other Repos** in the bundled `running-in-ci` skill) without
+asking permission here first. The default rule (open an issue here asking
+permission first) still applies when the target shows no agent signals.
+
 ## Codecov Monitoring
 
 After required CI checks pass, poll `codecov/patch` — it is mandatory despite
