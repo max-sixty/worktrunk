@@ -59,6 +59,34 @@ pub struct ProjectCiConfig {
     pub platform: Option<String>,
 }
 
+/// Project-level commit message configuration. *(Experimental — fields may
+/// change in future releases.)*
+///
+/// Only fields appropriate as shared, checked-in team conventions live here.
+/// The LLM command and full template stay in user/system config — they
+/// describe per-developer environment (which CLI is installed, which agent
+/// they prefer).
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
+pub struct ProjectCommitConfig {
+    /// Commit message generation settings shared across the team.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<ProjectCommitGenerationConfig>,
+}
+
+/// Project-level commit message generation settings.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
+pub struct ProjectCommitGenerationConfig {
+    /// Extra commit-message guidance appended to the user's prompt template
+    /// inside a `<project_guidance>` block.
+    ///
+    /// Use this for project-wide commit conventions (e.g. "use conventional
+    /// commits", "reference issue numbers"). The first time the LLM would
+    /// see this text, worktrunk prompts the user to approve it — the same
+    /// gate as project-defined commands.
+    #[serde(default)]
+    pub guidance: Option<String>,
+}
+
 /// Project-level forge configuration.
 ///
 /// Names the forge explicitly, for repos where URL-based detection can't
@@ -124,6 +152,20 @@ impl ProjectConfig {
     pub fn copy_ignored(&self) -> Option<&CopyIgnoredConfig> {
         self.step.copy_ignored.as_ref()
     }
+
+    /// Project-level commit-message guidance, trimmed, empty treated as unset.
+    ///
+    /// The text is appended to the LLM prompt inside a `<project_guidance>`
+    /// block. Callers must gate the first use through the approval system
+    /// (`approve_commit_guidance`) before sending it to the LLM.
+    pub fn commit_guidance(&self) -> Option<&str> {
+        self.commit
+            .generation
+            .as_ref()
+            .and_then(|g| g.guidance.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
 }
 
 /// Project-specific configuration with hooks.
@@ -171,6 +213,10 @@ pub struct ProjectConfig {
     /// Forge configuration (platform, API hostname)
     #[serde(default, skip_serializing_if = "is_default")]
     pub forge: ProjectForgeConfig,
+
+    /// Project-wide commit message settings (shared across teammates)
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub commit: ProjectCommitConfig,
 
     /// Configuration for `wt step` subcommands.
     #[serde(default, skip_serializing_if = "is_default")]
@@ -457,5 +503,56 @@ platform = "github"
         let config: ProjectConfig = toml::from_str(contents).unwrap();
         let cloned = config.clone();
         assert_eq!(config, cloned);
+    }
+
+    // ============================================================================
+    // ProjectCommitConfig Tests
+    // ============================================================================
+
+    #[test]
+    fn test_commit_guidance_parses() {
+        let toml = r#"
+[commit.generation]
+guidance = "Use conventional commits"
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.commit_guidance(), Some("Use conventional commits"));
+    }
+
+    /// `commit_guidance()` trims whitespace and treats blank guidance as unset.
+    /// This matters because empty / whitespace-only guidance would still render
+    /// the `<project_guidance>` block but with no content — confusing the LLM
+    /// and prompting an empty approval. Failing to filter would also produce a
+    /// `truthy` minijinja value, so the template's `{% if project_guidance %}`
+    /// branch can't be the second line of defense.
+    #[test]
+    fn test_commit_guidance_blank_treated_as_unset() {
+        let toml = r#"
+[commit.generation]
+guidance = "   \n\t  "
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.commit_guidance(), None);
+
+        // Whitespace inside the body is preserved — only leading/trailing trimmed.
+        let toml = r#"
+[commit.generation]
+guidance = "  - a\n  - b  "
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.commit_guidance(), Some("- a\n  - b"));
+    }
+
+    #[test]
+    fn test_commit_guidance_missing_returns_none() {
+        let config = ProjectConfig::default();
+        assert_eq!(config.commit_guidance(), None);
+
+        // `[commit.generation]` present but no `guidance` field also returns None.
+        let toml = r#"
+[commit.generation]
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.commit_guidance(), None);
     }
 }

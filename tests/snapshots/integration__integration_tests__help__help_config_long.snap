@@ -11,14 +11,15 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
-    WORKTRUNK_APPROVALS_PATH: /nonexistent/wt/approvals.toml
-    WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml
-    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
@@ -312,7 +313,11 @@ Default template:
 [107m [0m [2m[32m- Match recent commit style (conventional commits if used)[0m
 [107m [0m [2m[32m- Describe the change, not the intent or benefit[0m
 [107m [0m [2m[32m</style>[0m
-[107m [0m 
+[107m [0m [2m[32m{% if project_guidance %}[0m
+[107m [0m [2m[32m<project_guidance>[0m
+[107m [0m [2m[32m{{ project_guidance }}[0m
+[107m [0m [2m[32m</project_guidance>[0m
+[107m [0m [2m[32m{% endif %}[0m
 [107m [0m [2m[32m<diffstat>[0m
 [107m [0m [2m[32m{{ git_diff_stat }}[0m
 [107m [0m [2m[32m</diffstat>[0m
@@ -354,7 +359,11 @@ Default template:
 [107m [0m [2m[32m- Match the style of commits being squashed (conventional commits if used)[0m
 [107m [0m [2m[32m- Describe the change, not the intent or benefit[0m
 [107m [0m [2m[32m</style>[0m
-[107m [0m 
+[107m [0m [2m[32m{% if project_guidance %}[0m
+[107m [0m [2m[32m<project_guidance>[0m
+[107m [0m [2m[32m{{ project_guidance }}[0m
+[107m [0m [2m[32m</project_guidance>[0m
+[107m [0m [2m[32m{% endif %}[0m
 [107m [0m [2m[32m<commits branch="[0m[2m{{ branch }}[0m[2m[32m" target="[0m[2m{{ target_branch }}[0m[2m[32m">[0m
 [107m [0m [2m[32m{% for commit in commits %}- {{ commit }}[0m
 [107m [0m [2m[32m{% endfor %}</commits>[0m
@@ -400,6 +409,20 @@ Name the forge explicitly for SSH aliases or self-hosted instances, where it can
 [107m [0m [2m[36m[forge][0m
 [107m [0m [2mplatform = [0m[2m[32m"github"[0m[2m  [0m[2m# or "gitlab", "gitea" (experimental), "azure-devops" (experimental)[0m
 [107m [0m [2mhostname = [0m[2m[32m"github.example.com"[0m[2m  [0m[2m# Example: API host (GHE / self-hosted GitLab)[0m
+
+[1m[32mCommit-message guidance[0m
+
+<span class="badge-experimental"></span>
+
+Project-wide commit-message style notes appended to the LLM prompt inside a [2m<project_guidance>[0m block. The first time the guidance changes, [2mwt[0m prompts the user to approve it — the same one-shot gate as project-defined hooks.
+
+[107m [0m [2m[36m[commit.generation][0m
+[107m [0m [2mguidance = [0m[2m[32m""[0m[2m[32m"[0m
+[107m [0m [2m[32m- Use conventional commits (feat:, fix:, docs:, …)[0m
+[107m [0m [2m[32m- Reference the relevant issue ID in the body[0m
+[107m [0m [2m[32m"[0m[2m[32m""[0m
+
+Only [2mguidance[0m is honored from the project file. The LLM command and the full template stay in user config — they describe per-developer environment (which CLI is installed, which agent the developer prefers).
 
 [1m[32mCopy-ignored excludes[0m
 

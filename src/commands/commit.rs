@@ -66,6 +66,10 @@ pub struct CommitOptions<'a> {
     pub stage_mode: StageMode,
     pub warn_about_untracked: bool,
     pub show_no_squash_note: bool,
+    /// Whether `commit()` runs its own guidance approval gate or trusts a
+    /// value supplied by the caller (`wt merge` bundles the guidance into
+    /// its hook-approval batch so the user sees one combined prompt).
+    pub guidance: super::step::PreApprovedGuidance,
 }
 
 impl<'a> CommitOptions<'a> {
@@ -78,17 +82,24 @@ impl<'a> CommitOptions<'a> {
             stage_mode: StageMode::All,
             warn_about_untracked: true,
             show_no_squash_note: false,
+            guidance: super::step::PreApprovedGuidance::RunOwnGate,
         }
     }
 }
 
 pub(crate) struct CommitGenerator<'a> {
     config: &'a CommitGenerationConfig,
+    /// Approved project-level guidance to append to the LLM prompt. `None` if
+    /// not configured or the user declined approval.
+    project_guidance: Option<&'a str>,
 }
 
 impl<'a> CommitGenerator<'a> {
-    pub fn new(config: &'a CommitGenerationConfig) -> Self {
-        Self { config }
+    pub fn new(config: &'a CommitGenerationConfig, project_guidance: Option<&'a str>) -> Self {
+        Self {
+            config,
+            project_guidance,
+        }
     }
 
     pub fn format_message_for_display(&self, message: &str) -> String {
@@ -175,7 +186,8 @@ impl<'a> CommitGenerator<'a> {
         }
 
         self.emit_hint_if_needed();
-        let commit_message = crate::llm::generate_commit_message(self.config, None)?;
+        let commit_message =
+            crate::llm::generate_commit_message(self.config, None, self.project_guidance)?;
 
         let formatted_message = self.format_message_for_display(&commit_message);
         eprintln!("{}", format_with_gutter(&formatted_message, None));
@@ -269,12 +281,23 @@ impl CommitOptions<'_> {
         }
 
         let effective_config = self.ctx.commit_generation();
-        let outcome = CommitGenerator::new(&effective_config).commit_staged_changes(
-            &wt,
-            true, // show_progress
-            self.show_no_squash_note,
-            self.stage_mode,
-        )?;
+        // Skip the approval gate when the LLM isn't configured — the fallback
+        // message generator doesn't render the prompt template, so guidance
+        // would never reach an LLM anyway.
+        let project_guidance = match self.guidance {
+            super::step::PreApprovedGuidance::Resolved(value) => value,
+            super::step::PreApprovedGuidance::RunOwnGate if effective_config.is_configured() => {
+                super::command_approval::approve_commit_guidance(self.ctx)?
+            }
+            super::step::PreApprovedGuidance::RunOwnGate => None,
+        };
+        let outcome = CommitGenerator::new(&effective_config, project_guidance.as_deref())
+            .commit_staged_changes(
+                &wt,
+                true, // show_progress
+                self.show_no_squash_note,
+                self.stage_mode,
+            )?;
 
         // Register post-commit hooks onto the caller's announcer (respects --no-hooks).
         if self.hooks.run() {
@@ -294,7 +317,7 @@ mod tests {
     fn test_format_message_for_display() {
         use insta::assert_snapshot;
         let config = CommitGenerationConfig::default();
-        let generator = CommitGenerator::new(&config);
+        let generator = CommitGenerator::new(&config, None);
 
         assert_snapshot!(generator.format_message_for_display("Simple commit message"), @"[1mSimple commit message[22m");
         assert_snapshot!(generator.format_message_for_display("First line\nSecond line\nThird line"), @"
@@ -307,7 +330,7 @@ mod tests {
     #[test]
     fn test_format_message_for_display_empty() {
         let config = CommitGenerationConfig::default();
-        let generator = CommitGenerator::new(&config);
+        let generator = CommitGenerator::new(&config, None);
         let result = generator.format_message_for_display("");
         assert_eq!(result, "");
     }

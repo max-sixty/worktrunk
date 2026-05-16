@@ -200,7 +200,11 @@
 # - Match recent commit style (conventional commits if used)
 # - Describe the change, not the intent or benefit
 # </style>
-#
+# {% if project_guidance %}
+# <project_guidance>
+# {{ project_guidance }}
+# </project_guidance>
+# {% endif %}
 # <diffstat>
 # {{ git_diff_stat }}
 # </diffstat>
@@ -244,7 +248,11 @@
 # - Match the style of commits being squashed (conventional commits if used)
 # - Describe the change, not the intent or benefit
 # </style>
-#
+# {% if project_guidance %}
+# <project_guidance>
+# {{ project_guidance }}
+# </project_guidance>
+# {% endif %}
 # <commits branch="{{ branch }}" target="{{ target_branch }}">
 # {% for commit in commits %}- {{ commit }}
 # {% endfor %}</commits>

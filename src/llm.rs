@@ -251,6 +251,9 @@ struct TemplateContext<'a> {
     commits: &'a [String],
     /// Target branch for merge (squash only)
     target_branch: Option<&'a str>,
+    /// Project-level commit guidance appended in a `<project_guidance>` block.
+    /// `None` when no project guidance is set or the user declined approval.
+    project_guidance: Option<&'a str>,
 }
 
 /// Default template for commit message prompts
@@ -269,7 +272,11 @@ const DEFAULT_TEMPLATE: &str = r#"<task>Write a commit message for the staged ch
 - Match recent commit style (conventional commits if used)
 - Describe the change, not the intent or benefit
 </style>
-
+{% if project_guidance %}
+<project_guidance>
+{{ project_guidance }}
+</project_guidance>
+{% endif %}
 <diffstat>
 {{ git_diff_stat }}
 </diffstat>
@@ -302,7 +309,11 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"<task>Write a commit message for the co
 - Match the style of commits being squashed (conventional commits if used)
 - Describe the change, not the intent or benefit
 </style>
-
+{% if project_guidance %}
+<project_guidance>
+{{ project_guidance }}
+</project_guidance>
+{% endif %}
 <commits branch="{{ branch }}" target="{{ target_branch }}">
 {% for commit in commits %}- {{ commit }}
 {% endfor %}</commits>
@@ -495,6 +506,7 @@ fn build_prompt(
         repo => context.repo_name,
         commits => commits_chronological,
         target_branch => context.target_branch.unwrap_or(""),
+        project_guidance => context.project_guidance.unwrap_or(""),
     })?;
 
     Ok(rendered)
@@ -502,26 +514,34 @@ fn build_prompt(
 
 /// `index_override` is forwarded to git operations that read the staging area, so
 /// `--dry-run` can preview against a temp index without touching the user's real one.
+///
+/// `project_guidance` is the approved project-level guidance (or `None` to skip).
 pub(crate) fn generate_commit_message(
     commit_generation_config: &CommitGenerationConfig,
     index_override: Option<&Path>,
+    project_guidance: Option<&str>,
 ) -> anyhow::Result<String> {
     // Check if commit generation is configured (non-empty command)
     if commit_generation_config.is_configured() {
         let command = commit_generation_config.command.as_ref().unwrap();
         // Commit generation is explicitly configured - fail if it doesn't work
-        return try_generate_commit_message(command, commit_generation_config, index_override)
-            .map_err(|e| {
-                worktrunk::git::GitError::LlmCommandFailed {
-                    command: command.clone(),
-                    error: e.to_string(),
-                    reproduction_command: Some(format_reproduction_command(
-                        "wt step commit --show-prompt",
-                        command,
-                    )),
-                }
-                .into()
-            });
+        return try_generate_commit_message(
+            command,
+            commit_generation_config,
+            index_override,
+            project_guidance,
+        )
+        .map_err(|e| {
+            worktrunk::git::GitError::LlmCommandFailed {
+                command: command.clone(),
+                error: e.to_string(),
+                reproduction_command: Some(format_reproduction_command(
+                    "wt step commit --show-prompt",
+                    command,
+                )),
+            }
+            .into()
+        });
     }
 
     // Fallback: generate a descriptive commit message based on changed files
@@ -563,8 +583,9 @@ fn try_generate_commit_message(
     command: &str,
     config: &CommitGenerationConfig,
     index_override: Option<&Path>,
+    project_guidance: Option<&str>,
 ) -> anyhow::Result<String> {
-    let prompt = build_commit_prompt(config, index_override)?;
+    let prompt = build_commit_prompt(config, index_override, project_guidance)?;
     execute_llm_command(command, &prompt)
 }
 
@@ -596,6 +617,7 @@ fn run_git_capture(cmd: Cmd, what: &str) -> anyhow::Result<String> {
 pub(crate) fn build_commit_prompt(
     config: &CommitGenerationConfig,
     index_override: Option<&Path>,
+    project_guidance: Option<&str>,
 ) -> anyhow::Result<String> {
     let repo = Repository::current()?;
     let cwd = repo.discovery_path().to_path_buf();
@@ -645,6 +667,7 @@ pub(crate) fn build_commit_prompt(
         repo_name,
         commits: &[],
         target_branch: None,
+        project_guidance,
     };
     build_prompt(config, TemplateType::Commit, &context)
 }
@@ -656,6 +679,7 @@ pub(crate) fn generate_squash_message(
     current_branch: &str,
     repo_name: &str,
     commit_generation_config: &CommitGenerationConfig,
+    project_guidance: Option<&str>,
 ) -> anyhow::Result<String> {
     // Check if commit generation is configured (non-empty command)
     if commit_generation_config.is_configured() {
@@ -668,6 +692,7 @@ pub(crate) fn generate_squash_message(
             current_branch,
             repo_name,
             commit_generation_config,
+            project_guidance,
         )?;
 
         return execute_llm_command(command, &prompt).map_err(|e| {
@@ -704,6 +729,7 @@ pub(crate) fn build_squash_prompt(
     current_branch: &str,
     repo_name: &str,
     config: &CommitGenerationConfig,
+    project_guidance: Option<&str>,
 ) -> anyhow::Result<String> {
     let repo = Repository::current()?;
 
@@ -733,6 +759,7 @@ pub(crate) fn build_squash_prompt(
         repo_name,
         commits: subjects,
         target_branch: Some(target_branch),
+        project_guidance,
     };
     build_prompt(config, TemplateType::Squash, &context)
 }
@@ -784,6 +811,10 @@ pub(crate) fn test_commit_generation(
         repo_name: "test-repo",
         commits: &[],
         target_branch: None,
+        // The connectivity test sends a synthetic prompt — keep it independent
+        // of any project guidance so it doesn't surface team-policy text in
+        // `wt config show`.
+        project_guidance: None,
     };
     let prompt = build_prompt(commit_generation_config, TemplateType::Commit, &context)?;
 
@@ -860,6 +891,7 @@ mod tests {
             repo_name,
             commits: &[],
             target_branch: None,
+            project_guidance: None,
         }
     }
 
@@ -880,6 +912,7 @@ mod tests {
             repo_name,
             commits,
             target_branch: Some(target_branch),
+            project_guidance: None,
         }
     }
 
@@ -1053,6 +1086,89 @@ mod tests {
             prompt,
             "Repo: myrepo\nBranch: feature\nDiff: my diff\ncommit1\ncommit2\n"
         );
+    }
+
+    #[test]
+    fn test_default_commit_template_renders_project_guidance() {
+        let config = CommitGenerationConfig::default();
+        let mut context = commit_context("diff content", "main", None, "myrepo");
+        context.project_guidance = Some("- Use conventional commits\n- Reference the issue");
+        let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
+        // The block lives between `<style>` and `<diffstat>`, only when guidance is set.
+        assert_snapshot!(prompt, @r#"
+        <task>Write a commit message for the staged changes below.</task>
+
+        <format>
+        - Subject line under 50 chars
+        - For material changes, add a blank line then a body paragraph explaining the change
+        - Output only the commit message, no quotes or code blocks
+        </format>
+
+        <style>
+        - Imperative mood: "Add feature" not "Added feature"
+        - Match recent commit style (conventional commits if used)
+        - Describe the change, not the intent or benefit
+        </style>
+
+        <project_guidance>
+        - Use conventional commits
+        - Reference the issue
+        </project_guidance>
+
+        <diffstat>
+
+        </diffstat>
+
+        <diff>
+        diff content
+        </diff>
+
+        <context>
+        Branch: main
+
+        </context>
+        "#);
+    }
+
+    #[test]
+    fn test_default_squash_template_renders_project_guidance() {
+        let config = CommitGenerationConfig::default();
+        let commits = vec!["feat: A".to_string(), "fix: B".to_string()];
+        let mut context = squash_context("diff content", "feature", None, "repo", &commits, "main");
+        context.project_guidance = Some("- Reference the related issue");
+        let prompt = build_prompt(&config, TemplateType::Squash, &context).unwrap();
+        assert_snapshot!(prompt, @r#"
+        <task>Write a commit message for the combined effect of these commits.</task>
+
+        <format>
+        - Subject line under 50 chars
+        - For material changes, add a blank line then a body paragraph explaining the change
+        - Output only the commit message, no quotes or code blocks
+        </format>
+
+        <style>
+        - Imperative mood: "Add feature" not "Added feature"
+        - Match the style of commits being squashed (conventional commits if used)
+        - Describe the change, not the intent or benefit
+        </style>
+
+        <project_guidance>
+        - Reference the related issue
+        </project_guidance>
+
+        <commits branch="feature" target="main">
+        - fix: B
+        - feat: A
+        </commits>
+
+        <diffstat>
+
+        </diffstat>
+
+        <diff>
+        diff content
+        </diff>
+        "#);
     }
 
     #[test]

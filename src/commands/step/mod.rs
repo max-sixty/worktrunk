@@ -31,5 +31,5 @@ pub(crate) use prune::step_prune;
 pub(crate) use rebase::{RebaseResult, handle_rebase};
 pub(crate) use relocate::step_relocate;
 pub(crate) use squash::{
-    SquashResult, handle_squash, step_dry_run_squash, step_show_squash_prompt,
+    PreApprovedGuidance, SquashResult, handle_squash, step_dry_run_squash, step_show_squash_prompt,
 };

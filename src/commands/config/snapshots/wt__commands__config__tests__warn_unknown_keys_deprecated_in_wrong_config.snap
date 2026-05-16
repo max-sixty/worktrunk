@@ -1,5 +1,5 @@
 ---
 source: src/commands/config/mod.rs
-expression: "warn_unknown_keys::<ProjectConfig>(&unknown)"
+expression: "warn_unknown_keys::<ProjectConfig>(\"[commit-generation]\\ncommand = \\\"llm\\\"\\n\")"
 ---
-[33m▲[39m [33mKey [1mcommit-generation[22m belongs in user config as [commit.generation][39m
+[33m▲[39m [33mUnknown key [1mcommit.generation.command[22m will be ignored[39m

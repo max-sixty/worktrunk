@@ -27,6 +27,20 @@
 # platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)
 # hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 #
+# ## Commit-message guidance
+#
+# <span class="badge-experimental"></span>
+#
+# Project-wide commit-message style notes appended to the LLM prompt inside a `<project_guidance>` block. The first time the guidance changes, `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks.
+#
+# [commit.generation]
+# guidance = """
+# - Use conventional commits (feat:, fix:, docs:, …)
+# - Reference the relevant issue ID in the body
+# """
+#
+# Only `guidance` is honored from the project file. The LLM command and the full template stay in user config (https://worktrunk.dev/config/) — they describe per-developer environment (which CLI is installed, which agent the developer prefers).
+#
 # ## Copy-ignored excludes
 #
 # Additional excludes for `wt step copy-ignored`:

@@ -11,7 +11,7 @@
 //! only the presentation varies.
 #![cfg(not(windows))]
 
-use crate::common::wt_command;
+use crate::common::{add_standard_env_redactions, wt_command};
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -19,6 +19,7 @@ use rstest::rstest;
 fn snapshot_help(test_name: &str, args: &[&str]) {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
+    add_standard_env_redactions(&mut settings);
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.args(args);

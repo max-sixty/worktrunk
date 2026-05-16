@@ -594,6 +594,169 @@ command = "cat >/dev/null && echo 'feat: test commit message'"
     assert_no_spurious_no_hooks(&output);
 }
 
+/// Project commit-message guidance must be approved before the LLM sees it.
+///
+/// Accept → guidance is included in the prompt the LLM receives.
+#[rstest]
+fn test_commit_guidance_approval_accept(mut repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier.
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    repo.write_project_config(
+        r#"
+[commit.generation]
+guidance = "Use conventional commits"
+"#,
+    );
+    repo.commit("Add project commit guidance");
+
+    let feature_wt = repo.add_worktree("feature-guidance-accept");
+    std::fs::write(feature_wt.join("new-file.txt"), "new content").unwrap();
+
+    // Sink the LLM prompt to a file so we can confirm the guidance reached it.
+    let prompt_capture = repo.root_path().join("captured-prompt.txt");
+    let prompt_capture_str = prompt_capture.display().to_string();
+    repo.write_test_config(&format!(
+        r#"
+[commit.generation]
+command = "tee {prompt_capture_str} > /dev/null && echo 'feat: accept guidance'"
+"#
+    ));
+
+    let env_vars = test_env_vars_with_shell(&repo);
+
+    let (output, exit_code) =
+        exec_wt_in_pty_cwd(&feature_wt, &["step", "commit"], &env_vars, "y\n");
+
+    assert_eq!(
+        exit_code, 0,
+        "Commit should succeed when guidance approved. Output:\n{output}"
+    );
+    assert!(
+        output.contains("commit-guidance"),
+        "Approval prompt should label the guidance phase. Output:\n{output}"
+    );
+    assert!(
+        output.contains("Use conventional commits"),
+        "Approval prompt should display the guidance text. Output:\n{output}"
+    );
+
+    let captured = std::fs::read_to_string(&prompt_capture).expect("captured prompt");
+    assert!(
+        captured.contains("<project_guidance>") && captured.contains("Use conventional commits"),
+        "Guidance should be sent to the LLM inside <project_guidance>. Captured:\n{captured}"
+    );
+}
+
+/// Declining the guidance prompt continues without the guidance — the LLM
+/// receives the rest of the prompt as if no project guidance were configured.
+#[rstest]
+fn test_commit_guidance_approval_decline(mut repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    repo.write_project_config(
+        r#"
+[commit.generation]
+guidance = "Reference the issue ID"
+"#,
+    );
+    repo.commit("Add project commit guidance");
+
+    let feature_wt = repo.add_worktree("feature-guidance-decline");
+    std::fs::write(feature_wt.join("new-file.txt"), "new content").unwrap();
+
+    let prompt_capture = repo.root_path().join("captured-prompt.txt");
+    let prompt_capture_str = prompt_capture.display().to_string();
+    repo.write_test_config(&format!(
+        r#"
+[commit.generation]
+command = "tee {prompt_capture_str} > /dev/null && echo 'feat: decline guidance'"
+"#
+    ));
+
+    let env_vars = test_env_vars_with_shell(&repo);
+
+    let (output, exit_code) =
+        exec_wt_in_pty_cwd(&feature_wt, &["step", "commit"], &env_vars, "n\n");
+
+    assert_eq!(
+        exit_code, 0,
+        "Commit should succeed even when guidance declined. Output:\n{output}"
+    );
+    assert!(
+        output.contains("Project commit guidance declined"),
+        "Should announce that guidance was declined. Output:\n{output}"
+    );
+
+    let captured = std::fs::read_to_string(&prompt_capture).expect("captured prompt");
+    assert!(
+        !captured.contains("Reference the issue ID"),
+        "Declined guidance must not reach the LLM. Captured:\n{captured}"
+    );
+    assert!(
+        !captured.contains("<project_guidance>"),
+        "No <project_guidance> block when guidance declined. Captured:\n{captured}"
+    );
+}
+
+/// `wt merge` with both project hooks and commit guidance bundles the two
+/// items into the same approval prompt — the user sees one prompt covering
+/// both, not one for hooks and a second for guidance mid-merge.
+#[rstest]
+fn test_merge_bundles_guidance_into_hook_approval(mut repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.write_project_config(
+        r#"
+pre-commit = "echo 'pre-commit hook'"
+
+[commit.generation]
+guidance = "Reference the related issue"
+"#,
+    );
+    repo.commit("Add project config with hook + guidance");
+
+    let feature_wt = repo.add_worktree("feature-merge-bundle");
+    std::fs::write(feature_wt.join("new-file.txt"), "new content").unwrap();
+
+    let prompt_capture = repo.root_path().join("captured-prompt.txt");
+    let prompt_capture_str = prompt_capture.display().to_string();
+    repo.write_test_config(&format!(
+        r#"
+[commit.generation]
+command = "tee {prompt_capture_str} > /dev/null && echo 'feat: bundled'"
+"#
+    ));
+
+    let env_vars = test_env_vars_with_shell(&repo);
+
+    let (output, exit_code) = exec_wt_in_pty_cwd(&feature_wt, &["merge"], &env_vars, "y\n");
+
+    assert_eq!(
+        exit_code, 0,
+        "Merge should succeed when both prompts approved. Output:\n{output}"
+    );
+    assert!(
+        output.contains("pre-commit hook"),
+        "Bundled prompt should list the pre-commit hook command. Output:\n{output}"
+    );
+    assert!(
+        output.contains("commit-guidance") && output.contains("Reference the related issue"),
+        "Bundled prompt should list the commit guidance. Output:\n{output}"
+    );
+    // The downstream commit step must not present a second prompt.
+    let prompts = output.matches("Allow and remember?").count();
+    assert_eq!(
+        prompts, 1,
+        "Bundled approval should produce exactly one [y/N] prompt. Saw {prompts}. Output:\n{output}"
+    );
+
+    let captured = std::fs::read_to_string(&prompt_capture).expect("captured prompt");
+    assert!(
+        captured.contains("<project_guidance>") && captured.contains("Reference the related issue"),
+        "Approved guidance should reach the LLM. Captured:\n{captured}"
+    );
+}
+
 /// `wt config approvals add` accepts the prompt — covers the success branch of
 /// `add_approvals` after `approve_command_batch` returns Ok(true).
 #[rstest]

@@ -1839,7 +1839,11 @@ template = """
 - Match recent commit style (conventional commits if used)
 - Describe the change, not the intent or benefit
 </style>
-
+{% if project_guidance %}
+<project_guidance>
+{{ project_guidance }}
+</project_guidance>
+{% endif %}
 <diffstat>
 {{ git_diff_stat }}
 </diffstat>
@@ -1885,7 +1889,11 @@ squash-template = """
 - Match the style of commits being squashed (conventional commits if used)
 - Describe the change, not the intent or benefit
 </style>
-
+{% if project_guidance %}
+<project_guidance>
+{{ project_guidance }}
+</project_guidance>
+{% endif %}
 <commits branch="{{ branch }}" target="{{ target_branch }}">
 {% for commit in commits %}- {{ commit }}
 {% endfor %}</commits>
@@ -1941,6 +1949,22 @@ Name the forge explicitly for SSH aliases or self-hosted instances, where it can
 platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)
 hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 ```
+
+## Commit-message guidance
+
+<span class="badge-experimental"></span>
+
+Project-wide commit-message style notes appended to the LLM prompt inside a `<project_guidance>` block. The first time the guidance changes, `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks.
+
+```toml
+[commit.generation]
+guidance = """
+- Use conventional commits (feat:, fix:, docs:, …)
+- Reference the relevant issue ID in the body
+"""
+```
+
+Only `guidance` is honored from the project file. The LLM command and the full template stay in [user config](@/config.md) — they describe per-developer environment (which CLI is installed, which agent the developer prefers).
 
 ## Copy-ignored excludes
 

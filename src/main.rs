@@ -264,6 +264,7 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
                     hooks,
                     args.stage,
                     &mut announcer,
+                    commands::PreApprovedGuidance::RunOwnGate,
                 )?;
                 announcer.flush()?;
                 if format == SwitchFormat::Json {

@@ -37,7 +37,7 @@ pub(super) fn print_dry_run(
         Some(cmd) => format_bash_with_gutter(&crate::llm::render_llm_invocation(cmd)?),
         None => format_with_gutter("(LLM not configured — using built-in fallback)", None),
     };
-    let formatted = CommitGenerator::new(commit_config).format_message_for_display(message);
+    let formatted = CommitGenerator::new(commit_config, None).format_message_for_display(message);
     let out = format!(
         "{prompt_heading}\n{prompt}\n\n{command_heading}\n{command_block}\n\n{message_heading}\n{message_block}\n",
         prompt_heading = format_heading("PROMPT", None),

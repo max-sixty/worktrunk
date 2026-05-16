@@ -88,10 +88,35 @@ pub fn step_relocate(
     }
 
     // Phase 2: Validate candidates (check locked/dirty, optionally auto-commit)
+    // Approve project commit guidance once for the whole batch so per-worktree
+    // commits share a single approval prompt rather than one per worktree.
+    // Skip approval when the LLM isn't configured for this project — the
+    // fallback message generator doesn't render the prompt template.
+    let project_guidance = if commit {
+        use super::super::command_approval::approve_commit_guidance;
+        use super::super::command_executor::CommandContext;
+        let project_id = repo.project_identifier().ok();
+        let commit_config = config.commit_generation(project_id.as_deref());
+        if commit_config.is_configured() {
+            let ctx = CommandContext::new(&repo, &config, None, &repo_path, false);
+            approve_commit_guidance(&ctx)?
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let ValidationResult {
         validated,
         skipped: validation_skipped,
-    } = validate_candidates(&repo, &config, candidates, commit, &repo_path)?;
+    } = validate_candidates(
+        &repo,
+        &config,
+        candidates,
+        commit,
+        &repo_path,
+        project_guidance.as_deref(),
+    )?;
 
     if validated.is_empty() {
         if json_mode {

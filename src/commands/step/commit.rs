@@ -9,7 +9,7 @@ use worktrunk::git::Repository;
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::println;
 
-use super::super::command_approval::approve_or_skip;
+use super::super::command_approval::{approve_or_skip, resolve_guidance_for_preview};
 use super::super::commit::{CommitOptions, CommitOutcome, HookGate, StageMode};
 use super::super::context::CommandEnv;
 use super::super::hooks::HookAnnouncer;
@@ -99,12 +99,23 @@ fn preview_commit(stage: Option<StageMode>, dry_run: bool) -> anyhow::Result<()>
     };
     let index_override = temp_index.as_ref().map(|t| t.path());
 
-    let prompt = crate::llm::build_commit_prompt(&commit_config, index_override)?;
+    let ctx = env.context(false);
+    let project_guidance = resolve_guidance_for_preview(&ctx, &commit_config, dry_run)?;
+
+    let prompt = crate::llm::build_commit_prompt(
+        &commit_config,
+        index_override,
+        project_guidance.as_deref(),
+    )?;
     if !dry_run {
         println!("{}", prompt);
         return Ok(());
     }
-    let message = crate::llm::generate_commit_message(&commit_config, index_override)?;
+    let message = crate::llm::generate_commit_message(
+        &commit_config,
+        index_override,
+        project_guidance.as_deref(),
+    )?;
     print_dry_run(&prompt, &commit_config, &message)
 }
 
