@@ -1594,7 +1594,10 @@ fn main() {
     // on-demand callers unchanged.
     Repository::prewarm();
 
-    let command_line = std::env::args().collect::<Vec<_>>().join(" ");
+    let command_line = std::env::args_os()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ");
     {
         let _span = worktrunk::trace::Span::new("init_command_log");
         init_command_log(&command_line);

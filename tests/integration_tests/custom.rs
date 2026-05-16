@@ -54,6 +54,34 @@ fn custom_subcommand_runs_wt_prefixed_binary_on_path() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "custom ran");
 }
 
+#[cfg(unix)]
+#[test]
+fn custom_subcommand_accepts_non_utf8_forwarded_arg() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempDir::new().unwrap();
+    let script = dir.path().join("wt-wt-test-extcmd-raw");
+    std::fs::write(&script, "#!/bin/sh\nprintf 'custom ran\\n'\n").unwrap();
+    let mut perms = std::fs::metadata(&script).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&script, perms).unwrap();
+
+    let mut cmd = wt_command();
+    prepend_path(&mut cmd, dir.path());
+    cmd.arg("wt-test-extcmd-raw")
+        .arg(OsString::from_vec(vec![0xff]));
+
+    let output = cmd.output().expect("failed to run wt");
+    assert!(
+        output.status.success(),
+        "expected success, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "custom ran");
+}
+
 #[test]
 fn custom_subcommand_not_found_prints_clap_error() {
     let mut cmd = wt_command();
