@@ -416,7 +416,7 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
     }
 }
 
-/// Exit with a clap-style `ArgumentConflict` error when `--format` is combined
+/// Return a clap-style `ArgumentConflict` error when `--format` is combined
 /// with a write action (set/clear) on the state subcommands where it has no
 /// effect. Clap accepts the flag because `--format` is declared `global = true`
 /// on the parent so the bareword and `get` forms work, but write actions don't
@@ -425,9 +425,9 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
 /// Populates `InvalidArg` / `PriorArg` context rather than passing a raw
 /// message so clap renders the arg name and subcommand with its own `invalid`
 /// style, matching native conflict errors byte-for-byte.
-fn guard_format_on_write(action_name: &str, format: SwitchFormat) {
+fn guard_format_on_write(action_name: &str, format: SwitchFormat) -> anyhow::Result<()> {
     if format == SwitchFormat::Text {
-        return;
+        return Ok(());
     }
     let mut cmd = cli::build_command();
     let usage = cmd.render_usage();
@@ -444,7 +444,7 @@ fn guard_format_on_write(action_name: &str, format: SwitchFormat) {
         clap::error::ContextKind::Usage,
         clap::error::ContextValue::StyledStr(usage),
     );
-    err.exit()
+    Err(enhance_clap_error(err))
 }
 
 fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
@@ -471,7 +471,7 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
             Some(CiStatusAction::Get { branch }) => handle_state_get("ci-status", branch, format),
             None => handle_state_get("ci-status", None, format),
             Some(CiStatusAction::Clear { branch, all }) => {
-                guard_format_on_write("clear", format);
+                guard_format_on_write("clear", format)?;
                 handle_state_clear("ci-status", branch, all)
             }
         },
@@ -479,25 +479,25 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
             Some(MarkerAction::Get { branch }) => handle_state_get("marker", branch, format),
             None => handle_state_get("marker", None, format),
             Some(MarkerAction::Set { value, branch }) => {
-                guard_format_on_write("set", format);
+                guard_format_on_write("set", format)?;
                 handle_state_set("marker", value, branch)
             }
             Some(MarkerAction::Clear { branch, all }) => {
-                guard_format_on_write("clear", format);
+                guard_format_on_write("clear", format)?;
                 handle_state_clear("marker", branch, all)
             }
         },
         StateCommand::Logs { action, format } => match action {
             Some(LogsAction::Get) | None => handle_logs_list(format),
             Some(LogsAction::Clear) => {
-                guard_format_on_write("clear", format);
+                guard_format_on_write("clear", format)?;
                 handle_state_clear("logs", None, false)
             }
         },
         StateCommand::Hints { action, format } => match action {
             Some(HintsAction::Get) | None => handle_hints_get(format),
             Some(HintsAction::Clear { name }) => {
-                guard_format_on_write("clear", format);
+                guard_format_on_write("clear", format)?;
                 handle_hints_clear(name)
             }
         },

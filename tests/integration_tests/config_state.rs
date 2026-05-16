@@ -2341,3 +2341,37 @@ fn test_format_rejected_on_write_actions(
         );
     }
 }
+
+#[rstest]
+fn test_format_rejected_on_write_action_writes_verbose_diagnostic(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args([
+            "-vv",
+            "config",
+            "state",
+            "marker",
+            "set",
+            "foo",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--format <FORMAT>"),
+        "stderr should include the clap conflict: {stderr}"
+    );
+    assert!(
+        stderr.contains("Diagnostic saved"),
+        "stderr should mention the verbose diagnostic: {stderr}"
+    );
+
+    let diagnostic_path = repo.root_path().join(".git/wt/logs/diagnostic.md");
+    assert!(
+        diagnostic_path.exists(),
+        "diagnostic should be written for post-dispatch clap errors"
+    );
+}
