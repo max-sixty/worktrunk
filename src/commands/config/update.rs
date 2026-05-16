@@ -90,10 +90,12 @@ pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
 
     for candidate in &candidates {
         // Preserve approved-commands before rewriting config (migrated content
-        // drops them; approvals.toml becomes the authoritative source).
+        // drops them; approvals.toml becomes the authoritative source). Abort
+        // the whole update if the copy fails — rewriting config.toml first
+        // would silently lose the legacy approvals.
         if candidate.info.deprecations.approved_commands
             && let Some(approvals_path) =
-                copy_approved_commands_to_approvals_file(&candidate.config_path)
+                copy_approved_commands_to_approvals_file(&candidate.config_path)?
         {
             let filename = approvals_path
                 .file_name()

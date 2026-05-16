@@ -22,6 +22,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex, OnceLock};
 
+use anyhow::Context;
 use color_print::cformat;
 use minijinja::Environment;
 use regex::Regex;
@@ -1051,22 +1052,37 @@ pub fn migrate_content(content: &str) -> String {
 /// Copy approved-commands from config.toml to approvals.toml.
 ///
 /// Called by `wt config update` before overwriting the config with migrated
-/// content, so the approvals data survives the rewrite. No-op if
-/// `approvals.toml` already exists (already authoritative) or the config has
-/// no approved-commands entries.
-///
-/// Returns `Some(path)` if approvals.toml was created, `None` otherwise.
-pub fn copy_approved_commands_to_approvals_file(config_path: &Path) -> Option<PathBuf> {
+/// content, so the approvals data survives the rewrite. `Ok(None)` for the
+/// benign no-op cases (`approvals.toml` already exists, or the config has no
+/// approved-commands entries). Returns `Err` when a copy was attempted but
+/// failed — the caller must abort before rewriting config.toml, otherwise the
+/// legacy approvals are silently lost.
+pub fn copy_approved_commands_to_approvals_file(
+    config_path: &Path,
+) -> anyhow::Result<Option<PathBuf>> {
     let approvals_path = config_path.with_file_name("approvals.toml");
     if approvals_path.exists() {
-        return None; // Already authoritative, don't overwrite
+        return Ok(None); // Already authoritative, don't overwrite
     }
 
-    let approvals = super::approvals::Approvals::load_from_config_file(config_path).ok()?;
-    approvals.projects().next()?; // Nothing to copy if empty
+    let approvals =
+        super::approvals::Approvals::load_from_config_file(config_path).with_context(|| {
+            format!(
+                "Failed to read approved-commands from {} for migration",
+                config_path.display()
+            )
+        })?;
+    if approvals.projects().next().is_none() {
+        return Ok(None); // Nothing to copy
+    }
 
-    approvals.save_to(&approvals_path).ok()?;
-    Some(approvals_path)
+    approvals.save_to(&approvals_path).with_context(|| {
+        format!(
+            "Failed to write migrated approvals to {}",
+            approvals_path.display()
+        )
+    })?;
+    Ok(Some(approvals_path))
 }
 
 /// Merge args array into command string
@@ -2788,7 +2804,8 @@ approved-commands = ["cargo build"]
 "#;
         std::fs::write(&config_path, content).unwrap();
 
-        let result = copy_approved_commands_to_approvals_file(&config_path);
+        let result =
+            copy_approved_commands_to_approvals_file(&config_path).expect("copy should succeed");
         assert!(result.is_some(), "Should create approvals.toml");
 
         let approvals_path = result.unwrap();
@@ -2824,7 +2841,8 @@ approved-commands = ["npm install"]
         std::fs::write(&config_path, content).unwrap();
         std::fs::write(&approvals_path, "# existing approvals\n").unwrap();
 
-        let result = copy_approved_commands_to_approvals_file(&config_path);
+        let result = copy_approved_commands_to_approvals_file(&config_path)
+            .expect("skip should not surface error");
         assert!(result.is_none(), "Should skip when approvals.toml exists");
 
         // Verify existing file was not overwritten
@@ -2842,10 +2860,46 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
 "#;
         std::fs::write(&config_path, content).unwrap();
 
-        let result = copy_approved_commands_to_approvals_file(&config_path);
+        let result = copy_approved_commands_to_approvals_file(&config_path)
+            .expect("empty case should not surface error");
         assert!(
             result.is_none(),
             "Should skip when no approved-commands exist"
+        );
+    }
+
+    /// Regression: when approvals.toml cannot be written (e.g. the directory
+    /// is read-only), the copy must return Err rather than silently signaling
+    /// "nothing to copy", otherwise the caller would proceed to rewrite
+    /// config.toml and drop the legacy approvals.
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_approved_commands_surfaces_write_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install"]
+"#;
+        std::fs::write(&config_path, content).unwrap();
+
+        // Make the directory read-only so approvals.toml creation fails.
+        let mut perms = std::fs::metadata(temp_dir.path()).unwrap().permissions();
+        perms.set_mode(0o555);
+        std::fs::set_permissions(temp_dir.path(), perms).unwrap();
+
+        let result = copy_approved_commands_to_approvals_file(&config_path);
+
+        // Restore writable perms so the tempdir can be cleaned up.
+        let mut perms = std::fs::metadata(temp_dir.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(temp_dir.path(), perms).unwrap();
+
+        assert!(
+            result.is_err(),
+            "Write failure must surface as Err, not Ok(None); got {result:?}"
         );
     }
 
