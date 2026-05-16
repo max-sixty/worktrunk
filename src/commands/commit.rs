@@ -91,14 +91,14 @@ pub(crate) struct CommitGenerator<'a> {
     config: &'a CommitGenerationConfig,
     /// Approved project-level guidance to append to the LLM prompt. `None` if
     /// not configured or the user declined approval.
-    project_guidance: Option<&'a str>,
+    project_template: Option<&'a str>,
 }
 
 impl<'a> CommitGenerator<'a> {
-    pub fn new(config: &'a CommitGenerationConfig, project_guidance: Option<&'a str>) -> Self {
+    pub fn new(config: &'a CommitGenerationConfig, project_template: Option<&'a str>) -> Self {
         Self {
             config,
-            project_guidance,
+            project_template,
         }
     }
 
@@ -187,7 +187,7 @@ impl<'a> CommitGenerator<'a> {
 
         self.emit_hint_if_needed();
         let commit_message =
-            crate::llm::generate_commit_message(self.config, None, self.project_guidance)?;
+            crate::llm::generate_commit_message(self.config, None, self.project_template)?;
 
         let formatted_message = self.format_message_for_display(&commit_message);
         eprintln!("{}", format_with_gutter(&formatted_message, None));
@@ -284,14 +284,14 @@ impl CommitOptions<'_> {
         // Skip the approval gate when the LLM isn't configured — the fallback
         // message generator doesn't render the prompt template, so guidance
         // would never reach an LLM anyway.
-        let project_guidance = match self.guidance {
+        let project_template = match self.guidance {
             super::step::PreApprovedGuidance::Resolved(value) => value,
             super::step::PreApprovedGuidance::RunOwnGate if effective_config.is_configured() => {
-                super::command_approval::approve_commit_guidance(self.ctx)?
+                super::command_approval::approve_commit_template(self.ctx)?
             }
             super::step::PreApprovedGuidance::RunOwnGate => None,
         };
-        let outcome = CommitGenerator::new(&effective_config, project_guidance.as_deref())
+        let outcome = CommitGenerator::new(&effective_config, project_template.as_deref())
             .commit_staged_changes(
                 &wt,
                 true, // show_progress

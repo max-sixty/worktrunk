@@ -223,7 +223,7 @@ pub struct ValidationResult {
 
 /// Check each candidate for locked/dirty state and optionally auto-commit.
 ///
-/// Returns validated candidates ready for relocation. `project_guidance` is
+/// Returns validated candidates ready for relocation. `project_template` is
 /// the approved project-level guidance appended to each auto-commit prompt.
 /// Resolved once upfront by the caller so per-worktree commits share the
 /// same approved value rather than each running its own approval gate.
@@ -233,7 +233,7 @@ pub fn validate_candidates(
     candidates: Vec<RelocationCandidate>,
     auto_commit: bool,
     repo_path: &Path,
-    project_guidance: Option<&str>,
+    project_template: Option<&str>,
 ) -> anyhow::Result<ValidationResult> {
     let mut validated = Vec::new();
     let mut skipped: Vec<SkippedEntry> = Vec::new();
@@ -274,7 +274,7 @@ pub fn validate_candidates(
                 // Commit using shared pipeline
                 let project_id = repo.project_identifier().ok();
                 let commit_config = config.commit_generation(project_id.as_deref());
-                CommitGenerator::new(&commit_config, project_guidance).commit_staged_changes(
+                CommitGenerator::new(&commit_config, project_template).commit_staged_changes(
                     &worktree,
                     false, // show_progress - already showing "Committing changes in..."
                     false, // show_no_squash_note

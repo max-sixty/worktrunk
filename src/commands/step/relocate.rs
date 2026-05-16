@@ -92,14 +92,14 @@ pub fn step_relocate(
     // commits share a single approval prompt rather than one per worktree.
     // Skip approval when the LLM isn't configured for this project — the
     // fallback message generator doesn't render the prompt template.
-    let project_guidance = if commit {
-        use super::super::command_approval::approve_commit_guidance;
+    let project_template = if commit {
+        use super::super::command_approval::approve_commit_template;
         use super::super::command_executor::CommandContext;
         let project_id = repo.project_identifier().ok();
         let commit_config = config.commit_generation(project_id.as_deref());
         if commit_config.is_configured() {
             let ctx = CommandContext::new(&repo, &config, None, &repo_path, false);
-            approve_commit_guidance(&ctx)?
+            approve_commit_template(&ctx)?
         } else {
             None
         }
@@ -115,7 +115,7 @@ pub fn step_relocate(
         candidates,
         commit,
         &repo_path,
-        project_guidance.as_deref(),
+        project_template.as_deref(),
     )?;
 
     if validated.is_empty() {

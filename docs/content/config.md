@@ -303,10 +303,10 @@ template = """
 - Match recent commit style (conventional commits if used)
 - Describe the change, not the intent or benefit
 </style>
-{% if project_guidance %}
-<project_guidance>
-{{ project_guidance }}
-</project_guidance>
+{% if project_template %}
+<project_template>
+{{ project_template }}
+</project_template>
 {% endif %}
 <diffstat>
 {{ git_diff_stat }}
@@ -353,10 +353,10 @@ squash-template = """
 - Match the style of commits being squashed (conventional commits if used)
 - Describe the change, not the intent or benefit
 </style>
-{% if project_guidance %}
-<project_guidance>
-{{ project_guidance }}
-</project_guidance>
+{% if project_template %}
+<project_template>
+{{ project_template }}
+</project_template>
 {% endif %}
 <commits branch="{{ branch }}" target="{{ target_branch }}">
 {% for commit in commits %}- {{ commit }}
@@ -414,21 +414,21 @@ platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (expe
 hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 ```
 
-## Commit-message guidance
+## Commit-message template
 
 <span class="badge-experimental"></span>
 
-Project-wide commit-message style notes appended to the LLM prompt inside a `<project_guidance>` block. The first time the guidance changes, `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks.
+Project-wide commit-message conventions appended to the LLM prompt inside a `<project_template>` block. Rendered as a [minijinja](https://docs.rs/minijinja/) template with the same variables as the main commit template (`{{ branch }}`, `{{ git_diff }}`, etc.), so the fragment can reference them directly. The first time the fragment changes, `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks.
 
 ```toml
 [commit.generation]
-guidance = """
+template = """
 - Use conventional commits (feat:, fix:, docs:, …)
 - Reference the relevant issue ID in the body
 """
 ```
 
-Only `guidance` is honored from the project file. The LLM command and the full template stay in [user config](@/config.md) — they describe per-developer environment (which CLI is installed, which agent the developer prefers).
+Only `template` is honored from the project file. The LLM command and the main prompt template stay in [user config](@/config.md) — they describe per-developer environment (which CLI is installed, which agent the developer prefers).
 
 ## Copy-ignored excludes
 

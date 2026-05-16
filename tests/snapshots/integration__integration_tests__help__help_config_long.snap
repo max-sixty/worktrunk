@@ -313,10 +313,10 @@ Default template:
 [107m [0m [2m[32m- Match recent commit style (conventional commits if used)[0m
 [107m [0m [2m[32m- Describe the change, not the intent or benefit[0m
 [107m [0m [2m[32m</style>[0m
-[107m [0m [2m[32m{% if project_guidance %}[0m
-[107m [0m [2m[32m<project_guidance>[0m
-[107m [0m [2m[32m{{ project_guidance }}[0m
-[107m [0m [2m[32m</project_guidance>[0m
+[107m [0m [2m[32m{% if project_template %}[0m
+[107m [0m [2m[32m<project_template>[0m
+[107m [0m [2m[32m{{ project_template }}[0m
+[107m [0m [2m[32m</project_template>[0m
 [107m [0m [2m[32m{% endif %}[0m
 [107m [0m [2m[32m<diffstat>[0m
 [107m [0m [2m[32m{{ git_diff_stat }}[0m
@@ -359,10 +359,10 @@ Default template:
 [107m [0m [2m[32m- Match the style of commits being squashed (conventional commits if used)[0m
 [107m [0m [2m[32m- Describe the change, not the intent or benefit[0m
 [107m [0m [2m[32m</style>[0m
-[107m [0m [2m[32m{% if project_guidance %}[0m
-[107m [0m [2m[32m<project_guidance>[0m
-[107m [0m [2m[32m{{ project_guidance }}[0m
-[107m [0m [2m[32m</project_guidance>[0m
+[107m [0m [2m[32m{% if project_template %}[0m
+[107m [0m [2m[32m<project_template>[0m
+[107m [0m [2m[32m{{ project_template }}[0m
+[107m [0m [2m[32m</project_template>[0m
 [107m [0m [2m[32m{% endif %}[0m
 [107m [0m [2m[32m<commits branch="[0m[2m{{ branch }}[0m[2m[32m" target="[0m[2m{{ target_branch }}[0m[2m[32m">[0m
 [107m [0m [2m[32m{% for commit in commits %}- {{ commit }}[0m
@@ -410,19 +410,19 @@ Name the forge explicitly for SSH aliases or self-hosted instances, where it can
 [107m [0m [2mplatform = [0m[2m[32m"github"[0m[2m  [0m[2m# or "gitlab", "gitea" (experimental), "azure-devops" (experimental)[0m
 [107m [0m [2mhostname = [0m[2m[32m"github.example.com"[0m[2m  [0m[2m# Example: API host (GHE / self-hosted GitLab)[0m
 
-[1m[32mCommit-message guidance[0m
+[1m[32mCommit-message template[0m
 
 <span class="badge-experimental"></span>
 
-Project-wide commit-message style notes appended to the LLM prompt inside a [2m<project_guidance>[0m block. The first time the guidance changes, [2mwt[0m prompts the user to approve it — the same one-shot gate as project-defined hooks.
+Project-wide commit-message conventions appended to the LLM prompt inside a [2m<project_template>[0m block. Rendered as a minijinja template with the same variables as the main commit template ([2m{{ branch }}[0m, [2m{{ git_diff }}[0m, etc.), so the fragment can reference them directly. The first time the fragment changes, [2mwt[0m prompts the user to approve it — the same one-shot gate as project-defined hooks.
 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mguidance = [0m[2m[32m""[0m[2m[32m"[0m
+[107m [0m [2mtemplate = [0m[2m[32m""[0m[2m[32m"[0m
 [107m [0m [2m[32m- Use conventional commits (feat:, fix:, docs:, …)[0m
 [107m [0m [2m[32m- Reference the relevant issue ID in the body[0m
 [107m [0m [2m[32m"[0m[2m[32m""[0m
 
-Only [2mguidance[0m is honored from the project file. The LLM command and the full template stay in user config — they describe per-developer environment (which CLI is installed, which agent the developer prefers).
+Only [2mtemplate[0m is honored from the project file. The LLM command and the main prompt template stay in user config — they describe per-developer environment (which CLI is installed, which agent the developer prefers).
 
 [1m[32mCopy-ignored excludes[0m
 

@@ -34,8 +34,8 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     let all_hooks: Vec<_> = HookType::iter().collect();
     let mut commands = collect_commands_for_hooks(&project_config, &all_hooks);
     commands.extend(collect_commands_for_aliases(&project_config));
-    if let Some(guidance) = project_config.commit_guidance() {
-        commands.push(ApprovableCommand::commit_guidance(guidance.to_string()));
+    if let Some(guidance) = project_config.commit_template() {
+        commands.push(ApprovableCommand::commit_template(guidance.to_string()));
     }
 
     if commands.is_empty() {

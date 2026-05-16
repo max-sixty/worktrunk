@@ -161,7 +161,7 @@ Diff:
 | `{{ recent_commits }}` | Recent commit subjects (for style reference) |
 | `{{ commits }}` | Commits being squashed (squash template only) |
 | `{{ target_branch }}` | Merge target branch (squash template only) |
-| `{{ project_guidance }}` | Project-level guidance from `.config/wt.toml` (see below) |
+| `{{ project_template }}` | Project-level template fragment from `.config/wt.toml`, pre-rendered (see below) |
 
 ### Template syntax
 
@@ -176,24 +176,24 @@ Templates use [minijinja](https://docs.rs/minijinja/latest/minijinja/syntax/inde
 
 See `wt config create --help` for the full default templates.
 
-## Project commit guidance
+## Project commit template
 
 [experimental]
 
-Project-level commit-message conventions can be checked into the repo so every teammate's LLM sees the same style guide. The text is appended to the prompt inside a `<project_guidance>` block:
+Project-level commit-message conventions can be checked into the repo so every teammate's LLM sees the same style guide. The fragment is itself a [minijinja](https://docs.rs/minijinja/) template — Worktrunk renders it with the same variables as the main commit template (`{{ branch }}`, `{{ git_diff }}`, …), then appends the result inside a `<project_template>` block:
 
 ```toml
 # .config/wt.toml
 [commit.generation]
-guidance = """
+template = """
 - Use conventional commits (feat:, fix:, docs:, …)
 - Reference the related issue ID in the body
 """
 ```
 
-The first time the guidance is sent to the LLM, Worktrunk shows the text in an approval prompt — the same one-shot gate as project-defined hooks. Subsequent commits don't re-prompt unless the guidance changes. Declining is non-fatal: the LLM runs without the project guidance.
+The first time the rendered text is sent to the LLM, Worktrunk shows the raw fragment in an approval prompt — the same one-shot gate as project-defined hooks. Subsequent commits don't re-prompt unless the fragment changes. Declining is non-fatal: the LLM runs without the project template.
 
-Custom templates that don't reference `{{ project_guidance }}` opt out of the appended block — the variable is rendered only where the template places it.
+Custom user templates that don't reference `{{ project_template }}` opt out of the appended block — the pre-rendered value is injected only where the template places it.
 
 ## Fallback behavior
 

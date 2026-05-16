@@ -10,10 +10,10 @@ use worktrunk::git::{HookType, Repository};
 pub enum Phase {
     Hook(HookType),
     Alias,
-    /// Project-level commit-message guidance — not a shell command. Approving
-    /// this records the guidance text as "approved" so subsequent LLM calls
-    /// include it without re-prompting.
-    CommitGuidance,
+    /// Project-level commit-message template fragment — not a shell command.
+    /// Approving records the raw fragment as "approved" so subsequent LLM
+    /// calls include it without re-prompting.
+    CommitTemplate,
 }
 
 impl fmt::Display for Phase {
@@ -21,7 +21,7 @@ impl fmt::Display for Phase {
         match self {
             Phase::Hook(hook_type) => write!(f, "{hook_type}"),
             Phase::Alias => write!(f, "alias"),
-            Phase::CommitGuidance => write!(f, "commit-guidance"),
+            Phase::CommitTemplate => write!(f, "commit-template"),
         }
     }
 }
@@ -34,12 +34,13 @@ pub struct ApprovableCommand {
 }
 
 impl ApprovableCommand {
-    /// Build an approvable for project-level commit-message guidance. The
-    /// guidance text is reused as the `Command::template` so the approvals
-    /// store (`approved-commands`) treats it like any other approved input.
-    pub fn commit_guidance(text: String) -> Self {
+    /// Build an approvable for the project-level commit template fragment.
+    /// The raw fragment is reused as the `Command::template` so the
+    /// approvals store (`approved-commands`) treats it like any other
+    /// approved input.
+    pub fn commit_template(text: String) -> Self {
         Self {
-            phase: Phase::CommitGuidance,
+            phase: Phase::CommitTemplate,
             command: Command::new(None, text),
         }
     }

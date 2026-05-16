@@ -266,10 +266,10 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# - Match recent commit style (conventional commits if used)[0m
 [107m [0m [2m# - Describe the change, not the intent or benefit[0m
 [107m [0m [2m# </style>[0m
-[107m [0m [2m# {% if project_guidance %}[0m
-[107m [0m [2m# <project_guidance>[0m
-[107m [0m [2m# {{ project_guidance }}[0m
-[107m [0m [2m# </project_guidance>[0m
+[107m [0m [2m# {% if project_template %}[0m
+[107m [0m [2m# <project_template>[0m
+[107m [0m [2m# {{ project_template }}[0m
+[107m [0m [2m# </project_template>[0m
 [107m [0m [2m# {% endif %}[0m
 [107m [0m [2m# <diffstat>[0m
 [107m [0m [2m# {{ git_diff_stat }}[0m
@@ -314,10 +314,10 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# - Match the style of commits being squashed (conventional commits if used)[0m
 [107m [0m [2m# - Describe the change, not the intent or benefit[0m
 [107m [0m [2m# </style>[0m
-[107m [0m [2m# {% if project_guidance %}[0m
-[107m [0m [2m# <project_guidance>[0m
-[107m [0m [2m# {{ project_guidance }}[0m
-[107m [0m [2m# </project_guidance>[0m
+[107m [0m [2m# {% if project_template %}[0m
+[107m [0m [2m# <project_template>[0m
+[107m [0m [2m# {{ project_template }}[0m
+[107m [0m [2m# </project_template>[0m
 [107m [0m [2m# {% endif %}[0m
 [107m [0m [2m# <commits branch="{{ branch }}" target="{{ target_branch }}">[0m
 [107m [0m [2m# {% for commit in commits %}- {{ commit }}[0m
@@ -371,19 +371,19 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)[0m
 [107m [0m [2m# hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# ## Commit-message guidance[0m
+[107m [0m [2m# ## Commit-message template[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# <span class="badge-experimental"></span>[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Project-wide commit-message style notes appended to the LLM prompt inside a `<project_guidance>` block. The first time the guidance changes, `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks.[0m
+[107m [0m [2m# Project-wide commit-message conventions appended to the LLM prompt inside a `<project_template>` block. Rendered as a minijinja (https://docs.rs/minijinja/) template with the same variables as the main commit template (`{{ branch }}`, `{{ git_diff }}`, etc.), so the fragment can reference them directly. The first time the fragment changes, `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [commit.generation][0m
-[107m [0m [2m# guidance = """[0m
+[107m [0m [2m# template = """[0m
 [107m [0m [2m# - Use conventional commits (feat:, fix:, docs:, …)[0m
 [107m [0m [2m# - Reference the relevant issue ID in the body[0m
 [107m [0m [2m# """[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Only `guidance` is honored from the project file. The LLM command and the full template stay in user config (https://worktrunk.dev/config/) — they describe per-developer environment (which CLI is installed, which agent the developer prefers).[0m
+[107m [0m [2m# Only `template` is honored from the project file. The LLM command and the main prompt template stay in user config (https://worktrunk.dev/config/) — they describe per-developer environment (which CLI is installed, which agent the developer prefers).[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Copy-ignored excludes[0m
 [107m [0m [2m#[0m

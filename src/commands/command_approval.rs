@@ -123,7 +123,7 @@ fn prompt_for_batch_approval(
         // Shell commands get bash syntax highlighting; commit guidance is plain
         // text (markdown-ish) and shouldn't be tokenized as bash.
         let body = match cmd.phase {
-            Phase::CommitGuidance => format_with_gutter(&cmd.command.template, None),
+            Phase::CommitTemplate => format_with_gutter(&cmd.command.template, None),
             _ => format_bash_with_gutter(&cmd.command.template),
         };
         eprintln!("{}", body);
@@ -288,19 +288,19 @@ pub fn approve_or_skip(
 /// `--show-prompt` doesn't invoke the LLM, so it always renders the configured
 /// guidance verbatim. `--dry-run` does invoke the LLM, so when an LLM is
 /// configured it goes through the same approval gate as a real commit.
-pub fn resolve_guidance_for_preview(
+pub fn resolve_template_for_preview(
     ctx: &super::command_executor::CommandContext<'_>,
     commit_config: &worktrunk::config::CommitGenerationConfig,
     dry_run: bool,
 ) -> anyhow::Result<Option<String>> {
     if dry_run && commit_config.is_configured() {
-        approve_commit_guidance(ctx)
+        approve_commit_template(ctx)
     } else {
         Ok(ctx
             .repo
             .load_project_config()?
             .as_ref()
-            .and_then(|cfg| cfg.commit_guidance().map(str::to_string)))
+            .and_then(|cfg| cfg.commit_template().map(str::to_string)))
     }
 }
 
@@ -315,13 +315,13 @@ pub fn resolve_guidance_for_preview(
 /// commit`, `wt step squash`, `wt merge`, `wt step commit --dry-run`, etc.).
 /// `--show-prompt` paths skip the gate — they don't execute the LLM, so showing
 /// the guidance text is a preview, not a send.
-pub fn approve_commit_guidance(
+pub fn approve_commit_template(
     ctx: &super::command_executor::CommandContext<'_>,
 ) -> anyhow::Result<Option<String>> {
     let Some(project_config) = ctx.repo.load_project_config()? else {
         return Ok(None);
     };
-    let Some(guidance) = project_config.commit_guidance() else {
+    let Some(guidance) = project_config.commit_template() else {
         return Ok(None);
     };
 
@@ -332,7 +332,7 @@ pub fn approve_commit_guidance(
         return Ok(Some(owned));
     }
 
-    let batch = vec![ApprovableCommand::commit_guidance(owned.clone())];
+    let batch = vec![ApprovableCommand::commit_template(owned.clone())];
     let approved = approve_command_batch(&batch, &project_id, &approvals, ctx.yes, true)?;
     if !approved {
         worktrunk::styling::eprintln!(

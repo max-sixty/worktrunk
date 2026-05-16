@@ -76,15 +76,18 @@ pub struct ProjectCommitConfig {
 /// Project-level commit message generation settings.
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct ProjectCommitGenerationConfig {
-    /// Extra commit-message guidance appended to the user's prompt template
-    /// inside a `<project_guidance>` block.
+    /// Project-level template fragment appended to the user's prompt inside
+    /// a `<project_template>` block.
     ///
-    /// Use this for project-wide commit conventions (e.g. "use conventional
-    /// commits", "reference issue numbers"). The first time the LLM would
-    /// see this text, worktrunk prompts the user to approve it — the same
-    /// gate as project-defined commands.
+    /// Rendered with the same minijinja context as the main commit/squash
+    /// template (`{{ branch }}`, `{{ git_diff }}`, etc.), so the fragment
+    /// can reference template variables directly. Use this for project-wide
+    /// commit conventions (e.g. "use conventional commits", "reference
+    /// issue numbers"). The first time the rendered text would reach the
+    /// LLM, worktrunk prompts the user to approve the raw fragment — the
+    /// same gate as project-defined commands.
     #[serde(default)]
-    pub guidance: Option<String>,
+    pub template: Option<String>,
 }
 
 /// Project-level forge configuration.
@@ -153,16 +156,18 @@ impl ProjectConfig {
         self.step.copy_ignored.as_ref()
     }
 
-    /// Project-level commit-message guidance, trimmed, empty treated as unset.
+    /// Project-level commit-message template fragment (trimmed, empty
+    /// treated as unset).
     ///
-    /// The text is appended to the LLM prompt inside a `<project_guidance>`
-    /// block. Callers must gate the first use through the approval system
-    /// (`approve_commit_guidance`) before sending it to the LLM.
-    pub fn commit_guidance(&self) -> Option<&str> {
+    /// Rendered with the main commit/squash template's variable context and
+    /// appended to the LLM prompt inside a `<project_template>` block.
+    /// Callers must gate the first use through the approval system before
+    /// sending the rendered output to the LLM.
+    pub fn commit_template(&self) -> Option<&str> {
         self.commit
             .generation
             .as_ref()
-            .and_then(|g| g.guidance.as_deref())
+            .and_then(|g| g.template.as_deref())
             .map(str::trim)
             .filter(|s| !s.is_empty())
     }
@@ -510,49 +515,46 @@ platform = "github"
     // ============================================================================
 
     #[test]
-    fn test_commit_guidance_parses() {
+    fn test_commit_template_parses() {
         let toml = r#"
 [commit.generation]
-guidance = "Use conventional commits"
+template = "Use conventional commits"
 "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.commit_guidance(), Some("Use conventional commits"));
+        assert_eq!(config.commit_template(), Some("Use conventional commits"));
     }
 
-    /// `commit_guidance()` trims whitespace and treats blank guidance as unset.
-    /// This matters because empty / whitespace-only guidance would still render
-    /// the `<project_guidance>` block but with no content — confusing the LLM
-    /// and prompting an empty approval. Failing to filter would also produce a
-    /// `truthy` minijinja value, so the template's `{% if project_guidance %}`
-    /// branch can't be the second line of defense.
+    /// `commit_template()` trims whitespace and treats a blank template as
+    /// unset. Otherwise an empty `<project_template>` block would still render
+    /// (confusing the LLM) and an empty approval would prompt.
     #[test]
-    fn test_commit_guidance_blank_treated_as_unset() {
+    fn test_commit_template_blank_treated_as_unset() {
         let toml = r#"
 [commit.generation]
-guidance = "   \n\t  "
+template = "   \n\t  "
 "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.commit_guidance(), None);
+        assert_eq!(config.commit_template(), None);
 
         // Whitespace inside the body is preserved — only leading/trailing trimmed.
         let toml = r#"
 [commit.generation]
-guidance = "  - a\n  - b  "
+template = "  - a\n  - b  "
 "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.commit_guidance(), Some("- a\n  - b"));
+        assert_eq!(config.commit_template(), Some("- a\n  - b"));
     }
 
     #[test]
-    fn test_commit_guidance_missing_returns_none() {
+    fn test_commit_template_missing_returns_none() {
         let config = ProjectConfig::default();
-        assert_eq!(config.commit_guidance(), None);
+        assert_eq!(config.commit_template(), None);
 
-        // `[commit.generation]` present but no `guidance` field also returns None.
+        // `[commit.generation]` present but no `template` field also returns None.
         let toml = r#"
 [commit.generation]
 "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.commit_guidance(), None);
+        assert_eq!(config.commit_template(), None);
     }
 }

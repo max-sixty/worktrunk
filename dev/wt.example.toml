@@ -27,19 +27,19 @@
 # platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)
 # hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 #
-# ## Commit-message guidance
+# ## Commit-message template
 #
 # <span class="badge-experimental"></span>
 #
-# Project-wide commit-message style notes appended to the LLM prompt inside a `<project_guidance>` block. The first time the guidance changes, `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks.
+# Project-wide commit-message conventions appended to the LLM prompt inside a `<project_template>` block. Rendered as a minijinja (https://docs.rs/minijinja/) template with the same variables as the main commit template (`{{ branch }}`, `{{ git_diff }}`, etc.), so the fragment can reference them directly. The first time the fragment changes, `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks.
 #
 # [commit.generation]
-# guidance = """
+# template = """
 # - Use conventional commits (feat:, fix:, docs:, …)
 # - Reference the relevant issue ID in the body
 # """
 #
-# Only `guidance` is honored from the project file. The LLM command and the full template stay in user config (https://worktrunk.dev/config/) — they describe per-developer environment (which CLI is installed, which agent the developer prefers).
+# Only `template` is honored from the project file. The LLM command and the main prompt template stay in user config (https://worktrunk.dev/config/) — they describe per-developer environment (which CLI is installed, which agent the developer prefers).
 #
 # ## Copy-ignored excludes
 #
