@@ -338,21 +338,23 @@ pub fn handle_squash(
 ///
 /// Builds and outputs the squash prompt without running the LLM or squashing.
 pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
-    preview_squash(target, false)
+    // `--show-prompt` never invokes the LLM, so the `yes` flag is irrelevant
+    // — pass false; the guidance gate inside `preview_squash` is dry-run only.
+    preview_squash(target, false, false)
 }
 
 /// Handle `wt step squash --dry-run`
 ///
 /// Renders the squash prompt, prints the LLM command, generates the message, and prints
 /// it without resetting, running hooks, or committing.
-pub fn step_dry_run_squash(target: Option<&str>) -> anyhow::Result<()> {
-    preview_squash(target, true)
+pub fn step_dry_run_squash(target: Option<&str>, yes: bool) -> anyhow::Result<()> {
+    preview_squash(target, true, yes)
 }
 
 /// Shared implementation for `--show-prompt` and `--dry-run` on squash. `--show-prompt`
 /// (`dry_run = false`) outputs only the rendered prompt; `--dry-run` additionally calls
 /// the LLM and prints the command and the generated message.
-fn preview_squash(target: Option<&str>, dry_run: bool) -> anyhow::Result<()> {
+fn preview_squash(target: Option<&str>, dry_run: bool, yes: bool) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let config = UserConfig::load().context("Failed to load config")?;
     let project_id = repo.project_identifier().ok();
@@ -377,7 +379,7 @@ fn preview_squash(target: Option<&str>, dry_run: bool) -> anyhow::Result<()> {
         .unwrap_or("repo");
 
     let env = CommandEnv::for_action(config)?;
-    let ctx = env.context(false);
+    let ctx = env.context(yes);
     let project_template = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
 
     let prompt = crate::llm::build_squash_prompt(

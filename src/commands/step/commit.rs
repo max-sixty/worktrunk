@@ -30,7 +30,7 @@ pub fn step_commit(
     // mirrors --stage against a temp index so the previewed prompt matches what a real
     // run would send the LLM. Neither path produces a CommitOutcome.
     if show_prompt || dry_run {
-        preview_commit(stage, dry_run)?;
+        preview_commit(stage, dry_run, yes)?;
         return Ok(None);
     }
 
@@ -78,7 +78,7 @@ pub fn step_commit(
 /// `--stage` against a temp index — so the previewed prompt matches what a real run
 /// would send — then calls the LLM and prints the command and message in three labeled
 /// sections. The user's real index is never modified.
-fn preview_commit(stage: Option<StageMode>, dry_run: bool) -> anyhow::Result<()> {
+fn preview_commit(stage: Option<StageMode>, dry_run: bool, yes: bool) -> anyhow::Result<()> {
     let env = CommandEnv::for_action(UserConfig::load().context("Failed to load config")?)?;
     let commit_config = env.resolved().commit_generation.clone();
 
@@ -99,7 +99,7 @@ fn preview_commit(stage: Option<StageMode>, dry_run: bool) -> anyhow::Result<()>
     };
     let index_override = temp_index.as_ref().map(|t| t.path());
 
-    let ctx = env.context(false);
+    let ctx = env.context(yes);
     let project_template = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
 
     let prompt = crate::llm::build_commit_prompt(
