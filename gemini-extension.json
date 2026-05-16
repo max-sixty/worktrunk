@@ -1,5 +1,5 @@
 {
   "name": "worktrunk",
   "version": "0.1.0",
-  "description": "Activity tracking for Worktrunk: shows 🤖 (working) and 💬 (waiting) markers in `wt list` for branches with active Gemini CLI sessions."
+  "description": "Worktrunk is a CLI for Git worktree management, designed for parallel AI agent workflows. This extension provides configuration guidance (LLM commit messages, project hooks, worktree paths) and automatic activity tracking (🤖/💬 indicators in `wt list` showing active Gemini CLI sessions)."
 }
