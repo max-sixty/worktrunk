@@ -366,13 +366,16 @@ impl SwitchSuggestionCtx {
 ///
 /// # Usage
 ///
-/// ```ignore
-/// // Return a typed error
-/// return Err(GitError::DetachedHead { action: Some("merge".into()) }.into());
+/// ```
+/// use worktrunk::git::GitError;
 ///
-/// // Pattern match on errors
-/// if let Some(GitError::BranchAlreadyExists { branch }) = err.downcast_ref() {
-///     println!("Branch {} exists", branch);
+/// // A typed error converts into a type-erased one (in real code, into `anyhow::Error`).
+/// let err: Box<dyn std::error::Error> =
+///     GitError::DetachedHead { action: Some("merge".into()) }.into();
+///
+/// // Recover the typed error to branch on the variant.
+/// if let Some(GitError::BranchAlreadyExists { branch }) = err.downcast_ref::<GitError>() {
+///     println!("branch {branch} already exists");
 /// }
 /// ```
 #[derive(Debug, Clone)]
@@ -387,6 +390,12 @@ pub enum GitError {
         branch: Option<String>,
         /// When true, hint mentions --force as an alternative to stashing
         force_hint: bool,
+        /// Raw `git status --porcelain` lines (one per dirty entry). Rendered
+        /// as a dim, indented block between the title and the hint, so the
+        /// user knows *which* files are blocking — important when the dirty
+        /// state is unexpected (e.g., post-merge cleanup catching a stray file).
+        /// Empty vec is allowed (nothing extra rendered).
+        dirty_files: Vec<String>,
     },
     BranchAlreadyExists {
         branch: String,
@@ -788,7 +797,10 @@ impl GitError {
             }
 
             GitError::UncommittedChanges {
-                branch, force_hint, ..
+                branch,
+                force_hint,
+                dirty_files,
+                ..
             } => {
                 let title = self.title();
                 let hint = if *force_hint {
@@ -801,7 +813,11 @@ impl GitError {
                 } else {
                     "Commit or stash changes first".to_string()
                 };
-                write!(f, "{}\n{}", error_message(&title), hint_message(hint))
+                write!(f, "{}", error_message(&title))?;
+                for line in dirty_files {
+                    write!(f, "\n  {}", cformat!("<dim>{}</>", line))?;
+                }
+                write!(f, "\n{}", hint_message(hint))
             }
 
             GitError::BranchAlreadyExists { branch } => {
@@ -1044,8 +1060,8 @@ impl GitError {
                 write!(
                     f,
                     "\n{}",
-                    hint_message(format!(
-                        "Commit or stash these changes in {path_display} first"
+                    hint_message(cformat!(
+                        "Commit or stash these changes in <underline>{path_display}</> first"
                     ))
                 )
             }
@@ -2085,6 +2101,7 @@ mod tests {
             action: Some("push".into()),
             branch: None,
             force_hint: false,
+            dirty_files: Vec::new(),
         };
         let display = err.render();
         assert_snapshot!(display, @"
@@ -2098,6 +2115,7 @@ mod tests {
             action: None,
             branch: Some("feature".into()),
             force_hint: false,
+            dirty_files: Vec::new(),
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31m[1mfeature[22m has uncommitted changes[39m
@@ -2109,6 +2127,7 @@ mod tests {
             action: None,
             branch: None,
             force_hint: false,
+            dirty_files: Vec::new(),
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31mWorking tree has uncommitted changes[39m
@@ -2120,10 +2139,27 @@ mod tests {
             action: Some("remove worktree".into()),
             branch: Some("feature".into()),
             force_hint: true,
+            dirty_files: Vec::new(),
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31mCannot remove worktree: [1mfeature[22m has uncommitted changes[39m
         [2m↳[22m [2mCommit or stash changes first, or to lose uncommitted changes, run [4mwt remove --force feature[24m[22m
+        ");
+
+        // With dirty_files populated — surfaces *which* files block the action.
+        // Each line is the raw `git status --porcelain` entry, dim, indented two
+        // columns.
+        let err = GitError::UncommittedChanges {
+            action: Some("remove worktree after merge".into()),
+            branch: Some("feature-auth".into()),
+            force_hint: false,
+            dirty_files: vec![" M auth.rs".into(), "?? .DS_Store".into()],
+        };
+        assert_snapshot!(err.render(), @"
+        [31m✗[39m [31mCannot remove worktree after merge: [1mfeature-auth[22m has uncommitted changes[39m
+          [2m M auth.rs[22m
+          [2m?? .DS_Store[22m
+        [2m↳[22m [2mCommit or stash changes first[22m
         ");
     }
 
@@ -2174,7 +2210,7 @@ mod tests {
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31mCan't push to local [1mmain[22m branch: conflicting uncommitted changes[39m
-        [2m↳[22m [2mCommit or stash these changes in /tmp/repo first[22m
+        [2m↳[22m [2mCommit or stash these changes in [4m/tmp/repo[24m first[22m
         ");
     }
 

@@ -122,7 +122,7 @@ impl PageMode {
     fn emit_header(self, subcommand: &str) {
         match self {
             Self::Web => std::println!(
-                "{MARKER_OPEN_PREFIX}`wt {subcommand} --help-page` — edit cli.rs to update -->"
+                "{MARKER_OPEN_PREFIX}`wt {subcommand} --help-page` — edit src/cli/mod.rs to update -->"
             ),
             Self::Plain => std::println!("# wt {subcommand}"),
         }

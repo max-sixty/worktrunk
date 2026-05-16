@@ -7,7 +7,7 @@ weight = 16
 group = "Commands"
 +++
 
-<!-- ⚠️ AUTO-GENERATED from `wt step --help-page` — edit cli.rs to update -->
+<!-- ⚠️ AUTO-GENERATED from `wt step --help-page` — edit src/cli/mod.rs to update -->
 
 Run individual operations. The building blocks of wt merge — commit, squash, rebase, push — plus standalone utilities.
 
@@ -525,7 +525,7 @@ Show available template variables:
 {% terminal(cmd="wt step eval --dry-run '__WT_OPEN__ branch __WT_CLOSE__'") %}
 branch=feature/auth-oauth2
 worktree_path=/home/user/projects/myapp-feature-auth-oauth2
-...
+---
 Result: feature/auth-oauth2
 {% end %}
 

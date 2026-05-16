@@ -446,16 +446,21 @@ pub fn configure_pty_command(cmd: &mut portable_pty::CommandBuilder) {
 /// Pass through LLVM coverage profiling environment to a portable_pty::CommandBuilder.
 ///
 /// PTY tests use `cmd.env_clear()` for isolation, which removes LLVM_PROFILE_FILE.
-/// Without this, spawned binaries can't write coverage data.
+/// Without this, an instrumented child writes `default_*.profraw` into its cwd
+/// (i.e. the repo root for tests that don't override it) instead of the path
+/// `cargo llvm-cov` chose. The non-PTY equivalent lives inside
+/// `worktrunk::testing::isolate_subprocess_env`; both paths share
+/// [`worktrunk::testing::default_llvm_profile_file`] for the
+/// inherit-or-temp-dir resolution.
 ///
 /// Use `configure_pty_command()` for the full setup, or call this directly if you
 /// need custom env_clear handling (e.g., shell-specific env vars).
 pub fn pass_coverage_env_to_pty_cmd(cmd: &mut portable_pty::CommandBuilder) {
-    for key in [
+    cmd.env(
         "LLVM_PROFILE_FILE",
-        "CARGO_LLVM_COV",
-        "CARGO_LLVM_COV_TARGET_DIR",
-    ] {
+        worktrunk::testing::default_llvm_profile_file(),
+    );
+    for key in worktrunk::testing::COVERAGE_ENV_VARS {
         if let Ok(val) = std::env::var(key) {
             cmd.env(key, val);
         }
@@ -553,6 +558,38 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     settings.add_redaction(".env.MOCK_CONFIG_DIR", "[MOCK_CONFIG_DIR]");
     // OpenCode config directory (platform-independent override for tests)
     settings.add_redaction(".env.OPENCODE_CONFIG_DIR", "[TEST_OPENCODE_CONFIG]");
+    // `wt config show --full` tests inject WORKTRUNK_TEST_LATEST_VERSION = the
+    // current crate version (so the version-check line reads "Up to date"), which
+    // would otherwise churn this `info` block on every release bump. Redact any
+    // semver-shaped value to [VERSION]; the "error" sentinel test passes a
+    // non-semver value and is left intact.
+    settings.add_dynamic_redaction(".env.WORKTRUNK_TEST_LATEST_VERSION", |value, _path| {
+        let is_semver = value.as_str().is_some_and(|s| {
+            let mut parts = s.split('.');
+            (0..3).all(|_| parts.next().is_some_and(|p| p.parse::<u32>().is_ok()))
+                && parts.next().is_none()
+        });
+        if is_semver {
+            insta::internals::Content::from("[VERSION]")
+        } else {
+            value
+        }
+    });
+
+    // Redact cargo-llvm-cov env from snapshot info blocks. `LLVM_PROFILE_FILE`
+    // is set on every test subprocess by `isolate_subprocess_env` (#2730) —
+    // its `<temp_dir>/wt-test-profraw/cov-%m_%p.profraw` value is platform-
+    // and host-specific and would leak into snapshots regenerated on any
+    // other machine. CARGO_LLVM_COV* propagate by the same path under
+    // `cargo llvm-cov`. `add_redaction` is the right hammer here:
+    // `add_filter` substitutes only on the captured snapshot content, not
+    // the YAML info/env block where these entries live.
+    settings.add_redaction(".env.LLVM_PROFILE_FILE", "[LLVM_PROFILE_FILE]");
+    settings.add_redaction(".env.CARGO_LLVM_COV", "[CARGO_LLVM_COV]");
+    settings.add_redaction(
+        ".env.CARGO_LLVM_COV_TARGET_DIR",
+        "[CARGO_LLVM_COV_TARGET_DIR]",
+    );
 }
 
 fn canonical_home_dir() -> Option<PathBuf> {
@@ -584,6 +621,15 @@ fn add_snapshot_path_prelude_filters(settings: &mut insta::Settings) {
     // routes its instrumented build to target/affected/build/ to avoid invalidating
     // the project's normal target/ — see max-sixty/cargo-affected#12.
     settings.add_filter(r"/target/affected/build/", "/target/");
+
+    // Normalize cross-target build dirs (target/<triple>/) to target/ when tests
+    // run via `cargo nextest run --target <triple>` — used by the nightly
+    // `release-target` matrix (musl, intel-darwin). Anchored on the vendor
+    // field of a Rust target triple to avoid matching unrelated subdirs.
+    settings.add_filter(
+        r"/target/[a-z0-9_]+-(?:unknown|apple|pc|wasi)-[a-z0-9_-]+/",
+        "/target/",
+    );
 
     // Deliberately no global `\\` → `/` normalization here: it corrupts
     // intentional backslashes (JSON `\u001b` ANSI escapes, shell line
@@ -699,26 +745,64 @@ fn add_placeholder_cleanup_filters(settings: &mut insta::Settings) {
     );
 }
 
+/// Match the parent path of a `test-*` config under the test tempdir, in
+/// either the absolute (`/var/folders/.../.tmp.../`) or tilde
+/// (`~/`, `~/.tmp.../`) form. `format_path_for_display` produces both shapes
+/// — macOS keeps the absolute form (canonicalized HOME `/private/var/...`
+/// doesn't prefix the uncanonicalized config path), Linux strips to a tilde
+/// (HOME == tempdir, prefix matches).
+const TEST_PATH_PREFIX: &str =
+    r"'?(?:~(?:/\.tmp[^/\\']+)?|(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+)[/\\]";
+
 fn add_temp_path_placeholder_filters(settings: &mut insta::Settings) {
     settings.add_filter(
-        r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-config\.toml\.new'?",
+        &format!(r"{TEST_PATH_PREFIX}test-config\.toml\.new'?"),
         "[TEST_CONFIG_NEW]",
     );
     settings.add_filter(
-        r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-config\.toml'?",
+        &format!(r"{TEST_PATH_PREFIX}test-config\.toml'?"),
         "[TEST_CONFIG]",
     );
     settings.add_filter(
-        r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-approvals\.toml'?",
+        &format!(r"{TEST_PATH_PREFIX}test-approvals\.toml'?"),
         "[TEST_APPROVALS]",
-    );
-    settings.add_filter(
-        r"(?:\x1b\[\d+m)+(\[TEST_(?:CONFIG(?:_NEW)?|APPROVALS)\])(?:\x1b\[\d+m)+",
-        "$1",
     );
     settings.add_filter(
         r"(?:[A-Z]:)?/[^\s]+/\.tmp[^/]+/test-gitconfig",
         "[TEST_GIT_CONFIG]",
+    );
+}
+
+/// Strip ANSI codes immediately wrapping a path-redaction placeholder so a
+/// `<bold>{path}</>` source collapses to a clean `[PLACEHOLDER]` in snapshots.
+///
+/// Targeted: only placeholders that name a redacted path — not value
+/// placeholders (`[VERSION]`, `[HASH]`, `[BUILD_MODE]`, `[BINARY_PATH]`) where
+/// bold is meaningful styling we want to assert.
+///
+/// Insta filters apply in insertion order, so this must run *after* every
+/// in-setup substitution that establishes one of these placeholders. Filters
+/// added by tests on top of `setup_snapshot_settings*` are past this point —
+/// they must consume ANSI inline via [`add_path_placeholder_filter`].
+fn add_placeholder_ansi_strip_filter(settings: &mut insta::Settings) {
+    settings.add_filter(
+        r"(?:\x1b\[\d+m)+(\[(?:TEST_(?:CONFIG(?:_NEW)?|APPROVALS|GIT_CONFIG)|PROJECT_ID|TEMP(?:_HOME)?)\])(?:\x1b\[\d+m)+",
+        "$1",
+    );
+}
+
+/// Add a filter substituting `path_pattern` → `placeholder`, consuming any
+/// ANSI codes immediately wrapping the path. Use this for test-specific path
+/// redactions that need to survive a `<bold>` source — the late strip pass in
+/// `setup_snapshot_settings*` runs before test-level filters get a chance.
+pub fn add_path_placeholder_filter(
+    settings: &mut insta::Settings,
+    path_pattern: &str,
+    placeholder: &str,
+) {
+    settings.add_filter(
+        &format!(r"(?:\x1b\[\d+m)*{path_pattern}(?:\x1b\[\d+m)*"),
+        placeholder,
     );
 }
 
@@ -849,14 +933,7 @@ fn add_project_id_filters(settings: &mut insta::Settings) {
 /// This extracts the common settings configuration while allowing the
 /// `assert_cmd_snapshot!` macro to remain in test files for correct module path capture.
 pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
-    setup_snapshot_settings_impl(repo.root_path(), None)
-}
-
-/// Internal implementation that optionally includes temp_home filter.
-/// The temp_home filter MUST be added before PROJECT_ID filters to take precedence.
-fn setup_snapshot_settings_impl(root: &Path, temp_home: Option<&Path>) -> insta::Settings {
-    let worktrees = HashMap::new(); // Caller doesn't need worktree filters
-    setup_snapshot_settings_for_paths_with_home(root, &worktrees, temp_home)
+    setup_snapshot_settings_for_paths_with_home(repo.root_path(), &HashMap::new(), None)
 }
 
 /// Full snapshot settings - path filters AND ANSI cleanup.
@@ -982,13 +1059,12 @@ fn setup_snapshot_settings_for_paths_with_home(
         "${1}[VERSION]",
     );
 
-    // Normalize project root paths in "Binary invoked as:" debug output
-    // Tests run cargo which produces paths like /path/to/worktrunk/target/debug/wt
-    // Normalize to [PROJECT_ROOT]/target/debug/wt for deterministic snapshots
-    settings.add_filter(
-        r"(Binary invoked as: \x1b\[1m)[^\x1b]+/target/(debug|release)/wt(\x1b\[22m)",
-        "${1}[PROJECT_ROOT]/target/$2/wt$3",
-    );
+    // Collapse build-mode (debug|release) so snapshots survive both cargo's
+    // debug builds and crane/release builds (notably the nightly nix-flake
+    // sandbox). The pattern is anchored on `/target/.../wt` so it matches
+    // the bin path in "Invoked as:" / "Binary invoked as:" / diagnostic
+    // hint output without touching unrelated `target/` paths.
+    settings.add_filter(r"/target/(debug|release)/wt", "/target/[BUILD_MODE]/wt");
 
     // Normalize shell probe binary paths
     // Shell probe reports the actual binary location which varies by system
@@ -1031,13 +1107,10 @@ fn setup_snapshot_settings_for_paths_with_home(
     // Format: "* " + yellow code + 7-char hex hash + reset
     settings.add_filter(r"\* \x1b\[33m[a-f0-9]{7}\x1b\[m", "* \x1b[33m[HASH]\x1b[m");
 
-    // Filter out cargo-llvm-cov env variables from snapshot YAML headers.
-    // These are only present during coverage runs and cause snapshot mismatches.
-    // Note: YAML indentation in the info.env section is 4 spaces.
-    settings.add_filter(r#"    CARGO_LLVM_COV: "1"\n"#, "");
-    settings.add_filter(r#"    CARGO_LLVM_COV_TARGET_DIR: "[^"]+"\n"#, "");
-    settings.add_filter(r#"    LLVM_PROFILE_FILE: "[^"]+"\n"#, "");
-    settings.add_filter(r#"    WORKTRUNK_TEST_CODEX_INSTALLED: "[01]"\n"#, "");
+    // Last so every placeholder established above (e.g. [TEST_CONFIG],
+    // [PROJECT_ID], [TEMP_HOME], [HASH]) is in place when we strip styling
+    // wrappers around it.
+    add_placeholder_ansi_strip_filter(&mut settings);
 
     settings
 }
@@ -1047,11 +1120,14 @@ fn setup_snapshot_settings_for_paths_with_home(
 /// This extends `setup_snapshot_settings` by adding a filter for the temporary home directory.
 /// Use this for tests that need both a TestRepo and a temporary home (for user config testing).
 ///
-/// IMPORTANT: The temp_home filter is passed to setup_snapshot_settings_impl so it gets added
-/// BEFORE the generic [PROJECT_ID] filters. Otherwise, paths like /tmp/.tmpXXX/.config/worktrunk/config.toml
-/// would match [PROJECT_ID] first.
+/// IMPORTANT: The temp_home filter is added BEFORE the generic [PROJECT_ID] filters.
+/// Otherwise, paths like /tmp/.tmpXXX/.config/worktrunk/config.toml would match [PROJECT_ID] first.
 pub fn setup_snapshot_settings_with_home(repo: &TestRepo, temp_home: &TempDir) -> insta::Settings {
-    setup_snapshot_settings_impl(repo.root_path(), Some(temp_home.path()))
+    setup_snapshot_settings_for_paths_with_home(
+        repo.root_path(),
+        &HashMap::new(),
+        Some(temp_home.path()),
+    )
 }
 
 /// Create configured insta Settings for snapshot tests with only a temporary home directory
@@ -1069,7 +1145,7 @@ pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
         "[TEMP_HOME]",
     );
     settings.add_filter(r"\\", "/");
-    // Filter out PowerShell lines (see main filter in setup_snapshot_settings_impl for details)
+    // Filter out PowerShell lines (see main filter in setup_snapshot_settings_for_paths_with_home for details)
     settings.add_filter(r"(?m)^.*[Pp]owershell(?:\x1b\[[0-9;]*m)*:.*\n", "");
     settings.add_filter(r"(?m)^.*No .*powershell.* shell extension.*\n", "");
     settings.add_filter(r"(?m)^.*shell init powershell.*\n", "");
@@ -1087,6 +1163,7 @@ pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
     // Normalize thread IDs in panic messages (vary across runs)
     settings.add_filter(r"thread '([^']+)' \(\d+\)", "thread '$1'");
     add_standard_env_redactions(&mut settings);
+    add_placeholder_ansi_strip_filter(&mut settings);
 
     settings
 }
@@ -1130,6 +1207,7 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
 
     add_standard_env_redactions(&mut settings);
     add_remove_stats_byte_filter(&mut settings);
+    add_placeholder_ansi_strip_filter(&mut settings);
 
     settings
 }
@@ -1196,11 +1274,17 @@ pub fn add_pty_filters(settings: &mut insta::Settings) {
 ///
 /// Test binaries are run from the cargo target directory, which varies.
 pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
-    // Match paths ending in target/debug/wt or target/release/wt
-    // Also handles llvm-cov-target used by cargo-llvm-cov and affected/build/
-    // used by cargo-affected (max-sixty/cargo-affected#12)
+    // Match paths ending in target/.../{debug,release}/wt — covers the
+    // default layout (`target/debug/wt`), cargo-llvm-cov (`llvm-cov-target/`),
+    // cargo-affected (`affected/build/`, max-sixty/cargo-affected#12), and
+    // cross-target builds (e.g. `target/x86_64-unknown-linux-musl/debug/wt`
+    // from the nightly `release-target` matrix).
+    //
+    // Include the literal `[BUILD_MODE]` placeholder so this filter still
+    // collapses to `[BIN]` when the prelude's `target/(debug|release)/wt`
+    // → `target/[BUILD_MODE]/wt` rewrite has already run.
     settings.add_filter(
-        r"[^\s]+/target/(?:llvm-cov-target/|affected/build/)?(?:debug|release)/wt",
+        r"[^\s]+/target/(?:[^/\s]+/)*(?:debug|release|\[BUILD_MODE\])/wt",
         "[BIN]",
     );
 }
@@ -1212,6 +1296,7 @@ pub fn add_pty_binary_path_filters(settings: &mut insta::Settings) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::assert_snapshot;
     use rstest::rstest;
 
     #[rstest]
@@ -1228,5 +1313,33 @@ mod tests {
         let output = repo.git_command().args(["log", "--oneline"]).run().unwrap();
         let log = String::from_utf8_lossy(&output.stdout);
         assert_eq!(log.lines().count(), 5);
+    }
+
+    /// Regression: a `<bold>{path}</>` warning has to land on the same snapshot
+    /// regardless of whether `format_path_for_display` returned the absolute
+    /// (macOS) or tilde (Linux) form. The path-substitution filter has to
+    /// catch both alternatives, and the late ANSI-strip pass has to remove the
+    /// styling wrappers around the resulting placeholder.
+    #[test]
+    fn placeholder_strip_collapses_styled_paths_cross_platform() {
+        let mut settings = insta::Settings::new();
+        add_temp_path_placeholder_filters(&mut settings);
+        add_placeholder_ansi_strip_filter(&mut settings);
+
+        // macOS: format_path_for_display falls through to the absolute form
+        // because HOME is canonicalized (/private/var) but the path isn't.
+        let macos = "▲ \x1b[1m/var/folders/abc/T/.tmpXYZ/test-config.toml\x1b[22m failed";
+        // Linux CI: HOME == tempdir, so the prefix strips to a clean tilde
+        // form with no `.tmp...` segment between `~` and the filename.
+        let linux_home_eq_tempdir = "▲ \x1b[1m~/test-config.toml\x1b[22m failed";
+        // Linux dev box: HOME != tempdir but tempdir lives under HOME, so the
+        // tilde form keeps the `.tmpXYZ/` segment.
+        let linux_home_above_tempdir = "▲ \x1b[1m~/.tmpXYZ/test-config.toml\x1b[22m failed";
+
+        settings.bind(|| {
+            assert_snapshot!(macos, @"▲ [TEST_CONFIG] failed");
+            assert_snapshot!(linux_home_eq_tempdir, @"▲ [TEST_CONFIG] failed");
+            assert_snapshot!(linux_home_above_tempdir, @"▲ [TEST_CONFIG] failed");
+        });
     }
 }

@@ -19,6 +19,7 @@ use super::log_formatter::{
 };
 use super::pager::{diff_pager, pipe_through_pager};
 use super::preview::{PreviewMode, PreviewStateData};
+use super::preview_cache;
 
 /// Cache key for pre-computed previews: (branch_name, mode).
 pub(super) type PreviewCacheKey = (String, PreviewMode);
@@ -232,7 +233,10 @@ impl WorktreeSkimItem {
         format!("○ {verb} {label}. Press {key} again to refresh.\n")
     }
 
-    /// Compute preview and apply pager for diff modes.
+    /// Compute preview and apply pager for diff modes. Returns the
+    /// display-ready string and (for Log) whether the disk cache was a
+    /// hit — the orchestrator uses the flag to schedule a background
+    /// refresh.
     ///
     /// Both the inline cache-miss path and background pre-computation use this so
     /// that the cache always stores display-ready content (no pager subprocess
@@ -243,34 +247,33 @@ impl WorktreeSkimItem {
         mode: PreviewMode,
         width: usize,
         height: usize,
-    ) -> String {
-        let content = Self::compute_preview(repo, item, mode, width, height);
+    ) -> (String, bool) {
         match mode {
-            PreviewMode::WorkingTree | PreviewMode::BranchDiff | PreviewMode::UpstreamDiff => {
-                if let Some(pager_cmd) = diff_pager() {
-                    pipe_through_pager(&content, pager_cmd, width)
-                } else {
-                    content
-                }
-            }
-            _ => content,
+            PreviewMode::WorkingTree => (
+                Self::page_diff(Self::compute_working_tree_preview(repo, item, width), width),
+                false,
+            ),
+            PreviewMode::Log => Self::compute_log_preview(repo, item, width, height),
+            PreviewMode::BranchDiff => (
+                Self::page_diff(Self::compute_branch_diff_preview(repo, item, width), width),
+                false,
+            ),
+            PreviewMode::UpstreamDiff => (
+                Self::page_diff(
+                    Self::compute_upstream_diff_preview(repo, item, width),
+                    width,
+                ),
+                false,
+            ),
+            PreviewMode::Summary => (Self::loading_placeholder(PreviewMode::Summary), false),
         }
     }
 
-    /// Compute raw preview for any mode.
-    pub(super) fn compute_preview(
-        repo: &Repository,
-        item: &ListItem,
-        mode: PreviewMode,
-        width: usize,
-        height: usize,
-    ) -> String {
-        match mode {
-            PreviewMode::WorkingTree => Self::compute_working_tree_preview(repo, item, width),
-            PreviewMode::Log => Self::compute_log_preview(repo, item, width, height),
-            PreviewMode::BranchDiff => Self::compute_branch_diff_preview(repo, item, width),
-            PreviewMode::UpstreamDiff => Self::compute_upstream_diff_preview(repo, item, width),
-            PreviewMode::Summary => Self::loading_placeholder(PreviewMode::Summary),
+    fn page_diff(content: String, width: usize) -> String {
+        if let Some(pager_cmd) = diff_pager() {
+            pipe_through_pager(&content, pager_cmd, width)
+        } else {
+            content
         }
     }
 
@@ -300,6 +303,16 @@ impl WorktreeSkimItem {
     /// Independent of `item.counts` — `compute_diff_preview`'s empty-diff
     /// fallback covers the ahead=0 case, so the preview is correct even
     /// before the list-row pipeline has populated counts.
+    ///
+    /// The default branch's SHA comes from [`Repository::default_branch_sha`],
+    /// which sources it from the already-warmed local-branch inventory. N
+    /// parallel preview tasks all share one inventory scan instead of each
+    /// forking `git rev-parse`. The SHA also keeps the disk cache invariant
+    /// across `git fetch` (which moves the *ref* but not the captured SHA).
+    /// When the SHA isn't available (no default branch, or stale config
+    /// pointing at a deleted branch), we fall through to the uncached path
+    /// with the branch name in the diff range — same git behavior as
+    /// before, just no cache read/write.
     fn compute_branch_diff_preview(repo: &Repository, item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
         let reset = Reset;
@@ -309,32 +322,69 @@ impl WorktreeSkimItem {
             );
         };
 
-        let merge_base = format!("{}...{}", default_branch, item.head());
-        compute_diff_preview(
+        let base_sha = repo.default_branch_sha();
+
+        if let Some(ref base) = base_sha
+            && let Some(cached) = preview_cache::read_branch_diff(repo, base, item.head(), width)
+        {
+            return cached;
+        }
+
+        // Use the resolved SHA in the diff range when available so the
+        // cache key and the diff agree on which commit was the base.
+        let base_ref = base_sha.as_deref().unwrap_or(&default_branch);
+        let merge_base = format!("{base_ref}...{}", item.head());
+        let result = compute_diff_preview(
             repo,
             &["diff", &merge_base],
             &cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no file changes vs <bold>{default_branch}</>{reset}"
             ),
             width,
-        )
+        );
+
+        if let Some(ref base) = base_sha {
+            preview_cache::write_branch_diff(repo, base, item.head(), width, &result);
+        }
+        result
     }
 
     /// Compute Tab 4: Upstream diff preview (ahead/behind vs tracking branch)
     ///
-    /// Independent of `item.upstream` — a single
-    /// `git rev-list --left-right --count HEAD...@{u}` probes both
-    /// existence (non-zero exit when `@{u}` is unresolvable) and counts,
-    /// so the preview is correct even before the list-row pipeline has
-    /// populated upstream.
+    /// Independent of `item.upstream` — `git rev-parse {branch}@{{u}}`
+    /// probes existence (non-zero exit when `@{{u}}` is unresolvable) and
+    /// also yields the upstream SHA for cache keying. The follow-up
+    /// `rev-list --left-right --count` then runs against the resolved SHAs
+    /// so the count and the cached diff agree on which upstream commit was
+    /// in play.
     fn compute_upstream_diff_preview(repo: &Repository, item: &ListItem, width: usize) -> String {
         let branch = item.branch_name();
         let reset = Reset;
 
         let upstream_ref = format!("{branch}@{{u}}");
-        let probe_range = format!("{}...{upstream_ref}", item.head());
-        let Ok(counts) = repo.run_command(&["rev-list", "--left-right", "--count", &probe_range])
+        let Ok(upstream_sha_raw) =
+            repo.run_command(&["rev-parse", "--verify", "--end-of-options", &upstream_ref])
         else {
+            return cformat!(
+                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no upstream tracking branch\n"
+            );
+        };
+        let upstream_sha = upstream_sha_raw.trim();
+
+        if let Some(cached) =
+            preview_cache::read_upstream_diff(repo, item.head(), upstream_sha, width)
+        {
+            return cached;
+        }
+
+        let probe_range = format!("{}...{upstream_sha}", item.head());
+        let Ok(counts) = repo.run_command(&[
+            "rev-list",
+            "--left-right",
+            "--count",
+            "--end-of-options",
+            &probe_range,
+        ]) else {
             return cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no upstream tracking branch\n"
             );
@@ -354,14 +404,10 @@ impl WorktreeSkimItem {
             );
         };
 
-        if ahead == 0 && behind == 0 {
-            return cformat!(
-                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is up to date with upstream\n"
-            );
-        }
-
-        if ahead > 0 && behind > 0 {
-            let range = format!("{}...{}", upstream_ref, item.head());
+        let result = if ahead == 0 && behind == 0 {
+            cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} is up to date with upstream\n")
+        } else if ahead > 0 && behind > 0 {
+            let range = format!("{upstream_sha}...{}", item.head());
             compute_diff_preview(
                 repo,
                 &["diff", &range],
@@ -371,7 +417,7 @@ impl WorktreeSkimItem {
                 width,
             )
         } else if ahead > 0 {
-            let range = format!("{}...{}", upstream_ref, item.head());
+            let range = format!("{upstream_sha}...{}", item.head());
             compute_diff_preview(
                 repo,
                 &["diff", &range],
@@ -381,7 +427,7 @@ impl WorktreeSkimItem {
                 width,
             )
         } else {
-            let range = format!("{}...{}", item.head(), upstream_ref);
+            let range = format!("{}...{upstream_sha}", item.head());
             compute_diff_preview(
                 repo,
                 &["diff", &range],
@@ -390,24 +436,63 @@ impl WorktreeSkimItem {
                 ),
                 width,
             )
-        }
+        };
+
+        preview_cache::write_upstream_diff(repo, item.head(), upstream_sha, width, &result);
+        result
     }
 
     /// Compute log preview for a worktree item.
-    /// This can be called from background threads for pre-computation.
+    ///
+    /// Splits work into a SHA-deterministic part that's safe to disk-cache
+    /// (raw `git log --graph` output and the per-commit insertions/deletions
+    /// map from `batch_fetch_stats`) and a path that has to recompute on
+    /// every call (merge-base + rev-list for the dim/bright split, plus
+    /// `format_log_output` for relative timestamps). This keeps the cache
+    /// key out of `main`'s SHA — a `git fetch` advancing `origin/main`
+    /// doesn't invalidate any entry — while preserving correctness as
+    /// `main` and wall-clock advance.
+    ///
+    /// Returns the rendered preview and a flag for whether the disk cache
+    /// was hit. The orchestrator uses the flag to schedule a background
+    /// refresh — see [`Self::refresh_log_preview`] and the `LogCacheEntry`
+    /// docstring for why decorations baked into `raw_log` need refreshing
+    /// even though the cache key is correct.
     pub(super) fn compute_log_preview(
         repo: &Repository,
         item: &ListItem,
         width: usize,
         height: usize,
+    ) -> (String, bool) {
+        Self::compute_log_preview_inner(repo, item, width, height, false)
+    }
+
+    /// Force-recompute the Log preview, bypassing the disk-cache read but
+    /// writing through. Returns the freshly rendered string. Called by the
+    /// orchestrator's refresh worker after a cache hit so the next visit
+    /// sees decorations that match current ref topology.
+    pub(super) fn refresh_log_preview(
+        repo: &Repository,
+        item: &ListItem,
+        width: usize,
+        height: usize,
     ) -> String {
+        Self::compute_log_preview_inner(repo, item, width, height, true).0
+    }
+
+    fn compute_log_preview_inner(
+        repo: &Repository,
+        item: &ListItem,
+        width: usize,
+        height: usize,
+        force_recompute: bool,
+    ) -> (String, bool) {
         // Minimum preview width to show timestamps (adds ~7 chars: space + 4-char time + space)
         // Note: preview is typically 50% of terminal width, so 50 = 100-col terminal
         const TIMESTAMP_WIDTH_THRESHOLD: usize = 50;
         // Tab header takes 3 lines (tabs + controls + blank)
         const HEADER_LINES: usize = 3;
 
-        let mut output = String::new();
         let show_timestamps = width >= TIMESTAMP_WIDTH_THRESHOLD;
         // Calculate how many log lines fit in preview (height minus header)
         let log_limit = height.saturating_sub(HEADER_LINES).max(1);
@@ -415,45 +500,45 @@ impl WorktreeSkimItem {
         let branch = item.branch_name();
         let reset = Reset;
         let Some(default_branch) = repo.default_branch() else {
-            output.push_str(&cformat!(
-                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits\n"
-            ));
-            return output;
+            return (
+                cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits\n"),
+                false,
+            );
         };
 
-        // Get merge-base with default branch
+        // merge-base / rev-list run on every call — they're how the
+        // dim/bright split tracks main's current position. See the cache
+        // entry docstring for why we keep this off the SHA-keyed disk cache.
         //
-        // Note on error handling: This code runs in an interactive preview pane that updates
-        // on every keystroke. We intentionally use silent fallbacks rather than propagating
-        // errors to avoid disruptive error messages during navigation. The preview is
-        // supplementary - users can still select worktrees even if preview fails.
+        // Don't pre-resolve `default_branch` to a SHA via
+        // `Repository::default_branch_sha` here. That accessor is a
+        // snapshot of the local-branch inventory at first scan (see its
+        // docstring) — feeding the snapshot into a merge-base call would
+        // freeze the dim/bright styling at the SHA main pointed at when
+        // the picker started, instead of the current SHA. The
+        // `log_cache_dim_split_tracks_main_advance` test pins this
+        // contract.
         //
-        // Alternative: Check specific conditions (default branch exists, valid HEAD, etc.) before
-        // running git commands. This would provide better diagnostics but adds latency to
-        // every preview render. Trade-off: simplicity + speed vs. detailed error messages.
-        let Ok(merge_base_output) = repo.run_command(&["merge-base", &default_branch, head]) else {
-            output.push_str(&cformat!(
-                "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits\n"
-            ));
-            return output;
+        // (`Repository::merge_base` is correctness-safe — it re-resolves
+        // ref names through an uncached `git rev-parse` before hitting
+        // its SHA-keyed cache — but it'd cost an extra subprocess per
+        // render on cache miss, with no win since each item's head is
+        // unique.)
+        //
+        // Error handling note: this code runs in an interactive preview
+        // pane. Silent fallbacks beat disruptive errors during navigation;
+        // the preview is supplementary, users can still select worktrees
+        // even if a probe fails.
+        let Ok(merge_base_output) =
+            repo.run_command(&["merge-base", "--end-of-options", &default_branch, head])
+        else {
+            return (
+                cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits\n"),
+                false,
+            );
         };
-
         let merge_base = merge_base_output.trim();
         let is_default_branch = branch == default_branch;
-
-        // Format strings for git log
-        // Without timestamps: hash (colored/dimmed), then message
-        // Format includes full hash (for matching) between SOH and NUL delimiters.
-        // Display content uses \x1f to separate fields for timestamp parsing.
-        // Format: SOH full_hash NUL short_hash \x1f timestamp \x1f decorations+message
-        // Using delimiters allows parsing without assuming fixed hash length (SHA-256 safe)
-        // Note: Use %x01/%x00 (git's hex escapes) to avoid embedding control chars in argv
-        let timestamp_format = format!(
-            "--format=%x01%H%x00%C(auto)%h{}%ct{}%C(auto)%d%C(reset) %s",
-            FIELD_DELIM, FIELD_DELIM
-        );
-        let no_timestamp_format = "--format=%x01%H%x00%C(auto)%h%C(auto)%d%C(reset) %s";
-
         let log_limit_str = log_limit.to_string();
 
         // Get commits after merge-base (for dimming logic)
@@ -474,12 +559,74 @@ impl WorktreeSkimItem {
             Some(commits) // Some(empty) means dim everything
         };
 
-        // Get graph output (no --numstat to avoid blank continuation lines)
+        // Cacheable: the raw `git log --graph` output plus per-commit
+        // stats. Both are pure functions of (head, width, height); on a
+        // disk-cache hit we skip the `git log` and `git diff-tree` calls
+        // entirely. On miss we compute and write through. `force_recompute`
+        // bypasses the read (the refresh path) but always writes.
+        let cached = if force_recompute {
+            None
+        } else {
+            preview_cache::read_log(repo, head, width, height)
+        };
+        let was_disk_hit = cached.is_some();
+        // On `git log` failure (effectively unreachable — merge-base
+        // already validated `head`), `unwrap_or_default()` yields an
+        // empty entry which `process_log_with_dimming` + `format_log_output`
+        // render as empty output below. We deliberately skip the disk
+        // write in that case: persisting an empty `LogCacheEntry` would
+        // poison the SHA-keyed cache so a single transient failure
+        // suppresses the preview indefinitely.
+        let entry = cached.unwrap_or_else(|| {
+            let fresh = Self::compute_log_raw_and_stats(repo, head, log_limit, show_timestamps);
+            if let Some(ref f) = fresh {
+                preview_cache::write_log(repo, head, width, height, f);
+            }
+            fresh.unwrap_or_default()
+        });
+
+        let (processed, _hashes) =
+            process_log_with_dimming(&entry.raw_log, unique_commits.as_ref());
+        let rendered = if show_timestamps {
+            // `format_log_output` reads `epoch_now()` so relative-time
+            // strings ("5m" / "2h" / "3d") track wall-clock on every call,
+            // even when serving from cache.
+            format_log_output(&processed, &entry.stats)
+        } else {
+            // Strip hash markers (SOH...NUL) since we're not using format_log_output
+            strip_hash_markers(&processed)
+        };
+        (rendered, was_disk_hit)
+    }
+
+    /// Run `git log --graph` and (when timestamps are shown) `batch_fetch_stats`,
+    /// returning the SHA-deterministic payload to store in the disk cache.
+    /// Returns `None` only when `git log` itself fails — caller renders an
+    /// empty preview in that case.
+    fn compute_log_raw_and_stats(
+        repo: &Repository,
+        head: &str,
+        log_limit: usize,
+        show_timestamps: bool,
+    ) -> Option<preview_cache::LogCacheEntry> {
+        // Format strings for git log
+        // Without timestamps: hash (colored/dimmed), then message
+        // Format includes full hash (for matching) between SOH and NUL delimiters.
+        // Display content uses \x1f to separate fields for timestamp parsing.
+        // Format: SOH full_hash NUL short_hash \x1f timestamp \x1f decorations+message
+        // Using delimiters allows parsing without assuming fixed hash length (SHA-256 safe)
+        // Note: Use %x01/%x00 (git's hex escapes) to avoid embedding control chars in argv
+        let timestamp_format = format!(
+            "--format=%x01%H%x00%C(auto)%h{}%ct{}%C(auto)%d%C(reset) %s",
+            FIELD_DELIM, FIELD_DELIM
+        );
+        let no_timestamp_format = "--format=%x01%H%x00%C(auto)%h%C(auto)%d%C(reset) %s";
         let format: &str = if show_timestamps {
             &timestamp_format
         } else {
             no_timestamp_format
         };
+        let log_limit_str = log_limit.to_string();
         let args = vec![
             "log",
             "--graph",
@@ -491,20 +638,20 @@ impl WorktreeSkimItem {
             head,
         ];
 
-        if let Ok(log_output) = repo.run_command(&args) {
-            let (processed, hashes) =
-                process_log_with_dimming(&log_output, unique_commits.as_ref());
-            if show_timestamps {
-                // Batch fetch stats for all commits
-                let stats = batch_fetch_stats(repo, &hashes);
-                output.push_str(&format_log_output(&processed, &stats));
-            } else {
-                // Strip hash markers (SOH...NUL) since we're not using format_log_output
-                output.push_str(&strip_hash_markers(&processed));
-            }
-        }
+        let raw_log = repo.run_command(&args).ok()?;
 
-        output
+        let stats = if show_timestamps {
+            // Pull hashes from the raw log via `process_log_with_dimming`
+            // with `unique_commits = None` — that path doesn't apply any
+            // dim styling, so we get a clean hash list for the stats fetch
+            // without baking dimming into the cached value.
+            let (_processed, hashes) = process_log_with_dimming(&raw_log, None);
+            batch_fetch_stats(repo, &hashes)
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        Some(preview_cache::LogCacheEntry { raw_log, stats })
     }
 }
 
@@ -639,6 +786,155 @@ mod tests {
             output.contains("feat.txt"),
             "expected diff to mention feat.txt, got: {output:?}"
         );
+    }
+
+    #[test]
+    fn branch_diff_cache_short_circuits_recompute() {
+        // Pre-populate the disk cache with a sentinel value, then call
+        // compute — a hit must return the sentinel verbatim instead of
+        // running git diff. Proves the SHA + width key is the lookup path
+        // and that a hit short-circuits before `compute_diff_preview`.
+        let (t, repo) = repo_with_main();
+        repo.run_command(&["checkout", "-b", "feature"]).unwrap();
+        std::fs::write(t.path().join("real.txt"), "real\n").unwrap();
+        repo.run_command(&["add", "real.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "real"]).unwrap();
+        let item = item_at(&repo, "feature");
+
+        let base_sha = repo.default_branch_sha().unwrap();
+        let sentinel = "SENTINEL_FROM_CACHE";
+        super::preview_cache::write_branch_diff(&repo, &base_sha, item.head(), 80, sentinel);
+
+        let output = WorktreeSkimItem::compute_branch_diff_preview(&repo, &item, 80);
+        assert_eq!(output, sentinel, "cache hit must return cached value");
+    }
+
+    #[test]
+    fn branch_diff_cache_writeback_on_miss() {
+        // After a miss, the next call's cache key must be populated. Width
+        // is part of the key, so a different width still misses.
+        let (t, repo) = repo_with_main();
+        repo.run_command(&["checkout", "-b", "feature"]).unwrap();
+        std::fs::write(t.path().join("wb.txt"), "wb\n").unwrap();
+        repo.run_command(&["add", "wb.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "wb"]).unwrap();
+        let item = item_at(&repo, "feature");
+
+        let base_sha = repo.default_branch_sha().unwrap();
+
+        assert!(
+            super::preview_cache::read_branch_diff(&repo, &base_sha, item.head(), 80).is_none()
+        );
+        let _ = WorktreeSkimItem::compute_branch_diff_preview(&repo, &item, 80);
+        assert!(
+            super::preview_cache::read_branch_diff(&repo, &base_sha, item.head(), 80).is_some()
+        );
+        // Different width: miss.
+        assert!(
+            super::preview_cache::read_branch_diff(&repo, &base_sha, item.head(), 100).is_none()
+        );
+    }
+
+    #[test]
+    fn log_cache_writeback_on_miss() {
+        // First call populates the cache; the entry must exist after.
+        // Width is part of the key, so a different width still misses.
+        let (t, repo) = repo_with_main();
+        repo.run_command(&["checkout", "-b", "feature"]).unwrap();
+        std::fs::write(t.path().join("log.txt"), "x\n").unwrap();
+        repo.run_command(&["add", "log.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "log"]).unwrap();
+        let item = item_at(&repo, "feature");
+
+        assert!(super::preview_cache::read_log(&repo, item.head(), 80, 24).is_none());
+        let _ = WorktreeSkimItem::compute_log_preview(&repo, &item, 80, 24).0;
+        let entry = super::preview_cache::read_log(&repo, item.head(), 80, 24)
+            .expect("cache populated after first compute");
+        assert!(
+            !entry.raw_log.is_empty(),
+            "cached raw log should be non-empty"
+        );
+        assert!(
+            super::preview_cache::read_log(&repo, item.head(), 100, 24).is_none(),
+            "different width still misses"
+        );
+    }
+
+    #[test]
+    fn log_cache_dim_split_tracks_main_advance() {
+        // Regression for worktrunk-bot's review on PR #2628: the cache key
+        // is only `(branch_head_sha, w, h)` — main's SHA isn't included —
+        // so a `git fetch` advancing the default branch must NOT serve
+        // stale dim/bright styling. The dim split runs on every call from
+        // a fresh `merge-base` + `rev-list`, even on cache hit.
+        //
+        // Setup: feature branches off main, gets a unique commit, then
+        // main advances to include that commit. Before main advances,
+        // feature's commit is "unique" (bright). After main advances and
+        // contains the commit, it's no longer unique (dim).
+        let (t, repo) = repo_with_main();
+        repo.run_command(&["checkout", "-b", "feature"]).unwrap();
+        std::fs::write(t.path().join("f.txt"), "feat\n").unwrap();
+        repo.run_command(&["add", "f.txt"]).unwrap();
+        repo.run_command(&["commit", "-m", "feature commit"])
+            .unwrap();
+        let feature_head = repo
+            .run_command(&["rev-parse", "feature"])
+            .unwrap()
+            .trim()
+            .to_string();
+        let item = ListItem::new_branch(feature_head.clone(), "feature".to_string());
+
+        // The dim/bright signal we check is the bold-green branch
+        // decoration `\x1b[1;32m` — `git log --format=%C(auto)%d` colors
+        // the branch name (e.g. `feature`) bold-green when bright, and
+        // `process_log_with_dimming`'s dim path runs `display.ansi_strip()`
+        // which removes that escape. The dim SGR `\x1b[2m` is unsuitable
+        // because `format_log_output` already wraps every relative-time
+        // column in dim, so it appears even in bright lines.
+        let before = WorktreeSkimItem::compute_log_preview(&repo, &item, 80, 24).0;
+        let before_subject_line = before
+            .lines()
+            .find(|l| l.contains("feature commit"))
+            .expect("subject line present before advance");
+        assert!(
+            before_subject_line.contains("\x1b[1;32m"),
+            "before main advance, unique commit should be bright (bold-green branch decoration present), got: {before_subject_line:?}"
+        );
+
+        // Advance main to include feature's commit. Same `feature_head`,
+        // same cache key — but the dim split now changes because rev-list
+        // returns no unique commits.
+        repo.run_command(&["checkout", "main"]).unwrap();
+        repo.run_command(&["merge", "--ff-only", "feature"])
+            .unwrap();
+        repo.run_command(&["checkout", "feature"]).unwrap();
+
+        let after = WorktreeSkimItem::compute_log_preview(&repo, &item, 80, 24).0;
+        let after_subject_line = after
+            .lines()
+            .find(|l| l.contains("feature commit"))
+            .expect("subject line present after advance");
+        assert!(
+            !after_subject_line.contains("\x1b[1;32m"),
+            "after main advance, commit should be dimmed (bold-green stripped by dim path), got: {after_subject_line:?}"
+        );
+    }
+
+    #[test]
+    fn upstream_diff_cache_short_circuits_recompute() {
+        let (_t, repo) = repo_with_tracked_pair();
+        let item = item_at(&repo, "feature");
+        let upstream_sha = repo
+            .run_command(&["rev-parse", "upstream-base"])
+            .unwrap()
+            .trim()
+            .to_string();
+        let sentinel = "SENTINEL_UPSTREAM_VALUE";
+        super::preview_cache::write_upstream_diff(&repo, item.head(), &upstream_sha, 80, sentinel);
+
+        let output = WorktreeSkimItem::compute_upstream_diff_preview(&repo, &item, 80);
+        assert_eq!(output, sentinel);
     }
 
     #[test]

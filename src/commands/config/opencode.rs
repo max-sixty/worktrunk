@@ -2,7 +2,8 @@
 //!
 //! Installs the worktrunk activity tracking plugin for OpenCode.
 //! The plugin source (`dev/opencode-plugin.ts`) is embedded in the binary via
-//! `include_str!()` and written to `${OPENCODE_CONFIG_DIR:-~/.config/opencode}/plugins/worktrunk.ts`.
+//! `include_str!()` and written under the OpenCode global-config directory (see
+//! `opencode_plugins_dir` for the precedence rules) at `…/plugins/worktrunk.ts`.
 
 use std::path::PathBuf;
 
@@ -18,13 +19,23 @@ const PLUGIN_SOURCE: &str = include_str!("../../../dev/opencode-plugin.ts");
 
 /// Resolve the OpenCode plugins directory.
 ///
-/// Uses `$OPENCODE_CONFIG_DIR/plugins/` if set, otherwise `~/.config/opencode/plugins/`.
+/// Mirrors OpenCode's own global-config precedence (see <https://opencode.ai/docs/config>):
+/// `$OPENCODE_CONFIG_DIR` > `$XDG_CONFIG_HOME/opencode` > `~/.config/opencode`. The macOS
+/// `~/Library/Application Support/opencode/` path is reserved for *managed* settings and is
+/// not where OpenCode looks for user plugins, so we deliberately avoid `dirs::config_dir()`
+/// here — it would put the plugin in the wrong place on macOS.
 fn opencode_plugins_dir() -> Result<PathBuf> {
     let config_dir = if let Ok(dir) = std::env::var("OPENCODE_CONFIG_DIR") {
         PathBuf::from(dir)
+    } else if let Some(xdg) = std::env::var("XDG_CONFIG_HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+    {
+        PathBuf::from(xdg).join("opencode")
     } else {
-        dirs::config_dir()
-            .context("Could not determine config directory")?
+        worktrunk::path::home_dir()
+            .context("Could not determine home directory")?
+            .join(".config")
             .join("opencode")
     };
     Ok(config_dir.join("plugins"))

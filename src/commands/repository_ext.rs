@@ -318,6 +318,26 @@ impl RepositoryCliExt for Repository {
             .ok()
             .map(|s| s.trim().to_string());
 
+        // Snapshot the removed worktree's `.config/wt.toml` before removal so
+        // `post-remove` can read it after the directory is gone. `pre-remove`
+        // runs against the same config from disk; both hooks are *about* the
+        // removed worktree — see the spec in `commands::hooks`.
+        //
+        // A parse failure here is intentionally not propagated: the executor
+        // (`output::handlers::execute_pre_remove_hooks_if_needed`) re-reads
+        // the config from disk and surfaces the parse error with its full
+        // chain via `print_command_error`. `pre-remove` aborts before
+        // `post-remove` fires, so the snapshot being `None` in the malformed
+        // case is invisible to the user. Routing the parse error through
+        // `prepare_worktree_removal` instead would land it in `main.rs`'s
+        // `record_error`, which renders only the top message — a pre-existing
+        // display gap orthogonal to this work.
+        let removed_project_config = Repository::at(&worktree_path)?
+            .load_project_config()
+            .ok()
+            .flatten()
+            .map(Box::new);
+
         Ok(RemoveResult::RemovedWorktree {
             main_path,
             worktree_path,
@@ -329,6 +349,7 @@ impl RepositoryCliExt for Repository {
             force_worktree,
             expected_path,
             removed_commit,
+            removed_project_config,
         })
     }
 
@@ -430,7 +451,10 @@ impl RepositoryCliExt for Repository {
         let Some(merge_base) = self.merge_base("HEAD", target)? else {
             return Ok(false);
         };
-        let target_sha = self.run_command(&["rev-parse", target])?.trim().to_string();
+        let target_sha = self
+            .run_command(&["rev-parse", "--verify", "--end-of-options", target])?
+            .trim()
+            .to_string();
 
         if merge_base != target_sha {
             return Ok(false); // Target has advanced past merge-base
@@ -438,7 +462,12 @@ impl RepositoryCliExt for Repository {
 
         // Check for merge commits — if present, history is not linear
         let merge_commits = self
-            .run_command(&["rev-list", "--merges", &format!("{}..HEAD", target)])?
+            .run_command(&[
+                "rev-list",
+                "--merges",
+                "--end-of-options",
+                &format!("{}..HEAD", target),
+            ])?
             .trim()
             .to_string();
 

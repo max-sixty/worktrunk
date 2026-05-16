@@ -2,6 +2,62 @@
 //!
 //! See [`super::hook_announcement`] for the announcement format / grammar that
 //! the background path emits before spawning pipelines.
+//!
+//! # Which `.config/wt.toml` a hook reads
+//!
+//! **Every hook is anchored to one worktree — the worktree it's *about*.** It
+//! reads that worktree's `.config/wt.toml`. When the worktree isn't on disk at
+//! the moment we need to read it, read a snapshot.
+//!
+//! Most hooks resolve their project config from `ctx.repo.load_project_config()`
+//! — [`execute_hook`], [`prepare_background_pipelines`], and
+//! [`super::command_approval::approve_hooks`] all do this — so the construction
+//! sites just have to root `ctx.repo` at the anchor worktree. Two hooks resolve
+//! the config from a snapshot instead, because the anchor isn't on disk at
+//! preparation time: see "Snapshot paths" below.
+//!
+//! Each worktree's `.config/wt.toml` stands alone — there is no fallback to
+//! the primary worktree's config when the anchor has none, and a
+//! present-but-malformed config aborts the operation rather than silently
+//! using a different one.
+//!
+//! | Hook | Anchor worktree | Set in |
+//! |---|---|---|
+//! | `pre-remove`, `post-remove` | the worktree being removed (`pre-remove` reads it on disk; `post-remove` reads a snapshot taken before removal, stashed on [`super::worktree::RemoveResult::RemovedWorktree::removed_project_config`]) | `output::handlers::execute_pre_remove_hooks_if_needed` and `output::handlers::spawn_hooks_after_remove`; the three approval call sites (`main.rs`'s `approve_remove` for `wt remove`, `merge::collect_merge_commands` for `wt merge`, `step::prune::approve_prune_hooks` for `wt step prune`) all delegate to [`super::project_config::collect_remove_hook_commands`] |
+//! | `post-merge` | the merge destination (target branch's worktree if it has one, otherwise the primary) | `worktree::finish::finish_after_merge`; approval in `merge::collect_merge_commands` |
+//! | `post-switch` after a removal | the post-removal working directory the user lands in ([`super::worktree::RemoveResult::destination_path`]) — usually the primary worktree, cwd when the primary worktree is itself removed (bare repo), the merge destination for `wt merge` | `output::handlers::spawn_hooks_after_remove`; approval through `collect_remove_hook_commands` |
+//! | `pre-commit` / `post-commit` | the worktree being committed — the cwd worktree, or `<b>`'s worktree for `wt step commit --branch <b>` | `commands::commit`, `step::commit` (via `CommandEnv::for_branch`) |
+//! | `wt switch`'s `pre-start` / `post-start` / `post-switch` | the new (`--create`) or destination (`wt switch <existing>`) worktree | `worktree::switch` — `hook_repo_for_worktree` (execution); `switch_hook_project_config` (approval / pre-flight, see Snapshot paths below) |
+//! | `pre-switch`, `pre-merge`, `wt hook <type>`, aliases | the worktree `wt` was invoked in | the respective command entry points |
+//!
+//! ## Snapshot paths
+//!
+//! Two hooks need the anchor's config when the anchor itself isn't on disk:
+//!
+//! - **`post-remove`** runs after the anchor worktree was just deleted. The
+//!   removed worktree's `ProjectConfig` is loaded by `prepare_worktree_removal`
+//!   (or `finish_after_merge` for `wt merge`) *before* the deletion and stashed
+//!   on `RemoveResult::RemovedWorktree::removed_project_config`. The executor
+//!   reads it via [`HookAnnouncer::register_with_project_config`].
+//! - **`wt switch --create`'s post-switch hooks** (approval-time only) anchor at
+//!   a worktree that doesn't exist yet — `git worktree add` runs after the
+//!   approval gate. The approval prompt and template pre-flight read the base
+//!   ref's committed `.config/wt.toml` via `git show` (`git fetch`ing a
+//!   `pr:`/`mr:` fork head first), assembled by `switch_hook_project_config` and
+//!   passed to [`super::command_approval::approve_or_skip_with_config`]. By
+//!   execution time the worktree exists and the executor reads its on-disk
+//!   config the normal way.
+//!
+//! Different physical sources, same role: produce the anchor's config when the
+//! anchor isn't on disk.
+//!
+//! `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path regardless of the root
+//! (test isolation). User config (`~/.config/worktrunk/config.toml`) is global
+//! and unaffected. Every hook is approved against the same `.config/wt.toml`
+//! it executes against. The one exception is `wt step prune`, which calls
+//! [`super::project_config::collect_remove_hook_commands`] over every linked
+//! worktree it might prune (the integrated set isn't known until the checks
+//! run), a superset of what executes.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -222,7 +278,13 @@ impl<'a> HookAnnouncer<'a> {
         }
     }
 
-    /// Prepare and add user+project pipelines for a single hook type.
+    /// Prepare and add user+project pipelines for a single hook type, reading
+    /// the project config from `ctx.repo.load_project_config()` — the worktree
+    /// this hook acts on, per the spec. Use [`Self::register_with_project_config`]
+    /// when the anchor worktree isn't on disk and the config came from a
+    /// snapshot or git ref (`post-remove` after the worktree is gone; `wt
+    /// switch`'s post-switch hooks before `--create` materializes the new
+    /// worktree).
     pub fn register(
         &mut self,
         ctx: &CommandContext<'_>,
@@ -230,7 +292,28 @@ impl<'a> HookAnnouncer<'a> {
         extra_vars: &[(&str, &str)],
         display_path: Option<&Path>,
     ) -> anyhow::Result<()> {
-        let pipelines = prepare_background_pipelines(ctx, hook_type, extra_vars, display_path)?;
+        let project_config = ctx.repo.load_project_config()?;
+        self.register_with_project_config(
+            ctx,
+            project_config.as_ref(),
+            hook_type,
+            extra_vars,
+            display_path,
+        )
+    }
+
+    /// Like [`Self::register`], but reads the project config from an explicit
+    /// snapshot instead of `ctx.repo.load_project_config()`.
+    pub fn register_with_project_config(
+        &mut self,
+        ctx: &CommandContext<'_>,
+        project_config: Option<&worktrunk::config::ProjectConfig>,
+        hook_type: HookType,
+        extra_vars: &[(&str, &str)],
+        display_path: Option<&Path>,
+    ) -> anyhow::Result<()> {
+        let pipelines =
+            prepare_background_pipelines(ctx, project_config, hook_type, extra_vars, display_path)?;
         self.extend(pipelines);
         Ok(())
     }
@@ -395,16 +478,24 @@ pub(crate) fn into_source_groups(flat: Vec<SourcedStep>) -> Vec<Vec<SourcedStep>
 /// Looks up user/project configs, prepares + name-checks steps, and groups
 /// them by source so each source spawns as an independent pipeline. Each
 /// group is returned with its `(hook_type, display_path)` metadata.
+///
+/// `project_config` is the resolved `.config/wt.toml` for this hook's anchor
+/// worktree — normally `ctx.repo.load_project_config()` (what
+/// [`HookAnnouncer::register`] passes), or a snapshot / git-ref-derived config
+/// when the anchor isn't on disk at preparation time: `post-remove` (worktree
+/// just removed; config snapshotted on [`super::worktree::RemoveResult::RemovedWorktree`])
+/// and `wt switch`'s post-switch hooks before `--create` materializes the new
+/// worktree (config from the base ref via `git show`). See the module-level
+/// "Which `.config/wt.toml` a hook reads" docs.
 pub(crate) fn prepare_background_pipelines<'c>(
     ctx: &CommandContext<'c>,
+    project_config: Option<&worktrunk::config::ProjectConfig>,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
     display_path: Option<&Path>,
 ) -> anyhow::Result<Vec<BackgroundPipeline<'c>>> {
-    let project_config = ctx.repo.load_project_config()?;
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
-    let (user_config, proj_config) =
-        lookup_hook_configs(&user_hooks, project_config.as_ref(), hook_type);
+    let (user_config, proj_config) = lookup_hook_configs(&user_hooks, project_config, hook_type);
     let flat = prepare_and_check(
         ctx,
         HookCommandSpec {
@@ -729,6 +820,10 @@ pub(crate) fn lookup_hook_configs<'a>(
 /// `--no-hooks` reminder. This is the canonical operation-driven entry point;
 /// the only path that should bypass it is `wt hook <type>` (which calls
 /// [`run_hooks_foreground`] directly so failures don't carry the hint).
+///
+/// Project config comes from `ctx.repo.load_project_config()` — see the
+/// module-level "Which `.config/wt.toml` a hook reads" docs for which worktree
+/// `ctx.repo` is rooted at per hook type.
 pub(crate) fn execute_hook(
     ctx: &CommandContext,
     hook_type: HookType,

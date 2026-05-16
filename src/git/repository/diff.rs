@@ -14,7 +14,7 @@ impl Repository {
         let _guard = super::super::HEAVY_OPS_SEMAPHORE.acquire();
 
         let range = format!("{}..{}", base, head);
-        let stdout = self.run_command(&["rev-list", "--count", &range])?;
+        let stdout = self.run_command(&["rev-list", "--count", "--end-of-options", &range])?;
 
         stdout
             .trim()
@@ -29,7 +29,8 @@ impl Repository {
     /// is renamed in one branch but has uncommitted changes under the old name).
     pub fn changed_files(&self, base: &str, head: &str) -> anyhow::Result<Vec<String>> {
         let range = format!("{}..{}", base, head);
-        let stdout = self.run_command(&["diff", "--name-status", "-z", &range])?;
+        let stdout =
+            self.run_command(&["diff", "--name-status", "-z", "--end-of-options", &range])?;
 
         // Format: STATUS\0PATH\0 or STATUS\0NEW_PATH\0OLD_PATH\0 for renames/copies
         let mut files = Vec::new();
@@ -113,7 +114,13 @@ impl Repository {
 
     /// Get commit subjects (first line of commit message) from a range.
     pub fn commit_subjects(&self, range: &str) -> anyhow::Result<Vec<String>> {
-        let output = self.run_command(&["log", "--no-show-signature", "--format=%s", range])?;
+        let output = self.run_command(&[
+            "log",
+            "--no-show-signature",
+            "--format=%s",
+            "--end-of-options",
+            range,
+        ])?;
         Ok(output.lines().map(String::from).collect())
     }
 
@@ -137,6 +144,7 @@ impl Repository {
             "--no-merges",
         ];
         if let Some(ref_name) = start_ref {
+            args.push("--end-of-options");
             args.push(ref_name);
         }
         self.run_command(&args).ok().and_then(|output| {
@@ -202,18 +210,25 @@ impl Repository {
 
     /// SHA-keyed ahead/behind counts.
     ///
-    /// Inputs are commit SHAs. Uncached — counts are typically primed in
-    /// bulk by [`crate::git::RefSnapshot`]'s ahead/behind batch; this is
-    /// the per-pair fallback for snapshot misses or callers that already
-    /// hold SHAs. Returns `(ahead, behind)` where ahead is commits in
-    /// head not in base; orphan branches (no common ancestor) yield
-    /// `(0, 0)` — caller should distinguish via [`Self::merge_base_by_sha`].
+    /// Inputs are commit SHAs. Backed by the persistent SHA-keyed cache
+    /// (`ahead-behind/{base_sha}-{head_sha}.json`) — content-addressed, so
+    /// the entry is never stale. `wt list` populates this per branch (and
+    /// in bulk from a `for-each-ref %(ahead-behind)` batch when most
+    /// entries are cold); subsequent runs are pure cache reads. Returns
+    /// `(ahead, behind)` where ahead is commits in head not in base;
+    /// orphan branches (no common ancestor) yield `(0, 0)` — caller should
+    /// distinguish via [`Self::merge_base_by_sha`].
     pub fn ahead_behind_by_sha(
         &self,
         base_sha: &str,
         head_sha: &str,
     ) -> anyhow::Result<(usize, usize)> {
-        self.compute_ahead_behind(base_sha, head_sha)
+        if let Some(cached) = super::sha_cache::ahead_behind(self, base_sha, head_sha) {
+            return Ok(cached);
+        }
+        let result = self.compute_ahead_behind(base_sha, head_sha)?;
+        super::sha_cache::put_ahead_behind(self, base_sha, head_sha, result);
+        Ok(result)
     }
 
     fn compute_ahead_behind(&self, base: &str, head: &str) -> anyhow::Result<(usize, usize)> {

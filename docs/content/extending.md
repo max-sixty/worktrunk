@@ -117,6 +117,17 @@ Every step sees the same `{{ args }}` and bound variables — `wt release -- --d
 
 `wt` commands that change the parent shell's directory — `wt switch`, `wt merge` (leaving the removed source), `wt remove` of the current worktree — still do so when invoked from an alias; the Worktrunk shell integration propagates the change through. Other shell state doesn't persist: the alias runs in a subshell, so `cd`, `export`, and similar commands only affect that subshell.
 
+### Deferring expansion to a nested `wt` command
+
+Alias templates render once at dispatch, using the alias-invocation worktree's context. A nested `wt` command in the alias body — for example `wt switch --execute '…'` — therefore receives already-rendered text, so a variable like `{{ worktree_path }}` inside the inner command's template resolves to the *outer* worktree rather than the one `wt switch` is targeting. Wrap the inner template in `{% raw %}…{% endraw %}` so it passes through unrendered and the inner `wt` command expands it in its own context:
+
+```toml
+[aliases]
+echo-target = "wt switch {{ args }} --no-cd --execute 'echo {% raw %}{{ worktree_path }}{% endraw %}'"
+```
+
+`wt echo-target other` now prints the path of the `other` worktree, not the worktree the alias was invoked from.
+
 ### Recipe: rebase every worktree onto its upstream
 
 ```toml

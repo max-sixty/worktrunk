@@ -295,6 +295,44 @@ const DEFAULT_ISOLATED_APPROVALS: &str = "/nonexistent/wt/approvals.toml";
 /// file doesn't actually exist on test/CI machines.
 const DEFAULT_ISOLATED_SYSTEM_CONFIG: &str = "/etc/xdg/worktrunk/config.toml";
 
+/// `cargo llvm-cov` / `cargo affected` coverage env vars that propagate
+/// verbatim from parent to test subprocesses. `LLVM_PROFILE_FILE` is *not*
+/// in this list — it's resolved by [`default_llvm_profile_file`] so an
+/// instrumented child writing to its cwd is impossible even when nothing's
+/// inherited. Mirrored at the PTY call sites in `tests/common/`.
+pub const COVERAGE_ENV_VARS: &[&str] = &["CARGO_LLVM_COV", "CARGO_LLVM_COV_TARGET_DIR"];
+
+/// Resolve the `LLVM_PROFILE_FILE` value to set on test subprocesses.
+///
+/// Returns the inherited value when the parent is running under
+/// `cargo llvm-cov` (so coverage data lands where the runner expects). When
+/// nothing is inherited, returns a per-binary, per-pid path under the system
+/// temp dir so an instrumented child (e.g. a stale `mock-stub` left
+/// instrumented by an earlier coverage build) can't fall back to writing
+/// `default_<hash>_<pid>.profraw` into the subprocess's cwd. That cwd is the
+/// test worktree for any `wt list` snapshot that spawns a mock, and a stray
+/// profraw there flips `wt list` to "1 with changes" and flakes the snapshot.
+///
+/// The `%m` and `%p` placeholders are expanded by the LLVM runtime in the
+/// instrumented child; uninstrumented children ignore the env var entirely.
+pub fn default_llvm_profile_file() -> std::ffi::OsString {
+    default_llvm_profile_file_with(std::env::var_os("LLVM_PROFILE_FILE"))
+}
+
+/// Inner form of [`default_llvm_profile_file`] that takes the inherited value
+/// as a parameter instead of reading [`std::env::var_os`]. CI always runs
+/// under `cargo llvm-cov`, so the production caller always takes the
+/// inherited branch — this split lets a unit test exercise the fallback
+/// without mutating process env (which races with parallel tests).
+fn default_llvm_profile_file_with(inherited: Option<std::ffi::OsString>) -> std::ffi::OsString {
+    if let Some(inherited) = inherited {
+        return inherited;
+    }
+    let dir = std::env::temp_dir().join("wt-test-profraw");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("cov-%m_%p.profraw").into_os_string()
+}
+
 /// Prepare a subprocess to run with a clean wt environment.
 ///
 /// Strips every `GIT_*` and `WORKTRUNK_*` from the parent env, plus
@@ -304,6 +342,13 @@ const DEFAULT_ISOLATED_SYSTEM_CONFIG: &str = "/etc/xdg/worktrunk/config.toml";
 /// - `WORKTRUNK_CONFIG_PATH` ← `user_config` (or [`DEFAULT_ISOLATED_USER_CONFIG`])
 /// - `WORKTRUNK_SYSTEM_CONFIG_PATH` ← real XDG location (typically nonexistent on CI)
 /// - `WORKTRUNK_APPROVALS_PATH` ← nonexistent file
+///
+/// Also sets `LLVM_PROFILE_FILE` via [`default_llvm_profile_file`] and
+/// re-applies [`COVERAGE_ENV_VARS`] from the parent so an instrumented child
+/// writes its `.profraw` to the path `cargo llvm-cov` chose (or to a temp-dir
+/// fallback when nothing's inherited), not to a `default_*.profraw` in the
+/// child's cwd. The re-apply is defensive: a caller that did `env_clear()`
+/// before us would otherwise drop the inherited values.
 ///
 /// Shared by [`configure_cli_command`] (test-side, layers on test
 /// determinism: forced colors, fixed timestamps, log level, etc.) and
@@ -345,6 +390,17 @@ where
         DEFAULT_ISOLATED_SYSTEM_CONFIG,
     );
     cmd.env("WORKTRUNK_APPROVALS_PATH", DEFAULT_ISOLATED_APPROVALS);
+
+    // Always set LLVM_PROFILE_FILE — to the inherited value under coverage,
+    // or to a temp-dir default otherwise — so an instrumented child never
+    // falls back to writing `default_*.profraw` into its cwd. See
+    // [`default_llvm_profile_file`] for the rationale.
+    cmd.env("LLVM_PROFILE_FILE", default_llvm_profile_file());
+    for key in COVERAGE_ENV_VARS {
+        if let Ok(val) = std::env::var(key) {
+            cmd.env(key, val);
+        }
+    }
 }
 
 /// `env_remove` the [`INHERITED_GIT_PATH_VARS`] from `cmd`. Call this on
@@ -361,16 +417,37 @@ pub fn scrub_git_path_vars(cmd: &mut Command) {
     }
 }
 
+/// A process-scoped empty directory used as the default `current_dir` for
+/// [`wt_command`]. Created lazily on first use and kept alive for the rest of
+/// the test process; the OS reaps it from the temp dir afterwards (statics
+/// aren't dropped at process exit, so `TempDir::drop` doesn't run).
+///
+/// The dir is guaranteed to be outside any git repository and to have no
+/// `.config/wt.toml`, so `wt` invocations spawned through [`wt_command`] don't
+/// pick up the test process's inherited CWD (which is typically the worktrunk
+/// repo root, with its own `.config/wt.toml` and git history).
+fn isolated_test_cwd() -> &'static Path {
+    static ISOLATED_CWD: std::sync::LazyLock<TempDir> =
+        std::sync::LazyLock::new(|| TempDir::new().expect("create isolated test cwd"));
+    ISOLATED_CWD.path()
+}
+
 /// Create a `wt` CLI command with standardized test environment settings.
 ///
 /// The command has the following guarantees:
 /// - All host `GIT_*` and `WORKTRUNK_*` variables are cleared
 /// - Color output is forced (`CLICOLOR_FORCE=1`) so ANSI styling appears in snapshots
 /// - Terminal width set to 150 columns (`COLUMNS=150`)
+/// - `current_dir` defaults to a process-scoped empty tempdir (not a git repo,
+///   no project config), so `wt` doesn't pick up worktrunk's own
+///   `.config/wt.toml` or detect a git repo from the test process's inherited
+///   CWD. Tests that need a specific CWD must override via
+///   `cmd.current_dir(...)`; `repo.wt_command()` does so automatically.
 #[must_use]
 pub fn wt_command() -> Command {
     let mut cmd = Command::new(wt_bin());
     configure_cli_command(&mut cmd);
+    cmd.current_dir(isolated_test_cwd());
     cmd
 }
 
@@ -476,18 +553,8 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // Not in STATIC_TEST_ENV_VARS because PTY tests need a TERM with valid terminfo.
     cmd.env("TERM", "alacritty");
 
-    // Pass through LLVM coverage profiling environment for subprocess coverage collection.
-    // When running under cargo-llvm-cov, spawned binaries need LLVM_PROFILE_FILE to record
-    // their coverage data. Without this, integration test coverage isn't captured.
-    for key in [
-        "LLVM_PROFILE_FILE",
-        "CARGO_LLVM_COV",
-        "CARGO_LLVM_COV_TARGET_DIR",
-    ] {
-        if let Ok(val) = std::env::var(key) {
-            cmd.env(key, val);
-        }
-    }
+    // LLVM coverage env propagation lives in `isolate_subprocess_env` so bench
+    // callers get the same defense; nothing extra needed here.
 }
 
 /// Configure a git command with isolated environment for testing.
@@ -1651,6 +1718,21 @@ impl TestRepo {
         self.mock_bin_path = Some(mock_bin);
     }
 
+    /// Add a mock `tea` (installed, no login) to the existing mock bin.
+    ///
+    /// Call this after `setup_mock_ci_tools_unauthenticated()` to make
+    /// `wt config show --full` against a Gitea remote deterministic — the
+    /// Gitea diagnostics row only depends on `tea`'s state.
+    pub fn setup_mock_tea_installed(&mut self) {
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+        MockConfig::new("tea")
+            .version("tea version development (mock)")
+            .write(mock_bin);
+    }
+
     /// Setup mock `claude` CLI as installed
     ///
     /// Call this after setup_mock_ci_tools_unauthenticated() to simulate
@@ -1980,6 +2062,206 @@ impl TestRepo {
         MockConfig::new("gh")
             .command("_default", MockResponse::exit(1))
             .write(&mock_bin);
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Setup mock `az` that returns configurable PR/pipeline data for Azure DevOps.
+    ///
+    /// Use this for testing Azure DevOps CI status parsing. The mock handles:
+    /// - `az repos pr list` → returns `pr_list_json` (array of PR entries)
+    /// - `az pipelines runs list` → returns `runs_json` (array of pipeline runs)
+    ///
+    /// `az repos pr list` is queried per branch (with `--source-branch`), so the
+    /// same `pr_list_json` is returned for every branch — mirroring how the
+    /// `glab mr list` mock behaves.
+    ///
+    /// # Arguments
+    /// * `pr_list_json` - JSON for `az repos pr list --output json`. Each entry
+    ///   should include `pullRequestId`, optionally `mergeStatus`,
+    ///   `lastMergeSourceCommit.commitId`, and `repository.{name,project.name}`.
+    /// * `runs_json` - JSON for `az pipelines runs list --output json`. Each entry
+    ///   should include `id`, optionally `status`, `result`, and `sourceVersion`.
+    pub fn setup_mock_az_with_ci_data(&mut self, pr_list_json: &str, runs_json: &str) {
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        std::fs::write(mock_bin.join("az_pr_list.json"), pr_list_json).unwrap();
+        std::fs::write(mock_bin.join("az_runs.json"), runs_json).unwrap();
+
+        MockConfig::new("az")
+            .version("azure-cli 2.60.0 (mock)")
+            .command("account", MockResponse::exit(0))
+            .command("repos pr list", MockResponse::file("az_pr_list.json"))
+            .command("pipelines runs list", MockResponse::file("az_runs.json"))
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        // gh/glab mocks fail — platform detection is URL-based, but keep these
+        // present-but-useless so a real gh/glab on PATH can't interfere.
+        MockConfig::new("gh")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+        MockConfig::new("glab")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Setup mock `az` where `az repos pr list` and/or `az pipelines runs list`
+    /// fail with the given stderr (exit code 1).
+    ///
+    /// Used to exercise the `is_retriable_error` branches in `detect_azure_pr`
+    /// and `detect_azure_pipeline`. A `None` argument makes that command return
+    /// an empty JSON array instead of failing.
+    pub fn setup_mock_az_with_detection_errors(
+        &mut self,
+        pr_list_stderr: Option<&str>,
+        runs_stderr: Option<&str>,
+    ) {
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        let pr_list_response = match pr_list_stderr {
+            Some(stderr) => MockResponse::stderr(stderr).with_exit_code(1),
+            None => MockResponse::output("[]"),
+        };
+        let runs_response = match runs_stderr {
+            Some(stderr) => MockResponse::stderr(stderr).with_exit_code(1),
+            None => MockResponse::output("[]"),
+        };
+
+        MockConfig::new("az")
+            .version("azure-cli 2.60.0 (mock)")
+            .command("account", MockResponse::exit(0))
+            .command("repos pr list", pr_list_response)
+            .command("pipelines runs list", runs_response)
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        MockConfig::new("gh")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+        MockConfig::new("glab")
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Setup mock `tea` that returns configurable Gitea PR / commit-status data.
+    ///
+    /// Use this for testing Gitea CI status parsing. The mock handles:
+    /// - `tea api repos/{owner}/{repo}/pulls?state=open` → `pulls_json`
+    /// - `tea api repos/{owner}/{repo}/commits/{head_sha}/status` → `status_json`
+    ///
+    /// `owner`/`repo_name`/`head_sha` are needed because mock-stub matches the
+    /// invocation's leading arguments verbatim, and `tea api <path>` passes the
+    /// whole API path as a single argument — so the exact path string must be
+    /// registered.
+    ///
+    /// # Arguments
+    /// * `owner`, `repo_name` - the Gitea repo the test's remote points at.
+    /// * `head_sha` - the SHA used for the `commits/{sha}/status` lookup
+    ///   (the feature branch's HEAD; also the PR head SHA in `pulls_json`).
+    /// * `pulls_json` - JSON array for `tea api .../pulls`. Each entry should
+    ///   include `mergeable`, `html_url`, and `head.{ref,sha,repo.owner.login}`.
+    /// * `status_json` - JSON object for `tea api .../commits/{sha}/status`,
+    ///   with `state` and `total_count`.
+    pub fn setup_mock_tea_with_ci_data(
+        &mut self,
+        owner: &str,
+        repo_name: &str,
+        head_sha: &str,
+        pulls_json: &str,
+        status_json: &str,
+    ) {
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        std::fs::write(mock_bin.join("tea_pulls.json"), pulls_json).unwrap();
+        std::fs::write(mock_bin.join("tea_status.json"), status_json).unwrap();
+
+        // Keep `&limit=20` in sync with `MAX_PRS_TO_FETCH` in
+        // `src/commands/list/ci_status/mod.rs`.
+        let pulls_path = format!("api repos/{owner}/{repo_name}/pulls?state=open&limit=20");
+        let status_path = format!("api repos/{owner}/{repo_name}/commits/{head_sha}/status");
+
+        MockConfig::new("tea")
+            .version("tea version development (mock)")
+            .command(&pulls_path, MockResponse::file("tea_pulls.json"))
+            .command(&status_path, MockResponse::file("tea_status.json"))
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        // Other CI tools fail — platform detection is URL-based, but keep these
+        // present-but-useless so a real tool on PATH can't interfere.
+        for tool in ["gh", "glab", "az"] {
+            MockConfig::new(tool)
+                .command("_default", MockResponse::exit(1))
+                .write(&mock_bin);
+        }
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Setup mock `tea` where every `tea api` call fails with the given stderr
+    /// (exit code 1).
+    ///
+    /// Used to exercise the `is_retriable_error` branch in `detect_gitea_pr`.
+    pub fn setup_mock_tea_with_detection_error(&mut self, stderr: &str) {
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        MockConfig::new("tea")
+            .version("tea version development (mock)")
+            .command("api", MockResponse::stderr(stderr).with_exit_code(1))
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        for tool in ["gh", "glab", "az"] {
+            MockConfig::new(tool)
+                .command("_default", MockResponse::exit(1))
+                .write(&mock_bin);
+        }
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Setup mock `tea` for the Gitea commit-status fallback (no PR): the
+    /// `pulls` list returns `[]`, and the `commits/{head_sha}/status` lookup
+    /// fails with `stderr` (exit code 1). Assumes the repo's remote points at
+    /// `owner/test-repo`.
+    ///
+    /// Used to exercise the `is_retriable_error` branch in
+    /// `fetch_combined_status`.
+    pub fn setup_mock_tea_commit_status_error(&mut self, head_sha: &str, stderr: &str) {
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        std::fs::write(mock_bin.join("tea_pulls.json"), "[]").unwrap();
+
+        MockConfig::new("tea")
+            .version("tea version development (mock)")
+            .command(
+                // Keep `&limit=20` in sync with `MAX_PRS_TO_FETCH` in
+                // `src/commands/list/ci_status/mod.rs`.
+                "api repos/owner/test-repo/pulls?state=open&limit=20",
+                MockResponse::file("tea_pulls.json"),
+            )
+            .command(
+                &format!("api repos/owner/test-repo/commits/{head_sha}/status"),
+                MockResponse::stderr(stderr).with_exit_code(1),
+            )
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+
+        for tool in ["gh", "glab", "az"] {
+            MockConfig::new(tool)
+                .command("_default", MockResponse::exit(1))
+                .write(&mock_bin);
+        }
 
         self.mock_bin_path = Some(mock_bin);
     }
@@ -2696,5 +2978,30 @@ mod tests {
             removed.get("WORKTRUNK_APPROVALS_PATH"),
             Some(&Some(DEFAULT_ISOLATED_APPROVALS.to_string()))
         );
+    }
+
+    #[test]
+    fn default_llvm_profile_file_with_inherited_value_returns_it_verbatim() {
+        let inherited = std::ffi::OsString::from("/cov/expected-%p.profraw");
+        let resolved = default_llvm_profile_file_with(Some(inherited.clone()));
+        assert_eq!(resolved, inherited);
+    }
+
+    #[test]
+    fn default_llvm_profile_file_falls_back_to_temp_dir_when_uninherited() {
+        let resolved = default_llvm_profile_file_with(None);
+        let expected_dir = std::env::temp_dir().join("wt-test-profraw");
+        // The returned path is `<temp>/wt-test-profraw/cov-%m_%p.profraw`. We
+        // assert the parent dir lives under temp and the file name carries the
+        // LLVM templating placeholders — the runtime expands those in the
+        // instrumented child, so the literal `%m_%p` in this string is correct.
+        let resolved_path = std::path::PathBuf::from(&resolved);
+        assert_eq!(resolved_path.parent(), Some(expected_dir.as_path()));
+        assert_eq!(
+            resolved_path.file_name().and_then(|n| n.to_str()),
+            Some("cov-%m_%p.profraw"),
+        );
+        // The fallback creates the dir if absent.
+        assert!(expected_dir.is_dir());
     }
 }

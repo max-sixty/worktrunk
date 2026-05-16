@@ -92,18 +92,18 @@ use std::time::{Duration, Instant};
 
 use crate::shell_exec::Cmd;
 
+use color_print::cformat;
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 use wait_timeout::ChildExt;
 
 use anyhow::{Context, bail};
-
 use dunce::canonicalize;
 
 use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
-use super::{CommandError, DefaultBranchName, GitError, LineDiff, WorktreeInfo};
+use super::{CiPlatform, CommandError, DefaultBranchName, GitError, LineDiff, WorktreeInfo};
 
 // Re-export types needed by submodules
 pub(super) use super::{
@@ -126,8 +126,8 @@ mod worktrees;
 pub use branch::Branch;
 pub use integration::IntegrationTargets;
 pub use ref_snapshot::RefSnapshot;
-pub use working_tree::WorkingTree;
 pub(super) use working_tree::path_to_logging_context;
+pub use working_tree::{TempIndex, WorkingTree};
 
 /// Structured error from [`Repository::run_command_delayed_stream`].
 ///
@@ -250,6 +250,11 @@ pub(super) struct RepoCache {
     pub(super) project_identifier: OnceCell<String>,
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
+    /// CI platform from project config (`forge.platform` / `ci.platform`).
+    /// `None` when unset or unrecognized; an unrecognized value warns once,
+    /// deduplicating the warning across the many branches `wt list` probes.
+    /// Resolved via [`Repository::ci_platform`].
+    pub(super) configured_ci_platform: OnceCell<Option<CiPlatform>>,
     /// User config (raw, as loaded from disk).
     /// Populated by [`Repository::at`] from the
     /// [`WORKTRUNK_USER_CONFIG_PRELOAD`] preload when prewarm ran; otherwise
@@ -269,6 +274,14 @@ pub(super) struct RepoCache {
     /// Separate from `all_config` because `git remote get-url` applies
     /// `url.insteadOf` rewrites that aren't visible in raw config.
     pub(super) effective_remote_urls: DashMap<String, Option<String>>,
+    /// Per-branch effective push URL: branch_name -> push URL (or None if
+    /// no push remote is configured). One `for-each-ref %(push:remotename)`
+    /// per branch, then `effective_remote_url` for the resolved remote name.
+    /// `wt list`'s CI-status detection calls `push_remote_url` from both the
+    /// PR-based path and the branch fallback (via `branch_remote_url`), so
+    /// the same branch is queried twice on the no-PR path — this cache
+    /// collapses that to one subprocess.
+    pub(super) push_remote_urls: DashMap<String, Option<String>>,
 
     /// Local branch inventory: one `git for-each-ref refs/heads/` scan, cached
     /// for the lifetime of the repository. Entries are sorted by most recent
@@ -890,11 +903,16 @@ impl Repository {
         &self.discovery_path
     }
 
-    /// Get a worktree view at the current directory.
+    /// Get a worktree view at this Repository's discovery path.
     ///
-    /// This is the primary way to get a [`WorkingTree`] for worktree-specific operations.
+    /// This is the primary way to get a [`WorkingTree`] for worktree-specific
+    /// operations. For [`Repository::current`] the discovery path is the
+    /// process CWD (or `-C` value), so "current" matches its colloquial
+    /// meaning. For [`Repository::at`], the discovery path is the path passed
+    /// in, and this returns a worktree there rather than at the process CWD —
+    /// see #2625 for the bug class that motivated anchoring this to `self`.
     pub fn current_worktree(&self) -> WorkingTree<'_> {
-        self.worktree_at(base_path().clone())
+        self.worktree_at(self.discovery_path.clone())
     }
 
     /// Get a worktree view at a specific path.
@@ -1272,6 +1290,19 @@ impl Repository {
     /// Executes the git command with this repository's discovery path as the working directory.
     /// For repo-wide operations, any path within the repo works.
     ///
+    /// # Passing refs
+    ///
+    /// A ref that starts with `-` (e.g. a branch literally named `-foo`,
+    /// which `git update-ref refs/heads/-foo HEAD` will write) is parsed as a
+    /// flag. When the ref's value isn't provably safe — a SHA, a
+    /// `refs/heads/{}` wrap, a hardcoded `HEAD` — put `--end-of-options`
+    /// before it, *after* every other flag (everything following becomes
+    /// positional, so `git log` rejects later flags). For `git rev-parse`,
+    /// use `--verify --end-of-options`: plain `--end-of-options` makes
+    /// rev-parse echo the literal marker to stdout ahead of the SHA, and
+    /// `--verify` forces single-revision strict mode — so it can't cover the
+    /// two-ref `rev-parse <a> <b>` form, which stays unguarded.
+    ///
     /// # Examples
     /// ```no_run
     /// use worktrunk::git::Repository;
@@ -1575,11 +1606,11 @@ fn emit_user_config_warnings(warnings: &[LoadError]) {
     for warning in warnings {
         match warning {
             LoadError::File { path, label, err } => {
+                let path_display = crate::path::format_path_for_display(path);
                 crate::styling::eprintln!(
                     "{}",
-                    crate::styling::warning_message(format!(
-                        "{label} at {} failed to parse, skipping",
-                        crate::path::format_path_for_display(path),
+                    crate::styling::warning_message(cformat!(
+                        "{label} @ <bold>{path_display}</> failed to parse, skipping"
                     ))
                 );
                 crate::styling::eprintln!(

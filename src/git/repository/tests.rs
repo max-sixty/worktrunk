@@ -763,3 +763,34 @@ fn worktree_at_path_resolves_symlinked_path() {
     let (_, branch) = resolved.unwrap();
     assert_eq!(branch.as_deref(), Some("feature"));
 }
+
+#[test]
+fn current_worktree_anchors_to_repository_discovery_path() {
+    // `Repository::at(p).current_worktree()` must resolve relative to `p`,
+    // not to the test process's CWD. PR #2625 fixed one symptom of the
+    // opposite behavior (`infer_default_branch_locally` calling
+    // `current_worktree().is_linked()` and reaching for process CWD); the
+    // structural fix anchored `current_worktree` to `self.discovery_path`,
+    // which this test pins down so the bug class can't regress.
+    use super::Repository;
+    use crate::testing::TestRepo;
+    use dunce::canonicalize;
+
+    let test = TestRepo::with_initial_commit();
+    let repo = Repository::at(test.repo.discovery_path().to_path_buf()).unwrap();
+
+    let wt_path = repo.current_worktree().path().to_path_buf();
+    let expected = canonicalize(test.repo.discovery_path()).unwrap();
+    assert_eq!(
+        wt_path, expected,
+        "current_worktree() should resolve to the Repository's discovery path, not the process CWD",
+    );
+    // The bug we're guarding against: `current_worktree()` previously used
+    // the process CWD (`base_path()`), which for unit tests is the cargo
+    // working directory — different from any test repo's tempdir.
+    let process_cwd = canonicalize(std::env::current_dir().unwrap()).unwrap();
+    assert_ne!(
+        wt_path, process_cwd,
+        "current_worktree() must not resolve to the process CWD when Repository::at(p) was given a different path",
+    );
+}

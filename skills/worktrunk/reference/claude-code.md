@@ -5,7 +5,12 @@ Worktrunk ships plugins for Claude Code and Codex. Both bundle:
 1. **Configuration skill** — Documentation the agent can read, so it can help set up LLM commits, hooks, and troubleshoot issues
 2. **Activity tracking** — Status markers in `wt list` showing which worktrees have active agent sessions (🤖 working, 💬 waiting)
 
-The Claude Code plugin additionally routes agent-created isolated worktrees through `wt switch --create` / `wt remove`. Codex does not currently expose equivalent worktree-lifecycle hooks, so Codex users invoke `wt` directly for `--create` / `remove`.
+The Claude Code plugin additionally provides:
+
+3. **Worktree isolation** — Routes agent-created isolated worktrees through `wt switch --create` / `wt remove` instead of raw `git`
+4. **`/wt-switch-create` command** — Creates a worktrunk worktree and moves the current Claude session into it
+
+Codex does not currently expose equivalent worktree-lifecycle hooks, so Codex users invoke `wt switch --create` and `wt remove` directly.
 
 ## Installation
 
@@ -84,6 +89,12 @@ $ git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Di
 Claude Code agents can run in isolated worktrees (`isolation: "worktree"`). By default, Claude Code creates these with `git worktree add`. The plugin's `WorktreeCreate` and `WorktreeRemove` hooks route this through `wt switch --create` and `wt remove` instead, so worktrees created by agents get worktrunk's naming conventions, hooks, and lifecycle management.
 
 Codex does not currently expose equivalent hook events, so Codex users should invoke `wt switch --create` and `wt remove` directly.
+
+## `/wt-switch-create` command (Claude Code only)
+
+`/wt-switch-create <branch> [<repo>] [-- <task>]` starts work in a fresh worktree without leaving the session. It creates (or re-enters) the named worktrunk worktree — sibling layout `<repo>.<branch>/`, not `.claude/worktrees/` — switches the session's working directory into it, then runs the task there. An optional second token names a different repository to create the worktree in; the task is whatever follows `--` (or, with no `--`, whatever follows the branch). The command rides the same `WorktreeCreate` hook as agent isolation, so the worktree gets worktrunk's naming, hooks, and lifecycle.
+
+On session exit the worktree is offered for removal via the `WorktreeRemove` hook; one with uncommitted changes is kept rather than removed.
 
 ## Statusline (Claude Code only)
 

@@ -132,6 +132,7 @@ Controls where new worktrees are created.
 - [2m{{ branch }}[0m — raw branch name (e.g., [2mfeature/auth[0m)
 - [2m{{ branch | sanitize }}[0m — filesystem-safe: [2m/[0m and [2m\[0m become [2m-[0m (e.g., [2mfeature-auth[0m)
 - [2m{{ branch | sanitize_db }}[0m — database-safe: lowercase, underscores, hash suffix (e.g., [2mfeature_auth_x7k[0m)
+- [2m{{ branch | codename(2) }}[0m — deterministic friendly name from a ~1.26M-combo pool (e.g., [2mmalleable-opah[0m)
 
 [1mExamples[0m for repo at [2m~/code/myproject[0m, branch [2mfeature/auth[0m:
 
@@ -142,6 +143,14 @@ Default — sibling directory ([2m~/code/myproject.feature-auth[0m):
 Inside the repository ([2m~/code/myproject/.worktrees/feature-auth[0m):
 
 [107m [0m [2mworktree-path = [0m[2m[32m"{{ repo_path }}/.worktrees/{{ branch | sanitize }}"[0m
+
+Friendly branch-derived names ([2m~/code/myproject.malleable-opah[0m):
+
+[107m [0m [2mworktree-path = [0m[2m[32m"{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}"[0m
+
+Friendly names with branch identity in a parent directory ([2m~/code/worktrees/feature-auth/malleable-opah[0m):
+
+[107m [0m [2mworktree-path = [0m[2m[32m"{{ repo_path }}/../worktrees/{{ branch | sanitize }}/{{ branch | codename(2) }}"[0m
 
 Centralized worktrees directory ([2m~/worktrees/myproject/feature-auth[0m):
 
@@ -384,12 +393,12 @@ URL column in [2mwt list[0m (dimmed when port not listening):
 [107m [0m [2m[36m[list][0m
 [107m [0m [2murl = [0m[2m[32m"http://localhost:{{ branch | hash_port }}"[0m
 
-[1m[32mForge platform override[0m
+[1m[32mForge platform[0m
 
-Override platform detection for SSH aliases or self-hosted instances:
+Name the forge explicitly for SSH aliases or self-hosted instances, where it can't be detected from the remote URL:
 
 [107m [0m [2m[36m[forge][0m
-[107m [0m [2mplatform = [0m[2m[32m"github"[0m[2m  [0m[2m# or "gitlab"[0m
+[107m [0m [2mplatform = [0m[2m[32m"github"[0m[2m  [0m[2m# or "gitlab", "gitea" (experimental), "azure-devops" (experimental)[0m
 [107m [0m [2mhostname = [0m[2m[32m"github.example.com"[0m[2m  [0m[2m# Example: API host (GHE / self-hosted GitLab)[0m
 
 [1m[32mCopy-ignored excludes[0m

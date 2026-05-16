@@ -84,6 +84,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# - `{{ branch }}` — raw branch name (e.g., `feature/auth`)[0m
 [107m [0m [2m# - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)[0m
 [107m [0m [2m# - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)[0m
+[107m [0m [2m# - `{{ branch | codename(2) }}` — deterministic friendly name from a ~1.26M-combo pool (e.g., `malleable-opah`)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# **Examples** for repo at `~/code/myproject`, branch `feature/auth`:[0m
 [107m [0m [2m#[0m
@@ -94,6 +95,14 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# Inside the repository (`~/code/myproject/.worktrees/feature-auth`):[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Friendly branch-derived names (`~/code/myproject.malleable-opah`):[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Friendly names with branch identity in a parent directory (`~/code/worktrees/feature-auth/malleable-opah`):[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# worktree-path = "{{ repo_path }}/../worktrees/{{ branch | sanitize }}/{{ branch | codename(2) }}"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Centralized worktrees directory (`~/worktrees/myproject/feature-auth`):[0m
 [107m [0m [2m#[0m
@@ -345,12 +354,12 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# [list][0m
 [107m [0m [2m# url = "http://localhost:{{ branch | hash_port }}"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# ## Forge platform override[0m
+[107m [0m [2m# ## Forge platform[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Override platform detection for SSH aliases or self-hosted instances:[0m
+[107m [0m [2m# Name the forge explicitly for SSH aliases or self-hosted instances, where it can't be detected from the remote URL:[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [forge][0m
-[107m [0m [2m# platform = "github"  # or "gitlab"[0m
+[107m [0m [2m# platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)[0m
 [107m [0m [2m# hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Copy-ignored excludes[0m

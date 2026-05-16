@@ -7,7 +7,7 @@ weight = 10
 group = "Commands"
 +++
 
-<!-- ⚠️ AUTO-GENERATED from `wt switch --help-page` — edit cli.rs to update -->
+<!-- ⚠️ AUTO-GENERATED from `wt switch --help-page` — edit src/cli/mod.rs to update -->
 
 Switch to a worktree; create if needed.
 
@@ -105,6 +105,10 @@ The `pr:<number>` and `mr:<number>` shortcuts resolve a GitHub PR or GitLab MR t
 Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
 
 **Forks:** The local branch uses the PR/MR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
+
+**Gitea (experimental):** `pr:` is also compatible with Gitea via the `tea` CLI. Set `[forge] platform = "gitea"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Gitea when the remote host contains `gitea` or when `tea login add` has been run for the host.
+
+**Azure DevOps (experimental):** `pr:` is also compatible with Azure DevOps via the `az` CLI (with the `azure-devops` extension). Set `[forge] platform = "azure-devops"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Azure DevOps from `dev.azure.com` and `*.visualstudio.com` remotes.
 
 ## When wt switch fails
 

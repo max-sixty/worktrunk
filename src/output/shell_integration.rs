@@ -212,9 +212,7 @@ fn compute_shell_warning_reason_inner(
 }
 
 /// Print skipped shells (config file not found).
-pub fn print_skipped_shells(
-    skipped: &[(worktrunk::shell::Shell, std::path::PathBuf)],
-) -> anyhow::Result<()> {
+pub fn print_skipped_shells(skipped: &[(worktrunk::shell::Shell, std::path::PathBuf)]) {
     for (shell, path) in skipped {
         let path = format_path_for_display(path);
         eprintln!(
@@ -224,15 +222,20 @@ pub fn print_skipped_shells(
             ))
         );
     }
-    Ok(())
 }
 
-fn shell_extension_label(shell: Shell) -> &'static str {
-    // For bash/zsh, completions are inline in the init script.
-    if matches!(shell, Shell::Bash | Shell::Zsh) {
-        "shell extension & completions"
-    } else {
+/// Per-shell label distinguishing Fish (its completions live in a
+/// separate file under `~/.config/fish/completions/` rendered on its own
+/// line) from every other supported shell, which ships completions
+/// inline with the extension — bash/zsh via the init script, nushell via
+/// the `@complete` attribute on the wrapper, and powershell via
+/// `Register-ArgumentCompleter`. Single source of truth so the label
+/// can't drift across the install/uninstall/preview/config-show paths.
+pub(crate) fn shell_extension_label(shell: Shell) -> &'static str {
+    if matches!(shell, Shell::Fish) {
         "shell extension"
+    } else {
+        "shell extension & completions"
     }
 }
 
@@ -261,9 +264,7 @@ fn print_config_action_result(action: &ConfigAction, message: String) {
 /// - Restart hint for current shell
 ///
 /// Used by both `wt config shell install` and the interactive prompt after `wt switch`.
-pub fn print_shell_install_result(
-    scan_result: &crate::commands::configure_shell::ScanResult,
-) -> anyhow::Result<()> {
+pub fn print_shell_install_result(scan_result: &crate::commands::configure_shell::ScanResult) {
     // Count shells that became (more) configured
     let shells_configured_count = scan_result
         .configured
@@ -329,7 +330,7 @@ pub fn print_shell_install_result(
     }
 
     // Show skipped shells
-    print_skipped_shells(&scan_result.skipped)?;
+    print_skipped_shells(&scan_result.skipped);
 
     // Summary
     if shells_configured_count > 0 {
@@ -379,8 +380,6 @@ pub fn print_shell_install_result(
             eprintln!("{}", hint_message(shell_restart_hint()));
         }
     }
-
-    Ok(())
 }
 
 /// Handle shell integration prompt/hint after switch when shell integration is not active.
@@ -480,7 +479,7 @@ pub fn prompt_shell_integration(
     let install_result = handle_configure_shell(None, true, false, binary_name.to_string())
         .map_err(|e| anyhow::anyhow!("Failed to configure shell integration: {e}"))?;
 
-    print_shell_install_result(&install_result)?;
+    print_shell_install_result(&install_result);
 
     Ok(true)
 }
@@ -531,7 +530,10 @@ pub fn print_shell_uninstall_result(scan_result: &UninstallScanResult, explicit_
         let path = format_path_for_display(path);
         let what = shell_extension_label(*shell);
         if explicit_shell {
-            eprintln!("{}", warning_message(format!("No {what} found in {path}")));
+            eprintln!(
+                "{}",
+                warning_message(cformat!("No {what} found in <bold>{path}</>"))
+            );
         } else {
             eprintln!(
                 "{}",
@@ -552,7 +554,7 @@ pub fn print_shell_uninstall_result(scan_result: &UninstallScanResult, explicit_
         if explicit_shell {
             eprintln!(
                 "{}",
-                warning_message(format!("No completions found in {path}"))
+                warning_message(cformat!("No completions found in <bold>{path}</>"))
             );
         } else {
             eprintln!(

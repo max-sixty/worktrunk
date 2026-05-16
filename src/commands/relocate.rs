@@ -553,6 +553,13 @@ impl<'a> RelocationExecutor<'a> {
     }
 
     /// Main worktree can't use `git worktree move`; must create new + switch.
+    ///
+    /// If `worktree add` fails after the initial checkout, the main worktree
+    /// is left on `default_branch` rather than the original branch — the user
+    /// can recover with `git switch -`. Restoring it here would be best-effort
+    /// (no error surface) and the failure modes for `worktree add` (invalid
+    /// path, branch already checked out elsewhere) are clear enough that the
+    /// user knows what to do.
     fn move_main_worktree(&mut self, idx: usize, default_branch: &str) -> anyhow::Result<()> {
         let candidate = &self.pending[idx];
         let branch = candidate.branch();
@@ -560,28 +567,16 @@ impl<'a> RelocationExecutor<'a> {
         let msg = cformat!("Switching main worktree to <bold>{default_branch}</>...");
         eprintln!("{}", progress_message(msg));
 
-        // Bind the main worktree up front so the rollback path can reuse it
-        // without threading another `?` through a best-effort cleanup.
         let main_wt = self.repo.worktree_at(self.repo.repo_path()?);
 
         main_wt
-            .run_command(&["checkout", default_branch])
+            .run_command(&["checkout", "--end-of-options", default_branch])
             .with_context(|| format!("Failed to checkout default branch '{default_branch}'"))?;
 
-        // Try to create worktree; if it fails, rollback to original branch.
         let dest = candidate.expected_path.to_string_lossy();
-        let add_result = main_wt.run_command(&["worktree", "add", &dest, branch]);
-
-        if let Err(e) = add_result {
-            // Rollback: checkout the original branch to restore user context
-            let rollback_msg = cformat!("Worktree creation failed, restoring <bold>{branch}</>...");
-            eprintln!("{}", warning_message(rollback_msg));
-
-            // Best-effort rollback: log failures but don't mask the original error.
-            let _ = main_wt.run_command(&["checkout", branch]);
-
-            return Err(e).context("Failed to create worktree for main relocation");
-        }
+        main_wt
+            .run_command(&["worktree", "add", "--end-of-options", &dest, branch])
+            .context("Failed to create worktree for main relocation")?;
 
         Ok(())
     }

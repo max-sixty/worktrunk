@@ -7,7 +7,7 @@ weight = 12
 group = "Commands"
 +++
 
-<!-- ⚠️ AUTO-GENERATED from `wt remove --help-page` — edit cli.rs to update -->
+<!-- ⚠️ AUTO-GENERATED from `wt remove --help-page` — edit src/cli/mod.rs to update -->
 
 Remove worktree; delete branch if merged. Defaults to the current worktree.
 
@@ -46,7 +46,7 @@ Worktrunk checks six conditions (in order of cost):
 3. **No added changes** — Three-dot diff (`target...branch`) is empty. Shows `⊂`.
 4. **Trees match** — Branch tree SHA equals target tree SHA. Shows `⊂`.
 5. **Merge adds nothing** — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced with changes to different files. Shows `⊂`.
-6. **Patch-id match** — Branch's entire diff matches a single squash-merge commit on target. Fallback for when the simulated merge conflicts because target later modified the same files the branch touched. Shows `⊂`.
+6. **Patch-id match** — Branch's entire diff matches a single squash-merge commit on target. Fallback for when the simulated merge conflicts because target later modified the same files the branch touched. Shows `⊂`. The default-branch walk is capped so a single check stays fast; a squash merge with hundreds of commits landed since the merge point falls outside the cap and needs `-D` to remove.
 
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
 

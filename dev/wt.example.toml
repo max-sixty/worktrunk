@@ -19,12 +19,12 @@
 # [list]
 # url = "http://localhost:{{ branch | hash_port }}"
 #
-# ## Forge platform override
+# ## Forge platform
 #
-# Override platform detection for SSH aliases or self-hosted instances:
+# Name the forge explicitly for SSH aliases or self-hosted instances, where it can't be detected from the remote URL:
 #
 # [forge]
-# platform = "github"  # or "gitlab"
+# platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)
 # hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 #
 # ## Copy-ignored excludes

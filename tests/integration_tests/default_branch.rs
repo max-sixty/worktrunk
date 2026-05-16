@@ -1,4 +1,4 @@
-use crate::common::{TestRepo, repo, repo_with_remote};
+use crate::common::{BareRepoTest, TestRepo, TestRepoBase, repo, repo_with_remote};
 use rstest::rstest;
 use std::fs;
 use worktrunk::git::{GitRemoteUrl, Repository};
@@ -543,9 +543,12 @@ fn test_find_remote_by_url_insteadof(repo: TestRepo) {
     assert_eq!(found.as_deref(), Some("origin"));
 }
 
-/// Test github_push_url: resolves through insteadOf on push remote.
+/// `push_remote_url`: resolves through `insteadOf` on the push remote.
+///
+/// CI-status detection composes this with a per-platform host check (e.g.
+/// `is_github`) — here we assert the URL resolves and points at GitHub.
 #[rstest]
-fn test_github_push_url_insteadof_fallback(repo: TestRepo) {
+fn test_push_remote_url_insteadof_fallback(repo: TestRepo) {
     setup_insteadof(
         &repo,
         "origin",
@@ -557,26 +560,66 @@ fn test_github_push_url_insteadof_fallback(repo: TestRepo) {
     let git_repo = Repository::at(repo.root_path()).unwrap();
     let url = git_repo
         .branch("main")
-        .github_push_url()
-        .expect("github_push_url should resolve via insteadOf");
+        .push_remote_url()
+        .expect("push_remote_url should resolve via insteadOf");
     let parsed = GitRemoteUrl::parse(&url).unwrap();
     assert!(parsed.is_github());
     assert_eq!(parsed.host(), "github.com");
 }
 
-/// Test github_push_url: returns None for non-GitHub forge (GitLab).
+/// `push_remote_url`: returns a non-GitHub URL untouched. CI-status callers
+/// filter via `GitRemoteUrl::is_github` etc. — the primitive itself is
+/// platform-agnostic.
 #[rstest]
-fn test_github_push_url_non_github_forge_returns_none(repo: TestRepo) {
+fn test_push_remote_url_returns_non_github_url(repo: TestRepo) {
     repo.run_git(&["config", "remote.origin.url", "git@gitlab.com:org/repo.git"]);
     setup_push_tracking(&repo, "main", "origin");
 
     let git_repo = Repository::at(repo.root_path()).unwrap();
-    assert!(git_repo.branch("main").github_push_url().is_none());
+    let url = git_repo
+        .branch("main")
+        .push_remote_url()
+        .expect("push_remote_url resolves the configured remote regardless of host");
+    let parsed = GitRemoteUrl::parse(&url).unwrap();
+    assert!(!parsed.is_github());
+    assert!(parsed.is_gitlab());
 }
 
-/// Test github_push_url: returns None when insteadOf resolves to GitLab (not GitHub).
+/// `push_remote_url`: result is cached on the Repository.
+///
+/// `wt list`'s CI-status detection calls `push_remote_url` from both the
+/// PR-based path and the branch fallback — without caching the underlying
+/// `for-each-ref %(push:remotename)` runs twice for the same branch on the
+/// no-PR path (worktrunk#2672). Mutating the branch's push tracking after
+/// the first call must not change the cached value.
 #[rstest]
-fn test_github_push_url_unknown_host_non_github_insteadof(repo: TestRepo) {
+fn test_push_remote_url_is_cached(repo: TestRepo) {
+    repo.run_git(&["config", "remote.origin.url", "git@github.com:org/repo.git"]);
+    setup_push_tracking(&repo, "main", "origin");
+
+    let git_repo = Repository::at(repo.root_path()).unwrap();
+    let first = git_repo
+        .branch("main")
+        .push_remote_url()
+        .expect("first call resolves to a URL");
+
+    // Remove the push tracking config. A fresh `for-each-ref
+    // %(push:remotename)` would now return empty, so a non-cached
+    // implementation would yield None on the second call.
+    repo.run_git(&["config", "--unset", "branch.main.remote"]);
+    repo.run_git(&["config", "--unset", "branch.main.merge"]);
+
+    let second = git_repo
+        .branch("main")
+        .push_remote_url()
+        .expect("second call returns the cached URL");
+    assert_eq!(first, second);
+}
+
+/// `push_remote_url`: when `insteadOf` resolves to a GitLab URL, returns
+/// that GitLab URL. The primitive isn't host-filtered — callers do that.
+#[rstest]
+fn test_push_remote_url_insteadof_resolves_to_non_github(repo: TestRepo) {
     setup_insteadof(
         &repo,
         "origin",
@@ -586,5 +629,90 @@ fn test_github_push_url_unknown_host_non_github_insteadof(repo: TestRepo) {
     setup_push_tracking(&repo, "main", "origin");
 
     let git_repo = Repository::at(repo.root_path()).unwrap();
-    assert!(git_repo.branch("main").github_push_url().is_none());
+    let url = git_repo
+        .branch("main")
+        .push_remote_url()
+        .expect("push_remote_url resolves through insteadOf regardless of host");
+    let parsed = GitRemoteUrl::parse(&url).unwrap();
+    assert!(parsed.is_gitlab());
+    assert!(!parsed.is_github());
+}
+
+// --- `-C` and discovery-path independence ---
+//
+// `infer_default_branch_locally` previously called `current_worktree().is_linked()`,
+// which probes `base_path()` (the process CWD or `-C` target). When tests
+// constructed `Repository::at(test_path)` from a process CWD that wasn't
+// inside any git repo, `is_linked()` errored on the missing `.git` and
+// propagated, making `default_branch()` return `None` (#2624). Anchoring
+// the probe to `self.discovery_path()` makes the answer depend on the
+// repo we're asking about, not on whatever the process CWD happens to be.
+//
+// `-C` itself doesn't trigger the original bug — it sets `base_path()` to
+// the same path `Repository::current()` adopts as `discovery_path()`, so
+// both probes hit the same directory. These tests still exercise it
+// end-to-end so the binary's behavior under `-C` is locked in alongside
+// the unit-level fix.
+
+/// `wt -C <repo>` from a non-repo CWD resolves the default branch via
+/// local inference (no remote, empty cache).
+#[rstest]
+fn test_default_branch_via_c_flag_from_non_repo_cwd(repo: TestRepo) {
+    // Force the local-inference path. The standard fixture has an origin
+    // remote with origin/HEAD set, so `default_branch()` would short-circuit
+    // through `detect_from_remote` before ever reaching the formerly-buggy
+    // local probe.
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    let non_repo_cwd = tempfile::tempdir().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.current_dir(non_repo_cwd.path()).args([
+        "-C",
+        repo.root_path().to_str().unwrap(),
+        "config",
+        "state",
+        "default-branch",
+    ]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt -C <repo> config state default-branch from non-repo CWD failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "main");
+}
+
+/// `wt -C <linked-worktree-of-bare>` from a non-repo CWD resolves the
+/// default branch correctly. The maintainer's specific concern in #2625
+/// review was: "Presumably if we were in a bare worktree with `-C` in a
+/// linked worktree, the existing code would be wrong?" — this test pins
+/// down the answer (it isn't), so the combination stays covered.
+#[test]
+fn test_default_branch_via_c_flag_to_linked_worktree_of_bare_repo() {
+    let test = BareRepoTest::new();
+    let main_worktree = test.create_worktree("main", "main");
+
+    // Make sure there's a commit so refs resolve cleanly.
+    test.commit_in(&main_worktree, "init");
+
+    let non_repo_cwd = tempfile::tempdir().unwrap();
+    let mut cmd = test.wt_command();
+    cmd.current_dir(non_repo_cwd.path()).args([
+        "-C",
+        main_worktree.to_str().unwrap(),
+        "config",
+        "state",
+        "default-branch",
+    ]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt -C <linked-wt-of-bare> config state default-branch from non-repo CWD failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "main");
 }

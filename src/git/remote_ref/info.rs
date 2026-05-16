@@ -6,12 +6,25 @@ use crate::git::{RefContext, RefType};
 
 /// Platform-specific data for a remote ref.
 ///
-/// Contains fields that differ between GitHub and GitLab.
+/// Contains fields that differ between GitHub, GitLab, and Azure DevOps.
 #[derive(Debug, Clone)]
 pub enum PlatformData {
     /// GitHub-specific data.
     GitHub {
         /// GitHub host (e.g., "github.com", "github.enterprise.com").
+        host: String,
+        /// Owner of the head (source) repository.
+        head_owner: String,
+        /// Name of the head (source) repository.
+        head_repo: String,
+        /// Owner of the base (target) repository.
+        base_owner: String,
+        /// Name of the base (target) repository.
+        base_repo: String,
+    },
+    /// Gitea-specific data.
+    Gitea {
+        /// Gitea host (e.g., "gitea.com", "git.example.com").
         host: String,
         /// Owner of the head (source) repository.
         head_owner: String,
@@ -34,6 +47,17 @@ pub enum PlatformData {
         source_project_id: u64,
         /// Target project ID (used for deferred URL fetching).
         target_project_id: u64,
+    },
+    /// Azure DevOps-specific data.
+    AzureDevOps {
+        /// Azure DevOps host (e.g., "dev.azure.com", "myorg.visualstudio.com").
+        host: String,
+        /// Azure DevOps organization name.
+        organization: String,
+        /// Azure DevOps project name.
+        project: String,
+        /// Repository name.
+        repo_name: String,
     },
 }
 
@@ -103,6 +127,9 @@ impl RefContext for RemoteRefInfo {
                 PlatformData::GitHub { head_owner, .. } => {
                     format!("{}:{}", head_owner, self.source_branch)
                 }
+                PlatformData::Gitea { head_owner, .. } => {
+                    format!("{}:{}", head_owner, self.source_branch)
+                }
                 PlatformData::GitLab { .. } => {
                     // For GitLab, try to extract namespace from fork_push_url
                     if let Some(url) = &self.fork_push_url
@@ -110,6 +137,10 @@ impl RefContext for RemoteRefInfo {
                     {
                         return format!("{}:{}", namespace, self.source_branch);
                     }
+                    self.source_branch.clone()
+                }
+                PlatformData::AzureDevOps { .. } => {
+                    // Azure DevOps fork PRs are uncommon; just show branch name
                     self.source_branch.clone()
                 }
             }
@@ -123,13 +154,13 @@ impl RemoteRefInfo {
     /// Generate a prefixed local branch name for when the unprefixed name conflicts.
     ///
     /// Returns `<owner>/<branch>` (e.g., `contributor/main`).
-    /// Only meaningful for GitHub fork PRs; GitLab doesn't support this pattern.
+    /// Used for GitHub/Gitea fork PRs; GitLab and Azure DevOps don't support this pattern.
     pub fn prefixed_local_branch_name(&self) -> Option<String> {
         match &self.platform_data {
-            PlatformData::GitHub { head_owner, .. } => {
+            PlatformData::GitHub { head_owner, .. } | PlatformData::Gitea { head_owner, .. } => {
                 Some(format!("{}/{}", head_owner, self.source_branch))
             }
-            PlatformData::GitLab { .. } => None,
+            PlatformData::GitLab { .. } | PlatformData::AzureDevOps { .. } => None,
         }
     }
 }
@@ -195,6 +226,30 @@ mod tests {
             },
         };
         assert_eq!(info.source_ref(), "feature-auth");
+    }
+
+    #[test]
+    fn test_source_ref_fork_gitea() {
+        let info = RemoteRefInfo {
+            ref_type: RefType::Pr,
+            number: 42,
+            title: "Add feature".to_string(),
+            author: "contributor".to_string(),
+            state: "open".to_string(),
+            draft: false,
+            source_branch: "feature-fix".to_string(),
+            is_cross_repo: true,
+            url: "https://git.example.com/owner/repo/pulls/42".to_string(),
+            fork_push_url: Some("https://git.example.com/contributor/repo.git".to_string()),
+            platform_data: PlatformData::Gitea {
+                host: "git.example.com".to_string(),
+                head_owner: "contributor".to_string(),
+                head_repo: "repo".to_string(),
+                base_owner: "owner".to_string(),
+                base_repo: "repo".to_string(),
+            },
+        };
+        assert_eq!(info.source_ref(), "contributor:feature-fix");
     }
 
     #[test]
@@ -273,6 +328,33 @@ mod tests {
     }
 
     #[test]
+    fn test_prefixed_local_branch_name_gitea() {
+        let info = RemoteRefInfo {
+            ref_type: RefType::Pr,
+            number: 101,
+            title: "Test".to_string(),
+            author: "contributor".to_string(),
+            state: "open".to_string(),
+            draft: false,
+            source_branch: "main".to_string(),
+            is_cross_repo: true,
+            url: "https://git.example.com/owner/repo/pulls/101".to_string(),
+            fork_push_url: Some("https://git.example.com/contributor/repo.git".to_string()),
+            platform_data: PlatformData::Gitea {
+                host: "git.example.com".to_string(),
+                head_owner: "contributor".to_string(),
+                head_repo: "repo".to_string(),
+                base_owner: "owner".to_string(),
+                base_repo: "repo".to_string(),
+            },
+        };
+        assert_eq!(
+            info.prefixed_local_branch_name(),
+            Some("contributor/main".to_string())
+        );
+    }
+
+    #[test]
     fn test_prefixed_local_branch_name_gitlab() {
         let info = RemoteRefInfo {
             ref_type: RefType::Mr,
@@ -337,6 +419,52 @@ mod tests {
             extract_namespace_from_url("git@gitlab.com:org/team/project/repo.git"),
             Some("org/team/project".to_string())
         );
+    }
+
+    #[test]
+    fn test_source_ref_azure_same_repo() {
+        let info = RemoteRefInfo {
+            ref_type: RefType::Pr,
+            number: 550,
+            title: "Add ACH mandate support".to_string(),
+            author: "crogers".to_string(),
+            state: "active".to_string(),
+            draft: false,
+            source_branch: "crogers/ACHMandate".to_string(),
+            is_cross_repo: false,
+            url: "https://dev.azure.com/myorg/myproject/_git/myrepo/pullrequest/550".to_string(),
+            fork_push_url: None,
+            platform_data: PlatformData::AzureDevOps {
+                host: "dev.azure.com".to_string(),
+                organization: "myorg".to_string(),
+                project: "myproject".to_string(),
+                repo_name: "myrepo".to_string(),
+            },
+        };
+        assert_eq!(info.source_ref(), "crogers/ACHMandate");
+    }
+
+    #[test]
+    fn test_prefixed_local_branch_name_azure() {
+        let info = RemoteRefInfo {
+            ref_type: RefType::Pr,
+            number: 550,
+            title: "Test".to_string(),
+            author: "crogers".to_string(),
+            state: "active".to_string(),
+            draft: false,
+            source_branch: "main".to_string(),
+            is_cross_repo: true,
+            url: "https://dev.azure.com/myorg/myproject/_git/myrepo/pullrequest/550".to_string(),
+            fork_push_url: None,
+            platform_data: PlatformData::AzureDevOps {
+                host: "dev.azure.com".to_string(),
+                organization: "myorg".to_string(),
+                project: "myproject".to_string(),
+                repo_name: "myrepo".to_string(),
+            },
+        };
+        assert_eq!(info.prefixed_local_branch_name(), None);
     }
 
     #[test]

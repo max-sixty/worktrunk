@@ -23,8 +23,8 @@
 //! 1. `current_or_recover` + config resolution.
 //! 2. `PreviewState::new` — auto-detects Right vs Down layout.
 //! 3. Allocates the `PreviewOrchestrator` and kicks off a *speculative*
-//!    `git diff HEAD` for the current worktree on the preview pool. That bg
-//!    work overlaps with everything below.
+//!    `git diff HEAD` for the current worktree on the global rayon pool.
+//!    That bg work overlaps with everything below.
 //! 4. Computes `num_items_estimate` — `list_worktrees` plus (conditionally)
 //!    `local_branches` / `remote_branches`, capped at
 //!    `MAX_VISIBLE_ITEMS`. Only used to size skim's `preview_window`.
@@ -68,6 +68,13 @@
 //! cargo bench --bench time_to_first_output -- switch
 //! ```
 //!
+//! Preview pre-compute workload — spawn → all preview tasks drained,
+//! skim bypassed (criterion, synthetic repo):
+//!
+//! ```bash
+//! cargo bench --bench picker_preview
+//! ```
+//!
 //! Per-phase breakdown on a specific repo (a single trace is usually enough
 //! to spot where time goes; re-run a few times if you want variance):
 //!
@@ -77,27 +84,19 @@
 //! # Open trace.json in Perfetto, or run the phase-duration SQL query
 //! # documented in benches/CLAUDE.md §"What's on the critical path?".
 //! ```
-//!
-//! # TODO(picker-perf): dedupe git calls
-//!
-//! `num_items_estimate` and `collect::collect` each call `list_worktrees`.
-//! Pre-seed collect's OnceCells from the main-thread fetch to save one
-//! `git worktree list` on the bg thread's critical path toward skeleton.
-//! (The branch inventory is already shared via `Repository::cache`, so
-//! calling `local_branches()` / `remote_branches()` from both the main
-//! and bg threads runs the scan at most once.)
 
 mod items;
 mod log_formatter;
 mod pager;
 mod preview;
+pub(crate) mod preview_cache;
 mod preview_orchestrator;
 mod progressive_handler;
 mod summary;
 
 use std::cell::RefCell;
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
@@ -106,29 +105,37 @@ use anyhow::Context;
 // bounded/unbounded/Sender are re-exported by skim::prelude
 use skim::prelude::*;
 use skim::reader::CommandCollector;
+use worktrunk::config::Approvals;
 use worktrunk::git::{Repository, current_or_recover};
+use worktrunk::styling::eprintln;
 
-use super::command_executor::FailureStrategy;
-use super::hooks::{HookAnnouncer, execute_hook};
+use super::hooks::HookAnnouncer;
 use super::list::collect;
 use super::list::progressive::RenderTarget;
+use super::project_config::collect_remove_hook_commands;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::template_vars::TemplateVars;
-use super::worktree::hooks::PostRemoveContext;
 use super::worktree::{
     RemoveResult, SwitchBranchInfo, SwitchResult, approve_switch_hooks, execute_switch,
     offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch, run_pre_switch_hooks,
-    spawn_switch_background_hooks,
+    spawn_switch_background_hooks, switch_hook_project_config, validate_switch_templates,
 };
-use crate::commands::command_executor::CommandContext;
-use crate::output::handle_switch_output;
-use worktrunk::git::{
-    BranchDeletionMode, RemoveOptions, delete_branch_if_safe, remove_worktree_with_cleanup,
-};
+use crate::output::{handle_remove_output, handle_switch_output};
+use worktrunk::git::{BranchDeletionMode, delete_branch_if_safe};
 
 use items::{PreviewCache, WorktreeSkimItem};
 use preview::{PreviewLayout, PreviewMode, PreviewState};
 use preview_orchestrator::PreviewOrchestrator;
+
+/// Drain stashed warnings to stderr. Called after skim has released the
+/// terminal (or in the dry-run path after the bg thread joins) — eprintln
+/// during the picker would corrupt skim's frame, so collect routes warnings
+/// through `PickerProgressHandler::stash_warning` and we emit them here.
+fn drain_stashed_warnings(stash: &Mutex<Vec<String>>) {
+    for line in stash.lock().unwrap().drain(..) {
+        eprintln!("{line}");
+    }
+}
 
 /// Action selected by the user in the picker.
 enum PickerAction {
@@ -155,88 +162,58 @@ struct PickerCollector {
     items: Arc<Mutex<Vec<Arc<dyn SkimItem>>>>,
     signal_path: PathBuf,
     repo: Repository,
+    /// Approvals snapshot, loaded once at picker startup. A queued removal runs
+    /// its `pre-remove` / `post-remove` / `post-switch` hooks only when every
+    /// one is in here — the picker can't show an approval prompt mid-render, so
+    /// unapproved project commands are skipped, never run. See
+    /// [`removal_hooks_approved`].
+    approvals: Arc<Approvals>,
 }
 
 impl PickerCollector {
-    /// Execute removal in background: pre-remove hooks + worktree + branch + post-remove hooks.
+    /// Execute a queued removal in the background.
     ///
-    /// Called from a background thread after the picker optimistically removes the item
-    /// from the list. The entire operation runs off skim's event loop so the TUI stays
-    /// responsive. If pre-remove hooks fail, the removal is aborted (but the item is
-    /// already gone from the picker — a tradeoff until we can show in-progress state).
+    /// A `RemovedWorktree` result goes through [`handle_remove_output`] in its
+    /// silent (TUI) mode — the git worktree removal with no `wt`-generated
+    /// messages, spinner, or `cd` directive (skim owns the terminal). Its
+    /// `pre-remove` / `post-remove` / `post-switch` hooks run only when they're
+    /// already approved ([`removal_hooks_approved`] — a read-only `Approvals`
+    /// check, no prompt): the picker can't prompt mid-render, so unapproved
+    /// project commands are skipped, never run. (A hook that *does* run still
+    /// streams its own output to stderr, like any hook — a rough edge of
+    /// removing inside the picker.) A `BranchOnly` result just deletes the
+    /// branch if it's safe to.
     ///
-    /// `repo` is only used for `BranchOnly` deletion. `RemovedWorktree` constructs
-    /// its own from `main_path` (which may differ from the picker's startup repo in
-    /// bare-repo setups).
-    fn do_removal(repo: &Repository, result: &RemoveResult) -> anyhow::Result<()> {
+    /// Called from a background thread after the picker optimistically removes
+    /// the item from the list, so the whole operation runs off skim's event loop
+    /// and the TUI stays responsive. A removal failure is logged; the item stays
+    /// gone from the picker — a tradeoff until we can show in-progress state.
+    ///
+    /// `repo` is only used for `BranchOnly` deletion; `RemovedWorktree` removal
+    /// is rooted at `main_path` (which may differ from the picker's startup repo
+    /// in bare-repo setups).
+    fn do_removal(
+        repo: &Repository,
+        result: &RemoveResult,
+        approvals: &Approvals,
+    ) -> anyhow::Result<()> {
         match result {
             RemoveResult::RemovedWorktree {
                 main_path,
                 worktree_path,
-                branch_name,
-                deletion_mode,
-                target_branch,
-                force_worktree,
-                removed_commit,
                 ..
             } => {
-                let repo = Repository::at(main_path)?;
-                let config = repo.user_config();
-                let hook_branch = branch_name.as_deref().unwrap_or("HEAD");
-
-                // Run pre-remove hooks (synchronously in this background thread).
-                // Non-zero exit aborts the removal, matching `wt remove` semantics.
-                let target_ref = repo
-                    .worktree_at(main_path)
-                    .branch()
-                    .ok()
-                    .flatten()
-                    .unwrap_or_default();
-                let template_vars = TemplateVars::new()
-                    .with_target(&target_ref)
-                    .with_target_worktree_path(main_path);
-                let pre_ctx =
-                    CommandContext::new(&repo, config, Some(hook_branch), worktree_path, false);
-                execute_hook(
-                    &pre_ctx,
-                    worktrunk::HookType::PreRemove,
-                    &template_vars.as_extra_vars(),
-                    FailureStrategy::FailFast,
-                    None, // no display path in TUI context
-                )?;
-
-                let snapshot = repo.capture_refs()?;
-                let output = remove_worktree_with_cleanup(
-                    &repo,
-                    &snapshot,
-                    worktree_path,
-                    RemoveOptions {
-                        branch: branch_name.clone(),
-                        deletion_mode: *deletion_mode,
-                        target_branch: target_branch.clone(),
-                        force_worktree: *force_worktree,
-                    },
-                )?;
-                if let Some(staged) = output.staged_path {
-                    let _ = std::fs::remove_dir_all(&staged);
-                }
-
-                // Spawn post-remove hooks in background (log to files, no terminal output).
-                let post_ctx =
-                    CommandContext::new(&repo, config, Some(hook_branch), main_path, false);
-                let remove_vars = PostRemoveContext::new(
-                    worktree_path,
-                    removed_commit.as_deref(),
-                    main_path,
-                    &repo,
-                );
-                let extra_vars = remove_vars.extra_vars(hook_branch);
-                let mut announcer = HookAnnouncer::new(&repo, config, false);
-                announcer.register(
-                    &post_ctx,
-                    worktrunk::HookType::PostRemove,
-                    &extra_vars,
-                    None, // no display path in TUI context
+                let main_repo = Repository::at(main_path)?;
+                let verify =
+                    removal_hooks_approved(&main_repo, main_path, worktree_path, approvals)?;
+                let mut announcer = HookAnnouncer::new(&main_repo, main_repo.user_config(), false);
+                handle_remove_output(
+                    result,
+                    /* foreground */ true,
+                    verify,
+                    /* quiet */ true,
+                    /* silent */ true,
+                    &mut announcer,
                 )?;
                 announcer.flush()?;
             }
@@ -335,10 +312,11 @@ impl CommandCollector for PickerCollector {
                         // Defer actual git removal to a background thread so skim's
                         // event loop stays responsive.
                         let repo = self.repo.clone();
+                        let approvals = Arc::clone(&self.approvals);
                         let _ = std::thread::Builder::new()
                             .name(format!("picker-remove-{selected_output}"))
                             .spawn(move || {
-                                if let Err(e) = Self::do_removal(&repo, &result) {
+                                if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
                                     log::warn!(
                                         "picker: failed to remove '{selected_output}': {e:#}"
                                     );
@@ -373,15 +351,46 @@ impl CommandCollector for PickerCollector {
     }
 }
 
+/// Whether every `pre-remove` / `post-remove` / `post-switch` command this
+/// removal would run is already approved — a read-only check, no prompt.
+///
+/// `main_path` is the post-removal destination (where `post-switch` reads its
+/// config, same as the executor); `worktree_path` is the worktree being
+/// removed (where `pre-remove` / `post-remove` read theirs). `wt remove` /
+/// `wt merge` collect the same command set and prompt for it at the gate; the
+/// picker can't prompt mid-render, so it runs the removal's hooks only when
+/// they're already approved (e.g. from a prior `wt remove` / `wt merge`) and
+/// skips them otherwise — unapproved project commands must never run. See
+/// CLAUDE.md → "Project Commands Run Only After Approval".
+fn removal_hooks_approved(
+    main_repo: &Repository,
+    main_path: &Path,
+    worktree_path: &Path,
+    approvals: &Approvals,
+) -> anyhow::Result<bool> {
+    let commands = collect_remove_hook_commands(&[worktree_path], &[main_path])?;
+    if commands.is_empty() {
+        return Ok(true); // nothing to run — `verify` is moot
+    }
+    let project_id = main_repo.project_identifier()?;
+    Ok(commands
+        .iter()
+        .all(|c| approvals.is_command_approved(&project_id, &c.command.template)))
+}
+
 pub fn handle_picker(
     cli_branches: bool,
     cli_remotes: bool,
     change_dir_flag: Option<bool>,
 ) -> anyhow::Result<()> {
-    // Interactive picker requires a terminal for the TUI. The dry-run path
-    // bypasses skim entirely, so no TTY is required — useful for tests and
-    // for diagnosing the pre-compute pipeline from scripts.
-    if std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_none() && !std::io::stdin().is_terminal() {
+    // Interactive picker requires a terminal for the TUI. The dry-run and
+    // preview-bench paths bypass skim entirely, so no TTY is required —
+    // useful for tests, for diagnosing the pre-compute pipeline from scripts,
+    // and for benchmarking the preview workload headlessly.
+    let is_dry_run = std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_some();
+    let is_preview_bench = std::env::var_os("WORKTRUNK_PREVIEW_BENCH").is_some();
+    let skip_tui = is_dry_run || is_preview_bench;
+    if !skip_tui && !std::io::stdin().is_terminal() {
         anyhow::bail!("Interactive picker requires an interactive terminal");
     }
     worktrunk::trace::instant("Picker started");
@@ -407,10 +416,18 @@ pub fn handle_picker(
     // (which runs `prewarm_info` again — now a cache hit).
     let _ = repo.current_worktree().prewarm_info();
 
-    // Preview cache + dedicated pool are created up-front so the speculative
-    // first-item preview can run in parallel with `collect::collect` below.
+    // Preview cache is created up-front so the speculative first-item
+    // preview can run in parallel with `collect::collect` below. Tasks
+    // route to the global rayon pool (shared with the row pipeline).
     // Wrapped in `Arc` because the progressive handler (running on the
     // collect background thread) also calls `spawn_preview`.
+    //
+    // BranchDiff previews resolve the default branch's SHA via
+    // `Repository::default_branch_sha`, which sources it from the
+    // local-branch inventory cached on the shared `RepoCache`. N parallel
+    // preview tasks share one inventory scan instead of each forking
+    // `git rev-parse`. Read-only for the picker session — see the
+    // accessor's docstring for the staleness contract.
     let orchestrator = Arc::new(PreviewOrchestrator::new(repo.clone()));
     let preview_cache: PreviewCache = Arc::clone(&orchestrator.cache);
 
@@ -520,10 +537,15 @@ pub fn handle_picker(
     // Cleaned up in PreviewState::Drop.
     let signal_path = state.path.with_extension("remove");
 
+    // Approvals snapshot for the session — alt-r removals consult it (read-only)
+    // to decide whether their hooks may run; see `removal_hooks_approved`.
+    let approvals = Arc::new(Approvals::load().context("Failed to load approvals")?);
+
     let collector = PickerCollector {
         items: Arc::clone(&shared_items),
         signal_path: signal_path.clone(),
         repo: repo.clone(),
+        approvals,
     };
 
     let signal_path_escaped =
@@ -547,6 +569,23 @@ pub fn handle_picker(
         .no_info(true) // Hide info line (matched/total counter)
         .preview(Some("".to_string())) // Enable preview (empty string means use SkimItem::preview())
         .preview_window(preview_window_spec)
+        // Force the inline-mode clearing path on exit.
+        //
+        // tuikit only enters the alternate screen when the picker is full
+        // height; at `height: "90%"` we're inline, so `smcup` is never
+        // sent. But its `pause()` still emits `rmcup` whenever the option
+        // `disable_alternate_screen` is false — and unmatched `rmcup`
+        // varies by terminal: a no-op on most macOS terminals, but on some
+        // Linux setups it leaves the picker frame on screen because no
+        // explicit erase ran.
+        //
+        // skim plumbs `disable_alternate_screen = no_clear_start` (see
+        // `skim/src/lib.rs` `Skim::run_with`), so setting `no_clear_start`
+        // here forces pause() down the `cursor_goto + erase_down` branch,
+        // which actually erases the rows skim drew on. The other side
+        // effect, `clear_on_start = false`, is harmless for us — skim
+        // immediately overdraws the rows it allocates.
+        .no_clear_start(true)
         // Color scheme using fzf's --color=light values: dark text (237) on light gray bg (251)
         //
         // Terminal color compatibility is tricky:
@@ -610,6 +649,11 @@ pub fn handle_picker(
 
     let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
 
+    // Shared between the bg-thread handler (which pushes warnings while
+    // skim owns the terminal) and the main thread (which drains them after
+    // `Skim::run_with` returns and stderr is safe again).
+    let stashed_warnings: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
     let handler: Arc<dyn collect::PickerProgressHandler> =
         Arc::new(progressive_handler::PickerHandler {
             tx: tx.clone(),
@@ -620,6 +664,8 @@ pub fn handle_picker(
             preview_dims,
             llm_command,
             summary_hint,
+            stashed_warnings: Arc::clone(&stashed_warnings),
+            deferred_items: std::sync::OnceLock::new(),
         });
 
     // Spawn collect on a background thread. The handler holds the only
@@ -655,13 +701,21 @@ pub fn handle_picker(
     drop(tx);
     drop(handler);
 
-    // Dry-run: skim is bypassed. Wait for collect (which spawns previews
-    // via the handler), then for the preview pool, then dump the cache.
-    if std::env::var_os("WORKTRUNK_PICKER_DRY_RUN").is_some() {
+    // Dry-run / preview-bench: skim is bypassed. Wait for collect (which
+    // spawns previews via the handler) to finish, then for the orchestrator's
+    // pending tasks to drain on the global rayon pool. Dry-run additionally
+    // drains stashed warnings and dumps the cache inventory; preview-bench
+    // returns immediately so the measured wall clock is just "spawn → all
+    // preview tasks drained", with no JSON serialization or stderr I/O in
+    // the hot path.
+    if skip_tui {
         drop(rx);
         let _ = bg_handle.join();
         orchestrator.wait_for_idle();
-        println!("{}", orchestrator.dump_cache_json());
+        if is_dry_run {
+            drain_stashed_warnings(&stashed_warnings);
+            println!("{}", orchestrator.dump_cache_json());
+        }
         return Ok(());
     }
 
@@ -674,6 +728,12 @@ pub fn handle_picker(
     // are read-only.
     let output = Skim::run_with(&options, Some(rx));
     drop(bg_handle);
+
+    // Skim has released the terminal — emit any warnings that collect's bg
+    // thread stashed during the run. Late warnings (e.g. drain timeouts)
+    // may still be in flight; we capture whatever has landed by now and let
+    // the rest fall on the floor with the bg thread.
+    drain_stashed_warnings(&stashed_warnings);
 
     // Handle selection (signal file cleaned up by PreviewState::Drop)
     if let Some(out) = output
@@ -739,7 +799,33 @@ pub fn handle_picker(
 
         // Switch to existing worktree or create new one
         let plan = plan_switch(&repo, &identifier, should_create, None, false, &config)?;
-        let hooks_approved = approve_switch_hooks(&repo, &config, &plan, false, true)?;
+        // Resolve the config the post-switch hooks will run against (the
+        // new/destination worktree's, or for `--create` the base ref's) so the
+        // approval prompt lists the exact commands `execute_switch` will run.
+        let hook_project_config = switch_hook_project_config(&repo, &plan)?;
+        let hooks_approved = approve_switch_hooks(
+            &repo,
+            &config,
+            &plan,
+            false,
+            true,
+            hook_project_config.as_ref(),
+        )?;
+
+        // Pre-flight: validate all templates before mutation (worktree creation).
+        // Without this, picker-create would have the half-state risk that
+        // `wt switch --create` already guards against — a broken template would
+        // fail after `git worktree add`, leaving the worktree behind.
+        validate_switch_templates(
+            &repo,
+            &config,
+            &plan,
+            None,
+            &[],
+            hooks_approved,
+            hook_project_config.as_ref(),
+        )?;
+
         let (result, branch_info) = execute_switch(&repo, plan, &config, false, hooks_approved)?;
 
         // Compute path mismatch lazily (deferred from plan_switch for existing worktrees).
@@ -773,7 +859,6 @@ pub fn handle_picker(
             let template_vars = TemplateVars::for_post_switch(&result, &branch_info, "", "");
             let extra_vars = template_vars.as_extra_vars();
             spawn_switch_background_hooks(
-                &repo,
                 &config,
                 &result,
                 branch_info.branch.as_deref(),
@@ -821,10 +906,33 @@ fn resolve_identifier(
 #[cfg(test)]
 pub mod tests {
     use super::preview::{PreviewLayout, PreviewMode, PreviewStateData};
-    use super::{PickerAction, PickerCollector, resolve_identifier};
+    use super::{
+        PickerAction, PickerCollector, drain_stashed_warnings, removal_hooks_approved,
+        resolve_identifier,
+    };
     use crate::commands::worktree::RemoveResult;
     use std::fs;
+    use std::sync::Mutex;
+    use worktrunk::config::Approvals;
     use worktrunk::git::BranchDeletionMode;
+
+    /// Empties the stash and emits each line. Verifies post-skim drain
+    /// semantics without standing up a real picker.
+    #[test]
+    fn drain_stashed_warnings_empties_the_stash() {
+        let stash = Mutex::new(vec!["one".to_string(), "two".to_string()]);
+        drain_stashed_warnings(&stash);
+        assert!(stash.lock().unwrap().is_empty());
+    }
+
+    /// A fresh stash with no warnings is a no-op — exercising the empty path
+    /// keeps the loop body covered when the picker exits cleanly.
+    #[test]
+    fn drain_stashed_warnings_handles_empty_stash() {
+        let stash: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        drain_stashed_warnings(&stash);
+        assert!(stash.lock().unwrap().is_empty());
+    }
 
     #[test]
     fn test_preview_state_data_roundtrip() {
@@ -896,7 +1004,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_execute_removal_removes_worktree_and_branch() {
+    fn test_do_removal_removes_worktree_and_branch() {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         let repo = worktrunk::git::Repository::at(test.path()).unwrap();
         let wt_dir = tempfile::tempdir().unwrap();
@@ -923,9 +1031,10 @@ pub mod tests {
             force_worktree: false,
             expected_path: None,
             removed_commit: None,
+            removed_project_config: None,
         };
 
-        PickerCollector::do_removal(&repo, &result).unwrap();
+        PickerCollector::do_removal(&repo, &result, &Approvals::default()).unwrap();
         assert!(!wt_path.exists(), "worktree should be removed");
 
         let output = repo.run_command(&["branch", "--list", "feature"]).unwrap();
@@ -947,7 +1056,7 @@ pub mod tests {
             target_branch: None,
             integration_reason: None,
         };
-        PickerCollector::do_removal(&repo, &result).unwrap();
+        PickerCollector::do_removal(&repo, &result, &Approvals::default()).unwrap();
 
         let output = repo.run_command(&["branch", "--list", "feature"]).unwrap();
         assert!(output.is_empty(), "integrated branch should be deleted");
@@ -973,7 +1082,7 @@ pub mod tests {
             target_branch: None,
             integration_reason: None,
         };
-        PickerCollector::do_removal(&repo, &result).unwrap();
+        PickerCollector::do_removal(&repo, &result, &Approvals::default()).unwrap();
 
         // Branch should be retained — SafeDelete won't delete unmerged branches
         let output = repo.run_command(&["branch", "--list", "unmerged"]).unwrap();
@@ -1019,10 +1128,66 @@ pub mod tests {
             force_worktree: false,
             expected_path: None,
             removed_commit: None,
+            removed_project_config: None,
         };
 
-        PickerCollector::do_removal(&repo, &result).unwrap();
+        PickerCollector::do_removal(&repo, &result, &Approvals::default()).unwrap();
         assert!(!wt_path.exists(), "detached worktree should be removed");
+    }
+
+    /// A `pre-remove` hook the user hasn't approved must not run when the
+    /// picker removes the worktree — the picker can't prompt mid-render, so
+    /// unapproved project commands are skipped. The git removal still happens.
+    #[test]
+    fn test_do_removal_skips_unapproved_pre_remove_hook() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt_path = wt_dir.path().join("feature");
+        repo.run_command(&[
+            "worktree",
+            "add",
+            "-b",
+            "feature",
+            wt_path.to_str().unwrap(),
+        ])
+        .unwrap();
+
+        // A `pre-remove` hook in the removed worktree's `.config/wt.toml` that
+        // would write a marker (outside the worktree) if it ever ran.
+        let marker_dir = tempfile::tempdir().unwrap();
+        let marker = marker_dir.path().join("pre-remove-ran");
+        fs::create_dir_all(wt_path.join(".config")).unwrap();
+        fs::write(
+            wt_path.join(".config/wt.toml"),
+            format!("pre-remove = {:?}\n", format!("touch {}", marker.display())),
+        )
+        .unwrap();
+
+        let result = RemoveResult::RemovedWorktree {
+            main_path: test.path().to_path_buf(),
+            worktree_path: wt_path.clone(),
+            changed_directory: false,
+            branch_name: Some("feature".to_string()),
+            deletion_mode: BranchDeletionMode::SafeDelete,
+            target_branch: Some("main".to_string()),
+            integration_reason: None,
+            force_worktree: false,
+            expected_path: None,
+            removed_commit: None,
+            removed_project_config: None,
+        };
+
+        // Empty approvals → the hook is unapproved.
+        let approvals = Approvals::default();
+        assert!(
+            !removal_hooks_approved(&repo, test.path(), &wt_path, &approvals).unwrap(),
+            "an unapproved pre-remove hook is not approved"
+        );
+
+        PickerCollector::do_removal(&repo, &result, &approvals).unwrap();
+        assert!(!wt_path.exists(), "worktree should be removed");
+        assert!(!marker.exists(), "unapproved pre-remove hook must not run");
     }
 
     // Note: skim's `as_any().downcast_ref::<WorktreeSkimItem>()` fails at

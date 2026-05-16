@@ -19,13 +19,17 @@ info:
     WORKTRUNK_APPROVALS_PATH: /nonexistent/wt/approvals.toml
     WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml
     WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
 success: true
 exit_code: 0
@@ -208,6 +212,10 @@ The [2mpr:<number>[0m and [2mmr:<number>[0m shortcuts resolve a GitHub PR or
 Requires [2mgh[0m (GitHub) or [2mglab[0m (GitLab) CLI to be installed and authenticated. The [2m--create[0m flag cannot be used with [2mpr:[0m/[2mmr:[0m syntax since the branch already exists.
 
 [1mForks:[0m The local branch uses the PR/MR's branch name directly (e.g., [2mfeature-fix[0m), so [2mgit push[0m works normally. If a local branch with that name already exists tracking something else, rename it first.
+
+[1mGitea (experimental):[0m [2mpr:[0m is also compatible with Gitea via the [2mtea[0m CLI. Set [2m[forge] platform = "gitea"[0m in [2m.config/wt.toml[0m to opt in; worktrunk also auto-detects Gitea when the remote host contains [2mgitea[0m or when [2mtea login add[0m has been run for the host.
+
+[1mAzure DevOps (experimental):[0m [2mpr:[0m is also compatible with Azure DevOps via the [2maz[0m CLI (with the [2mazure-devops[0m extension). Set [2m[forge] platform = "azure-devops"[0m in [2m.config/wt.toml[0m to opt in; worktrunk also auto-detects Azure DevOps from [2mdev.azure.com[0m and [2m*.visualstudio.com[0m remotes.
 
 [1m[32mWhen wt switch fails[0m
 

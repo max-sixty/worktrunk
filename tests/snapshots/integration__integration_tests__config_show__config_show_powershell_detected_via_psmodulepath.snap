@@ -59,7 +59,7 @@ exit_code: 0
 
 [36mSHELL INTEGRATION[39m
 [33m▲[39m [33mShell integration not active[39m
-[107m [0m Invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
+[107m [0m Invoked as: [1m[PROJECT_ROOT]/target/[BUILD_MODE]/wt[22m
 [107m [0m Detected shell: [1mpowershell[22m (via PSModulePath)
 
 [2m○[22m [1mbash[22m: Already configured shell extension & completions @ ~/.bashrc:1

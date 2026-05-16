@@ -2,19 +2,21 @@
 
 ## Directory Layout
 
-Skills are at the repo root (`skills/worktrunk/`) — the standard plugin location.
-Hooks remain in `.claude-plugin/hooks/` for now.
+Skills are at the repo root (`skills/`) — the standard plugin location. Hooks
+remain in `.claude-plugin/hooks/` for now.
 
 ```
-worktrunk.skills/          ← plugin root
+worktrunk/                ← plugin root (repo root)
 ├── .claude-plugin/
-│   ├── plugin.json        ← manifest
-│   └── hooks/hooks.json   ← activity tracking hooks
+│   ├── plugin.json       ← manifest (lists every skill dir)
+│   └── hooks/hooks.json  ← activity tracking + WorktreeCreate/Remove hooks
 └── skills/
-    └── worktrunk/         ← main skill + reference docs
+    ├── worktrunk/        ← config/hook guidance skill + reference docs
+    └── wt-switch-create/ ← /wt-switch-create slash command
 ```
 
-Paths in `plugin.json` and `marketplace.json` resolve from the plugin root (repo root).
+Paths in `plugin.json` and `marketplace.json` resolve from the plugin root (repo
+root). Each skill directory must be listed in `plugin.json`'s `skills` array.
 
 ## Known Limitations
 

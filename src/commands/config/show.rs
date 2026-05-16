@@ -12,7 +12,7 @@ use color_print::cformat;
 use worktrunk::config::{
     ProjectConfig, UserConfig, default_system_config_path, system_config_path,
 };
-use worktrunk::git::{ErrorExt, Repository};
+use worktrunk::git::{CiPlatform, ErrorExt, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{FileDetectionResult, Shell, scan_for_detection_details};
 use worktrunk::shell_exec::Cmd;
@@ -24,7 +24,7 @@ use worktrunk::styling::{
 use super::state::require_user_config_path;
 use crate::cli::{SwitchFormat, version_str};
 use crate::commands::configure_shell::{ConfigAction, ConfigureResult, scan_shell_configs};
-use crate::commands::list::ci_status::{CiPlatform, CiToolsStatus, platform_for_repo};
+use crate::commands::list::ci_status::CiToolsStatus;
 use crate::help_pager::show_help_in_pager;
 use crate::llm::test_commit_generation;
 use crate::output;
@@ -385,11 +385,9 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
 fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("DIAGNOSTICS", None))?;
 
-    // Check CI tool based on detected platform (with config override support)
+    // Check the CI tool for this repo's platform (project config, else remote URL).
     let repo = Repository::current()?;
-    let platform = platform_for_repo(&repo, None);
-
-    match platform {
+    match repo.ci_platform(None) {
         Some(CiPlatform::GitHub) => {
             let ci_tools = CiToolsStatus::detect(None);
             render_ci_tool_status(
@@ -410,11 +408,31 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
                 ci_tools.glab_authenticated,
             )?;
         }
+        Some(CiPlatform::Gitea) => {
+            let ci_tools = CiToolsStatus::detect(None);
+            render_ci_tool_status(
+                out,
+                "tea",
+                "Gitea",
+                ci_tools.tea_installed,
+                ci_tools.tea_authenticated,
+            )?;
+        }
+        Some(CiPlatform::AzureDevOps) => {
+            let ci_tools = CiToolsStatus::detect(None);
+            render_ci_tool_status(
+                out,
+                "az",
+                "Azure DevOps",
+                ci_tools.az_installed,
+                ci_tools.az_authenticated,
+            )?;
+        }
         None => {
             writeln!(
                 out,
                 "{}",
-                hint_message("CI status requires GitHub or GitLab remote")
+                hint_message("CI status requires GitHub, GitLab, Gitea, or Azure DevOps remote")
             )?;
         }
     }
@@ -764,16 +782,6 @@ fn render_fish_legacy_migration(
     Ok(())
 }
 
-/// Per-shell label distinguishing fish (separate completion file) from
-/// bash/zsh (inline completions).
-fn what_label(shell: Shell) -> &'static str {
-    if matches!(shell, Shell::Fish) {
-        "shell extension"
-    } else {
-        "shell extension & completions"
-    }
-}
-
 /// Zsh-only: warn when compinit isn't enabled, since the integration
 /// installs completions but they won't load without compinit.
 fn render_zsh_compinit_warning(out: &mut String) -> anyhow::Result<()> {
@@ -813,7 +821,7 @@ fn render_fish_completion_status(out: &mut String, cmd: &str) -> anyhow::Result<
         )?;
     } else {
         let warning = warning_message(cformat!(
-            "<bold>{shell}</>: Completions not configured @ {completion_display}"
+            "<bold>{shell}</>: Completions not configured @ <bold>{completion_display}</>"
         ));
         let hint = hint_message(cformat!(
             "To configure completions, run <underline>{cmd} config shell install {shell}</>"
@@ -858,7 +866,7 @@ fn render_already_configured(
 ) -> anyhow::Result<()> {
     let shell = result.shell;
     let path = format_path_for_display(&result.path);
-    let what = what_label(shell);
+    let what = crate::output::shell_integration::shell_extension_label(shell);
 
     let detection = detection_results
         .iter()
@@ -918,7 +926,7 @@ fn render_would_add_or_create(
 ) -> anyhow::Result<bool> {
     let shell = result.shell;
     let path = format_path_for_display(&result.path);
-    let what = what_label(shell);
+    let what = crate::output::shell_integration::shell_extension_label(shell);
 
     // Fish: prefer migration hint when the legacy conf.d location has
     // working integration — silencing the "Not configured" row.
@@ -932,7 +940,7 @@ fn render_would_add_or_create(
     // so the generic "To configure" summary stays silent.
     if shell.is_wrapper_based() && matches!(result.action, ConfigAction::WouldAdd) {
         let warning = warning_message(cformat!(
-            "<bold>{shell}</>: Outdated shell extension @ {path}"
+            "<bold>{shell}</>: Outdated shell extension @ <bold>{path}</>"
         ));
         let hint = hint_message(cformat!(
             "To update, run <underline>{cmd} config shell install {shell}</>"
@@ -1069,8 +1077,8 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     let mut has_any_unmatched = false;
 
     // Show configured and not-configured shells (matching `config shell install` format exactly)
-    // Bash/Zsh: inline completions, show "shell extension & completions"
-    // Fish: separate completion file, show "shell extension" for functions/ and "completions" for completions/
+    // Fish ships completions as a separate file: "shell extension" for functions/ and "completions" for completions/
+    // Every other supported shell wires completions inline with the extension, so they show "shell extension & completions"
     for result in &scan_result.configured {
         match result.action {
             ConfigAction::AlreadyExists => {
@@ -1279,11 +1287,18 @@ pub(super) fn render_ci_tool_status(
                 success_message(cformat!("<bold>{tool}</> installed & authenticated"))
             )?;
         } else {
+            // The auth-setup command differs by CLI: `gh`/`glab` use
+            // `<tool> auth login`, `az` uses `az login`, `tea` uses `tea login add`.
+            let auth_command = match tool {
+                "az" => format!("{tool} login"),
+                "tea" => format!("{tool} login add"),
+                _ => format!("{tool} auth login"),
+            };
             writeln!(
                 out,
                 "{}",
                 warning_message(cformat!(
-                    "<bold>{tool}</> installed but not authenticated; run <bold>{tool} auth login</>"
+                    "<bold>{tool}</> installed but not authenticated; run <bold>{auth_command}</>"
                 ))
             )?;
         }

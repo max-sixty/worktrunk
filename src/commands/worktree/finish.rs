@@ -36,6 +36,7 @@ use crate::commands::repository_ext::{
     check_not_default_branch, compute_integration_reason, is_primary_worktree,
 };
 use crate::commands::template_vars::TemplateVars;
+use crate::output::{handle_remove_output, post_hook_display_path, pre_hook_display_path};
 
 /// Inputs to [`finish_after_merge`]. Owned by the caller; this struct just
 /// bundles them so the function signature stays readable.
@@ -139,6 +140,16 @@ pub fn finish_after_merge(
         );
         let expected_path = path_mismatch(repo, current_branch, &worktree_root, config);
 
+        // Snapshot the feature worktree's `.config/wt.toml` before removal so
+        // `post-remove` can read it after the directory is gone — same
+        // mechanism as `prepare_worktree_removal`. The repo is already rooted
+        // at the feature worktree (`current_wt`), so `load_project_config`
+        // reads from there. Parse errors propagate here because they'd abort
+        // `wt merge` upfront (no removal happens yet, so the executor's
+        // re-read path that handles them on the `wt remove` side isn't
+        // reachable from this call).
+        let removed_project_config = repo.load_project_config()?.map(Box::new);
+
         let remove_result = RemoveResult::RemovedWorktree {
             main_path: destination_path.clone(),
             worktree_path: worktree_root,
@@ -150,20 +161,32 @@ pub fn finish_after_merge(
             force_worktree: false,
             expected_path,
             removed_commit: feature_commit.clone(),
+            removed_project_config,
         };
-        crate::output::handle_remove_output(&remove_result, false, verify, false, announcer)?;
+        handle_remove_output(&remove_result, false, verify, false, false, announcer)?;
         true
     };
 
     if verify {
-        // Post-merge hooks run in the destination worktree (target), but bare vars
-        // point to the Active (feature branch) per the template variable model.
-        // The destination worktree is the execution context (cwd).
-        let ctx = CommandContext::new(repo, config, Some(current_branch), &destination_path, yes);
+        // Post-merge hooks run in the destination worktree (target), and resolve
+        // their `.config/wt.toml` from there — root `ctx.repo` at the
+        // destination (the feature worktree may be gone by now). Bare template
+        // vars still point to the Active (feature branch) per the template
+        // variable model; those are repo-wide lookups, unaffected by the root.
+        // No fallback to `repo`: if the destination has no `.config/wt.toml`,
+        // no project `post-merge` runs.
+        let dest_repo = Repository::at(&destination_path)?;
+        let ctx = CommandContext::new(
+            &dest_repo,
+            config,
+            Some(current_branch),
+            &destination_path,
+            yes,
+        );
         let display_path = if removed {
-            crate::output::post_hook_display_path(&destination_path)
+            post_hook_display_path(&destination_path)
         } else {
-            crate::output::pre_hook_display_path(&destination_path)
+            pre_hook_display_path(&destination_path)
         };
 
         let mut vars = feature_vars.with_target(target_branch);

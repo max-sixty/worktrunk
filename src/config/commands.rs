@@ -315,8 +315,13 @@ impl<'de> Deserialize<'de> for CommandConfig {
                     .into_iter()
                     .map(|(name, template)| Command::new(Some(name), template))
                     .collect();
+                let steps = if commands.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![HookStep::Concurrent(commands)]
+                };
                 Ok(CommandConfig {
-                    steps: vec![HookStep::Concurrent(commands)],
+                    steps,
                     pipeline: false,
                 })
             }
@@ -624,6 +629,32 @@ third = "echo 3"
 
         let result: Result<Wrapper, _> = toml::from_str(toml_str);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deserialize_empty_named_table() {
+        // An empty hook table — e.g. `[post-switch]` with all commands
+        // commented out — must produce zero steps, not one empty
+        // Concurrent step. Otherwise downstream code (`HookAnnouncer::flush`,
+        // `spawn_hook_pipeline_quiet`) panics indexing into an empty vec.
+        // Mirrors the inline-table case in `visit_seq` that already skips
+        // empty maps. See issue #2634.
+        let toml_str = r#"
+[command]
+"#;
+
+        #[derive(Deserialize)]
+        struct Wrapper {
+            command: CommandConfig,
+        }
+
+        let wrapper: Wrapper = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            wrapper.command.steps().len(),
+            0,
+            "empty hook table should produce zero steps"
+        );
+        assert_eq!(wrapper.command.commands().count(), 0);
     }
 
     // ============================================================================

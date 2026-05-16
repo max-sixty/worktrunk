@@ -432,6 +432,41 @@ fn test_relocate_main_worktree(repo: TestRepo) {
     );
 }
 
+/// Regression: a branch literally named `-foo` (creatable via `git
+/// update-ref refs/heads/-foo HEAD`) must round-trip through main worktree
+/// relocation without `git worktree add` parsing the ref as a flag.
+/// Without `--end-of-options`, the `worktree add` call would fail with
+/// `unknown switch 'o'`.
+#[rstest]
+fn test_relocate_main_worktree_hyphen_prefixed_branch(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+
+    // `git checkout -b -- -foo` is rejected by modern git, but `update-ref`
+    // happily writes the ref, then `symbolic-ref` moves HEAD onto it.
+    repo.run_git(&["update-ref", "refs/heads/-foo", "HEAD"]);
+    repo.run_git(&["symbolic-ref", "HEAD", "refs/heads/-foo"]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "relocate"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "relocate must succeed with a hyphen-prefixed branch; \
+         stdout: {stdout}\nstderr: {stderr}"
+    );
+
+    let expected_path = parent.join("repo.-foo");
+    assert!(
+        expected_path.exists(),
+        "worktree for `-foo` should be created at: {}",
+        expected_path.display()
+    );
+}
+
 /// Test swap scenario: two worktrees at each other's expected locations
 ///
 /// When alpha is at repo.beta and beta is at repo.alpha, relocate

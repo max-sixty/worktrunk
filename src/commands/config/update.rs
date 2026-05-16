@@ -8,6 +8,7 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use anyhow::Context;
+use color_print::cformat;
 use worktrunk::config::{
     DeprecationInfo, compute_migrated_content, config_path,
     copy_approved_commands_to_approvals_file, format_deprecation_warnings, format_migration_diff,
@@ -100,7 +101,7 @@ pub fn handle_config_update(yes: bool, print: bool) -> anyhow::Result<()> {
                 .unwrap_or_default();
             eprintln!(
                 "{}",
-                info_message(format!("Copied approved commands to {filename}"))
+                info_message(cformat!("Copied approved commands to <bold>{filename}</>"))
             );
         }
 

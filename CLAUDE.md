@@ -36,11 +36,13 @@ Use consistent terminology in documentation, help text, and code comments:
 
 ## Skills
 
-Check `.claude/skills/` for available skills and load those relevant to your task.
+**Load relevant skills before starting work, and reload when scope changes mid-session.**
 
-Key skills:
+Project-local skills in `.claude/skills/`:
 
-- **`writing-user-outputs`** — Required when modifying user-facing messages, hints, warnings, errors, or any terminal output formatting. Documents ANSI color nesting rules, message patterns, and output system architecture.
+- `writing-user-outputs` — load before editing any code that calls `warning_message`, `hint_message`, `error_message`, `info_message`, `eprintln`, or `println`, or that produces strings the user sees (CLI help, progress UI, snapshot text).
+- `running-tend` — operating in CI or writing tend workflows.
+- `release` — cutting a release.
 
 ## Testing
 
@@ -64,6 +66,8 @@ cargo test --lib --bins                 # unit tests only
 cargo test --test integration           # integration tests (no shell tests)
 cargo test --test integration --features shell-integration-tests  # with shell tests
 ```
+
+A filtered `--test integration` run on a fresh `target/` panics with "mock-stub binary not found" — a target filter skips the helper-bin build. Fix: `cargo build -p mock-stub`, or use `cargo nextest run` / `cargo llvm-cov nextest`.
 
 ### Claude Code Web Environment
 
@@ -264,6 +268,14 @@ When no structured alternative exists, document the fragility inline.
 - `handle_command_error` in `src/commands/command_executor.rs` enforces the policy for hook and alias pipelines (foreground and concurrent groups). `for_each.rs` enforces it directly for the worktree loop.
 
 When adding a new code path that loops over child processes, call `.interrupt_exit_code()` on per-iteration errors and break.
+
+### Project Commands Run Only After Approval
+
+**Policy:** project-defined commands — `pre-*` / `post-*` hooks, `[aliases]`, `--execute` bodies from project config — are arbitrary code shipped in a repo the user may have just cloned, so they run only after the approval system (`Approvals` plus `approve_command_batch` / `approve_or_skip` in `src/commands/command_approval.rs`) clears them. Never build a code path that runs project commands without that gate. A context that can't prompt for approval — a TUI mid-render, a background recovery path — must consult the approval state read-only and run only the already-approved commands, skipping the rest: `commands::picker::do_removal` checks `Approvals` (no prompt) and passes `verify` to `handle_remove_output` accordingly.
+
+**Why:** the gate is the only thing between `git clone && wt switch` and a `post-switch` hook running `curl … | sh`. A "we already validated the operation, so run the hooks too" shortcut turns every command that touches project config into remote code execution.
+
+**Implementation:** the operation entry points (`wt remove` / `wt merge` / `wt step prune` / `wt switch`) approve the command set up front, then thread the answer through as `verify` / `run_hooks`; when it's false, `execute_pre_remove_hooks_if_needed`, `spawn_hooks_after_remove`, and the switch/merge equivalents early-return. Gate first, run second — never the reverse.
 
 ## Hook Output Logs
 

@@ -31,8 +31,6 @@ pub use anstyle::Style as AnstyleStyle;
 
 // Re-export our public types
 pub use constants::*;
-#[cfg(all(test, feature = "syntax-highlighting"))]
-pub(crate) use format::format_bash_with_gutter_at_width;
 pub use format::{GUTTER_OVERHEAD, format_bash_with_gutter, format_with_gutter, wrap_styled_text};
 pub use highlighting::format_toml;
 pub use hyperlink::{Stream, hyperlink_stdout, strip_osc8_hyperlinks, supports_hyperlinks};
@@ -205,6 +203,8 @@ pub fn fix_dim_after_color_reset(s: &str) -> String {
 mod tests {
     use insta::assert_snapshot;
 
+    #[cfg(feature = "syntax-highlighting")]
+    use super::format::format_bash_with_gutter_at_width;
     use super::*;
     use anstyle::Style;
     use unicode_width::UnicodeWidthStr;

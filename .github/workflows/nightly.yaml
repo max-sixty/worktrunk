@@ -1,20 +1,47 @@
 name: nightly
-# Catches feature-flag breakage that workspace feature unification can mask;
-# see #2442 for the v0.45.0 incident that motivated this.
+# Slower checks that aren't worth running on every PR but should run before a
+# release. Jobs:
+#   - feature-powerset: feature-flag unification (motivated by #2442)
+#   - release-target: PTY+shell suite on the release triples ci.yaml doesn't cover
+#   - benchmarks: full criterion suite + time-series gist append (cron only)
+#   - check-unused-dependencies: cargo-udeps on nightly toolchain
+#   - minimal-versions: cargo check against minimum-version dep resolution
+#   - nix-flake: nix flake check (packaging-environment bugs, motivated by #2624)
 #
-# Runs daily and can be triggered manually. Not wired to push or pull_request —
-# this is a slow check that addresses a class of bug that only matters at
-# integration time, not per-commit.
+# Runs daily on cron, on demand via workflow_dispatch, on pushes to main that
+# touch dependency or toolchain files, and on PRs that either (a) touch the
+# same dependency/toolchain files or (b) carry the `nightly` label. The
+# label is the iteration knob for fixes targeting nightly-only failures
+# (e.g. nix-flake's sandbox suite); without it, contributors had to wait for
+# the cron run or `gh workflow run` manually. The cron still catches drift
+# that's not commit-correlated (registry updates, transitive resolution).
 #
 # Runner versions pinned; see ci.yaml header comment for rationale.
 
 on:
   schedule:
     # Run at 5:37 UTC every day. Off-peak minute (avoid :00 to be a good
-    # citizen w.r.t. GitHub's cron scheduler), and offset from
-    # nightly-benchmark.yaml (4:17 UTC) so they don't contend for runners.
+    # citizen w.r.t. GitHub's cron scheduler).
     - cron: '37 5 * * *'
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/nightly.yaml'
+  pull_request:
+    branches: [main]
+    # `labeled` fires when a label is added (so the `nightly` label can
+    # trigger a run mid-PR); `synchronize` re-runs on subsequent pushes.
+    # The `gate` job below decides whether to actually run, ORing the
+    # label against a Cargo-paths diff check.
+    types: [opened, synchronize, reopened, labeled]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -22,6 +49,37 @@ env:
   RUSTFLAGS: -C debuginfo=0
 
 jobs:
+  gate:
+    # Decides whether to run on PR events. Non-PR events (cron,
+    # workflow_dispatch, push) pass through unconditionally. PR events
+    # run when either the `nightly` label is attached OR the diff touches
+    # one of the dependency/toolchain files. The decision is exposed via
+    # `outputs.run`; downstream jobs gate on it.
+    #
+    # `dorny/paths-filter` works against the GitHub API for PR events, so
+    # no checkout step is needed.
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: dorny/paths-filter@v4
+        if: github.event_name == 'pull_request'
+        id: changes
+        with:
+          filters: |
+            nightly:
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/nightly.yaml'
+      - id: decide
+        run: |
+          echo "run=${{ github.event_name != 'pull_request' ||
+            contains(github.event.pull_request.labels.*.name, 'nightly') ||
+            steps.changes.outputs.nightly == 'true' }}" >> "$GITHUB_OUTPUT"
+
   feature-powerset:
     # Every combination of cli/syntax-highlighting/shell-integration-tests/
     # git-wt should compile. Catches regressions in feature gating — including
@@ -31,6 +89,8 @@ jobs:
     # Workspace members must use `default-features = false` when depending on
     # worktrunk, or feature unification will mask gating bugs by silently
     # enabling `cli` in the lib build (see tests/helpers/wt-perf/Cargo.toml).
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-24.04
     steps:
     - name: 📂 Checkout code
@@ -40,16 +100,213 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2.77.1
+      uses: taiki-e/install-action@v2.78.1
       with:
         tool: cargo-hack
 
     - name: cargo hack check --feature-powerset --no-dev-deps
       run: cargo hack check --feature-powerset --no-dev-deps
 
+  release-target:
+    # Build and run the test suite on the release triples that ci.yaml's
+    # `test` matrix doesn't cover — `dist-workspace.toml` ships musl Linux
+    # (x86_64 + arm64) and Intel macOS, but the test matrix is glibc Linux,
+    # arm64 macOS, and Windows. Without this, a regression on those targets
+    # first surfaces at release-tag time, which blocks the release.
+    #
+    # Runs the integration suite (default features, no
+    # `shell-integration-tests`) — covers file IO, command spawning, and
+    # output rendering on the cross-target triple, which is where
+    # musl-vs-glibc and intel-vs-arm divergence shows up. Shell-integration
+    # PTY tests are intentionally off because they read $SHELL from the
+    # runner env, which resolves differently on `ubuntu-24.04-arm` and
+    # masks musl/arm signal with environment noise.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            install: musl-tools
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            install: musl-tools
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+    name: release-target (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v6
+
+    - name: Install musl-tools
+      if: matrix.install == 'musl-tools'
+      run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+    - uses: ./.github/actions/test-setup
+
+    - name: Add target
+      run: rustup target add ${{ matrix.target }}
+
+    - name: 🧪 Tests
+      env:
+        NEXTEST_NO_INPUT_HANDLER: 1
+      run: cargo nextest run --target ${{ matrix.target }}
+
+  benchmarks:
+    # Full criterion suite. Moved here from ci.yaml — runs ~80 min, was
+    # already advisory non-required (CLAUDE.md: "Don't wait for CI
+    # benchmarks before merging"). The cron run also appends results to the
+    # time-series gist so we have daily perf history on main.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v6
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install shells (zsh, fish)
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.0
+      with:
+        packages: zsh fish
+        version: 1.0
+
+    - name: Install nushell
+      uses: hustcer/setup-nu@v3
+      with:
+        version: '0.112.2'
+
+    - name: 💰 Rust repo cache
+      uses: actions/cache@v5
+      with:
+        path: target/bench-repos
+        key: bench-repos-rust-${{ runner.os }}
+
+    - name: 📊 Run benchmarks
+      run: cargo bench
+
+    - name: 📦 Upload benchmark results
+      uses: actions/upload-artifact@v7
+      with:
+        name: benchmark-results-${{ github.run_id }}
+        path: target/criterion
+
+    # Time-series benchmark store, owned by worktrunk-bot:
+    # https://gist.github.com/worktrunk-bot/19bb23cb9658722abfe69479d0a4f9bf
+    #
+    # Cron-only: PR/push runs aren't appended (would pollute the time
+    # series). Skipped on forks: `WORKTRUNK_BOT_TOKEN` is not exposed there.
+    - name: 💾 Append results to gist
+      if: github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
+      env:
+        GITHUB_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+        GIST_ID: 19bb23cb9658722abfe69479d0a4f9bf
+      run: |
+        set -euo pipefail
+        python3 .github/scripts/criterion-to-jsonl.py --sha "$GITHUB_SHA" > new-rows.jsonl
+        git clone "https://x-access-token:${GITHUB_TOKEN}@gist.github.com/${GIST_ID}.git" /tmp/gist
+        cat new-rows.jsonl >> /tmp/gist/results.jsonl
+        git -C /tmp/gist \
+          -c user.name=worktrunk-bot \
+          -c user.email=worktrunk-bot@users.noreply.github.com \
+          commit -am "benchmarks: ${GITHUB_SHA::7}"
+        git -C /tmp/gist push
+
+  check-unused-dependencies:
+    # Moved from ci.yaml — `cargo udeps` requires nightly toolchain anyway,
+    # so it's already in the "nightly concern" bucket; rarely flips between
+    # PRs touching deps.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v6
+
+    # cargo-udeps requires nightly; update date periodically
+    - run: rustup override set nightly-2026-03-01
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+
+    - uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-udeps
+        version: "=0.1.61"
+
+    - uses: clechasseur/rs-cargo@v5.0.5
+      with:
+        command: udeps
+        args: --all-targets
+
+  minimal-versions:
+    # Verify `Cargo.toml` constraints aren't under-specified — library
+    # consumers (the lib/CLI cleave is real; `feature-check` in ci.yaml
+    # exists for the same downstream-protection reason) can resolve to a
+    # lower compatible version that doesn't actually compile if our manifest
+    # under-specifies.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v6
+
+    - run: rustup override set nightly-2026-03-01
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: minimal-versions
+
+    - name: Resolve to minimum versions
+      run: cargo update -Z minimal-versions
+
+    - name: cargo check
+      run: cargo check --workspace --all-targets
+
+  nix-flake:
+    # Build and test under the nix sandbox so packaging-environment bugs
+    # surface before a release / nixpkgs maintainer hits them. See #2624 for
+    # the canonical example: a unit test that depends on the process CWD
+    # being inside a git repo, which fails in the sandbox where source is
+    # extracted from a tarball without `.git`.
+    #
+    # Runs `nix flake check`, which exercises every check defined in
+    # flake.nix — in particular `worktrunk-tests`, which runs `cargo test`
+    # with default features (lib + bins + integration + doctests; the
+    # `shell-integration-tests` feature is intentionally off). Cold builds
+    # take ~10-15 min without a binary cache; nightly cadence absorbs it.
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v6
+
+    - name: Install Nix
+      uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+          access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+    - name: nix flake check
+      run: nix flake check --print-build-logs --keep-going
+
   create-issue-on-nightly-failure:
     needs:
       - feature-powerset
+      - release-target
+      - benchmarks
+      - check-unused-dependencies
+      - minimal-versions
+      - nix-flake
     if: always() && contains(needs.*.result, 'failure') && github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     permissions:

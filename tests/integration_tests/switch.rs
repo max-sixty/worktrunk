@@ -788,7 +788,7 @@ fn test_switch_no_config_commands_skips_post_start_commands(repo: TestRepo) {
 
     fs::write(
         config_dir.join("wt.toml"),
-        format!(r#"post-starts = ["{}"]"#, create_file_cmd),
+        format!(r#"post-start = "{}""#, create_file_cmd),
     )
     .unwrap();
 
@@ -816,6 +816,21 @@ approved-commands = ["{}"]
         &repo,
         &["--create", "no-post-start", "--no-hooks"],
     );
+
+    // post-start runs in the background; with --no-hooks it is never spawned,
+    // but sleep briefly so a regression that incorrectly spawns it has time to
+    // create the marker (per tests/CLAUDE.md "Testing absence").
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
+    let worktree = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("{repo_name}.no-post-start"));
+    assert!(
+        !worktree.join("marker.txt").exists(),
+        "post-start hook should have been skipped, but marker.txt was created"
+    );
 }
 
 #[rstest]
@@ -839,12 +854,12 @@ fn test_switch_no_config_commands_with_existing_worktree(mut repo: TestRepo) {
 fn test_switch_no_config_commands_with_yes(repo: TestRepo) {
     use std::fs;
 
-    // Create project config with a command
+    // Create project config with a command that would create a file
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
     fs::write(
         config_dir.join("wt.toml"),
-        r#"post-starts = ["echo 'test'"]"#,
+        r#"post-start = "echo 'marker' > marker.txt""#,
     )
     .unwrap();
 
@@ -856,6 +871,190 @@ fn test_switch_no_config_commands_with_yes(repo: TestRepo) {
         "switch_no_hooks_with_yes",
         &repo,
         &["--create", "yes-no-hooks", "--yes", "--no-hooks"],
+    );
+
+    // post-start runs in the background; with --no-hooks it is never spawned,
+    // but sleep briefly so a regression that incorrectly spawns it has time to
+    // create the marker (per tests/CLAUDE.md "Testing absence").
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
+    let worktree = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("{repo_name}.yes-no-hooks"));
+    assert!(
+        !worktree.join("marker.txt").exists(),
+        "post-start hook should have been skipped, but marker.txt was created"
+    );
+}
+
+/// `wt switch --create <new> --base <other>` resolves `pre-start` / `post-start`
+/// from the base branch's committed `.config/wt.toml` — the worktree these hooks
+/// run in is a checkout of that branch. The primary worktree (cwd) has no
+/// project config at all; only `other-base` does, so a regression that read the
+/// invoking worktree's config would run nothing.
+#[rstest]
+fn test_switch_create_reads_base_branch_config(mut repo: TestRepo) {
+    // Commit a `.config/wt.toml` on `other-base` only (not on `main`).
+    let other_wt = repo.add_worktree("other-base");
+    fs::create_dir_all(other_wt.join(".config")).unwrap();
+    fs::write(
+        other_wt.join(".config/wt.toml"),
+        // `{{ repo_path }}` is the main worktree root regardless of which
+        // worktree the hook runs in, so the markers land where the test reads.
+        r#"pre-start = "echo pre-start-from-base > {{ repo_path }}/pre-start-marker.txt"
+post-start = "echo post-start-from-base > {{ repo_path }}/post-start-marker.txt"
+"#,
+    )
+    .unwrap();
+    repo.run_git_in(&other_wt, &["add", ".config/wt.toml"]);
+    repo.run_git_in(&other_wt, &["commit", "-m", "Add hooks on other-base"]);
+
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "new-feature",
+            "--base",
+            "other-base",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt switch --create failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let pre_marker = repo.root_path().join("pre-start-marker.txt");
+    wait_for_file_content(&pre_marker);
+    assert_eq!(
+        fs::read_to_string(&pre_marker).unwrap().trim(),
+        "pre-start-from-base",
+        "pre-start should run with the base branch's config"
+    );
+    let post_marker = repo.root_path().join("post-start-marker.txt");
+    wait_for_file_content(&post_marker);
+    assert_eq!(
+        fs::read_to_string(&post_marker).unwrap().trim(),
+        "post-start-from-base",
+        "post-start should run with the base branch's config"
+    );
+}
+
+/// `wt switch <existing>` resolves `post-switch` from the destination worktree's
+/// `.config/wt.toml`, not the worktree `wt switch` ran in. Only the destination
+/// has a project config here.
+#[rstest]
+fn test_switch_existing_reads_destination_worktree_config(mut repo: TestRepo) {
+    let dest = repo.add_worktree("dest");
+    fs::create_dir_all(dest.join(".config")).unwrap();
+    fs::write(
+        dest.join(".config/wt.toml"),
+        r#"post-switch = "echo post-switch-from-dest > {{ repo_path }}/post-switch-marker.txt""#,
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "dest", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt switch dest failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let marker = repo.root_path().join("post-switch-marker.txt");
+    wait_for_file_content(&marker);
+    assert_eq!(
+        fs::read_to_string(&marker).unwrap().trim(),
+        "post-switch-from-dest",
+        "post-switch should run with the destination worktree's config"
+    );
+}
+
+/// A destination worktree with a malformed `.config/wt.toml` makes `wt switch
+/// <existing>` abort with the parse error in stderr — no silent fall-through
+/// to a different config. The path is surfaced so the user can find and fix
+/// the offending file.
+#[rstest]
+fn test_switch_existing_aborts_on_malformed_destination_config(mut repo: TestRepo) {
+    let dest = repo.add_worktree("dest");
+    fs::create_dir_all(dest.join(".config")).unwrap();
+    fs::write(dest.join(".config/wt.toml"), "this is not [ valid toml").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "dest", "--yes"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "wt switch should abort on a malformed destination config; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("wt.toml"),
+        "error should name the offending config file; stderr:\n{stderr}"
+    );
+}
+
+/// `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path for *every* config read —
+/// including `wt switch --create`'s base-ref preview — so the override file's
+/// hooks run, not the base branch's committed `.config/wt.toml`.
+#[rstest]
+fn test_switch_create_honors_project_config_path_override(mut repo: TestRepo) {
+    // The base branch carries a committed hook that must be ignored.
+    let other_wt = repo.add_worktree("other-base");
+    fs::create_dir_all(other_wt.join(".config")).unwrap();
+    fs::write(
+        other_wt.join(".config/wt.toml"),
+        r#"post-start = "echo IGNORED-COMMITTED-HOOK > {{ repo_path }}/wrong-marker.txt""#,
+    )
+    .unwrap();
+    repo.run_git_in(&other_wt, &["add", ".config/wt.toml"]);
+    repo.run_git_in(&other_wt, &["commit", "-m", "Committed hook on other-base"]);
+
+    // The override file (outside any worktree) is what should win.
+    let override_path = repo.root_path().parent().unwrap().join("override-wt.toml");
+    fs::write(
+        &override_path,
+        r#"post-start = "echo OVERRIDE-HOOK > {{ repo_path }}/right-marker.txt""#,
+    )
+    .unwrap();
+
+    let output = repo
+        .wt_command()
+        .env("WORKTRUNK_PROJECT_CONFIG_PATH", &override_path)
+        .args([
+            "switch",
+            "--create",
+            "new-feature",
+            "--base",
+            "other-base",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt switch --create failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let right = repo.root_path().join("right-marker.txt");
+    wait_for_file_content(&right);
+    assert_eq!(fs::read_to_string(&right).unwrap().trim(), "OVERRIDE-HOOK");
+    // The base ref's committed hook must never have run.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert!(
+        !repo.root_path().join("wrong-marker.txt").exists(),
+        "the base ref's committed hook must not run when the config path is overridden"
     );
 }
 
@@ -1623,6 +1822,46 @@ fn test_switch_create_no_hint_with_custom_worktree_path(repo: TestRepo) {
     );
 }
 
+#[rstest]
+fn test_switch_create_uses_codename_in_worktree_path(repo: TestRepo) {
+    repo.write_test_config(
+        r#"worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(3) }}""#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args([
+            "switch",
+            "--create",
+            "feature/JIRA-1234",
+            "--format=json",
+            "--no-cd",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch --create should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let path = Path::new(json["path"].as_str().unwrap());
+    let dir_name = path.file_name().unwrap().to_str().unwrap();
+    let repo_prefix = format!(
+        "{}.",
+        repo.root_path().file_name().unwrap().to_str().unwrap()
+    );
+    let codename = dir_name.strip_prefix(&repo_prefix).unwrap();
+
+    assert!(path.exists(), "worktree should exist @ {}", path.display());
+    assert_eq!(codename.split('-').count(), 3, "got: {codename}");
+    assert!(
+        codename.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+        "got: {codename}"
+    );
+}
+
 /// Test that the worktree-path hint is suppressed when a project-specific
 /// worktree-path is configured (not just a global one).
 ///
@@ -1748,12 +1987,15 @@ fn setup_mock_gh_for_pr(repo: &TestRepo, gh_response: Option<&str>) -> std::path
     mock_bin
 }
 
-/// Configure command environment for mock gh.
-fn configure_mock_gh_env(cmd: &mut std::process::Command, mock_bin: &Path) {
-    // Tell mock-stub where to find config files
+/// Configure command environment for any mock CLI installed in `mock_bin`.
+///
+/// Sets `MOCK_CONFIG_DIR` (so mock-stub finds its config) and prepends
+/// `mock_bin` to `PATH` (so the mock binary is found before any real CLI).
+fn configure_mock_cli_env(cmd: &mut std::process::Command, mock_bin: &Path) {
     cmd.env("MOCK_CONFIG_DIR", mock_bin);
 
-    // Build PATH with mock binary first
+    // Find the actual PATH var name (case-insensitive on Windows) to avoid
+    // creating a duplicate entry with different case.
     let (path_var_name, current_path) = std::env::vars_os()
         .find(|(k, _)| k.eq_ignore_ascii_case("PATH"))
         .map(|(k, v)| (k.to_string_lossy().into_owned(), Some(v)))
@@ -1805,7 +2047,7 @@ fn test_switch_pr_create_conflict(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_create_conflict", cmd);
     });
 }
@@ -1869,7 +2111,7 @@ fn test_switch_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_same_repo", cmd);
     });
 }
@@ -1939,7 +2181,7 @@ fn test_switch_pr_same_repo_limited_refspec(#[from(repo_with_remote)] mut repo: 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_same_repo_limited_refspec", cmd);
     });
 }
@@ -1984,7 +2226,7 @@ fn test_switch_pr_same_repo_no_remote(#[from(repo_with_remote)] repo: TestRepo) 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_same_repo_no_remote", cmd);
     });
 }
@@ -2069,7 +2311,7 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork", cmd);
     });
 }
@@ -2083,10 +2325,24 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
 fn test_switch_pr_hooks_see_pr_vars(#[from(repo_with_remote)] repo: TestRepo) {
     // Set up the same fork-PR scenario as test_switch_pr_fork: a refs/pull/42/head on the
     // bare remote, origin redirected to GitHub-style URL, and `gh api` mocked.
+    // The PR commit carries the project config so the post-switch hooks read it
+    // from the new worktree (a checkout of refs/pull/42/head) directly.
     repo.run_git(&["checkout", "-b", "pr-source"]);
     fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
-    repo.run_git(&["add", "pr-file.txt"]);
-    repo.run_git(&["commit", "-m", "PR commit"]);
+    // Each hook writes its own marker in the primary worktree so we can verify
+    // post-switch + post-start (background) populate pr_number/pr_url too.
+    // {{ repo_path }} is always the main repo's working tree.
+    fs::create_dir_all(repo.root_path().join(".config")).unwrap();
+    fs::write(
+        repo.root_path().join(".config/wt.toml"),
+        r#"pre-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_start.txt"
+post-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_start.txt"
+post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_switch.txt"
+"#,
+    )
+    .unwrap();
+    repo.run_git(&["add", "pr-file.txt", ".config/wt.toml"]);
+    repo.run_git(&["commit", "-m", "PR commit with hook config"]);
 
     let commit_sha = repo
         .git_command()
@@ -2138,19 +2394,9 @@ fn test_switch_pr_hooks_see_pr_vars(#[from(repo_with_remote)] repo: TestRepo) {
     }"#;
     let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
 
-    // Each hook writes its own marker in the primary worktree so we can verify
-    // post-switch + post-start (background) populate pr_number/pr_url too.
-    // {{ repo_path }} is always the main repo's working tree.
-    repo.write_project_config(
-        r#"pre-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_start.txt"
-post-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_start.txt"
-post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_switch.txt"
-"#,
-    );
-
     let mut cmd = repo.wt_command();
     cmd.args(["switch", "pr:42", "--yes"]);
-    configure_mock_gh_env(&mut cmd, &mock_bin);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
     let output = cmd.output().expect("wt switch pr:42 should run");
     assert!(
         output.status.success(),
@@ -2172,6 +2418,123 @@ post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_pa
             "{marker} hook should see canonical pr_number and pr_url variables",
         );
     }
+}
+
+/// `wt switch pr:N` resolves `post-start` etc. from the PR's tree — the fetched
+/// head ref, potentially from a fork — and the approval prompt reads that same
+/// PR config, so what the prompt lists can't diverge from what runs. The local
+/// repo has no project config; only the PR commit does. Without `--yes` the
+/// prompt lists the PR's hook and bails (non-interactive); with `--yes` the
+/// hook executes against the new worktree (a checkout of the PR head).
+#[rstest]
+fn test_switch_pr_reads_pr_ref_config(#[from(repo_with_remote)] repo: TestRepo) {
+    // Fork-PR scenario (mirrors `test_switch_pr_hooks_see_pr_vars`): a
+    // refs/pull/42/head on the bare remote, origin redirected to a GitHub URL,
+    // `gh api` mocked — but the PR commit carries a `.config/wt.toml`.
+    repo.run_git(&["checkout", "-b", "pr-source"]);
+    fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
+    fs::create_dir_all(repo.root_path().join(".config")).unwrap();
+    fs::write(
+        repo.root_path().join(".config/wt.toml"),
+        r#"post-start = "echo PR-CONFIG-HOOK-RAN > {{ repo_path }}/pr-hook-marker.txt""#,
+    )
+    .unwrap();
+    repo.run_git(&["add", "pr-file.txt", ".config/wt.toml"]);
+    repo.run_git(&["commit", "-m", "PR commit with hook config"]);
+
+    let sha = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["rev-parse", "HEAD"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&["push", "origin", &format!("{sha}:refs/pull/42/head")]);
+    // Back on `main`, which never had `.config/wt.toml` committed — `pr-source`
+    // branched off before that commit, so `git checkout main` drops it from the
+    // working tree, leaving the local repo with no project config.
+    repo.run_git(&["checkout", "main"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{bare_url}.insteadOf"),
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://github.com/owner/test-repo/pull/42"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    // (a) Without `--yes`: the approval prompt prints the PR's command template
+    // to stderr, then bails (stdin is not a TTY in tests). No worktree, no hook.
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:42"]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch pr:42 should run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("PR-CONFIG-HOOK-RAN"),
+        "approval prompt should list the PR ref's post-start hook; stderr:\n{stderr}"
+    );
+    assert!(
+        !output.status.success(),
+        "non-interactive approval should bail without running the hook"
+    );
+    assert!(
+        !repo.root_path().join("pr-hook-marker.txt").exists(),
+        "a declined approval must not run the hook"
+    );
+
+    // (b) With `--yes`: the PR's `post-start` runs against the new worktree.
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "pr:42", "--yes"]);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
+    let output = cmd.output().expect("wt switch pr:42 --yes should run");
+    assert!(
+        output.status.success(),
+        "wt switch pr:42 --yes failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let marker = repo.root_path().join("pr-hook-marker.txt");
+    wait_for_file_content(&marker);
+    assert_eq!(
+        fs::read_to_string(&marker).unwrap().trim(),
+        "PR-CONFIG-HOOK-RAN",
+        "post-start should run with the PR ref's config"
+    );
 }
 
 /// Test fork PR when origin points to fork (no remote for base repo)
@@ -2215,7 +2578,7 @@ fn test_switch_pr_fork_no_upstream_remote(#[from(repo_with_remote)] repo: TestRe
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork_no_upstream", cmd);
     });
 }
@@ -2324,7 +2687,7 @@ fn test_switch_pr_fork_gh_default_repo(#[from(repo_with_remote)] repo: TestRepo)
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork_gh_default", cmd);
     });
 }
@@ -2354,7 +2717,7 @@ fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:9999"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_not_found", cmd);
     });
 }
@@ -2386,7 +2749,7 @@ fn test_switch_pr_deleted_fork(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_deleted_fork", cmd);
     });
 }
@@ -2465,7 +2828,7 @@ fn test_switch_base_pr_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
             ],
             None,
         );
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_base_pr_same_repo", cmd);
     });
 }
@@ -2527,7 +2890,7 @@ fn test_switch_base_pr_sets_upstream(#[from(repo_with_remote)] mut repo: TestRep
     cmd.args([
         "switch", "--create", "swa-65", "--base", "pr:2648", "--no-cd",
     ]);
-    configure_mock_gh_env(&mut cmd, &mock_bin);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
     let status = cmd.status().expect("wt switch should run");
     assert!(status.success(), "wt switch failed: {:?}", status);
 
@@ -2636,7 +2999,7 @@ fn test_switch_base_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
             &["--create", "my-work", "--base", "pr:42", "--no-cd"],
             None,
         );
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_base_pr_fork", cmd);
     });
 
@@ -2777,7 +3140,7 @@ fn test_switch_pr_fork_existing_same_pr(#[from(repo_with_remote)] repo: TestRepo
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork_existing_same_pr", cmd);
     });
 }
@@ -2862,7 +3225,7 @@ fn test_switch_pr_fork_existing_different_pr(#[from(repo_with_remote)] repo: Tes
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork_existing_different_pr", cmd);
     });
 }
@@ -2945,7 +3308,7 @@ fn test_switch_pr_fork_existing_same_pr_wrong_remote(#[from(repo_with_remote)] m
 
     let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
     let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-    configure_mock_gh_env(&mut cmd, &mock_bin);
+    configure_mock_cli_env(&mut cmd, &mock_bin);
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "switch should succeed");
 
@@ -3029,7 +3392,7 @@ fn test_switch_pr_fork_existing_no_tracking(#[from(repo_with_remote)] repo: Test
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork_existing_no_tracking", cmd);
     });
 }
@@ -3114,7 +3477,7 @@ fn test_switch_pr_fork_prefixed_exists_same_pr(#[from(repo_with_remote)] repo: T
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork_prefixed_exists_same_pr", cmd);
     });
 }
@@ -3184,7 +3547,7 @@ fn test_switch_pr_fork_prefixed_exists_different_pr(#[from(repo_with_remote)] re
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_fork_prefixed_exists_different_pr", cmd);
     });
 }
@@ -3213,7 +3576,7 @@ fn test_switch_pr_not_authenticated(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_not_authenticated", cmd);
     });
 }
@@ -3244,7 +3607,7 @@ fn test_switch_pr_rate_limit(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_rate_limit", cmd);
     });
 }
@@ -3268,7 +3631,7 @@ fn test_switch_pr_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_invalid_json", cmd);
     });
 }
@@ -3295,7 +3658,7 @@ fn test_switch_pr_network_error(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_network_error", cmd);
     });
 }
@@ -3323,7 +3686,7 @@ fn test_switch_pr_unknown_error(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_unknown_error", cmd);
     });
 }
@@ -3363,8 +3726,1185 @@ fn test_switch_pr_empty_branch(#[from(repo_with_remote)] repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
-        configure_mock_gh_env(&mut cmd, &mock_bin);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_empty_branch", cmd);
+    });
+}
+
+// ============================================================================
+// PR Syntax Tests on Gitea remotes
+//
+// These exercise `pr:<N>` against a Gitea remote (host detection picks the
+// `tea` provider; provider selection is in choose_pr_provider). The remote
+// URLs use `gitea.example.com` so `GitRemoteUrl::is_gitea()` matches and the
+// ambiguous fallback is skipped — the runtime calls only the mock `tea`,
+// not real `gh`.
+// ============================================================================
+
+/// Helper to set up mock tea for Gitea PR tests with custom response.
+///
+/// Returns the path to the mock bin directory; pass it to
+/// `configure_mock_cli_env`.
+fn setup_mock_tea(repo: &TestRepo, tea_response: Option<&str>) -> std::path::PathBuf {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "tea");
+
+    if let Some(response) = tea_response {
+        fs::write(mock_bin.join("tea_pr_response.json"), response).unwrap();
+
+        MockConfig::new("tea")
+            .version("tea version development (mock)")
+            .command("api", MockResponse::file("tea_pr_response.json"))
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+    }
+
+    mock_bin
+}
+
+#[rstest]
+fn test_switch_pr_gitea_create_conflict(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "feature-auth",
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
+    }"#;
+
+    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_create_conflict", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_pr_gitea_base_conflict(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--base", "main", "pr:101"], None);
+        assert_cmd_snapshot!("switch_pr_gitea_base_conflict", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_pr_gitea_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "feature-auth",
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
+    }"#;
+
+    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_same_repo", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_pr_gitea_fork(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&["checkout", "-b", "gitea-pr-source"]);
+    fs::write(
+        repo.root_path().join("gitea-pr-file.txt"),
+        "Gitea PR content",
+    )
+    .unwrap();
+    repo.run_git(&["add", "gitea-pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "Gitea PR commit"]);
+
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .run()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Add feature fix for edge case",
+        "user": {"login": "contributor"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "contributor:feature-fix",
+            "ref": "feature-fix",
+            "repo": {"name": "test-repo", "owner": {"login": "contributor"}}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/42"
+    }"#;
+
+    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_fork", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_pr_gitea_not_found(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "tea");
+
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"404 Not found"}"#).with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:9999"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_not_found", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_pr_gitea_tea_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
+        eprintln!("Skipping test: symlinks not available on this system");
+        return;
+    };
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_cli_not_installed_env(&mut cmd, &minimal_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_tea_not_installed", cmd);
+    });
+}
+
+/// `forge.platform = "gitea"` selects the Gitea provider directly, even when
+/// the remote URL doesn't look like Gitea (no ambiguous two-provider fallback).
+#[rstest]
+fn test_switch_pr_gitea_forge_platform(#[from(repo_with_remote)] repo: TestRepo) {
+    // Non-Gitea-looking URL — without `forge.platform` set we'd hit the ambiguous path.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://git.internal.example.com/owner/test-repo.git",
+    ]);
+
+    let project_config = repo.root_path().join(".config/wt.toml");
+    fs::create_dir_all(project_config.parent().unwrap()).unwrap();
+    fs::write(&project_config, "[forge]\nplatform = \"gitea\"\n").unwrap();
+
+    let tea_response = r#"{
+        "title": "Override test",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "feature-auth",
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://git.internal.example.com/owner/test-repo/pulls/101"
+    }"#;
+
+    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_forge_platform", cmd);
+    });
+}
+
+/// `forge.platform = "gitlab"` with `pr:` should bail and tell the user to use
+/// `mr:` instead — the platform is incompatible with the syntax.
+#[rstest]
+fn test_switch_pr_forge_platform_gitlab_rejects_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    let project_config = repo.root_path().join(".config/wt.toml");
+    fs::create_dir_all(project_config.parent().unwrap()).unwrap();
+    fs::write(&project_config, "[forge]\nplatform = \"gitlab\"\n").unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        assert_cmd_snapshot!("switch_pr_forge_platform_gitlab", cmd);
+    });
+}
+
+/// An invalid `forge.platform` value bails with a clear error listing the
+/// accepted values, rather than silently routing somewhere via fall-through.
+#[rstest]
+fn test_switch_pr_forge_platform_invalid_bails(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/owner/test-repo.git",
+    ]);
+
+    let project_config = repo.root_path().join(".config/wt.toml");
+    fs::create_dir_all(project_config.parent().unwrap()).unwrap();
+    fs::write(&project_config, "[forge]\nplatform = \"bitbucket\"\n").unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        assert_cmd_snapshot!("switch_pr_forge_platform_invalid_bails", cmd);
+    });
+}
+
+/// With no parseable remote URL, dispatch defaults to GitHub. Without `gh`
+/// installed the GitHub provider bails with the install hint — a single,
+/// readable error rather than a wrapped two-provider message.
+#[rstest]
+fn test_switch_pr_no_remote_defaults_to_github(repo: TestRepo) {
+    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
+        eprintln!("Skipping test: symlinks not available on this system");
+        return;
+    };
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_cli_not_installed_env(&mut cmd, &minimal_bin);
+        assert_cmd_snapshot!("switch_pr_no_remote_defaults_to_github", cmd);
+    });
+}
+
+/// Detected GitLab remote with `pr:` should bail and tell the user to use `mr:`.
+#[rstest]
+fn test_switch_pr_gitlab_remote_rejects_pr(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/owner/test-repo.git",
+    ]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        assert_cmd_snapshot!("switch_pr_gitlab_remote", cmd);
+    });
+}
+
+/// Self-hosted forge whose hostname doesn't match any URL detection rule, but
+/// `tea` has a login configured for it (via `tea login add`) — dispatch
+/// inspects tea's config file and routes to Gitea.
+#[rstest]
+fn test_switch_pr_self_hosted_tea_authed_dispatches_to_gitea(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://forge.selfhosted.test/owner/test-repo.git",
+    ]);
+
+    let tea_config_dir = repo.home_path().join(".config").join("tea");
+    fs::create_dir_all(&tea_config_dir).unwrap();
+    fs::write(
+        tea_config_dir.join("config.yml"),
+        "logins:\n  - name: selfhosted\n    url: https://forge.selfhosted.test\n    default: true\n",
+    )
+    .unwrap();
+
+    let tea_response = r#"{
+        "title": "Routed via tea config",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "feature-auth",
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://forge.selfhosted.test/owner/test-repo/pulls/101"
+    }"#;
+    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_self_hosted_tea_authed", cmd);
+    });
+}
+
+/// Self-hosted forge with a non-distinctive hostname (`forge.example.com`)
+/// and neither `gh` nor `tea` configured for it — dispatch defaults to
+/// GitHub. The mock `gh api` succeeds, so the PR is checked out and the
+/// user never sees a wrapped error.
+#[rstest]
+fn test_switch_pr_self_hosted_defaults_to_github(#[from(repo_with_remote)] mut repo: TestRepo) {
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://forge.example.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://forge.example.com/owner/test-repo.git",
+    ]);
+
+    let gh_response = r#"{
+        "title": "Self-hosted defaults to gh",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "ref": "feature-auth",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://forge.example.com/owner/test-repo/pull/101"
+    }"#;
+    let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_self_hosted_defaults_to_github", cmd);
+    });
+}
+
+/// Gitea API returns malformed JSON — covers the JSON parse error path
+/// in `gitea::fetch_pr_info`.
+#[rstest]
+fn test_switch_pr_gitea_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = setup_mock_tea(&repo, Some("not json {"));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_invalid_json", cmd);
+    });
+}
+
+/// Gitea API returns a 5xx-style generic error (non-404/401/403) — exercises
+/// the generic `cli_api_error` fallback in `gitea::fetch_pr_info`.
+#[rstest]
+fn test_switch_pr_gitea_server_error(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "tea");
+
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"500 Internal Server Error"}"#)
+                .with_stderr("tea: server error\n")
+                .with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_server_error", cmd);
+    });
+}
+
+/// Gitea API returns a PR with no source branch (label and ref both empty)
+/// — exercises the `extract_source_branch` failure path in `fetch_pr_info`.
+#[rstest]
+fn test_switch_pr_gitea_no_source_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Stuck PR",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "",
+            "ref": "",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
+    }"#;
+
+    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_no_source_branch", cmd);
+    });
+}
+
+/// Gitea API returns a PR whose head repo is null (the fork has been deleted).
+/// Covers the `head_repo` `ok_or_else` path in `gitea::fetch_pr_info`.
+#[rstest]
+fn test_switch_pr_gitea_deleted_fork(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let tea_response = r#"{
+        "title": "Deleted fork PR",
+        "user": {"login": "alice"},
+        "state": "open",
+        "draft": false,
+        "head": {
+            "label": "alice:gone",
+            "ref": "gone",
+            "repo": null
+        },
+        "base": {
+            "label": "main",
+            "ref": "main",
+            "repo": {"name": "test-repo", "owner": {"login": "owner"}}
+        },
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/101"
+    }"#;
+
+    let mock_bin = setup_mock_tea(&repo, Some(tea_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_deleted_fork", cmd);
+    });
+}
+
+/// Gitea CLI returning 401/Unauthorized hits the dedicated bail message
+/// (covers the auth-error branch in `gitea::fetch_pr_info`).
+#[rstest]
+fn test_switch_pr_gitea_unauthorized(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "tea");
+
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"401 Unauthorized"}"#).with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_unauthorized", cmd);
+    });
+}
+
+/// Gitea CLI returning 403/Forbidden hits the dedicated bail message
+/// (covers the forbidden branch in `gitea::fetch_pr_info`).
+#[rstest]
+fn test_switch_pr_gitea_forbidden(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "tea");
+
+    MockConfig::new("tea")
+        .version("tea version development (mock)")
+        .command(
+            "api",
+            MockResponse::output(r#"{"message":"403 Forbidden"}"#).with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_gitea_forbidden", cmd);
+    });
+}
+
+// ============================================================================
+// PR Syntax Tests on Azure DevOps remotes
+//
+// These exercise `pr:<N>` against an Azure DevOps remote. Host detection picks
+// the `az` provider (provider selection is in choose_pr_provider). The remote
+// URLs use `dev.azure.com` / `*.visualstudio.com` so `GitRemoteUrl::is_azure_devops()`
+// matches and the ambiguous fallback is skipped — the runtime calls only the
+// mock `az`, not real `gh`.
+// ============================================================================
+
+/// Helper to set up mock `az` for Azure DevOps PR tests with a custom
+/// `az repos pr show` response.
+///
+/// Returns the path to the mock bin directory; pass it to
+/// `configure_mock_cli_env`.
+fn setup_mock_az(repo: &TestRepo, az_pr_response: Option<&str>) -> std::path::PathBuf {
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+
+    copy_mock_binary(&mock_bin, "az");
+
+    if let Some(response) = az_pr_response {
+        fs::write(mock_bin.join("az_pr_response.json"), response).unwrap();
+
+        MockConfig::new("az")
+            .version("azure-cli 2.60.0 (mock)")
+            .command("repos pr show", MockResponse::file("az_pr_response.json"))
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+    }
+
+    mock_bin
+}
+
+/// Point `origin` at an Azure DevOps URL and redirect that URL to the local
+/// bare remote via `url.insteadOf`, so `git fetch` still works.
+fn set_azure_remote_url(repo: &TestRepo, azure_url: &str) {
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    repo.run_git(&["remote", "set-url", "origin", azure_url]);
+    repo.run_git(&["config", &format!("url.{}.insteadOf", bare_url), azure_url]);
+}
+
+#[rstest]
+fn test_switch_pr_azure_create_conflict(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    ]);
+
+    let az_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "createdBy": {"uniqueName": "alice@example.com"},
+        "status": "active",
+        "isDraft": false,
+        "sourceRefName": "refs/heads/feature-auth",
+        "repository": {
+            "name": "test-repo",
+            "project": {"name": "myproject"},
+            "webUrl": "https://dev.azure.com/myorg/myproject/_git/test-repo"
+        },
+        "forkSource": null
+    }"#;
+
+    let mock_bin = setup_mock_az(&repo, Some(az_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_create_conflict", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_pr_azure_base_conflict(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    ]);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--base", "main", "pr:101"], None);
+        assert_cmd_snapshot!("switch_pr_azure_base_conflict", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_pr_azure_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) {
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    set_azure_remote_url(
+        &repo,
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    );
+
+    let az_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "createdBy": {"uniqueName": "alice@example.com"},
+        "status": "active",
+        "isDraft": false,
+        "sourceRefName": "refs/heads/feature-auth",
+        "repository": {
+            "name": "test-repo",
+            "project": {"name": "myproject"},
+            "webUrl": "https://dev.azure.com/myorg/myproject/_git/test-repo"
+        },
+        "forkSource": null
+    }"#;
+
+    let mock_bin = setup_mock_az(&repo, Some(az_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_same_repo", cmd);
+    });
+}
+
+/// Legacy `*.visualstudio.com` remotes encode the org in the hostname — exercises
+/// the `*.visualstudio.com` branches of the Azure URL helpers end to end.
+#[rstest]
+fn test_switch_pr_azure_visualstudio_host(#[from(repo_with_remote)] mut repo: TestRepo) {
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    set_azure_remote_url(
+        &repo,
+        "https://myorg.visualstudio.com/myproject/_git/test-repo",
+    );
+
+    let az_response = r#"{
+        "title": "Fix authentication bug in login flow",
+        "createdBy": {"uniqueName": "alice@example.com"},
+        "status": "active",
+        "isDraft": false,
+        "sourceRefName": "refs/heads/feature-auth",
+        "repository": {
+            "name": "test-repo",
+            "project": {"name": "myproject"},
+            "webUrl": "https://myorg.visualstudio.com/myproject/_git/test-repo"
+        },
+        "forkSource": null
+    }"#;
+
+    let mock_bin = setup_mock_az(&repo, Some(az_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_visualstudio_host", cmd);
+    });
+}
+
+#[rstest]
+fn test_switch_pr_azure_fork(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&["checkout", "-b", "azure-pr-source"]);
+    fs::write(
+        repo.root_path().join("azure-pr-file.txt"),
+        "Azure PR content",
+    )
+    .unwrap();
+    repo.run_git(&["add", "azure-pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "Azure PR commit"]);
+
+    let commit_sha = repo
+        .git_command()
+        .args(["rev-parse", "HEAD"])
+        .run()
+        .unwrap();
+    let sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
+
+    repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
+    repo.run_git(&["checkout", "main"]);
+
+    set_azure_remote_url(
+        &repo,
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    );
+
+    let az_response = r#"{
+        "title": "Add feature fix for edge case",
+        "createdBy": {"uniqueName": "contributor@example.com"},
+        "status": "active",
+        "isDraft": false,
+        "sourceRefName": "refs/heads/feature-fix",
+        "repository": {
+            "name": "test-repo",
+            "project": {"name": "myproject"},
+            "webUrl": "https://dev.azure.com/myorg/myproject/_git/test-repo"
+        },
+        "forkSource": {
+            "repository": {
+                "remoteUrl": "https://dev.azure.com/myorg/myproject/_git/test-repo-fork",
+                "sshUrl": "git@ssh.dev.azure.com:v3/myorg/myproject/test-repo-fork"
+            }
+        }
+    }"#;
+
+    let mock_bin = setup_mock_az(&repo, Some(az_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:42"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_fork", cmd);
+    });
+}
+
+/// `az repos pr show` reporting "does not exist" hits the dedicated
+/// not-found bail in `azure::fetch_pr_info`.
+#[rstest]
+fn test_switch_pr_azure_not_found(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "az");
+
+    MockConfig::new("az")
+        .version("azure-cli 2.60.0 (mock)")
+        .command(
+            "repos pr show",
+            MockResponse::stderr(
+                "TF401174: The requested pull request was not found, or it does not exist.\n",
+            )
+            .with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:9999"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_not_found", cmd);
+    });
+}
+
+/// `az` not installed: with an Azure remote, dispatch routes to the Azure
+/// provider, which bails with the install hint when `az` isn't on PATH.
+#[rstest]
+fn test_switch_pr_azure_az_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    ]);
+
+    let Some(minimal_bin) = setup_minimal_bin_without_cli(&repo) else {
+        eprintln!("Skipping test: symlinks not available on this system");
+        return;
+    };
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_cli_not_installed_env(&mut cmd, &minimal_bin);
+        assert_cmd_snapshot!("switch_pr_azure_az_not_installed", cmd);
+    });
+}
+
+/// `forge.platform = "azure-devops"` selects the Azure provider directly, even
+/// when the remote URL doesn't look like Azure DevOps.
+#[rstest]
+fn test_switch_pr_azure_forge_platform(#[from(repo_with_remote)] repo: TestRepo) {
+    // Non-Azure-looking URL — without `forge.platform` set we'd default to GitHub.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://git.internal.example.com/owner/test-repo.git",
+    ]);
+
+    let project_config = repo.root_path().join(".config/wt.toml");
+    fs::create_dir_all(project_config.parent().unwrap()).unwrap();
+    fs::write(&project_config, "[forge]\nplatform = \"azure-devops\"\n").unwrap();
+
+    let az_response = r#"{
+        "title": "Override test",
+        "createdBy": {"uniqueName": "alice@example.com"},
+        "status": "active",
+        "isDraft": false,
+        "sourceRefName": "refs/heads/feature-auth",
+        "repository": {
+            "name": "test-repo",
+            "project": {"name": "myproject"},
+            "webUrl": "https://dev.azure.com/myorg/myproject/_git/test-repo"
+        },
+        "forkSource": null
+    }"#;
+
+    let mock_bin = setup_mock_az(&repo, Some(az_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_forge_platform", cmd);
+    });
+}
+
+/// `az repos pr show` returning malformed JSON hits the parse-error path
+/// in `azure::fetch_pr_info`.
+#[rstest]
+fn test_switch_pr_azure_invalid_json(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    ]);
+
+    let mock_bin = setup_mock_az(&repo, Some("not json {"));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_invalid_json", cmd);
+    });
+}
+
+/// `az repos pr show` failing with a generic (non-auth, non-not-found) error
+/// exercises the `cli_api_error` fallback in `azure::fetch_pr_info`.
+#[rstest]
+fn test_switch_pr_azure_server_error(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "az");
+
+    MockConfig::new("az")
+        .version("azure-cli 2.60.0 (mock)")
+        .command(
+            "repos pr show",
+            MockResponse::stderr("az: TF400898: An internal error occurred.\n").with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_server_error", cmd);
+    });
+}
+
+/// `az repos pr show` reporting a login error hits the dedicated auth bail.
+#[rstest]
+fn test_switch_pr_azure_auth_error(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "az");
+
+    MockConfig::new("az")
+        .version("azure-cli 2.60.0 (mock)")
+        .command(
+            "repos pr show",
+            MockResponse::stderr("Please run 'az login' to setup account.\n").with_exit_code(1),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_auth_error", cmd);
+    });
+}
+
+/// `az repos pr show` failing because the `azure-devops` extension is missing
+/// hits the dedicated extension-install bail.
+#[rstest]
+fn test_switch_pr_azure_extension_not_installed(#[from(repo_with_remote)] repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "az");
+
+    MockConfig::new("az")
+        .version("azure-cli 2.60.0 (mock)")
+        .command(
+            "repos pr show",
+            MockResponse::stderr(
+                "ERROR: 'repos' is misspelled or not recognized by the system. \
+                 The command requires the azure-devops extension.\n",
+            )
+            .with_exit_code(2),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_extension_not_installed", cmd);
+    });
+}
+
+/// When the API response has no `webUrl` and no local Azure remote is
+/// configured, `fetch_pr_info` can't determine the org/host and bails with a
+/// clear error rather than inventing one.
+#[rstest]
+fn test_switch_pr_azure_org_undeterminable(#[from(repo_with_remote)] repo: TestRepo) {
+    // Non-Azure remote → detect_azure_target returns None.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://git.internal.example.com/owner/test-repo.git",
+    ]);
+
+    let project_config = repo.root_path().join(".config/wt.toml");
+    fs::create_dir_all(project_config.parent().unwrap()).unwrap();
+    fs::write(&project_config, "[forge]\nplatform = \"azure-devops\"\n").unwrap();
+
+    // Response omits `repository.webUrl` → parse_web_url returns None.
+    let az_response = r#"{
+        "title": "No web URL",
+        "createdBy": {"uniqueName": "alice@example.com"},
+        "status": "active",
+        "isDraft": false,
+        "sourceRefName": "refs/heads/feature-auth",
+        "repository": {
+            "name": "test-repo",
+            "project": {"name": "myproject"}
+        },
+        "forkSource": null
+    }"#;
+
+    let mock_bin = setup_mock_az(&repo, Some(az_response));
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        assert_cmd_snapshot!("switch_pr_azure_org_undeterminable", cmd);
     });
 }
 

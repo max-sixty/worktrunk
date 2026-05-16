@@ -59,11 +59,11 @@ exit_code: 0
 
 [36mSHELL INTEGRATION[39m
 [33m▲[39m [33mShell integration not active[39m
-[107m [0m Invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
+[107m [0m Invoked as: [1m[PROJECT_ROOT]/target/[BUILD_MODE]/wt[22m
 
 [2m○[22m [1mfish[22m: Already configured shell extension @ ~/.config/fish/functions/wt.fish:7
 [107m [0m [2m[0m[2m[34mcommand[0m[2m wt config shell init fish [0m[2m[36m|[0m[2m [0m[2m[34msource[0m[2m
-[33m▲[39m [33m[1mfish[22m: Completions not configured @ ~/.config/fish/completions/wt.fish[39m
+[33m▲[39m [33m[1mfish[22m: Completions not configured @ [1m~/.config/fish/completions/wt.fish[22m[39m
 [2m↳[22m [2mTo configure completions, run [4mwt config shell install fish[24m[22m
 
 [36mOTHER[39m

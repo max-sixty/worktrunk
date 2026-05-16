@@ -632,6 +632,10 @@ Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated.
 
 **Forks:** The local branch uses the PR/MR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
 
+**Gitea (experimental):** `pr:` is also compatible with Gitea via the `tea` CLI. Set `[forge] platform = "gitea"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Gitea when the remote host contains `gitea` or when `tea login add` has been run for the host.
+
+**Azure DevOps (experimental):** `pr:` is also compatible with Azure DevOps via the `az` CLI (with the `azure-devops` extension). Set `[forge] platform = "azure-devops"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Azure DevOps from `dev.azure.com` and `*.visualstudio.com` remotes.
+
 ## When wt switch fails
 
 - **Branch doesn't exist** — Use `--create`, or check `wt list --branches`
@@ -979,7 +983,7 @@ Worktrunk checks six conditions (in order of cost):
 3. **No added changes** — Three-dot diff (`target...branch`) is empty. Shows `⊂`.
 4. **Trees match** — Branch tree SHA equals target tree SHA. Shows `⊂`.
 5. **Merge adds nothing** — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced with changes to different files. Shows `⊂`.
-6. **Patch-id match** — Branch's entire diff matches a single squash-merge commit on target. Fallback for when the simulated merge conflicts because target later modified the same files the branch touched. Shows `⊂`.
+6. **Patch-id match** — Branch's entire diff matches a single squash-merge commit on target. Fallback for when the simulated merge conflicts because target later modified the same files the branch touched. Shows `⊂`. The default-branch walk is capped so a single check stays fast; a squash merge with hundreds of commits landed since the merge point falls outside the cap and needs `-D` to remove.
 
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
 
@@ -1373,8 +1377,22 @@ Templates support Jinja2 filters for transforming values:
 | `hash_port` | `{{ branch \| hash_port }}` | Hash to port 10000-19999 |
 | `dirname` | `{{ repo_path \| dirname }}` | Strip the last path component (`/a/b/c` → `/a/b`) |
 | `basename` | `{{ repo_path \| basename }}` | Keep only the last path component (`/a/b/c` → `c`) |
+| `codename(n)` | `{{ branch \| codename(2) }}` | Deterministic friendly words |
 
-The `sanitize` filter makes branch names safe for filesystem paths. The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `sanitize_hash` filter produces a filesystem-safe name and appends a 3-character hash suffix when sanitization changed the input, so distinct originals never collide — already-safe names pass through unchanged. The `hash` filter is the bare 3-character base36 digest, useful for composing your own truncate-with-collision-avoidance recipes when an output budget is tight (e.g., Unix socket paths capped at 107 bytes):
+The `sanitize` filter makes branch names safe for filesystem paths. The `sanitize_db` filter produces database-safe identifiers — lowercase alphanumeric and underscores, no leading digits, with a 3-character hash suffix to avoid collisions and reserved words. The `sanitize_hash` filter produces a filesystem-safe name and appends a 3-character hash suffix when sanitization changed the input, so distinct originals never collide — already-safe names pass through unchanged. The `codename(n)` filter produces deterministic friendly names from an input string: `codename(1)` returns a noun, `codename(2)` returns `adjective-noun`, and higher counts add more adjectives. The pool is large (~1.26M combinations for `codename(2)`), so it usually stands alone as a worktree leaf:
+
+```toml
+# Friendly branch-derived worktree names, e.g. myproject.malleable-opah
+worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}"
+```
+
+When you want both a friendly name and the original branch identity in the path, put the branch name in a parent directory:
+
+```toml
+worktree-path = "{{ repo_path }}/../worktrees/{{ branch | sanitize }}/{{ branch | codename(2) }}"
+```
+
+The `hash` filter is the bare 3-character base36 digest, useful for composing your own truncate-with-collision-avoidance recipes when an output budget is tight (e.g., Unix socket paths capped at 107 bytes):
 
 ```toml
 # Truncated branch slug + hash: collisions remain disambiguated even when prefixes match
@@ -1599,6 +1617,7 @@ Controls where new worktrees are created.
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
 - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
+- `{{ branch | codename(2) }}` — deterministic friendly name from a ~1.26M-combo pool (e.g., `malleable-opah`)
 
 **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
 
@@ -1612,6 +1631,18 @@ Inside the repository (`~/code/myproject/.worktrees/feature-auth`):
 
 ```toml
 worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
+```
+
+Friendly branch-derived names (`~/code/myproject.malleable-opah`):
+
+```toml
+worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}"
+```
+
+Friendly names with branch identity in a parent directory (`~/code/worktrees/feature-auth/malleable-opah`):
+
+```toml
+worktree-path = "{{ repo_path }}/../worktrees/{{ branch | sanitize }}/{{ branch | codename(2) }}"
 ```
 
 Centralized worktrees directory (`~/worktrees/myproject/feature-auth`):
@@ -1901,13 +1932,13 @@ URL column in `wt list` (dimmed when port not listening):
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-## Forge platform override
+## Forge platform
 
-Override platform detection for SSH aliases or self-hosted instances:
+Name the forge explicitly for SSH aliases or self-hosted instances, where it can't be detected from the remote URL:
 
 ```toml
 [forge]
-platform = "github"  # or "gitlab"
+platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)
 hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 ```
 

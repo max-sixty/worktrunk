@@ -6,6 +6,7 @@
   },
   "hooks": "./.claude-plugin/hooks/hooks.json",
   "skills": [
-    "./skills/worktrunk"
+    "./skills/worktrunk",
+    "./skills/wt-switch-create"
   ]
 }

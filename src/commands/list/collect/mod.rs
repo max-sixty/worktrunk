@@ -151,6 +151,7 @@
 //! | `is-ancestor/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
 //! | `has-added-changes/` | `git::repository::sha_cache` | `{branch_sha}-{target_sha}.json` | Never — content-addressed |
 //! | `diff-stats/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
+//! | `ahead-behind/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
 //! | `ci-status/` | `commands::list::ci_status::cache` | `{branch}.json` | TTL 30–60s + HEAD SHA check |
 //! | `summary/{branch}/` | `summary` | `{diff_hash}.json` | Miss if no file exists for the current hash; siblings pruned on write |
 //!
@@ -158,7 +159,7 @@
 //!
 //! - **SHA-pair**: pure function of two commit SHAs. Never stale, no TTL, no invalidation.
 //!   Used by all `sha_cache` kinds (merge-tree conflicts, merge-add probes, ancestry
-//!   checks, file-change probes, diff stats).
+//!   checks, file-change probes, diff stats, ahead/behind counts).
 //! - **Branch + TTL + HEAD**: external mutable state (CI API, remote refs). TTL bounds
 //!   staleness; the HEAD check invalidates early when the branch moves.
 //! - **Branch + content-addressed hash in filename**: content hash (SHA-256
@@ -177,6 +178,7 @@
 //! | `IsAncestor` | `sha_cache` (is-ancestor) |
 //! | `HasFileChanges` | `sha_cache` (has-added-changes) |
 //! | `BranchDiff` | `sha_cache` (diff-stats, skipped when sparse checkout is active) |
+//! | `AheadBehind`, `Upstream` | `sha_cache` (ahead-behind); on a cold cache both columns are pre-filled from `for-each-ref %(ahead-behind:SHA)` walks — one against the default branch (`main↕`, in `RefSnapshot::capture_ahead_behind`) and one per unique upstream SHA (`Remote⇅`, in `Repository::prime_upstream_ahead_behind_cache`) |
 //! | `CiStatus` | `ci_status::cache` |
 //! | `SummaryGenerate` | `summary` |
 //!
@@ -184,11 +186,7 @@
 //!
 //! ### Already optimized (not cache candidates)
 //!
-//! - `AheadBehind` — batch-optimized via single `git for-each-ref %(ahead-behind:main)`
-//!   (~11ms for all branches); per-branch tasks read the in-memory cache
 //! - `CommittedTreesMatch` — single `git rev-parse` resolving both tree SHAs (~1ms)
-//! - `Upstream` — upstream names batch-fetched via single `git for-each-ref
-//!   %(upstream:short)`; per-branch tasks read the in-memory cache
 //!
 //! ### Cached via tree SHA
 //!
@@ -254,7 +252,7 @@ pub(crate) use execution::ExpectedResults;
 use execution::{work_items_for_branch, work_items_for_worktree};
 use results::drain_results;
 use types::DrainOutcome;
-use types::{TaskError, TaskResult};
+use types::{MissingResult, TaskError, TaskResult};
 
 struct TableRenderPlan {
     progressive_table: Option<ProgressiveTable>,
@@ -325,6 +323,11 @@ pub struct CollectOptions {
     /// of cached methods — bypassing the ambient ref→SHA cache entirely.
     /// `None` when capture failed (degraded mode).
     pub snapshot: Option<std::sync::Arc<worktrunk::git::RefSnapshot>>,
+
+    /// Whether `WorkingTreeDiffTask` should include untracked files in
+    /// `HEAD±`. Set by `wt list --full` and `wt statusline`; consumed
+    /// in `tasks.rs` where the cost/cutover rationale lives.
+    pub include_untracked_in_working_diff: bool,
 }
 
 fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
@@ -366,6 +369,24 @@ pub trait PickerProgressHandler: Send + Sync {
     /// skeleton state use the skeleton renderer. The handler writes every
     /// slot — slot writes are idempotent.
     fn on_reveal(&self, rendered: Vec<String>);
+
+    /// Stash a pre-formatted warning line. Skim owns the terminal while
+    /// collect runs on the picker's bg thread, so eprintln from collect
+    /// would corrupt the rendered frame. The picker drains stashed lines
+    /// after `Skim::run_with` returns, when stderr is safe again.
+    fn stash_warning(&self, line: String);
+
+    /// Fired once before `collect` returns `Ok(Some(_))`. Lets the picker
+    /// kick off the deferred tier of background work — secondary preview
+    /// modes for items 1..N, and LLM summaries for items 1..N. The
+    /// global rayon pool serves both pipelines; deferring this tier
+    /// until drain-end keeps low-priority preview submissions out of
+    /// the injector while row tasks dominate worker deques.
+    ///
+    /// Not fired on the `WORKTRUNK_SKELETON_ONLY` / `WORKTRUNK_FIRST_OUTPUT`
+    /// benchmark early-exit, nor on the zero-worktree `Ok(None)` return
+    /// (which exits before `on_skeleton`). Default: no-op.
+    fn on_collect_complete(&self) {}
 }
 
 /// Controls how show flags (branches/remotes/full) are determined in [`collect`].
@@ -450,6 +471,67 @@ fn format_stall_footer(
     cformat!(
         "{INFO_SYMBOL} {dim}{footer_base} ({completed}/{total} loaded, no recent progress; {waiting_clause}){dim:#}"
     )
+}
+
+/// Emit the drain-timeout warning + hint when the default 120s
+/// `DRAIN_TIMEOUT` was hit. No-op for `Complete` outcomes or when an
+/// explicit `collect_deadline` was supplied — those are intentional
+/// truncations the caller controls.
+///
+/// Split out so tests can drive it with a synthetic `DrainOutcome::TimedOut`
+/// without spinning up a real 120s drain.
+fn handle_drain_timeout(
+    drain_outcome: DrainOutcome,
+    collect_deadline: Option<std::time::Instant>,
+    emit: &dyn Fn(String),
+) {
+    if collect_deadline.is_none()
+        && let DrainOutcome::TimedOut {
+            received_count,
+            items_with_missing,
+        } = drain_outcome
+    {
+        let diag = format_drain_timeout_diag(received_count, &items_with_missing);
+        emit(warning_message(&diag).to_string());
+        emit(
+            hint_message(cformat!(
+                "A git command likely hung; for details, re-run with <underline>-v</>; for a diagnostic file, re-run with <underline>-vv</>"
+            ))
+            .to_string(),
+        );
+    }
+}
+
+/// Build the drain-timeout diagnostic shown when the default 120s
+/// `DRAIN_TIMEOUT` is hit. Returns the pre-formatted warning text — the
+/// caller wraps it in `warning_message` and routes through the picker stash
+/// or stderr. Pure so tests can exercise it without spinning up a 120s drain.
+fn format_drain_timeout_diag(
+    received_count: usize,
+    items_with_missing: &[MissingResult],
+) -> String {
+    let mut diag = format!(
+        "Listing worktrees timed out after {}s ({received_count} results received)",
+        results::DRAIN_TIMEOUT.as_secs()
+    );
+
+    if !items_with_missing.is_empty() {
+        diag.push_str("; blocked tasks:");
+        let missing_lines: Vec<String> = items_with_missing
+            .iter()
+            .take(5)
+            .map(|result| {
+                let missing_names: Vec<&str> =
+                    result.missing_kinds.iter().map(|k| k.into()).collect();
+                cformat!("<bold>{}</>: {}", result.name, missing_names.join(", "))
+            })
+            .collect();
+        diag.push_str(&format!(
+            "\n{}",
+            format_with_gutter(&missing_lines.join("\n"), None)
+        ));
+    }
+    diag
 }
 
 /// Collect worktree data with rendering driven by `render_target`.
@@ -567,6 +649,7 @@ pub fn collect(
         collect_deadline,
         list_width,
         progressive_handler,
+        include_untracked_in_working_diff,
     ) = match show_config {
         ShowConfig::Resolved {
             show_branches,
@@ -584,6 +667,10 @@ pub fn collect(
             collect_deadline,
             list_width,
             progressive_handler,
+            // Picker is the only `Resolved` caller and runs the same fast
+            // bucket as default `wt list` (skips BranchDiff/CiStatus), so
+            // it also opts out of the untracked-inclusive working diff.
+            false,
         ),
         ShowConfig::DeferredToParallel {
             cli_branches,
@@ -621,7 +708,21 @@ pub fn collect(
                 collect_deadline,
                 None,
                 None,
+                show_full,
             )
+        }
+    };
+
+    // The picker (`wt switch`) drives a skim TUI that owns the terminal while
+    // collect runs on a background thread. Any stderr write from collect
+    // would overlay the picker's rendered frame and corrupt skim's clear
+    // math, so warnings go through the handler's stash instead — picker
+    // drains and emits them after `Skim::run_with` returns.
+    let emit_warning = |line: String| {
+        if let Some(h) = progressive_handler.as_ref() {
+            h.stash_warning(line);
+        } else {
+            eprintln!("{line}");
         }
     };
 
@@ -662,17 +763,17 @@ pub fn collect(
     };
 
     if warn_stale_default && let Some(branch) = default_branch.as_deref() {
-        eprintln!(
-            "{}",
+        emit_warning(
             warning_message(cformat!(
                 "Configured default branch <bold>{branch}</> does not exist locally"
             ))
+            .to_string(),
         );
-        eprintln!(
-            "{}",
+        emit_warning(
             hint_message(cformat!(
                 "To reset, run <underline>wt config state default-branch clear</>"
             ))
+            .to_string(),
         );
     }
 
@@ -751,9 +852,8 @@ pub fn collect(
         // Surface git's actual stderr (when available via the typed leaf)
         // rather than our `CommandError` summary.
         let detail = err.display_message();
-        eprintln!(
-            "{}",
-            warning_message(cformat!("Failed to batch-fetch commit details: {detail}"))
+        emit_warning(
+            warning_message(cformat!("Failed to batch-fetch commit details: {detail}")).to_string(),
         );
         std::collections::HashMap::new()
     });
@@ -897,6 +997,7 @@ pub fn collect(
         default_branch: default_branch.clone(),
         integration_targets: None,
         snapshot: None,
+        include_untracked_in_working_diff,
     };
 
     // Track expected results per item - populated as spawns are queued
@@ -1021,7 +1122,8 @@ pub fn collect(
     // See: https://gitlab.com/gitlab-org/git/-/merge_requests/148 (scalar's fsmonitor workaround)
     // See: https://github.com/jj-vcs/jj/issues/6440 (jj hit same fsmonitor issue)
     let previous_branch_cell: OnceCell<Option<String>> = OnceCell::new();
-    let snapshot_cell: OnceCell<Option<worktrunk::git::RefSnapshot>> = OnceCell::new();
+    let snapshot_cell: OnceCell<Option<std::sync::Arc<worktrunk::git::RefSnapshot>>> =
+        OnceCell::new();
 
     rayon::scope(|s| {
         // Previous branch lookup (for gutter symbol)
@@ -1029,16 +1131,90 @@ pub fn collect(
             let _ = previous_branch_cell.set(repo.switch_previous());
         });
 
-        // Capture ref state. One `for-each-ref refs/heads/ refs/remotes/`
-        // plus (when default_branch is known) one `for-each-ref
-        // %(ahead-behind:BASE)` batch. The snapshot replaces the prior
+        // Capture ref state: `for-each-ref refs/heads/ refs/remotes/`,
+        // plus — when default_branch is known and the per-base
+        // ahead-behind cache doesn't already cover the branches — one
+        // `for-each-ref %(ahead-behind:BASE)` walk (scoped to the cold
+        // subset; warm runs do neither). The snapshot replaces the prior
         // `commit_shas` priming + `batch_ahead_behind` pair: tasks consume
         // it by SHA, dodging ref→SHA cache staleness.
-        s.spawn(|_| {
+        //
+        // After the snapshot is built, an inner spawn primes the
+        // `Remote⇅` cache off its already-scanned inventories — see the
+        // nested `s.spawn` below for the rationale.
+        //
+        // TODO(ahead-behind-pool): the `%(ahead-behind)` walk that runs
+        // here on a cold cache is serial — it blocks this scope, and the
+        // big task pool can't open until it returns. Nothing downstream of
+        // work-item generation actually needs the ahead/behind *counts*
+        // (only the per-row `AheadBehindTask` reads them, and it has a
+        // per-SHA fallback) — only the cheap `for-each-ref refs/heads/
+        // refs/remotes/` ref scan gates work-item generation. So the walk
+        // could become a single work item in the pool, overlapping the
+        // other ~N workers, instead of a serial prelude. That needs an
+        // inter-task dependency (the per-row tasks would wait on it, or it
+        // would emit their results directly) — the work-item model has
+        // none today.
+        s.spawn(|s| {
             let snap = match default_branch.as_deref() {
                 Some(db) => repo.capture_refs_with_ahead_behind(db).ok(),
                 None => repo.capture_refs().ok(),
-            };
+            }
+            .map(std::sync::Arc::new);
+
+            // Prime the `ahead-behind/` SHA-cache for the `Remote⇅`
+            // column, pairing each local branch with its configured
+            // upstream. Mirrors the `main↕` priming inside
+            // `capture_refs_with_ahead_behind`, but per-upstream-group
+            // instead of single-base: one serial `for-each-ref
+            // %(ahead-behind:UPSTREAM_SHA)` walk per unique upstream
+            // that's both cold and above the same threshold.
+            //
+            // Nested inside this spawn (rather than a sibling) so it can
+            // read the snapshot's already-scanned local/remote
+            // inventories — a sibling spawn would race the snapshot's
+            // own scans and (when `--remotes` is off) fire a redundant
+            // `for-each-ref refs/remotes/`. The primer still runs in
+            // parallel with downstream scope work (fsmonitor, etc.); it
+            // just gates on its data dependency.
+            //
+            // Scope to branches that will actually render an
+            // `UpstreamTask` row: with `--branches` that's every local;
+            // without it that's just the worktree-attached subset.
+            // Otherwise plain `wt list` on a repo with many stale
+            // tracking branches would block the worker pool on a serial
+            // batch for rows nobody sees.
+            if let Some(snap_arc) = snap.as_ref() {
+                let snap_for_primer = std::sync::Arc::clone(snap_arc);
+                s.spawn(move |_| {
+                    // Honor `list.task-timeout-ms` for the primer's git
+                    // commands — these are the same `for-each-ref
+                    // %(ahead-behind)` / `rev-list` invocations that
+                    // used to run inside `UpstreamTask`, where the
+                    // worker loop sets the per-thread timeout. Without
+                    // this, `wt list` could sit at the skeleton on a
+                    // pathologically slow git until the (untimed) batch
+                    // returned.
+                    worktrunk::shell_exec::set_command_timeout(command_timeout);
+                    let all_locals = snap_for_primer.local_branches();
+                    let filtered_locals: Vec<LocalBranch>;
+                    let candidates: &[LocalBranch] = if show_branches {
+                        all_locals
+                    } else {
+                        filtered_locals = all_locals
+                            .iter()
+                            .filter(|b| worktree_branches.contains(b.name.as_str()))
+                            .cloned()
+                            .collect();
+                        &filtered_locals
+                    };
+                    repo.prime_upstream_ahead_behind_cache(
+                        candidates,
+                        snap_for_primer.remote_branches(),
+                    );
+                });
+            }
+
             let _ = snapshot_cell.set(snap);
         });
 
@@ -1052,10 +1228,7 @@ pub fn collect(
 
     // Extract results from cells
     let previous_branch = previous_branch_cell.into_inner().flatten();
-    let snapshot = snapshot_cell
-        .into_inner()
-        .flatten()
-        .map(std::sync::Arc::new);
+    let snapshot = snapshot_cell.into_inner().flatten();
 
     // Resolve integration targets from the snapshot. Same OR semantics
     // as `Repository::integration_reason` (`primary` + optional
@@ -1366,47 +1539,11 @@ pub fn collect(
     // final table / finalize / timeout paths must not inherit that.
     placeholder = super::render::PLACEHOLDER;
 
-    // Handle timeout if it occurred.
-    // Budget-based deadlines (collect_deadline) are intentional truncation — don't warn.
-    // Only warn for the default DRAIN_TIMEOUT (120s), which indicates a hung command.
-    if collect_deadline.is_none()
-        && let DrainOutcome::TimedOut {
-            received_count,
-            items_with_missing,
-        } = drain_outcome
-    {
-        // Warning: what happened + gutter showing which tasks blocked
-        let mut diag = format!(
-            "wt list timed out after {}s ({received_count} results received)",
-            results::DRAIN_TIMEOUT.as_secs()
-        );
-
-        if !items_with_missing.is_empty() {
-            diag.push_str("; blocked tasks:");
-            let missing_lines: Vec<String> = items_with_missing
-                .iter()
-                .take(5)
-                .map(|result| {
-                    let missing_names: Vec<&str> =
-                        result.missing_kinds.iter().map(|k| k.into()).collect();
-                    cformat!("<bold>{}</>: {}", result.name, missing_names.join(", "))
-                })
-                .collect();
-            diag.push_str(&format!(
-                "\n{}",
-                format_with_gutter(&missing_lines.join("\n"), None)
-            ));
-        }
-
-        eprintln!("{}", warning_message(&diag));
-
-        eprintln!(
-            "{}",
-            hint_message(cformat!(
-                "A git command likely hung; run <underline>wt list -v</> for details or <underline>wt list -vv</> to create a diagnostic file"
-            ))
-        );
-    }
+    // Handle timeout if it occurred. Budget-based deadlines
+    // (collect_deadline) are intentional truncation — don't warn. Only
+    // warn for the default DRAIN_TIMEOUT (120s), which indicates a hung
+    // command.
+    handle_drain_timeout(drain_outcome, collect_deadline, &emit_warning);
 
     // The drain calls `refresh_status_symbols` after every *successful*
     // result, but items with zero successful results (all tasks errored
@@ -1478,10 +1615,10 @@ pub fn collect(
         }
 
         let warning = warning_parts.join("\n");
-        eprintln!("{}", warning_message(&warning));
+        emit_warning(warning_message(&warning).to_string());
 
         // Show issue reporting hint (free function - doesn't collect diagnostic data)
-        eprintln!("{}", hint_message(crate::diagnostic::issue_hint()));
+        emit_warning(hint_message(crate::diagnostic::issue_hint()).to_string());
     }
 
     // Populate display fields for all items (used by JSON output and statusline)
@@ -1500,6 +1637,14 @@ pub fn collect(
     //   caller to serialize (`wt list --format=json`) or feed into its own
     //   UI (picker via `progressive_handler`)
     worktrunk::trace::instant("List collect complete");
+
+    // Fire `on_collect_complete` after the row pipeline has fully torn
+    // down. The picker handler uses this to spawn bulk preview pre-compute
+    // for items 1..N without contending with row tasks. No-op for
+    // non-picker callers (default trait impl).
+    if let Some(handler) = progressive_handler.as_ref() {
+        handler.on_collect_complete();
+    }
 
     Ok(Some(super::model::ListData { items }))
 }
@@ -1816,6 +1961,103 @@ mod tests {
         insta::assert_snapshot!(
             strip_ansi(&rendered),
             @"○ Showing 3 worktrees (5/12 loaded, no recent progress; waiting on 3 tasks, including ci-status for feat)"
+        );
+    }
+
+    /// Drain timeout diagnostic without per-item breakdown — the early-exit
+    /// path when no items are blocked.
+    #[test]
+    fn test_format_drain_timeout_diag_no_items() {
+        let rendered = format_drain_timeout_diag(7, &[]);
+        insta::assert_snapshot!(
+            strip_ansi(&rendered),
+            @"Listing worktrees timed out after 120s (7 results received)"
+        );
+    }
+
+    /// `handle_drain_timeout` emits both warning + hint when the default
+    /// timeout fires (`collect_deadline: None` + `TimedOut`). Captures
+    /// emissions through the closure to avoid touching real stderr.
+    #[test]
+    fn test_handle_drain_timeout_emits_on_default_timeout() {
+        use std::sync::Mutex;
+        let captured: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let emit = |line: String| captured.lock().unwrap().push(line);
+        let outcome = DrainOutcome::TimedOut {
+            received_count: 4,
+            items_with_missing: vec![],
+        };
+        handle_drain_timeout(outcome, None, &emit);
+        let lines = captured.lock().unwrap();
+        assert_eq!(lines.len(), 2, "expected warning + hint, got: {lines:?}");
+        assert!(
+            strip_ansi(&lines[0]).contains("Listing worktrees timed out after"),
+            "warning line: {}",
+            lines[0]
+        );
+        assert!(
+            strip_ansi(&lines[1]).contains("re-run with -v"),
+            "hint line: {}",
+            lines[1]
+        );
+    }
+
+    /// An explicit `collect_deadline` is intentional truncation — the helper
+    /// must stay silent so user-budgeted deadlines don't surface as bugs.
+    #[test]
+    fn test_handle_drain_timeout_silent_when_deadline_set() {
+        use std::sync::Mutex;
+        let captured: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let emit = |line: String| captured.lock().unwrap().push(line);
+        let outcome = DrainOutcome::TimedOut {
+            received_count: 0,
+            items_with_missing: vec![],
+        };
+        let deadline = std::time::Instant::now();
+        handle_drain_timeout(outcome, Some(deadline), &emit);
+        assert!(
+            captured.lock().unwrap().is_empty(),
+            "expected no emissions for budgeted deadline"
+        );
+    }
+
+    /// `Complete` outcomes are the happy path — the helper must stay silent.
+    #[test]
+    fn test_handle_drain_timeout_silent_on_complete() {
+        use std::sync::Mutex;
+        let captured: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let emit = |line: String| captured.lock().unwrap().push(line);
+        handle_drain_timeout(DrainOutcome::Complete, None, &emit);
+        assert!(
+            captured.lock().unwrap().is_empty(),
+            "expected no emissions for Complete outcome"
+        );
+    }
+
+    /// With blocked items, the diagnostic appends a gutter listing each
+    /// item's missing task kinds. `take(5)` caps the list; cover that here.
+    #[test]
+    fn test_format_drain_timeout_diag_with_blocked_items() {
+        let items = vec![
+            MissingResult {
+                item_idx: 0,
+                name: "feature-a".to_string(),
+                missing_kinds: vec![TaskKind::CiStatus, TaskKind::BranchDiff],
+            },
+            MissingResult {
+                item_idx: 1,
+                name: "feature-b".to_string(),
+                missing_kinds: vec![TaskKind::AheadBehind],
+            },
+        ];
+        let rendered = format_drain_timeout_diag(3, &items);
+        insta::assert_snapshot!(
+            strip_ansi(&rendered),
+            @r"
+        Listing worktrees timed out after 120s (3 results received); blocked tasks:
+          feature-a: ci-status, branch-diff
+          feature-b: ahead-behind
+        "
         );
     }
 

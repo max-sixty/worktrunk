@@ -1,12 +1,13 @@
 use std::collections::HashSet;
 use std::io::Write;
+use std::path::Path;
 
 use anyhow::Context;
 use clap::FromArgMatches;
 use clap::error::ErrorKind as ClapErrorKind;
 use color_print::{ceprintln, cformat};
 use std::process;
-use worktrunk::config::{UserConfig, set_config_path};
+use worktrunk::config::{Approvals, UserConfig, set_config_path};
 use worktrunk::git::{
     ErrorExt, Repository, ResolvedWorktree, WorktrunkError, current_or_recover, cwd_removed_hint,
     set_base_path,
@@ -15,9 +16,9 @@ use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, hint_message, info_message, warning_message,
 };
 
-use commands::command_approval::approve_or_skip;
-use commands::command_executor::CommandContext;
+use commands::command_approval::approve_command_batch;
 use commands::hooks::HookAnnouncer;
+use commands::project_config::collect_remove_hook_commands;
 use commands::worktree::RemoveResult;
 
 mod cli;
@@ -72,7 +73,6 @@ use cli::{
     PreviousBranchAction, RemoveArgs, StateCommand, StepCommand, SwitchArgs, SwitchFormat,
     VarsAction,
 };
-use worktrunk::HookType;
 
 /// Render a clap error to stderr, appending a wt-specific nested-subcommand
 /// tip when the unknown name matches something under `wt step` / `wt hook`
@@ -298,8 +298,8 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
                         SquashResult::NoCommitsAhead(branch) => {
                             eprintln!(
                                 "{}",
-                                info_message(format!(
-                                    "Nothing to squash; no commits ahead of {branch}"
+                                info_message(cformat!(
+                                    "Nothing to squash; no commits ahead of <bold>{branch}</>"
                                 ))
                             );
                         }
@@ -535,7 +535,7 @@ fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow:
                     // Exit with error if no shells configured
                     // Show skipped shells first so user knows what was tried
                     if scan_result.configured.is_empty() {
-                        crate::output::print_skipped_shells(&scan_result.skipped)?;
+                        crate::output::print_skipped_shells(&scan_result.skipped);
                         return Err(worktrunk::git::GitError::Other {
                             message: "No shell config files found".into(),
                         }
@@ -545,7 +545,8 @@ fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow:
                     if dry_run {
                         return Ok(());
                     }
-                    crate::output::print_shell_install_result(&scan_result)
+                    crate::output::print_shell_install_result(&scan_result);
+                    Ok(())
                 })
         }
         ConfigShellCommand::Uninstall { shell, dry_run } => {
@@ -898,33 +899,34 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 .into());
             }
 
-            // Resolve current worktree context for hook approval
-            let current_wt = repo.current_worktree();
-            let approve_worktree_path = current_wt.root()?;
-            let approve_branch = current_wt
-                .branch()
-                .context("Failed to determine current branch")?;
-
-            // Helper: approve remove hooks using current worktree context
-            // Returns true if hooks should run (user approved)
-            let approve_remove = |yes: bool| -> anyhow::Result<bool> {
-                let ctx = CommandContext::new(
-                    &repo,
-                    &config,
-                    approve_branch.as_deref(),
-                    &approve_worktree_path,
-                    yes,
-                );
-                approve_or_skip(
-                    &ctx,
-                    &[
-                        HookType::PreRemove,
-                        HookType::PostRemove,
-                        HookType::PostSwitch,
-                    ],
-                    "Commands declined, continuing removal",
-                )
-            };
+            // Helper: approve every command the removal will run, in one batch.
+            // `pre-remove` / `post-remove` resolve their `.config/wt.toml` from
+            // each worktree being removed (`removed_worktree_paths`); `post-switch`
+            // resolves from each removal's post-removal destination
+            // (`destination_paths` — `RemoveResult::destination_path()`, normally
+            // the primary worktree, cwd when the primary worktree is itself the
+            // removal target). No fallback between worktrees, same rule as the
+            // executors. The shared helper assembles them all, dedup'd by template.
+            // Returns `true` when the prompt was accepted or there was nothing to
+            // approve.
+            let approve_remove =
+                |removed_worktree_paths: &[&Path], destination_paths: &[&Path], yes: bool| -> anyhow::Result<bool> {
+                    let commands = collect_remove_hook_commands(
+                        removed_worktree_paths,
+                        destination_paths,
+                    )?;
+                    if commands.is_empty() {
+                        return Ok(true);
+                    }
+                    let project_id = repo.project_identifier()?;
+                    let approvals = Approvals::load().context("Failed to load approvals")?;
+                    let approved =
+                        approve_command_batch(&commands, &project_id, &approvals, yes, false)?;
+                    if !approved {
+                        eprintln!("{}", info_message("Commands declined, continuing removal"));
+                    }
+                    Ok(approved)
+                };
 
             let branches = args.branches;
 
@@ -948,10 +950,22 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 }
 
                 // "Approve at the Gate": approval happens AFTER validation passes
-                let run_hooks = verify && approve_remove(yes)?;
+                let run_hooks = verify
+                    && approve_remove(
+                        result.removed_worktree_path().as_slice(),
+                        result.destination_path().as_slice(),
+                        yes,
+                    )?;
 
                 let mut announcer = HookAnnouncer::new(&repo, &config, false);
-                handle_remove_output(&result, args.foreground, run_hooks, false, &mut announcer)?;
+                handle_remove_output(
+                    &result,
+                    args.foreground,
+                    run_hooks,
+                    false,
+                    false,
+                    &mut announcer,
+                )?;
                 announcer.flush()?;
                 if json_mode {
                     let json = serde_json::json!([result.to_json()]);
@@ -982,10 +996,25 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     return Ok(());
                 }
 
-                // Approve hooks (only if we have valid plans)
-                // TODO(pre-remove-context): Approval context uses current worktree,
-                // but hooks execute in each target worktree.
-                let run_hooks = verify && approve_remove(yes)?;
+                // Approve hooks (only if we have valid plans). Each removed
+                // worktree's `pre-remove` / `post-remove` is approved against
+                // that worktree's config, and its `post-switch` against the
+                // worktree the user lands in — see `approve_remove` above.
+                // (`destination_targets` is mostly the primary worktree
+                // repeated; the helper dedups by template.)
+                let all_plans = || {
+                    plans
+                        .others
+                        .iter()
+                        .chain(&plans.branch_only)
+                        .chain(plans.current.iter())
+                };
+                let removed_targets: Vec<&Path> =
+                    all_plans().filter_map(|r| r.removed_worktree_path()).collect();
+                let destination_targets: Vec<&Path> =
+                    all_plans().filter_map(|r| r.destination_path()).collect();
+                let run_hooks =
+                    verify && approve_remove(&removed_targets, &destination_targets, yes)?;
 
                 // Execute all validated plans: others first, branch-only next, current last
                 let show_branch =
@@ -996,6 +1025,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                         result,
                         args.foreground,
                         run_hooks,
+                        false,
                         false,
                         &mut announcer,
                     )?;
@@ -1042,6 +1072,14 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
 /// (often blocked on pipe reads) alongside occasional network requests. 2x CPU
 /// cores lets threads waiting on I/O overlap with compute work without excessive
 /// context-switch overhead.
+///
+/// 3x CPU was benchmarked against `divergent_branches/warm` (branch-heavy) and
+/// `worktree_scaling/warm/8` (worktree-heavy) on packed fixtures. 3x is at or
+/// within noise of the optimum on both workloads; 2x trails by 0-5% (divergent:
+/// 259ms vs 257ms, CIs overlap; worktree: 86.6ms vs 82.4ms, ~5% gap). 4x
+/// regresses on branch-heavy workloads. We stay at 2x because the win is small
+/// in absolute terms (≤ 5ms) and 2x has been validated in production across
+/// hardware we haven't benchmarked.
 pub(crate) fn rayon_thread_count() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get() * 2)

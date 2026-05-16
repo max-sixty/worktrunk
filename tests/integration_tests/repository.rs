@@ -586,8 +586,8 @@ fn test_primary_remote_url_composition() {
 
 /// `detect_ref_type` resolves the platform's PR/MR reference type from the
 /// primary remote URL. Drives the numeric branch hint in `BranchNotFound`
-/// ("To switch to PR #N, run wt switch pr:N"). The `forge.platform` override
-/// branch is exercised end-to-end via the `platform_for_repo` paths.
+/// ("To switch to PR #N, run wt switch pr:N"). The `forge.platform` config
+/// branch is exercised end-to-end via the `Repository::ci_platform` paths.
 #[test]
 fn test_detect_ref_type() {
     // GitHub remote → PR
@@ -1101,7 +1101,6 @@ fn test_branch_returns_none_for_detached_head() {
 
     // Create a fresh repository instance to avoid cached result
     let repository = Repository::at(&root).unwrap();
-    // Use worktree_at with explicit path, not current_worktree() which uses base_path()
     let wt = repository.worktree_at(&root);
 
     let result = wt.branch();
@@ -1139,7 +1138,6 @@ fn test_branch_returns_branch_name() {
     let repo = TestRepo::new();
     let root = repo.root_path().to_path_buf();
     let repository = Repository::at(&root).unwrap();
-    // Use worktree_at with explicit path, not current_worktree() which uses base_path()
     let wt = repository.worktree_at(&root);
 
     let result = wt.branch();
@@ -1156,7 +1154,6 @@ fn test_branch_caches_result() {
     let repo = TestRepo::new();
     let root = repo.root_path().to_path_buf();
     let repository = Repository::at(&root).unwrap();
-    // Use worktree_at with explicit path, not current_worktree() which uses base_path()
     let wt = repository.worktree_at(&root);
 
     // First call

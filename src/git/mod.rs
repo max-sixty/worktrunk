@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 // Submodules
+mod ci_platform;
 mod diff;
 mod error;
 mod parse;
@@ -35,6 +36,7 @@ static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::ne
 pub const NULL_OID: &str = "0000000000000000000000000000000000000000";
 
 // Re-exports from submodules
+pub use ci_platform::CiPlatform;
 pub(crate) use diff::DiffStats;
 pub use diff::{LineDiff, parse_numstat_line};
 pub use error::{
@@ -72,7 +74,7 @@ pub use remove::{
 };
 pub use repository::sha_cache;
 pub use repository::{
-    Branch, IntegrationTargets, RefSnapshot, Repository, ResolvedWorktree, WorkingTree,
+    Branch, IntegrationTargets, RefSnapshot, Repository, ResolvedWorktree, TempIndex, WorkingTree,
     set_base_path,
 };
 pub use url::GitRemoteUrl;
@@ -303,7 +305,10 @@ fn resolve_via_snapshot(
     if let Some(sha) = snapshot.resolve(name) {
         return Ok(sha.to_string());
     }
-    Ok(repo.run_command(&["rev-parse", name])?.trim().to_string())
+    Ok(repo
+        .run_command(&["rev-parse", "--verify", "--end-of-options", name])?
+        .trim()
+        .to_string())
 }
 
 /// Category of branch for completion display

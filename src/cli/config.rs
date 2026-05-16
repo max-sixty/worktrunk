@@ -167,8 +167,9 @@ $ wt config plugins opencode install --yes
 
 ## Plugin location
 
-The plugin is written to `~/.config/opencode/plugins/worktrunk.ts`.
-Override with the `OPENCODE_CONFIG_DIR` environment variable."#
+The plugin is written to `~/.config/opencode/plugins/worktrunk.ts`,
+mirroring OpenCode's own global-config precedence:
+`$OPENCODE_CONFIG_DIR` > `$XDG_CONFIG_HOME/opencode` > `~/.config/opencode`."#
     )]
     Install,
 
@@ -302,7 +303,9 @@ $ wt config plugins opencode uninstall
 
 ## Plugin location
 
-Written to `~/.config/opencode/plugins/worktrunk.ts` (or `$OPENCODE_CONFIG_DIR/plugins/worktrunk.ts`)."#
+Written to `~/.config/opencode/plugins/worktrunk.ts`. Honors OpenCode's
+config precedence: `$OPENCODE_CONFIG_DIR` > `$XDG_CONFIG_HOME/opencode` >
+`~/.config/opencode`."#
     )]
     Opencode {
         #[command(subcommand)]
@@ -357,11 +360,18 @@ Skips gracefully if the statusline is already configured."#
 // dry-run previews the expansion for a given invocation.
 #[derive(Subcommand)]
 pub enum ConfigAliasCommand {
-    /// Show an alias's template as configured
+    /// Show an alias's template, or all aliases' templates
     #[command(
-        after_long_help = r#"Prints each pipeline step's raw template indented with a gutter, tagged by source (user / project). Duplicate names defined in both configs show as two entries, runtime order (user first, then project).
+        after_long_help = r#"With a name, prints each pipeline step's raw template indented with a gutter, tagged by source (user / project). Duplicate names defined in both configs show as two entries in runtime order (user first, then project).
+
+With no name, prints that block for every configured alias in name order — equivalent to running `wt config alias show <name>` for each. `wt --help` shows a compact names-only list and points here.
 
 ## Examples
+
+Show every alias's template:
+```console
+$ wt config alias show
+```
 
 Show the template for `deploy`:
 ```console
@@ -369,9 +379,9 @@ $ wt config alias show deploy
 ```"#
     )]
     Show {
-        /// Alias name
+        /// Alias name (omit to show all)
         #[arg(add = crate::completion::alias_name_completer())]
-        name: String,
+        name: Option<String>,
     },
 
     /// Preview an alias invocation with template expansion
@@ -537,6 +547,11 @@ Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval
 
 ## Examples
 
+Show every configured alias's template:
+```console
+$ wt config alias show
+```
+
 Show the template for `deploy`:
 ```console
 $ wt config alias show deploy
@@ -653,7 +668,7 @@ pub enum StateCommand {
 - **Vars**: Custom variables per branch
 - **CI status**: Cached GitHub/GitLab CI status per branch (30s TTL)
 - **Summaries**: Cached LLM-generated branch summaries (shown in `wt list --full` and `wt switch` preview)
-- **Git commands cache**: SHA-keyed merge-tree, ancestry, and diff-stats results
+- **Git commands cache**: SHA-keyed disk caches — merge-tree, ancestry, diff-stats, and `wt switch` preview renders
 - **Hints**: One-time hints that have been shown
 - **Log files**: Operation and debug logs
 - **Trash**: Staged worktree directories awaiting background deletion
@@ -867,7 +882,7 @@ $ wt config state hints clear NAME   # re-show specific hint
         name = "ci-status",
         after_long_help = r#"Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
 
-Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `forge.platform = "github"` in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
+Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from the remote URL; set `forge.platform = "github"` (or `"gitlab"`) in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
 
 Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
 

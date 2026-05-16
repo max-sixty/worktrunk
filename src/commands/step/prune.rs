@@ -2,21 +2,20 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context;
 use color_print::cformat;
 use crossbeam_channel as chan;
 use rayon::prelude::*;
-use worktrunk::HookType;
-use worktrunk::config::UserConfig;
+use worktrunk::config::{Approvals, UserConfig};
 use worktrunk::git::{BranchDeletionMode, RefSnapshot, Repository, WorktreeInfo};
 use worktrunk::styling::{eprintln, hint_message, info_message, println, success_message};
 
-use super::super::command_approval::approve_or_skip;
-use super::super::context::CommandEnv;
+use super::super::command_approval::approve_command_batch;
 use super::super::hooks::HookAnnouncer;
+use super::super::project_config::collect_remove_hook_commands;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use crate::output::handle_remove_output;
 
@@ -178,7 +177,7 @@ fn try_remove(
         }
     };
     let mut announcer = HookAnnouncer::new(repo, config, true);
-    handle_remove_output(&plan, foreground, run_hooks, true, &mut announcer)?;
+    handle_remove_output(&plan, foreground, run_hooks, true, false, &mut announcer)?;
     announcer.flush()?;
     Ok(true)
 }
@@ -355,7 +354,11 @@ fn render_dry_run(
     // Sort for deterministic output regardless of channel completion order.
     skipped_young.sort();
     if !skipped_young.is_empty() {
-        let names = skipped_young.join(", ");
+        let names = skipped_young
+            .iter()
+            .map(|n| cformat!("<bold>{n}</>"))
+            .collect::<Vec<_>>()
+            .join(", ");
         eprintln!(
             "{}",
             info_message(format!("Skipped {names} (younger than {min_age})"))
@@ -376,6 +379,51 @@ fn render_dry_run(
         ))
     );
     Ok(())
+}
+
+/// Approve the project commands `wt step prune` may run, mirroring the
+/// executors' `.config/wt.toml` resolution via
+/// [`collect_remove_hook_commands`].
+///
+/// `pre-remove` runs only when a *live linked* worktree is removed (stale-
+/// metadata and orphan-branch removals delete just the branch — no
+/// `pre-remove`/`post-remove`/`post-switch`). The integration checks haven't
+/// run yet, so every linked worktree is fed to the helper — its `pre-remove`
+/// approval is a superset of what executes. `post-switch` resolves from the
+/// primary worktree's config: a prune candidate is never the primary worktree,
+/// so each removal's `RemoveResult::destination_path()` is `home_path()`. No
+/// fallback between worktrees — each `.config/wt.toml` stands alone.
+///
+/// Returns `true` when hooks should run, `false` when the user declined.
+fn approve_prune_hooks(
+    repo: &Repository,
+    worktrees: &[WorktreeInfo],
+    check_items: &[CheckItem],
+    yes: bool,
+) -> anyhow::Result<bool> {
+    let primary_path = repo.home_path()?;
+
+    let removed_worktree_paths: Vec<&Path> = check_items
+        .iter()
+        .filter_map(|item| match &item.source {
+            CheckSource::Linked { wt_idx } => Some(worktrees[*wt_idx].path.as_path()),
+            _ => None,
+        })
+        .collect();
+    let all_commands =
+        collect_remove_hook_commands(&removed_worktree_paths, &[primary_path.as_path()])?;
+
+    if all_commands.is_empty() {
+        return Ok(true);
+    }
+
+    let project_id = repo.project_identifier()?;
+    let approvals = Approvals::load().context("Failed to load approvals")?;
+    let approved = approve_command_batch(&all_commands, &project_id, &approvals, yes, false)?;
+    if !approved {
+        eprintln!("{}", info_message("Commands declined, continuing removal"));
+    }
+    Ok(approved)
 }
 
 /// Remove worktrees and branches integrated into the default branch.
@@ -420,28 +468,22 @@ pub fn step_prune(
 
     let default_branch = repo.default_branch();
 
+    // Build the candidate set before approval: `approve_prune_hooks` needs the
+    // linked worktrees prune might remove (each `pre-remove` is approved against
+    // that worktree's own config). The integration checks below narrow this to
+    // the actually-pruned set.
+    let check_items = gather_check_items(&repo, worktrees, default_branch.as_deref())?;
+
     // For non-dry-run, approve hooks upfront so we can remove inline.
     let run_hooks = if dry_run {
         false // unused in dry-run path
     } else {
-        let env = CommandEnv::for_action_branchless()?;
-        let ctx = env.context(yes);
-        approve_or_skip(
-            &ctx,
-            &[
-                HookType::PreRemove,
-                HookType::PostRemove,
-                HookType::PostSwitch,
-            ],
-            "Commands declined, continuing removal",
-        )?
+        approve_prune_hooks(&repo, worktrees, &check_items, yes)?
     };
 
     let mut removed: Vec<Candidate> = Vec::new();
     let mut deferred_current: Option<Candidate> = None;
     let mut skipped_young: Vec<String> = Vec::new();
-
-    let check_items = gather_check_items(&repo, worktrees, default_branch.as_deref())?;
 
     // Parallel integration checks with inline removals.
     //
@@ -508,7 +550,9 @@ pub fn step_prune(
                 if !dry_run {
                     eprintln!(
                         "{}",
-                        info_message(format!("Skipped {label} (younger than {min_age})"))
+                        info_message(cformat!(
+                            "Skipped <bold>{label}</> (younger than {min_age})"
+                        ))
                     );
                 }
                 skipped_young.push(label);
@@ -569,7 +613,9 @@ pub fn step_prune(
             if !dry_run {
                 eprintln!(
                     "{}",
-                    info_message(format!("Skipped {branch} (younger than {min_age})"))
+                    info_message(cformat!(
+                        "Skipped <bold>{branch}</> (younger than {min_age})"
+                    ))
                 );
             }
             skipped_young.push(branch.clone());

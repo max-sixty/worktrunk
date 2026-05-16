@@ -41,6 +41,10 @@ impl RemoteRefProvider for GitLabProvider {
         RefType::Mr
     }
 
+    fn platform_label(&self) -> &'static str {
+        "gitlab"
+    }
+
     fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
         let repo_root = repo.repo_path()?;
         fetch_mr_info(number, repo_root)

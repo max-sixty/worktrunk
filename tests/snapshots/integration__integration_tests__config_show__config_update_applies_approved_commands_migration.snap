@@ -65,5 +65,5 @@ exit_code: 0
 [107m [0m [31m-[m
 [107m [0m [31m-[projects."github.com/user/repo"][m
 [107m [0m [31m-approved-commands = ["npm install", "npm test"][m
-[2m○[22m Copied approved commands to approvals.toml
+[2m○[22m Copied approved commands to [1mapprovals.toml[22m
 [32m✓[39m [32mUpdated user config[39m

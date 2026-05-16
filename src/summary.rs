@@ -236,10 +236,12 @@ pub(crate) fn compute_combined_diff(
         let is_default_branch = branch == *default_branch;
         if !is_default_branch {
             let merge_base = format!("{}...{}", default_branch, head);
-            if let Ok(branch_stat) = repo.run_command(&["diff", &merge_base, "--stat"]) {
+            if let Ok(branch_stat) =
+                repo.run_command(&["diff", "--stat", "--end-of-options", &merge_base])
+            {
                 stat.push_str(&branch_stat);
             }
-            if let Ok(branch_diff) = repo.run_command(&["diff", &merge_base]) {
+            if let Ok(branch_diff) = repo.run_command(&["diff", "--end-of-options", &merge_base]) {
                 diff.push_str(&branch_diff);
             }
         }

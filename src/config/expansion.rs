@@ -19,6 +19,7 @@ use color_print::cformat;
 use minijinja::value::{Enumerator, Object, ObjectRepr};
 use minijinja::{Environment, ErrorKind, UndefinedBehavior, Value};
 use regex::Regex;
+use sha2::{Digest, Sha256};
 use shell_escape::escape;
 
 use crate::git::{Diagnostic, HookType, Repository};
@@ -356,6 +357,23 @@ fn string_to_port(s: &str) -> u16 {
     10000 + (h.finish() % 10000) as u16
 }
 
+const CODENAME_MAX_WORDS: usize = 8;
+
+/// Wordlists used by [`codename`].
+///
+/// Sourced from `petname::Petnames::medium()` (1198 adjectives, 1052 nouns —
+/// ~1.26M `codename(2)` combinations, ~1.5B for `codename(3)`). The pin in
+/// `Cargo.toml` is `=3.0.0`; bumping it may change, add, or remove words and
+/// would silently shift every existing user's `worktree-path` output. Treat
+/// any upgrade as a breaking change — see `test_codename_outputs_are_stable`.
+///
+/// `petname::Petnames::medium()` is effectively free — its `Cow::Borrowed`
+/// fields point at static slices embedded by the `petnames!` macro — so
+/// re-constructing per call is cheaper than reaching for a `OnceLock`.
+fn codename_words() -> petname::Petnames<'static> {
+    petname::Petnames::medium()
+}
+
 /// Sanitize a branch name for use in filesystem paths.
 ///
 /// Replaces path separators (`/` and `\`) with dashes to prevent directory traversal
@@ -462,6 +480,67 @@ pub fn short_hash(s: &str) -> String {
     let c1 = CHARS[((hash / 36) % 36) as usize];
     let c2 = CHARS[((hash / 1296) % 36) as usize];
     String::from_utf8(vec![c0, c1, c2]).unwrap()
+}
+
+fn codename_index(input: &str, position: usize, salt: usize, pool: &str, len: usize) -> usize {
+    // Cast to a fixed-width type so the hash is identical across 32-bit and
+    // 64-bit builds. `usize::to_le_bytes` is architecture-dependent and would
+    // change the on-disk codename for the same branch when users move between
+    // architectures.
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    hasher.update([0]);
+    hasher.update((position as u64).to_le_bytes());
+    hasher.update((salt as u64).to_le_bytes());
+    hasher.update(pool.as_bytes());
+    let digest = hasher.finalize();
+    let mut bytes = [0_u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    // Take the modulo in u64 before narrowing — `as usize` on a 32-bit
+    // build truncates the upper 32 bits and would pick a different word
+    // than 64-bit for the same branch, defeating the whole point of
+    // hashing through a fixed-width type above.
+    (u64::from_le_bytes(bytes) % len as u64) as usize
+}
+
+fn codename(input: &str, words: usize) -> String {
+    let lists = codename_words();
+    let adjectives: &[&str] = lists.adjectives.as_ref();
+    let nouns: &[&str] = lists.nouns.as_ref();
+
+    let mut parts = Vec::with_capacity(words);
+    let adjective_count = words.saturating_sub(1);
+
+    for position in 0..adjective_count {
+        let mut salt = 0;
+        loop {
+            let index = codename_index(input, position, salt, "adjective", adjectives.len());
+            let word = adjectives[index];
+            if !parts.contains(&word) || salt >= adjectives.len() {
+                parts.push(word);
+                break;
+            }
+            salt += 1;
+        }
+    }
+
+    let index = codename_index(input, adjective_count, 0, "noun", nouns.len());
+    parts.push(nouns[index]);
+    parts.join("-")
+}
+
+fn invalid_filter_arg(message: impl Into<String>) -> minijinja::Error {
+    minijinja::Error::new(ErrorKind::InvalidOperation, message.into())
+}
+
+fn codename_filter(value: Value, words: Option<usize>) -> Result<String, minijinja::Error> {
+    let words = words.unwrap_or(2);
+    if words == 0 || words > CODENAME_MAX_WORDS {
+        return Err(invalid_filter_arg(format!(
+            "codename word count must be between 1 and {CODENAME_MAX_WORDS}"
+        )));
+    }
+    Ok(codename(value.as_str().unwrap_or_default(), words))
 }
 
 /// Redact credentials from URLs for safe logging.
@@ -631,6 +710,7 @@ fn setup_template_env(repo: &Repository) -> Environment<'static> {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default()
     });
+    env.add_filter("codename", codename_filter);
 
     // Register worktree_path_of_branch function for looking up branch worktree paths.
     // Returns raw paths — shell escaping is applied by the formatter at output time.
@@ -771,6 +851,7 @@ pub fn validate_template(
 /// - `hash_port` — Hash to deterministic port number (10000-19999)
 /// - `dirname` — Strip the last path component (e.g., `/a/b/c` → `/a/b`)
 /// - `basename` — Keep only the last path component (e.g., `/a/b/c` → `c`)
+/// - `codename(n)` — deterministic friendly words, e.g. `malleable-opah`
 ///
 /// # Functions
 /// - `worktree_path_of_branch(branch)` — Look up the filesystem path of a branch's worktree
@@ -1464,6 +1545,205 @@ mod tests {
         let empty =
             expand_template("{{ branch | hash }}", &vars, false, &test.repo, "test").unwrap();
         assert_eq!(empty.len(), 3);
+    }
+
+    #[test]
+    fn test_codename_filter() {
+        let test = test_repo();
+        let mut vars = HashMap::new();
+        vars.insert("branch", "feature/very-long-branch-name");
+
+        let default =
+            expand_template("{{ branch | codename }}", &vars, false, &test.repo, "test").unwrap();
+        let explicit_default = expand_template(
+            "{{ branch | codename(2) }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(default, explicit_default);
+        assert_eq!(default.split('-').count(), 2, "got: {default}");
+
+        let one_word = expand_template(
+            "{{ branch | codename(1) }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert!(!one_word.contains('-'), "got: {one_word}");
+        let lists = codename_words();
+        let nouns: &[&str] = lists.nouns.as_ref();
+        assert!(nouns.contains(&one_word.as_str()));
+
+        let three_words = expand_template(
+            "{{ branch | codename(3) }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert_eq!(three_words.split('-').count(), 3, "got: {three_words}");
+
+        let repeat =
+            expand_template("{{ branch | codename }}", &vars, false, &test.repo, "test").unwrap();
+        assert_eq!(default, repeat);
+
+        vars.insert("branch", "feature/different-name");
+        let other =
+            expand_template("{{ branch | codename }}", &vars, false, &test.repo, "test").unwrap();
+        assert_eq!(other.split('-').count(), 2, "got: {other}");
+
+        vars.insert("branch", "feature/73");
+        let ticket_73 = expand_template(
+            "{{ branch | codename(3) }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        vars.insert("branch", "feature/149");
+        let ticket_149 = expand_template(
+            "{{ branch | codename(3) }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        assert_ne!(ticket_73, ticket_149);
+    }
+
+    #[test]
+    fn test_codename_filter_rejects_invalid_counts() {
+        let test = test_repo();
+        let mut vars = HashMap::new();
+        vars.insert("branch", "feature");
+
+        let zero = expand_template(
+            "{{ branch | codename(0) }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            zero.contains("codename word count must be between 1 and 8"),
+            "got: {zero}"
+        );
+
+        let too_many = expand_template(
+            "{{ branch | codename(9) }}",
+            &vars,
+            false,
+            &test.repo,
+            "test",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            too_many.contains("codename word count must be between 1 and 8"),
+            "got: {too_many}"
+        );
+    }
+
+    #[test]
+    fn test_codename_word_lists_are_path_safe() {
+        fn assert_word_list(name: &str, words: &[&str]) {
+            assert!(words.len() >= 160, "{name} should have enough entries");
+            let mut seen = std::collections::HashSet::new();
+            for &word in words {
+                assert!(seen.insert(word), "duplicate {name} word: {word}");
+                assert!(!word.is_empty(), "empty {name} word");
+                assert!(
+                    word.chars().all(|c| c.is_ascii_lowercase()),
+                    "{name} word is not lowercase ASCII: {word}"
+                );
+                assert!(
+                    !word.contains('-') && !word.contains(' '),
+                    "{name} word is not a single path component fragment: {word}"
+                );
+            }
+        }
+
+        let lists = codename_words();
+        let adjectives: &[&str] = lists.adjectives.as_ref();
+        let nouns: &[&str] = lists.nouns.as_ref();
+        assert_word_list("adjective", adjectives);
+        assert_word_list("noun", nouns);
+        // codename(2) cardinality — petname::medium() gives ~1.26M combinations,
+        // so a single adjective+noun pair is enough on its own for typical
+        // worktree counts.
+        assert!(adjectives.len() * nouns.len() >= 1_000_000);
+    }
+
+    /// Pins specific `codename(input, n)` outputs so the on-disk contract
+    /// is impossible to break by accident. Once a user adopts this filter in
+    /// their `worktree-path` template, the petname wordlists (and the
+    /// hash-input layout in `codename_index`) become an on-disk identity for
+    /// every worktree they own. Anything that shifts the wordlists (a
+    /// `petname` version bump that adds, removes, or reorders a word) or
+    /// changes how the hash is computed produces a different name for the
+    /// same branch on the next `wt switch`, orphaning the existing worktree.
+    ///
+    /// If this test fails:
+    ///
+    /// 1. Stop. Do not update the expected values to silence it.
+    /// 2. Confirm whether you actually intended to change the wordlists
+    ///    (e.g. via a `petname` version bump) or the hash layout. If it was
+    ///    unintentional (a refactor, a Cargo update), revert.
+    /// 3. If the change is intentional, accept that you are breaking every
+    ///    existing user's worktree paths. Coordinate the rollout, document
+    ///    it as a breaking change, and only then update the expected values.
+    #[test]
+    fn test_codename_outputs_are_stable() {
+        let cases: &[(&str, usize, &str)] = &[
+            ("main", 1, "gorilla"),
+            ("feature/auth", 2, "malleable-opah"),
+            ("feature/73", 2, "prodigious-shoveler"),
+            ("feature/149", 2, "tuneful-vendace"),
+            ("release/1.0", 3, "intent-equipped-treefrog"),
+            (
+                "hotfix/some-very-long-thing",
+                4,
+                "noteworthy-musical-durable-silkworm",
+            ),
+        ];
+
+        for (input, n, expected) in cases {
+            let actual = codename(input, *n);
+            assert_eq!(
+                &actual, expected,
+                "\n\
+                 codename({input:?}, {n}) returned {actual:?}, expected {expected:?}.\n\
+                 \n\
+                 Changing the petname version, or the codename algorithm,\n\
+                 BREAKS every existing user's worktree paths derived from\n\
+                 `{{{{ branch | codename(...) }}}}`. See the comment above\n\
+                 this test before updating these expectations.\n"
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_template_accepts_codename_filter() {
+        let test = test_repo();
+        assert!(
+            validate_template(
+                "{{ branch | codename(2) }}",
+                ValidationScope::SwitchExecute,
+                &test.repo,
+                "test"
+            )
+            .is_ok()
+        );
     }
 
     #[test]

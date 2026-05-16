@@ -139,6 +139,67 @@ fn test_bash_shell_integration_switch_existing_worktree(repo: TestRepo) {
     );
 }
 
+/// Reproduction for #2643: when `cd` is aliased before worktrunk's shell
+/// integration is loaded (e.g., zoxide's `eval "$(zoxide init zsh)"` runs
+/// first), the `wt()` function's `cd` token is alias-expanded at eval time.
+/// This rewrites the function body to call `__zoxide_z -- "$path"`, which
+/// queries zoxide's database instead of changing to the absolute path, so
+/// `wt switch` reports success but the shell stays put.
+///
+/// The init code is written to a file and `source`d so that the file is
+/// parsed *after* the alias takes effect, matching the real-world
+/// `eval "$(wt config shell init zsh)"` flow.
+#[rstest]
+#[case("zsh")]
+#[case("bash")]
+fn test_shell_integration_cd_alias_does_not_break_switch(#[case] shell: &str, repo: TestRepo) {
+    let init_code = generate_init_code(&repo, shell);
+    let bin_path = wt_bin_dir();
+    let init_file = repo.home_path().join("wt-init.sh");
+    std::fs::write(&init_file, &init_code).unwrap();
+    let init_path = init_file.display();
+
+    // bash only expands aliases in non-interactive shells when
+    // expand_aliases is set; zsh expands them unconditionally.
+    let pre_init = match shell {
+        "bash" => "shopt -s expand_aliases\n",
+        _ => "",
+    };
+
+    let script = format!(
+        r#"
+        {}
+        {}
+        __zoxide_z() {{
+          echo "zoxide: no match found" >&2
+          return 1
+        }}
+        alias cd='__zoxide_z'
+        source "{}"
+        wt switch --create zoxide-branch
+        echo "__PWD_AFTER_SWITCH__ $PWD"
+        "#,
+        path_export_syntax(shell, &bin_path),
+        pre_init,
+        init_path,
+    );
+
+    let output = execute_shell_script(&repo, shell, &script);
+    let after_switch = extract_pwd_marker(&output, "__PWD_AFTER_SWITCH__").unwrap();
+
+    assert!(
+        after_switch.contains("zoxide-branch"),
+        "Shell should cd into zoxide-branch worktree even when cd is aliased, saw: {}\nFull output:\n{}",
+        after_switch,
+        output,
+    );
+    assert!(
+        !output.contains("zoxide: no match found"),
+        "cd should bypass the alias; got zoxide error in output:\n{}",
+        output,
+    );
+}
+
 fn extract_pwd_marker(output: &str, marker: &str) -> Option<String> {
     output
         .lines()

@@ -4,6 +4,7 @@ use crate::common::{
     mock_commands::{MockConfig, MockResponse},
     wt_command,
 };
+use ansi_str::AnsiStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
@@ -66,7 +67,9 @@ fn custom_subcommand_not_found_prints_clap_error() {
     assert!(!output.status.success(), "expected failure");
     // clap's standard InvalidSubcommand exit code.
     assert_eq!(output.status.code(), Some(2));
-    let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
     assert!(
         stderr.contains("unrecognized subcommand 'definitely-not-a-wt-subcommand'"),
         "stderr should use clap's native error format: {stderr}"
@@ -86,7 +89,9 @@ fn custom_subcommand_typo_suggests_closest_builtin() {
 
     let output = cmd.output().expect("failed to run wt");
     assert!(!output.status.success());
-    let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
     assert!(
         stderr.contains("tip:") && stderr.contains("similar subcommand"),
         "stderr missing clap's similar-subcommand tip: {stderr}"
@@ -110,32 +115,13 @@ fn custom_subcommand_nested_suggestion_wins_over_path_lookup() {
     let output = cmd.output().expect("failed to run wt");
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(2));
-    let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
     assert!(
         stderr.contains("wt step squash"),
         "stderr should suggest 'wt step squash': {stderr}"
     );
-}
-
-/// Strip ANSI escape sequences so test assertions can match rendered text
-/// without worrying about colour codes clap inserts.
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c == '\u{1b}' {
-            // CSI: ESC [ ... letter. Drop everything up to (and including)
-            // the terminator (any ASCII letter).
-            for next in chars.by_ref() {
-                if next.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 #[test]

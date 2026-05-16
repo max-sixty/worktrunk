@@ -1,6 +1,6 @@
 ---
 name: writing-user-outputs
-description: CLI output formatting standards for worktrunk. Use when writing user-facing messages, error handling, progress output, hints, warnings, or working with the output system.
+description: CLI output formatting standards for worktrunk. Load before editing any code that calls warning_message, hint_message, error_message, info_message, eprintln, or println, or that produces strings the user will see (CLI help, progress UI, snapshot text). Documents ANSI color nesting rules, message patterns, and output system architecture.
 metadata:
   internal: true
 ---

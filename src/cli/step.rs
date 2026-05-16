@@ -433,7 +433,7 @@ Show available template variables:
 $ wt step eval --dry-run '{{ branch }}'
 branch=feature/auth-oauth2
 worktree_path=/home/user/projects/myapp-feature-auth-oauth2
-...
+---
 Result: feature/auth-oauth2
 ```
 

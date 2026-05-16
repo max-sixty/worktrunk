@@ -21,9 +21,24 @@ use super::Repository;
 ///
 /// Prints an info message when recovery occurs.
 pub fn current_or_recover() -> anyhow::Result<(Repository, bool)> {
-    match Repository::current() {
+    or_recover(Repository::current(), recover_from_deleted_cwd)
+}
+
+/// Wiring between `Repository::current()` and `recover_from_deleted_cwd`.
+///
+/// Split out so tests can exercise each branch with explicit inputs rather
+/// than relying on the test binary's inherited CWD — which the Nix flake
+/// build sandbox strips of `.git`, breaking environment-coupled assertions.
+fn or_recover<F>(
+    current: anyhow::Result<Repository>,
+    recover: F,
+) -> anyhow::Result<(Repository, bool)>
+where
+    F: FnOnce() -> Option<Repository>,
+{
+    match current {
         Ok(repo) => Ok((repo, false)),
-        Err(err) => match recover_from_deleted_cwd() {
+        Err(err) => match recover() {
             Some(repo) => {
                 eprintln!(
                     "{}",
@@ -281,13 +296,29 @@ mod tests {
     }
 
     #[test]
-    fn test_current_or_recover_returns_repo_when_cwd_exists() {
-        // In a test environment, CWD exists, so current_or_recover should succeed
-        // via the normal Repository::current() path (not recovery).
-        // Tests run inside a git repo in CI, so Repository::current() succeeds.
-        let (repo, recovered) = current_or_recover().unwrap();
+    fn test_or_recover_uses_current_repo_without_recovering() {
+        let test = TestRepo::new();
+        let (repo, recovered) = or_recover(Ok(test.repo.clone()), || None).unwrap();
         assert!(!recovered);
         assert!(repo.repo_path().unwrap().exists());
+    }
+
+    #[test]
+    fn test_or_recover_recovers_when_current_fails() {
+        let test = TestRepo::new();
+        let recovered_repo = test.repo.clone();
+        let (_, recovered) = or_recover(Err(anyhow::anyhow!("CWD missing")), move || {
+            Some(recovered_repo)
+        })
+        .unwrap();
+        assert!(recovered);
+    }
+
+    #[test]
+    fn test_or_recover_propagates_error_when_recovery_fails() {
+        let result = or_recover(Err(anyhow::anyhow!("CWD missing")), || None);
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("CWD missing"));
     }
 
     #[test]

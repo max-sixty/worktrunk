@@ -7,7 +7,7 @@ weight = 15
 group = "Commands"
 +++
 
-<!-- ⚠️ AUTO-GENERATED from `wt config --help-page` — edit cli.rs to update -->
+<!-- ⚠️ AUTO-GENERATED from `wt config --help-page` — edit src/cli/mod.rs to update -->
 
 Manage user & project configs. Includes shell integration, hooks, and saved state.
 
@@ -81,6 +81,7 @@ Controls where new worktrees are created.
 - `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 - `{{ branch | sanitize }}` — filesystem-safe: `/` and `\` become `-` (e.g., `feature-auth`)
 - `{{ branch | sanitize_db }}` — database-safe: lowercase, underscores, hash suffix (e.g., `feature_auth_x7k`)
+- `{{ branch | codename(2) }}` — deterministic friendly name from a ~1.26M-combo pool (e.g., `malleable-opah`)
 
 **Examples** for repo at `~/code/myproject`, branch `feature/auth`:
 
@@ -94,6 +95,18 @@ Inside the repository (`~/code/myproject/.worktrees/feature-auth`):
 
 ```toml
 worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
+```
+
+Friendly branch-derived names (`~/code/myproject.malleable-opah`):
+
+```toml
+worktree-path = "{{ repo_path }}/../{{ repo }}.{{ branch | codename(2) }}"
+```
+
+Friendly names with branch identity in a parent directory (`~/code/worktrees/feature-auth/malleable-opah`):
+
+```toml
+worktree-path = "{{ repo_path }}/../worktrees/{{ branch | sanitize }}/{{ branch | codename(2) }}"
 ```
 
 Centralized worktrees directory (`~/worktrees/myproject/feature-auth`):
@@ -383,13 +396,13 @@ URL column in `wt list` (dimmed when port not listening):
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-## Forge platform override
+## Forge platform
 
-Override platform detection for SSH aliases or self-hosted instances:
+Name the forge explicitly for SSH aliases or self-hosted instances, where it can't be detected from the remote URL:
 
 ```toml
 [forge]
-platform = "github"  # or "gitlab"
+platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)
 hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 ```
 
@@ -631,6 +644,9 @@ Aliases are command templates configured in user (`~/.config/worktrunk/config.to
 
 ### Examples
 
+Show every configured alias's template:
+{{ terminal(cmd="wt config alias show") }}
+
 Show the template for `deploy`:
 {{ terminal(cmd="wt config alias show deploy") }}
 
@@ -645,7 +661,7 @@ wt config alias - Inspect and preview aliases
 Usage: <b><span class=c>wt config alias</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>show</span></b>     Show an alias&#39;s template as configured
+  <b><span class=c>show</span></b>     Show an alias&#39;s template, or all aliases&#39; templates
   <b><span class=c>dry-run</span></b>  Preview an alias invocation with template expansion
 
 <b><span class=g>Options:</span></b>
@@ -911,7 +927,7 @@ CI status cache.
 
 Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
 
-Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `forge.platform = "github"` in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
+Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from the remote URL; set `forge.platform = "github"` (or `"gitlab"`) in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
 
 Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
 

@@ -42,7 +42,7 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
         );
     }
 
-    let rebase_result = repo.run_command(&["rebase", &integration_target]);
+    let rebase_result = repo.run_command(&["rebase", "--end-of-options", &integration_target]);
 
     // If rebase failed, check if it's due to conflicts
     if let Err(e) = rebase_result {
