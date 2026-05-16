@@ -387,6 +387,23 @@ fn find_commit_generation_from_doc(doc: &toml_edit::DocumentMut) -> CommitGenera
     result
 }
 
+/// Whether a TOML item is a table or inline table (can be migrated as a section).
+fn is_table_like(item: &toml_edit::Item) -> bool {
+    matches!(
+        item,
+        toml_edit::Item::Table(_) | toml_edit::Item::Value(toml_edit::Value::InlineTable(_))
+    )
+}
+
+/// Convert a table-like TOML item into a `Table`. Returns `None` for other shapes.
+fn into_table(item: toml_edit::Item) -> Option<toml_edit::Table> {
+    match item {
+        toml_edit::Item::Table(t) => Some(t),
+        toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) => Some(it.into_table()),
+        _ => None,
+    }
+}
+
 fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     let mut modified = false;
 
@@ -400,35 +417,33 @@ fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
 
     // Migrate top-level [commit-generation] → [commit.generation]
     // Only if new section doesn't already exist
-    // Handle both regular tables and inline tables
-    if !has_new_section && let Some(old_section) = doc.remove("commit-generation") {
-        // Convert to table - works for both regular tables and inline tables
-        let table_opt = match old_section {
-            toml_edit::Item::Table(t) => Some(t),
-            toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) => Some(it.into_table()),
-            _ => None,
-        };
+    // Handle both regular tables and inline tables. Peek before removing so a
+    // malformed value (e.g., a bare string) is left in place rather than
+    // silently dropped when a sibling migration also serializes the doc.
+    if !has_new_section
+        && doc.get("commit-generation").is_some_and(is_table_like)
+        && let Some(old_section) = doc.remove("commit-generation")
+    {
+        let mut table = into_table(old_section).expect("checked is_table_like above");
 
-        if let Some(mut table) = table_opt {
-            // Merge args into command if present
-            merge_args_into_command(&mut table);
+        // Merge args into command if present
+        merge_args_into_command(&mut table);
 
-            // Ensure [commit] section exists.
-            // Mark as implicit so it doesn't render a separate [commit] header
-            // (only [commit.generation] will render)
-            if !doc.contains_key("commit") {
-                let mut commit_table = toml_edit::Table::new();
-                commit_table.set_implicit(true);
-                doc.insert("commit", toml_edit::Item::Table(commit_table));
-            }
-
-            // Move to [commit.generation]
-            if let Some(commit_table) = doc["commit"].as_table_mut() {
-                commit_table.insert("generation", toml_edit::Item::Table(table));
-            }
-
-            modified = true;
+        // Ensure [commit] section exists.
+        // Mark as implicit so it doesn't render a separate [commit] header
+        // (only [commit.generation] will render)
+        if !doc.contains_key("commit") {
+            let mut commit_table = toml_edit::Table::new();
+            commit_table.set_implicit(true);
+            doc.insert("commit", toml_edit::Item::Table(commit_table));
         }
+
+        // Move to [commit.generation]
+        if let Some(commit_table) = doc["commit"].as_table_mut() {
+            commit_table.insert("generation", toml_edit::Item::Table(table));
+        }
+
+        modified = true;
     }
 
     // Migrate [projects."...".commit-generation] → [projects."...".commit.generation]
@@ -442,37 +457,32 @@ fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
                     .and_then(|t| t.get("generation"))
                     .is_some_and(|g| g.is_table() || g.is_inline_table());
 
+                // Peek before removing so a malformed value is preserved.
                 if !has_new_project_section
+                    && project_table
+                        .get("commit-generation")
+                        .is_some_and(is_table_like)
                     && let Some(old_section) = project_table.remove("commit-generation")
                 {
-                    // Convert to table - works for both regular tables and inline tables
-                    let table_opt = match old_section {
-                        toml_edit::Item::Table(t) => Some(t),
-                        toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) => {
-                            Some(it.into_table())
-                        }
-                        _ => None,
-                    };
+                    let mut table = into_table(old_section).expect("checked is_table_like above");
 
-                    if let Some(mut table) = table_opt {
-                        // Merge args into command if present
-                        merge_args_into_command(&mut table);
+                    // Merge args into command if present
+                    merge_args_into_command(&mut table);
 
-                        // Ensure [projects."...".commit] section exists.
-                        // Mark as implicit so it doesn't render a separate header
-                        if !project_table.contains_key("commit") {
-                            let mut commit_table = toml_edit::Table::new();
-                            commit_table.set_implicit(true);
-                            project_table.insert("commit", toml_edit::Item::Table(commit_table));
-                        }
-
-                        // Move to [projects."...".commit.generation]
-                        if let Some(commit_table) = project_table["commit"].as_table_mut() {
-                            commit_table.insert("generation", toml_edit::Item::Table(table));
-                        }
-
-                        modified = true;
+                    // Ensure [projects."...".commit] section exists.
+                    // Mark as implicit so it doesn't render a separate header
+                    if !project_table.contains_key("commit") {
+                        let mut commit_table = toml_edit::Table::new();
+                        commit_table.set_implicit(true);
+                        project_table.insert("commit", toml_edit::Item::Table(commit_table));
                     }
+
+                    // Move to [projects."...".commit.generation]
+                    if let Some(commit_table) = project_table["commit"].as_table_mut() {
+                        commit_table.insert("generation", toml_edit::Item::Table(table));
+                    }
+
+                    modified = true;
                 }
             }
         }
@@ -636,6 +646,10 @@ fn migrate_select_doc(doc: &mut toml_edit::DocumentMut) -> bool {
 }
 
 /// Migrate a `select` key to `switch.picker` within a table.
+///
+/// Leaves a malformed `select` (e.g., a string) in place rather than removing
+/// it — silently dropping it would lose user config when a sibling migration
+/// also rewrites the document.
 fn migrate_select_table(table: &mut toml_edit::Table, modified: &mut bool) {
     let has_new_section = table
         .get("switch")
@@ -647,19 +661,12 @@ fn migrate_select_table(table: &mut toml_edit::Table, modified: &mut bool) {
         return;
     }
 
-    let Some(old_section) = table.remove("select") else {
+    if !table.get("select").is_some_and(is_table_like) {
         return;
-    };
+    }
 
-    let table_opt = match old_section {
-        toml_edit::Item::Table(t) => Some(t),
-        toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) => Some(it.into_table()),
-        _ => None,
-    };
-
-    let Some(select_table) = table_opt else {
-        return;
-    };
+    let select_table =
+        into_table(table.remove("select").unwrap()).expect("checked is_table_like above");
 
     if !table.contains_key("switch") {
         let mut switch_table = toml_edit::Table::new();
@@ -768,8 +775,14 @@ fn migrate_ci_doc(doc: &mut toml_edit::DocumentMut) -> bool {
         return false;
     };
 
-    // Remove [ci] section (it only has platform)
-    doc.remove("ci");
+    // Remove only the migrated key; keep any other keys so we don't silently
+    // drop config that wasn't part of the migration.
+    if let Some(ci_table) = doc.get_mut("ci").and_then(|ci| ci.as_table_mut()) {
+        ci_table.remove("platform");
+        if ci_table.is_empty() {
+            doc.remove("ci");
+        }
+    }
 
     // Create [forge] section with platform
     let mut forge_table = toml_edit::Table::new();
@@ -2389,24 +2402,27 @@ args = ["-m", "haiku"]
 
     #[test]
     fn test_migrate_malformed_string_value_unchanged() {
-        // When commit-generation is a string (malformed), migration skips it
-        // This exercises the `_ => None` branch in the match
+        // When commit-generation is a string (malformed), migration must leave
+        // it in place — silently dropping it would lose user config.
         let content = r#"
 commit-generation = "not a table"
 other = "value"
 "#;
         let result = migrate_commit_generation_sections(content);
-        // Malformed value is removed (doc.remove happens), but no migration occurs
-        // The content stays mostly unchanged since we don't add [commit.generation]
         assert!(
             !result.contains("[commit.generation]"),
             "Should not create new section for malformed input"
+        );
+        assert!(
+            result.contains("commit-generation = \"not a table\""),
+            "Malformed value must be preserved; got: {result}"
         );
     }
 
     #[test]
     fn test_migrate_malformed_project_level_string_unchanged() {
-        // When project-level commit-generation is a string, migration skips it
+        // When project-level commit-generation is a string, migration must
+        // leave it in place rather than dropping it.
         let content = r#"
 [projects."github.com/user/repo"]
 commit-generation = "not a table"
@@ -2416,6 +2432,72 @@ other = "value"
         assert!(
             !result.contains("[projects.\"github.com/user/repo\".commit.generation]"),
             "Should not create new section for malformed project-level input"
+        );
+        assert!(
+            result.contains("commit-generation = \"not a table\""),
+            "Malformed project-level value must be preserved; got: {result}"
+        );
+    }
+
+    /// Malformed deprecated section + a valid sibling migration: the bug was
+    /// that doc.remove() happened before the malformed-value check, so a
+    /// sibling migration would serialize the doc with the section already
+    /// dropped. The fix peeks before removing.
+    #[test]
+    fn test_malformed_section_preserved_with_sibling_migration() {
+        let content = r#"commit-generation = "keep me"
+
+[merge]
+no-ff = true
+"#;
+        let result = migrate_content(content);
+        assert!(
+            result.contains(r#"commit-generation = "keep me""#),
+            "Malformed commit-generation must survive sibling migrations; got:\n{result}"
+        );
+        // Sibling migration should still apply.
+        assert!(
+            result.contains("ff = false"),
+            "merge.no-ff should have migrated to merge.ff = false; got:\n{result}"
+        );
+    }
+
+    /// Same shape for [select]: a malformed select value next to a valid
+    /// sibling migration must be preserved.
+    #[test]
+    fn test_malformed_select_preserved_with_sibling_migration() {
+        let content = r#"select = "not a table"
+
+[merge]
+no-ff = true
+"#;
+        let result = migrate_content(content);
+        assert!(
+            result.contains(r#"select = "not a table""#),
+            "Malformed select must survive sibling migrations; got:\n{result}"
+        );
+        assert!(
+            result.contains("ff = false"),
+            "merge.no-ff should have migrated; got:\n{result}"
+        );
+    }
+
+    /// `[ci]` migration only owns `platform`; other keys in the same section
+    /// must be preserved, not dropped along with the section.
+    #[test]
+    fn test_ci_migration_preserves_other_keys() {
+        let content = r#"[ci]
+platform = "github"
+hostname = "ghe.example"
+"#;
+        let result = migrate_content(content);
+        assert!(
+            result.contains(r#"platform = "github""#) && result.contains("[forge]"),
+            "platform should have moved into [forge]; got:\n{result}"
+        );
+        assert!(
+            result.contains(r#"hostname = "ghe.example""#),
+            "Unrelated [ci].hostname must be preserved; got:\n{result}"
         );
     }
 
