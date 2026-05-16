@@ -137,34 +137,24 @@ fn exec_in_pty_with_input(
     env_vars: &[(String, String)],
     input: &str,
 ) -> PtyResult {
-    exec_in_pty_with_input_expectations(
-        command,
-        args,
-        working_dir,
-        env_vars,
-        &[(input, None, None)],
-    )
+    exec_in_pty_with_input_expectations(command, args, working_dir, env_vars, &[(input, None)])
 }
 
-/// Execute a command in a PTY with a sequence of inputs and optional content/row expectations.
+/// Execute a command in a PTY with a sequence of inputs and optional content expectations.
 ///
-/// Each input is `(input_bytes, expected_content, expected_rows)`:
+/// Each input is `(input_bytes, expected_content)`:
 /// - `expected_content`: a substring that must appear on screen before the input is considered
 ///   processed. Required for async preview content that lands later than the prompt update.
-/// - `expected_rows`: the number of list rows that should be visible once the matcher has
-///   caught up. Required after a filter input — see
-///   [`wait_for_stable_with_content`] for the matcher-lag rationale.
 ///
-/// Example: `[("feature", None, Some(1)), ("3", Some("diff --git"), Some(1))]`
-/// - After typing "feature": wait until the matcher has narrowed the list to 1 row.
-/// - After pressing "3" (switch to diff panel): wait until "diff --git" appears AND
-///   the list still has 1 row (matcher hasn't been disturbed).
+/// Example: `[("\x1b[B", None), ("3", Some("diff --git"))]`
+/// - After Down (move cursor to the next worktree): just wait for the screen to settle.
+/// - After pressing "3" (switch to diff panel): wait until "diff --git" appears.
 fn exec_in_pty_with_input_expectations(
     command: &str,
     args: &[&str],
     working_dir: &Path,
     env_vars: &[(String, String)],
-    inputs: &[(&str, Option<&str>, Option<usize>)],
+    inputs: &[(&str, Option<&str>)],
 ) -> PtyResult {
     let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
 
@@ -241,12 +231,12 @@ fn exec_in_pty_with_input_expectations(
     wait_for_stable(&rx, &mut parser);
 
     // Send each input and wait for screen to stabilize after each
-    for (input, expected_content, expected_rows) in inputs {
+    for (input, expected_content) in inputs {
         writer.write_all(input.as_bytes()).unwrap();
         writer.flush().unwrap();
 
         // Wait for screen to stabilize after this input, optionally requiring specific content
-        wait_for_stable_with_content(&rx, &mut parser, *expected_content, *expected_rows);
+        wait_for_stable_with_content(&rx, &mut parser, *expected_content);
     }
 
     // Drop writer to signal EOF on stdin
@@ -288,7 +278,7 @@ fn exec_in_pty_capture_before_abort(
     args: &[&str],
     working_dir: &Path,
     env_vars: &[(String, String)],
-    pre_abort_inputs: &[(&str, Option<&str>, Option<usize>)],
+    pre_abort_inputs: &[(&str, Option<&str>)],
 ) -> PtyResult {
     let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
 
@@ -361,10 +351,10 @@ fn exec_in_pty_capture_before_abort(
     wait_for_stable(&rx, &mut parser);
 
     // Send pre-abort inputs (filter text, panel switches, etc.)
-    for (input, expected_content, expected_rows) in pre_abort_inputs {
+    for (input, expected_content) in pre_abort_inputs {
         writer.write_all(input.as_bytes()).unwrap();
         writer.flush().unwrap();
-        wait_for_stable_with_content(&rx, &mut parser, *expected_content, *expected_rows);
+        wait_for_stable_with_content(&rx, &mut parser, *expected_content);
     }
 
     // === CAPTURE: screen state is now stable — snapshot BEFORE aborting ===
@@ -398,35 +388,14 @@ fn exec_in_pty_capture_before_abort(
 
 /// Wait for screen content to stabilize (no changes for STABLE_DURATION)
 fn wait_for_stable(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
-    wait_for_stable_with_content(rx, parser, None, None);
+    wait_for_stable_with_content(rx, parser, None);
 }
 
-/// Count the number of non-empty rows in the left (list) panel, excluding the
-/// query and header rows.
-fn visible_list_rows(screen: &str) -> usize {
-    let width = SEPARATOR_COL as usize;
-    screen
-        .lines()
-        .skip(2) // query + column header
-        .filter(|line| line.chars().take(width).any(|c| !c.is_whitespace()))
-        .count()
-}
-
-/// Wait for screen content to stabilize, optionally requiring specific content
-/// and/or a specific visible list-row count.
+/// Wait for screen content to stabilize, optionally requiring specific content.
 ///
 /// If `expected_content` is provided, waits until the screen contains that string
 /// AND has stabilized. This is essential for async preview panels where the initial
 /// render may show placeholder content before the actual data loads.
-///
-/// If `expected_rows` is provided, waits until the list panel shows exactly that
-/// many rows. This is the matcher-lag gate: skim renders the filter query
-/// (`> feature`) into the prompt as soon as the chars are processed, but its
-/// matcher runs async on a separate thread. Under heavy parallel load, the matcher
-/// result can land seconds *after* the prompt has been redrawn — so checking only
-/// for screen stability or prompt content can capture a state where the rows
-/// haven't been filtered yet. Pass `expected_rows` whenever the input changes the
-/// filter so that the helper waits for the matcher to actually apply.
 ///
 /// Handles a subtle race condition: skim may continuously redraw (cursor repositioning,
 /// border repaints) even after all meaningful content is rendered. These minor redraws
@@ -441,7 +410,6 @@ fn wait_for_stable_with_content(
     rx: &mpsc::Receiver<Vec<u8>>,
     parser: &mut vt100::Parser,
     expected_content: Option<&str>,
-    expected_rows: Option<usize>,
 ) {
     let start = Instant::now();
     let mut last_change = Instant::now();
@@ -477,18 +445,8 @@ fn wait_for_stable_with_content(
             None => true,
         };
 
-        // Reject "stable" states where skim's matcher hasn't yet caught up with the
-        // prompt repaint. The matcher runs on its own thread; under load it can lag
-        // seconds behind the prompt, so a screen that *looks* stable may still show
-        // pre-filter rows. Only the expected-rows gate is reliable here — see the
-        // function docstring.
-        let display_ready = match expected_rows {
-            Some(n) => visible_list_rows(&current_content) == n,
-            None => true,
-        };
-
         // Primary: screen hasn't changed for STABLE_DURATION and content is ready
-        if last_change.elapsed() >= STABLE_DURATION && content_ready && display_ready {
+        if last_change.elapsed() >= STABLE_DURATION && content_ready {
             return;
         }
 
@@ -498,7 +456,6 @@ fn wait_for_stable_with_content(
         // changes don't affect snapshot correctness.
         if let Some(found_time) = content_found_at
             && found_time.elapsed() >= STABLE_DURATION
-            && display_ready
         {
             return;
         }
@@ -515,23 +472,6 @@ fn wait_for_stable_with_content(
             "Timed out after {:?} waiting for expected content {:?} to appear on screen.\n\
              Screen content:\n{}",
             STABILIZE_TIMEOUT, expected, last_content
-        );
-    }
-
-    // Timeout: if expected rows were specified but the row count never matched, fail
-    // with diagnostics. Without this panic the test silently proceeds with stale rows
-    // (e.g. pre-filter state) and the snapshot assertion fires far from the actual
-    // cause — see #2334 / #2345.
-    if let Some(n) = expected_rows
-        && visible_list_rows(&last_content) != n
-    {
-        panic!(
-            "Timed out after {:?} waiting for {} visible list row(s); saw {}.\n\
-             Screen content:\n{}",
-            STABILIZE_TIMEOUT,
-            n,
-            visible_list_rows(&last_content),
-            last_content
         );
     }
 
@@ -622,7 +562,7 @@ fn test_switch_picker_with_multiple_worktrees(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         // Wait for items to render before capturing (prevents flakiness on slow CI)
-        &[("", Some("feature-two"), None)],
+        &[("", Some("feature-two"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
@@ -658,7 +598,7 @@ fn test_switch_picker_with_branches(mut repo: TestRepo) {
         // Wait for branch items to render before capturing. On macOS CI under
         // heavy load, skim may show the prompt and header before item rows,
         // causing wait_for_stable to capture too early (just the header).
-        &[("", Some("orphan-branch"), None)],
+        &[("", Some("orphan-branch"))],
     );
 
     assert_valid_abort_exit_code(result.exit_code);
@@ -715,11 +655,16 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            // Gate on the matcher having narrowed to a single row before pressing
-            // a preview-switch key — otherwise a slow matcher under parallel load
-            // can leave the stale `main` row visible at capture time.
-            ("feature", None, Some(1)),
-            ("1", Some("diff --git"), Some(1)), // Wait for diff to load
+            // Select `feature` by cursor navigation, not a filter query. skim's
+            // matcher runs on a separate thread; under heavy parallel macOS load
+            // its row redraw can lag the keystroke-driven prompt by more than the
+            // 30s gate timeout (#2334/#2729/#2767). Arrow navigation never invokes
+            // the matcher, so the selection is deterministic regardless of load.
+            // The list now shows both worktrees with the cursor on `feature`; the
+            // panel-content gate below still fails loudly if the wrong row is
+            // selected (the snapshot would not match `feature`'s preview).
+            ("\x1b[B", None),          // Down: move cursor to `feature`
+            ("1", Some("diff --git")), // Wait for diff to load
         ],
     );
 
@@ -776,11 +721,10 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            // Gate on the matcher having narrowed to a single row before pressing
-            // a preview-switch key — otherwise a slow matcher under parallel load
-            // can leave the stale `main` row visible at capture time.
-            ("feature", None, Some(1)),
-            ("2", Some("* "), Some(1)), // Wait for git log output
+            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
+            // for the matcher-lag rationale.
+            ("\x1b[B", None),  // Down: move cursor to `feature`
+            ("2", Some("* ")), // Wait for git log output
         ],
     );
 
@@ -870,11 +814,10 @@ fn test_new_feature() {
         repo.root_path(),
         &env_vars,
         &[
-            // Gate on the matcher having narrowed to a single row before pressing
-            // a preview-switch key — otherwise a slow matcher under parallel load
-            // can leave the stale `main` row visible at capture time (#2334).
-            ("feature", None, Some(1)),
-            ("3", Some("diff --git"), Some(1)), // Wait for diff to load
+            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
+            // for the matcher-lag rationale.
+            ("\x1b[B", None),          // Down: move cursor to `feature`
+            ("3", Some("diff --git")), // Wait for diff to load
         ],
     );
 
@@ -925,11 +868,10 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            // Gate on the matcher having narrowed to a single row before pressing
-            // a preview-switch key — otherwise a slow matcher under parallel load
-            // can leave the stale `main` row visible at capture time.
-            ("feature", None, Some(1)),
-            ("5", Some("Configure"), Some(1)), // Wait for config hint
+            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
+            // for the matcher-lag rationale.
+            ("\x1b[B", None),         // Down: move cursor to `feature`
+            ("5", Some("Configure")), // Wait for config hint
         ],
     );
 
@@ -976,7 +918,7 @@ branches = true
         &["switch"], // No --branches flag - config should enable it
         repo.root_path(),
         &env_vars,
-        &[("", Some("orphan-branch"), None)], // Wait for orphan-branch to appear in list before abort
+        &[("", Some("orphan-branch"))], // Wait for orphan-branch to appear in list before abort
     );
 
     assert_valid_abort_exit_code(result.exit_code);
@@ -1005,8 +947,8 @@ fn test_switch_picker_create_worktree_with_alt_c(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            ("new-feature", None, None), // Type the branch name
-            ("\x1bc", None, None),       // Alt-C (escape + c) to create worktree
+            ("new-feature", None), // Type the branch name
+            ("\x1bc", None),       // Alt-C (escape + c) to create worktree
         ],
     );
 
@@ -1100,8 +1042,8 @@ fn test_switch_picker_create_validates_templates_before_worktree(mut repo: TestR
         repo.root_path(),
         &env_vars,
         &[
-            ("new-feature", None, None), // Type the branch name
-            ("\x1bc", None, None),       // Alt-C: create
+            ("new-feature", None), // Type the branch name
+            ("\x1bc", None),       // Alt-C: create
         ],
     );
 
@@ -1147,7 +1089,7 @@ fn test_switch_picker_create_validates_templates_before_worktree(mut repo: TestR
         &["switch"],
         repo.root_path(),
         &env_vars,
-        &[("new-feature", None, None), ("\x1bc", None, None)],
+        &[("new-feature", None), ("\x1bc", None)],
     );
     assert_eq!(
         result.exit_code,
@@ -1167,45 +1109,6 @@ fn test_switch_picker_create_validates_templates_before_worktree(mut repo: TestR
     );
 }
 
-#[rstest]
-fn test_switch_picker_switch_to_existing_worktree(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    // Remove origin so there's no interference from remote branches
-    repo.run_git(&["remote", "remove", "origin"]);
-
-    // Create a worktree to switch to
-    repo.add_worktree("target-branch");
-
-    let env_vars = repo.test_env_vars();
-
-    // Navigate to target-branch and press Enter to switch
-    let result = exec_in_pty_with_input_expectations(
-        wt_bin().to_str().unwrap(),
-        &["switch"],
-        repo.root_path(),
-        &env_vars,
-        &[
-            ("target", None, Some(1)), // Filter to "target-branch"
-            ("\r", None, None),        // Enter to switch
-        ],
-    );
-
-    // Should exit successfully
-    assert_eq!(
-        result.exit_code, 0,
-        "Expected exit code 0 for successful switch"
-    );
-
-    let screen = result.screen();
-
-    // Verify the success message or cd directive
-    assert!(
-        screen.contains("target-branch") || screen.contains("Switched") || screen.contains("cd "),
-        "Expected switch output showing target-branch.\nScreen:\n{}",
-        screen
-    );
-}
-
 /// Helper to create temporary directive files for PTY tests.
 /// Returns (cd_path, exec_path, guards) — guards keep the temp files alive.
 fn directive_files_for_pty() -> (PathBuf, PathBuf, (tempfile::TempPath, tempfile::TempPath)) {
@@ -1218,52 +1121,6 @@ fn directive_files_for_pty() -> (PathBuf, PathBuf, (tempfile::TempPath, tempfile
         exec_path,
         (cd.into_temp_path(), exec.into_temp_path()),
     )
-}
-
-#[rstest]
-fn test_switch_picker_no_cd_suppresses_directive(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    repo.run_git(&["remote", "remove", "origin"]);
-
-    // Create a worktree to switch to
-    repo.add_worktree("target-branch");
-
-    let (cd_path, exec_path, _guard) = directive_files_for_pty();
-
-    let mut env_vars = repo.test_env_vars();
-    env_vars.push((
-        "WORKTRUNK_DIRECTIVE_CD_FILE".to_string(),
-        cd_path.display().to_string(),
-    ));
-    env_vars.push((
-        "WORKTRUNK_DIRECTIVE_EXEC_FILE".to_string(),
-        exec_path.display().to_string(),
-    ));
-
-    // Run `wt switch --no-cd`, select "target-branch" via picker, press Enter
-    let result = exec_in_pty_with_input_expectations(
-        wt_bin().to_str().unwrap(),
-        &["switch", "--no-cd"],
-        repo.root_path(),
-        &env_vars,
-        &[
-            ("target", None, Some(1)), // Filter to "target-branch"
-            ("\r", None, None),        // Enter to switch
-        ],
-    );
-
-    assert_eq!(
-        result.exit_code, 0,
-        "Expected exit code 0 for successful switch"
-    );
-
-    // Verify CD file is empty (no path written with --no-cd)
-    let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
-    assert!(
-        cd_content.trim().is_empty(),
-        "CD file should be empty with --no-cd via picker, got: {}",
-        cd_content
-    );
 }
 
 #[rstest]
@@ -1293,8 +1150,15 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            ("target", None, Some(1)), // Filter to "target-branch"
-            ("\r", None, None),        // Enter to switch
+            // Gate on the preview-pane text that's emitted only once skim's
+            // selection has moved to target-branch. Under heavy macOS load
+            // skim's matcher (and the row redraw it drives) can lag the typed
+            // query, but the preview pane tracks the selection cursor — and
+            // Enter acts on the cursor, not on which rows are painted. Gating
+            // on the preview text rides that lag instead of racing it
+            // (#2334/#2729/#2767).
+            ("target", Some("target-branch has no uncommitted changes")),
+            ("\r", None), // Enter to switch
         ],
     );
 
@@ -1339,8 +1203,10 @@ fn test_switch_picker_no_cd_prints_branch_without_switching(mut repo: TestRepo) 
         repo.root_path(),
         &env_vars,
         &[
-            ("target", None, Some(1)), // Filter to "target-branch"
-            ("\r", None, None),        // Enter to select
+            // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default
+            // for the rationale (matcher-driven row redraw can lag the cursor).
+            ("target", Some("target-branch has no uncommitted changes")),
+            ("\r", None), // Enter to select
         ],
     );
 

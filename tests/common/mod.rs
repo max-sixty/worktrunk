@@ -575,6 +575,21 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
             value
         }
     });
+
+    // Redact cargo-llvm-cov env from snapshot info blocks. `LLVM_PROFILE_FILE`
+    // is set on every test subprocess by `isolate_subprocess_env` (#2730) —
+    // its `<temp_dir>/wt-test-profraw/cov-%m_%p.profraw` value is platform-
+    // and host-specific and would leak into snapshots regenerated on any
+    // other machine. CARGO_LLVM_COV* propagate by the same path under
+    // `cargo llvm-cov`. `add_redaction` is the right hammer here:
+    // `add_filter` substitutes only on the captured snapshot content, not
+    // the YAML info/env block where these entries live.
+    settings.add_redaction(".env.LLVM_PROFILE_FILE", "[LLVM_PROFILE_FILE]");
+    settings.add_redaction(".env.CARGO_LLVM_COV", "[CARGO_LLVM_COV]");
+    settings.add_redaction(
+        ".env.CARGO_LLVM_COV_TARGET_DIR",
+        "[CARGO_LLVM_COV_TARGET_DIR]",
+    );
 }
 
 fn canonical_home_dir() -> Option<PathBuf> {
@@ -1091,13 +1106,6 @@ fn setup_snapshot_settings_for_paths_with_home(
     // Pattern 3: Git log style "* <hash> message" lines
     // Format: "* " + yellow code + 7-char hex hash + reset
     settings.add_filter(r"\* \x1b\[33m[a-f0-9]{7}\x1b\[m", "* \x1b[33m[HASH]\x1b[m");
-
-    // Filter out cargo-llvm-cov env variables from snapshot YAML headers.
-    // These are only present during coverage runs and cause snapshot mismatches.
-    // Note: YAML indentation in the info.env section is 4 spaces.
-    settings.add_filter(r#"    CARGO_LLVM_COV: "1"\n"#, "");
-    settings.add_filter(r#"    CARGO_LLVM_COV_TARGET_DIR: "[^"]+"\n"#, "");
-    settings.add_filter(r#"    LLVM_PROFILE_FILE: "[^"]+"\n"#, "");
 
     // Last so every placeholder established above (e.g. [TEST_CONFIG],
     // [PROJECT_ID], [TEMP_HOME], [HASH]) is in place when we strip styling

@@ -2,6 +2,7 @@
 source: tests/integration_tests/switch_picker.rs
 expression: list
 ---
-> [QUERY]
+>
     Branch   Status        HEAD±    main↕  Remote⇅  Commit
+  @ main         ^                                  [HASH]
 > + feature      ↑                 ↑2               [HASH]..

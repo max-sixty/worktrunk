@@ -363,13 +363,23 @@ Setup-side path-redaction placeholders in the strip list (`add_placeholder_ansi_
 
 ## Test Style
 
-### Snapshot env drift is cosmetic
+### Snapshot env drift: cosmetic vs. a leak
 
-`insta_cmd` snapshots record the test's environment variables in an `env:` block.
-When test infrastructure changes add or reorder env vars (e.g., `NO_COLOR: ""`
-appearing in a snapshot that didn't have it before), the snapshot diff includes
-those lines even though the test output is unchanged. This is cosmetic drift —
-accept it without comment during review.
+`insta_cmd` snapshots record the test's environment variables in an `env:`
+block. New or reordered env lines split into two cases — check the *value*
+before dismissing:
+
+- **Cosmetic (accept silently):** value is identical on every machine — `""`,
+  a deterministic literal (`"0"`, `C`), or an already-redacted placeholder
+  (`[TEST_HOME]`). A `NO_COLOR: ""` line appearing where it didn't before is
+  drift, not a bug.
+- **A leak (must fix):** value is host/platform/run-specific — a temp path
+  (`/var/folders/…`, `/tmp/…`), `$HOME`/`$USER`, a PID, a timestamp. It will
+  diff spuriously when the snapshot is regenerated elsewhere. Redact it with
+  `add_redaction(".env.VAR_NAME", "[VAR_NAME]")` in
+  `add_standard_env_redactions` (bound by the `repo` rstest fixture). Note
+  `add_filter` does **not** work on the `env:` block — it only substitutes on
+  captured snapshot content; use a redaction.
 
 ### Inline snapshots over multi-assert
 

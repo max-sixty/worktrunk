@@ -74,7 +74,7 @@ pub use remove::{
 };
 pub use repository::sha_cache;
 pub use repository::{
-    Branch, IntegrationTargets, RefSnapshot, Repository, ResolvedWorktree, WorkingTree,
+    Branch, IntegrationTargets, RefSnapshot, Repository, ResolvedWorktree, TempIndex, WorkingTree,
     set_base_path,
 };
 pub use url::GitRemoteUrl;

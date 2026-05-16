@@ -64,6 +64,9 @@ pub struct TaskContext {
     /// ref→SHA cache. `None` when snapshot capture failed (degraded
     /// mode — tasks fall back to ref-taking methods).
     pub snapshot: Option<Arc<RefSnapshot>>,
+    /// Whether `WorkingTreeDiffTask` should include untracked files in
+    /// its `HEAD±` line counts. See `CollectOptions` for rationale.
+    pub include_untracked_in_working_diff: bool,
 }
 
 impl TaskContext {
@@ -522,11 +525,20 @@ impl Task for WorkingTreeDiffTask {
         let (working_tree_status, is_dirty, has_conflicts) =
             parse_working_tree_status(&status_output);
 
-        let working_tree_diff = if is_dirty {
-            wt.working_tree_diff_stats()
+        // The default `wt list` path keeps `HEAD±` as a fast `git diff
+        // --shortstat HEAD` over tracked files only. `--full` and statusline
+        // ask for the same untracked-inclusive stat that `wt step diff`
+        // shows; honour it only when the cached porcelain actually has
+        // untracked entries (otherwise the fast path is identical and we
+        // skip the index copy + intent-to-add walk).
+        let working_tree_diff = if !is_dirty {
+            LineDiff::default()
+        } else if ctx.include_untracked_in_working_diff && working_tree_status.untracked {
+            wt.working_tree_diff_stats_with_untracked()
                 .map_err(|e| ctx.error(Self::KIND, &e))?
         } else {
-            LineDiff::default()
+            wt.working_tree_diff_stats()
+                .map_err(|e| ctx.error(Self::KIND, &e))?
         };
 
         Ok(TaskResult::WorkingTreeDiff {
@@ -668,7 +680,20 @@ impl Task for WorkingTreeConflictsTask {
             .any(|l| l.starts_with("??") || l.as_bytes().get(1) != Some(&b' '));
 
         let tree_sha = if needs_working_tree {
-            write_tree_with_working_tree(&wt).map_err(|e| ctx.error(Self::KIND, &e))?
+            // Stage all dirty + untracked entries into a temp index so
+            // `write-tree` produces a tree representing the full working
+            // state. Real index untouched. See `WorkingTree::temp_index`.
+            let idx = wt.temp_index().map_err(|e| ctx.error(Self::KIND, &e))?;
+            idx.git(["add", "-A"])
+                .run()
+                .context("Failed to stage working tree changes")
+                .map_err(|e| ctx.error(Self::KIND, &e))?;
+            let output = idx
+                .git(["write-tree"])
+                .run()
+                .context("Failed to write tree from temporary index")
+                .map_err(|e| ctx.error(Self::KIND, &e))?;
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
         } else {
             wt.run_command(&["write-tree"])
                 .map(|s| s.trim().to_string())
@@ -692,52 +717,6 @@ impl Task for WorkingTreeConflictsTask {
             has_working_tree_conflicts: Some(has_conflicts),
         })
     }
-}
-
-/// Build a tree SHA representing the full working tree state (staged +
-/// unstaged + untracked) by staging everything into a temporary index.
-///
-/// Copies the real index (preserving git's stat cache for unchanged files),
-/// then `git add -A` to stage all modifications and untracked files, then
-/// `git write-tree` to produce the tree SHA. The real index is untouched.
-fn write_tree_with_working_tree(wt: &worktrunk::git::WorkingTree) -> anyhow::Result<String> {
-    use worktrunk::shell_exec::Cmd;
-
-    let git_dir = wt.git_dir()?;
-    let worktree_root = wt.root()?;
-    let real_index = git_dir.join("index");
-    let log_ctx = wt
-        .path()
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(".")
-        .to_string();
-
-    let temp_index = tempfile::NamedTempFile::new().context("Failed to create temporary index")?;
-    std::fs::copy(&real_index, temp_index.path()).context("Failed to copy index file")?;
-    let temp_index_path = temp_index
-        .path()
-        .to_str()
-        .context("Temporary index path is not valid UTF-8")?;
-
-    // Stage all changes (unstaged modifications + untracked files)
-    Cmd::new("git")
-        .args(["add", "-A"])
-        .current_dir(&worktree_root)
-        .context(&log_ctx)
-        .env("GIT_INDEX_FILE", temp_index_path)
-        .run()
-        .context("Failed to stage working tree changes")?;
-
-    let output = Cmd::new("git")
-        .args(["write-tree"])
-        .current_dir(&worktree_root)
-        .context(&log_ctx)
-        .env("GIT_INDEX_FILE", temp_index_path)
-        .run()
-        .context("Failed to write tree from temporary index")?;
-
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 /// Task 7 (worktree only): Git operation state detection (rebase/merge)
