@@ -681,11 +681,11 @@ command = "tee {prompt_capture_str} > /dev/null && echo 'feat: decline guidance'
 
     assert_eq!(
         exit_code, 0,
-        "Commit should succeed even when guidance declined. Output:\n{output}"
+        "Commit should succeed even when template declined. Output:\n{output}"
     );
     assert!(
-        output.contains("Project commit guidance declined"),
-        "Should announce that guidance was declined. Output:\n{output}"
+        output.contains("Project commit template declined"),
+        "Should announce that the template was declined. Output:\n{output}"
     );
 
     let captured = std::fs::read_to_string(&prompt_capture).expect("captured prompt");

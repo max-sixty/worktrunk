@@ -1155,6 +1155,42 @@ mod tests {
         "#);
     }
 
+    /// The project fragment is itself a minijinja template — variables in it
+    /// expand against the same context as the main template. Without this
+    /// test, the pre-render pass in `build_prompt` could regress to a raw
+    /// string injection and nothing else would catch it.
+    #[test]
+    fn test_project_fragment_expands_template_variables() {
+        let config = CommitGenerationConfig::default();
+        let mut context = commit_context("diff", "feature/auth", None, "myrepo");
+        context.project_template = Some("Branch: {{ branch }} ({{ repo }})");
+        let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
+        assert!(
+            prompt.contains("Branch: feature/auth (myrepo)"),
+            "expected minijinja-expanded fragment in prompt, got:\n{prompt}"
+        );
+        // Make sure the unexpanded form didn't sneak through.
+        assert!(
+            !prompt.contains("{{ branch }}"),
+            "fragment was not rendered:\n{prompt}"
+        );
+    }
+
+    /// A malformed fragment must surface its render error rather than slipping
+    /// into the LLM prompt as literal text.
+    #[test]
+    fn test_project_fragment_render_error_propagates() {
+        let config = CommitGenerationConfig::default();
+        let mut context = commit_context("diff", "main", None, "repo");
+        context.project_template = Some("Unclosed {{ branch");
+        let err = build_prompt(&config, TemplateType::Commit, &context).unwrap_err();
+        assert!(
+            err.to_string().contains("syntax error")
+                || err.to_string().to_lowercase().contains("unexpected"),
+            "expected minijinja syntax error, got: {err}"
+        );
+    }
+
     #[test]
     fn test_default_squash_template_renders_project_fragment() {
         let config = CommitGenerationConfig::default();

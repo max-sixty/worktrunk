@@ -120,8 +120,9 @@ fn prompt_for_batch_approval(
             None => format!("{INFO_SYMBOL} {phase}:"),
         };
         eprintln!("{}", label);
-        // Shell commands get bash syntax highlighting; commit guidance is plain
-        // text (markdown-ish) and shouldn't be tokenized as bash.
+        // Shell commands get bash syntax highlighting; the commit template
+        // fragment is plain text (markdown-ish) and shouldn't be tokenized as
+        // bash.
         let body = match cmd.phase {
             Phase::CommitTemplate => format_with_gutter(&cmd.command.template, None),
             _ => format_bash_with_gutter(&cmd.command.template),
@@ -283,10 +284,11 @@ pub fn approve_or_skip(
     Ok(approved)
 }
 
-/// Resolve project guidance for a preview path (`--show-prompt` / `--dry-run`).
+/// Resolve the project commit template for a preview path (`--show-prompt` /
+/// `--dry-run`).
 ///
-/// `--show-prompt` doesn't invoke the LLM, so it always renders the configured
-/// guidance verbatim. `--dry-run` does invoke the LLM, so when an LLM is
+/// `--show-prompt` doesn't invoke the LLM, so it always returns the configured
+/// fragment verbatim. `--dry-run` does invoke the LLM, so when an LLM is
 /// configured it goes through the same approval gate as a real commit.
 pub fn resolve_template_for_preview(
     ctx: &super::command_executor::CommandContext<'_>,
@@ -304,17 +306,17 @@ pub fn resolve_template_for_preview(
     }
 }
 
-/// Approve project-level commit-message guidance before sending it to the LLM.
+/// Approve the project-level commit template fragment before sending it to the LLM.
 ///
-/// Returns `Ok(Some(guidance))` when approved (or already approved), `Ok(None)`
-/// when no guidance is configured or the user declined. Declining is non-fatal:
-/// the LLM still runs, just without the project guidance, mirroring the
+/// Returns `Ok(Some(fragment))` when approved (or already approved), `Ok(None)`
+/// when no fragment is configured or the user declined. Declining is non-fatal:
+/// the LLM still runs, just without the project template, mirroring the
 /// "commands declined, continuing without hooks" pattern.
 ///
 /// Callers should invoke this on every LLM-bearing path (`wt commit`, `wt step
 /// commit`, `wt step squash`, `wt merge`, `wt step commit --dry-run`, etc.).
 /// `--show-prompt` paths skip the gate — they don't execute the LLM, so showing
-/// the guidance text is a preview, not a send.
+/// the fragment is a preview, not a send.
 pub fn approve_commit_template(
     ctx: &super::command_executor::CommandContext<'_>,
 ) -> anyhow::Result<Option<String>> {
@@ -338,7 +340,7 @@ pub fn approve_commit_template(
         worktrunk::styling::eprintln!(
             "{}",
             worktrunk::styling::info_message(
-                "Project commit guidance declined; generating without it",
+                "Project commit template declined; generating without it",
             )
         );
         return Ok(None);
