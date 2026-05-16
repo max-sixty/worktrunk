@@ -383,6 +383,15 @@ impl<'a> RelocationExecutor<'a> {
                         .unwrap_or_default()
                         .to_string_lossy()
                 ));
+                // Fail closed if the backup destination already exists: `fs::rename`
+                // can silently replace an existing file (and some empty
+                // directories) on Unix, which would destroy a prior backup.
+                if backup_path.exists() {
+                    anyhow::bail!(
+                        "Backup path already exists: {}",
+                        format_path_for_display(&backup_path)
+                    );
+                }
                 let src = format_path_for_display(expected_path);
                 let dest = format_path_for_display(&backup_path);
                 eprintln!(

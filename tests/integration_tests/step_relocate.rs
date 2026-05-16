@@ -313,6 +313,55 @@ fn test_relocate_clobber_backs_up(repo: TestRepo) {
     assert!(backup_exists, "Backup directory should exist");
 }
 
+/// Regression: when the computed backup path already exists, relocate
+/// --clobber must fail rather than silently overwriting it. (Matches the
+/// `wt switch --clobber` contract — see test_switch_clobber_error_backup_exists.)
+#[rstest]
+fn test_relocate_clobber_error_backup_exists(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+
+    // Create a worktree at a non-standard location.
+    let wrong_path = parent.join("wrong-location");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        wrong_path.to_str().unwrap(),
+    ]);
+
+    // Blocker file at the expected destination.
+    let expected_path = parent.join("repo.feature");
+    fs::write(&expected_path, "blocker contents").unwrap();
+
+    // Pre-create the backup path that relocate would compute. TEST_EPOCH
+    // pins the timestamp suffix so this name is deterministic.
+    // TEST_EPOCH=1735776000 -> 2025-01-02 00:00:00 UTC
+    let backup_path = parent.join("repo.feature.bak-20250102-000000");
+    fs::write(&backup_path, "existing backup").unwrap();
+
+    let output = make_snapshot_cmd(&repo, "step", &["relocate", "--clobber"], None)
+        .output()
+        .expect("relocate should run");
+    assert!(
+        !output.status.success(),
+        "relocate must fail when backup path already exists; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Both the blocker and the existing backup must be intact.
+    assert_eq!(
+        fs::read_to_string(&expected_path).unwrap(),
+        "blocker contents",
+        "blocker file must not be moved"
+    );
+    assert_eq!(
+        fs::read_to_string(&backup_path).unwrap(),
+        "existing backup",
+        "existing backup must not be overwritten"
+    );
+}
+
 /// Test that --clobber refuses to clobber an existing worktree
 #[rstest]
 fn test_relocate_clobber_refuses_worktree(repo: TestRepo) {
