@@ -931,9 +931,14 @@ pub fn execute_switch(
                     let local_branch_existed =
                         !create_branch && branch_handle.exists_locally().unwrap_or(false);
 
-                    // Build git worktree add command
+                    // Build git worktree add command. Options come first, then
+                    // `--` separates them from the path and any positional ref,
+                    // so branch/base names that begin with `-` cannot be
+                    // misinterpreted by git as flags. `-b <branch>` keeps the
+                    // branch as the *value* of `-b`, which is safe even when
+                    // the branch name starts with `-`.
                     let worktree_path_str = worktree_path.to_string_lossy();
-                    let mut args = vec!["worktree", "add", worktree_path_str.as_ref()];
+                    let mut args: Vec<&str> = vec!["worktree", "add"];
 
                     // For DWIM fallback: when the branch doesn't exist locally,
                     // git worktree add relies on DWIM to auto-create it from a
@@ -942,12 +947,10 @@ pub fn execute_switch(
                     // create from the tracking ref in that case.
                     let tracking_ref;
 
-                    if *create_branch {
+                    let trailing_ref: Option<&str> = if *create_branch {
                         args.push("-b");
                         args.push(&branch);
-                        if let Some(base) = base_branch {
-                            args.push(base);
-                        }
+                        base_branch.as_deref()
                     } else if !local_branch_existed {
                         // Explicit -b when there's exactly one remote tracking ref.
                         // Git's DWIM relies on the fetch refspec including this branch,
@@ -955,13 +958,20 @@ pub fn execute_switch(
                         let remotes = branch_handle.remotes().unwrap_or_default();
                         if remotes.len() == 1 {
                             tracking_ref = format!("{}/{}", remotes[0], branch);
-                            args.extend(["-b", &branch, tracking_ref.as_str()]);
+                            args.extend(["-b", &branch]);
+                            Some(tracking_ref.as_str())
                         } else {
                             // Multiple or zero remotes: let git's DWIM handle (or error)
-                            args.push(&branch);
+                            Some(branch.as_str())
                         }
                     } else {
-                        args.push(&branch);
+                        Some(branch.as_str())
+                    };
+
+                    args.push("--");
+                    args.push(worktree_path_str.as_ref());
+                    if let Some(r) = trailing_ref {
+                        args.push(r);
                     }
 
                     // Delayed streaming: silent if fast, shows progress if slow
