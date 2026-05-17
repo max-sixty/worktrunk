@@ -1919,9 +1919,7 @@ squash-template = """
 ```
 <!-- DEFAULT_SQUASH_TEMPLATE_END -->
 
-#### Appending to the prompt
-
-<span class="badge-experimental"></span>
+#### Appending to the prompt [experimental]
 
 `template-append` adds to the prompt instead of replacing it. The value is rendered as its own minijinja template (same variables) and injected into the default templates' `{{ user_guidance }}` slot — a `<user-guidance>` block right after `<style>`. It applies to both commit and squash. Use it for personal preferences without restating the whole template:
 
@@ -1974,9 +1972,7 @@ platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (expe
 hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 ```
 
-## Commit-message append
-
-<span class="badge-experimental"></span>
+## Commit-message append [experimental]
 
 Project-wide commit-message conventions appended to the LLM commit and squash prompts inside a `<project-guidance>` block, after the main template's `<style>` section (and after any user `<user-guidance>`). Rendered as a [minijinja](https://docs.rs/minijinja/) template with the same variables as the main commit template (`{{ branch }}`, `{{ git_diff }}`, etc.), so it can reference them directly. The first time the fragment changes, `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks.
 

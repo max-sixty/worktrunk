@@ -8,7 +8,7 @@
 //! to simulate interactive terminals. The non-PTY tests in `approval_ui.rs` verify the
 //! error case (non-TTY environments).
 
-use crate::common::pty::{build_pty_command, exec_cmd_in_pty_prompted};
+use crate::common::pty::{build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted};
 use crate::common::{TestRepo, add_pty_binary_path_filters, add_pty_filters, repo, wt_bin};
 use insta::assert_snapshot;
 use rstest::rstest;
@@ -646,6 +646,32 @@ command = "tee {prompt_capture_str} > /dev/null && echo 'feat: accept guidance'"
         captured.contains("<project-guidance>") && captured.contains("Use conventional commits"),
         "Append should be sent to the LLM inside <project-guidance>. Captured:\n{captured}"
     );
+
+    // Second run: the fragment is already approved, so it must NOT re-prompt
+    // — exercises the `is_command_approved` cache-hit path in
+    // `approve_commit_template_append`.
+    std::fs::write(feature_wt.join("second.txt"), "more content").unwrap();
+    let cmd = build_pty_command(
+        wt_bin().to_str().unwrap(),
+        &["step", "commit"],
+        &feature_wt,
+        &env_vars,
+        None,
+    );
+    let (output2, exit2) = exec_cmd_in_pty(cmd, "");
+    assert_eq!(
+        exit2, 0,
+        "Second commit should succeed without re-prompting. Output:\n{output2}"
+    );
+    assert!(
+        !output2.contains("Allow and remember?"),
+        "Already-approved append must not prompt again. Output:\n{output2}"
+    );
+    let captured2 = std::fs::read_to_string(&prompt_capture).expect("captured prompt (2)");
+    assert!(
+        captured2.contains("<project-guidance>") && captured2.contains("Use conventional commits"),
+        "Approved append should still reach the LLM on re-run. Captured:\n{captured2}"
+    );
 }
 
 /// Declining the append prompt continues without it — the LLM receives the
@@ -762,7 +788,15 @@ command = "tee {prompt_capture_str} > /dev/null && echo 'feat: bundled'"
 #[rstest]
 fn test_config_approvals_add_accept(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
-    repo.write_project_config(r#"pre-start = "echo 'test command'""#);
+    // Include a project commit append so `add_approvals` also collects the
+    // `commit-template-append` entry (covers that branch in add_approvals).
+    repo.write_project_config(
+        r#"pre-start = "echo 'test command'"
+
+[commit.generation]
+template-append = "Use conventional commits"
+"#,
+    );
     repo.commit("Add config");
 
     let env_vars = repo.test_env_vars();
@@ -773,6 +807,10 @@ fn test_config_approvals_add_accept(repo: TestRepo) {
     assert!(
         output.contains("Commands approved"),
         "Should show approval success. Output:\n{output}"
+    );
+    assert!(
+        output.contains("commit-template-append") && output.contains("Use conventional commits"),
+        "add should list the project commit append. Output:\n{output}"
     );
 }
 

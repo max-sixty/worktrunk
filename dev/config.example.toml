@@ -277,9 +277,7 @@
 # """
 # <!-- DEFAULT_SQUASH_TEMPLATE_END -->
 #
-# #### Appending to the prompt
-#
-# <span class="badge-experimental"></span>
+# #### Appending to the prompt [experimental]
 #
 # `template-append` adds to the prompt instead of replacing it. The value is rendered as its own minijinja template (same variables) and injected into the default templates' `{{ user_guidance }}` slot — a `<user-guidance>` block right after `<style>`. It applies to both commit and squash. Use it for personal preferences without restating the whole template:
 #

@@ -387,9 +387,7 @@ Default template:
 [107m [0m 
 [107m [0m [2m[32m"[0m[2m[32m""[0m
 
-[1mAppending to the prompt[0m
-
-<span class="badge-experimental"></span>
+[1mAppending to the prompt [experimental][0m
 
 [2mtemplate-append[0m adds to the prompt instead of replacing it. The value is rendered as its own minijinja template (same variables) and injected into the default templates' [2m{{ user_guidance }}[0m slot — a [2m<user-guidance>[0m block right after [2m<style>[0m. It applies to both commit and squash. Use it for personal preferences without restating the whole template:
 
@@ -432,9 +430,7 @@ Name the forge explicitly for SSH aliases or self-hosted instances, where it can
 [107m [0m [2mplatform = [0m[2m[32m"github"[0m[2m  [0m[2m# or "gitlab", "gitea" (experimental), "azure-devops" (experimental)[0m
 [107m [0m [2mhostname = [0m[2m[32m"github.example.com"[0m[2m  [0m[2m# Example: API host (GHE / self-hosted GitLab)[0m
 
-[1m[32mCommit-message append[0m
-
-<span class="badge-experimental"></span>
+[1m[32mCommit-message append [experimental][0m
 
 Project-wide commit-message conventions appended to the LLM commit and squash prompts inside a [2m<project-guidance>[0m block, after the main template's [2m<style>[0m section (and after any user [2m<user-guidance>[0m). Rendered as a minijinja template with the same variables as the main commit template ([2m{{ branch }}[0m, [2m{{ git_diff }}[0m, etc.), so it can reference them directly. The first time the fragment changes, [2mwt[0m prompts the user to approve it — the same one-shot gate as project-defined hooks.
 

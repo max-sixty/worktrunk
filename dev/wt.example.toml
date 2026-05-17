@@ -27,9 +27,7 @@
 # platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)
 # hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 #
-# ## Commit-message append
-#
-# <span class="badge-experimental"></span>
+# ## Commit-message append [experimental]
 #
 # Project-wide commit-message conventions appended to the LLM commit and squash prompts inside a `<project-guidance>` block, after the main template's `<style>` section (and after any user `<user-guidance>`). Rendered as a minijinja (https://docs.rs/minijinja/) template with the same variables as the main commit template (`{{ branch }}`, `{{ git_diff }}`, etc.), so it can reference them directly. The first time the fragment changes, `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks.
 #

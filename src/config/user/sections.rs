@@ -88,16 +88,6 @@ impl CommitGenerationConfig {
             .map(|s| !s.trim().is_empty())
             .unwrap_or(false)
     }
-
-    /// User-level commit-message append fragment (trimmed; blank treated as
-    /// unset, so an empty value doesn't render an empty `<template_append>`
-    /// block).
-    pub fn template_append(&self) -> Option<&str> {
-        self.template_append
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-    }
 }
 
 impl Merge for CommitGenerationConfig {
