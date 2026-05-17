@@ -41,7 +41,7 @@ codex plugin marketplace add max-sixty/worktrunk
 
 To remove the marketplace entry, run `wt config plugins codex uninstall`. Already-installed plugins and global Codex hook feature flags are left unchanged.
 
-If activity markers do not appear after installing the plugin, Codex may be gating plugin-bundled hooks. Run `codex features list`; if `plugin_hooks` is `false`, enable it (`codex features enable plugin_hooks`), or copy this repo's `.codex-plugin/hooks/hooks.json` to `~/.codex/hooks.json`.
+If activity markers do not appear after installing the plugin, Codex may be gating plugin-bundled hooks. Run `codex features list`; if `plugin_hooks` is `false`, enable it (`codex features enable plugin_hooks`), or copy this repo's `plugins/worktrunk/hooks/hooks.json` to `~/.codex/hooks.json`.
 
 ## Configuration skill
 

@@ -51,7 +51,7 @@ pub fn handle_codex_install(yes: bool) -> Result<()> {
     eprintln!(
         "{}",
         hint_message(
-            "If markers do not appear, enable Codex plugin hooks or copy .codex-plugin/hooks/hooks.json to a standard Codex hook location"
+            "If markers do not appear, enable Codex plugin hooks or copy plugins/worktrunk/hooks/hooks.json to a standard Codex hook location"
         )
     );
 

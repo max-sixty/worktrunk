@@ -3540,28 +3540,42 @@ fn test_plugins_codex_install_command_fails(mut repo: TestRepo, temp_home: TempD
 fn test_codex_plugin_metadata_is_valid_json() {
     let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let plugin: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(project_root.join(".codex-plugin/plugin.json")).unwrap(),
+        &fs::read_to_string(project_root.join("plugins/worktrunk/.codex-plugin/plugin.json"))
+            .unwrap(),
     )
     .unwrap();
     // Codex discovers a marketplace's plugin list strictly from
-    // <repo-root>/.agents/plugins/marketplace.json — there is no fallback to
-    // the Claude .claude-plugin/marketplace.json. Without this file Codex
-    // registers the marketplace but enumerates zero plugins, so the plugin is
-    // uninstallable via /plugins (verified against codex-cli 0.130.0).
+    // <repo-root>/.agents/plugins/marketplace.json (no fallback to the Claude
+    // .claude-plugin/marketplace.json). Each plugin's `source` must be an
+    // object pointing at a non-empty subdirectory — codex rejects a bare or
+    // root-relative source ("local plugin source path must not be empty"), so
+    // the plugin lives in plugins/worktrunk/ rather than at the repo root.
+    // Verified end-to-end against codex-cli 0.130.0: with this layout the
+    // worktrunk marketplace surfaces in /plugins and the plugin installs;
+    // without it the marketplace registers but enumerates zero plugins.
     let marketplace: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(project_root.join(".agents/plugins/marketplace.json")).unwrap(),
     )
     .unwrap();
     let hooks: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(project_root.join(".codex-plugin/hooks/hooks.json")).unwrap(),
+        &fs::read_to_string(project_root.join("plugins/worktrunk/hooks/hooks.json")).unwrap(),
     )
     .unwrap();
 
     assert_eq!(plugin["name"], "worktrunk");
     assert_eq!(plugin["skills"], "./skills/");
-    assert_eq!(plugin["hooks"], "./.codex-plugin/hooks/hooks.json");
+    assert_eq!(plugin["hooks"], "./hooks/hooks.json");
     assert_eq!(marketplace["plugins"][0]["name"], "worktrunk");
-    assert_eq!(marketplace["plugins"][0]["source"], "./");
+    // Source is a non-empty subdir object; a bare "./" is rejected by codex.
+    assert_eq!(marketplace["plugins"][0]["source"]["source"], "local");
+    assert_eq!(
+        marketplace["plugins"][0]["source"]["path"],
+        "./plugins/worktrunk"
+    );
+    assert_eq!(
+        marketplace["plugins"][0]["policy"]["installation"],
+        "AVAILABLE"
+    );
     // Codex validates `interface` is an object and requires `displayName`;
     // omitting it is what made the plugin undiscoverable in /plugins.
     assert_eq!(marketplace["interface"]["displayName"], "Worktrunk");

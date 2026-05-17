@@ -10,7 +10,7 @@
   "license": "MIT OR Apache-2.0",
   "keywords": ["git", "worktree", "codex", "agent"],
   "skills": "./skills/",
-  "hooks": "./.codex-plugin/hooks/hooks.json",
+  "hooks": "./hooks/hooks.json",
   "interface": {
     "displayName": "Worktrunk",
     "shortDescription": "Git worktree workflows for parallel Codex sessions.",
