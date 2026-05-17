@@ -168,7 +168,7 @@ cargo insta test --accept -- --test integration "test_help"
 
 Config docs (`USER_CONFIG_START`/`PROJECT_CONFIG_START` sections in `src/cli/mod.rs`) generate `dev/*.example.toml` files where every line is commented out with `#`. TOML comments inside code blocks become double-commented (`# # comment`). Use plain text descriptions ending with colons before each code block instead — inline end-of-line comments (e.g., `key = "value"  # explanation`) are fine.
 
-## Plugin Layout (Claude Code + Codex)
+## Plugin Layout
 
 One plugin payload serves both tools, in `plugins/worktrunk/`. The repo root keeps only the two loader-mandated marketplace pointers — Claude (`.claude-plugin/marketplace.json`) and Codex (`.agents/plugins/marketplace.json`) each hardcode their marketplace path with no fallback, so two pointer files is the irreducible floor. Both point `source` at `./plugins/worktrunk`. Inside that directory: `plugin.json` is the Claude manifest (at the plugin root — Claude's `.claude-plugin/` wrapper is marketplace-root-only), `.codex-plugin/plugin.json` is the Codex manifest (Codex's required wrapper), and `skills -> ../../skills` single-sources the skills across both plugins and the docs auto-sync. The full layout, path-resolution rules, and the live-CLI verification are documented in `plugins/worktrunk/CLAUDE.md`; keep that file current when the layout changes.
 

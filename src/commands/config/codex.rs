@@ -48,7 +48,7 @@ pub fn handle_codex_install(yes: bool) -> Result<()> {
     // HookEventNameWire vocabulary (codex-cli 0.130.0) has no `Stop`/turn-end
     // event, so a 🤖 set on UserPromptSubmit could never return to 💬 within a
     // session. Re-add the hooks (and restore the marker hints + docs) once
-    // Codex exposes a turn-end hook event. See CLAUDE.md → "Codex Plugin".
+    // Codex exposes a turn-end hook event. See CLAUDE.md → "Plugin Layout".
 
     Ok(())
 }

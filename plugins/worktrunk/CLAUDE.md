@@ -20,7 +20,7 @@ worktrunk/                          ← repo root = marketplace root
     ├── skills -> ../../skills       ← symlink; single-sources skills across both
     │                                  plugins and the docs auto-sync
     ├── CLAUDE.md / README.md
-    └── (Codex ships no hooks — see repo CLAUDE.md → "Codex Plugin")
+    └── (Codex ships no hooks — see repo CLAUDE.md → "Plugin Layout")
 ```
 
 Path resolution differs by tool, both verified end-to-end against the real CLIs:
@@ -37,7 +37,7 @@ Path resolution differs by tool, both verified end-to-end against the real CLIs:
 
 Each Claude skill directory must be listed in `plugin.json`'s `skills` array;
 Codex picks up the whole `skills/` dir via the symlink (accepted tradeoff — see
-repo CLAUDE.md → "Codex Plugin").
+repo CLAUDE.md → "Plugin Layout").
 
 ## Known Limitations
 
@@ -54,4 +54,4 @@ The Claude hooks track activity via git config (`worktrunk.status.{branch}`):
 
 ### Codex ships no activity hooks
 
-Codex-cli 0.130.0's hook event vocabulary has no `Stop`/turn-end event, so a 🤖 marker could never return to 💬. The Codex manifest deliberately carries no `hooks` key. See repo CLAUDE.md → "Codex Plugin" for the re-enablement conditions.
+Codex-cli 0.130.0's hook event vocabulary has no `Stop`/turn-end event, so a 🤖 marker could never return to 💬. The Codex manifest deliberately carries no `hooks` key. See repo CLAUDE.md → "Plugin Layout" for the re-enablement conditions.
