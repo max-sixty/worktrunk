@@ -60,6 +60,7 @@ use commands::{
     handle_state_set, handle_state_show, handle_unconfigure_shell, handle_vars_clear,
     handle_vars_get, handle_vars_list, handle_vars_set, resolve_worktree_arg, run_hook, run_switch,
     step_commit, step_copy_ignored, step_diff, step_eval, step_for_each, step_prune, step_relocate,
+    step_tether,
 };
 use output::handle_remove_output;
 use worktrunk::git::BranchDeletionMode;
@@ -408,6 +409,7 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             clobber,
             format,
         } => step_relocate(branches, dry_run, commit, clobber, format),
+        StepCommand::Tether { command } => step_tether(&command),
         StepCommand::External(args) => commands::step_alias(args, yes),
     }
 }

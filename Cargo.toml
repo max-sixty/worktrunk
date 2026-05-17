@@ -156,7 +156,7 @@ wait-timeout = "0.2"
 # Windows picker support (worktrunk#2223) landed in skim v4.3.0 but is
 # gated by the same constraint.
 skim = { version = "0.20", optional = true }
-nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
+nix = { version = "0.31", default-features = false, features = ["process", "signal", "event", "inotify"] }
 signal-hook = "0.4"
 
 [build-dependencies]

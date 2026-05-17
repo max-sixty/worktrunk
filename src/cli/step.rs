@@ -70,8 +70,8 @@ pub struct SquashArgs {
 
 // Ordering: `wt merge` pipeline steps first (commit → squash → rebase → push),
 // then standalone utilities (diff, copy-ignored), then experimentals
-// (alphabetical: eval, for-each, promote, prune, relocate). Keep this enum,
-// the `## Operations` bullet list in `src/cli/mod.rs`, and the
+// (alphabetical: eval, for-each, promote, prune, relocate, tether). Keep this
+// enum, the `## Operations` bullet list in `src/cli/mod.rs`, and the
 // `<!-- subdoc: -->` markers in the same relative order.
 /// Run individual operations
 #[derive(Subcommand)]
@@ -682,6 +682,64 @@ Note: This command is experimental and may change in future versions.
         /// JSON prints structured result to stdout after the relocate completes.
         #[arg(long, default_value = "text", help_heading = "Automation")]
         format: crate::cli::SwitchFormat,
+    },
+
+    /// \[experimental\] Run a command; kill its whole process tree when its worktree is removed
+    ///
+    /// `tether -- CMD…` runs CMD in a new process group and supervises it.
+    /// When CMD exits on its own, or its worktree is removed (`wt rm`, `git
+    /// worktree remove`, `rm -rf`), the entire process group is torn down
+    /// (`SIGTERM`, then `SIGKILL`). Because the group survives the leader, a
+    /// detached or reparented child (such as the esbuild `--service` sidecar
+    /// a Vite dev server spawns) is killed too, which a port- or parent-based
+    /// kill misses.
+    #[command(after_long_help = r#"## Arguments
+
+Arguments after `--` are the program and its arguments, run directly, no shell.
+
+```console
+$ wt step tether -- npm run dev
+```
+
+For pipes, redirects, variables, or globs, wrap in `sh -c`:
+
+```console
+$ wt step tether -- sh -c 'PORT=$P npm run dev | tee dev.log'
+```
+
+## Examples
+
+Run a dev server, torn down automatically when the worktree goes away:
+
+```toml
+# .config/wt.toml
+[post-start]
+server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
+```
+
+## Why a process group
+
+`npm run dev` spawns node, Vite, and a separate esbuild `--service` process.
+esbuild does not listen on the dev-server port and does not put itself in a new
+process group, so it stays in the group `tether` created. `killpg` reaches
+every member at once, including after the top process has exited and its
+children have reparented to PID 1 (the process-group id outlives the leader).
+
+## Fire and forget
+
+There is no stop command and no rendezvous file. The supervisor watches its
+own worktree directory (kqueue on macOS, inotify on Linux). worktrunk renames
+a removed worktree into trash, and `git worktree remove` / `rm -rf` delete it
+outright; the watch fires either way, so the server dies with its worktree.
+No hook wiring beyond the single `post-start` line is needed. State lives only
+in the supervisor process, which dies with the command.
+
+Note: This command is experimental and may change in future versions.
+"#)]
+    Tether {
+        /// Command to run (after `--`, run directly, no shell)
+        #[arg(required = true, last = true, num_args = 1..)]
+        command: Vec<String>,
     },
 
     /// Catch-all for alias lookup

@@ -45,14 +45,15 @@ Each worktree runs its own dev server on a deterministic port. The `hash_port` f
 ```toml
 # .config/wt.toml
 [post-start]
-server = "npm run dev -- --port {{ branch | hash_port }}"
+server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
 
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
-
-[pre-remove]
-server = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/dev/null || true"
 ```
+
+[`wt step tether`](https://worktrunk.dev/step/#wt-step-tether) runs the dev server in its own process group and tears the whole group down when the command exits or the worktree is removed. A naive `lsof -ti :PORT | xargs kill` only reaches the process holding the port: `npm run dev` also spawns an esbuild service process that does not listen on the port, survives the port-based kill, and keeps a recursive file watch on the deleted worktree. On macOS those orphaned watches accumulate across every worktree ever removed and eventually saturate `fseventsd`. Killing the process group takes esbuild with everything else, including when the dev server exits on its own and esbuild reparents away (the group id outlives the leader, so a parent-walk would miss it but `tether` does not).
+
+There is no teardown hook to wire up. The supervisor watches its own worktree directory (kqueue on macOS, inotify on Linux); `wt remove`, `wt merge`, `git worktree remove`, and `rm -rf` all delete or rename that directory, so the server dies with its worktree however it is removed. On other Unix the watch is unavailable and the server is reaped only when the command exits on its own.
 
 The URL column in `wt list` shows each worktree's dev server:
 
@@ -67,7 +68,7 @@ $ wt list
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead, 2 columns hidden</span>
 ```
 
-Ports are deterministic — `fix-auth` always gets port 16460, regardless of which machine or when. The URL dims if the server isn't running.
+Ports are deterministic: `fix-auth` always gets port 16460, regardless of which machine or when. The URL dims if the server isn't running.
 
 ## Database per worktree
 
@@ -398,7 +399,7 @@ Clean URLs like `http://feature-auth.myproject.localhost` without port numbers. 
 ```toml
 # .config/wt.toml
 [post-start]
-server = "npm run dev -- --port {{ branch | hash_port }}"
+server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
 proxy = """
   curl -sf --max-time 0.5 http://localhost:2019/config/ || caddy start
   curl -sf http://localhost:2019/config/apps/http/servers/wt || \

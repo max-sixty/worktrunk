@@ -12,6 +12,8 @@
 //! - `promote::handle_promote` - Swap a branch into the main worktree
 //! - `prune::step_prune` - Remove worktrees merged into the default branch
 //! - `relocate::step_relocate` - Move worktrees to expected paths
+//! - `tether::step_tether` - Supervise a command and kill its whole process
+//!   group when the command exits or its worktree is removed
 
 pub(crate) mod commit;
 pub(crate) mod copy_ignored;
@@ -22,6 +24,7 @@ pub(crate) mod rebase;
 pub(crate) mod relocate;
 mod shared;
 pub(crate) mod squash;
+pub(crate) mod tether;
 
 pub(crate) use commit::step_commit;
 pub(crate) use copy_ignored::step_copy_ignored;
@@ -33,3 +36,4 @@ pub(crate) use relocate::step_relocate;
 pub(crate) use squash::{
     SquashResult, handle_squash, step_dry_run_squash, step_show_squash_prompt,
 };
+pub(crate) use tether::step_tether;

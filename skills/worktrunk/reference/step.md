@@ -35,6 +35,7 @@ $ wt step push
 - [`promote`](#wt-step-promote) — [experimental] Swap a branch into the main worktree
 - [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
 - [`relocate`](#wt-step-relocate) — [experimental] Move worktrees to expected paths
+- [`tether`](#wt-step-tether) — [experimental] Run a command; kill its whole process tree when its worktree is removed
 - [`<alias>`](https://worktrunk.dev/extending/#aliases) — Run a configured command alias
 
 ## Command reference
@@ -58,6 +59,8 @@ Commands:
   promote       [experimental] Swap a branch into the main worktree
   prune         [experimental] Remove worktrees merged into the default branch
   relocate      [experimental] Move worktrees to expected paths
+  tether        [experimental] Run a command; kill its whole process tree when its worktree is
+                removed
 
 Options:
   -h, --help
@@ -922,6 +925,92 @@ Automation:
           - json: JSON output
 
           [default: text]
+
+Global Options:
+  -C <path>
+          Working directory for this command
+
+      --config <path>
+          User config file path
+
+  -v, --verbose...
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
+```
+
+## wt step tether
+
+[experimental]
+
+Run a command; kill its whole process tree when its worktree is removed. tether -- CMD… runs CMD in a new process group and supervises it. When CMD exits on its own, or its worktree is removed (wt rm, git worktree remove, rm -rf), the entire process group is torn down (SIGTERM, then SIGKILL). Because the group survives the leader, a detached or reparented child (such as the esbuild --service sidecar a Vite dev server spawns) is killed too, which a port- or parent-based kill misses.
+
+### Arguments
+
+Arguments after `--` are the program and its arguments, run directly, no shell.
+
+```bash
+$ wt step tether -- npm run dev
+```
+
+For pipes, redirects, variables, or globs, wrap in `sh -c`:
+
+```bash
+$ wt step tether -- sh -c 'PORT=$P npm run dev | tee dev.log'
+```
+
+### Examples
+
+Run a dev server, torn down automatically when the worktree goes away:
+
+```toml
+# .config/wt.toml
+[post-start]
+server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
+```
+
+### Why a process group
+
+`npm run dev` spawns node, Vite, and a separate esbuild `--service` process.
+esbuild does not listen on the dev-server port and does not put itself in a new
+process group, so it stays in the group `tether` created. `killpg` reaches
+every member at once, including after the top process has exited and its
+children have reparented to PID 1 (the process-group id outlives the leader).
+
+### Fire and forget
+
+There is no stop command and no rendezvous file. The supervisor watches its
+own worktree directory (kqueue on macOS, inotify on Linux). worktrunk renames
+a removed worktree into trash, and `git worktree remove` / `rm -rf` delete it
+outright; the watch fires either way, so the server dies with its worktree.
+No hook wiring beyond the single `post-start` line is needed. State lives only
+in the supervisor process, which dies with the command.
+
+Note: This command is experimental and may change in future versions.
+
+### Command reference
+
+```
+wt step tether - [experimental] Run a command; kill its whole process tree when its worktree is removed
+
+tether --
+CMD… runs CMD in a new process group and supervises it. When CMD exits on its own, or its worktree
+is removed (wt rm, git worktree remove, rm -rf), the entire process group is torn down (SIGTERM,
+then SIGKILL). Because the group survives the leader, a detached or reparented child (such as the
+esbuild --service sidecar a Vite dev server spawns) is killed too, which a port- or parent-based
+kill misses.
+
+Usage: wt step tether [OPTIONS] -- <COMMAND>...
+
+Arguments:
+  <COMMAND>...
+          Command to run (after --, run directly, no shell)
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
 
 Global Options:
   -C <path>
