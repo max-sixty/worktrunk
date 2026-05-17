@@ -265,6 +265,16 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
         .unwrap_or(&response.source_ref_name)
         .to_string();
 
+    // Validate at the provider boundary — same as the GitHub/GitLab/Gitea
+    // providers — so an empty or `refs/heads/`-only sourceRefName produces a
+    // clear diagnostic rather than confusing downstream git/path errors.
+    if source_branch.is_empty() {
+        bail!(
+            "Azure DevOps PR #{} has empty branch name; the PR may be in an invalid state",
+            pr_number
+        );
+    }
+
     let is_cross_repo = response.fork_source.is_some();
 
     let fork_push_url = response.fork_source.as_ref().and_then(|fork| {

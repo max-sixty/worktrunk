@@ -4636,6 +4636,50 @@ fn test_switch_pr_azure_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) 
     });
 }
 
+/// Regression: an Azure PR whose `sourceRefName` is just `refs/heads/`
+/// (empty branch after stripping) must fail at the provider boundary with a
+/// clear message — matching GitHub/GitLab/Gitea — not produce a confusing
+/// downstream git/path error.
+#[rstest]
+fn test_switch_pr_azure_empty_source_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    set_azure_remote_url(
+        &repo,
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    );
+
+    let az_response = r#"{
+        "title": "Broken PR",
+        "createdBy": {"uniqueName": "alice@example.com"},
+        "status": "active",
+        "isDraft": false,
+        "sourceRefName": "refs/heads/",
+        "repository": {
+            "name": "test-repo",
+            "project": {"name": "myproject"},
+            "webUrl": "https://dev.azure.com/myorg/myproject/_git/test-repo"
+        },
+        "forkSource": null
+    }"#;
+
+    let mock_bin = setup_mock_az(&repo, Some(az_response));
+
+    let output = {
+        let mut cmd = repo.wt_command();
+        cmd.args(["switch", "pr:101"]);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        cmd.output().unwrap()
+    };
+    assert!(
+        !output.status.success(),
+        "switch must fail on an empty Azure source branch"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("empty branch name"),
+        "expected a clear empty-branch diagnostic, got:\n{stderr}"
+    );
+}
+
 /// Legacy `*.visualstudio.com` remotes encode the org in the hostname — exercises
 /// the `*.visualstudio.com` branches of the Azure URL helpers end to end.
 #[rstest]
