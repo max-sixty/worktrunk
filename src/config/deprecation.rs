@@ -3055,7 +3055,7 @@ approved-commands = ["npm install"]
         let result = copy_approved_commands_to_approvals_file(&config_path);
         assert!(
             result.is_err(),
-            "Unparseable source config must surface as Err; got {result:?}"
+            "Unparsable source config must surface as Err; got {result:?}"
         );
     }
 
