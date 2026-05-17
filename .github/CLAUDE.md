@@ -13,7 +13,7 @@ Workflows check `user.login == 'worktrunk-bot'` directly.
 
 | Token | Purpose |
 |-------|---------|
-| `WORKTRUNK_BOT_TOKEN` | All Claude workflows — consistent bot identity |
+| `TEND_BOT_TOKEN` | All Claude workflows — consistent bot identity |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Authenticates Claude Code to the Anthropic API |
 
 ## Merge restriction
