@@ -1819,6 +1819,7 @@ Available variables:
 - `{{ git_diff }}`, `{{ git_diff_stat }}` — diff content
 - `{{ branch }}`, `{{ repo }}` — context
 - `{{ recent_commits }}` — recent commit messages
+- `{{ user_guidance }}`, `{{ project_guidance }}` — rendered append fragments (see [Appending to the prompt](#appending-to-the-prompt))
 
 Default template:
 
@@ -1839,10 +1840,14 @@ template = """
 - Match recent commit style (conventional commits if used)
 - Describe the change, not the intent or benefit
 </style>
-{% if project_template %}
-<project_template>
-{{ project_template }}
-</project_template>
+{% if user_guidance %}
+<user-guidance>
+{{ user_guidance }}
+</user-guidance>
+{% endif %}{% if project_guidance %}
+<project-guidance>
+{{ project_guidance }}
+</project-guidance>
 {% endif %}
 <diffstat>
 {{ git_diff_stat }}
@@ -1889,10 +1894,14 @@ squash-template = """
 - Match the style of commits being squashed (conventional commits if used)
 - Describe the change, not the intent or benefit
 </style>
-{% if project_template %}
-<project_template>
-{{ project_template }}
-</project_template>
+{% if user_guidance %}
+<user-guidance>
+{{ user_guidance }}
+</user-guidance>
+{% endif %}{% if project_guidance %}
+<project-guidance>
+{{ project_guidance }}
+</project-guidance>
 {% endif %}
 <commits branch="{{ branch }}" target="{{ target_branch }}">
 {% for commit in commits %}- {{ commit }}
@@ -1909,6 +1918,21 @@ squash-template = """
 """
 ```
 <!-- DEFAULT_SQUASH_TEMPLATE_END -->
+
+#### Appending to the prompt
+
+<span class="badge-experimental"></span>
+
+`template-append` adds to the prompt instead of replacing it. The value is rendered as its own minijinja template (same variables) and injected into the default templates' `{{ user_guidance }}` slot — a `<user-guidance>` block right after `<style>`. It applies to both commit and squash. Use it for personal preferences without restating the whole template:
+
+```toml
+[commit.generation]
+template-append = """
+- Explain the rationale in the body, not just the change
+"""
+```
+
+The [project config](@/config.md#project-configuration) has a `template-append` of its own; it renders into a separate `<project-guidance>` block right after `<user-guidance>`.
 
 ## Hooks
 
@@ -1950,21 +1974,21 @@ platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (expe
 hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)
 ```
 
-## Commit-message template
+## Commit-message append
 
 <span class="badge-experimental"></span>
 
-Project-wide commit-message conventions appended to the LLM prompt inside a `<project_template>` block. Rendered as a [minijinja](https://docs.rs/minijinja/) template with the same variables as the main commit template (`{{ branch }}`, `{{ git_diff }}`, etc.), so the fragment can reference them directly. The first time the fragment changes, `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks.
+Project-wide commit-message conventions appended to the LLM commit and squash prompts inside a `<project-guidance>` block, after the main template's `<style>` section (and after any user `<user-guidance>`). Rendered as a [minijinja](https://docs.rs/minijinja/) template with the same variables as the main commit template (`{{ branch }}`, `{{ git_diff }}`, etc.), so it can reference them directly. The first time the fragment changes, `wt` prompts the user to approve it — the same one-shot gate as project-defined hooks.
 
 ```toml
 [commit.generation]
-template = """
+template-append = """
 - Use conventional commits (feat:, fix:, docs:, …)
 - Reference the relevant issue ID in the body
 """
 ```
 
-Only `template` is honored from the project file. The LLM command and the main prompt template stay in [user config](@/config.md) — they describe per-developer environment (which CLI is installed, which agent the developer prefers).
+Only `template-append` is honored from the project file. The LLM command and the main prompt template stay in [user config](@/config.md) — they describe per-developer environment (which CLI is installed, which agent the developer prefers). User config has a `[commit.generation] template-append` of its own; it renders into a separate `<user-guidance>` block immediately before this one.
 
 ## Copy-ignored excludes
 

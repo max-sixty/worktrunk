@@ -100,13 +100,10 @@ fn preview_commit(stage: Option<StageMode>, dry_run: bool, yes: bool) -> anyhow:
     let index_override = temp_index.as_ref().map(|t| t.path());
 
     let ctx = env.context(yes);
-    let project_template = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
+    let project_append = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
 
-    let prompt = crate::llm::build_commit_prompt(
-        &commit_config,
-        index_override,
-        project_template.as_deref(),
-    )?;
+    let prompt =
+        crate::llm::build_commit_prompt(&commit_config, index_override, project_append.as_deref())?;
     if !dry_run {
         println!("{}", prompt);
         return Ok(());
@@ -114,7 +111,7 @@ fn preview_commit(stage: Option<StageMode>, dry_run: bool, yes: bool) -> anyhow:
     let message = crate::llm::generate_commit_message(
         &commit_config,
         index_override,
-        project_template.as_deref(),
+        project_append.as_deref(),
     )?;
     print_dry_run(&prompt, &commit_config, &message)
 }

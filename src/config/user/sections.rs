@@ -64,6 +64,20 @@ pub struct CommitGenerationConfig {
     /// Supports tilde expansion (e.g., "~/.config/worktrunk/squash-template.txt")
     #[serde(default, rename = "squash-template-file")]
     pub squash_template_file: Option<String>,
+
+    /// Inline text appended to the commit and squash prompts inside a
+    /// `<user-guidance>` block, after the main template's `<style>`
+    /// section. Rendered as a minijinja template with the same variables
+    /// (`{{ branch }}`, `{{ git_diff }}`, etc.). Unlike `template`, this
+    /// *adds to* the default prompt instead of replacing it — use it for
+    /// personal commit-message preferences without restating the whole
+    /// template. The project config has a `[commit.generation]
+    /// template-append` of its own; it renders into a separate
+    /// `<project-guidance>` block right after this one.
+    ///
+    /// *(Experimental — may change in future releases.)*
+    #[serde(default, rename = "template-append")]
+    pub template_append: Option<String>,
 }
 
 impl CommitGenerationConfig {
@@ -73,6 +87,16 @@ impl CommitGenerationConfig {
             .as_ref()
             .map(|s| !s.trim().is_empty())
             .unwrap_or(false)
+    }
+
+    /// User-level commit-message append fragment (trimmed; blank treated as
+    /// unset, so an empty value doesn't render an empty `<template_append>`
+    /// block).
+    pub fn template_append(&self) -> Option<&str> {
+        self.template_append
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
     }
 }
 
@@ -105,6 +129,10 @@ impl Merge for CommitGenerationConfig {
             template_file,
             squash_template,
             squash_template_file,
+            template_append: other
+                .template_append
+                .clone()
+                .or_else(|| self.template_append.clone()),
         }
     }
 }

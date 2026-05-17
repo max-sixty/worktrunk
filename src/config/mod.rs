@@ -606,6 +606,7 @@ squash-template-file = "~/file.txt"
             template_file: None,
             squash_template: None,
             squash_template_file: None,
+            template_append: None,
         };
 
         assert_snapshot!(toml::to_string(&config).unwrap(), @r#"

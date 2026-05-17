@@ -594,21 +594,21 @@ command = "cat >/dev/null && echo 'feat: test commit message'"
     assert_no_spurious_no_hooks(&output);
 }
 
-/// Project commit-message guidance must be approved before the LLM sees it.
+/// Project commit-message append must be approved before the LLM sees it.
 ///
-/// Accept → guidance is included in the prompt the LLM receives.
+/// Accept → the fragment is included in the prompt the LLM receives.
 #[rstest]
-fn test_commit_template_approval_accept(mut repo: TestRepo) {
+fn test_commit_template_append_approval_accept(mut repo: TestRepo) {
     // Remove origin so worktrunk uses directory name as project identifier.
     repo.run_git(&["remote", "remove", "origin"]);
 
     repo.write_project_config(
         r#"
 [commit.generation]
-template = "Use conventional commits"
+template-append = "Use conventional commits"
 "#,
     );
-    repo.commit("Add project commit guidance");
+    repo.commit("Add project commit append");
 
     let feature_wt = repo.add_worktree("feature-guidance-accept");
     std::fs::write(feature_wt.join("new-file.txt"), "new content").unwrap();
@@ -633,34 +633,34 @@ command = "tee {prompt_capture_str} > /dev/null && echo 'feat: accept guidance'"
         "Commit should succeed when guidance approved. Output:\n{output}"
     );
     assert!(
-        output.contains("commit-template"),
-        "Approval prompt should label the guidance phase. Output:\n{output}"
+        output.contains("commit-template-append"),
+        "Approval prompt should label the append phase. Output:\n{output}"
     );
     assert!(
         output.contains("Use conventional commits"),
-        "Approval prompt should display the guidance text. Output:\n{output}"
+        "Approval prompt should display the append text. Output:\n{output}"
     );
 
     let captured = std::fs::read_to_string(&prompt_capture).expect("captured prompt");
     assert!(
-        captured.contains("<project_template>") && captured.contains("Use conventional commits"),
-        "Guidance should be sent to the LLM inside <project_template>. Captured:\n{captured}"
+        captured.contains("<project-guidance>") && captured.contains("Use conventional commits"),
+        "Append should be sent to the LLM inside <project-guidance>. Captured:\n{captured}"
     );
 }
 
-/// Declining the guidance prompt continues without the guidance — the LLM
-/// receives the rest of the prompt as if no project guidance were configured.
+/// Declining the append prompt continues without it — the LLM receives the
+/// rest of the prompt as if no project append were configured.
 #[rstest]
-fn test_commit_template_approval_decline(mut repo: TestRepo) {
+fn test_commit_template_append_approval_decline(mut repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     repo.write_project_config(
         r#"
 [commit.generation]
-template = "Reference the issue ID"
+template-append = "Reference the issue ID"
 "#,
     );
-    repo.commit("Add project commit guidance");
+    repo.commit("Add project commit append");
 
     let feature_wt = repo.add_worktree("feature-guidance-decline");
     std::fs::write(feature_wt.join("new-file.txt"), "new content").unwrap();
@@ -684,33 +684,33 @@ command = "tee {prompt_capture_str} > /dev/null && echo 'feat: decline guidance'
         "Commit should succeed even when template declined. Output:\n{output}"
     );
     assert!(
-        output.contains("Project commit template declined"),
-        "Should announce that the template was declined. Output:\n{output}"
+        output.contains("Project commit guidance declined"),
+        "Should announce that the append was declined. Output:\n{output}"
     );
 
     let captured = std::fs::read_to_string(&prompt_capture).expect("captured prompt");
     assert!(
         !captured.contains("Reference the issue ID"),
-        "Declined guidance must not reach the LLM. Captured:\n{captured}"
+        "Declined append must not reach the LLM. Captured:\n{captured}"
     );
     assert!(
-        !captured.contains("<project_template>"),
-        "No <project_template> block when guidance declined. Captured:\n{captured}"
+        !captured.contains("<project-guidance>"),
+        "No <project-guidance> block when append declined. Captured:\n{captured}"
     );
 }
 
-/// `wt merge` with both project hooks and commit guidance bundles the two
+/// `wt merge` with both project hooks and a commit append bundles the two
 /// items into the same approval prompt — the user sees one prompt covering
-/// both, not one for hooks and a second for guidance mid-merge.
+/// both, not one for hooks and a second for the append mid-merge.
 #[rstest]
-fn test_merge_bundles_guidance_into_hook_approval(mut repo: TestRepo) {
+fn test_merge_bundles_append_into_hook_approval(mut repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
     repo.write_project_config(
         r#"
 pre-commit = "echo 'pre-commit hook'"
 
 [commit.generation]
-template = "Reference the related issue"
+template-append = "Reference the related issue"
 "#,
     );
     repo.commit("Add project config with hook + guidance");
@@ -740,8 +740,8 @@ command = "tee {prompt_capture_str} > /dev/null && echo 'feat: bundled'"
         "Bundled prompt should list the pre-commit hook command. Output:\n{output}"
     );
     assert!(
-        output.contains("commit-template") && output.contains("Reference the related issue"),
-        "Bundled prompt should list the commit guidance. Output:\n{output}"
+        output.contains("commit-template-append") && output.contains("Reference the related issue"),
+        "Bundled prompt should list the commit append. Output:\n{output}"
     );
     // The downstream commit step must not present a second prompt.
     let prompts = output.matches("Allow and remember?").count();
@@ -752,8 +752,8 @@ command = "tee {prompt_capture_str} > /dev/null && echo 'feat: bundled'"
 
     let captured = std::fs::read_to_string(&prompt_capture).expect("captured prompt");
     assert!(
-        captured.contains("<project_template>") && captured.contains("Reference the related issue"),
-        "Approved guidance should reach the LLM. Captured:\n{captured}"
+        captured.contains("<project-guidance>") && captured.contains("Reference the related issue"),
+        "Approved append should reach the LLM. Captured:\n{captured}"
     );
 }
 

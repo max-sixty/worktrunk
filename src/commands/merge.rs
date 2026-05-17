@@ -232,16 +232,16 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         .config
         .commit_generation(Some(&project_id))
         .is_configured();
-    let project_template_text: Option<String> = if commit && will_create_commit && llm_configured {
+    let project_append_text: Option<String> = if commit && will_create_commit && llm_configured {
         env.repo
             .load_project_config()?
             .as_ref()
-            .and_then(|cfg| cfg.commit_template().map(str::to_string))
+            .and_then(|cfg| cfg.commit_template_append().map(str::to_string))
     } else {
         None
     };
-    if let Some(ref g) = project_template_text {
-        all_commands.push(ApprovableCommand::commit_template(g.clone()));
+    if let Some(ref g) = project_append_text {
+        all_commands.push(ApprovableCommand::commit_template_append(g.clone()));
     }
 
     // Approve all commands in a single batch (shows templates, not expanded values)
@@ -270,7 +270,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let mut announcer = HookAnnouncer::new(repo, config, false);
 
     let guidance = super::step::PreApprovedGuidance::Resolved(
-        approved.then_some(project_template_text).flatten(),
+        approved.then_some(project_append_text).flatten(),
     );
 
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred

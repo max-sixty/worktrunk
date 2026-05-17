@@ -187,7 +187,8 @@ Diff:
 | `{{ recent_commits }}` | Recent commit subjects (for style reference) |
 | `{{ commits }}` | Commits being squashed (squash template only) |
 | `{{ target_branch }}` | Merge target branch (squash template only) |
-| `{{ project_template }}` | Project-level template fragment from `.config/wt.toml`, pre-rendered (see below) |
+| `{{ user_guidance }}` | Rendered user `template-append` fragment (see below) |
+| `{{ project_guidance }}` | Rendered project `template-append` fragment (see below) |
 
 ### Template syntax
 
@@ -202,24 +203,26 @@ Templates use [minijinja](https://docs.rs/minijinja/latest/minijinja/syntax/inde
 
 See `wt config create --help` for the full default templates.
 
-## Project commit template
+## Appending to the prompt
 
 <span class="badge-experimental"></span>
 
-Project-level commit-message conventions can be checked into the repo so every teammate's LLM sees the same style guide. The fragment is itself a [minijinja](https://docs.rs/minijinja/) template — Worktrunk renders it with the same variables as the main commit template (`{{ branch }}`, `{{ git_diff }}`, …), then appends the result inside a `<project_template>` block:
+`template-append` adds to the commit and squash prompts instead of replacing them. It lives in both user config (personal preferences) and project config (`.config/wt.toml`, shared so every teammate's LLM sees the same style guide). Each fragment is itself a [minijinja](https://docs.rs/minijinja/) template — Worktrunk renders it with the same variables as the main template (`{{ branch }}`, `{{ git_diff }}`, …), then appends the result after `<style>`. The user fragment renders into a `<user-guidance>` block and the project fragment into a `<project-guidance>` block, so the LLM can tell personal preference from shared convention:
 
 ```toml
 # .config/wt.toml
 [commit.generation]
-template = """
+template-append = """
 - Use conventional commits (feat:, fix:, docs:, …)
 - Reference the related issue ID in the body
 """
 ```
 
-The first time the rendered text is sent to the LLM, Worktrunk shows the raw fragment in an approval prompt — the same one-shot gate as project-defined hooks. Subsequent commits don't re-prompt unless the fragment changes. Declining is non-fatal: the LLM runs without the project template.
+When both the user and project set `template-append`, the `<user-guidance>` block comes first, then `<project-guidance>`.
 
-Custom user templates that don't reference `{{ project_template }}` opt out of the appended block — the pre-rendered value is injected only where the template places it.
+The user fragment needs no approval — it's the developer's own config. For the project fragment, the first time the rendered text is sent to the LLM, Worktrunk shows the raw fragment in an approval prompt — the same one-shot gate as project-defined hooks. Subsequent commits don't re-prompt unless the fragment changes. Declining is non-fatal: the LLM runs with just the user fragment (if any).
+
+Custom user templates that don't reference `{{ user_guidance }}` / `{{ project_guidance }}` opt out of the appended blocks — the rendered values are injected only where the template places them.
 
 ## Fallback behavior
 

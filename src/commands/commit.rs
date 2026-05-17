@@ -89,16 +89,17 @@ impl<'a> CommitOptions<'a> {
 
 pub(crate) struct CommitGenerator<'a> {
     config: &'a CommitGenerationConfig,
-    /// Approved project-level guidance to append to the LLM prompt. `None` if
-    /// not configured or the user declined approval.
-    project_template: Option<&'a str>,
+    /// Approved project-level append fragment for the LLM prompt. `None` if
+    /// not configured or the user declined approval. The user-level
+    /// `template-append` rides along inside `config` and needs no approval.
+    project_append: Option<&'a str>,
 }
 
 impl<'a> CommitGenerator<'a> {
-    pub fn new(config: &'a CommitGenerationConfig, project_template: Option<&'a str>) -> Self {
+    pub fn new(config: &'a CommitGenerationConfig, project_append: Option<&'a str>) -> Self {
         Self {
             config,
-            project_template,
+            project_append,
         }
     }
 
@@ -187,7 +188,7 @@ impl<'a> CommitGenerator<'a> {
 
         self.emit_hint_if_needed();
         let commit_message =
-            crate::llm::generate_commit_message(self.config, None, self.project_template)?;
+            crate::llm::generate_commit_message(self.config, None, self.project_append)?;
 
         let formatted_message = self.format_message_for_display(&commit_message);
         eprintln!("{}", format_with_gutter(&formatted_message, None));
@@ -284,14 +285,14 @@ impl CommitOptions<'_> {
         // Skip the approval gate when the LLM isn't configured — the fallback
         // message generator doesn't render the prompt template, so guidance
         // would never reach an LLM anyway.
-        let project_template = match self.guidance {
+        let project_append = match self.guidance {
             super::step::PreApprovedGuidance::Resolved(value) => value,
             super::step::PreApprovedGuidance::RunOwnGate if effective_config.is_configured() => {
-                super::command_approval::approve_commit_template(self.ctx)?
+                super::command_approval::approve_commit_template_append(self.ctx)?
             }
             super::step::PreApprovedGuidance::RunOwnGate => None,
         };
-        let outcome = CommitGenerator::new(&effective_config, project_template.as_deref())
+        let outcome = CommitGenerator::new(&effective_config, project_append.as_deref())
             .commit_staged_changes(
                 &wt,
                 true, // show_progress

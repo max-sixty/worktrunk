@@ -124,7 +124,7 @@ fn prompt_for_batch_approval(
         // fragment is plain text (markdown-ish) and shouldn't be tokenized as
         // bash.
         let body = match cmd.phase {
-            Phase::CommitTemplate => format_with_gutter(&cmd.command.template, None),
+            Phase::CommitTemplateAppend => format_with_gutter(&cmd.command.template, None),
             _ => format_bash_with_gutter(&cmd.command.template),
         };
         eprintln!("{}", body);
@@ -296,51 +296,52 @@ pub fn resolve_template_for_preview(
     dry_run: bool,
 ) -> anyhow::Result<Option<String>> {
     if dry_run && commit_config.is_configured() {
-        approve_commit_template(ctx)
+        approve_commit_template_append(ctx)
     } else {
         Ok(ctx
             .repo
             .load_project_config()?
             .as_ref()
-            .and_then(|cfg| cfg.commit_template().map(str::to_string)))
+            .and_then(|cfg| cfg.commit_template_append().map(str::to_string)))
     }
 }
 
-/// Approve the project-level commit template fragment before sending it to the LLM.
+/// Approve the project-level commit append fragment before sending it to the LLM.
 ///
 /// Returns `Ok(Some(fragment))` when approved (or already approved), `Ok(None)`
 /// when no fragment is configured or the user declined. Declining is non-fatal:
-/// the LLM still runs, just without the project template, mirroring the
-/// "commands declined, continuing without hooks" pattern.
+/// the LLM still runs, just without the project append, mirroring the
+/// "commands declined, continuing without hooks" pattern. The user-level
+/// `template-append` is not gated here — it's the developer's own config.
 ///
 /// Callers should invoke this on every LLM-bearing path (`wt commit`, `wt step
 /// commit`, `wt step squash`, `wt merge`, `wt step commit --dry-run`, etc.).
 /// `--show-prompt` paths skip the gate — they don't execute the LLM, so showing
 /// the fragment is a preview, not a send.
-pub fn approve_commit_template(
+pub fn approve_commit_template_append(
     ctx: &super::command_executor::CommandContext<'_>,
 ) -> anyhow::Result<Option<String>> {
     let Some(project_config) = ctx.repo.load_project_config()? else {
         return Ok(None);
     };
-    let Some(guidance) = project_config.commit_template() else {
+    let Some(fragment) = project_config.commit_template_append() else {
         return Ok(None);
     };
 
     let project_id = ctx.repo.project_identifier()?;
     let approvals = Approvals::load().context("Failed to load approvals")?;
-    let owned = guidance.to_string();
+    let owned = fragment.to_string();
     if approvals.is_command_approved(&project_id, &owned) {
         return Ok(Some(owned));
     }
 
-    let batch = vec![ApprovableCommand::commit_template(owned.clone())];
+    let batch = vec![ApprovableCommand::commit_template_append(owned.clone())];
     let approved = approve_command_batch(&batch, &project_id, &approvals, ctx.yes, true)?;
     if !approved {
         worktrunk::styling::eprintln!(
             "{}",
             worktrunk::styling::info_message(
-                "Project commit template declined; generating without it",
+                "Project commit guidance declined; generating without it",
             )
         );
         return Ok(None);

@@ -88,18 +88,18 @@ pub fn step_relocate(
     }
 
     // Phase 2: Validate candidates (check locked/dirty, optionally auto-commit)
-    // Approve project commit guidance once for the whole batch so per-worktree
+    // Approve the project commit append once for the whole batch so per-worktree
     // commits share a single approval prompt rather than one per worktree.
     // Skip approval when the LLM isn't configured for this project — the
     // fallback message generator doesn't render the prompt template.
-    let project_template = if commit {
-        use super::super::command_approval::approve_commit_template;
+    let project_append = if commit {
+        use super::super::command_approval::approve_commit_template_append;
         use super::super::command_executor::CommandContext;
         let project_id = repo.project_identifier().ok();
         let commit_config = config.commit_generation(project_id.as_deref());
         if commit_config.is_configured() {
             let ctx = CommandContext::new(&repo, &config, None, &repo_path, false);
-            approve_commit_template(&ctx)?
+            approve_commit_template_append(&ctx)?
         } else {
             None
         }
@@ -115,7 +115,7 @@ pub fn step_relocate(
         candidates,
         commit,
         &repo_path,
-        project_template.as_deref(),
+        project_append.as_deref(),
     )?;
 
     if validated.is_empty() {

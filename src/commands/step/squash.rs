@@ -11,7 +11,7 @@ use worktrunk::styling::{
 };
 
 use super::super::command_approval::{
-    approve_commit_template, approve_or_skip, resolve_template_for_preview,
+    approve_commit_template_append, approve_or_skip, resolve_template_for_preview,
 };
 use super::super::command_executor::FailureStrategy;
 use super::super::commit::{CommitGenerator, CommitOutcome, HookGate, StageMode};
@@ -24,13 +24,13 @@ use super::shared::print_dry_run;
 /// Caller's stance on project commit-message guidance approval.
 ///
 /// `wt step squash` runs its own gate (the user invokes squash directly, so
-/// there's no upstream batch to attach to). `wt merge` bundles the guidance
+/// there's no upstream batch to attach to). `wt merge` bundles the append
 /// into its hook-approval batch and passes the result here so the user
 /// doesn't see a second prompt mid-flow.
 #[derive(Debug, Clone)]
 pub enum PreApprovedGuidance {
     /// No pre-approval — `handle_squash` runs its own gate via
-    /// `approve_commit_template` (only if the LLM is configured).
+    /// `approve_commit_template_append` (only if the LLM is configured).
     RunOwnGate,
     /// Caller already resolved the guidance through an upstream batch.
     /// `None` means "guidance not configured or user declined".
@@ -94,7 +94,9 @@ pub fn handle_squash(
     let approve_guidance = || -> anyhow::Result<Option<String>> {
         match &pre_approved_guidance {
             PreApprovedGuidance::Resolved(value) => Ok(value.clone()),
-            PreApprovedGuidance::RunOwnGate if llm_configured => approve_commit_template(&ctx),
+            PreApprovedGuidance::RunOwnGate if llm_configured => {
+                approve_commit_template_append(&ctx)
+            }
             PreApprovedGuidance::RunOwnGate => Ok(None),
         }
     };
@@ -188,9 +190,9 @@ pub fn handle_squash(
         return Ok(SquashResult::AlreadySingleCommit);
     }
 
-    // From here on, an LLM call may happen — gate guidance.
-    let project_template = approve_guidance()?;
-    let generator = CommitGenerator::new(&resolved.commit_generation, project_template.as_deref());
+    // From here on, an LLM call may happen — gate the project append.
+    let project_append = approve_guidance()?;
+    let generator = CommitGenerator::new(&resolved.commit_generation, project_append.as_deref());
 
     if commit_count == 0 && has_staged {
         // Just staged changes, no commits - commit them directly (no squashing needed)
@@ -279,7 +281,7 @@ pub fn handle_squash(
         &current_branch,
         repo_name,
         &resolved.commit_generation,
-        project_template.as_deref(),
+        project_append.as_deref(),
     )?;
 
     // Display the generated commit message
@@ -380,7 +382,7 @@ fn preview_squash(target: Option<&str>, dry_run: bool, yes: bool) -> anyhow::Res
 
     let env = CommandEnv::for_action(config)?;
     let ctx = env.context(yes);
-    let project_template = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
+    let project_append = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
 
     let prompt = crate::llm::build_squash_prompt(
         &integration_target,
@@ -389,7 +391,7 @@ fn preview_squash(target: Option<&str>, dry_run: bool, yes: bool) -> anyhow::Res
         &current_branch,
         repo_name,
         &commit_config,
-        project_template.as_deref(),
+        project_append.as_deref(),
     )?;
     if !dry_run {
         println!("{}", prompt);
@@ -402,7 +404,7 @@ fn preview_squash(target: Option<&str>, dry_run: bool, yes: bool) -> anyhow::Res
         &current_branch,
         repo_name,
         &commit_config,
-        project_template.as_deref(),
+        project_append.as_deref(),
     )?;
     print_dry_run(&prompt, &commit_config, &message)
 }
