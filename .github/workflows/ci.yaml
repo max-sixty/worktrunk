@@ -92,7 +92,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.49.0"
+        version: "=0.50.0"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -371,7 +371,7 @@ jobs:
     - uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-llvm-cov
-        version: "=0.8.6"
+        version: "=0.8.7"
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
