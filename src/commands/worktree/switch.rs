@@ -1088,10 +1088,22 @@ pub fn execute_switch(
                 }
             };
 
-            // Compute base worktree path for hooks and result
+            // Compute base worktree path for hooks and result.
+            //
+            // `git worktree add` already mutated the worktree list, but `repo`
+            // cached it pre-create (populated by `plan_switch`). Reading
+            // `worktree_for_branch` through `repo` here would observe the stale
+            // pre-create inventory — see the caching contract in
+            // `git/repository/mod.rs`. Probe through a fresh `Repository::at`
+            // so the lookup reflects the post-create state.
             let base_worktree_path = base_branch
                 .as_ref()
-                .and_then(|b| repo.worktree_for_branch(b).ok().flatten())
+                .and_then(|b| {
+                    Repository::at(repo.discovery_path())
+                        .and_then(|fresh| fresh.worktree_for_branch(b))
+                        .ok()
+                        .flatten()
+                })
                 .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
             // PR/MR identity travels into both the pre-start hook below and the
