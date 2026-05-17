@@ -3588,13 +3588,16 @@ fn test_codex_plugin_metadata_is_valid_json() {
     // The Codex plugin ships no activity-marker hooks: Codex's
     // HookEventNameWire vocabulary (codex-cli 0.130.0) has no `Stop`/turn-end
     // event, so a 🤖 set on UserPromptSubmit could never return to 💬 within a
-    // session. Keep the manifest free of a `hooks` key (and the hooks/ dir
-    // absent) until Codex adds a turn-end hook event — see CLAUDE.md →
-    // "Codex Plugin".
+    // session. Keep the Codex manifest free of a `hooks` key, and its wrapper
+    // dir manifest-only, until Codex adds a turn-end hook event — see CLAUDE.md
+    // → "Plugin Layout". (plugins/worktrunk/hooks/ exists post-consolidation,
+    // but it is the *Claude* plugin's — Codex's manifest never references it.)
     assert_eq!(plugin.get("hooks"), None);
     assert!(
-        !project_root.join("plugins/worktrunk/hooks").exists(),
-        "plugins/worktrunk/hooks/ must not exist while Codex lacks a turn-end hook event"
+        !project_root
+            .join("plugins/worktrunk/.codex-plugin/hooks")
+            .exists(),
+        "the Codex wrapper dir must hold only plugin.json"
     );
     assert_eq!(marketplace["plugins"][0]["name"], "worktrunk");
     // Source is a non-empty subdir object; a bare "./" is rejected by codex.
@@ -3610,6 +3613,50 @@ fn test_codex_plugin_metadata_is_valid_json() {
     // Codex validates `interface` is an object and requires `displayName`;
     // omitting it is what made the plugin undiscoverable in /plugins.
     assert_eq!(marketplace["interface"]["displayName"], "Worktrunk");
+}
+
+/// The Claude Code and Codex plugins share one payload dir, `plugins/worktrunk/`.
+/// Both marketplace pointers must stay at the repo root (each tool hardcodes its
+/// path) and point `source` at that subdir; the Claude manifest sits at the
+/// plugin root with NO `.claude-plugin/` wrapper (the wrapper is
+/// marketplace-root-only — verified end-to-end against claude-cli 2.1.x:
+/// `source: "./plugins/worktrunk"` + manifest at `<subdir>/.claude-plugin/`
+/// fails "Plugin not found"). The duplicated description string can't be
+/// `include!`d into JSON, so this test is the drift guard.
+#[test]
+fn test_plugin_layout_is_consolidated() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let read = |p: &str| fs::read_to_string(root.join(p)).unwrap();
+    let json = |p: &str| serde_json::from_str::<serde_json::Value>(&read(p)).unwrap();
+
+    // Repo root keeps ONLY the two loader-mandated marketplace pointers.
+    assert!(
+        !root.join(".claude-plugin/plugin.json").exists()
+            && !root.join(".claude-plugin/hooks").exists(),
+        ".claude-plugin/ at the repo root must hold only marketplace.json"
+    );
+    let claude_mkt = json(".claude-plugin/marketplace.json");
+    assert_eq!(claude_mkt["plugins"][0]["source"], "./plugins/worktrunk");
+
+    // Claude manifest at the plugin root (no wrapper); hooks relative to it.
+    let claude = json("plugins/worktrunk/plugin.json");
+    assert_eq!(claude["hooks"], "./hooks/hooks.json");
+    assert!(
+        root.join("plugins/worktrunk/hooks/hooks.json").exists()
+            && root.join("plugins/worktrunk/hooks/wt.sh").exists(),
+        "Claude hooks must live at the plugin root's hooks/"
+    );
+    assert!(
+        !read("plugins/worktrunk/hooks/hooks.json").contains(".claude-plugin/hooks/"),
+        "hooks.json must reference ${{CLAUDE_PLUGIN_ROOT}}/hooks/wt.sh, not the old wrapper path"
+    );
+
+    // The description is duplicated across the Claude marketplace pointer and
+    // the Claude manifest — they must stay byte-identical.
+    assert_eq!(
+        claude_mkt["plugins"][0]["description"], claude["description"],
+        ".claude-plugin/marketplace.json and plugins/worktrunk/plugin.json descriptions drifted"
+    );
 }
 
 // ==================== Plugin Install-Statusline Tests ====================

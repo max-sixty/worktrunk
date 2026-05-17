@@ -168,21 +168,13 @@ cargo insta test --accept -- --test integration "test_help"
 
 Config docs (`USER_CONFIG_START`/`PROJECT_CONFIG_START` sections in `src/cli/mod.rs`) generate `dev/*.example.toml` files where every line is commented out with `#`. TOML comments inside code blocks become double-commented (`# # comment`). Use plain text descriptions ending with colons before each code block instead — inline end-of-line comments (e.g., `key = "value"  # explanation`) are fine.
 
-## Codex Plugin
+## Plugin Layout (Claude Code + Codex)
 
-The Codex plugin is separate from the Claude Code plugin (`.claude-plugin/`) and uses Codex's marketplace layout:
+One plugin payload serves both tools, in `plugins/worktrunk/`. The repo root keeps only the two loader-mandated marketplace pointers — Claude (`.claude-plugin/marketplace.json`) and Codex (`.agents/plugins/marketplace.json`) each hardcode their marketplace path with no fallback, so two pointer files is the irreducible floor. Both point `source` at `./plugins/worktrunk`. Inside that directory: `plugin.json` is the Claude manifest (at the plugin root — Claude's `.claude-plugin/` wrapper is marketplace-root-only), `.codex-plugin/plugin.json` is the Codex manifest (Codex's required wrapper), and `skills -> ../../skills` single-sources the skills across both plugins and the docs auto-sync. The full layout, path-resolution rules, and the live-CLI verification are documented in `plugins/worktrunk/CLAUDE.md`; keep that file current when the layout changes.
 
-```
-.agents/plugins/marketplace.json          ← marketplace manifest Codex enumerates
-plugins/worktrunk/.codex-plugin/plugin.json   ← plugin manifest
-plugins/worktrunk/skills -> ../../skills      ← symlink to repo-root skills/
-```
+**No Codex activity-marker hooks.** The Claude manifest carries `hooks: "./hooks/hooks.json"`; the Codex manifest has no `hooks` key and Codex ships no hooks. Codex's `HookEventNameWire` vocabulary (codex-cli 0.130.0: `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`, `SessionStart`, `UserPromptSubmit`) has no `Stop`/turn-end event, so a 🤖 marker set on `UserPromptSubmit` could never return to 💬 — it would stick at "working" indefinitely. Re-add a Codex `hooks.json`, the `hooks` manifest key, the install hints in `src/commands/config/codex.rs`, and the docs (`docs/content/claude-code.md` "Activity tracking", `src/cli/config.rs` plugin list) once Codex exposes a turn-end hook event.
 
-Codex discovers a marketplace's plugin list strictly from `<repo-root>/.agents/plugins/marketplace.json` (no fallback to `.claude-plugin/marketplace.json`). Each plugin's `source` must be an object pointing at a non-empty subdirectory — codex rejects a bare or root-relative source — so the plugin lives in `plugins/worktrunk/`, not at the repo root.
-
-**No activity-marker hooks.** Unlike the Claude Code plugin, the Codex plugin ships no `hooks` — the manifest has no `hooks` key and there is no `hooks/` directory. Codex's `HookEventNameWire` vocabulary (codex-cli 0.130.0: `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`, `SessionStart`, `UserPromptSubmit`) has no `Stop`/turn-end event, so a 🤖 marker set on `UserPromptSubmit` could never return to 💬 within a session — it would stick at "working" indefinitely. Re-add `hooks.json`, the `hooks` manifest key, the install hints in `src/commands/config/codex.rs`, and the docs (`docs/content/claude-code.md` "Activity tracking", `src/cli/config.rs` plugin list) once Codex exposes a turn-end hook event.
-
-**Accepted tradeoff — `skills` exposes `wt-switch-create`.** The manifest's `"skills": "./skills/"` resolves through the `plugins/worktrunk/skills -> ../../skills` symlink, exposing the entire repo-root `skills/` directory — including `wt-switch-create`, which depends on Claude session-cwd switching and the `WorktreeCreate` hook that Codex doesn't provide. We accept this: Codex loading a skill it can't act on is harmless, and a single repo-root `skills/` keeps the `worktrunk` skill single-source across both plugins. Don't add a Codex-only skills subtree to exclude it.
+**Accepted tradeoff — `skills` exposes `wt-switch-create` to Codex.** The Codex manifest's `"skills": "./skills/"` resolves through the shared `skills` symlink, exposing the entire repo-root `skills/` directory — including `wt-switch-create`, which depends on Claude session-cwd switching and the `WorktreeCreate` hook that Codex doesn't provide. We accept this: Codex loading a skill it can't act on is harmless, and a single repo-root `skills/` keeps the `worktrunk` skill single-source across both plugins and the docs sync. Don't add a Codex-only skills subtree to exclude it.
 
 ## Data Safety
 
