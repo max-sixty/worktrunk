@@ -3543,11 +3543,13 @@ fn test_codex_plugin_metadata_is_valid_json() {
         &fs::read_to_string(project_root.join(".codex-plugin/plugin.json")).unwrap(),
     )
     .unwrap();
-    // Codex falls back to .claude-plugin/marketplace.json when
-    // .agents/plugins/marketplace.json is absent, so the existing Claude
-    // marketplace doubles as the Codex marketplace.
+    // Codex discovers a marketplace's plugin list strictly from
+    // <repo-root>/.agents/plugins/marketplace.json — there is no fallback to
+    // the Claude .claude-plugin/marketplace.json. Without this file Codex
+    // registers the marketplace but enumerates zero plugins, so the plugin is
+    // uninstallable via /plugins (verified against codex-cli 0.130.0).
     let marketplace: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(project_root.join(".claude-plugin/marketplace.json")).unwrap(),
+        &fs::read_to_string(project_root.join(".agents/plugins/marketplace.json")).unwrap(),
     )
     .unwrap();
     let hooks: serde_json::Value = serde_json::from_str(
@@ -3560,6 +3562,9 @@ fn test_codex_plugin_metadata_is_valid_json() {
     assert_eq!(plugin["hooks"], "./.codex-plugin/hooks/hooks.json");
     assert_eq!(marketplace["plugins"][0]["name"], "worktrunk");
     assert_eq!(marketplace["plugins"][0]["source"], "./");
+    // Codex validates `interface` is an object and requires `displayName`;
+    // omitting it is what made the plugin undiscoverable in /plugins.
+    assert_eq!(marketplace["interface"]["displayName"], "Worktrunk");
     assert_eq!(
         hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
         "wt config state marker set \"🤖\" >/dev/null 2>&1 || true"

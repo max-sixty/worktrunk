@@ -1,0 +1,18 @@
+{
+  "name": "worktrunk",
+  "interface": {
+    "displayName": "Worktrunk",
+    "shortDescription": "Git worktree workflows for parallel Codex sessions.",
+    "longDescription": "Use Worktrunk from Codex to manage linked worktrees, set up LLM commit workflows, configure hooks, and bundle activity markers for wt list.",
+    "developerName": "Worktrunk",
+    "category": "Productivity",
+    "websiteURL": "https://worktrunk.dev/claude-code/"
+  },
+  "plugins": [
+    {
+      "name": "worktrunk",
+      "description": "Worktrunk is a CLI for Git worktree management, designed for parallel AI agent workflows. This plugin provides configuration guidance (LLM commit messages, project hooks, worktree paths) and automatic activity tracking (🤖/💬 indicators in `wt list` showing active Codex sessions).",
+      "source": "./"
+    }
+  ]
+}
