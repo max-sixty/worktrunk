@@ -12,36 +12,44 @@
 //! parent-walk cannot, because the parent link is gone.
 //!
 //! Fire and forget: there is no stop command and no rendezvous file. The
-//! supervisor watches its own worktree directory (the cwd at launch, which is
+//! supervisor polls its own worktree directory (the cwd at launch, which is
 //! the worktree root for a `post-start` hook). worktrunk removes a worktree by
 //! renaming it into a trash directory; `git worktree remove` and `rm -rf`
-//! delete it outright. A kqueue `EVFILT_VNODE` (macOS) or inotify (Linux)
-//! watch fires on the rename or the delete either way, so the orphaned server
-//! dies with its worktree without any hook beyond the single `post-start`
-//! line. An open fd does not pin a Unix directory entry, so the watch must be
-//! explicit; nothing else signals the removal.
+//! delete it outright. `symlink_metadata` stops resolving in every case, so
+//! the orphaned server dies with its worktree without any hook beyond the
+//! single `post-start` line.
+//!
+//! Polling, not a kqueue/inotify watch: a stat of one path is portable, has no
+//! arm-time race, behaves identically on every platform, and registers no
+//! filesystem watcher — the proliferation of which is the very problem this
+//! command exists to avoid. The poll interval bounds teardown latency for an
+//! already-orphaned server, which no one observes.
 //!
 //! State lives only in this supervisor process, which dies with CMD.
 //!
 //! Unix only: process groups and `killpg` have no Windows equivalent here; the
-//! Windows stub errors out. The worktree watch covers macOS and Linux; on
-//! other Unix the command is still supervised, but only its own exit tears the
-//! group down.
+//! Windows stub errors out.
 
 #[cfg(unix)]
 mod imp {
     use std::os::unix::process::CommandExt;
     use std::path::Path;
+    use std::time::Duration;
 
     use anyhow::{Context, Result};
+
+    /// How often the reaper re-checks whether the worktree still exists.
+    /// Teardown of an already-orphaned server within this bound is
+    /// imperceptible next to a dev server's own startup.
+    const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
     /// Run `command` supervised; tear its whole process group down when the
     /// command exits or its worktree is removed.
     pub(crate) fn step_tether(command: &[String]) -> Result<()> {
         // post-start hooks run with cwd at the worktree root; capture it now
-        // so the reaper can notice the worktree being removed. `None` (or a
-        // path the watch can't arm on) degrades to "tear down only on the
-        // command's own exit", never a false teardown.
+        // so the reaper can notice the worktree being removed. `None` (cwd
+        // unavailable) degrades to "tear down only on the command's own
+        // exit", never a false teardown.
         let worktree = std::env::current_dir().ok();
 
         let mut cmd = std::process::Command::new(&command[0]);
@@ -61,13 +69,15 @@ mod imp {
             .with_context(|| format!("spawn tethered command: {}", command[0]))?;
         let pgid = child.id() as i32;
 
-        // Reaper: blocks until the worktree is removed, then signals the group
-        // so the supervised child exits and `wait` returns. Only spawned when
+        // Reaper: polls until the worktree is gone, then signals the group so
+        // the supervised child exits and `wait` returns. Only spawned when
         // there is a worktree to watch; otherwise teardown relies solely on
         // the command's own exit.
         if let Some(dir) = worktree {
             std::thread::spawn(move || {
-                await_worktree_gone(&dir);
+                while !worktree_gone(&dir) {
+                    std::thread::sleep(POLL_INTERVAL);
+                }
                 let _ = nix::sys::signal::killpg(
                     nix::unistd::Pid::from_raw(pgid),
                     nix::sys::signal::Signal::SIGTERM,
@@ -83,133 +93,19 @@ mod imp {
         // so this still reaches them.
         worktrunk::shell_exec::forward_signal_with_escalation(pgid, signal_hook::consts::SIGTERM);
 
-        // A reaper still blocked on the watch (the command self-exited) dies
+        // A reaper still sleeping between polls (the command self-exited) dies
         // with this process when it returns.
         Ok(())
     }
 
-    /// Never returns. The reaper calls this only when it genuinely cannot
-    /// watch (kqueue/inotify instance creation failed), so an inability to
-    /// arm is never mistaken for a removal and a live server is never falsely
-    /// torn down. A *missing* worktree is not a setup failure: it means the
-    /// removal already happened, so those paths return instead of parking.
-    fn park_forever() -> ! {
-        loop {
-            std::thread::park();
-        }
-    }
-
-    /// The worktree path no longer exists. The reaper arms its watch
-    /// asynchronously; if the worktree is removed before (or during) arming,
-    /// `open`/`add_watch` see `ENOENT` and the post-arm re-check sees this —
-    /// the removal already happened, so the reaper must tear down rather than
-    /// block on a watch that will never fire.
+    /// The worktree path no longer resolves. Only `NotFound` counts as gone;
+    /// a transient stat error (EACCES, EIO) is not a removal, so the reaper
+    /// keeps waiting rather than tearing down a live server.
     fn worktree_gone(worktree: &Path) -> bool {
         matches!(
             std::fs::symlink_metadata(worktree),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound
         )
-    }
-
-    /// Block until `worktree` is deleted or renamed (worktrunk renames a
-    /// removed worktree into trash, so `wt rm`, `git worktree remove`, and
-    /// `rm -rf` all fire). A single non-recursive vnode watch, not an
-    /// FSEvents hierarchy stream, so it does not reintroduce the watcher
-    /// proliferation this command exists to avoid.
-    #[cfg(target_os = "macos")]
-    fn await_worktree_gone(worktree: &Path) {
-        use std::os::fd::AsRawFd;
-
-        use nix::errno::Errno;
-        use nix::sys::event::{EvFlags, EventFilter, FilterFlag, KEvent, Kqueue};
-
-        let dir = match std::fs::File::open(worktree) {
-            Ok(dir) => dir,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
-            Err(_) => park_forever(),
-        };
-        let Ok(kq) = Kqueue::new() else {
-            park_forever()
-        };
-        let change = KEvent::new(
-            dir.as_raw_fd() as usize,
-            EventFilter::EVFILT_VNODE,
-            EvFlags::EV_ADD | EvFlags::EV_CLEAR,
-            FilterFlag::NOTE_DELETE | FilterFlag::NOTE_RENAME | FilterFlag::NOTE_REVOKE,
-            0,
-            0,
-        );
-        if kq.kevent(&[change], &mut [], None).is_err() {
-            park_forever();
-        }
-        // kqueue only reports events that occur after EV_ADD registers, so a
-        // removal between `open` and here would be missed and the wait would
-        // block forever. Re-check now that the watch is armed.
-        if worktree_gone(worktree) {
-            return;
-        }
-        // `dir` stays in scope so the watched fd is open across the wait.
-        // Return only on a real vnode event: a bare signal wakes `kevent`
-        // with `EINTR`, and returning then would tear down a live server.
-        let mut ev = [KEvent::new(
-            0,
-            EventFilter::EVFILT_VNODE,
-            EvFlags::empty(),
-            FilterFlag::empty(),
-            0,
-            0,
-        )];
-        loop {
-            match kq.kevent(&[], &mut ev, None) {
-                Ok(n) if n > 0 => return,
-                Ok(_) | Err(Errno::EINTR) => continue,
-                Err(_) => park_forever(),
-            }
-        }
-    }
-
-    /// Block until `worktree` is deleted or renamed. `IN_MOVE_SELF` covers
-    /// worktrunk's rename-into-trash; `IN_DELETE_SELF` covers `rm -rf` and
-    /// `git worktree remove`.
-    #[cfg(target_os = "linux")]
-    fn await_worktree_gone(worktree: &Path) {
-        use nix::errno::Errno;
-        use nix::sys::inotify::{AddWatchFlags, InitFlags, Inotify};
-
-        let Ok(ino) = Inotify::init(InitFlags::empty()) else {
-            park_forever()
-        };
-        match ino.add_watch(
-            worktree,
-            AddWatchFlags::IN_DELETE_SELF | AddWatchFlags::IN_MOVE_SELF,
-        ) {
-            Ok(_) => {}
-            Err(Errno::ENOENT) => return,
-            Err(_) => park_forever(),
-        }
-        // inotify queues events from the moment the watch is added, so a
-        // removal after this point is captured; but one racing the add could
-        // slip between the ENOENT check and here. Re-check now.
-        if worktree_gone(worktree) {
-            return;
-        }
-        // Return only on a real event: `read_events` is a raw `read` that
-        // returns `EINTR` on signal interruption, and returning then would
-        // tear down a live server.
-        loop {
-            match ino.read_events() {
-                Ok(events) if !events.is_empty() => return,
-                Ok(_) | Err(Errno::EINTR) => continue,
-                Err(_) => park_forever(),
-            }
-        }
-    }
-
-    /// No worktree-removal watch on this platform; the command is still
-    /// supervised, but only its own exit tears the group down.
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    fn await_worktree_gone(_worktree: &Path) {
-        park_forever()
     }
 }
 

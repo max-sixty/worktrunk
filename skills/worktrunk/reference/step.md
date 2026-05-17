@@ -981,12 +981,12 @@ children have reparented to PID 1 (the process-group id outlives the leader).
 
 ### Fire and forget
 
-There is no stop command and no rendezvous file. The supervisor watches its
-own worktree directory (kqueue on macOS, inotify on Linux). worktrunk renames
-a removed worktree into trash, and `git worktree remove` / `rm -rf` delete it
-outright; the watch fires either way, so the server dies with its worktree.
-No hook wiring beyond the single `post-start` line is needed. State lives only
-in the supervisor process, which dies with the command.
+There is no stop command and no rendezvous file. The supervisor polls its
+own worktree directory. worktrunk renames a removed worktree into trash, and
+`git worktree remove` / `rm -rf` delete it outright; the path stops resolving
+either way, so the server dies with its worktree. No hook wiring beyond the
+single `post-start` line is needed. State lives only in the supervisor
+process, which dies with the command.
 
 Note: This command is experimental and may change in future versions.
 
