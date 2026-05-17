@@ -945,7 +945,18 @@ Global Options:
 
 [experimental]
 
-Run a command; kill its whole process tree when its worktree is removed. tether -- CMD… runs CMD in a new process group and supervises it. When CMD exits on its own, or its worktree is removed (wt rm, git worktree remove, rm -rf), the entire process group is torn down (SIGTERM, then SIGKILL). Because the group survives the leader, a detached or reparented child (such as the esbuild --service sidecar a Vite dev server spawns) is killed too, which a port- or parent-based kill misses.
+Run a command; kill its whole process tree when its worktree is removed. Teardown is automatic and needs no pre-remove hook; the group gets SIGTERM then SIGKILL.
+
+### Why
+
+A `post-start` hook to start a long-lived process and a `pre-remove` hook to
+stop it is usually enough. But `pre-remove` only runs when worktrunk removes
+the worktree, so a `git worktree remove`, an `rm -rf`, or a crashed hook skips
+it. Across enough worktree churn some process is bound to outlive its worktree,
+and with no cleanup these leaks accumulate (on macOS they eventually saturate
+`fseventsd`). `tether` removes the need for a `pre-remove`: it ties the
+command's lifetime to the worktree and kills the whole process group once the
+worktree is gone.
 
 ### Arguments
 
@@ -995,12 +1006,7 @@ Note: This command is experimental and may change in future versions.
 ```
 wt step tether - [experimental] Run a command; kill its whole process tree when its worktree is removed
 
-tether --
-CMD… runs CMD in a new process group and supervises it. When CMD exits on its own, or its worktree
-is removed (wt rm, git worktree remove, rm -rf), the entire process group is torn down (SIGTERM,
-then SIGKILL). Because the group survives the leader, a detached or reparented child (such as the
-esbuild --service sidecar a Vite dev server spawns) is killed too, which a port- or parent-based
-kill misses.
+Teardown is automatic and needs no pre-remove hook; the group gets SIGTERM then SIGKILL.
 
 Usage: wt step tether [OPTIONS] -- <COMMAND>...
 

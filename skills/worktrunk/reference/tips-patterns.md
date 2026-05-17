@@ -51,11 +51,7 @@ server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-A `post-start` hook to start the server plus a `pre-remove` hook to stop it is usually enough. The gap is that `pre-remove` only runs when worktrunk removes the worktree: a `git worktree remove`, an `rm -rf`, or a crashed hook skips it. Over enough worktree creations and removals some server process is bound to outlive its worktree, and each survivor keeps a recursive file watch on a directory that no longer exists. With no cleanup these accumulate; on macOS they eventually saturate `fseventsd`.
-
-[`wt step tether`](https://worktrunk.dev/step/#wt-step-tether) closes that gap, so no `pre-remove` is needed. It runs the server in its own process group and ties that group's lifetime to the worktree directory: the supervisor polls the directory and tears the whole group down once the worktree is deleted or renamed, however that happens (`wt remove`, `wt merge`, `git worktree remove`, `rm -rf`), and also when the command exits on its own.
-
-The process group is what makes this reliable. A naive `lsof -ti :PORT | xargs kill` only reaches the process holding the port, but `npm run dev` also spawns an esbuild service process that does not listen on the port and reparents away when the top process exits. `killpg` reaches it anyway, because the group id outlives the leader, so a parent-walk would miss it but `tether` does not. On Windows `wt step tether` is unsupported.
+[`wt step tether`](https://worktrunk.dev/step/#wt-step-tether) runs the server in its own process group and tears the whole group down when the worktree is removed, so no `pre-remove` hook is needed. This matters because `npm run dev` spawns an esbuild process that does not listen on the dev-server port and reparents away when the top process exits, so a port- or parent-based kill leaks it; across enough worktree churn those leaks accumulate. See the [`wt step tether`](https://worktrunk.dev/step/#wt-step-tether) docs for the full rationale. Windows is unsupported.
 
 The URL column in `wt list` shows each worktree's dev server:
 
