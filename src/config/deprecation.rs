@@ -1986,6 +1986,59 @@ post-create = "echo hello"
         assert_eq!(result, r#"cmd = "{{  repo_path  }}""#); // Preserves original formatting
     }
 
+    /// The tree walker must recurse into arrays of tables and inline tables —
+    /// not just top-level tables — so a deprecated var is migrated wherever it
+    /// appears, while non-string scalars are left untouched.
+    #[test]
+    fn test_replace_deprecated_vars_walks_array_of_tables_and_inline_table() {
+        let content = r#"
+[[steps]]
+run = "build {{ repo_root }}"
+
+[env]
+script = { cmd = "{{ repo_root }}/x" }
+timeout = 30
+"#;
+        let result = replace_deprecated_vars(content);
+        assert!(
+            result.contains("build {{ repo_path }}"),
+            "array-of-tables var migrated: {result}"
+        );
+        assert!(
+            result.contains("{{ repo_path }}/x"),
+            "inline-table var migrated: {result}"
+        );
+        assert!(
+            result.contains("timeout = 30"),
+            "non-string scalar left untouched: {result}"
+        );
+    }
+
+    /// `into_table` underpins every "peek before remove" structural migration:
+    /// callers gate on `is_table_like`, so the non-table arm must return `None`
+    /// rather than panic if that contract is ever violated.
+    #[test]
+    fn test_into_table_returns_none_for_non_table() {
+        let scalar = toml_edit::Item::Value(toml_edit::Value::from(5));
+        assert!(into_table(scalar).is_none());
+    }
+
+    /// Canonical config with no deprecations must round-trip through
+    /// `compute_migrated_content` byte-for-byte (the unmodified branch).
+    #[test]
+    fn test_compute_migrated_content_noop_returns_input_unchanged() {
+        let content = "pre-start = \"echo {{ repo_path }}\"\n";
+        assert_eq!(compute_migrated_content(content), content);
+    }
+
+    /// The `replace_deprecated_vars` helper must return the input untouched
+    /// when it cannot be parsed as TOML, rather than panicking.
+    #[test]
+    fn test_replace_deprecated_vars_returns_input_on_parse_error() {
+        let content = "this is = = not valid toml";
+        assert_eq!(replace_deprecated_vars(content), content);
+    }
+
     #[test]
     fn test_replace_does_not_match_suffix() {
         // Should NOT replace "worktree_path" when looking for "worktree"
@@ -2987,6 +3040,22 @@ approved-commands = ["npm install"]
         assert!(
             result.is_err(),
             "Write failure must surface as Err, not Ok(None); got {result:?}"
+        );
+    }
+
+    /// Regression: when the source config cannot be read or parsed, the copy
+    /// must surface the error (with context) rather than silently signaling
+    /// "nothing to copy" — same data-loss class as the write-failure case.
+    #[test]
+    fn test_copy_approved_commands_surfaces_read_failure() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        std::fs::write(&config_path, "this is = = not valid toml\n").unwrap();
+
+        let result = copy_approved_commands_to_approvals_file(&config_path);
+        assert!(
+            result.is_err(),
+            "Unparseable source config must surface as Err; got {result:?}"
         );
     }
 
