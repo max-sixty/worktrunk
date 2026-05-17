@@ -22,6 +22,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex, OnceLock};
 
+use anyhow::Context;
 use color_print::cformat;
 use minijinja::Environment;
 use regex::Regex;
@@ -206,21 +207,70 @@ fn collect_strings_from_edit_value(value: &toml_edit::Value, strings: &mut Vec<S
     }
 }
 
-/// Core logic for variable replacement, operating on pre-extracted template strings
-fn replace_deprecated_vars_from_strings(content: &str, template_strings: &[String]) -> String {
-    let mut result = content.to_string();
+/// Rewrite deprecated template variables inside one string, returning the
+/// new value when it changed.
+fn rewrite_deprecated_vars(original: &str) -> Option<String> {
+    let mut modified = original.to_string();
+    for (re, new) in DEPRECATED_VAR_REGEXES.iter() {
+        modified = re.replace_all(&modified, *new).into_owned();
+    }
+    (modified != original).then_some(modified)
+}
 
-    for original in template_strings {
-        let mut modified = original.clone();
-        for (re, new) in DEPRECATED_VAR_REGEXES.iter() {
-            modified = re.replace_all(&modified, *new).into_owned();
+/// Replace deprecated template vars in every string value of the document,
+/// mutating the `toml_edit` tree in place.
+///
+/// Operating on the parsed tree (rather than a raw `str::replace` against the
+/// file text) is correct when the TOML source uses escapes: the decoded value
+/// would not appear verbatim in the file, so a raw replace silently skipped
+/// the migration while detection still warned. `toml_edit` re-serializes the
+/// changed string with proper escaping.
+fn replace_deprecated_vars_in_doc(doc: &mut toml_edit::DocumentMut) -> bool {
+    fn walk_table(table: &mut toml_edit::Table, changed: &mut bool) {
+        for (_, item) in table.iter_mut() {
+            walk_item(item, changed);
         }
-        if modified != *original {
-            result = result.replace(original, &modified);
+    }
+    fn walk_item(item: &mut toml_edit::Item, changed: &mut bool) {
+        match item {
+            toml_edit::Item::Value(v) => walk_value(v, changed),
+            toml_edit::Item::Table(t) => walk_table(t, changed),
+            toml_edit::Item::ArrayOfTables(arr) => {
+                for t in arr.iter_mut() {
+                    walk_table(t, changed);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn walk_value(value: &mut toml_edit::Value, changed: &mut bool) {
+        match value {
+            toml_edit::Value::String(s) => {
+                if let Some(new) = rewrite_deprecated_vars(s.value()) {
+                    let decor = s.decor().clone();
+                    let mut formatted = toml_edit::Formatted::new(new);
+                    *formatted.decor_mut() = decor;
+                    *value = toml_edit::Value::String(formatted);
+                    *changed = true;
+                }
+            }
+            toml_edit::Value::Array(arr) => {
+                for v in arr.iter_mut() {
+                    walk_value(v, changed);
+                }
+            }
+            toml_edit::Value::InlineTable(t) => {
+                for (_, v) in t.iter_mut() {
+                    walk_value(v, changed);
+                }
+            }
+            _ => {}
         }
     }
 
-    result
+    let mut changed = false;
+    walk_table(doc.as_table_mut(), &mut changed);
+    changed
 }
 
 /// Information about deprecated commit-generation sections found in config
@@ -387,6 +437,23 @@ fn find_commit_generation_from_doc(doc: &toml_edit::DocumentMut) -> CommitGenera
     result
 }
 
+/// Whether a TOML item is a table or inline table (can be migrated as a section).
+fn is_table_like(item: &toml_edit::Item) -> bool {
+    matches!(
+        item,
+        toml_edit::Item::Table(_) | toml_edit::Item::Value(toml_edit::Value::InlineTable(_))
+    )
+}
+
+/// Convert a table-like TOML item into a `Table`. Returns `None` for other shapes.
+fn into_table(item: toml_edit::Item) -> Option<toml_edit::Table> {
+    match item {
+        toml_edit::Item::Table(t) => Some(t),
+        toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) => Some(it.into_table()),
+        _ => None,
+    }
+}
+
 fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     let mut modified = false;
 
@@ -400,35 +467,33 @@ fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
 
     // Migrate top-level [commit-generation] → [commit.generation]
     // Only if new section doesn't already exist
-    // Handle both regular tables and inline tables
-    if !has_new_section && let Some(old_section) = doc.remove("commit-generation") {
-        // Convert to table - works for both regular tables and inline tables
-        let table_opt = match old_section {
-            toml_edit::Item::Table(t) => Some(t),
-            toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) => Some(it.into_table()),
-            _ => None,
-        };
+    // Handle both regular tables and inline tables. Peek before removing so a
+    // malformed value (e.g., a bare string) is left in place rather than
+    // silently dropped when a sibling migration also serializes the doc.
+    if !has_new_section
+        && doc.get("commit-generation").is_some_and(is_table_like)
+        && let Some(old_section) = doc.remove("commit-generation")
+    {
+        let mut table = into_table(old_section).expect("checked is_table_like above");
 
-        if let Some(mut table) = table_opt {
-            // Merge args into command if present
-            merge_args_into_command(&mut table);
+        // Merge args into command if present
+        merge_args_into_command(&mut table);
 
-            // Ensure [commit] section exists.
-            // Mark as implicit so it doesn't render a separate [commit] header
-            // (only [commit.generation] will render)
-            if !doc.contains_key("commit") {
-                let mut commit_table = toml_edit::Table::new();
-                commit_table.set_implicit(true);
-                doc.insert("commit", toml_edit::Item::Table(commit_table));
-            }
-
-            // Move to [commit.generation]
-            if let Some(commit_table) = doc["commit"].as_table_mut() {
-                commit_table.insert("generation", toml_edit::Item::Table(table));
-            }
-
-            modified = true;
+        // Ensure [commit] section exists.
+        // Mark as implicit so it doesn't render a separate [commit] header
+        // (only [commit.generation] will render)
+        if !doc.contains_key("commit") {
+            let mut commit_table = toml_edit::Table::new();
+            commit_table.set_implicit(true);
+            doc.insert("commit", toml_edit::Item::Table(commit_table));
         }
+
+        // Move to [commit.generation]
+        if let Some(commit_table) = doc["commit"].as_table_mut() {
+            commit_table.insert("generation", toml_edit::Item::Table(table));
+        }
+
+        modified = true;
     }
 
     // Migrate [projects."...".commit-generation] → [projects."...".commit.generation]
@@ -442,37 +507,32 @@ fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
                     .and_then(|t| t.get("generation"))
                     .is_some_and(|g| g.is_table() || g.is_inline_table());
 
+                // Peek before removing so a malformed value is preserved.
                 if !has_new_project_section
+                    && project_table
+                        .get("commit-generation")
+                        .is_some_and(is_table_like)
                     && let Some(old_section) = project_table.remove("commit-generation")
                 {
-                    // Convert to table - works for both regular tables and inline tables
-                    let table_opt = match old_section {
-                        toml_edit::Item::Table(t) => Some(t),
-                        toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) => {
-                            Some(it.into_table())
-                        }
-                        _ => None,
-                    };
+                    let mut table = into_table(old_section).expect("checked is_table_like above");
 
-                    if let Some(mut table) = table_opt {
-                        // Merge args into command if present
-                        merge_args_into_command(&mut table);
+                    // Merge args into command if present
+                    merge_args_into_command(&mut table);
 
-                        // Ensure [projects."...".commit] section exists.
-                        // Mark as implicit so it doesn't render a separate header
-                        if !project_table.contains_key("commit") {
-                            let mut commit_table = toml_edit::Table::new();
-                            commit_table.set_implicit(true);
-                            project_table.insert("commit", toml_edit::Item::Table(commit_table));
-                        }
-
-                        // Move to [projects."...".commit.generation]
-                        if let Some(commit_table) = project_table["commit"].as_table_mut() {
-                            commit_table.insert("generation", toml_edit::Item::Table(table));
-                        }
-
-                        modified = true;
+                    // Ensure [projects."...".commit] section exists.
+                    // Mark as implicit so it doesn't render a separate header
+                    if !project_table.contains_key("commit") {
+                        let mut commit_table = toml_edit::Table::new();
+                        commit_table.set_implicit(true);
+                        project_table.insert("commit", toml_edit::Item::Table(commit_table));
                     }
+
+                    // Move to [projects."...".commit.generation]
+                    if let Some(commit_table) = project_table["commit"].as_table_mut() {
+                        commit_table.insert("generation", toml_edit::Item::Table(table));
+                    }
+
+                    modified = true;
                 }
             }
         }
@@ -636,6 +696,10 @@ fn migrate_select_doc(doc: &mut toml_edit::DocumentMut) -> bool {
 }
 
 /// Migrate a `select` key to `switch.picker` within a table.
+///
+/// Leaves a malformed `select` (e.g., a string) in place rather than removing
+/// it — silently dropping it would lose user config when a sibling migration
+/// also rewrites the document.
 fn migrate_select_table(table: &mut toml_edit::Table, modified: &mut bool) {
     let has_new_section = table
         .get("switch")
@@ -647,19 +711,12 @@ fn migrate_select_table(table: &mut toml_edit::Table, modified: &mut bool) {
         return;
     }
 
-    let Some(old_section) = table.remove("select") else {
+    if !table.get("select").is_some_and(is_table_like) {
         return;
-    };
+    }
 
-    let table_opt = match old_section {
-        toml_edit::Item::Table(t) => Some(t),
-        toml_edit::Item::Value(toml_edit::Value::InlineTable(it)) => Some(it.into_table()),
-        _ => None,
-    };
-
-    let Some(select_table) = table_opt else {
-        return;
-    };
+    let select_table =
+        into_table(table.remove("select").unwrap()).expect("checked is_table_like above");
 
     if !table.contains_key("switch") {
         let mut switch_table = toml_edit::Table::new();
@@ -768,8 +825,14 @@ fn migrate_ci_doc(doc: &mut toml_edit::DocumentMut) -> bool {
         return false;
     };
 
-    // Remove [ci] section (it only has platform)
-    doc.remove("ci");
+    // Remove only the migrated key; keep any other keys so we don't silently
+    // drop config that wasn't part of the migration.
+    if let Some(ci_table) = doc.get_mut("ci").and_then(|ci| ci.as_table_mut()) {
+        ci_table.remove("platform");
+        if ci_table.is_empty() {
+            doc.remove("ci");
+        }
+    }
 
     // Create [forge] section with platform
     let mut forge_table = toml_edit::Table::new();
@@ -1038,22 +1101,37 @@ pub fn migrate_content(content: &str) -> String {
 /// Copy approved-commands from config.toml to approvals.toml.
 ///
 /// Called by `wt config update` before overwriting the config with migrated
-/// content, so the approvals data survives the rewrite. No-op if
-/// `approvals.toml` already exists (already authoritative) or the config has
-/// no approved-commands entries.
-///
-/// Returns `Some(path)` if approvals.toml was created, `None` otherwise.
-pub fn copy_approved_commands_to_approvals_file(config_path: &Path) -> Option<PathBuf> {
+/// content, so the approvals data survives the rewrite. `Ok(None)` for the
+/// benign no-op cases (`approvals.toml` already exists, or the config has no
+/// approved-commands entries). Returns `Err` when a copy was attempted but
+/// failed — the caller must abort before rewriting config.toml, otherwise the
+/// legacy approvals are silently lost.
+pub fn copy_approved_commands_to_approvals_file(
+    config_path: &Path,
+) -> anyhow::Result<Option<PathBuf>> {
     let approvals_path = config_path.with_file_name("approvals.toml");
     if approvals_path.exists() {
-        return None; // Already authoritative, don't overwrite
+        return Ok(None); // Already authoritative, don't overwrite
     }
 
-    let approvals = super::approvals::Approvals::load_from_config_file(config_path).ok()?;
-    approvals.projects().next()?; // Nothing to copy if empty
+    let approvals =
+        super::approvals::Approvals::load_from_config_file(config_path).with_context(|| {
+            format!(
+                "Failed to read approved-commands from {} for migration",
+                config_path.display()
+            )
+        })?;
+    if approvals.projects().next().is_none() {
+        return Ok(None); // Nothing to copy
+    }
 
-    approvals.save_to(&approvals_path).ok()?;
-    Some(approvals_path)
+    approvals.save_to(&approvals_path).with_context(|| {
+        format!(
+            "Failed to write migrated approvals to {}",
+            approvals_path.display()
+        )
+    })?;
+    Ok(Some(approvals_path))
 }
 
 /// Merge args array into command string
@@ -1275,28 +1353,22 @@ pub fn compute_migrated_content(content: &str) -> String {
     // Parse once to extract template strings and detect what needs migrating.
     // Callers (`wt config show`, `wt config update`, `format_deprecation_details`)
     // all run content through `check_and_migrate` first, so it is known to parse.
-    let doc = content
+    let mut doc = content
         .parse::<toml_edit::DocumentMut>()
         .expect("compute_migrated_content called with content that failed TOML parse; callers must funnel through check_and_migrate first");
     let template_strings = extract_template_strings_from_doc(&doc);
     let deprecations = detect_deprecations_from_doc(&doc, &template_strings);
 
-    // Apply string-level var replacement first (cosmetic, operates on raw content)
-    let after_vars = if !deprecations.vars.is_empty() {
-        replace_deprecated_vars_from_strings(content, &template_strings)
+    // Replace deprecated template vars on the parsed tree (correct even when
+    // the source uses escapes — see `replace_deprecated_vars_in_doc`).
+    let mut modified = if !deprecations.vars.is_empty() {
+        replace_deprecated_vars_in_doc(&mut doc)
     } else {
-        content.to_string()
+        false
     };
 
-    // Re-parse for structural migrations (which operate on toml_edit::DocumentMut).
-    // `replace_deprecated_vars_from_strings` substitutes one identifier for another
-    // inside `template_strings`, which are values extracted from string literals —
-    // they cannot collide with TOML syntactic tokens, so the replacement preserves
-    // validity.
-    let mut doc = after_vars
-        .parse::<toml_edit::DocumentMut>()
-        .expect("template-var replacement preserves TOML structure");
-    let mut modified = migrate_content_doc(&mut doc);
+    // Structural migrations operate on the same document.
+    modified |= migrate_content_doc(&mut doc);
     // Additionally remove approved-commands (not part of migrate_content because
     // approved-commands is still a valid serde field at runtime).
     if deprecations.approved_commands {
@@ -1305,7 +1377,7 @@ pub fn compute_migrated_content(content: &str) -> String {
     if modified {
         doc.to_string()
     } else {
-        after_vars
+        content.to_string()
     }
 }
 
@@ -1643,8 +1715,21 @@ mod tests {
     }
 
     fn replace_deprecated_vars(content: &str) -> String {
-        let strings = extract_template_strings(content);
-        replace_deprecated_vars_from_strings(content, &strings)
+        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+            return content.to_string();
+        };
+        if !replace_deprecated_vars_in_doc(&mut doc) {
+            return content.to_string();
+        }
+        // `toml_edit` always serializes a document with a trailing newline.
+        // These helper tests pass fragments without one and assert on the
+        // substituted text, not serialization shape — mirror the input.
+        let out = doc.to_string();
+        if !content.ends_with('\n') {
+            out.strip_suffix('\n').map(str::to_owned).unwrap_or(out)
+        } else {
+            out
+        }
     }
 
     fn find_deprecated_vars(content: &str) -> Vec<(&'static str, &'static str)> {
@@ -1820,6 +1905,37 @@ post-create = "cd {{ worktree_path }} && npm install"
         assert_eq!(result, r#"cmd = "{{ repo_path | sanitize }}""#);
     }
 
+    /// Regression: when the deprecated var sits next to an escaped quote, the
+    /// decoded string value does not appear verbatim in the raw file text, so
+    /// the old `str::replace`-on-content path silently skipped the migration
+    /// while detection still warned. The toml_edit-tree rewrite handles it.
+    #[test]
+    fn test_replace_deprecated_vars_with_escaped_quotes() {
+        // Source TOML: pre-start = "echo \"{{ repo_root }}\""
+        let content = r#"pre-start = "echo \"{{ repo_root }}\"""#;
+        let result = replace_deprecated_vars(content);
+        assert!(
+            !result.contains("repo_root"),
+            "deprecated var must be migrated even with escaped quotes; got: {result}"
+        );
+        assert!(
+            result.contains("repo_path"),
+            "migrated var must be present; got: {result}"
+        );
+    }
+
+    /// Same, exercised through the public `compute_migrated_content` entry.
+    #[test]
+    fn test_compute_migrated_content_escaped_quotes() {
+        let content = "pre-start = \"echo \\\"{{ repo_root }}\\\"\"\n";
+        let migrated = compute_migrated_content(content);
+        assert!(
+            !migrated.contains("repo_root"),
+            "compute_migrated_content must migrate vars inside escaped strings; got: {migrated}"
+        );
+        assert!(migrated.contains("repo_path"));
+    }
+
     #[test]
     fn test_replace_deprecated_vars_no_spaces() {
         let content = r#"cmd = "{{repo_root}}""#;
@@ -1868,6 +1984,59 @@ post-create = "echo hello"
         let content = r#"cmd = "{{  repo_root  }}""#;
         let result = replace_deprecated_vars(content);
         assert_eq!(result, r#"cmd = "{{  repo_path  }}""#); // Preserves original formatting
+    }
+
+    /// The tree walker must recurse into arrays of tables and inline tables —
+    /// not just top-level tables — so a deprecated var is migrated wherever it
+    /// appears, while non-string scalars are left untouched.
+    #[test]
+    fn test_replace_deprecated_vars_walks_array_of_tables_and_inline_table() {
+        let content = r#"
+[[steps]]
+run = "build {{ repo_root }}"
+
+[env]
+script = { cmd = "{{ repo_root }}/x" }
+timeout = 30
+"#;
+        let result = replace_deprecated_vars(content);
+        assert!(
+            result.contains("build {{ repo_path }}"),
+            "array-of-tables var migrated: {result}"
+        );
+        assert!(
+            result.contains("{{ repo_path }}/x"),
+            "inline-table var migrated: {result}"
+        );
+        assert!(
+            result.contains("timeout = 30"),
+            "non-string scalar left untouched: {result}"
+        );
+    }
+
+    /// `into_table` underpins every "peek before remove" structural migration:
+    /// callers gate on `is_table_like`, so the non-table arm must return `None`
+    /// rather than panic if that contract is ever violated.
+    #[test]
+    fn test_into_table_returns_none_for_non_table() {
+        let scalar = toml_edit::Item::Value(toml_edit::Value::from(5));
+        assert!(into_table(scalar).is_none());
+    }
+
+    /// Canonical config with no deprecations must round-trip through
+    /// `compute_migrated_content` byte-for-byte (the unmodified branch).
+    #[test]
+    fn test_compute_migrated_content_noop_returns_input_unchanged() {
+        let content = "pre-start = \"echo {{ repo_path }}\"\n";
+        assert_eq!(compute_migrated_content(content), content);
+    }
+
+    /// The `replace_deprecated_vars` helper must return the input untouched
+    /// when it cannot be parsed as TOML, rather than panicking.
+    #[test]
+    fn test_replace_deprecated_vars_returns_input_on_parse_error() {
+        let content = "this is = = not valid toml";
+        assert_eq!(replace_deprecated_vars(content), content);
     }
 
     #[test]
@@ -2389,24 +2558,27 @@ args = ["-m", "haiku"]
 
     #[test]
     fn test_migrate_malformed_string_value_unchanged() {
-        // When commit-generation is a string (malformed), migration skips it
-        // This exercises the `_ => None` branch in the match
+        // When commit-generation is a string (malformed), migration must leave
+        // it in place — silently dropping it would lose user config.
         let content = r#"
 commit-generation = "not a table"
 other = "value"
 "#;
         let result = migrate_commit_generation_sections(content);
-        // Malformed value is removed (doc.remove happens), but no migration occurs
-        // The content stays mostly unchanged since we don't add [commit.generation]
         assert!(
             !result.contains("[commit.generation]"),
             "Should not create new section for malformed input"
+        );
+        assert!(
+            result.contains("commit-generation = \"not a table\""),
+            "Malformed value must be preserved; got: {result}"
         );
     }
 
     #[test]
     fn test_migrate_malformed_project_level_string_unchanged() {
-        // When project-level commit-generation is a string, migration skips it
+        // When project-level commit-generation is a string, migration must
+        // leave it in place rather than dropping it.
         let content = r#"
 [projects."github.com/user/repo"]
 commit-generation = "not a table"
@@ -2416,6 +2588,72 @@ other = "value"
         assert!(
             !result.contains("[projects.\"github.com/user/repo\".commit.generation]"),
             "Should not create new section for malformed project-level input"
+        );
+        assert!(
+            result.contains("commit-generation = \"not a table\""),
+            "Malformed project-level value must be preserved; got: {result}"
+        );
+    }
+
+    /// Malformed deprecated section + a valid sibling migration: the bug was
+    /// that doc.remove() happened before the malformed-value check, so a
+    /// sibling migration would serialize the doc with the section already
+    /// dropped. The fix peeks before removing.
+    #[test]
+    fn test_malformed_section_preserved_with_sibling_migration() {
+        let content = r#"commit-generation = "keep me"
+
+[merge]
+no-ff = true
+"#;
+        let result = migrate_content(content);
+        assert!(
+            result.contains(r#"commit-generation = "keep me""#),
+            "Malformed commit-generation must survive sibling migrations; got:\n{result}"
+        );
+        // Sibling migration should still apply.
+        assert!(
+            result.contains("ff = false"),
+            "merge.no-ff should have migrated to merge.ff = false; got:\n{result}"
+        );
+    }
+
+    /// Same shape for [select]: a malformed select value next to a valid
+    /// sibling migration must be preserved.
+    #[test]
+    fn test_malformed_select_preserved_with_sibling_migration() {
+        let content = r#"select = "not a table"
+
+[merge]
+no-ff = true
+"#;
+        let result = migrate_content(content);
+        assert!(
+            result.contains(r#"select = "not a table""#),
+            "Malformed select must survive sibling migrations; got:\n{result}"
+        );
+        assert!(
+            result.contains("ff = false"),
+            "merge.no-ff should have migrated; got:\n{result}"
+        );
+    }
+
+    /// `[ci]` migration only owns `platform`; other keys in the same section
+    /// must be preserved, not dropped along with the section.
+    #[test]
+    fn test_ci_migration_preserves_other_keys() {
+        let content = r#"[ci]
+platform = "github"
+hostname = "ghe.example"
+"#;
+        let result = migrate_content(content);
+        assert!(
+            result.contains(r#"platform = "github""#) && result.contains("[forge]"),
+            "platform should have moved into [forge]; got:\n{result}"
+        );
+        assert!(
+            result.contains(r#"hostname = "ghe.example""#),
+            "Unrelated [ci].hostname must be preserved; got:\n{result}"
         );
     }
 
@@ -2706,7 +2944,8 @@ approved-commands = ["cargo build"]
 "#;
         std::fs::write(&config_path, content).unwrap();
 
-        let result = copy_approved_commands_to_approvals_file(&config_path);
+        let result =
+            copy_approved_commands_to_approvals_file(&config_path).expect("copy should succeed");
         assert!(result.is_some(), "Should create approvals.toml");
 
         let approvals_path = result.unwrap();
@@ -2742,7 +2981,8 @@ approved-commands = ["npm install"]
         std::fs::write(&config_path, content).unwrap();
         std::fs::write(&approvals_path, "# existing approvals\n").unwrap();
 
-        let result = copy_approved_commands_to_approvals_file(&config_path);
+        let result = copy_approved_commands_to_approvals_file(&config_path)
+            .expect("skip should not surface error");
         assert!(result.is_none(), "Should skip when approvals.toml exists");
 
         // Verify existing file was not overwritten
@@ -2760,10 +3000,74 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
 "#;
         std::fs::write(&config_path, content).unwrap();
 
-        let result = copy_approved_commands_to_approvals_file(&config_path);
+        let result = copy_approved_commands_to_approvals_file(&config_path)
+            .expect("empty case should not surface error");
         assert!(
             result.is_none(),
             "Should skip when no approved-commands exist"
+        );
+    }
+
+    /// Regression: when approvals.toml cannot be written (e.g. the directory
+    /// is read-only), the copy must return Err rather than silently signaling
+    /// "nothing to copy", otherwise the caller would proceed to rewrite
+    /// config.toml and drop the legacy approvals.
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_approved_commands_surfaces_write_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install"]
+"#;
+        std::fs::write(&config_path, content).unwrap();
+
+        // Make the directory read-only so approvals.toml creation fails.
+        let mut perms = std::fs::metadata(temp_dir.path()).unwrap().permissions();
+        perms.set_mode(0o555);
+        std::fs::set_permissions(temp_dir.path(), perms).unwrap();
+
+        // Root ignores directory permissions, so the write would succeed and
+        // the assertion below would spuriously fail (Claude Code web, Docker).
+        // Probe and skip when not actually restricted — matching the pattern
+        // in tests/integration_tests/approval_save.rs.
+        if std::fs::write(temp_dir.path().join("__probe"), "").is_ok() {
+            let mut perms = std::fs::metadata(temp_dir.path()).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(temp_dir.path(), perms).unwrap();
+            std::eprintln!("Skipping permission test - running with elevated privileges");
+            return;
+        }
+
+        let result = copy_approved_commands_to_approvals_file(&config_path);
+
+        // Restore writable perms so the tempdir can be cleaned up.
+        let mut perms = std::fs::metadata(temp_dir.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(temp_dir.path(), perms).unwrap();
+
+        assert!(
+            result.is_err(),
+            "Write failure must surface as Err, not Ok(None); got {result:?}"
+        );
+    }
+
+    /// Regression: when the source config cannot be read or parsed, the copy
+    /// must surface the error (with context) rather than silently signaling
+    /// "nothing to copy" — same data-loss class as the write-failure case.
+    #[test]
+    fn test_copy_approved_commands_surfaces_read_failure() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        std::fs::write(&config_path, "this is = = not valid toml\n").unwrap();
+
+        let result = copy_approved_commands_to_approvals_file(&config_path);
+        assert!(
+            result.is_err(),
+            "Unparsable source config must surface as Err; got {result:?}"
         );
     }
 
