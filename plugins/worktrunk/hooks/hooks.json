@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/.claude-plugin/hooks/wt.sh\" config state marker set 🤖 || true"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" config state marker set 🤖 || true"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/.claude-plugin/hooks/wt.sh\" config state marker set 💬 || true"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" config state marker set 💬 || true"
           }
         ]
       }
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/.claude-plugin/hooks/wt.sh\" config state marker clear || true"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" config state marker clear || true"
           }
         ]
       }
@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.name' | xargs -I{} bash \"${CLAUDE_PLUGIN_ROOT}/.claude-plugin/hooks/wt.sh\" switch --create {} --no-cd --format=json | jq -r '.path'"
+            "command": "jq -r '.name' | xargs -I{} bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" switch --create {} --no-cd --format=json | jq -r '.path'"
           }
         ]
       }
@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.worktree_path' | xargs bash \"${CLAUDE_PLUGIN_ROOT}/.claude-plugin/hooks/wt.sh\" remove -D --foreground"
+            "command": "jq -r '.worktree_path' | xargs bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" remove -D --foreground"
           }
         ]
       }

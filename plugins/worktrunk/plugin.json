@@ -4,7 +4,7 @@
   "author": {
     "name": "Worktrunk"
   },
-  "hooks": "./.claude-plugin/hooks/hooks.json",
+  "hooks": "./hooks/hooks.json",
   "skills": [
     "./skills/worktrunk",
     "./skills/wt-switch-create"
