@@ -3557,14 +3557,45 @@ fn test_codex_plugin_metadata_is_valid_json() {
         &fs::read_to_string(project_root.join(".agents/plugins/marketplace.json")).unwrap(),
     )
     .unwrap();
-    let hooks: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(project_root.join("plugins/worktrunk/hooks/hooks.json")).unwrap(),
-    )
-    .unwrap();
 
     assert_eq!(plugin["name"], "worktrunk");
     assert_eq!(plugin["skills"], "./skills/");
-    assert_eq!(plugin["hooks"], "./hooks/hooks.json");
+    // Metadata must not drift back toward the Claude plugin: the Codex plugin
+    // ships only the configuration skill, and its URLs are the canonical site
+    // (not the `/claude-code/` doc slug).
+    for key in ["description", "homepage"] {
+        let val = plugin[key].as_str().unwrap();
+        assert!(
+            !val.contains("activity") && !val.contains("claude-code"),
+            "plugin.json `{key}` regressed toward Claude/activity wording: {val}"
+        );
+    }
+    let iface = &plugin["interface"];
+    assert!(
+        !iface["longDescription"]
+            .as_str()
+            .unwrap()
+            .contains("activity"),
+        "plugin.json interface.longDescription must not claim activity tracking"
+    );
+    assert!(
+        !iface["websiteURL"]
+            .as_str()
+            .unwrap()
+            .contains("claude-code"),
+        "plugin.json interface.websiteURL must point at the canonical site"
+    );
+    // The Codex plugin ships no activity-marker hooks: Codex's
+    // HookEventNameWire vocabulary (codex-cli 0.130.0) has no `Stop`/turn-end
+    // event, so a 🤖 set on UserPromptSubmit could never return to 💬 within a
+    // session. Keep the manifest free of a `hooks` key (and the hooks/ dir
+    // absent) until Codex adds a turn-end hook event — see CLAUDE.md →
+    // "Codex Plugin".
+    assert_eq!(plugin.get("hooks"), None);
+    assert!(
+        !project_root.join("plugins/worktrunk/hooks").exists(),
+        "plugins/worktrunk/hooks/ must not exist while Codex lacks a turn-end hook event"
+    );
     assert_eq!(marketplace["plugins"][0]["name"], "worktrunk");
     // Source is a non-empty subdir object; a bare "./" is rejected by codex.
     assert_eq!(marketplace["plugins"][0]["source"]["source"], "local");
@@ -3579,14 +3610,6 @@ fn test_codex_plugin_metadata_is_valid_json() {
     // Codex validates `interface` is an object and requires `displayName`;
     // omitting it is what made the plugin undiscoverable in /plugins.
     assert_eq!(marketplace["interface"]["displayName"], "Worktrunk");
-    assert_eq!(
-        hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
-        "wt config state marker set \"🤖\" >/dev/null 2>&1 || true"
-    );
-    assert_eq!(
-        hooks["hooks"]["Stop"][0]["hooks"][0]["command"],
-        "wt config state marker set \"💬\" >/dev/null 2>&1 || true"
-    );
 }
 
 // ==================== Plugin Install-Statusline Tests ====================
