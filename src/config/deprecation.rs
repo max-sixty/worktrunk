@@ -207,21 +207,70 @@ fn collect_strings_from_edit_value(value: &toml_edit::Value, strings: &mut Vec<S
     }
 }
 
-/// Core logic for variable replacement, operating on pre-extracted template strings
-fn replace_deprecated_vars_from_strings(content: &str, template_strings: &[String]) -> String {
-    let mut result = content.to_string();
+/// Rewrite deprecated template variables inside one string, returning the
+/// new value when it changed.
+fn rewrite_deprecated_vars(original: &str) -> Option<String> {
+    let mut modified = original.to_string();
+    for (re, new) in DEPRECATED_VAR_REGEXES.iter() {
+        modified = re.replace_all(&modified, *new).into_owned();
+    }
+    (modified != original).then_some(modified)
+}
 
-    for original in template_strings {
-        let mut modified = original.clone();
-        for (re, new) in DEPRECATED_VAR_REGEXES.iter() {
-            modified = re.replace_all(&modified, *new).into_owned();
+/// Replace deprecated template vars in every string value of the document,
+/// mutating the `toml_edit` tree in place.
+///
+/// Operating on the parsed tree (rather than a raw `str::replace` against the
+/// file text) is correct when the TOML source uses escapes: the decoded value
+/// would not appear verbatim in the file, so a raw replace silently skipped
+/// the migration while detection still warned. `toml_edit` re-serializes the
+/// changed string with proper escaping.
+fn replace_deprecated_vars_in_doc(doc: &mut toml_edit::DocumentMut) -> bool {
+    fn walk_table(table: &mut toml_edit::Table, changed: &mut bool) {
+        for (_, item) in table.iter_mut() {
+            walk_item(item, changed);
         }
-        if modified != *original {
-            result = result.replace(original, &modified);
+    }
+    fn walk_item(item: &mut toml_edit::Item, changed: &mut bool) {
+        match item {
+            toml_edit::Item::Value(v) => walk_value(v, changed),
+            toml_edit::Item::Table(t) => walk_table(t, changed),
+            toml_edit::Item::ArrayOfTables(arr) => {
+                for t in arr.iter_mut() {
+                    walk_table(t, changed);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn walk_value(value: &mut toml_edit::Value, changed: &mut bool) {
+        match value {
+            toml_edit::Value::String(s) => {
+                if let Some(new) = rewrite_deprecated_vars(s.value()) {
+                    let decor = s.decor().clone();
+                    let mut formatted = toml_edit::Formatted::new(new);
+                    *formatted.decor_mut() = decor;
+                    *value = toml_edit::Value::String(formatted);
+                    *changed = true;
+                }
+            }
+            toml_edit::Value::Array(arr) => {
+                for v in arr.iter_mut() {
+                    walk_value(v, changed);
+                }
+            }
+            toml_edit::Value::InlineTable(t) => {
+                for (_, v) in t.iter_mut() {
+                    walk_value(v, changed);
+                }
+            }
+            _ => {}
         }
     }
 
-    result
+    let mut changed = false;
+    walk_table(doc.as_table_mut(), &mut changed);
+    changed
 }
 
 /// Information about deprecated commit-generation sections found in config
@@ -1304,28 +1353,22 @@ pub fn compute_migrated_content(content: &str) -> String {
     // Parse once to extract template strings and detect what needs migrating.
     // Callers (`wt config show`, `wt config update`, `format_deprecation_details`)
     // all run content through `check_and_migrate` first, so it is known to parse.
-    let doc = content
+    let mut doc = content
         .parse::<toml_edit::DocumentMut>()
         .expect("compute_migrated_content called with content that failed TOML parse; callers must funnel through check_and_migrate first");
     let template_strings = extract_template_strings_from_doc(&doc);
     let deprecations = detect_deprecations_from_doc(&doc, &template_strings);
 
-    // Apply string-level var replacement first (cosmetic, operates on raw content)
-    let after_vars = if !deprecations.vars.is_empty() {
-        replace_deprecated_vars_from_strings(content, &template_strings)
+    // Replace deprecated template vars on the parsed tree (correct even when
+    // the source uses escapes — see `replace_deprecated_vars_in_doc`).
+    let mut modified = if !deprecations.vars.is_empty() {
+        replace_deprecated_vars_in_doc(&mut doc)
     } else {
-        content.to_string()
+        false
     };
 
-    // Re-parse for structural migrations (which operate on toml_edit::DocumentMut).
-    // `replace_deprecated_vars_from_strings` substitutes one identifier for another
-    // inside `template_strings`, which are values extracted from string literals —
-    // they cannot collide with TOML syntactic tokens, so the replacement preserves
-    // validity.
-    let mut doc = after_vars
-        .parse::<toml_edit::DocumentMut>()
-        .expect("template-var replacement preserves TOML structure");
-    let mut modified = migrate_content_doc(&mut doc);
+    // Structural migrations operate on the same document.
+    modified |= migrate_content_doc(&mut doc);
     // Additionally remove approved-commands (not part of migrate_content because
     // approved-commands is still a valid serde field at runtime).
     if deprecations.approved_commands {
@@ -1334,7 +1377,7 @@ pub fn compute_migrated_content(content: &str) -> String {
     if modified {
         doc.to_string()
     } else {
-        after_vars
+        content.to_string()
     }
 }
 
@@ -1672,8 +1715,21 @@ mod tests {
     }
 
     fn replace_deprecated_vars(content: &str) -> String {
-        let strings = extract_template_strings(content);
-        replace_deprecated_vars_from_strings(content, &strings)
+        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+            return content.to_string();
+        };
+        if !replace_deprecated_vars_in_doc(&mut doc) {
+            return content.to_string();
+        }
+        // `toml_edit` always serializes a document with a trailing newline.
+        // These helper tests pass fragments without one and assert on the
+        // substituted text, not serialization shape — mirror the input.
+        let out = doc.to_string();
+        if !content.ends_with('\n') {
+            out.strip_suffix('\n').map(str::to_owned).unwrap_or(out)
+        } else {
+            out
+        }
     }
 
     fn find_deprecated_vars(content: &str) -> Vec<(&'static str, &'static str)> {
@@ -1847,6 +1903,37 @@ post-create = "cd {{ worktree_path }} && npm install"
         let content = r#"cmd = "{{ repo_root | sanitize }}""#;
         let result = replace_deprecated_vars(content);
         assert_eq!(result, r#"cmd = "{{ repo_path | sanitize }}""#);
+    }
+
+    /// Regression: when the deprecated var sits next to an escaped quote, the
+    /// decoded string value does not appear verbatim in the raw file text, so
+    /// the old `str::replace`-on-content path silently skipped the migration
+    /// while detection still warned. The toml_edit-tree rewrite handles it.
+    #[test]
+    fn test_replace_deprecated_vars_with_escaped_quotes() {
+        // Source TOML: pre-start = "echo \"{{ repo_root }}\""
+        let content = r#"pre-start = "echo \"{{ repo_root }}\"""#;
+        let result = replace_deprecated_vars(content);
+        assert!(
+            !result.contains("repo_root"),
+            "deprecated var must be migrated even with escaped quotes; got: {result}"
+        );
+        assert!(
+            result.contains("repo_path"),
+            "migrated var must be present; got: {result}"
+        );
+    }
+
+    /// Same, exercised through the public `compute_migrated_content` entry.
+    #[test]
+    fn test_compute_migrated_content_escaped_quotes() {
+        let content = "pre-start = \"echo \\\"{{ repo_root }}\\\"\"\n";
+        let migrated = compute_migrated_content(content);
+        assert!(
+            !migrated.contains("repo_root"),
+            "compute_migrated_content must migrate vars inside escaped strings; got: {migrated}"
+        );
+        assert!(migrated.contains("repo_path"));
     }
 
     #[test]
