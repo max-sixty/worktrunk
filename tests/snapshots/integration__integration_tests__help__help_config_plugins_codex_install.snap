@@ -1,0 +1,63 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - config
+    - plugins
+    - codex
+    - install
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "500"
+    GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
+    NO_COLOR: ""
+    PSModulePath: ""
+    RUST_LOG: warn
+    SHELL: ""
+    TERM: alacritty
+    WORKTRUNK_APPROVALS_PATH: /nonexistent/test/approvals.toml
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
+    WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_NUSHELL_ENV: "0"
+    WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
+    WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+---
+success: true
+exit_code: 0
+----- stdout -----
+wt config plugins codex install - Configure the Worktrunk marketplace in Codex
+
+Usage: [1m[36mwt config plugins codex install[0m [36m[OPTIONS][0m
+
+[1m[32mOptions:[0m
+  [1m[36m-h[0m, [1m[36m--help[0m
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
+          User config file path
+
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  [1m[36m-y[0m, [1m[36m--yes[0m
+          Skip approval prompts
+
+Configures the Worktrunk plugin marketplace in Codex. Equivalent to:
+
+[107m [0m [2m[0m[2m[34mcodex[0m[2m plugin marketplace add max-sixty/worktrunk[0m
+
+This does not install the plugin by itself. Afterward, open [2m/plugins[0m in Codex and install Worktrunk from the marketplace.
+
+----- stderr -----

@@ -535,6 +535,8 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env("RUST_LOG", "warn");
     // Treat Claude as not installed by default (tests can override with "1")
     cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "0");
+    // Treat Codex as not installed by default (tests can override with "1")
+    cmd.env("WORKTRUNK_TEST_CODEX_INSTALLED", "0");
     // Treat OpenCode as not installed by default (tests can override with "1")
     cmd.env("WORKTRUNK_TEST_OPENCODE_INSTALLED", "0");
 
@@ -778,6 +780,8 @@ pub struct TestRepo {
     mock_bin_path: Option<PathBuf>,
     /// Whether Claude CLI should be treated as installed
     claude_installed: bool,
+    /// Whether Codex CLI should be treated as installed
+    codex_installed: bool,
     /// Whether OpenCode CLI should be treated as installed
     opencode_installed: bool,
 }
@@ -873,6 +877,7 @@ impl TestRepo {
             git_config_path,
             mock_bin_path: None,
             claude_installed: false,
+            codex_installed: false,
             opencode_installed: false,
         };
 
@@ -923,6 +928,7 @@ impl TestRepo {
             git_config_path,
             mock_bin_path: None,
             claude_installed: false,
+            codex_installed: false,
             opencode_installed: false,
         }
     }
@@ -969,6 +975,7 @@ impl TestRepo {
             git_config_path,
             mock_bin_path: None,
             claude_installed: false,
+            codex_installed: false,
             opencode_installed: false,
         }
     }
@@ -1735,6 +1742,14 @@ impl TestRepo {
         self.claude_installed = true;
     }
 
+    /// Setup mock `codex` CLI as installed
+    ///
+    /// Call this after setup_mock_ci_tools_unauthenticated() to simulate
+    /// Codex being available on the system.
+    pub fn setup_mock_codex_installed(&mut self) {
+        self.codex_installed = true;
+    }
+
     /// Setup the worktrunk plugin as installed in Claude Code
     ///
     /// Creates the installed_plugins.json file in the temp home directory.
@@ -1805,6 +1820,26 @@ impl TestRepo {
         self.claude_installed = true;
     }
 
+    /// Setup mock `codex` CLI with plugin marketplace support
+    ///
+    /// Creates a mock codex binary that handles `plugin marketplace add`,
+    /// and `plugin marketplace remove` commands. Must call
+    /// `setup_mock_ci_tools_unauthenticated()` first to create the mock bin
+    /// directory.
+    pub fn setup_mock_codex_with_plugins(&mut self) {
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+
+        MockConfig::new("codex")
+            .command("plugin marketplace add", MockResponse::exit(0))
+            .command("plugin marketplace remove", MockResponse::exit(0))
+            .write(mock_bin);
+
+        self.codex_installed = true;
+    }
+
     /// Setup mock `claude` CLI where plugin commands fail
     ///
     /// Creates a mock claude binary where `plugin marketplace`, `plugin install`,
@@ -1832,6 +1867,29 @@ impl TestRepo {
             .write(mock_bin);
 
         self.claude_installed = true;
+    }
+
+    /// Setup mock `codex` CLI where marketplace commands fail
+    ///
+    /// Must call `setup_mock_ci_tools_unauthenticated()` first.
+    pub fn setup_mock_codex_with_plugins_failing(&mut self) {
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+
+        MockConfig::new("codex")
+            .command(
+                "plugin marketplace add",
+                MockResponse::exit(1).with_stderr("error: marketplace add failed\n"),
+            )
+            .command(
+                "plugin marketplace remove",
+                MockResponse::exit(1).with_stderr("error: marketplace remove failed\n"),
+            )
+            .write(mock_bin);
+
+        self.codex_installed = true;
     }
 
     /// Setup mock `gh` that returns configurable PR/CI data
@@ -2245,6 +2303,11 @@ impl TestRepo {
         // Override Claude installed status if setup_mock_claude_installed() was called
         if self.claude_installed {
             cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "1");
+        }
+
+        // Override Codex installed status if setup_mock_codex_installed() was called
+        if self.codex_installed {
+            cmd.env("WORKTRUNK_TEST_CODEX_INSTALLED", "1");
         }
 
         // Override OpenCode installed status if setup_mock_opencode_installed() was called

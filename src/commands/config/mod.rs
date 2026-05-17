@@ -4,6 +4,7 @@
 
 mod alias;
 mod approvals;
+mod codex;
 mod create;
 mod hints;
 pub mod opencode;
@@ -15,6 +16,7 @@ mod update;
 // Re-export public functions
 pub use alias::{handle_alias_dry_run, handle_alias_show};
 pub use approvals::{add_approvals, clear_approvals};
+pub use codex::{handle_codex_install, handle_codex_uninstall};
 pub use create::handle_config_create;
 pub use hints::{handle_hints_clear, handle_hints_get};
 pub use opencode::{handle_opencode_install, handle_opencode_uninstall};

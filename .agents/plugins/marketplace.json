@@ -1,0 +1,19 @@
+{
+  "name": "worktrunk",
+  "interface": {
+    "displayName": "Worktrunk"
+  },
+  "plugins": [
+    {
+      "name": "worktrunk",
+      "source": {
+        "source": "local",
+        "path": "./plugins/worktrunk"
+      },
+      "policy": {
+        "installation": "AVAILABLE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

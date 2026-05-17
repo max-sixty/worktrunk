@@ -64,6 +64,12 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
 #[case("help_config_shell", "config shell --help")]
 #[case("help_config_create", "config create --help")]
 #[case("help_config_show", "config show --help")]
+#[case("help_config_plugins", "config plugins --help")]
+#[case("help_config_plugins_codex", "config plugins codex --help")]
+#[case(
+    "help_config_plugins_codex_install",
+    "config plugins codex install --help"
+)]
 #[case("help_config_state", "config state --help")]
 #[case(
     "help_config_state_default_branch",

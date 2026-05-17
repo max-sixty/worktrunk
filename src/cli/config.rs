@@ -186,6 +186,34 @@ $ wt config plugins opencode uninstall
     Uninstall,
 }
 
+// Ordering: action + inverse adjacent (install, uninstall).
+#[derive(Subcommand)]
+pub enum ConfigPluginsCodexCommand {
+    /// Configure the Worktrunk marketplace in Codex
+    #[command(
+        after_long_help = r#"Configures the Worktrunk plugin marketplace in Codex. Equivalent to:
+
+```console
+$ codex plugin marketplace add max-sixty/worktrunk
+```
+
+This does not install the plugin by itself. Afterward, open `/plugins` in Codex and install Worktrunk from the marketplace."#
+    )]
+    Install,
+
+    /// Remove the Worktrunk marketplace from Codex
+    #[command(
+        after_long_help = r#"Removes the Worktrunk plugin marketplace from Codex. Equivalent to:
+
+```console
+$ codex plugin marketplace remove worktrunk
+```
+
+This leaves any already-installed Worktrunk plugin and global Codex hook feature flags unchanged."#
+    )]
+    Uninstall,
+}
+
 // Ordering: action + inverse adjacent (add, clear).
 #[derive(Subcommand)]
 pub enum ApprovalsCommand {
@@ -240,6 +268,24 @@ $ wt config plugins claude install-statusline
     Claude {
         #[command(subcommand)]
         action: ConfigPluginsClaudeCommand,
+    },
+
+    /// Codex plugin
+    #[command(
+        after_long_help = r#"Bundled activity hooks — can show status markers in `wt list` when Codex loads plugin hooks:
+- 🤖 — Codex is working
+- 💬 — Codex is waiting or idle
+
+## Examples
+
+```console
+$ wt config plugins codex install
+$ wt config plugins codex uninstall
+```"#
+    )]
+    Codex {
+        #[command(subcommand)]
+        action: ConfigPluginsCodexCommand,
     },
 
     /// OpenCode plugin
@@ -529,12 +575,14 @@ $ wt config alias dry-run deploy -- --env=staging
 ## Supported tools
 
 - **claude** — Claude Code plugin (activity tracking + statusline)
+- **codex** — Codex plugin (Worktrunk skill + bundled activity hooks)
 - **opencode** — OpenCode plugin (activity tracking)
 
 ## Examples
 
 ```console
 $ wt config plugins claude install
+$ wt config plugins codex install
 $ wt config plugins opencode install
 ```"#
     )]

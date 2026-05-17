@@ -100,7 +100,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2.77.5
+      uses: taiki-e/install-action@v2.78.1
       with:
         tool: cargo-hack
 
@@ -200,11 +200,11 @@ jobs:
     # https://gist.github.com/worktrunk-bot/19bb23cb9658722abfe69479d0a4f9bf
     #
     # Cron-only: PR/push runs aren't appended (would pollute the time
-    # series). Skipped on forks: `WORKTRUNK_BOT_TOKEN` is not exposed there.
+    # series). Skipped on forks: `TEND_BOT_TOKEN` is not exposed there.
     - name: 💾 Append results to gist
       if: github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
       env:
-        GITHUB_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.TEND_BOT_TOKEN }}
         GIST_ID: 19bb23cb9658722abfe69479d0a4f9bf
       run: |
         set -euo pipefail
@@ -318,11 +318,11 @@ jobs:
 
     - uses: JasonEtco/create-an-issue@v2
       env:
-        # Use WORKTRUNK_BOT_TOKEN for a consistent bot identity (per
+        # Use TEND_BOT_TOKEN for a consistent bot identity (per
         # .github/CLAUDE.md) and so any future issue-triage automation can
         # cascade off issue creation — events from the default GITHUB_TOKEN
         # don't trigger other workflows.
-        GITHUB_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.TEND_BOT_TOKEN }}
         LINK: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       with:
         filename: .github/nightly-failure.md

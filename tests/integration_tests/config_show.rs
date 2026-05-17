@@ -2175,6 +2175,36 @@ fn test_config_show_statusline_configured(mut repo: TestRepo, temp_home: TempDir
 }
 
 #[rstest]
+fn test_config_show_codex_available(mut repo: TestRepo, temp_home: TempDir) {
+    // Setup mock gh/glab for deterministic output
+    repo.setup_mock_ci_tools_unauthenticated();
+    // Setup mock codex as available
+    repo.setup_mock_codex_installed();
+
+    // Create global config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
 fn test_config_show_opencode_available_plugin_not_installed(
     mut repo: TestRepo,
     temp_home: TempDir,
@@ -3434,6 +3464,129 @@ fn test_plugins_claude_uninstall_not_installed(mut repo: TestRepo, temp_home: Te
 
         assert_cmd_snapshot!(cmd);
     });
+}
+
+// ==================== Codex Plugin Install/Uninstall Tests ====================
+
+#[rstest]
+fn test_plugins_codex_install(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_plugins();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.args(["config", "plugins", "codex", "install", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_plugins_codex_install_codex_not_found(repo: TestRepo) {
+    // Don't call setup_mock_codex_installed — codex CLI not available
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["config", "plugins", "codex", "install", "--yes"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_plugins_codex_uninstall(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_plugins();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.args(["config", "plugins", "codex", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_plugins_codex_install_command_fails(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_plugins_failing();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.args(["config", "plugins", "codex", "install", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[test]
+fn test_codex_plugin_metadata_is_valid_json() {
+    let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let plugin: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(project_root.join("plugins/worktrunk/.codex-plugin/plugin.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    // Codex discovers a marketplace's plugin list strictly from
+    // <repo-root>/.agents/plugins/marketplace.json (no fallback to the Claude
+    // .claude-plugin/marketplace.json). Each plugin's `source` must be an
+    // object pointing at a non-empty subdirectory — codex rejects a bare or
+    // root-relative source ("local plugin source path must not be empty"), so
+    // the plugin lives in plugins/worktrunk/ rather than at the repo root.
+    // Verified end-to-end against codex-cli 0.130.0: with this layout the
+    // worktrunk marketplace surfaces in /plugins and the plugin installs;
+    // without it the marketplace registers but enumerates zero plugins.
+    let marketplace: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(project_root.join(".agents/plugins/marketplace.json")).unwrap(),
+    )
+    .unwrap();
+    let hooks: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(project_root.join("plugins/worktrunk/hooks/hooks.json")).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(plugin["name"], "worktrunk");
+    assert_eq!(plugin["skills"], "./skills/");
+    assert_eq!(plugin["hooks"], "./hooks/hooks.json");
+    assert_eq!(marketplace["plugins"][0]["name"], "worktrunk");
+    // Source is a non-empty subdir object; a bare "./" is rejected by codex.
+    assert_eq!(marketplace["plugins"][0]["source"]["source"], "local");
+    assert_eq!(
+        marketplace["plugins"][0]["source"]["path"],
+        "./plugins/worktrunk"
+    );
+    assert_eq!(
+        marketplace["plugins"][0]["policy"]["installation"],
+        "AVAILABLE"
+    );
+    // Codex validates `interface` is an object and requires `displayName`;
+    // omitting it is what made the plugin undiscoverable in /plugins.
+    assert_eq!(marketplace["interface"]["displayName"], "Worktrunk");
+    assert_eq!(
+        hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
+        "wt config state marker set \"🤖\" >/dev/null 2>&1 || true"
+    );
+    assert_eq!(
+        hooks["hooks"]["Stop"][0]["hooks"][0]["command"],
+        "wt config state marker set \"💬\" >/dev/null 2>&1 || true"
+    );
 }
 
 // ==================== Plugin Install-Statusline Tests ====================

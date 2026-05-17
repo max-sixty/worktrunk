@@ -60,6 +60,12 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
         render_claude_code_status(&mut show_output)?;
     }
 
+    // Render Codex status (only when codex CLI is available)
+    if is_codex_available() {
+        show_output.push('\n');
+        render_codex_status(&mut show_output)?;
+    }
+
     // Render OpenCode status (only when opencode CLI is available)
     if is_opencode_available() {
         show_output.push('\n');
@@ -132,6 +138,15 @@ pub(super) fn is_claude_available() -> bool {
         return val == "1";
     }
     which::which("claude").is_ok()
+}
+
+/// Check if Codex CLI is available
+pub(super) fn is_codex_available() -> bool {
+    // Allow tests to override detection
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_CODEX_INSTALLED") {
+        return val == "1";
+    }
+    which::which("codex").is_ok()
 }
 
 /// Get the home directory for Claude Code config detection
@@ -268,6 +283,22 @@ fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
             ))
         )?;
     }
+
+    Ok(())
+}
+
+/// Render CODEX section (marketplace install hint).
+/// Caller must check `is_codex_available()` first.
+fn render_codex_status(out: &mut String) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("CODEX", None))?;
+    writeln!(out, "{}", success_message("Codex CLI available"))?;
+    writeln!(
+        out,
+        "{}",
+        hint_message(cformat!(
+            "If Worktrunk is not installed in /plugins yet, run <underline>wt config plugins codex install</>"
+        ))
+    )?;
 
     Ok(())
 }

@@ -39,6 +39,37 @@ pub struct MergeProbeResult {
     pub is_patch_id_match: bool,
 }
 
+/// How many commits the patch-id squash-merge fallback is willing to walk on
+/// the target side before giving up.
+///
+/// [`Repository::is_squash_merged_via_patch_id`] runs
+/// `git log -p {merge-base}..{target} | git patch-id` — one patch per commit
+/// in the range. That range is unbounded: on a fast-moving repo an old branch
+/// can sit tens of thousands of commits behind the tip, and a single such
+/// check then dominates `wt list`, `wt remove`, and `wt step prune` (the
+/// latter goes visibly silent waiting for it). A cheap graph-only
+/// `git rev-list --count` pre-flight enforces this cap.
+///
+/// `500` is conservative because count is only a rough proxy for cost — the
+/// per-commit work scales with `changed_files × changed_lines`, so a few
+/// hundred lockfile-bump or large-refactor squashes can be slower than a few
+/// thousand tiny commits. Working back from "keep one check under a few
+/// seconds" on a heavy monorepo (~50-100 KB patches), 500 holds. On a typical
+/// repo (~5-20 KB patches), 500 is well under a second. Branches squash-merged
+/// within a normal review-and-cleanup cycle sit well inside this.
+///
+/// # Limitation
+///
+/// A branch that was squash-merged but whose merge point now sits more than
+/// `PATCH_ID_SCAN_MAX_COMMITS` commits behind the default-branch tip is
+/// reported as *not* integrated. This is the safe direction — the branch is
+/// kept rather than wrongly deleted — and `wt remove -D` still removes it. The
+/// fallback also only runs when `git merge-tree` itself conflicts (the same
+/// files were modified again after the squash), so the affected set is already
+/// narrow. There is no config knob; bump this constant if the trade-off needs
+/// tuning.
+const PATCH_ID_SCAN_MAX_COMMITS: usize = 500;
+
 impl Repository {
     /// Resolve a ref, preferring branches over tags when names collide.
     ///
@@ -388,14 +419,36 @@ impl Repository {
     ///
     /// Only runs when `merge-tree` conflicts (both sides modified the same files),
     /// since `MergeAddsNothing` handles the non-conflict case. Cost scales with the
-    /// number of commits on target since the merge-base (`git log -p`).
+    /// number of commits on target since the merge-base (`git log -p`), so it is
+    /// capped at [`PATCH_ID_SCAN_MAX_COMMITS`].
     ///
     /// Returns `Ok(true)` if a matching squash-merge commit is found on the target,
-    /// `Ok(false)` otherwise (including when patch-id computation fails — conservative).
+    /// `Ok(false)` otherwise (including when the target history is too deep to scan,
+    /// or when patch-id computation fails — both conservative).
     fn is_squash_merged_via_patch_id(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
         let Some(merge_base) = self.merge_base(target, branch)? else {
             return Ok(false);
         };
+
+        // Bound the target-side history walk. `git log -p {merge_base}..{target}`
+        // diffs every commit landed on the default branch since this branch
+        // diverged; on a fast-moving repo with an old branch that is tens of
+        // thousands of commits, turning one integration check into seconds (or
+        // tens of seconds) of work — visible as `wt step prune` / `wt list`
+        // going silent. A `git rev-list --count` pre-flight (graph walk only,
+        // no diffs) is cheap; bail above the cap. See the limitation note on
+        // [`PATCH_ID_SCAN_MAX_COMMITS`].
+        let target_commit_count: usize = self
+            .run_command(&["rev-list", "--count", &format!("{merge_base}..{target}")])?
+            .trim()
+            .parse()
+            .unwrap_or(0);
+        if target_commit_count > PATCH_ID_SCAN_MAX_COMMITS {
+            log::debug!(
+                "skipping patch-id squash-merge check: {target_commit_count} commits in {merge_base}..{target} exceeds cap of {PATCH_ID_SCAN_MAX_COMMITS}"
+            );
+            return Ok(false);
+        }
 
         // Compute the squashed patch-id (combined diff of all branch changes).
         let branch_pids = self.patch_ids_from(&["diff-tree", "-p", &merge_base, branch])?;
@@ -794,5 +847,108 @@ mod hex_sha_tests {
         assert!(!is_hex_commit_sha(
             "z73f078bd20a09f1a524aae48fcb1771ceac9b5d"
         ));
+    }
+}
+
+#[cfg(test)]
+mod patch_id_cap_tests {
+    use super::*;
+    use crate::testing::TestRepo;
+    use std::fmt::Write as _;
+
+    /// Build the topology
+    ///
+    /// ```text
+    /// base ─── feature  (file: A → B)
+    ///   └────── squash ── pad1 ── … ── padN  = target  (each pad reuses parent's tree)
+    /// ```
+    ///
+    /// via a single `git fast-import` stream — instant even at N = 2000, where
+    /// running `git commit` once per pad would dominate the test.
+    /// `merge_base(target, feature)` is `base`; `squash`'s combined patch
+    /// equals `feature`'s; `rev-list --count base..target` is `1 + n_padding`.
+    fn build(test: &TestRepo, n_padding: usize) {
+        let mut s = String::new();
+        s.push_str("blob\nmark :10\ndata 1\nA\n");
+        s.push_str("blob\nmark :11\ndata 1\nB\n");
+        writeln!(
+            s,
+            "commit refs/heads/base\nmark :1\ncommitter T <t@x> 1700000000 +0000\ndata 0\nM 100644 :10 file\n"
+        )
+        .unwrap();
+        writeln!(
+            s,
+            "commit refs/heads/feature\nmark :2\ncommitter T <t@x> 1700000001 +0000\ndata 0\nfrom :1\nM 100644 :11 file\n"
+        )
+        .unwrap();
+        writeln!(
+            s,
+            "commit refs/heads/target\nmark :3\ncommitter T <t@x> 1700000002 +0000\ndata 0\nfrom :1\nM 100644 :11 file\n"
+        )
+        .unwrap();
+        for i in 0..n_padding {
+            let mark = 4 + i;
+            let parent = if i == 0 { 3 } else { mark - 1 };
+            writeln!(
+                s,
+                "commit refs/heads/target\nmark :{mark}\ncommitter T <t@x> {} +0000\ndata 0\nfrom :{parent}\n",
+                1_700_000_003 + i
+            )
+            .unwrap();
+        }
+        let output = test
+            .git_command()
+            .args(["fast-import", "--quiet"])
+            .stdin_bytes(s.into_bytes())
+            .run()
+            .expect("fast-import spawn");
+        assert!(
+            output.status.success(),
+            "fast-import failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn rev_parse(repo: &Repository, r: &str) -> String {
+        repo.run_command(&["rev-parse", r])
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+
+    #[test]
+    fn detects_squash_when_range_is_under_cap() {
+        let test = TestRepo::new();
+        // base..target = 2 commits (squash + one pad). Well under the cap.
+        build(&test, 1);
+        let repo = Repository::at(test.root_path()).unwrap();
+        let feature = rev_parse(&repo, "refs/heads/feature");
+        let target = rev_parse(&repo, "refs/heads/target");
+
+        assert!(
+            repo.is_squash_merged_via_patch_id(&feature, &target)
+                .unwrap(),
+            "squash commit's patch-id matches feature's; should be detected within the cap"
+        );
+    }
+
+    #[test]
+    fn bails_when_range_exceeds_cap() {
+        let test = TestRepo::new();
+        // base..target = 1 (squash) + PATCH_ID_SCAN_MAX_COMMITS pads — one
+        // over the cap. The squash is still in the range; we just refuse to
+        // walk that far. Asserting `false` while the under-cap case asserts
+        // `true` pins the difference to the cap, not the topology.
+        build(&test, PATCH_ID_SCAN_MAX_COMMITS);
+        let repo = Repository::at(test.root_path()).unwrap();
+        let feature = rev_parse(&repo, "refs/heads/feature");
+        let target = rev_parse(&repo, "refs/heads/target");
+
+        assert!(
+            !repo
+                .is_squash_merged_via_patch_id(&feature, &target)
+                .unwrap(),
+            "should bail (return false) when base..target exceeds {PATCH_ID_SCAN_MAX_COMMITS}"
+        );
     }
 }
