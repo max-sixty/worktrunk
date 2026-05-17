@@ -308,6 +308,31 @@ impl Repository {
             .and_then(GitRemoteUrl::parse)
     }
 
+    /// Parsed URL of the remote that belongs to a particular forge.
+    ///
+    /// Prefers the primary remote when it matches `is_forge`, then the first
+    /// other remote whose URL matches, and finally falls back to the primary
+    /// remote's parsed URL even if it doesn't match (so callers preserve their
+    /// existing "no forge remote" error path). PR/MR lookup uses this so a
+    /// GitHub/Gitea mirror configured as a *non-primary* remote is queried
+    /// against its own owner/repo rather than the primary (e.g. GitLab/Azure)
+    /// remote's path.
+    pub fn forge_remote_parsed_url(
+        &self,
+        is_forge: impl Fn(&GitRemoteUrl) -> bool,
+    ) -> Option<GitRemoteUrl> {
+        if let Some(primary) = self.primary_remote_parsed_url()
+            && is_forge(&primary)
+        {
+            return Some(primary);
+        }
+        self.all_remote_urls()
+            .into_iter()
+            .filter_map(|(_, url)| GitRemoteUrl::parse(&url))
+            .find(&is_forge)
+            .or_else(|| self.primary_remote_parsed_url())
+    }
+
     /// Detect the platform's reference type (PR for GitHub, MR for GitLab).
     ///
     /// Hostname-matches the primary remote's effective URL (so `url.insteadOf`

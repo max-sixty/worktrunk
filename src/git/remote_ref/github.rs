@@ -11,7 +11,7 @@ use super::{
     CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_api_error, cli_config_value,
     extract_host_from_html_url, run_cli_api,
 };
-use crate::git::{self, RefType, Repository};
+use crate::git::{RefType, Repository};
 use crate::shell_exec::Cmd;
 
 /// GitHub Pull Request provider.
@@ -109,19 +109,18 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
     let (owner, repo_name, source) = if let Some((owner, name)) = gh_default_repo(repo_root) {
         (owner, name, "gh default".to_string())
     } else {
-        // Extract owner/repo from primary remote URL. Uses raw URL (not
-        // effective) because insteadOf may rewrite to a non-parseable path.
-        // SSH aliases only affect the host, not the path — owner/repo is always real.
-        let remote = repo.primary_remote()?;
-        let url = repo
-            .remote_url(&remote)
-            .ok_or_else(|| anyhow::anyhow!("Remote '{}' has no URL", remote))?;
-        let parsed = git::GitRemoteUrl::parse(&url)
-            .ok_or_else(|| anyhow::anyhow!("Cannot parse remote URL: {}", url))?;
+        // Extract owner/repo from the GitHub remote — which may be a
+        // non-primary remote in a mixed-remote repo (e.g. origin=GitLab,
+        // upstream=GitHub). Uses the raw URL (not effective) because insteadOf
+        // may rewrite to a non-parseable path; SSH aliases only affect the
+        // host, not the path, so owner/repo is always real.
+        let parsed = repo
+            .forge_remote_parsed_url(|u| u.is_github())
+            .ok_or_else(|| anyhow::anyhow!("No GitHub remote configured"))?;
         (
             parsed.owner().to_string(),
             parsed.repo().to_string(),
-            remote,
+            "github remote".to_string(),
         )
     };
 
