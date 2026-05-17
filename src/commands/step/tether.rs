@@ -88,12 +88,27 @@ mod imp {
         Ok(())
     }
 
-    /// Never returns. The reaper calls this when it cannot arm a watch, so a
-    /// setup failure can never be mistaken for a worktree removal.
+    /// Never returns. The reaper calls this only when it genuinely cannot
+    /// watch (kqueue/inotify instance creation failed), so an inability to
+    /// arm is never mistaken for a removal and a live server is never falsely
+    /// torn down. A *missing* worktree is not a setup failure: it means the
+    /// removal already happened, so those paths return instead of parking.
     fn park_forever() -> ! {
         loop {
             std::thread::park();
         }
+    }
+
+    /// The worktree path no longer exists. The reaper arms its watch
+    /// asynchronously; if the worktree is removed before (or during) arming,
+    /// `open`/`add_watch` see `ENOENT` and the post-arm re-check sees this —
+    /// the removal already happened, so the reaper must tear down rather than
+    /// block on a watch that will never fire.
+    fn worktree_gone(worktree: &Path) -> bool {
+        matches!(
+            std::fs::symlink_metadata(worktree),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound
+        )
     }
 
     /// Block until `worktree` is deleted or renamed (worktrunk renames a
@@ -108,8 +123,10 @@ mod imp {
         use nix::errno::Errno;
         use nix::sys::event::{EvFlags, EventFilter, FilterFlag, KEvent, Kqueue};
 
-        let Ok(dir) = std::fs::File::open(worktree) else {
-            park_forever()
+        let dir = match std::fs::File::open(worktree) {
+            Ok(dir) => dir,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+            Err(_) => park_forever(),
         };
         let Ok(kq) = Kqueue::new() else {
             park_forever()
@@ -124,6 +141,12 @@ mod imp {
         );
         if kq.kevent(&[change], &mut [], None).is_err() {
             park_forever();
+        }
+        // kqueue only reports events that occur after EV_ADD registers, so a
+        // removal between `open` and here would be missed and the wait would
+        // block forever. Re-check now that the watch is armed.
+        if worktree_gone(worktree) {
+            return;
         }
         // `dir` stays in scope so the watched fd is open across the wait.
         // Return only on a real vnode event: a bare signal wakes `kevent`
@@ -156,14 +179,19 @@ mod imp {
         let Ok(ino) = Inotify::init(InitFlags::empty()) else {
             park_forever()
         };
-        if ino
-            .add_watch(
-                worktree,
-                AddWatchFlags::IN_DELETE_SELF | AddWatchFlags::IN_MOVE_SELF,
-            )
-            .is_err()
-        {
-            park_forever();
+        match ino.add_watch(
+            worktree,
+            AddWatchFlags::IN_DELETE_SELF | AddWatchFlags::IN_MOVE_SELF,
+        ) {
+            Ok(_) => {}
+            Err(Errno::ENOENT) => return,
+            Err(_) => park_forever(),
+        }
+        // inotify queues events from the moment the watch is added, so a
+        // removal after this point is captured; but one racing the add could
+        // slip between the ENOENT check and here. Re-check now.
+        if worktree_gone(worktree) {
+            return;
         }
         // Return only on a real event: `read_events` is a raw `read` that
         // returns `EINTR` on signal interruption, and returning then would
