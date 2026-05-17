@@ -19,7 +19,7 @@ pub fn handle_codex_install(yes: bool) -> Result<()> {
         match prompt_yes_no_preview(
             &cformat!("Add Worktrunk plugin marketplace to <bold>Codex</>?"),
             || {
-                let commands = cformat!("codex plugin marketplace add {MARKETPLACE_SOURCE}");
+                let commands = format!("codex plugin marketplace add {MARKETPLACE_SOURCE}");
                 eprintln!("{}", worktrunk::styling::format_bash_with_gutter(&commands));
             },
         )? {
@@ -46,9 +46,7 @@ pub fn handle_codex_install(yes: bool) -> Result<()> {
     );
     eprintln!(
         "{}",
-        hint_message(cformat!(
-            "Activity markers (🤖/💬) use Codex plugin-bundled hooks"
-        ))
+        hint_message("Activity markers (🤖/💬) use Codex plugin-bundled hooks")
     );
     eprintln!(
         "{}",

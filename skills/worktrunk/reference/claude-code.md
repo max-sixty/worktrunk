@@ -72,7 +72,7 @@ $ wt list
 - 🤖 — agent is working
 - 💬 — agent is waiting or idle
 
-If an agent process exits without firing its stop hook, the marker can remain. Clear it manually with `wt config state marker clear`.
+The Claude Code plugin clears the marker when a session ends; Codex exposes no session-end hook event, so a Codex worktree rests at 💬 after its session ends rather than clearing. Either plugin can also leave a stale marker if the agent process is killed before its stop hook runs. `wt config state marker clear` removes a marker manually.
 
 ### Manual status markers
 
