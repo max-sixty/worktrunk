@@ -1603,6 +1603,44 @@ pub fn key_belongs_in<C: WorktrunkConfig>(key: &str) -> Option<&'static str> {
     C::Other::is_valid_key(key).then(C::Other::description)
 }
 
+/// `[commit.generation]` sub-keys (canonical/migrated form) that belong only
+/// in user config.
+///
+/// `[commit.generation]` is itself a valid *project* config section — but only
+/// for `template-append`, the project-wide commit convention shared across the
+/// team. The LLM `command` and the full prompt templates are resolved from
+/// user/system config only. Putting them in a project `.config/wt.toml` is a
+/// common, easily-missed mistake (see #2774).
+///
+/// `is_valid_key` only knows top-level keys, so misplaced *nested* keys can't
+/// be classified by [`key_belongs_in`]. Since `commit` is now a legitimate
+/// project section, the round-trip flags just these offending leaves; without
+/// this list they'd surface as a bare "unknown field" instead of a redirect.
+///
+/// These paths are schema-valid in user config, so they only ever surface as
+/// unknown-nested under *project* config; [`nested_key_belongs_in`] therefore
+/// needs no config-type gate. The list is kept in sync with
+/// `CommitGenerationConfig` by `user_only_commit_generation_paths_track_schema`.
+const USER_ONLY_COMMIT_GENERATION_PATHS: &[&str] = &[
+    "commit.generation.command",
+    "commit.generation.template",
+    "commit.generation.template-file",
+    "commit.generation.squash-template",
+    "commit.generation.squash-template-file",
+];
+
+/// Returns the config where a misplaced *nested* key belongs.
+///
+/// The nested analog of [`key_belongs_in`], for the one case that needs a
+/// redirect: user-only `[commit.generation]` keys placed in project config
+/// (see `USER_ONLY_COMMIT_GENERATION_PATHS`). Returns `None` for ordinary
+/// unknown nested paths (typos), which stay "unknown field".
+pub fn nested_key_belongs_in<C: WorktrunkConfig>(path: &str) -> Option<&'static str> {
+    USER_ONLY_COMMIT_GENERATION_PATHS
+        .contains(&path)
+        .then(C::Other::description)
+}
+
 /// Classification of an unknown config key for warning purposes.
 pub enum UnknownKeyKind {
     /// Deprecated key in its correct config type — deprecation system handles it
@@ -1693,6 +1731,12 @@ fn format_load_warning(label: &str, warning: &crate::config::UnknownWarning) -> 
         } => cformat!(
             "{label} has key <bold>{key}</> which belongs in {other_description} as {canonical_display}"
         ),
+        UnknownWarning::NestedWrongConfig {
+            path,
+            other_description,
+        } => cformat!(
+            "{label} has key <bold>{path}</> which belongs in {other_description} (will be ignored)"
+        ),
         UnknownWarning::NestedUnknown { path } => {
             cformat!("{label} has unknown field <bold>{path}</> (will be ignored)")
         }
@@ -1702,6 +1746,36 @@ fn format_load_warning(label: &str, warning: &crate::config::UnknownWarning) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `USER_ONLY_COMMIT_GENERATION_PATHS` must stay in sync with
+    /// `CommitGenerationConfig`: every key except the project-valid
+    /// `template-append`. If a field is added to that struct without updating
+    /// the list, a misplaced key would silently degrade to "unknown field".
+    #[test]
+    fn user_only_commit_generation_paths_track_schema() {
+        let schema = schemars::SchemaGenerator::default()
+            .into_root_schema_for::<crate::config::CommitGenerationConfig>();
+        let mut expected: Vec<String> = schema
+            .as_object()
+            .and_then(|o| o.get("properties"))
+            .and_then(|p| p.as_object())
+            .map(|props| props.keys().cloned().collect())
+            .unwrap_or_default();
+        expected.retain(|k| k != "template-append");
+        let mut expected: Vec<String> = expected
+            .iter()
+            .map(|k| format!("commit.generation.{k}"))
+            .collect();
+        expected.sort();
+
+        let mut actual: Vec<String> = USER_ONLY_COMMIT_GENERATION_PATHS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        actual.sort();
+
+        assert_eq!(actual, expected);
+    }
 
     // Test helpers that parse from string and delegate to the internal functions.
     // These mirror the former pub wrappers that were inlined into
@@ -3676,19 +3750,39 @@ ff = true
 
     #[test]
     fn test_warn_unknown_fields_deprecated_key_in_wrong_config() {
-        use crate::config::{ProjectConfig, UserConfig};
+        use crate::config::{ProjectConfig, UnknownWarning, UserConfig, collect_unknown_warnings};
 
-        // commit-generation in project config → should warn "belongs in user config"
+        // User-only commit-generation key in project config → nested redirect
+        // to user config (the load path that `config show` mirrors).
+        let warnings =
+            collect_unknown_warnings::<ProjectConfig>("[commit-generation]\ncommand = \"llm\"\n");
+        assert!(
+            matches!(
+                warnings.as_slice(),
+                [UnknownWarning::NestedWrongConfig { path, other_description }]
+                    if path == "commit.generation.command" && *other_description == "user config"
+            ),
+            "expected one NestedWrongConfig → user config, got {warnings:?}"
+        );
+
+        // ci in user config → top-level deprecated-section redirect.
+        let warnings = collect_unknown_warnings::<UserConfig>("[ci]\nplatform = \"github\"\n");
+        assert!(
+            matches!(
+                warnings.as_slice(),
+                [UnknownWarning::TopLevelDeprecatedWrongConfig { other_description, .. }]
+                    if *other_description == "project config"
+            ),
+            "expected one TopLevelDeprecatedWrongConfig → project config, got {warnings:?}"
+        );
+
+        // Exercise the stderr/dedup side-effect path itself.
         let path = std::env::temp_dir().join("test-deprecated-wrong-config-project.toml");
         warn_unknown_fields::<ProjectConfig>(
             "[commit-generation]\ncommand = \"llm\"\n",
             &path,
             "Project config",
         );
-
-        // ci in user config → should warn "belongs in project config"
-        let path = std::env::temp_dir().join("test-deprecated-wrong-config-user.toml");
-        warn_unknown_fields::<UserConfig>("[ci]\nplatform = \"github\"\n", &path, "User config");
     }
 
     // ==================== pre-hook table form tests ====================

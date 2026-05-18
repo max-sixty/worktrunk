@@ -643,6 +643,10 @@ fn format_show_warning(warning: &worktrunk::config::UnknownWarning) -> String {
             other_description,
             canonical_display,
         } => cformat!("Key <bold>{key}</> belongs in {other_description} as {canonical_display}"),
+        UnknownWarning::NestedWrongConfig {
+            path,
+            other_description,
+        } => cformat!("Key <bold>{path}</> belongs in {other_description} (will be ignored)"),
         UnknownWarning::NestedUnknown { path } => {
             cformat!("Unknown key <bold>{path}</> will be ignored")
         }

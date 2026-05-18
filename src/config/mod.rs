@@ -118,7 +118,7 @@ pub use deprecation::normalize_template_vars;
 pub use deprecation::suppress_warnings;
 pub use deprecation::{
     DEPRECATED_SECTION_KEYS, DeprecatedSection, UnknownKeyKind, classify_unknown_key,
-    key_belongs_in, warn_unknown_fields,
+    key_belongs_in, nested_key_belongs_in, warn_unknown_fields,
 };
 pub use expansion::{
     ACTIVE_VARS, ALIAS_ARGS_KEY, DEPRECATED_TEMPLATE_VARS, EXEC_BASE_VARS, REPO_VARS,

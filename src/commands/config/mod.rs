@@ -155,16 +155,37 @@ mod tests {
     }
 
     #[test]
-    fn test_warn_unknown_keys_deprecated_in_wrong_config() {
-        // commit-generation in project config should suggest user config with canonical form
-        assert_snapshot!(warn_unknown_keys::<ProjectConfig>(
-            "[commit-generation]\ncommand = \"llm\"\n"
-        ));
+    fn test_warn_unknown_keys_user_only_commit_key_redirects_to_user_config() {
+        // The LLM `command` is user-config-only. In a *project* config it must
+        // redirect the user to user config — both via the legacy flat
+        // `[commit-generation]` and the canonical `[commit.generation]`, since
+        // `[commit.generation]` is now a valid project section (for
+        // `template-append`) so the offending key surfaces nested.
+        assert_snapshot!(
+            warn_unknown_keys::<ProjectConfig>("[commit-generation]\ncommand = \"llm\"\n"),
+            @"[33m▲[39m [33mKey [1mcommit.generation.command[22m belongs in user config (will be ignored)[39m");
+        assert_snapshot!(
+            warn_unknown_keys::<ProjectConfig>("[commit.generation]\ncommand = \"llm\"\n"),
+            @"[33m▲[39m [33mKey [1mcommit.generation.command[22m belongs in user config (will be ignored)[39m");
 
-        // ci in user config should suggest project config with canonical form
-        assert_snapshot!(warn_unknown_keys::<UserConfig>(
-            "[ci]\nplatform = \"github\"\n"
-        ));
+        // The one project-valid key in the section is unaffected.
+        assert!(
+            warn_unknown_keys::<ProjectConfig>("[commit.generation]\ntemplate-append = \"x\"\n")
+                .is_empty()
+        );
+        // The same user-only key in user config is valid — no warning there.
+        assert!(
+            warn_unknown_keys::<UserConfig>("[commit.generation]\ncommand = \"llm\"\n").is_empty()
+        );
+    }
+
+    #[test]
+    fn test_warn_unknown_keys_deprecated_section_in_wrong_config() {
+        // `ci` is deprecated in favor of `[forge]`, which is project-only; in
+        // user config it redirects with the canonical form.
+        assert_snapshot!(
+            warn_unknown_keys::<UserConfig>("[ci]\nplatform = \"github\"\n"),
+            @"[33m▲[39m [33mKey [1mci[22m belongs in project config as [forge][39m");
     }
 
     #[test]
