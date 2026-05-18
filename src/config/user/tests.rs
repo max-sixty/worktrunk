@@ -750,6 +750,7 @@ fn test_merge_commit_generation_config() {
         template_file: Some("~/.config/template.txt".to_string()),
         squash_template: None,
         squash_template_file: None,
+        template_append: None,
     };
     let override_config = CommitGenerationConfig {
         command: Some("claude -p --model=haiku".to_string()), // Override
@@ -757,6 +758,7 @@ fn test_merge_commit_generation_config() {
         template_file: None,                                  // Fall back to base
         squash_template: None,
         squash_template_file: None,
+        template_append: None,
     };
 
     let merged = base.merge_with(&override_config);
@@ -764,6 +766,28 @@ fn test_merge_commit_generation_config() {
     assert_eq!(merged.template, Some("custom".to_string()));
     // When project sets template, template_file is cleared to maintain mutual exclusivity
     assert_eq!(merged.template_file, None);
+}
+
+#[test]
+fn test_merge_commit_generation_template_append() {
+    // Override wins when set; otherwise the base value carries through.
+    let base = CommitGenerationConfig {
+        template_append: Some("base append".to_string()),
+        ..Default::default()
+    };
+    let override_config = CommitGenerationConfig {
+        template_append: Some("override append".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(
+        base.merge_with(&override_config).template_append,
+        Some("override append".to_string())
+    );
+    assert_eq!(
+        base.merge_with(&CommitGenerationConfig::default())
+            .template_append,
+        Some("base append".to_string())
+    );
 }
 
 #[test]

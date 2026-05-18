@@ -128,7 +128,10 @@ pub use expansion::{
     validate_template_syntax, vars_available_in,
 };
 pub use hooks::HooksConfig;
-pub use project::{ProjectCiConfig, ProjectConfig, ProjectListConfig, valid_project_config_keys};
+pub use project::{
+    ProjectCiConfig, ProjectCommitConfig, ProjectCommitGenerationConfig, ProjectConfig,
+    ProjectListConfig, valid_project_config_keys,
+};
 pub use unknown_tree::{
     UnknownAnalysis, UnknownTree, UnknownWarning, collect_unknown_warnings, compute_unknown_tree,
 };
@@ -603,6 +606,7 @@ squash-template-file = "~/file.txt"
             template_file: None,
             squash_template: None,
             squash_template_file: None,
+            template_append: None,
         };
 
         assert_snapshot!(toml::to_string(&config).unwrap(), @r#"
