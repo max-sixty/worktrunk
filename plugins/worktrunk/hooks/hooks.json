@@ -1,31 +1,53 @@
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "wt config state marker set \"💬\" >/dev/null 2>&1 || true"
-          }
-        ]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "wt config state marker set \"🤖\" >/dev/null 2>&1 || true"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" config state marker set 🤖 || true"
           }
         ]
       }
     ],
-    "Stop": [
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" config state marker set 💬 || true"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" config state marker clear || true"
+          }
+        ]
+      }
+    ],
+    "WorktreeCreate": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "wt config state marker set \"💬\" >/dev/null 2>&1 || true"
+            "command": "jq -r '.name' | xargs -I{} bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" switch --create {} --no-cd --format=json | jq -r '.path'"
+          }
+        ]
+      }
+    ],
+    "WorktreeRemove": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.worktree_path' | xargs bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" remove -D --foreground"
           }
         ]
       }

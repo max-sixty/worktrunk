@@ -118,7 +118,7 @@ pub use deprecation::normalize_template_vars;
 pub use deprecation::suppress_warnings;
 pub use deprecation::{
     DEPRECATED_SECTION_KEYS, DeprecatedSection, UnknownKeyKind, classify_unknown_key,
-    key_belongs_in, warn_unknown_fields,
+    key_belongs_in, nested_key_belongs_in, warn_unknown_fields,
 };
 pub use expansion::{
     ACTIVE_VARS, ALIAS_ARGS_KEY, DEPRECATED_TEMPLATE_VARS, EXEC_BASE_VARS, REPO_VARS,
@@ -128,7 +128,10 @@ pub use expansion::{
     validate_template_syntax, vars_available_in,
 };
 pub use hooks::HooksConfig;
-pub use project::{ProjectCiConfig, ProjectConfig, ProjectListConfig, valid_project_config_keys};
+pub use project::{
+    ProjectCiConfig, ProjectCommitConfig, ProjectCommitGenerationConfig, ProjectConfig,
+    ProjectListConfig, valid_project_config_keys,
+};
 pub use unknown_tree::{
     UnknownAnalysis, UnknownTree, UnknownWarning, collect_unknown_warnings, compute_unknown_tree,
 };
@@ -603,6 +606,7 @@ squash-template-file = "~/file.txt"
             template_file: None,
             squash_template: None,
             squash_template_file: None,
+            template_append: None,
         };
 
         assert_snapshot!(toml::to_string(&config).unwrap(), @r#"

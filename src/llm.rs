@@ -251,6 +251,15 @@ struct TemplateContext<'a> {
     commits: &'a [String],
     /// Target branch for merge (squash only)
     target_branch: Option<&'a str>,
+    /// Approved project-level append fragment. `None` when no project
+    /// `template-append` is set or the user declined approval. The
+    /// user-level append fragment is read from the [`CommitGenerationConfig`]
+    /// directly (it needs no approval). Both fragments are themselves
+    /// minijinja templates — `build_prompt` renders each one and exposes
+    /// them as the `user_guidance` and `project_guidance` variables, which
+    /// the default templates wrap in `<user-guidance>` / `<project-guidance>`
+    /// blocks.
+    project_append: Option<&'a str>,
 }
 
 /// Default template for commit message prompts
@@ -269,7 +278,15 @@ const DEFAULT_TEMPLATE: &str = r#"<task>Write a commit message for the staged ch
 - Match recent commit style (conventional commits if used)
 - Describe the change, not the intent or benefit
 </style>
-
+{% if user_guidance %}
+<user-guidance>
+{{ user_guidance }}
+</user-guidance>
+{% endif %}{% if project_guidance %}
+<project-guidance>
+{{ project_guidance }}
+</project-guidance>
+{% endif %}
 <diffstat>
 {{ git_diff_stat }}
 </diffstat>
@@ -302,7 +319,15 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"<task>Write a commit message for the co
 - Match the style of commits being squashed (conventional commits if used)
 - Describe the change, not the intent or benefit
 </style>
-
+{% if user_guidance %}
+<user-guidance>
+{{ user_guidance }}
+</user-guidance>
+{% endif %}{% if project_guidance %}
+<project-guidance>
+{{ project_guidance }}
+</project-guidance>
+{% endif %}
 <commits branch="{{ branch }}" target="{{ target_branch }}">
 {% for commit in commits %}- {{ commit }}
 {% endfor %}</commits>
@@ -486,15 +511,53 @@ fn build_prompt(
 
     // Reverse commits so they're in chronological order (oldest first)
     let commits_chronological: Vec<&String> = context.commits.iter().rev().collect();
+    let empty_commits: Vec<String> = vec![];
+
+    // The append fragments are themselves minijinja templates. Render each
+    // one in its own pass with the same variable context so it doesn't share
+    // scope with the parent template (and can't recursively reference
+    // itself), then expose them separately as `user_guidance` /
+    // `project_guidance` so the default templates can label each by
+    // provenance. The user fragment needs no approval (it's the developer's
+    // own config); the project fragment is gated upstream and arrives here
+    // as `context.project_append` (or `None` if declined). Empty string when
+    // a source is absent — the templates gate the block on truthiness.
+    let render_fragment = |fragment: &str| -> anyhow::Result<String> {
+        let frag_tmpl = env.template_from_str(fragment)?;
+        Ok(frag_tmpl.render(minijinja::context! {
+            git_diff => context.git_diff,
+            git_diff_stat => context.git_diff_stat,
+            branch => context.branch,
+            recent_commits => context.recent_commits.unwrap_or(&empty_commits),
+            repo => context.repo_name,
+            commits => &commits_chronological,
+            target_branch => context.target_branch.unwrap_or(""),
+        })?)
+    };
+    let user_guidance = match config
+        .template_append
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(fragment) => render_fragment(fragment)?,
+        None => String::new(),
+    };
+    let project_guidance = match context.project_append {
+        Some(fragment) => render_fragment(fragment)?,
+        None => String::new(),
+    };
 
     let rendered = tmpl.render(minijinja::context! {
         git_diff => context.git_diff,
         git_diff_stat => context.git_diff_stat,
         branch => context.branch,
-        recent_commits => context.recent_commits.unwrap_or(&vec![]),
+        recent_commits => context.recent_commits.unwrap_or(&empty_commits),
         repo => context.repo_name,
         commits => commits_chronological,
         target_branch => context.target_branch.unwrap_or(""),
+        user_guidance => user_guidance,
+        project_guidance => project_guidance,
     })?;
 
     Ok(rendered)
@@ -502,26 +565,38 @@ fn build_prompt(
 
 /// `index_override` is forwarded to git operations that read the staging area, so
 /// `--dry-run` can preview against a temp index without touching the user's real one.
+///
+/// `project_append` is the approved project-level append fragment (or
+/// `None` to skip). It is rendered with the main template's context and
+/// appended to the prompt inside a `<project-guidance>` block; the
+/// user-level append fragment from the [`CommitGenerationConfig`] renders
+/// separately into `<user-guidance>`.
 pub(crate) fn generate_commit_message(
     commit_generation_config: &CommitGenerationConfig,
     index_override: Option<&Path>,
+    project_append: Option<&str>,
 ) -> anyhow::Result<String> {
     // Check if commit generation is configured (non-empty command)
     if commit_generation_config.is_configured() {
         let command = commit_generation_config.command.as_ref().unwrap();
         // Commit generation is explicitly configured - fail if it doesn't work
-        return try_generate_commit_message(command, commit_generation_config, index_override)
-            .map_err(|e| {
-                worktrunk::git::GitError::LlmCommandFailed {
-                    command: command.clone(),
-                    error: e.to_string(),
-                    reproduction_command: Some(format_reproduction_command(
-                        "wt step commit --show-prompt",
-                        command,
-                    )),
-                }
-                .into()
-            });
+        return try_generate_commit_message(
+            command,
+            commit_generation_config,
+            index_override,
+            project_append,
+        )
+        .map_err(|e| {
+            worktrunk::git::GitError::LlmCommandFailed {
+                command: command.clone(),
+                error: e.to_string(),
+                reproduction_command: Some(format_reproduction_command(
+                    "wt step commit --show-prompt",
+                    command,
+                )),
+            }
+            .into()
+        });
     }
 
     // Fallback: generate a descriptive commit message based on changed files
@@ -563,8 +638,9 @@ fn try_generate_commit_message(
     command: &str,
     config: &CommitGenerationConfig,
     index_override: Option<&Path>,
+    project_append: Option<&str>,
 ) -> anyhow::Result<String> {
-    let prompt = build_commit_prompt(config, index_override)?;
+    let prompt = build_commit_prompt(config, index_override, project_append)?;
     execute_llm_command(command, &prompt)
 }
 
@@ -596,6 +672,7 @@ fn run_git_capture(cmd: Cmd, what: &str) -> anyhow::Result<String> {
 pub(crate) fn build_commit_prompt(
     config: &CommitGenerationConfig,
     index_override: Option<&Path>,
+    project_append: Option<&str>,
 ) -> anyhow::Result<String> {
     let repo = Repository::current()?;
     let cwd = repo.discovery_path().to_path_buf();
@@ -645,6 +722,7 @@ pub(crate) fn build_commit_prompt(
         repo_name,
         commits: &[],
         target_branch: None,
+        project_append,
     };
     build_prompt(config, TemplateType::Commit, &context)
 }
@@ -656,6 +734,7 @@ pub(crate) fn generate_squash_message(
     current_branch: &str,
     repo_name: &str,
     commit_generation_config: &CommitGenerationConfig,
+    project_append: Option<&str>,
 ) -> anyhow::Result<String> {
     // Check if commit generation is configured (non-empty command)
     if commit_generation_config.is_configured() {
@@ -668,6 +747,7 @@ pub(crate) fn generate_squash_message(
             current_branch,
             repo_name,
             commit_generation_config,
+            project_append,
         )?;
 
         return execute_llm_command(command, &prompt).map_err(|e| {
@@ -704,6 +784,7 @@ pub(crate) fn build_squash_prompt(
     current_branch: &str,
     repo_name: &str,
     config: &CommitGenerationConfig,
+    project_append: Option<&str>,
 ) -> anyhow::Result<String> {
     let repo = Repository::current()?;
 
@@ -733,6 +814,7 @@ pub(crate) fn build_squash_prompt(
         repo_name,
         commits: subjects,
         target_branch: Some(target_branch),
+        project_append,
     };
     build_prompt(config, TemplateType::Squash, &context)
 }
@@ -784,6 +866,10 @@ pub(crate) fn test_commit_generation(
         repo_name: "test-repo",
         commits: &[],
         target_branch: None,
+        // The connectivity test sends a synthetic prompt — keep it independent
+        // of any project guidance so it doesn't surface team-policy text in
+        // `wt config show`.
+        project_append: None,
     };
     let prompt = build_prompt(commit_generation_config, TemplateType::Commit, &context)?;
 
@@ -860,6 +946,7 @@ mod tests {
             repo_name,
             commits: &[],
             target_branch: None,
+            project_append: None,
         }
     }
 
@@ -880,6 +967,7 @@ mod tests {
             repo_name,
             commits,
             target_branch: Some(target_branch),
+            project_append: None,
         }
     }
 
@@ -997,6 +1085,7 @@ mod tests {
             template_file: None,
             squash_template: None,
             squash_template_file: None,
+            template_append: None,
         };
         let context = commit_context("my diff", "feature", None, "repo");
         let result = build_prompt(&config, TemplateType::Commit, &context);
@@ -1012,6 +1101,7 @@ mod tests {
             template_file: None,
             squash_template: None,
             squash_template_file: None,
+            template_append: None,
         };
         let context = commit_context("diff", "main", None, "repo");
         let result = build_prompt(&config, TemplateType::Commit, &context);
@@ -1026,6 +1116,7 @@ mod tests {
             template_file: None,
             squash_template: None,
             squash_template_file: None,
+            template_append: None,
         };
         let context = commit_context("diff", "main", None, "repo");
         let result = build_prompt(&config, TemplateType::Commit, &context);
@@ -1043,6 +1134,7 @@ mod tests {
             template_file: None,
             squash_template: None,
             squash_template_file: None,
+            template_append: None,
         };
         let commits = vec!["commit1".to_string(), "commit2".to_string()];
         let context = commit_context("my diff", "feature", Some(&commits), "myrepo");
@@ -1053,6 +1145,195 @@ mod tests {
             prompt,
             "Repo: myrepo\nBranch: feature\nDiff: my diff\ncommit1\ncommit2\n"
         );
+    }
+
+    #[test]
+    fn test_default_commit_template_renders_project_fragment() {
+        let config = CommitGenerationConfig::default();
+        let mut context = commit_context("diff content", "main", None, "myrepo");
+        context.project_append = Some("- Use conventional commits\n- Reference the issue");
+        let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
+        // The block lives between `<style>` and `<diffstat>`, only when guidance is set.
+        assert_snapshot!(prompt, @r#"
+        <task>Write a commit message for the staged changes below.</task>
+
+        <format>
+        - Subject line under 50 chars
+        - For material changes, add a blank line then a body paragraph explaining the change
+        - Output only the commit message, no quotes or code blocks
+        </format>
+
+        <style>
+        - Imperative mood: "Add feature" not "Added feature"
+        - Match recent commit style (conventional commits if used)
+        - Describe the change, not the intent or benefit
+        </style>
+
+        <project-guidance>
+        - Use conventional commits
+        - Reference the issue
+        </project-guidance>
+
+        <diffstat>
+
+        </diffstat>
+
+        <diff>
+        diff content
+        </diff>
+
+        <context>
+        Branch: main
+
+        </context>
+        "#);
+    }
+
+    /// The user-level `template-append` (from `CommitGenerationConfig`,
+    /// no approval) renders into a `<user-guidance>` block.
+    #[test]
+    fn test_user_template_append_renders() {
+        let config = CommitGenerationConfig {
+            template_append: Some("- Personal: explain the why".to_string()),
+            ..Default::default()
+        };
+        let context = commit_context("diff content", "main", None, "myrepo");
+        let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
+        assert!(
+            prompt.contains("<user-guidance>\n- Personal: explain the why\n</user-guidance>"),
+            "user append should render in <user-guidance>, got:\n{prompt}"
+        );
+    }
+
+    /// User and project appends render into separate provenance-labeled
+    /// blocks, `<user-guidance>` before `<project-guidance>`.
+    #[test]
+    fn test_user_and_project_append_combined() {
+        let config = CommitGenerationConfig {
+            template_append: Some("USER LINE".to_string()),
+            ..Default::default()
+        };
+        let mut context = commit_context("d", "main", None, "repo");
+        context.project_append = Some("PROJECT LINE");
+        let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
+        let user_at = prompt.find("<user-guidance>\nUSER LINE\n</user-guidance>");
+        let project_at = prompt.find("<project-guidance>\nPROJECT LINE\n</project-guidance>");
+        assert!(
+            matches!((user_at, project_at), (Some(u), Some(p)) if u < p),
+            "<user-guidance> should precede <project-guidance>, got:\n{prompt}"
+        );
+    }
+
+    /// A blank user append is treated as unset — no empty block rendered.
+    #[test]
+    fn test_user_template_append_blank_is_unset() {
+        let config = CommitGenerationConfig {
+            template_append: Some("   \n\t ".to_string()),
+            ..Default::default()
+        };
+        let context = commit_context("d", "main", None, "repo");
+        let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
+        assert!(
+            !prompt.contains("<user-guidance>"),
+            "blank user append must not render a block, got:\n{prompt}"
+        );
+    }
+
+    /// The user append is itself a minijinja template, rendered against the
+    /// same context as the main template.
+    #[test]
+    fn test_user_template_append_expands_variables() {
+        let config = CommitGenerationConfig {
+            template_append: Some("Repo {{ repo }} on {{ branch }}".to_string()),
+            ..Default::default()
+        };
+        let context = commit_context("d", "feat/x", None, "myrepo");
+        let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
+        assert!(
+            prompt.contains("Repo myrepo on feat/x"),
+            "user append should expand variables, got:\n{prompt}"
+        );
+        assert!(
+            !prompt.contains("{{ repo }}"),
+            "user append was not rendered:\n{prompt}"
+        );
+    }
+
+    /// The project fragment is itself a minijinja template — variables in it
+    /// expand against the same context as the main template. Without this
+    /// test, the pre-render pass in `build_prompt` could regress to a raw
+    /// string injection and nothing else would catch it.
+    #[test]
+    fn test_project_fragment_expands_template_variables() {
+        let config = CommitGenerationConfig::default();
+        let mut context = commit_context("diff", "feature/auth", None, "myrepo");
+        context.project_append = Some("Branch: {{ branch }} ({{ repo }})");
+        let prompt = build_prompt(&config, TemplateType::Commit, &context).unwrap();
+        assert!(
+            prompt.contains("Branch: feature/auth (myrepo)"),
+            "expected minijinja-expanded fragment in prompt, got:\n{prompt}"
+        );
+        // Make sure the unexpanded form didn't sneak through.
+        assert!(
+            !prompt.contains("{{ branch }}"),
+            "fragment was not rendered:\n{prompt}"
+        );
+    }
+
+    /// A malformed fragment must surface its render error rather than slipping
+    /// into the LLM prompt as literal text.
+    #[test]
+    fn test_project_fragment_render_error_propagates() {
+        let config = CommitGenerationConfig::default();
+        let mut context = commit_context("diff", "main", None, "repo");
+        context.project_append = Some("Unclosed {{ branch");
+        let err = build_prompt(&config, TemplateType::Commit, &context).unwrap_err();
+        assert!(
+            err.to_string().contains("syntax error")
+                || err.to_string().to_lowercase().contains("unexpected"),
+            "expected minijinja syntax error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_default_squash_template_renders_project_fragment() {
+        let config = CommitGenerationConfig::default();
+        let commits = vec!["feat: A".to_string(), "fix: B".to_string()];
+        let mut context = squash_context("diff content", "feature", None, "repo", &commits, "main");
+        context.project_append = Some("- Reference the related issue");
+        let prompt = build_prompt(&config, TemplateType::Squash, &context).unwrap();
+        assert_snapshot!(prompt, @r#"
+        <task>Write a commit message for the combined effect of these commits.</task>
+
+        <format>
+        - Subject line under 50 chars
+        - For material changes, add a blank line then a body paragraph explaining the change
+        - Output only the commit message, no quotes or code blocks
+        </format>
+
+        <style>
+        - Imperative mood: "Add feature" not "Added feature"
+        - Match the style of commits being squashed (conventional commits if used)
+        - Describe the change, not the intent or benefit
+        </style>
+
+        <project-guidance>
+        - Reference the related issue
+        </project-guidance>
+
+        <commits branch="feature" target="main">
+        - fix: B
+        - feat: A
+        </commits>
+
+        <diffstat>
+
+        </diffstat>
+
+        <diff>
+        diff content
+        </diff>
+        "#);
     }
 
     #[test]
@@ -1102,6 +1383,7 @@ mod tests {
                     .to_string(),
             ),
             squash_template_file: None,
+            template_append: None,
         };
         let commits = vec!["A".to_string(), "B".to_string()];
         let context = squash_context("diff", "feature", None, "repo", &commits, "main");
@@ -1128,6 +1410,7 @@ mod tests {
             template_file: None,
             squash_template: Some("{% for x in commits %}{{ x }".to_string()),
             squash_template_file: None,
+            template_append: None,
         };
         let commits: Vec<String> = vec![];
         let context = squash_context("diff", "feature", None, "repo", &commits, "main");
@@ -1143,6 +1426,7 @@ mod tests {
             template_file: None,
             squash_template: Some("  \n  ".to_string()),
             squash_template_file: None,
+            template_append: None,
         };
         let commits: Vec<String> = vec![];
         let context = squash_context("diff", "feature", None, "repo", &commits, "main");
@@ -1162,6 +1446,7 @@ mod tests {
                     .to_string(),
             ),
             squash_template_file: None,
+            template_append: None,
         };
         let commits = vec!["A".to_string(), "B".to_string()];
         let recent = vec!["prev1".to_string(), "prev2".to_string()];
@@ -1206,6 +1491,7 @@ Diff follows:
             template_file: None,
             squash_template: None,
             squash_template_file: None,
+            template_append: None,
         };
 
         // With commits — exercises if-branch, filters, loop.index, whitespace control
@@ -1261,6 +1547,7 @@ Single commit: {{ commits[0] }}
                     .to_string(),
             ),
             squash_template_file: None,
+            template_append: None,
         };
 
         // Multiple commits — reversed for chronological order (C, B, A)
@@ -1305,6 +1592,7 @@ Single commit: {{ commits[0] }}
             template_file: Some(template_path.to_string_lossy().to_string()),
             squash_template: None,
             squash_template_file: None,
+            template_append: None,
         };
         let context = commit_context("my diff", "feature", None, "myrepo");
         let result = build_prompt(&config, TemplateType::Commit, &context);
@@ -1326,6 +1614,7 @@ Single commit: {{ commits[0] }}
             template_file: Some("/nonexistent/path/template.txt".to_string()),
             squash_template: None,
             squash_template_file: None,
+            template_append: None,
         };
         let context = commit_context("diff", "main", None, "repo");
         let result = build_prompt(&config, TemplateType::Commit, &context);
@@ -1351,6 +1640,7 @@ Single commit: {{ commits[0] }}
             template_file: None,
             squash_template: None,
             squash_template_file: Some(template_path.to_string_lossy().to_string()),
+            template_append: None,
         };
         let commits = vec!["A".to_string(), "B".to_string()];
         let context = squash_context("diff", "feature", None, "repo", &commits, "main");
@@ -1373,6 +1663,7 @@ Single commit: {{ commits[0] }}
             template_file: Some("~/nonexistent_template_for_test.txt".to_string()),
             squash_template: None,
             squash_template_file: None,
+            template_append: None,
         };
         let context = commit_context("diff", "main", None, "repo");
         let result = build_prompt(&config, TemplateType::Commit, &context);
@@ -1396,6 +1687,7 @@ Single commit: {{ commits[0] }}
             template_file: None,
             squash_template: None,
             squash_template_file: None,
+            template_append: None,
         };
         let context = commit_context("diff", "feature", None, "repo");
         let result = build_prompt(&config, TemplateType::Commit, &context);

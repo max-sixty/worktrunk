@@ -248,7 +248,7 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             if args.show_prompt {
                 commands::step_show_squash_prompt(args.target.as_deref())
             } else if args.dry_run {
-                commands::step_dry_run_squash(args.target.as_deref())
+                commands::step_dry_run_squash(args.target.as_deref(), yes)
             } else {
                 // Approval is handled inside handle_squash (like step_commit).
                 let repo = Repository::current()?;
@@ -266,6 +266,7 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
                     hooks,
                     args.stage,
                     &mut announcer,
+                    commands::PreApprovedGuidance::RunOwnGate,
                 )?;
                 announcer.flush()?;
                 if format == SwitchFormat::Json {

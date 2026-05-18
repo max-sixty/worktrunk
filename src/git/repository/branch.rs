@@ -103,8 +103,10 @@ impl<'a> Branch<'a> {
     /// This removes the tracking relationship, preventing accidental pushes
     /// to the wrong branch (e.g., when a feature branch was created from origin/main).
     pub fn unset_upstream(&self) -> anyhow::Result<()> {
+        // `--` separates the option from the positional branch name so a
+        // hyphen-prefixed branch cannot be misread as a flag.
         self.repo
-            .run_command(&["branch", "--unset-upstream", &self.name])?;
+            .run_command(&["branch", "--unset-upstream", "--", &self.name])?;
         Ok(())
     }
 

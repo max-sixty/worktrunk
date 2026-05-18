@@ -59,6 +59,39 @@ pub struct ProjectCiConfig {
     pub platform: Option<String>,
 }
 
+/// Project-level commit message configuration. *(Experimental — fields may
+/// change in future releases.)*
+///
+/// Only fields appropriate as shared, checked-in settings live here. The LLM
+/// command and full prompt template stay in user/system config — they
+/// describe per-developer environment (which CLI is installed, which agent
+/// they prefer).
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
+pub struct ProjectCommitConfig {
+    /// Commit message generation settings shared across the team.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<ProjectCommitGenerationConfig>,
+}
+
+/// Project-level commit message generation settings.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
+pub struct ProjectCommitGenerationConfig {
+    /// Text appended to the commit and squash prompts inside a
+    /// `<project-guidance>` block.
+    ///
+    /// Rendered with the same minijinja context as the main commit/squash
+    /// template (`{{ branch }}`, `{{ git_diff }}`, etc.), so it can
+    /// reference template variables directly. Use this for project-wide
+    /// commit conventions (e.g. "use conventional commits", "reference
+    /// issue numbers"). The user config has a `[commit.generation]
+    /// template-append` of its own; it renders into a separate
+    /// `<user-guidance>` block immediately before this one. The first time
+    /// the rendered text would reach the LLM, worktrunk prompts the user to
+    /// approve the raw fragment — the same gate as project-defined commands.
+    #[serde(default, rename = "template-append")]
+    pub template_append: Option<String>,
+}
+
 /// Project-level forge configuration.
 ///
 /// Names the forge explicitly, for repos where URL-based detection can't
@@ -124,6 +157,22 @@ impl ProjectConfig {
     pub fn copy_ignored(&self) -> Option<&CopyIgnoredConfig> {
         self.step.copy_ignored.as_ref()
     }
+
+    /// Project-level commit-message append fragment (trimmed, empty
+    /// treated as unset).
+    ///
+    /// Rendered with the main commit/squash template's variable context and
+    /// appended to the LLM prompt inside a `<project-guidance>` block.
+    /// Callers must gate the first use through the approval system before
+    /// sending the rendered output to the LLM.
+    pub fn commit_template_append(&self) -> Option<&str> {
+        self.commit
+            .generation
+            .as_ref()
+            .and_then(|g| g.template_append.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
 }
 
 /// Project-specific configuration with hooks.
@@ -171,6 +220,10 @@ pub struct ProjectConfig {
     /// Forge configuration (platform, API hostname)
     #[serde(default, skip_serializing_if = "is_default")]
     pub forge: ProjectForgeConfig,
+
+    /// Project-wide commit message settings (shared across teammates)
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub commit: ProjectCommitConfig,
 
     /// Configuration for `wt step` subcommands.
     #[serde(default, skip_serializing_if = "is_default")]
@@ -457,5 +510,56 @@ platform = "github"
         let config: ProjectConfig = toml::from_str(contents).unwrap();
         let cloned = config.clone();
         assert_eq!(config, cloned);
+    }
+
+    // ============================================================================
+    // ProjectCommitConfig Tests
+    // ============================================================================
+
+    #[test]
+    fn test_commit_template_append_parses() {
+        let toml = r#"
+[commit.generation]
+template-append = "Use conventional commits"
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.commit_template_append(),
+            Some("Use conventional commits")
+        );
+    }
+
+    /// `commit_template_append()` trims whitespace and treats a blank value
+    /// as unset. Otherwise an empty `<project-guidance>` block would still
+    /// render (confusing the LLM) and an empty approval would prompt.
+    #[test]
+    fn test_commit_template_append_blank_treated_as_unset() {
+        let toml = r#"
+[commit.generation]
+template-append = "   \n\t  "
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.commit_template_append(), None);
+
+        // Whitespace inside the body is preserved — only leading/trailing trimmed.
+        let toml = r#"
+[commit.generation]
+template-append = "  - a\n  - b  "
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.commit_template_append(), Some("- a\n  - b"));
+    }
+
+    #[test]
+    fn test_commit_template_append_missing_returns_none() {
+        let config = ProjectConfig::default();
+        assert_eq!(config.commit_template_append(), None);
+
+        // `[commit.generation]` present but no `template-append` field also returns None.
+        let toml = r#"
+[commit.generation]
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.commit_template_append(), None);
     }
 }

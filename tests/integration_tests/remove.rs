@@ -3052,6 +3052,88 @@ fn test_remove_foreground_with_submodules(mut repo: TestRepo) {
     );
 }
 
+/// Regression: `Repository::remove_worktree(path, force=false)` synthesizes
+/// `git worktree remove --force` for submodule worktrees, which suppresses
+/// git's own dirty-file check. The method must re-validate cleanliness
+/// itself right before the synthesized-force command so a file dirtied after
+/// the caller's planning-time check is not silently destroyed.
+#[rstest]
+fn test_remove_worktree_submodule_dirty_fails_closed(mut repo: TestRepo) {
+    use worktrunk::git::Repository;
+
+    // Submodule source.
+    let sub_source = repo.root_path().parent().unwrap().join("sub-source-dirty");
+    std::fs::create_dir_all(&sub_source).unwrap();
+    repo.run_git_in(&sub_source, &["init"]);
+    std::fs::write(sub_source.join("sub.txt"), "submodule content").unwrap();
+    repo.run_git_in(&sub_source, &["add", "sub.txt"]);
+    repo.run_git_in(&sub_source, &["commit", "-m", "sub init"]);
+
+    std::fs::write(repo.root_path().join("tracked.txt"), "original\n").unwrap();
+    repo.run_git(&["add", "tracked.txt"]);
+    repo.run_git(&["commit", "-m", "add tracked file"]);
+
+    let output = repo
+        .git_command()
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_source.to_str().unwrap(),
+            "submod",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Failed to add submodule: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    repo.run_git(&["commit", "-m", "add submodule"]);
+
+    let worktree_path = repo.add_worktree("feature-submod-dirty");
+    let output = repo
+        .git_command()
+        .current_dir(&worktree_path)
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Failed to init submodule: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Simulate the TOCTOU window: a tracked file is modified after the
+    // caller's clean check but before remove_worktree's destructive step.
+    std::fs::write(worktree_path.join("tracked.txt"), "DIRTIED\n").unwrap();
+
+    let repo_api = Repository::at(repo.root_path()).unwrap();
+    let result = repo_api.remove_worktree(&worktree_path, /* force */ false);
+
+    assert!(
+        result.is_err(),
+        "remove_worktree must fail closed when a submodule worktree is dirty \
+         (synthesized --force would otherwise destroy the change)"
+    );
+    assert!(
+        worktree_path.exists(),
+        "submodule worktree must be preserved, not force-removed"
+    );
+    assert_eq!(
+        std::fs::read_to_string(worktree_path.join("tracked.txt")).unwrap(),
+        "DIRTIED\n",
+        "the post-check modification must be intact (not destroyed)"
+    );
+}
+
 /// Restore write permissions recursively so TempDir cleanup succeeds.
 #[cfg(unix)]
 fn restore_dir_permissions(dir: &std::path::Path) {

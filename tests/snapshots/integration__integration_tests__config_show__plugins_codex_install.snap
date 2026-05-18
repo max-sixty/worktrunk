@@ -61,5 +61,3 @@ exit_code: 0
 [36m◎[39m [36mAdding Codex plugin marketplace...[39m
 [32m✓[39m [32mCodex marketplace configured[39m
 [2m↳[22m [2mNext, run /plugins in Codex and install Worktrunk from the marketplace[22m
-[2m↳[22m [2mActivity markers (🤖/💬) use Codex plugin-bundled hooks[22m
-[2m↳[22m [2mIf markers do not appear, enable Codex plugin hooks or copy plugins/worktrunk/hooks/hooks.json to a standard Codex hook location[22m

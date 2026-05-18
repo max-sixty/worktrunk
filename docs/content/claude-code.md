@@ -1,23 +1,21 @@
 +++
 title = "Claude Code & Codex Integration"
-description = "Worktrunk plugins for Claude Code and Codex: configuration skill, agent worktree isolation, and activity tracking for wt list."
+description = "Worktrunk plugins for Claude Code and Codex: a shared configuration skill, plus Claude-only worktree isolation and wt list activity tracking."
 weight = 23
 
 [extra]
 group = "Reference"
 +++
 
-Worktrunk ships plugins for Claude Code and Codex. Both bundle:
-
-1. **Configuration skill** — Documentation the agent can read, so it can help set up LLM commits, hooks, and troubleshoot issues
-2. **Activity tracking** — Status markers in `wt list` showing which worktrees have active agent sessions (🤖 working, 💬 waiting)
+Worktrunk ships plugins for Claude Code and Codex. Both bundle a **configuration skill** — documentation the agent can read, so it can help set up LLM commits, hooks, and troubleshoot issues.
 
 The Claude Code plugin additionally provides:
 
-3. **Worktree isolation** — Routes agent-created isolated worktrees through `wt switch --create` / `wt remove` instead of raw `git`
-4. **`/wt-switch-create` command** — Creates a worktrunk worktree and moves the current Claude session into it
+1. **Activity tracking** — Status markers in `wt list` showing which worktrees have active agent sessions (🤖 working, 💬 waiting)
+2. **Worktree isolation** — Routes agent-created isolated worktrees through `wt switch --create` / `wt remove` instead of raw `git`
+3. **`/wt-switch-create` command** — Creates a worktrunk worktree and moves the current Claude session into it
 
-Codex does not currently expose equivalent worktree-lifecycle hooks, so Codex users invoke `wt switch --create` and `wt remove` directly.
+Codex exposes no turn-end or worktree-lifecycle hooks, so the Codex plugin ships only the configuration skill.
 
 ## Installation
 
@@ -37,9 +35,7 @@ This configures the Worktrunk marketplace in Codex. Then run `/plugins` in Codex
 
 {{ terminal(cmd="codex plugin marketplace add max-sixty/worktrunk") }}
 
-To remove the marketplace entry, run `wt config plugins codex uninstall`. Already-installed plugins and global Codex hook feature flags are left unchanged.
-
-If activity markers do not appear after installing the plugin, Codex may be gating plugin-bundled hooks. Run `codex features list`; if `plugin_hooks` is `false`, enable it (`codex features enable plugin_hooks`), or copy this repo's `plugins/worktrunk/hooks/hooks.json` to `~/.codex/hooks.json`.
+To remove the marketplace entry, run `wt config plugins codex uninstall`. Already-installed plugins are left unchanged.
 
 ## Configuration skill
 
@@ -52,9 +48,9 @@ The plugin includes a skill — documentation the agent can read — covering Wo
 
 Claude Code is designed to load the skill automatically when it detects worktrunk-related questions.
 
-## Activity tracking
+## Activity tracking (Claude Code only)
 
-The plugins track agent sessions with status markers in `wt list`:
+The Claude Code plugin tracks Claude sessions with status markers in `wt list`:
 
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__list_with_user_marker.snap — edit source to update -->
 
@@ -74,7 +70,7 @@ The plugins track agent sessions with status markers in `wt list`:
 - 🤖 — agent is working
 - 💬 — agent is waiting or idle
 
-The Claude Code plugin clears the marker when a session ends; Codex exposes no session-end hook event, so a Codex worktree rests at 💬 after its session ends rather than clearing. Either plugin can also leave a stale marker if the agent process is killed before its stop hook runs. `wt config state marker clear` removes a marker manually.
+The plugin clears the marker when a session ends. A stale marker can remain if the Claude process is killed before its stop hook runs; `wt config state marker clear` removes a marker manually.
 
 ### Manual status markers
 

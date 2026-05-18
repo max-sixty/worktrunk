@@ -23,6 +23,7 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     NO_COLOR: ""
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
@@ -37,6 +38,7 @@ info:
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
@@ -69,7 +71,7 @@ exit_code: 0
 [107m [0m \ No newline at end of file[m
 [107m [0m [32m+[m[32m[commit.generation][m
 [107m [0m [32m+[m[32mcommand = "claude"[m
-[33m▲[39m [33mKey [1mcommit-generation[22m belongs in user config as [commit.generation][39m
+[33m▲[39m [33mKey [1mcommit.generation.command[22m belongs in user config (will be ignored)[39m
 
 [36mSHELL INTEGRATION[39m
 [33m▲[39m [33mShell integration not configured[39m

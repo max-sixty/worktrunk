@@ -2722,6 +2722,87 @@ fn test_switch_pr_not_found(#[from(repo_with_remote)] repo: TestRepo) {
     });
 }
 
+/// Regression: when the GitHub remote is *non-primary* (origin is GitLab,
+/// `upstream` is GitHub), `wt switch pr:N` must derive owner/repo from the
+/// GitHub remote, not the primary. The mock answers only the upstream's API
+/// path; the old code queried the gitlab origin's path and hit `_default`.
+#[rstest]
+fn test_switch_pr_uses_nonprimary_github_remote(#[from(repo_with_remote)] mut repo: TestRepo) {
+    repo.add_worktree("feature-auth");
+    repo.run_git(&["push", "origin", "feature-auth"]);
+
+    let bare_url = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["config", "remote.origin.url"])
+            .run()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    // origin is GitLab (non-GitHub) — must NOT be used for the gh api path.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/glowner/glrepo.git",
+    ]);
+    // GitHub lives on a non-primary remote.
+    repo.run_git(&[
+        "remote",
+        "add",
+        "upstream",
+        "https://github.com/upowner/uprepo.git",
+    ]);
+    // Redirect the GitHub URL to the local bare remote so fetch works.
+    repo.run_git(&[
+        "config",
+        &format!("url.{}.insteadOf", bare_url),
+        "https://github.com/upowner/uprepo.git",
+    ]);
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    copy_mock_binary(&mock_bin, "gh");
+    fs::write(
+        mock_bin.join("pr_response.json"),
+        r#"{
+            "title": "Fix auth",
+            "user": {"login": "alice"},
+            "state": "open",
+            "draft": false,
+            "head": {"ref": "feature-auth", "repo": {"name": "uprepo", "owner": {"login": "upowner"}}},
+            "base": {"ref": "main", "repo": {"name": "uprepo", "owner": {"login": "upowner"}}},
+            "html_url": "https://github.com/upowner/uprepo/pull/77"
+        }"#,
+    )
+    .unwrap();
+    // Only answer the *upstream* repo's API path. If owner/repo were derived
+    // from the gitlab origin, the path would differ and hit `_default` (exit 1).
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command(
+            "api repos/upowner/uprepo/pulls/77",
+            MockResponse::file("pr_response.json"),
+        )
+        .command("_default", MockResponse::exit(1))
+        .write(&mock_bin);
+
+    let output = {
+        let mut cmd = repo.wt_command();
+        cmd.args(["switch", "pr:77"]);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        cmd.output().unwrap()
+    };
+    assert!(
+        output.status.success(),
+        "switch pr:77 must resolve via the non-primary GitHub remote; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// Test error when fork was deleted (head.repo is null)
 #[rstest]
 fn test_switch_pr_deleted_fork(#[from(repo_with_remote)] repo: TestRepo) {
@@ -4553,6 +4634,50 @@ fn test_switch_pr_azure_same_repo(#[from(repo_with_remote)] mut repo: TestRepo) 
         configure_mock_cli_env(&mut cmd, &mock_bin);
         assert_cmd_snapshot!("switch_pr_azure_same_repo", cmd);
     });
+}
+
+/// Regression: an Azure PR whose `sourceRefName` is just `refs/heads/`
+/// (empty branch after stripping) must fail at the provider boundary with a
+/// clear message — matching GitHub/GitLab/Gitea — not produce a confusing
+/// downstream git/path error.
+#[rstest]
+fn test_switch_pr_azure_empty_source_branch(#[from(repo_with_remote)] repo: TestRepo) {
+    set_azure_remote_url(
+        &repo,
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    );
+
+    let az_response = r#"{
+        "title": "Broken PR",
+        "createdBy": {"uniqueName": "alice@example.com"},
+        "status": "active",
+        "isDraft": false,
+        "sourceRefName": "refs/heads/",
+        "repository": {
+            "name": "test-repo",
+            "project": {"name": "myproject"},
+            "webUrl": "https://dev.azure.com/myorg/myproject/_git/test-repo"
+        },
+        "forkSource": null
+    }"#;
+
+    let mock_bin = setup_mock_az(&repo, Some(az_response));
+
+    let output = {
+        let mut cmd = repo.wt_command();
+        cmd.args(["switch", "pr:101"]);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        cmd.output().unwrap()
+    };
+    assert!(
+        !output.status.success(),
+        "switch must fail on an empty Azure source branch"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("empty branch name"),
+        "expected a clear empty-branch diagnostic, got:\n{stderr}"
+    );
 }
 
 /// Legacy `*.visualstudio.com` remotes encode the org in the hostname — exercises

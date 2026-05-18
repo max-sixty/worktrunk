@@ -10,7 +10,9 @@ use worktrunk::styling::{
     success_message,
 };
 
-use super::super::command_approval::approve_or_skip;
+use super::super::command_approval::{
+    approve_commit_template_append, approve_or_skip, resolve_template_for_preview,
+};
 use super::super::command_executor::FailureStrategy;
 use super::super::commit::{CommitGenerator, CommitOutcome, HookGate, StageMode};
 use super::super::context::CommandEnv;
@@ -18,6 +20,22 @@ use super::super::hooks::{self, HookAnnouncer, execute_hook};
 use super::super::repository_ext::RepositoryCliExt;
 use super::super::template_vars::TemplateVars;
 use super::shared::print_dry_run;
+
+/// Caller's stance on project commit-message guidance approval.
+///
+/// `wt step squash` runs its own gate (the user invokes squash directly, so
+/// there's no upstream batch to attach to). `wt merge` bundles the append
+/// into its hook-approval batch and passes the result here so the user
+/// doesn't see a second prompt mid-flow.
+#[derive(Debug, Clone)]
+pub enum PreApprovedGuidance {
+    /// No pre-approval — `handle_squash` runs its own gate via
+    /// `approve_commit_template_append` (only if the LLM is configured).
+    RunOwnGate,
+    /// Caller already resolved the guidance through an upstream batch.
+    /// `None` means "guidance not configured or user declined".
+    Resolved(Option<String>),
+}
 
 /// Result of a squash operation
 #[derive(Debug, Clone)]
@@ -55,6 +73,7 @@ pub fn handle_squash(
     hooks: HookGate,
     stage: Option<StageMode>,
     announcer: &mut HookAnnouncer<'_>,
+    pre_approved_guidance: PreApprovedGuidance,
 ) -> anyhow::Result<SquashResult> {
     // Load config once, run LLM setup prompt, then reuse config
     let mut config = UserConfig::load().context("Failed to load config")?;
@@ -67,7 +86,20 @@ pub fn handle_squash(
     let current_branch = env.require_branch("squash")?.to_string();
     let ctx = env.context(yes);
     let resolved = env.resolved();
-    let generator = CommitGenerator::new(&resolved.commit_generation);
+    // Defer project-guidance approval until we know an LLM call will happen
+    // (after the NoCommitsAhead / AlreadySingleCommit early-exits). When the
+    // caller pre-approved via an upstream batch (e.g. `wt merge`), use that
+    // value directly to avoid a second prompt mid-flow.
+    let llm_configured = resolved.commit_generation.is_configured();
+    let approve_guidance = || -> anyhow::Result<Option<String>> {
+        match &pre_approved_guidance {
+            PreApprovedGuidance::Resolved(value) => Ok(value.clone()),
+            PreApprovedGuidance::RunOwnGate if llm_configured => {
+                approve_commit_template_append(&ctx)
+            }
+            PreApprovedGuidance::RunOwnGate => Ok(None),
+        }
+    };
 
     // CLI flag overrides config value
     let stage_mode = stage.unwrap_or(resolved.commit.stage());
@@ -153,6 +185,15 @@ pub fn handle_squash(
         return Ok(SquashResult::NoCommitsAhead(integration_target));
     }
 
+    if commit_count == 1 && !has_staged {
+        // Single commit, no staged changes - already squashed
+        return Ok(SquashResult::AlreadySingleCommit);
+    }
+
+    // From here on, an LLM call may happen — gate the project append.
+    let project_append = approve_guidance()?;
+    let generator = CommitGenerator::new(&resolved.commit_generation, project_append.as_deref());
+
     if commit_count == 0 && has_staged {
         // Just staged changes, no commits - commit them directly (no squashing needed)
         let CommitOutcome {
@@ -165,11 +206,6 @@ pub fn handle_squash(
             message,
             stage_mode,
         });
-    }
-
-    if commit_count == 1 && !has_staged {
-        // Single commit, no staged changes - already squashed
-        return Ok(SquashResult::AlreadySingleCommit);
     }
 
     // Either multiple commits OR single commit with staged changes - squash them
@@ -245,6 +281,7 @@ pub fn handle_squash(
         &current_branch,
         repo_name,
         &resolved.commit_generation,
+        project_append.as_deref(),
     )?;
 
     // Display the generated commit message
@@ -303,21 +340,23 @@ pub fn handle_squash(
 ///
 /// Builds and outputs the squash prompt without running the LLM or squashing.
 pub fn step_show_squash_prompt(target: Option<&str>) -> anyhow::Result<()> {
-    preview_squash(target, false)
+    // `--show-prompt` never invokes the LLM, so the `yes` flag is irrelevant
+    // — pass false; the guidance gate inside `preview_squash` is dry-run only.
+    preview_squash(target, false, false)
 }
 
 /// Handle `wt step squash --dry-run`
 ///
 /// Renders the squash prompt, prints the LLM command, generates the message, and prints
 /// it without resetting, running hooks, or committing.
-pub fn step_dry_run_squash(target: Option<&str>) -> anyhow::Result<()> {
-    preview_squash(target, true)
+pub fn step_dry_run_squash(target: Option<&str>, yes: bool) -> anyhow::Result<()> {
+    preview_squash(target, true, yes)
 }
 
 /// Shared implementation for `--show-prompt` and `--dry-run` on squash. `--show-prompt`
 /// (`dry_run = false`) outputs only the rendered prompt; `--dry-run` additionally calls
 /// the LLM and prints the command and the generated message.
-fn preview_squash(target: Option<&str>, dry_run: bool) -> anyhow::Result<()> {
+fn preview_squash(target: Option<&str>, dry_run: bool, yes: bool) -> anyhow::Result<()> {
     let repo = Repository::current()?;
     let config = UserConfig::load().context("Failed to load config")?;
     let project_id = repo.project_identifier().ok();
@@ -341,6 +380,10 @@ fn preview_squash(target: Option<&str>, dry_run: bool) -> anyhow::Result<()> {
         .and_then(|n| n.to_str())
         .unwrap_or("repo");
 
+    let env = CommandEnv::for_action(config)?;
+    let ctx = env.context(yes);
+    let project_append = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
+
     let prompt = crate::llm::build_squash_prompt(
         &integration_target,
         &merge_base,
@@ -348,6 +391,7 @@ fn preview_squash(target: Option<&str>, dry_run: bool) -> anyhow::Result<()> {
         &current_branch,
         repo_name,
         &commit_config,
+        project_append.as_deref(),
     )?;
     if !dry_run {
         println!("{}", prompt);
@@ -360,6 +404,7 @@ fn preview_squash(target: Option<&str>, dry_run: bool) -> anyhow::Result<()> {
         &current_branch,
         repo_name,
         &commit_config,
+        project_append.as_deref(),
     )?;
     print_dry_run(&prompt, &commit_config, &message)
 }

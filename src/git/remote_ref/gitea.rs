@@ -18,7 +18,7 @@ use super::{
     CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_api_error,
     extract_host_from_html_url, run_cli_api,
 };
-use crate::git::{self, RefType, Repository};
+use crate::git::{RefType, Repository};
 
 /// Gitea Pull Request provider.
 #[derive(Debug, Clone, Copy)]
@@ -92,14 +92,12 @@ struct TeaOwner {
 fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
     let repo_root = repo.repo_path()?;
 
-    // Resolve owner/repo from the primary remote URL so we pass a fully
-    // expanded path to `tea api`. See module docstring for rationale.
-    let remote = repo.primary_remote()?;
-    let url = repo
-        .remote_url(&remote)
-        .ok_or_else(|| anyhow::anyhow!("Remote '{}' has no URL", remote))?;
-    let parsed = git::GitRemoteUrl::parse(&url)
-        .ok_or_else(|| anyhow::anyhow!("Cannot parse remote URL: {}", url))?;
+    // Resolve owner/repo from the Gitea remote — which may be non-primary in
+    // a mixed-remote repo — so we pass a fully expanded path to `tea api`.
+    // See module docstring for the raw-URL rationale.
+    let parsed = repo
+        .forge_remote_parsed_url(|u| u.is_gitea())
+        .ok_or_else(|| anyhow::anyhow!("No Gitea remote configured"))?;
 
     let api_path = format!(
         "repos/{}/{}/pulls/{}",

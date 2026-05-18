@@ -209,7 +209,7 @@ This does not install the plugin by itself. Afterward, open `/plugins` in Codex 
 $ codex plugin marketplace remove worktrunk
 ```
 
-This leaves any already-installed Worktrunk plugin and global Codex hook feature flags unchanged."#
+This leaves any already-installed Worktrunk plugin unchanged."#
     )]
     Uninstall,
 }
@@ -272,9 +272,7 @@ $ wt config plugins claude install-statusline
 
     /// Codex plugin
     #[command(
-        after_long_help = r#"Bundled activity hooks — can show status markers in `wt list` when Codex loads plugin hooks:
-- 🤖 — Codex is working
-- 💬 — Codex is waiting or idle
+        after_long_help = r#"Bundles a configuration skill — documentation Codex can read to help set up LLM commits, project hooks, and worktree paths. Activity markers in `wt list` are Claude Code only: Codex exposes no turn-end hook event, so the Codex plugin omits them until it does.
 
 ## Examples
 
@@ -575,7 +573,7 @@ $ wt config alias dry-run deploy -- --env=staging
 ## Supported tools
 
 - **claude** — Claude Code plugin (activity tracking + statusline)
-- **codex** — Codex plugin (Worktrunk skill + bundled activity hooks)
+- **codex** — Codex plugin (Worktrunk configuration skill)
 - **opencode** — OpenCode plugin (activity tracking)
 
 ## Examples

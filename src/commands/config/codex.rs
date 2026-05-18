@@ -44,16 +44,11 @@ pub fn handle_codex_install(yes: bool) -> Result<()> {
         "{}",
         hint_message("Next, run /plugins in Codex and install Worktrunk from the marketplace")
     );
-    eprintln!(
-        "{}",
-        hint_message("Activity markers (🤖/💬) use Codex plugin-bundled hooks")
-    );
-    eprintln!(
-        "{}",
-        hint_message(
-            "If markers do not appear, enable Codex plugin hooks or copy plugins/worktrunk/hooks/hooks.json to a standard Codex hook location"
-        )
-    );
+    // The Codex plugin deliberately ships no activity-marker hooks: Codex's
+    // HookEventNameWire vocabulary (codex-cli 0.130.0) has no `Stop`/turn-end
+    // event, so a 🤖 set on UserPromptSubmit could never return to 💬 within a
+    // session. Re-add the hooks (and restore the marker hints + docs) once
+    // Codex exposes a turn-end hook event. See CLAUDE.md → "Plugin Layout".
 
     Ok(())
 }
@@ -94,10 +89,7 @@ pub fn handle_codex_uninstall(yes: bool) -> Result<()> {
     }
 
     eprintln!("{}", success_message("Codex marketplace removed"));
-    eprintln!(
-        "{}",
-        hint_message("Installed plugins and global Codex hook feature flags are left unchanged")
-    );
+    eprintln!("{}", hint_message("Installed plugins are left unchanged"));
 
     Ok(())
 }

@@ -215,7 +215,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let remove_requested = remove && !on_target;
 
     // Collect and approve all commands upfront for batch permission request
-    let (all_commands, project_id) = collect_merge_commands(
+    let (mut all_commands, project_id) = collect_merge_commands(
         repo,
         &destination_path,
         commit,
@@ -223,6 +223,26 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         remove_requested,
         squash_enabled,
     )?;
+
+    // Bundle commit guidance into the same batch as hooks so an LLM-bound
+    // merge produces one approval prompt, not two. Only when a commit will
+    // actually be created and an LLM is configured.
+    let will_create_commit = current_wt.is_dirty()? || squash_enabled;
+    let llm_configured = env
+        .config
+        .commit_generation(Some(&project_id))
+        .is_configured();
+    let project_append_text: Option<String> = if commit && will_create_commit && llm_configured {
+        env.repo
+            .load_project_config()?
+            .as_ref()
+            .and_then(|cfg| cfg.commit_template_append().map(str::to_string))
+    } else {
+        None
+    };
+    if let Some(ref g) = project_append_text {
+        all_commands.push(ApprovableCommand::commit_template_append(g.clone()));
+    }
 
     // Approve all commands in a single batch (shows templates, not expanded values)
     let approvals = Approvals::load().context("Failed to load approvals")?;
@@ -249,6 +269,10 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // the end.
     let mut announcer = HookAnnouncer::new(repo, config, false);
 
+    let guidance = super::step::PreApprovedGuidance::Resolved(
+        approved.then_some(project_append_text).flatten(),
+    );
+
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
     let committed = if commit && current_wt.is_dirty()? {
         if squash_enabled {
@@ -261,6 +285,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             options.stage_mode = stage_mode;
             options.warn_about_untracked = stage_mode == super::commit::StageMode::All;
             options.show_no_squash_note = true;
+            options.guidance = guidance.clone();
 
             let _ = options.commit(&mut announcer)?;
             true // Committed directly
@@ -280,6 +305,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
                 commit_hooks,
                 Some(stage_mode),
                 &mut announcer,
+                guidance,
             )?,
             super::step::SquashResult::Squashed { .. }
         )
