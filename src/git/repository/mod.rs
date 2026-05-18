@@ -755,15 +755,33 @@ impl Repository {
     ///
     /// Runs from `discovery_path` rather than `git_common_dir` (which we
     /// don't know yet — the rev-parse thread is racing in parallel). Git's
-    /// `config --list` emits the same merged system + global + local config
-    /// from any path inside the repo, including linked worktrees of bare
-    /// repos: linked worktrees and the common dir share one config file, so
-    /// the merged output is identical to the existing `git_common_dir`
+    /// `config --list` normally emits the same merged system + global + local
+    /// config from any path inside the repo, including linked worktrees of
+    /// bare repos: linked worktrees and the common dir share one config file,
+    /// so the merged output is identical to the existing `git_common_dir`
     /// invocation in [`Repository::all_config`].
+    ///
+    /// **`extensions.worktreeConfig` exception** ([#2779]): when the
+    /// extension is enabled, each worktree gets its own `config.worktree`
+    /// file (the main worktree at `.git/config.worktree`, linked worktrees
+    /// at `.git/worktrees/<name>/config.worktree`). From a linked worktree
+    /// `git config --list` merges only that linked worktree's
+    /// `config.worktree`, missing values set on the main worktree's
+    /// `config.worktree` — most importantly `core.bare = true` for the
+    /// bare-style `myproject/.git + sibling worktrees` layout. Caching that
+    /// incomplete map would cause `is_bare()` to read `false`, and the
+    /// `repo_path()` fallback would walk one level too high. So when the
+    /// parsed map contains `extensions.worktreeconfig=true`, we skip the
+    /// preload entirely — [`Repository::all_config`] re-forks from
+    /// `git_common_dir`, which sees the full merged set (one extra
+    /// subprocess in this layout; the prewarm benefit is preserved for all
+    /// other repos).
     ///
     /// Failures (non-repo directory, corrupted config) are swallowed; the
     /// on-demand path inside `all_config` re-forks the same subprocess and
     /// surfaces the error there.
+    ///
+    /// [#2779]: https://github.com/max-sixty/worktrunk/issues/2779
     fn prewarm_git_config(discovery_path: &Path) {
         let Ok(output) = Cmd::new("git")
             .args(["config", "--list", "-z"])
@@ -777,6 +795,9 @@ impl Repository {
             return;
         }
         let parsed = parse_config_list_z(&output.stdout);
+        if worktree_config_enabled(&parsed) {
+            return;
+        }
         GIT_CONFIG_PRELOAD.insert(discovery_path.to_path_buf(), parsed);
     }
 
@@ -1566,6 +1587,29 @@ pub(super) fn canonical_config_key(key: &str) -> String {
             out
         }
     }
+}
+
+/// True when `extensions.worktreeConfig = true` appears in a parsed config map.
+///
+/// When this extension is enabled, per-worktree config lives in separate
+/// `config.worktree` files — the main worktree's at `.git/config.worktree`,
+/// linked worktrees' at `.git/worktrees/<name>/config.worktree`. From a
+/// linked worktree, `git config --list` does not merge the main worktree's
+/// `config.worktree`, so a config read taken there is missing any value the
+/// main worktree set per-worktree (e.g., `core.bare`). [`prewarm_git_config`]
+/// uses this to detect and skip the preload in that layout. See [#2779].
+///
+/// Git emits config keys in lowercased canonical form, so the lookup matches
+/// directly without going through [`canonical_config_key`].
+///
+/// [`prewarm_git_config`]: Repository::prewarm_git_config
+/// [#2779]: https://github.com/max-sixty/worktrunk/issues/2779
+fn worktree_config_enabled(parsed: &indexmap::IndexMap<String, Vec<String>>) -> bool {
+    parsed
+        .get("extensions.worktreeconfig")
+        .and_then(|v| v.last())
+        .map(|v| parse_git_bool(v))
+        .unwrap_or(false)
 }
 
 /// Parse the output of `git config --list -z`.
