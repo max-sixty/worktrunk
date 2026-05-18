@@ -77,17 +77,17 @@ pub struct ProjectCommitConfig {
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct ProjectCommitGenerationConfig {
     /// Text appended to the commit and squash prompts inside a
-    /// `<template_append>` block.
+    /// `<project-guidance>` block.
     ///
     /// Rendered with the same minijinja context as the main commit/squash
     /// template (`{{ branch }}`, `{{ git_diff }}`, etc.), so it can
     /// reference template variables directly. Use this for project-wide
     /// commit conventions (e.g. "use conventional commits", "reference
     /// issue numbers"). The user config has a `[commit.generation]
-    /// template-append` of its own; both are appended (user first). The
-    /// first time the rendered text would reach the LLM, worktrunk prompts
-    /// the user to approve the raw fragment — the same gate as
-    /// project-defined commands.
+    /// template-append` of its own; it renders into a separate
+    /// `<user-guidance>` block immediately before this one. The first time
+    /// the rendered text would reach the LLM, worktrunk prompts the user to
+    /// approve the raw fragment — the same gate as project-defined commands.
     #[serde(default, rename = "template-append")]
     pub template_append: Option<String>,
 }
@@ -162,7 +162,7 @@ impl ProjectConfig {
     /// treated as unset).
     ///
     /// Rendered with the main commit/squash template's variable context and
-    /// appended to the LLM prompt inside a `<template_append>` block.
+    /// appended to the LLM prompt inside a `<project-guidance>` block.
     /// Callers must gate the first use through the approval system before
     /// sending the rendered output to the LLM.
     pub fn commit_template_append(&self) -> Option<&str> {
@@ -530,7 +530,7 @@ template-append = "Use conventional commits"
     }
 
     /// `commit_template_append()` trims whitespace and treats a blank value
-    /// as unset. Otherwise an empty `<template_append>` block would still
+    /// as unset. Otherwise an empty `<project-guidance>` block would still
     /// render (confusing the LLM) and an empty approval would prompt.
     #[test]
     fn test_commit_template_append_blank_treated_as_unset() {

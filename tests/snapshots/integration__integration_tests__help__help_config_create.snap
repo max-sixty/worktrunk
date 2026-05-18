@@ -247,7 +247,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# - `{{ git_diff }}`, `{{ git_diff_stat }}` — diff content[0m
 [107m [0m [2m# - `{{ branch }}`, `{{ repo }}` — context[0m
 [107m [0m [2m# - `{{ recent_commits }}` — recent commit messages[0m
-[107m [0m [2m# - `{{ user_guidance }}`, `{{ project_guidance }}` — rendered append fragments (see Appending to the prompt (#appending-to-the-prompt))[0m
+[107m [0m [2m# - `{{ user_guidance }}`, `{{ project_guidance }}` — rendered append fragments (see Appending to the prompt (https://worktrunk.dev/config/#appending-to-the-prompt))[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Default template:[0m
 [107m [0m [2m#[0m

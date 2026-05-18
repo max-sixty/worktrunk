@@ -282,7 +282,7 @@ Available variables:
 - `{{ git_diff }}`, `{{ git_diff_stat }}` — diff content
 - `{{ branch }}`, `{{ repo }}` — context
 - `{{ recent_commits }}` — recent commit messages
-- `{{ user_guidance }}`, `{{ project_guidance }}` — rendered append fragments (see [Appending to the prompt](#appending-to-the-prompt))
+- `{{ user_guidance }}`, `{{ project_guidance }}` — rendered append fragments (see [Appending to the prompt](https://worktrunk.dev/config/#appending-to-the-prompt))
 
 Default template:
 
