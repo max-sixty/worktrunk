@@ -3623,7 +3623,18 @@ fn test_codex_plugin_metadata_is_valid_json() {
 /// `<subdir>/.claude-plugin/` fails "Plugin not found"); Gemini (gemini-cli
 /// 0.42) hard-probes `${extensionPath}/{hooks,skills}/` with no path
 /// indirection and `install` *copies* the extension dir, so it must be
-/// self-contained (bundled `wt.sh`, no `../worktrunk` reference). Duplicated
+/// self-contained (bundled `wt.sh`, no `../worktrunk` reference).
+///
+/// Gemini install constraints (the manifest moving under `plugins/gemini/`
+/// trades these away — install via a local path, `gemini extensions install
+/// <repo>/plugins/gemini`, until a `wt config plugins gemini install` command
+/// exists): github-URL install (`owner/repo`) reads `<clone-root>/
+/// gemini-extension.json` and so can't see the manifest; and `fs.cp` rewrites
+/// the relative `skills` symlink to an absolute path, so the skills resolve
+/// only while the source repo stays in place (a git/URL install loses them to
+/// the deleted tempdir — silently empty). Robust fix = bundle copied SKILL.md
+/// trees at release time, drift-guarded like `wt.sh`; tracked with the install
+/// command. Duplicated
 /// strings/shims can't be `include!`d into JSON, so this test is the drift
 /// guard.
 #[test]
