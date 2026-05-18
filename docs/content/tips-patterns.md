@@ -270,9 +270,6 @@ Spawn a worktree with an agent CLI running in the background. Examples below use
 **Zellij** (new pane in current session):
 {{ terminal(cmd="zellij run -- wt switch --create fix-auth-bug -x claude -- \|||  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'") }}
 
-**cmux** (new workspace):
-{{ terminal(cmd="cmux new-workspace --command __WT_QUOT__wt switch --create fix-auth-bug -x claude -- \|||  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'__WT_QUOT__") }}
-
 This lets one agent session hand off work to another that runs in the background. Hooks run inside the multiplexer session/pane.
 
 The [worktrunk skill](@/claude-code.md) includes guidance for Claude Code (and other agent CLIs that load it) to execute this pattern. To enable it, request it explicitly ("spawn a parallel worktree for...") or add to your project instructions (`CLAUDE.md` or `AGENTS.md`):
@@ -317,36 +314,6 @@ To create a worktree and immediately attach:
 {% terminal() %}
 <span class="cmd">wt switch --create feature -x 'tmux attach -t {{ branch | sanitize }}'</span>
 {% end %}
-
-## cmux workspace per worktree
-
-Each worktree gets its own [cmux](https://cmux.com) workspace. Switching worktrees switches workspaces; removing a worktree closes its workspace.
-
-**Prerequisites:** [jq](https://jqlang.org) (`brew install jq`)
-
-```toml
-# ~/.config/worktrunk/config.toml
-[pre-start]
-cmux = "cmux new-workspace --name {{ repo | sanitize }}/{{ branch | sanitize }} --cwd {{ worktree_path }}"
-
-[pre-switch]
-cmux = """
-WS=$(cmux --json list-workspaces 2>/dev/null \\
-  | jq -r --arg t '{{ repo | sanitize }}/{{ branch | sanitize }}' \\
-      '.workspaces[] | select(.title == $t) | .ref' | head -1)
-[ -n "$WS" ] && cmux select-workspace --workspace "$WS" || true
-"""
-
-[pre-remove]
-cmux = """
-WS=$(cmux --json list-workspaces 2>/dev/null \\
-  | jq -r --arg t '{{ repo | sanitize }}/{{ branch | sanitize }}' \\
-      '.workspaces[] | select(.title == $t) | .ref' | head -1)
-[ -n "$WS" ] && cmux close-workspace --workspace "$WS" || true
-"""
-```
-
-**Why `pre-*` instead of `post-*`?** cmux restricts socket access to processes spawned inside a cmux terminal. `post-*` hooks run as detached background processes, breaking the process ancestry chain. `pre-*` hooks run in the foreground and inherit the terminal's process lineage.
 
 ## Xcode DerivedData cleanup
 
