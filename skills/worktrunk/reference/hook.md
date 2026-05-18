@@ -320,7 +320,7 @@ The long form `--var KEY=VALUE` is deprecated but still supported. It force-bind
 # Recipes
 
 - [Eliminate cold starts](https://worktrunk.dev/tips-patterns/#eliminate-cold-starts): `wt step copy-ignored` in `post-start` shares build caches and dependencies; use a `[[post-start]]` pipeline when a later hook depends on the copy
-- [Dev server per worktree](https://worktrunk.dev/tips-patterns/#dev-server-per-worktree): `hash_port` in `post-start` for launch and `post-remove` for cleanup, with optional subdomain routing
+- [Dev server per worktree](https://worktrunk.dev/tips-patterns/#dev-server-per-worktree): `wt step tether` in `post-start` runs the dev server and kills its whole process group when the worktree is removed, with optional subdomain routing
 - [Database per worktree](https://worktrunk.dev/tips-patterns/#database-per-worktree): a `post-start` pipeline stores container name, port, and connection string as [per-branch vars](https://worktrunk.dev/config/#wt-config-state-vars) that later hooks reference
 - [Progressive validation](https://worktrunk.dev/tips-patterns/#progressive-validation): quick lint/typecheck in `pre-commit`, expensive tests and builds in `pre-merge`
 - [Target-specific hooks](https://worktrunk.dev/tips-patterns/#target-specific-hooks): branch on `{{ target }}` in `post-merge` for per-environment deploys

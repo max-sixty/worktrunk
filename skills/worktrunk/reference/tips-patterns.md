@@ -45,14 +45,13 @@ Each worktree runs its own dev server on a deterministic port. The `hash_port` f
 ```toml
 # .config/wt.toml
 [post-start]
-server = "npm run dev -- --port {{ branch | hash_port }}"
+server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
 
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
-
-[pre-remove]
-server = "lsof -ti :{{ branch | hash_port }} -sTCP:LISTEN | xargs kill 2>/dev/null || true"
 ```
+
+[`wt step tether`](https://worktrunk.dev/step/#wt-step-tether) runs the server in its own process group and tears the whole group down when the worktree is removed, so no `pre-remove` hook is needed. This matters because `npm run dev` spawns an esbuild process that does not listen on the dev-server port and reparents away when the top process exits, so a port- or parent-based kill leaks it; across enough worktree churn those leaks accumulate. See the [`wt step tether`](https://worktrunk.dev/step/#wt-step-tether) docs for the full rationale and platform behavior.
 
 The URL column in `wt list` shows each worktree's dev server:
 
@@ -67,7 +66,7 @@ $ wt list
 <span class=d>○</span> <span class=d>Showing 4 worktrees, 2 with changes, 2 ahead, 2 columns hidden</span>
 ```
 
-Ports are deterministic — `fix-auth` always gets port 16460, regardless of which machine or when. The URL dims if the server isn't running.
+Ports are deterministic: `fix-auth` always gets port 16460, regardless of which machine or when. The URL dims if the server isn't running.
 
 ## Database per worktree
 
@@ -362,7 +361,7 @@ Clean URLs like `http://feature-auth.myproject.localhost` without port numbers. 
 ```toml
 # .config/wt.toml
 [post-start]
-server = "npm run dev -- --port {{ branch | hash_port }}"
+server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
 proxy = """
   curl -sf --max-time 0.5 http://localhost:2019/config/ || caddy start
   curl -sf http://localhost:2019/config/apps/http/servers/wt || \

@@ -78,6 +78,7 @@ const BUILTIN_STEP_COMMANDS: &[&str] = &[
     "rebase",
     "relocate",
     "squash",
+    "tether",
 ];
 
 /// Built-in top-level `wt` subcommand names — visible and hidden. Aliases

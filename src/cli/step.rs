@@ -70,8 +70,8 @@ pub struct SquashArgs {
 
 // Ordering: `wt merge` pipeline steps first (commit → squash → rebase → push),
 // then standalone utilities (diff, copy-ignored), then experimentals
-// (alphabetical: eval, for-each, promote, prune, relocate). Keep this enum,
-// the `## Operations` bullet list in `src/cli/mod.rs`, and the
+// (alphabetical: eval, for-each, promote, prune, relocate, tether). Keep this
+// enum, the `## Operations` bullet list in `src/cli/mod.rs`, and the
 // `<!-- subdoc: -->` markers in the same relative order.
 /// Run individual operations
 #[derive(Subcommand)]
@@ -682,6 +682,52 @@ Note: This command is experimental and may change in future versions.
         /// JSON prints structured result to stdout after the relocate completes.
         #[arg(long, default_value = "text", help_heading = "Automation")]
         format: crate::cli::SwitchFormat,
+    },
+
+    /// \[experimental\] Run a command; kill its whole process tree when its worktree is removed
+    ///
+    /// Teardown is automatic and needs no `pre-remove` hook; the group gets `SIGTERM` then `SIGKILL`.
+    #[command(after_long_help = r#"## Why
+
+A `post-start` hook to start a long-lived process and a `pre-remove` hook to
+stop it is usually enough. But `pre-remove` only runs when worktrunk removes
+the worktree, so a `git worktree remove`, an `rm -rf`, or a crashed hook skips
+it. Across enough worktree churn some process is bound to outlive its worktree,
+and with no cleanup these leaks accumulate (on macOS they eventually saturate
+`fseventsd`). `tether` removes the need for a `pre-remove`: it ties the
+command's lifetime to the worktree and kills the whole process group once the
+worktree is gone.
+
+## Arguments
+
+Arguments after `--` are the program and its arguments, run directly, no shell.
+
+```console
+$ wt step tether -- npm run dev
+```
+
+For pipes, redirects, variables, or globs, wrap in `sh -c`:
+
+```console
+$ wt step tether -- sh -c 'PORT=$P npm run dev | tee dev.log'
+```
+
+## Examples
+
+Run a dev server, torn down automatically when the worktree goes away:
+
+```toml
+# .config/wt.toml
+[post-start]
+server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
+```
+
+Note: This command is experimental and may change in future versions.
+"#)]
+    Tether {
+        /// Command to run (after `--`, run directly, no shell)
+        #[arg(required = true, last = true, num_args = 1..)]
+        command: Vec<String>,
     },
 
     /// Catch-all for alias lookup

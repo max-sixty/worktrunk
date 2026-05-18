@@ -61,6 +61,7 @@ pub mod step_diff;
 pub mod step_promote;
 pub mod step_prune;
 pub mod step_relocate;
+pub mod step_tether;
 pub mod switch;
 pub mod switch_picker;
 pub mod switch_picker_dry_run;

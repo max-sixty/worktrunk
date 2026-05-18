@@ -35,6 +35,7 @@ $ wt step push
 - [`promote`](#wt-step-promote) — [experimental] Swap a branch into the main worktree
 - [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
 - [`relocate`](#wt-step-relocate) — [experimental] Move worktrees to expected paths
+- [`tether`](#wt-step-tether) — [experimental] Run a command; kill its whole process tree when its worktree is removed
 - [`<alias>`](https://worktrunk.dev/extending/#aliases) — Run a configured command alias
 
 ## Command reference
@@ -58,6 +59,8 @@ Commands:
   promote       [experimental] Swap a branch into the main worktree
   prune         [experimental] Remove worktrees merged into the default branch
   relocate      [experimental] Move worktrees to expected paths
+  tether        [experimental] Run a command; kill its whole process tree when its worktree is
+                removed
 
 Options:
   -h, --help
@@ -922,6 +925,81 @@ Automation:
           - json: JSON output
 
           [default: text]
+
+Global Options:
+  -C <path>
+          Working directory for this command
+
+      --config <path>
+          User config file path
+
+  -v, --verbose...
+          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
+```
+
+## wt step tether
+
+[experimental]
+
+Run a command; kill its whole process tree when its worktree is removed. Teardown is automatic and needs no pre-remove hook; the group gets SIGTERM then SIGKILL.
+
+### Why
+
+A `post-start` hook to start a long-lived process and a `pre-remove` hook to
+stop it is usually enough. But `pre-remove` only runs when worktrunk removes
+the worktree, so a `git worktree remove`, an `rm -rf`, or a crashed hook skips
+it. Across enough worktree churn some process is bound to outlive its worktree,
+and with no cleanup these leaks accumulate (on macOS they eventually saturate
+`fseventsd`). `tether` removes the need for a `pre-remove`: it ties the
+command's lifetime to the worktree and kills the whole process group once the
+worktree is gone.
+
+### Arguments
+
+Arguments after `--` are the program and its arguments, run directly, no shell.
+
+```bash
+$ wt step tether -- npm run dev
+```
+
+For pipes, redirects, variables, or globs, wrap in `sh -c`:
+
+```bash
+$ wt step tether -- sh -c 'PORT=$P npm run dev | tee dev.log'
+```
+
+### Examples
+
+Run a dev server, torn down automatically when the worktree goes away:
+
+```toml
+# .config/wt.toml
+[post-start]
+server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
+```
+
+Note: This command is experimental and may change in future versions.
+
+### Command reference
+
+```
+wt step tether - [experimental] Run a command; kill its whole process tree when its worktree is removed
+
+Teardown is automatic and needs no pre-remove hook; the group gets SIGTERM then SIGKILL.
+
+Usage: wt step tether [OPTIONS] -- <COMMAND>...
+
+Arguments:
+  <COMMAND>...
+          Command to run (after --, run directly, no shell)
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
 
 Global Options:
   -C <path>

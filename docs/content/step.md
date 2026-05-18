@@ -38,6 +38,7 @@ Manual merge workflow with review between steps:
 - [`promote`](#wt-step-promote) — <span class="badge-experimental"></span> Swap a branch into the main worktree
 - [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
 - [`relocate`](#wt-step-relocate) — <span class="badge-experimental"></span> Move worktrees to expected paths
+- [`tether`](#wt-step-tether) — <span class="badge-experimental"></span> Run a command; kill its whole process tree when its worktree is removed
 - [`<alias>`](@/extending.md#aliases) — Run a configured command alias
 
 ## See also
@@ -67,6 +68,8 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>promote</span></b>       [experimental] Swap a branch into the main worktree
   <b><span class=c>prune</span></b>         [experimental] Remove worktrees merged into the default branch
   <b><span class=c>relocate</span></b>      [experimental] Move worktrees to expected paths
+  <b><span class=c>tether</span></b>        [experimental] Run a command; kill its whole process tree when its worktree is
+                removed
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
@@ -879,6 +882,77 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
           - <b><span class=c>json</span></b>: JSON output
 
           [default: text]
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
+          diagnostic report + trace.log/output.log under .git/wt/logs/)
+
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
+{% end %}
+
+## wt step tether
+
+<span class="badge-experimental"></span>
+
+Run a command; kill its whole process tree when its worktree is removed. Teardown is automatic and needs no pre-remove hook; the group gets SIGTERM then SIGKILL.
+
+### Why
+
+A `post-start` hook to start a long-lived process and a `pre-remove` hook to
+stop it is usually enough. But `pre-remove` only runs when worktrunk removes
+the worktree, so a `git worktree remove`, an `rm -rf`, or a crashed hook skips
+it. Across enough worktree churn some process is bound to outlive its worktree,
+and with no cleanup these leaks accumulate (on macOS they eventually saturate
+`fseventsd`). `tether` removes the need for a `pre-remove`: it ties the
+command's lifetime to the worktree and kills the whole process group once the
+worktree is gone.
+
+### Arguments
+
+Arguments after `--` are the program and its arguments, run directly, no shell.
+
+{{ terminal(cmd="wt step tether -- npm run dev") }}
+
+For pipes, redirects, variables, or globs, wrap in `sh -c`:
+
+{{ terminal(cmd="wt step tether -- sh -c 'PORT=$P npm run dev | tee dev.log'") }}
+
+### Examples
+
+Run a dev server, torn down automatically when the worktree goes away:
+
+```toml
+# .config/wt.toml
+[post-start]
+server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
+```
+
+Note: This command is experimental and may change in future versions.
+
+### Command reference
+
+{% terminal() %}
+wt step tether - [experimental] Run a command; kill its whole process tree when its worktree is removed
+
+Teardown is automatic and needs no <b>pre-remove</b> hook; the group gets <b>SIGTERM</b> then <b>SIGKILL</b>.
+
+Usage: <b><span class=c>wt step tether</span></b> <span class=c>[OPTIONS]</span> <b><span class=c>--</span></b> <span class=c>&lt;COMMAND&gt;...</span>
+
+<b><span class=g>Arguments:</span></b>
+  <span class=c>&lt;COMMAND&gt;...</span>
+          Command to run (after <b>--</b>, run directly, no shell)
+
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
 
 <b><span class=g>Global Options:</span></b>
   <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>

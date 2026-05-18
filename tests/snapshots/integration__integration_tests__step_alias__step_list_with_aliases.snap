@@ -22,6 +22,7 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     NO_COLOR: ""
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
@@ -66,6 +67,7 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
   [1m[36mpromote[0m       [experimental] Swap a branch into the main worktree
   [1m[36mprune[0m         [experimental] Remove worktrees merged into the default branch
   [1m[36mrelocate[0m      [experimental] Move worktrees to expected paths
+  [1m[36mtether[0m        [experimental] Run a command; kill its whole process tree when its worktree is removed
 
 [32m[1mAliases:[22m
   [36m[1mdeploy[22m[0m, [36m[1mport[22m[0m, [36m[1msquash[22m [33m(shadowed by built-in)
