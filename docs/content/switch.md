@@ -165,7 +165,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
 
           Especially useful with shell aliases:
 
-            <b>alias wsc=&#39;wt switch --create -x claude&#39;</b>
+            <b><b>alias wsc=&#39;wt switch --create -x claude&#39;</b></b>
             <b>wsc feature-branch -- &#39;Fix GH #322&#39;</b>
 
           Then <b>wsc feature-branch</b> creates the worktree and launches Claude Code. Arguments after <b>--</b>
