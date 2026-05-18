@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.51.0
+
+### Improved
+
+- **Codex support**: Worktrunk now ships a first-class Codex plugin alongside the Claude Code one. `wt config plugins codex install` installs it; `wt config show --full` reports its state. The Codex plugin bundles the shared configuration skill — documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Codex exposes no turn-end or worktree-lifecycle hooks, so unlike Claude Code it has no `wt list` activity tracking or session worktree isolation; the skill is the integration. [Docs](https://worktrunk.dev/claude-code/) ([#2512](https://github.com/max-sixty/worktrunk/pull/2512), thanks @douglas; [#2780](https://github.com/max-sixty/worktrunk/pull/2780), [#2782](https://github.com/max-sixty/worktrunk/pull/2782), [#2786](https://github.com/max-sixty/worktrunk/pull/2786))
+
+- **Experimental project-level commit-message guidance**: `[commit.generation] template-append` adds to the commit/squash LLM prompt instead of replacing it (`template` still replaces), and is now valid in both user config and project `.config/wt.toml`. The user fragment renders into a `<user-guidance>` block (no approval); the project fragment renders into a gated `<project-guidance>` block bundled into the existing `wt merge` hook-approval prompt — declining is non-fatal. User-only commit-generation keys placed in project config still get the "this belongs in user config" redirect. ([#2774](https://github.com/max-sixty/worktrunk/pull/2774), [#2790](https://github.com/max-sixty/worktrunk/pull/2790), thanks @gabimoncha for the request in [#2758](https://github.com/max-sixty/worktrunk/issues/2758))
+
+- **`/wt-switch-create` takes an optional repo and a `--` task delimiter**: The Claude Code skill now accepts `<branch> [<repo>] [-- <task>]`. The optional second token names a different repository to create the worktree in; `--` cleanly separates the task from the rest. Without a `--`, a path-shaped second token is treated as the repo and the remainder as the task. ([#2751](https://github.com/max-sixty/worktrunk/pull/2751))
+
+- **`wt list --full` and `wt statusline` count untracked files in `HEAD±`**: The `HEAD±` working-diff segment now includes untracked-file lines under `--full` and in `wt statusline`, matching `wt step diff`. Default `wt list` and the picker stay on the cheap tracked-only path. ([#2764](https://github.com/max-sixty/worktrunk/pull/2764))
+
+- **`wt step prune` and `wt list` no longer stall on long-divergent branches**: The patch-id squash-merge scan (`is_squash_merged_via_patch_id`) ran `git log -p` over the entire target-side history — tens of thousands of commits on a fast-moving repo, taking seconds to tens of seconds. It's now capped at 500 commits via a cheap graph-only pre-flight; above the cap the check returns "not squash-merged" (the safe answer). ([#2752](https://github.com/max-sixty/worktrunk/pull/2752))
+
+### Fixed
+
+- **Config deprecation-layer correctness**: Three independent fixes — structural migration now preserves unrelated `[ci]` keys and unparseable deprecated sections instead of discarding them; `config update` aborts on an approvals-copy I/O failure instead of silently dropping approvals; deprecated template-variable renaming rewrites the parsed TOML tree instead of doing a raw text replace that corrupted occurrences inside escaped strings. ([#2783](https://github.com/max-sixty/worktrunk/pull/2783))
+
+- **Data-safety and correctness fixes**: Six independent single-file fixes — `wt step relocate --clobber` refuses to overwrite an existing backup; `wt remove` re-checks cleanliness immediately before a forced submodule removal (time-of-check/time-of-use); `wt switch` re-discovers the base worktree via a fresh `Repository` after `worktree add` instead of reading a stale cached list; `wt switch pr:<N>` derives owner/repo from the forge remote rather than the primary remote and validates an empty Azure source branch at the provider boundary; user-controllable branch operands are guarded with `--`. ([#2784](https://github.com/max-sixty/worktrunk/pull/2784))
+
+### Documentation
+
+- **Alias template timing**: A new Aliases subsection documents that templates render at alias dispatch using the invoking worktree's context, so a nested `wt` command's own template variables resolve against the outer worktree unless wrapped in `{% raw %}…{% endraw %}`. Fixes [#2753](https://github.com/max-sixty/worktrunk/issues/2753). (thanks @viicslen for reporting) ([#2754](https://github.com/max-sixty/worktrunk/pull/2754))
+
+### Internal
+
+- The Claude Code and Codex plugin payloads are consolidated into one shared directory. ([#2789](https://github.com/max-sixty/worktrunk/pull/2789))
+- `WORKTRUNK_BOT_TOKEN` is renamed to `TEND_BOT_TOKEN` in non-tend CI workflows. ([#2781](https://github.com/max-sixty/worktrunk/pull/2781))
+
 ## 0.50.0
 
 ### Improved
