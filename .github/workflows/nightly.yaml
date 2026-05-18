@@ -265,7 +265,14 @@ jobs:
         key: minimal-versions
 
     - name: Resolve to minimum versions
-      run: cargo update -Z minimal-versions
+      run: |
+        cargo update -Z minimal-versions
+        # filedescriptor 0.8.3 declares `thiserror = "^1.0"` but uses `#[from]`,
+        # added in thiserror 1.0.7. Under -Z minimal-versions the resolver picks
+        # 1.0.0, which fails to compile. Bump the floor to a version that has
+        # `#[from]`. (Upstream filedescriptor hasn't been touched since
+        # 2025-02-11; we can't fix this at the source.)
+        cargo update -p thiserror@1 --precise 1.0.7
 
     - name: cargo check
       run: cargo check --workspace --all-targets
