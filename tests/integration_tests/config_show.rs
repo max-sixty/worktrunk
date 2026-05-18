@@ -3615,14 +3615,17 @@ fn test_codex_plugin_metadata_is_valid_json() {
     assert_eq!(marketplace["interface"]["displayName"], "Worktrunk");
 }
 
-/// The Claude Code and Codex plugins share one payload dir, `plugins/worktrunk/`.
-/// Both marketplace pointers must stay at the repo root (each tool hardcodes its
-/// path) and point `source` at that subdir; the Claude manifest sits at the
-/// plugin root with NO `.claude-plugin/` wrapper (the wrapper is
-/// marketplace-root-only — verified end-to-end against claude-cli 2.1.x:
-/// `source: "./plugins/worktrunk"` + manifest at `<subdir>/.claude-plugin/`
-/// fails "Plugin not found"). The duplicated description string can't be
-/// `include!`d into JSON, so this test is the drift guard.
+/// Claude Code + Codex share `plugins/worktrunk/`; Gemini gets its own
+/// `plugins/gemini/`. Every tool's payload lives under `plugins/`, leaving only
+/// loader-mandated pointers at the repo root. Verified end-to-end against the
+/// real CLIs: Claude (claude-cli 2.1.x) wants its manifest at the plugin root
+/// with NO `.claude-plugin/` wrapper (`source: "./plugins/worktrunk"` +
+/// `<subdir>/.claude-plugin/` fails "Plugin not found"); Gemini (gemini-cli
+/// 0.42) hard-probes `${extensionPath}/{hooks,skills}/` with no path
+/// indirection and `install` *copies* the extension dir, so it must be
+/// self-contained (bundled `wt.sh`, no `../worktrunk` reference). Duplicated
+/// strings/shims can't be `include!`d into JSON, so this test is the drift
+/// guard.
 #[test]
 fn test_plugin_layout_is_consolidated() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -3656,6 +3659,39 @@ fn test_plugin_layout_is_consolidated() {
     assert_eq!(
         claude_mkt["plugins"][0]["description"], claude["description"],
         ".claude-plugin/marketplace.json and plugins/worktrunk/plugin.json descriptions drifted"
+    );
+
+    // Gemini extension: own payload dir, nothing at the repo root.
+    assert!(
+        !root.join("gemini-extension.json").exists() && !root.join("hooks").exists(),
+        "Gemini extension lives in plugins/gemini/, not at the repo root"
+    );
+    let gemini = json("plugins/gemini/gemini-extension.json");
+    assert_eq!(gemini["name"], "worktrunk");
+    assert!(
+        gemini["description"]
+            .as_str()
+            .is_some_and(|d| !d.is_empty()),
+        "gemini-extension.json needs a description (shown in `gemini extensions list`)"
+    );
+    // Gemini `install` copies the extension dir, so it must be self-contained:
+    // bundled wt.sh, hooks referencing it via ${extensionPath}/hooks/, never a
+    // cross-dir `../worktrunk` or the old `.claude-plugin/` path.
+    assert!(
+        root.join("plugins/gemini/skills").is_symlink(),
+        "plugins/gemini/skills must be a symlink reusing the repo-root skills/"
+    );
+    let gemini_hooks = read("plugins/gemini/hooks/hooks.json");
+    assert!(
+        gemini_hooks.contains("${extensionPath}/hooks/wt.sh")
+            && !gemini_hooks.contains("../worktrunk")
+            && !gemini_hooks.contains(".claude-plugin/"),
+        "Gemini hooks must call the bundled ${{extensionPath}}/hooks/wt.sh (self-contained)"
+    );
+    assert_eq!(
+        read("plugins/gemini/hooks/wt.sh"),
+        read("plugins/worktrunk/hooks/wt.sh"),
+        "bundled Gemini wt.sh drifted from the canonical plugins/worktrunk/hooks/wt.sh"
     );
 }
 
