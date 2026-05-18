@@ -982,26 +982,6 @@ Run a dev server, torn down automatically when the worktree goes away:
 server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
 ```
 
-### Why a process group
-
-`npm run dev` spawns node, Vite, and a separate esbuild `--service` process.
-esbuild does not listen on the dev-server port and does not put itself in a new
-group, so it stays in the group `tether` created and a port- or parent-based
-kill misses it. Teardown reaches the whole group instead. On Unix `killpg`
-also reaches a child that reparented to PID 1 after the leader exited (the
-group id outlives the leader). On Windows `taskkill /T` walks the live tree:
-it reaches every descendant while the command runs, but a child that detaches
-after the command self-exits can outlive it.
-
-### Fire and forget
-
-There is no stop command and no rendezvous file. The supervisor polls its
-own worktree directory. worktrunk renames a removed worktree into trash, and
-`git worktree remove` / `rm -rf` delete it outright; the path stops resolving
-either way, so the server dies with its worktree. No hook wiring beyond the
-single `post-start` line is needed. State lives only in the supervisor
-process, which dies with the command.
-
 Note: This command is experimental and may change in future versions.
 
 ### Command reference
