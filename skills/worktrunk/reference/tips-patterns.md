@@ -51,7 +51,7 @@ server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-[`wt step tether`](https://worktrunk.dev/step/#wt-step-tether) runs the server in its own process group and tears the whole group down when the worktree is removed, so no `pre-remove` hook is needed. This matters because `npm run dev` spawns an esbuild process that does not listen on the dev-server port and reparents away when the top process exits, so a port- or parent-based kill leaks it; across enough worktree churn those leaks accumulate. See the [`wt step tether`](https://worktrunk.dev/step/#wt-step-tether) docs for the full rationale. Windows is unsupported.
+[`wt step tether`](https://worktrunk.dev/step/#wt-step-tether) runs the server in its own process group and tears the whole group down when the worktree is removed, so no `pre-remove` hook is needed. This matters because `npm run dev` spawns an esbuild process that does not listen on the dev-server port and reparents away when the top process exits, so a port- or parent-based kill leaks it; across enough worktree churn those leaks accumulate. See the [`wt step tether`](https://worktrunk.dev/step/#wt-step-tether) docs for the full rationale and platform behavior.
 
 The URL column in `wt list` shows each worktree's dev server:
 

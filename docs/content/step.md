@@ -939,9 +939,12 @@ server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
 
 `npm run dev` spawns node, Vite, and a separate esbuild `--service` process.
 esbuild does not listen on the dev-server port and does not put itself in a new
-process group, so it stays in the group `tether` created. `killpg` reaches
-every member at once, including after the top process has exited and its
-children have reparented to PID 1 (the process-group id outlives the leader).
+group, so it stays in the group `tether` created and a port- or parent-based
+kill misses it. Teardown reaches the whole group instead. On Unix `killpg`
+also reaches a child that reparented to PID 1 after the leader exited (the
+group id outlives the leader). On Windows `taskkill /T` walks the live tree:
+it reaches every descendant while the command runs, but a child that detaches
+after the command self-exits can outlive it.
 
 ### Fire and forget
 
