@@ -1445,9 +1445,9 @@ pub(crate) fn approve_switch_hooks(
 
     let ctx = CommandContext::new(repo, config, plan.branch(), plan.worktree_path(), yes);
     let on_decline = if plan.is_create() {
-        "Commands declined, continuing worktree creation"
+        "Commands declined, continuing worktree creation without hooks"
     } else {
-        "Commands declined"
+        "Commands declined, switching without hooks"
     };
     approve_or_skip_with_config(
         &ctx,

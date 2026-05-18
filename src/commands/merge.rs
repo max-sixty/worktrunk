@@ -6,7 +6,7 @@ use worktrunk::config::{Approvals, MergeConfig, UserConfig};
 use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, info_message};
 
-use super::command_approval::approve_command_batch;
+use super::command_approval::{approve_command_batch, approve_commit_template_append};
 use super::command_executor::FailureStrategy;
 use super::commit::{CommitOptions, HookGate};
 use super::context::CommandEnv;
@@ -215,7 +215,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let remove_requested = remove && !on_target;
 
     // Collect and approve all commands upfront for batch permission request
-    let (mut all_commands, project_id) = collect_merge_commands(
+    let (all_commands, project_id) = collect_merge_commands(
         repo,
         &destination_path,
         commit,
@@ -224,27 +224,9 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         squash_enabled,
     )?;
 
-    // Bundle commit guidance into the same batch as hooks so an LLM-bound
-    // merge produces one approval prompt, not two. Only when a commit will
-    // actually be created and an LLM is configured.
-    let will_create_commit = current_wt.is_dirty()? || squash_enabled;
-    let llm_configured = env
-        .config
-        .commit_generation(Some(&project_id))
-        .is_configured();
-    let project_append_text: Option<String> = if commit && will_create_commit && llm_configured {
-        env.repo
-            .load_project_config()?
-            .as_ref()
-            .and_then(|cfg| cfg.commit_template_append().map(str::to_string))
-    } else {
-        None
-    };
-    if let Some(ref g) = project_append_text {
-        all_commands.push(ApprovableCommand::commit_template_append(g.clone()));
-    }
-
-    // Approve all commands in a single batch (shows templates, not expanded values)
+    // Approve hook commands in a single batch (shows templates, not expanded
+    // values). The project commit-append is gated separately below so that
+    // declining it never skips hooks.
     let approvals = Approvals::load().context("Failed to load approvals")?;
     let approved = approve_command_batch(&all_commands, &project_id, &approvals, yes, false)?;
 
@@ -259,7 +241,10 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let verify = if approved {
         verify
     } else {
-        eprintln!("{}", info_message("Commands declined, continuing merge"));
+        eprintln!(
+            "{}",
+            info_message("Commands declined, continuing merge without hooks")
+        );
         false
     };
 
@@ -269,9 +254,20 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // the end.
     let mut announcer = HookAnnouncer::new(repo, config, false);
 
-    let guidance = super::step::PreApprovedGuidance::Resolved(
-        approved.then_some(project_append_text).flatten(),
-    );
+    // The project commit-append is gated independently of hook approval:
+    // declining it drops only the append, never the (possibly already-approved)
+    // hooks. Mirrors the standalone `wt step commit` path via the shared gate.
+    let will_create_commit = current_wt.is_dirty()? || squash_enabled;
+    let llm_configured = env
+        .config
+        .commit_generation(Some(&project_id))
+        .is_configured();
+    let project_append = if commit && will_create_commit && llm_configured {
+        approve_commit_template_append(&env.context(yes))?
+    } else {
+        None
+    };
+    let guidance = super::step::PreApprovedGuidance::Resolved(project_append);
 
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
     let committed = if commit && current_wt.is_dirty()? {

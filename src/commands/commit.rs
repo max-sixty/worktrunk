@@ -67,8 +67,8 @@ pub struct CommitOptions<'a> {
     pub warn_about_untracked: bool,
     pub show_no_squash_note: bool,
     /// Whether `commit()` runs its own guidance approval gate or trusts a
-    /// value supplied by the caller (`wt merge` bundles the guidance into
-    /// its hook-approval batch so the user sees one combined prompt).
+    /// value supplied by the caller (`wt merge` resolves the guidance via
+    /// `approve_commit_template_append` up front and passes it through).
     pub guidance: super::step::PreApprovedGuidance,
 }
 

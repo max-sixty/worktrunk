@@ -421,7 +421,10 @@ fn approve_prune_hooks(
     let approvals = Approvals::load().context("Failed to load approvals")?;
     let approved = approve_command_batch(&all_commands, &project_id, &approvals, yes, false)?;
     if !approved {
-        eprintln!("{}", info_message("Commands declined, continuing removal"));
+        eprintln!(
+            "{}",
+            info_message("Commands declined, continuing removal without hooks")
+        );
     }
     Ok(approved)
 }

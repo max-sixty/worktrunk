@@ -7,5 +7,5 @@ expression: "&output"
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'pre-remove hook'[0m[2m
 
 [36m❯[39m [36mAllow and remember? [1m[y/N][22m[39m n
-[2m○[22m Commands declined, continuing removal
+[2m○[22m Commands declined, continuing removal without hooks
 [36m◎[39m [36mRemoving [1mto-remove[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m

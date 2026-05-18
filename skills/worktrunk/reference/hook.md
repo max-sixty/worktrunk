@@ -52,6 +52,7 @@ Project commands require approval on first run:
 
 - Approvals are saved to `~/.config/worktrunk/approvals.toml`
 - If a command changes, new approval is required
+- Declining skips every project command for that operation — including any already approved — and continues without them; saved approvals are unaffected
 - Use `--yes` to bypass prompts — useful for CI and automation
 - Use `--no-hooks` to skip hooks
 

@@ -725,11 +725,11 @@ command = "tee {prompt_capture_str} > /dev/null && echo 'feat: decline guidance'
     );
 }
 
-/// `wt merge` with both project hooks and a commit append bundles the two
-/// items into the same approval prompt — the user sees one prompt covering
-/// both, not one for hooks and a second for the append mid-merge.
+/// `wt merge` gates project hooks and the commit append as two independent
+/// approvals: the hook batch first, then the append. Approving both lets the
+/// hook run and the append reach the LLM.
 #[rstest]
-fn test_merge_bundles_append_into_hook_approval(mut repo: TestRepo) {
+fn test_merge_prompts_hooks_and_append_separately(mut repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
     repo.write_project_config(
         r#"
@@ -755,7 +755,8 @@ command = "tee {prompt_capture_str} > /dev/null && echo 'feat: bundled'"
 
     let env_vars = test_env_vars_with_shell(&repo);
 
-    let (output, exit_code) = exec_wt_in_pty_cwd(&feature_wt, &["merge"], &env_vars, "y\n");
+    // Hook batch prompts first, append prompts second — approve both.
+    let (output, exit_code) = exec_wt_in_pty_cwd(&feature_wt, &["merge"], &env_vars, "y\ny\n");
 
     assert_eq!(
         exit_code, 0,
@@ -763,23 +764,86 @@ command = "tee {prompt_capture_str} > /dev/null && echo 'feat: bundled'"
     );
     assert!(
         output.contains("pre-commit hook"),
-        "Bundled prompt should list the pre-commit hook command. Output:\n{output}"
+        "Hook prompt should list (and run) the pre-commit hook. Output:\n{output}"
     );
     assert!(
         output.contains("commit-template-append") && output.contains("Reference the related issue"),
-        "Bundled prompt should list the commit append. Output:\n{output}"
-    );
-    // The downstream commit step must not present a second prompt.
-    let prompts = output.matches("Allow and remember?").count();
-    assert_eq!(
-        prompts, 1,
-        "Bundled approval should produce exactly one [y/N] prompt. Saw {prompts}. Output:\n{output}"
+        "Append prompt should list the commit append. Output:\n{output}"
     );
 
     let captured = std::fs::read_to_string(&prompt_capture).expect("captured prompt");
     assert!(
         captured.contains("<project-guidance>") && captured.contains("Reference the related issue"),
         "Approved append should reach the LLM. Captured:\n{captured}"
+    );
+}
+
+/// Regression: declining the project commit append must NOT skip
+/// already-approved hooks. With the hook approved up front, the only prompt is
+/// the append; declining it drops the append while the pre-commit hook still
+/// runs and the merge succeeds.
+#[rstest]
+fn test_merge_decline_append_keeps_approved_hooks(mut repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Step 1: project config with only the hook; pre-approve it.
+    repo.write_project_config(r#"pre-commit = "echo 'pre-commit hook'""#);
+    repo.commit("Add pre-commit hook");
+
+    let env_vars = test_env_vars_with_shell(&repo);
+    let (add_out, add_exit) =
+        exec_wt_in_pty(&repo, &["config", "approvals", "add"], &env_vars, "y\n");
+    assert_eq!(
+        add_exit, 0,
+        "Pre-approving the hook should succeed. Output:\n{add_out}"
+    );
+
+    // Step 2: add an unapproved commit append (hook command unchanged, so it
+    // stays approved).
+    repo.write_project_config(
+        r#"pre-commit = "echo 'pre-commit hook'"
+
+[commit.generation]
+template-append = "Reference the related issue"
+"#,
+    );
+    repo.commit("Add commit append");
+
+    let feature_wt = repo.add_worktree("feature-decline-append");
+    std::fs::write(feature_wt.join("new-file.txt"), "new content").unwrap();
+
+    let prompt_capture = repo.root_path().join("captured-prompt.txt");
+    let prompt_capture_str = prompt_capture.display().to_string();
+    repo.write_test_config(&format!(
+        r#"
+[commit.generation]
+command = "tee {prompt_capture_str} > /dev/null && echo 'feat: decline append'"
+"#
+    ));
+
+    // Hook is already approved → no hook prompt. The lone prompt is the
+    // append; decline it.
+    let (output, exit_code) = exec_wt_in_pty_cwd(&feature_wt, &["merge"], &env_vars, "n\n");
+
+    assert_eq!(
+        exit_code, 0,
+        "Merge should succeed when only the append is declined. Output:\n{output}"
+    );
+    assert!(
+        output.contains("Project commit guidance declined"),
+        "Declining the append should be announced. Output:\n{output}"
+    );
+    assert!(
+        output.contains("pre-commit hook"),
+        "Already-approved pre-commit hook must still run when the append is \
+         declined. Output:\n{output}"
+    );
+
+    let captured = std::fs::read_to_string(&prompt_capture).expect("captured prompt");
+    assert!(
+        !captured.contains("<project-guidance>")
+            && !captured.contains("Reference the related issue"),
+        "Declined append must not reach the LLM. Captured:\n{captured}"
     );
 }
 

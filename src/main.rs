@@ -924,7 +924,10 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     let approved =
                         approve_command_batch(&commands, &project_id, &approvals, yes, false)?;
                     if !approved {
-                        eprintln!("{}", info_message("Commands declined, continuing removal"));
+                        eprintln!(
+                            "{}",
+                            info_message("Commands declined, continuing removal without hooks")
+                        );
                     }
                     Ok(approved)
                 };

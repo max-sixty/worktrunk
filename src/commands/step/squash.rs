@@ -24,9 +24,9 @@ use super::shared::print_dry_run;
 /// Caller's stance on project commit-message guidance approval.
 ///
 /// `wt step squash` runs its own gate (the user invokes squash directly, so
-/// there's no upstream batch to attach to). `wt merge` bundles the append
-/// into its hook-approval batch and passes the result here so the user
-/// doesn't see a second prompt mid-flow.
+/// there's no upstream decision to attach to). `wt merge` resolves the append
+/// through its own `approve_commit_template_append` gate up front and passes
+/// the result here so `handle_squash` doesn't gate it a second time.
 #[derive(Debug, Clone)]
 pub enum PreApprovedGuidance {
     /// No pre-approval — `handle_squash` runs its own gate via
