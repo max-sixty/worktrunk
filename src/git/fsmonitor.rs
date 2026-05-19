@@ -334,11 +334,29 @@ fn enumerate_daemons() -> Vec<DaemonProcess> {
             if !out.status.success() {
                 return None;
             }
-            let socket = parse_lsof_socket_path(&String::from_utf8_lossy(&out.stdout))
-                .map(|s| canonicalize_socket(&s));
-            Some(DaemonProcess { pid, socket })
+            daemon_from_lsof_stdout(pid, &String::from_utf8_lossy(&out.stdout))
         })
         .collect()
+}
+
+/// Classify the lsof output for one PID into an [`Option<DaemonProcess>`].
+///
+/// `pgrep -f "git fsmonitor--daemon"` matches the full command line, so a
+/// non-daemon process whose argv merely contains that string (a debugger
+/// `gdb …/git fsmonitor--daemon`, a wrapper) is also enumerated as a
+/// candidate. A real fsmonitor daemon always holds its IPC socket (the
+/// resolved path or, on some platforms, the bare socket name), so its lsof
+/// output contains [`IPC_SOCKET_NAME`]. Output that does not contain
+/// [`IPC_SOCKET_NAME`] cannot belong to a daemon — return [`None`] rather
+/// than misclassify as a class-1 (unresolvable-socket) orphan, which would
+/// SIGTERM/SIGKILL the unrelated process during the sweep.
+#[cfg(unix)]
+fn daemon_from_lsof_stdout(pid: u32, stdout: &str) -> Option<DaemonProcess> {
+    if !stdout.contains(IPC_SOCKET_NAME) {
+        return None;
+    }
+    let socket = parse_lsof_socket_path(stdout).map(|s| canonicalize_socket(&s));
+    Some(DaemonProcess { pid, socket })
 }
 
 /// Canonicalized git-dirs of every live (non-prunable, on-disk) worktree in
@@ -482,6 +500,48 @@ mod tests {
         assert_eq!(
             socket_path_to_git_dir(socket),
             Some(PathBuf::from("/r/.git/worktrees/r.x"))
+        );
+    }
+
+    /// `pgrep -f "git fsmonitor--daemon"` is a substring match against the
+    /// full command line, so a non-daemon process whose argv merely contains
+    /// that string (a debugger `gdb …/git fsmonitor--daemon`, a wrapper)
+    /// is also enumerated. Its `lsof` output won't reference the IPC socket
+    /// — `daemon_from_lsof_stdout` must return `None` rather than
+    /// misclassify it as a class-1 orphan, which would SIGTERM/SIGKILL the
+    /// unrelated process during the sweep.
+    #[cfg(unix)]
+    #[test]
+    fn daemon_from_lsof_skips_pgrep_false_positive() {
+        let stdout = "p1234\nn/usr/lib/libc.so\nn/tmp/some-other.sock\nn/dev/null\n";
+        assert_eq!(daemon_from_lsof_stdout(1234, stdout), None);
+    }
+
+    /// A real daemon with a resolved IPC-socket path classifies with a
+    /// `Some(path)` socket; the caller then decides class-2 based on whether
+    /// the worktree is live.
+    #[cfg(unix)]
+    #[test]
+    fn daemon_from_lsof_keeps_resolved_socket() {
+        let stdout = "p1234\nn/r/.git/worktrees/r.x/fsmonitor--daemon.ipc\n";
+        let d = daemon_from_lsof_stdout(1234, stdout).expect("real daemon");
+        assert_eq!(d.pid, 1234);
+        assert!(d.socket.is_some());
+    }
+
+    /// When `lsof` reports the socket only as the bare name (no parent
+    /// path), the daemon still classifies with `socket = None` — the
+    /// existing class-1 "worktree-gone" reap path. The new guard must
+    /// preserve this.
+    #[cfg(unix)]
+    #[test]
+    fn daemon_from_lsof_keeps_bare_socket_name_as_class_one() {
+        let stdout = "p1234\nnfsmonitor--daemon.ipc\n";
+        let d = daemon_from_lsof_stdout(1234, stdout).expect("bare-name daemon");
+        assert_eq!(d.pid, 1234);
+        assert!(
+            d.socket.is_none(),
+            "bare name must remain unresolved (class 1)"
         );
     }
 
