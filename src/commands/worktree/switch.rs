@@ -34,9 +34,10 @@ use super::resolve::{
 };
 use super::types::{CreationMethod, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::cli::SwitchFormat;
-use crate::commands::command_approval::{approve_hooks, approve_or_skip_with_config};
+use crate::commands::command_approval::approve_hooks;
 use crate::commands::command_executor::FailureStrategy;
 use crate::commands::command_executor::{CommandContext, build_hook_context};
+use crate::commands::hook_plan::{ApprovedHookPlan, HookPlanBuilder, register_planned};
 use crate::commands::hooks::{HookAnnouncer, execute_hook};
 use crate::commands::template_vars::TemplateVars;
 use crate::output::{
@@ -857,6 +858,7 @@ pub fn execute_switch(
     config: &UserConfig,
     force: bool,
     run_hooks: bool,
+    hook_plan: &ApprovedHookPlan,
 ) -> anyhow::Result<(SwitchResult, SwitchBranchInfo)> {
     match plan {
         SwitchPlan::Existing {
@@ -1137,7 +1139,7 @@ pub fn execute_switch(
                         vars = vars.with_pr(Some(*number), Some(ref_url));
                     }
                 }
-                ctx.execute_pre_start_commands(&vars.as_extra_vars())?;
+                ctx.execute_pre_start_commands(&vars.as_extra_vars(), hook_plan, &worktree_path)?;
             }
 
             // Record successful switch in history
@@ -1429,8 +1431,9 @@ fn hook_repo_for_worktree(worktree_path: &Path) -> anyhow::Result<Repository> {
 /// prompt listing the exact commands `execute_switch` will run, including for
 /// `wt switch pr:N` against a fork's hooks.
 ///
-/// Returns `true` if hooks are approved to run.
-/// Returns `false` if hooks should be skipped (`!verify` or user declined).
+/// Returns `(hooks_approved, plan)`. `hooks_approved` is `false` and the plan
+/// empty when `!verify` or the user declined; the covered switch hooks
+/// (`pre-start` / `post-start` / `post-switch`) execute only from `plan`.
 pub(crate) fn approve_switch_hooks(
     repo: &Repository,
     config: &UserConfig,
@@ -1438,23 +1441,36 @@ pub(crate) fn approve_switch_hooks(
     yes: bool,
     verify: bool,
     project_config: Option<&ProjectConfig>,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<(bool, ApprovedHookPlan)> {
     if !verify {
-        return Ok(false);
+        return Ok((false, ApprovedHookPlan::empty()));
     }
 
-    let ctx = CommandContext::new(repo, config, plan.branch(), plan.worktree_path(), yes);
-    let on_decline = if plan.is_create() {
-        "Commands declined, continuing worktree creation without hooks"
-    } else {
-        "Commands declined, switching without hooks"
-    };
-    approve_or_skip_with_config(
-        &ctx,
-        project_config,
+    // Non-fatal: a destination with no project hooks must still switch even
+    // when the project identifier can't be resolved (the plan ends up empty
+    // and `approve` never needs it).
+    let project_id = repo.project_identifier().ok();
+    let pid = project_id.as_deref();
+    let mut builder = HookPlanBuilder::new();
+    builder.add(
+        plan.worktree_path(),
         switch_post_hook_types(plan.is_create()),
-        on_decline,
-    )
+        project_config,
+        config,
+        pid,
+    );
+    match builder.finish().approve(pid, yes)? {
+        Some(approved) => Ok((true, approved)),
+        None => {
+            let on_decline = if plan.is_create() {
+                "Commands declined, continuing worktree creation without hooks"
+            } else {
+                "Commands declined, switching without hooks"
+            };
+            eprintln!("{}", info_message(on_decline));
+            Ok((false, ApprovedHookPlan::empty()))
+        }
+    }
 }
 
 /// Spawn post-switch (and post-start for creates) background hooks.
@@ -1465,17 +1481,36 @@ pub(crate) fn spawn_switch_background_hooks(
     yes: bool,
     extra_vars: &[(&str, &str)],
     hooks_display_path: Option<&Path>,
+    hook_plan: &ApprovedHookPlan,
 ) -> anyhow::Result<()> {
-    // Background hooks run in the new/destination worktree and resolve their
-    // `.config/wt.toml` from there. No fallback — if the worktree has no
-    // `.config/wt.toml`, no project hooks fire.
+    // Background hooks run in the new/destination worktree. `hook_repo` roots
+    // the *render* context there; the command set is the frozen `hook_plan`
+    // (anchored at the destination at the gate, from the base-ref config for
+    // `--create`), so the worktree's on-disk `.config/wt.toml` is never
+    // re-read.
     let hook_repo = hook_repo_for_worktree(result.path())?;
     let ctx = CommandContext::new(&hook_repo, config, branch, result.path(), yes);
 
     let mut announcer = HookAnnouncer::new(&hook_repo, config, false);
-    announcer.register(&ctx, HookType::PostSwitch, extra_vars, hooks_display_path)?;
+    register_planned(
+        &mut announcer,
+        hook_plan,
+        result.path(),
+        &ctx,
+        HookType::PostSwitch,
+        extra_vars,
+        hooks_display_path,
+    )?;
     if matches!(result, SwitchResult::Created { .. }) {
-        announcer.register(&ctx, HookType::PostStart, extra_vars, hooks_display_path)?;
+        register_planned(
+            &mut announcer,
+            hook_plan,
+            result.path(),
+            &ctx,
+            HookType::PostStart,
+            extra_vars,
+            hooks_display_path,
+        )?;
     }
     announcer.flush()
 }
@@ -1589,7 +1624,7 @@ pub fn run_switch(
     // "Approve at the Gate": collect and approve hooks upfront
     // This ensures approval happens once at the command entry point
     // If user declines, skip hooks but continue with worktree operation
-    let hooks_approved = approve_switch_hooks(
+    let (hooks_approved, hook_plan) = approve_switch_hooks(
         &repo,
         config,
         &plan,
@@ -1616,7 +1651,8 @@ pub fn run_switch(
     let (source_branch, source_path) = capture_switch_source(&repo, is_recovered);
 
     // Execute the validated plan
-    let (result, branch_info) = execute_switch(&repo, plan, config, yes, hooks_approved)?;
+    let (result, branch_info) =
+        execute_switch(&repo, plan, config, yes, hooks_approved, &hook_plan)?;
 
     // --format=json: write structured result to stdout. All behavior (hooks,
     // --execute, shell integration) proceeds normally — format only affects output.
@@ -1692,6 +1728,7 @@ pub fn run_switch(
             yes,
             &extra_vars,
             hooks_display_path.as_deref(),
+            &hook_plan,
         )?;
     }
 

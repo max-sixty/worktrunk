@@ -9,13 +9,13 @@ use anyhow::Context;
 use color_print::cformat;
 use crossbeam_channel as chan;
 use rayon::prelude::*;
-use worktrunk::config::{Approvals, UserConfig};
+use worktrunk::HookType;
+use worktrunk::config::UserConfig;
 use worktrunk::git::{BranchDeletionMode, RefSnapshot, Repository, WorktreeInfo};
 use worktrunk::styling::{eprintln, hint_message, info_message, println, success_message};
 
-use super::super::command_approval::approve_command_batch;
+use super::super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
-use super::super::project_config::collect_remove_hook_commands;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use crate::output::handle_remove_output;
 
@@ -138,7 +138,7 @@ fn try_remove(
     repo: &Repository,
     config: &UserConfig,
     foreground: bool,
-    run_hooks: bool,
+    hook_plan: &ApprovedHookPlan,
     worktrees: &[WorktreeInfo],
     snapshot: &RefSnapshot,
 ) -> anyhow::Result<bool> {
@@ -177,7 +177,7 @@ fn try_remove(
         }
     };
     let mut announcer = HookAnnouncer::new(repo, config, true);
-    handle_remove_output(&plan, foreground, run_hooks, true, false, &mut announcer)?;
+    handle_remove_output(&plan, foreground, hook_plan, true, false, &mut announcer)?;
     announcer.flush()?;
     Ok(true)
 }
@@ -381,27 +381,32 @@ fn render_dry_run(
     Ok(())
 }
 
-/// Approve the project commands `wt step prune` may run, mirroring the
-/// executors' `.config/wt.toml` resolution via
-/// [`collect_remove_hook_commands`].
+/// Build and approve, once, the frozen hook plan `wt step prune` may run.
 ///
 /// `pre-remove` runs only when a *live linked* worktree is removed (stale-
 /// metadata and orphan-branch removals delete just the branch — no
 /// `pre-remove`/`post-remove`/`post-switch`). The integration checks haven't
-/// run yet, so every linked worktree is fed to the helper — its `pre-remove`
-/// approval is a superset of what executes. `post-switch` resolves from the
-/// primary worktree's config: a prune candidate is never the primary worktree,
-/// so each removal's `RemoveResult::destination_path()` is `home_path()`. No
-/// fallback between worktrees — each `.config/wt.toml` stands alone.
+/// run yet, so every linked worktree is fed to the plan — its `pre-remove`
+/// selection is a superset of what executes (extra anchors are simply never
+/// looked up). `post-switch` is anchored at the primary worktree: a prune
+/// candidate is never the primary, so each removal's
+/// `RemoveResult::destination_path()` is `home_path()`. No fallback between
+/// worktrees — each `.config/wt.toml` stands alone.
 ///
-/// Returns `true` when hooks should run, `false` when the user declined.
+/// A declined prompt yields an empty plan — every executor runs no hooks.
 fn approve_prune_hooks(
     repo: &Repository,
+    config: &UserConfig,
     worktrees: &[WorktreeInfo],
     check_items: &[CheckItem],
     yes: bool,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<ApprovedHookPlan> {
     let primary_path = repo.home_path()?;
+    // Non-fatal: prune candidates with no project hooks must still prune even
+    // when the project identifier can't be resolved (the plan ends up empty
+    // and `approve` never needs it).
+    let project_id = repo.project_identifier().ok();
+    let pid = project_id.as_deref();
 
     let removed_worktree_paths: Vec<&Path> = check_items
         .iter()
@@ -410,23 +415,37 @@ fn approve_prune_hooks(
             _ => None,
         })
         .collect();
-    let all_commands =
-        collect_remove_hook_commands(&removed_worktree_paths, &[primary_path.as_path()])?;
 
-    if all_commands.is_empty() {
-        return Ok(true);
-    }
-
-    let project_id = repo.project_identifier()?;
-    let approvals = Approvals::load().context("Failed to load approvals")?;
-    let approved = approve_command_batch(&all_commands, &project_id, &approvals, yes, false)?;
-    if !approved {
-        eprintln!(
-            "{}",
-            info_message("Commands declined, continuing removal without hooks")
+    let mut builder = HookPlanBuilder::new();
+    for &wt_path in &removed_worktree_paths {
+        let cfg = Repository::at(wt_path)?.load_project_config()?;
+        builder.add(
+            wt_path,
+            &[HookType::PreRemove, HookType::PostRemove],
+            cfg.as_ref(),
+            config,
+            pid,
         );
     }
-    Ok(approved)
+    let primary_cfg = Repository::at(&primary_path)?.load_project_config()?;
+    builder.add(
+        &primary_path,
+        &[HookType::PostSwitch],
+        primary_cfg.as_ref(),
+        config,
+        pid,
+    );
+
+    match builder.finish().approve(pid, yes)? {
+        Some(plan) => Ok(plan),
+        None => {
+            eprintln!(
+                "{}",
+                info_message("Commands declined, continuing removal without hooks")
+            );
+            Ok(ApprovedHookPlan::empty())
+        }
+    }
 }
 
 /// Remove worktrees and branches integrated into the default branch.
@@ -477,11 +496,12 @@ pub fn step_prune(
     // the actually-pruned set.
     let check_items = gather_check_items(&repo, worktrees, default_branch.as_deref())?;
 
-    // For non-dry-run, approve hooks upfront so we can remove inline.
-    let run_hooks = if dry_run {
-        false // unused in dry-run path
+    // For non-dry-run, build & approve the frozen hook plan upfront so we can
+    // remove inline. Dry-run runs no hooks → empty plan.
+    let hook_plan = if dry_run {
+        ApprovedHookPlan::empty()
     } else {
-        approve_prune_hooks(&repo, worktrees, &check_items, yes)?
+        approve_prune_hooks(&repo, &config, worktrees, &check_items, yes)?
     };
 
     let mut removed: Vec<Candidate> = Vec::new();
@@ -589,7 +609,7 @@ pub fn step_prune(
                 &repo,
                 &config,
                 foreground,
-                run_hooks,
+                &hook_plan,
                 worktrees,
                 &snapshot_arc,
             )
@@ -644,7 +664,7 @@ pub fn step_prune(
             &repo,
             &config,
             foreground,
-            run_hooks,
+            &hook_plan,
             worktrees,
             &snapshot_arc,
         )
@@ -665,7 +685,7 @@ pub fn step_prune(
             &repo,
             &config,
             foreground,
-            run_hooks,
+            &hook_plan,
             worktrees,
             &snapshot_arc,
         )

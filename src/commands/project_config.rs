@@ -1,9 +1,7 @@
-use std::collections::HashSet;
 use std::fmt;
-use std::path::Path;
 
 use worktrunk::config::{Command, ProjectConfig};
-use worktrunk::git::{HookType, Repository};
+use worktrunk::git::HookType;
 
 /// What triggered a project command — determines the label in approval prompts.
 #[derive(Clone)]
@@ -61,71 +59,6 @@ pub fn collect_commands_for_hooks(
         }
     }
     commands
-}
-
-/// Collect the project commands that run as part of removing a set of worktrees.
-///
-/// Each `pre-remove` and `post-remove` reads the removed worktree's own
-/// `.config/wt.toml` — both hooks are *about* that worktree, and at approval
-/// time it's still on disk. `post-switch` reads the destination worktree's
-/// config — the post-removal working directory the user lands in, which
-/// `prepare_worktree_removal` records as [`super::worktree::RemoveResult`]'s
-/// `main_path` (the primary worktree, except cwd when the primary worktree is
-/// itself being removed; the merge destination for `wt merge`). Pass those
-/// `destination_path()`s in — the gate must read the same config the executor
-/// will (`output::handlers::spawn_hooks_after_remove`).
-///
-/// No fallback to another worktree's config, mirroring the executors
-/// (`output::handlers::execute_pre_remove_hooks_if_needed` and the
-/// `post-remove` snapshot path in `spawn_hooks_after_remove`). A
-/// present-but-malformed worktree config surfaces as an error so the user
-/// fixes it rather than silently running a different one.
-///
-/// Templates are deduped so the approval prompt shows each command once — so
-/// `destination_paths` may contain duplicates (the common case: every removal
-/// lands in the same primary worktree).
-///
-/// Callers feed the result into [`super::command_approval::approve_command_batch`].
-/// `wt merge` prepends its own `pre-commit` / `post-commit` / `pre-merge` /
-/// `post-merge` commands to the same batch; `wt remove` and `wt step prune`
-/// approve the helper's output on its own.
-pub fn collect_remove_hook_commands(
-    removed_worktree_paths: &[&Path],
-    destination_paths: &[&Path],
-) -> anyhow::Result<Vec<ApprovableCommand>> {
-    let mut commands: Vec<ApprovableCommand> = Vec::new();
-
-    for &wt_path in removed_worktree_paths {
-        // A `Repository::at` failure means git can't recognize the path as a
-        // worktree — propagate rather than silently fall back. See #2708.
-        let wt_repo = Repository::at(wt_path)?;
-        if let Some(cfg) = wt_repo.load_project_config()? {
-            commands.extend(collect_commands_for_hooks(
-                &cfg,
-                &[HookType::PreRemove, HookType::PostRemove],
-            ));
-        }
-    }
-
-    // `destination_paths` is usually one worktree repeated (every removal lands
-    // in the same primary) — read each one's config at most once.
-    let mut seen_dests: HashSet<&Path> = HashSet::new();
-    for &dest_path in destination_paths {
-        if !seen_dests.insert(dest_path) {
-            continue;
-        }
-        // Propagate a `Repository::at` failure rather than silently skipping
-        // — same as the removed-worktree loop above. See #2708.
-        let dest_repo = Repository::at(dest_path)?;
-        if let Some(cfg) = dest_repo.load_project_config()? {
-            commands.extend(collect_commands_for_hooks(&cfg, &[HookType::PostSwitch]));
-        }
-    }
-
-    let mut seen = HashSet::new();
-    commands.retain(|cmd| seen.insert(cmd.command.template.clone()));
-
-    Ok(commands)
 }
 
 /// Collect commands for every project-config alias, in `BTreeMap` (alphabetical) order.
