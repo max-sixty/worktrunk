@@ -445,6 +445,14 @@ fn is_table_like(item: &toml_edit::Item) -> bool {
     )
 }
 
+/// Whether a slot can host a freshly-inserted subtable: absent, or already a
+/// (possibly inline) table. A scalar/array occupant blocks insertion — the
+/// migration would remove the deprecated source but have nowhere to put
+/// `[parent.child]`, silently dropping the user's data.
+fn can_host_subtable(item: Option<&toml_edit::Item>) -> bool {
+    item.is_none_or(is_table_like)
+}
+
 /// Convert a table-like TOML item into a `Table`. Returns `None` for other shapes.
 fn into_table(item: toml_edit::Item) -> Option<toml_edit::Table> {
     match item {
@@ -470,8 +478,12 @@ fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     // Handle both regular tables and inline tables. Peek before removing so a
     // malformed value (e.g., a bare string) is left in place rather than
     // silently dropped when a sibling migration also serializes the doc.
+    // Also require `commit` be absent or a table — a scalar `commit = "x"`
+    // blocks insertion of `[commit.generation]`; removing the source then
+    // would silently drop the deprecated section.
     if !has_new_section
         && doc.get("commit-generation").is_some_and(is_table_like)
+        && can_host_subtable(doc.get("commit"))
         && let Some(old_section) = doc.remove("commit-generation")
     {
         let mut table = into_table(old_section).expect("checked is_table_like above");
@@ -508,10 +520,12 @@ fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
                     .is_some_and(|g| g.is_table() || g.is_inline_table());
 
                 // Peek before removing so a malformed value is preserved.
+                // Same scalar-parent guard as the top-level case above.
                 if !has_new_project_section
                     && project_table
                         .get("commit-generation")
                         .is_some_and(is_table_like)
+                    && can_host_subtable(project_table.get("commit"))
                     && let Some(old_section) = project_table.remove("commit-generation")
                 {
                     let mut table = into_table(old_section).expect("checked is_table_like above");
@@ -712,6 +726,12 @@ fn migrate_select_table(table: &mut toml_edit::Table, modified: &mut bool) {
     }
 
     if !table.get("select").is_some_and(is_table_like) {
+        return;
+    }
+
+    // A scalar `switch = "x"` blocks insertion of `[switch.picker]`; removing
+    // `select` then would silently drop the user's picker config.
+    if !can_host_subtable(table.get("switch")) {
         return;
     }
 
@@ -1144,8 +1164,13 @@ pub fn copy_approved_commands_to_approvals_file(
 /// - `command` is missing or not a string
 /// - `args` is not an array
 fn merge_args_into_command(table: &mut toml_edit::Table) {
-    // Validate preconditions before removing args
-    let can_merge = table.get("args").is_some_and(|a| a.as_array().is_some())
+    // Validate preconditions before removing args. Every element must be a
+    // string — a single non-string (e.g. `args = [1, "--ok"]`) would otherwise
+    // be silently filtered out while `args` was removed, dropping user data.
+    let can_merge = table
+        .get("args")
+        .and_then(|a| a.as_array())
+        .is_some_and(|a| a.iter().all(|v| v.as_str().is_some()))
         && table
             .get("command")
             .and_then(|c| c.as_value())
@@ -2709,6 +2734,91 @@ no-ff = true
         assert!(
             result.contains("ff = false"),
             "merge.no-ff should have migrated; got:\n{result}"
+        );
+    }
+
+    /// Scalar `commit = "x"` blocks `[commit.generation]` insertion. The
+    /// migration must NOT remove `[commit-generation]` — doing so previously
+    /// dropped the section since the new key could not be written under a
+    /// scalar parent.
+    #[test]
+    fn test_commit_generation_preserved_when_commit_is_scalar() {
+        let content = r#"commit = "x"
+
+[commit-generation]
+template = "tpl"
+
+[merge]
+no-ff = true
+"#;
+        let result = migrate_content(content);
+        assert!(
+            result.contains("[commit-generation]") && result.contains(r#"template = "tpl""#),
+            "[commit-generation] must survive when scalar `commit` blocks the new key; got:\n{result}"
+        );
+        // Source must still be the scalar — nothing inserted under it.
+        assert!(
+            result.contains(r#"commit = "x""#),
+            "scalar `commit` must be preserved unchanged; got:\n{result}"
+        );
+        // Sibling migration still applies.
+        assert!(
+            result.contains("ff = false"),
+            "merge.no-ff should have migrated; got:\n{result}"
+        );
+    }
+
+    /// Same shape for `[select]` when `switch = "x"` is scalar.
+    #[test]
+    fn test_select_preserved_when_switch_is_scalar() {
+        let content = r#"switch = "x"
+
+[select]
+preview = "p"
+
+[merge]
+no-ff = true
+"#;
+        let result = migrate_content(content);
+        assert!(
+            result.contains("[select]") && result.contains(r#"preview = "p""#),
+            "[select] must survive when scalar `switch` blocks the new key; got:\n{result}"
+        );
+        assert!(
+            result.contains(r#"switch = "x""#),
+            "scalar `switch` must be preserved unchanged; got:\n{result}"
+        );
+        assert!(
+            result.contains("ff = false"),
+            "merge.no-ff should have migrated; got:\n{result}"
+        );
+    }
+
+    /// `args = [1, "--ok"]`: a single non-string element would previously be
+    /// filtered out while `args` was removed, dropping user data. The whole
+    /// `args` array must be preserved unchanged when any element isn't a
+    /// string.
+    #[test]
+    fn test_commit_generation_args_preserved_when_non_string_element() {
+        let content = r#"[commit-generation]
+command = "echo"
+args = [1, "--ok"]
+"#;
+        let result = migrate_content(content);
+        // Section migrated to [commit.generation], but `args` preserved
+        // because it contains a non-string element.
+        assert!(
+            result.contains("[commit.generation]"),
+            "section should still migrate; got:\n{result}"
+        );
+        assert!(
+            result.contains("args = [1, \"--ok\"]") || result.contains("args = [ 1, \"--ok\" ]"),
+            "args must be preserved unchanged when any element is non-string; got:\n{result}"
+        );
+        // command must NOT have been mutated to include the partial join.
+        assert!(
+            result.contains(r#"command = "echo""#),
+            "command must not be mutated when args is preserved; got:\n{result}"
         );
     }
 
