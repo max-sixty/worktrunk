@@ -1288,6 +1288,59 @@ $ wt config state hints clear worktree-path
     },
 }
 
+/// Write-ness of a state action, co-located with the action enums so a new
+/// variant cannot be added without classifying it.
+///
+/// `--format` is `global = true` on the state-cache parents so the bareword and
+/// `get` read forms accept it; clap therefore also accepts it on write actions,
+/// where it has no effect. The dispatcher guards against that
+/// (`guard_format_on_write`). Deriving the verb from this trait — rather than
+/// hand-placing the guard at each write arm — means the exhaustive match below
+/// fails to compile until a newly added write variant declares itself, so a
+/// write action can't silently bypass the guard.
+pub(crate) trait StateWrite {
+    /// `Some(verb)` for write actions (verb names the action in the conflict
+    /// error); `None` for reads.
+    fn write_verb(&self) -> Option<&'static str>;
+}
+
+impl StateWrite for CiStatusAction {
+    fn write_verb(&self) -> Option<&'static str> {
+        match self {
+            Self::Get { .. } => None,
+            Self::Clear { .. } => Some("clear"),
+        }
+    }
+}
+
+impl StateWrite for MarkerAction {
+    fn write_verb(&self) -> Option<&'static str> {
+        match self {
+            Self::Get { .. } => None,
+            Self::Set { .. } => Some("set"),
+            Self::Clear { .. } => Some("clear"),
+        }
+    }
+}
+
+impl StateWrite for LogsAction {
+    fn write_verb(&self) -> Option<&'static str> {
+        match self {
+            Self::Get => None,
+            Self::Clear => Some("clear"),
+        }
+    }
+}
+
+impl StateWrite for HintsAction {
+    fn write_verb(&self) -> Option<&'static str> {
+        match self {
+            Self::Get => None,
+            Self::Clear { .. } => Some("clear"),
+        }
+    }
+}
+
 // Ordering: reads before writes — get, list, set, clear.
 #[derive(Subcommand)]
 pub enum VarsAction {

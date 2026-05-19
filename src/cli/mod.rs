@@ -7,7 +7,7 @@ pub(crate) use config::{
     ApprovalsCommand, CiStatusAction, ConfigAliasCommand, ConfigCommand,
     ConfigPluginsClaudeCommand, ConfigPluginsCodexCommand, ConfigPluginsCommand,
     ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, HintsAction, LogsAction,
-    MarkerAction, PreviousBranchAction, StateCommand, VarsAction,
+    MarkerAction, PreviousBranchAction, StateCommand, StateWrite, VarsAction,
 };
 pub(crate) use hook::{HOOK_TYPE_NAMES, HookCommand, HookOptions};
 pub(crate) use list::ListSubcommand;

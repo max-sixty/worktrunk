@@ -70,8 +70,8 @@ use cli::{
     ConfigPluginsClaudeCommand, ConfigPluginsCodexCommand, ConfigPluginsCommand,
     ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, HintsAction,
     HookCommand, HookOptions, ListArgs, ListSubcommand, LogsAction, MarkerAction, MergeArgs,
-    PreviousBranchAction, RemoveArgs, StateCommand, StepCommand, SwitchArgs, SwitchFormat,
-    VarsAction,
+    PreviousBranchAction, RemoveArgs, StateCommand, StateWrite, StepCommand, SwitchArgs,
+    SwitchFormat, VarsAction,
 };
 
 /// Render a clap error to stderr, appending a wt-specific nested-subcommand
@@ -467,40 +467,53 @@ fn handle_state_command(action: StateCommand) -> anyhow::Result<()> {
             }
             Some(PreviousBranchAction::Clear) => handle_state_clear("previous-branch", None, false),
         },
-        StateCommand::CiStatus { action, format } => match action {
-            Some(CiStatusAction::Get { branch }) => handle_state_get("ci-status", branch, format),
-            None => handle_state_get("ci-status", None, format),
-            Some(CiStatusAction::Clear { branch, all }) => {
-                guard_format_on_write("clear", format)?;
-                handle_state_clear("ci-status", branch, all)
+        StateCommand::CiStatus { action, format } => {
+            if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
+                guard_format_on_write(verb, format)?;
             }
-        },
-        StateCommand::Marker { action, format } => match action {
-            Some(MarkerAction::Get { branch }) => handle_state_get("marker", branch, format),
-            None => handle_state_get("marker", None, format),
-            Some(MarkerAction::Set { value, branch }) => {
-                guard_format_on_write("set", format)?;
-                handle_state_set("marker", value, branch)
+            match action {
+                Some(CiStatusAction::Get { branch }) => {
+                    handle_state_get("ci-status", branch, format)
+                }
+                None => handle_state_get("ci-status", None, format),
+                Some(CiStatusAction::Clear { branch, all }) => {
+                    handle_state_clear("ci-status", branch, all)
+                }
             }
-            Some(MarkerAction::Clear { branch, all }) => {
-                guard_format_on_write("clear", format)?;
-                handle_state_clear("marker", branch, all)
+        }
+        StateCommand::Marker { action, format } => {
+            if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
+                guard_format_on_write(verb, format)?;
             }
-        },
-        StateCommand::Logs { action, format } => match action {
-            Some(LogsAction::Get) | None => handle_logs_list(format),
-            Some(LogsAction::Clear) => {
-                guard_format_on_write("clear", format)?;
-                handle_state_clear("logs", None, false)
+            match action {
+                Some(MarkerAction::Get { branch }) => handle_state_get("marker", branch, format),
+                None => handle_state_get("marker", None, format),
+                Some(MarkerAction::Set { value, branch }) => {
+                    handle_state_set("marker", value, branch)
+                }
+                Some(MarkerAction::Clear { branch, all }) => {
+                    handle_state_clear("marker", branch, all)
+                }
             }
-        },
-        StateCommand::Hints { action, format } => match action {
-            Some(HintsAction::Get) | None => handle_hints_get(format),
-            Some(HintsAction::Clear { name }) => {
-                guard_format_on_write("clear", format)?;
-                handle_hints_clear(name)
+        }
+        StateCommand::Logs { action, format } => {
+            if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
+                guard_format_on_write(verb, format)?;
             }
-        },
+            match action {
+                Some(LogsAction::Get) | None => handle_logs_list(format),
+                Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
+            }
+        }
+        StateCommand::Hints { action, format } => {
+            if let Some(verb) = action.as_ref().and_then(StateWrite::write_verb) {
+                guard_format_on_write(verb, format)?;
+            }
+            match action {
+                Some(HintsAction::Get) | None => handle_hints_get(format),
+                Some(HintsAction::Clear { name }) => handle_hints_clear(name),
+            }
+        }
         StateCommand::Vars { action } => match action {
             VarsAction::Get { key, branch } => handle_vars_get(&key, branch),
             VarsAction::Set {
