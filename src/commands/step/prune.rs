@@ -203,14 +203,11 @@ fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result
         }
     };
     let mut announcer = HookAnnouncer::new(ctx.repo, ctx.config, true);
-    handle_remove_output(
-        &plan,
-        ctx.foreground,
-        ctx.run_hooks,
-        true,
-        false,
-        &mut announcer,
-    )?;
+    // Read the Copy flags into locals so the call stays on one line (rustfmt
+    // breaks it past `ctx.`-prefixed args), keeping it identical to its form
+    // before the context-struct refactor.
+    let (foreground, run_hooks) = (ctx.foreground, ctx.run_hooks);
+    handle_remove_output(&plan, foreground, run_hooks, true, false, &mut announcer)?;
     announcer.flush()?;
     Ok(true)
 }
