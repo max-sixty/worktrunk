@@ -33,6 +33,8 @@ For each uncovered function, either write a test (integration tests via `assert_
 
 **"N functions have mismatched data" warning:** `cargo llvm-cov` merges profiles from multiple compilation targets with minor codegen differences (typically 5–20 functions). Expected, harmless, no suppression flag exists ([LLVM #97574](https://github.com/llvm/llvm-project/issues/97574)).
 
+PTY tests need extra setup to be measured at all — they `env_clear()` the subprocess, so LLVM env vars must be passed through explicitly. See "Coverage in PTY Tests" below.
+
 ## Running `wt` Commands in Tests
 
 **Use the correct helper to ensure test isolation.** Tests that spawn `wt` must

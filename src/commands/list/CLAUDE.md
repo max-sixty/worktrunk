@@ -36,18 +36,9 @@ Results update cells progressively as they complete.
 
 ## Adding New Features
 
-When adding a new column or feature, ask:
-
-1. **Does it need data before skeleton?** Usually no. The skeleton can show a
-   placeholder or omit the column until data arrives.
-
-2. **Can template expansion wait?** Yes. Expand templates post-skeleton, then
-   update the relevant cells.
-
-3. **Does it require file I/O?** If so, it belongs post-skeleton.
-
-**Default answer: defer to post-skeleton.** Only add pre-skeleton operations
-when the skeleton literally cannot render without the data.
+Default: defer to post-skeleton. Only add a pre-skeleton operation when the
+skeleton literally cannot render without the data. File I/O and template
+expansion always wait; new columns can render a placeholder until data arrives.
 
 ## Benchmarking Skeleton Time
 
