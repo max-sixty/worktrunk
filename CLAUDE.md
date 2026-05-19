@@ -63,7 +63,7 @@ Full inventory: FAQ [What files does Worktrunk create?](docs/content/faq.md#what
 
 ## Command Execution Principles
 
-### All commands through `shell_exec::Cmd`
+### All Commands Through `shell_exec::Cmd`
 
 Every external command goes through `shell_exec::Cmd` for consistent debug logging (`$ git status [worktree-name]`) and `[wt-trace]` timing. Never call `cmd.output()` directly. For git, prefer `Repository::run_command()` (wraps `Cmd` with worktree context). Pipe stdin via `.stdin_bytes(...)`. The `[wt-trace]` grammar is owned by `src/trace/emit.rs` — emit new trace records through that module, not ad-hoc `log::debug!("[wt-trace] …")` strings.
 
@@ -72,11 +72,11 @@ Cmd::new("git").args(["status", "--porcelain"]).current_dir(&wt).context("worktr
 Cmd::new("gh").args(["pr", "list"]).run()?;  // no context for standalone tools
 ```
 
-### Real-time output streaming
+### Real-time Output Streaming
 
 Stream command output line-by-line rather than buffering. Responsiveness is a priority.
 
-### Structured output over error-message parsing
+### Structured Output Over Error-Message Parsing
 
 Prefer exit codes / `--porcelain` / `--json` over parsing human-readable messages, which break on locale, version, and rewording changes. `git merge-base` exit codes encode meaning (0 found, 1 no common ancestor, 128 invalid ref) — branch on `status.code()`, not message text.
 
@@ -89,7 +89,7 @@ Prefer exit codes / `--porcelain` / `--json` over parsing human-readable message
 
 When no structured alternative exists, document the fragility inline.
 
-### Network access
+### Network Access
 
 worktrunk is local-first: the network is touched only when the user asked for it. **Single exception:** the *first* `Repository::default_branch()` per repo may fall through to `git ls-remote`; the result caches in `worktrunk.default-branch` and every later call is local. No other detection helper may add a similar fallback.
 
@@ -97,7 +97,7 @@ Why: silent "lookup" paths that walk to the wire (alias dispatch, hook context b
 
 Before adding an accessor that could reach the wire (`gh`, `glab`, `git fetch`, `git ls-remote`, HTTP), confirm the call site is one the user explicitly invoked. Background polling on a TTL cache counts: a CI-status check on every shell prompt is invisible but still hits the wire, and is not allowed.
 
-### Signal handling: Ctrl-C cancels the current command
+### Signal Handling: Ctrl-C Cancels the Current Command
 
 When a child process exits from a signal (SIGINT, SIGTERM), every loop in the foreground execution path MUST abort rather than continue to the next iteration. This applies to worktree loops (`wt step for-each`), hook pipelines, alias steps, concurrent groups, and any future code running multiple child processes in sequence.
 
@@ -136,7 +136,7 @@ Top-level *files* are shared logs (`commands.jsonl*`, `trace.log`, `output.log`,
 
 ## Code Quality
 
-### Use existing dependencies
+### Use Existing Dependencies
 
 Check `Cargo.toml` before hand-rolling a utility:
 
