@@ -199,11 +199,26 @@ jobs:
   # full suite. The signal is the runtime delta on the exact-match path and
   # whether selection misses any failures the full suite catches.
   #
-  # TODO: once cargo-affected is trusted on this repo, gate the full test
-  # matrix to run only on pushes to main and on PRs with a `full-tests` label
-  # (or similar). PR pushes would default to affected-only. The full suite
-  # could fold into the existing `nightly` workflow, which already hosts
-  # slower integration-time checks. Periodic full runs remain essential —
+  # Both jobs run as the same linux/macos/windows matrix as `test`. The
+  # fingerprint embeds `rustc -vV` (host triple), so a DB collected on one OS
+  # cache-misses on the others — each OS's `affected-tests` leg pairs with a
+  # `collect-affected` DB from the same OS via the `runner.os` cache key.
+  #
+  # TODO(affected-only PRs): once `affected tests (linux/macos/windows)` has a
+  # track record of catching every failure the required full suite catches on
+  # all three OSes, drop the full `test` matrix from PRs and let cargo-affected
+  # be the PR test path. Confidence bar: a sustained stretch of PRs where the
+  # advisory legs and the required full matrix agree — no failure the full
+  # suite caught that affected selection missed.
+  #
+  # Until then the full `test` matrix stays required and runs on every PR,
+  # unchanged. Do NOT reach affected-only by making the required `test (*)`
+  # checks skip=pass on PRs — relaxing the merge gate is a deliberate
+  # branch-protection change owned by the repo admin (see `.github/CLAUDE.md`),
+  # not a silent workflow skip.
+  #
+  # When the gate is flipped, keep periodic full runs (push-to-main, and fold
+  # into the `nightly` workflow, which already hosts slower checks) —
   # cargo-affected misses non-Rust inputs (`include_str!`, templates, SQL),
   # build-time inputs not in its fingerprint (build.rs, rust-toolchain.toml,
   # .cargo/config.toml), and proc-macro source edits.
@@ -235,9 +250,19 @@ jobs:
   #   manual `db-v{N}` marker. Bump the marker if cargo-affected ships an
   #   on-disk schema change; the cache is otherwise version-agnostic.
   collect-affected:
-    name: collect affected coverage
+    name: collect affected coverage (${{ matrix.name }})
     if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: linux
+          - os: macos-15
+            name: macos
+          - os: windows-2022
+            name: windows
+    runs-on: ${{ matrix.os }}
     steps:
     - name: 📂 Checkout code
       uses: actions/checkout@v6
@@ -247,6 +272,14 @@ jobs:
         fetch-depth: 0
 
     - uses: ./.github/actions/test-setup
+
+    - name: "Use fast D: drive for temp files (Windows)"
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path "D:\tmp" | Out-Null
+        echo "TEMP=D:\tmp" >> $env:GITHUB_ENV
+        echo "TMP=D:\tmp" >> $env:GITHUB_ENV
 
     - name: Install cargo-affected
       uses: baptiste0928/cargo-install@v3
@@ -292,9 +325,19 @@ jobs:
         key: cargo-affected-db-v1-${{ runner.os }}-${{ github.sha }}
 
   affected-tests:
-    name: affected tests (linux, advisory)
+    name: affected tests (${{ matrix.name }}, advisory)
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: linux
+          - os: macos-15
+            name: macos
+          - os: windows-2022
+            name: windows
+    runs-on: ${{ matrix.os }}
     # Advisory while we calibrate selection accuracy against the full suite.
     # The full matrix (`test (linux/macos/windows)`) is still required for
     # merge.
@@ -309,6 +352,7 @@ jobs:
 
     - name: Compute merge-base for cache key
       id: mb
+      shell: bash
       env:
         PR_HEAD: ${{ github.event.pull_request.head.sha }}
       run: |
@@ -318,6 +362,14 @@ jobs:
         echo "merge-base with origin/main: $sha"
 
     - uses: ./.github/actions/test-setup
+
+    - name: "Use fast D: drive for temp files (Windows)"
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path "D:\tmp" | Out-Null
+        echo "TEMP=D:\tmp" >> $env:GITHUB_ENV
+        echo "TMP=D:\tmp" >> $env:GITHUB_ENV
 
     # Restore AFTER test-setup so we land on top of rust-cache's tar
     # extraction. rust-cache's restore step calls `cleanTargetDir` on a
@@ -359,7 +411,7 @@ jobs:
       if: ${{ !cancelled() }}
       uses: actions/upload-artifact@v7
       with:
-        name: cargo-affected-report
+        name: cargo-affected-report-${{ matrix.name }}
         path: target/affected/report.json
 
   code-coverage:

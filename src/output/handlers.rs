@@ -11,13 +11,14 @@ use worktrunk::styling::{eprint, format_bash_with_gutter, stderr};
 
 use crate::commands::command_executor::CommandContext;
 use crate::commands::command_executor::FailureStrategy;
-use crate::commands::hooks::{HookAnnouncer, execute_hook};
+use crate::commands::hook_plan::{ApprovedHookPlan, execute_planned_hook, register_planned};
+use crate::commands::hooks::HookAnnouncer;
 use crate::commands::process::{
     HookLog, InternalOp, build_remove_command, build_remove_command_staged, spawn_detached,
 };
 use crate::commands::worktree::hooks::PostRemoveContext;
 use crate::commands::worktree::{RemoveResult, SwitchBranchInfo, SwitchResult};
-use worktrunk::config::{ProjectConfig, UserConfig};
+use worktrunk::config::UserConfig;
 use worktrunk::git::ErrorExt;
 use worktrunk::git::GitError;
 use worktrunk::git::IntegrationReason;
@@ -731,19 +732,24 @@ pub fn execute_user_command(command: &str, display_path: Option<&Path>) -> anyho
 /// When `quiet` is true (prune context), suppresses informational messages
 /// like "No worktree found for branch X" that are noise in batch operations.
 ///
+/// `plan` is the frozen, approved hook set; an empty plan (`--no-hooks`,
+/// declined, or no project config) runs no project hooks. `pre-remove` /
+/// `post-remove` / `post-switch` execute only from it — never a re-read of
+/// the (by-then-gone) worktree config.
+///
 /// When `silent` is true (the TUI picker — this runs while skim owns the
 /// terminal), a `RemovedWorktree` result is removed with no progress/success
 /// messages, no trash-cleanup spinner, and no `cd` directive: just the git
-/// removal plus the usual `verify`-gated `pre-remove` / `post-remove` /
-/// `post-switch` hooks. (The picker can't prompt for approval mid-render, so it
-/// passes `verify` from a read-only `Approvals` check — see `do_removal`.) The
-/// removal runs inline regardless of `foreground` (there's no detached `rm` to
-/// background to). `silent` has no effect on `BranchOnly` results — the picker
-/// handles that arm itself.
+/// removal plus the planned `pre-remove` / `post-remove` / `post-switch`
+/// hooks. (The picker can't prompt mid-render, so its `plan` comes from a
+/// read-only `Approvals` filter — see `do_removal`.) The removal runs inline
+/// regardless of `foreground` (there's no detached `rm` to background to).
+/// `silent` has no effect on `BranchOnly` results — the picker handles that
+/// arm itself.
 pub fn handle_remove_output(
     result: &RemoveResult,
     foreground: bool,
-    verify: bool,
+    plan: &ApprovedHookPlan,
     quiet: bool,
     silent: bool,
     announcer: &mut HookAnnouncer<'_>,
@@ -760,7 +766,6 @@ pub fn handle_remove_output(
             force_worktree,
             expected_path,
             removed_commit,
-            removed_project_config,
         } => handle_removed_worktree_output(
             RemovedWorktreeOutputContext {
                 main_path,
@@ -773,9 +778,8 @@ pub fn handle_remove_output(
                 force_worktree: *force_worktree,
                 expected_path: expected_path.as_deref(),
                 removed_commit: removed_commit.as_deref(),
-                removed_project_config: removed_project_config.as_deref(),
+                plan,
                 foreground,
-                verify,
                 silent,
             },
             announcer,
@@ -907,9 +911,6 @@ fn spawn_hooks_after_remove(
     removed_branch: &str,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
-    if !ctx.verify {
-        return Ok(());
-    }
     let Ok(config) = UserConfig::load() else {
         return Ok(());
     };
@@ -933,26 +934,29 @@ fn spawn_hooks_after_remove(
     // branch since both post-remove and post-switch are consequences of that removal.
     let remove_ctx = CommandContext::new(repo, &config, Some(removed_branch), ctx.main_path, false);
 
-    // `post-remove` is *about* the removed worktree, so its project config
-    // comes from the snapshot taken before removal — the worktree itself is
-    // gone by now. `post-switch` is *about* the destination worktree (where
-    // the user landed), so its config loads from `remove_ctx` (rooted at
-    // `ctx.main_path`) the normal way.
-    announcer.register_with_project_config(
+    // `post-remove` is *about* the removed worktree (gone by now); it was
+    // selected and frozen into `plan` at the gate, anchored at the removed
+    // worktree path. `remove_ctx` (rooted at `ctx.main_path`) only renders.
+    register_planned(
+        announcer,
+        ctx.plan,
+        ctx.worktree_path,
         &remove_ctx,
-        ctx.removed_project_config,
         worktrunk::HookType::PostRemove,
         &extra_vars,
         display_path,
     )?;
 
-    // Post-switch: only when the user actually changed directory.
-    // Uses its own context with the destination branch for template variables.
+    // Post-switch: only when the user actually changed directory. Anchored at
+    // the destination worktree (where the user landed) at the gate.
     if ctx.changed_directory {
         let dest_branch = repo.worktree_at(ctx.main_path).branch()?;
         let switch_ctx =
             CommandContext::new(repo, &config, dest_branch.as_deref(), ctx.main_path, false);
-        announcer.register(
+        register_planned(
+            announcer,
+            ctx.plan,
+            ctx.main_path,
             &switch_ctx,
             worktrunk::HookType::PostSwitch,
             &[],
@@ -1185,12 +1189,11 @@ struct RemovedWorktreeOutputContext<'a> {
     force_worktree: bool,
     expected_path: Option<&'a Path>,
     removed_commit: Option<&'a str>,
-    /// The removed worktree's `.config/wt.toml`, snapshotted before removal.
-    /// Used by `post-remove` (the worktree is gone by the time it runs);
-    /// `pre-remove` reads the same file on disk via `Repository::at`.
-    removed_project_config: Option<&'a ProjectConfig>,
+    /// The frozen, approved hook plan. `pre-remove` / `post-remove` /
+    /// `post-switch` execute only from this — no `.config/wt.toml` re-read,
+    /// no `ProjectConfig` snapshot to thread.
+    plan: &'a ApprovedHookPlan,
     foreground: bool,
-    verify: bool,
     /// TUI (picker) path: do the git removal and hook registration but emit no
     /// progress/success messages, no trash-cleanup spinner, and no `cd`
     /// directive — see [`handle_remove_output`].
@@ -1201,23 +1204,15 @@ fn execute_pre_remove_hooks_if_needed(
     repo: &Repository,
     ctx: &RemovedWorktreeOutputContext<'_>,
 ) -> anyhow::Result<()> {
-    if !ctx.verify {
-        return Ok(());
-    }
-
     let Ok(config) = UserConfig::load() else {
         return Ok(());
     };
 
-    // `pre-remove` runs in — and reads `.config/wt.toml` from — the worktree
-    // being removed. It's still on disk here (removal happens after this), so
-    // resolve the config from there rather than from `repo`, which is rooted at
-    // the post-removal working directory (usually the primary worktree, or the
-    // merge destination). No fallback to `repo`: if the removed worktree
-    // carries no `.config/wt.toml`, no project `pre-remove` runs. A
-    // present-but-malformed config surfaces as an error from
-    // `load_project_config`, which aborts removal. The `wt remove` approval
-    // helper in `main.rs` resolves the same config.
+    // `pre-remove` runs in the worktree being removed (still on disk here).
+    // `pre_remove_repo` roots the *render* context there for template vars;
+    // the command set is the frozen `plan` (anchored at the removed worktree
+    // at the gate), so the removed worktree's `.config/wt.toml` is never
+    // re-read.
     let pre_remove_repo = Repository::at(ctx.worktree_path)?;
     let command_ctx = CommandContext::new(
         &pre_remove_repo,
@@ -1243,7 +1238,9 @@ fn execute_pre_remove_hooks_if_needed(
         ("target_worktree_path", &target_path_str),
     ];
 
-    execute_hook(
+    execute_planned_hook(
+        ctx.plan,
+        ctx.worktree_path,
         &command_ctx,
         worktrunk::HookType::PreRemove,
         &extra_vars,

@@ -31,6 +31,7 @@ use super::resolve::path_mismatch;
 use super::types::RemoveResult;
 use crate::commands::command_executor::CommandContext;
 use crate::commands::context::CommandEnv;
+use crate::commands::hook_plan::{ApprovedHookPlan, register_planned};
 use crate::commands::hooks::HookAnnouncer;
 use crate::commands::repository_ext::{
     check_not_default_branch, compute_integration_reason, is_primary_worktree,
@@ -47,6 +48,9 @@ pub struct FinishAfterMergeArgs<'a> {
     pub remove: bool,
     pub verify: bool,
     pub yes: bool,
+    /// The frozen, approved hook plan. `post-merge` and the removal's
+    /// `pre-remove` / `post-remove` / `post-switch` execute only from this.
+    pub plan: &'a ApprovedHookPlan,
 }
 
 /// Run the post-merge finish sequence: capture feature identity, optionally
@@ -71,6 +75,7 @@ pub fn finish_after_merge(
         remove,
         verify,
         yes,
+        plan,
     } = args;
 
     let on_target = current_branch == target_branch;
@@ -140,16 +145,9 @@ pub fn finish_after_merge(
         );
         let expected_path = path_mismatch(repo, current_branch, &worktree_root, config);
 
-        // Snapshot the feature worktree's `.config/wt.toml` before removal so
-        // `post-remove` can read it after the directory is gone — same
-        // mechanism as `prepare_worktree_removal`. The repo is already rooted
-        // at the feature worktree (`current_wt`), so `load_project_config`
-        // reads from there. Parse errors propagate here because they'd abort
-        // `wt merge` upfront (no removal happens yet, so the executor's
-        // re-read path that handles them on the `wt remove` side isn't
-        // reachable from this call).
-        let removed_project_config = repo.load_project_config()?.map(Box::new);
-
+        // No config snapshot: `pre-remove` / `post-remove` were selected and
+        // frozen into `plan` at the gate (anchored at `feature_path`), so the
+        // executor never re-reads the removed worktree's `.config/wt.toml`.
         let remove_result = RemoveResult::RemovedWorktree {
             main_path: destination_path.clone(),
             worktree_path: worktree_root,
@@ -161,20 +159,17 @@ pub fn finish_after_merge(
             force_worktree: false,
             expected_path,
             removed_commit: feature_commit.clone(),
-            removed_project_config,
         };
-        handle_remove_output(&remove_result, false, verify, false, false, announcer)?;
+        handle_remove_output(&remove_result, false, plan, false, false, announcer)?;
         true
     };
 
     if verify {
-        // Post-merge hooks run in the destination worktree (target), and resolve
-        // their `.config/wt.toml` from there — root `ctx.repo` at the
-        // destination (the feature worktree may be gone by now). Bare template
-        // vars still point to the Active (feature branch) per the template
-        // variable model; those are repo-wide lookups, unaffected by the root.
-        // No fallback to `repo`: if the destination has no `.config/wt.toml`,
-        // no project `post-merge` runs.
+        // Post-merge hooks run in the destination worktree (target). `ctx.repo`
+        // is rooted there only for template *rendering* (the feature worktree
+        // may be gone); the command set is the frozen `plan`, anchored at
+        // `destination_path` at the gate — no re-read of the destination's
+        // (now post-merge) `.config/wt.toml`.
         let dest_repo = Repository::at(&destination_path)?;
         let ctx = CommandContext::new(
             &dest_repo,
@@ -193,7 +188,10 @@ pub fn finish_after_merge(
         if let Some(p) = target_worktree_path {
             vars = vars.with_target_worktree_path(p);
         }
-        announcer.register(
+        register_planned(
+            announcer,
+            plan,
+            &destination_path,
             &ctx,
             HookType::PostMerge,
             &vars.as_extra_vars(),

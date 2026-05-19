@@ -1065,3 +1065,99 @@ fn test_prune_runs_branch_local_pre_remove_hook(mut repo: TestRepo) {
     assert_eq!(std::fs::read_to_string(&marker).unwrap().trim(), "ran");
     assert!(!wt_path.exists(), "the merged worktree should be removed");
 }
+
+/// Windows residual-race canary for the `wt step prune` fallback path.
+///
+/// B-prime (the `check_lock` RwLock in `src/commands/step/prune.rs`)
+/// serializes the parallel `integration_reason` `.git/config` readers against
+/// the *synchronous* fast-path `git branch -D` writer. The cross-filesystem /
+/// `.gitmodules` / Windows-file-lock fallback, however, defers branch
+/// deletion into a detached `git worktree remove && git branch -D` that runs
+/// *outside* the write guard (see the `check_lock` rationale comment for why
+/// it cannot be guarded there — the worktree still references the branch). A
+/// `git branch -D` of a branch with a `[branch "<name>"]` section rewrites
+/// `.git/config` via lockfile+rename.
+///
+/// This forces that fallback for one non-current integrated worktree (by
+/// pre-blocking its staged path, like
+/// `test_remove_background_fallback_on_rename_failure`) while several other
+/// integrated worktrees keep the parallel integration-check fan-out running,
+/// so the deferred config-rewriting `git branch -D` overlaps live
+/// `.git/config` readers.
+///
+/// On POSIX this is a deterministic fallback-path smoke test: a concurrent
+/// `.git/config` read and rename never collide, so it always passes. On
+/// Windows the same overlap can hit the documented residual gap — `git`
+/// failing with `unable to access '.git/config': Permission denied`,
+/// panicking prune. It is left in the normal suite (not a dedicated stress
+/// lane) deliberately: a Windows flake here is empirical proof the fallback
+/// path needs closing rather than the structurally-estimated "small" gap
+/// (issue #2801).
+#[rstest]
+fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    // Several integrated worktrees → a real parallel integration-check
+    // fan-out. `add_worktree` puts each branch at `main` HEAD, so all are
+    // same-commit integrated and will be pruned. Each branch gets a
+    // `[branch "<name>"]` section so its `git branch -D` rewrites
+    // `.git/config` — the racing write. (No remote needed: `git branch -D`
+    // removes the section regardless of whether `origin` resolves, and the
+    // same-commit local check yields "integrated" before upstream is
+    // consulted.)
+    let names: Vec<String> = (0..6).map(|i| format!("merged-canary-{i}")).collect();
+    for name in &names {
+        repo.add_worktree(name);
+        repo.run_git(&["config", &format!("branch.{name}.remote"), "origin"]);
+        repo.run_git(&[
+            "config",
+            &format!("branch.{name}.merge"),
+            &format!("refs/heads/{name}"),
+        ]);
+    }
+
+    // Force the fallback for one *non-current* worktree by pre-creating a
+    // file at its computed staged path so `std::fs::rename(worktree → trash)`
+    // fails. Pick one in the middle so integration checks for later refs are
+    // still in flight when its deferred `git branch -D` fires.
+    let blocked = names[3].clone();
+    let blocked_wt_path = repo.worktree_path(&blocked).to_path_buf();
+    let trash_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
+    std::fs::create_dir_all(&trash_dir).unwrap();
+    let staged_path = trash_dir.join(format!(
+        "{}-{}",
+        blocked_wt_path.file_name().unwrap().to_string_lossy(),
+        crate::common::TEST_EPOCH
+    ));
+    std::fs::write(&staged_path, "blocking file to force fallback").unwrap();
+
+    // Parallel fan-out is the point — do NOT pin RAYON_NUM_THREADS=1.
+    let output = repo
+        .wt_command()
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "prune should succeed; the documented Windows fallback-path race \
+         would fail it here with a `.git/config` permission error \
+         (issue #2801).\nstderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("unable to access '.git/config'"),
+        "residual fallback-path `.git/config` race fired — the fallback's \
+         deferred `git branch -D` collided with a live integration-check \
+         reader (issue #2801).\nstderr:\n{stderr}"
+    );
+
+    // Removal-completion is intentionally NOT polled here. The race signal is
+    // the prune exit + stderr above (immediate, deterministic on POSIX).
+    // Detached background cleanup completing is load-sensitive and already
+    // covered by `test_prune_multiple` and
+    // `test_remove_background_fallback_on_rename_failure`; re-polling it under
+    // this test's deliberately heavy fan-out would only add load-induced
+    // flakiness with no canary value.
+    let _ = std::fs::remove_file(&staged_path);
+}

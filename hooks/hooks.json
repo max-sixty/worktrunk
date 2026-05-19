@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${extensionPath}/hooks/wt.sh\" config state marker set 🤖 || true"
+            "command": "bash \"${extensionPath}/plugins/worktrunk/hooks/wt.sh\" config state marker set 🤖 || true"
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${extensionPath}/hooks/wt.sh\" config state marker set 💬 || true"
+            "command": "bash \"${extensionPath}/plugins/worktrunk/hooks/wt.sh\" config state marker set 💬 || true"
           }
         ]
       }
@@ -25,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${extensionPath}/hooks/wt.sh\" config state marker clear || true"
+            "command": "bash \"${extensionPath}/plugins/worktrunk/hooks/wt.sh\" config state marker clear || true"
           }
         ]
       }

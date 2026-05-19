@@ -3,19 +3,20 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use anyhow::Context;
 use color_print::cformat;
 use crossbeam_channel as chan;
 use rayon::prelude::*;
-use worktrunk::config::{Approvals, UserConfig};
+use worktrunk::HookType;
+use worktrunk::config::UserConfig;
 use worktrunk::git::{BranchDeletionMode, RefSnapshot, Repository, WorktreeInfo};
 use worktrunk::styling::{eprintln, hint_message, info_message, println, success_message};
 
-use super::super::command_approval::approve_command_batch;
+use super::super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
-use super::super::project_config::collect_remove_hook_commands;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use crate::output::handle_remove_output;
 
@@ -131,17 +132,42 @@ fn prune_summary(candidates: &[Candidate]) -> String {
     parts.join(", ")
 }
 
+/// Loop-invariant context for [`try_remove`]: every field is identical at all
+/// three call sites in [`step_prune`] (only the `Candidate` varies). Built once
+/// and passed by reference.
+struct RemovalContext<'a> {
+    repo: &'a Repository,
+    config: &'a UserConfig,
+    foreground: bool,
+    hook_plan: &'a ApprovedHookPlan,
+    worktrees: &'a [WorktreeInfo],
+    snapshot: &'a RefSnapshot,
+    /// Serializes the parallel `integration_reason` readers against the
+    /// removal writer — load-bearing for the Windows `.git/config` race fix.
+    /// `try_remove` acquires the write guard at the top of its body and holds
+    /// it over the whole body.
+    check_lock: &'a RwLock<()>,
+}
+
 /// Try to remove a candidate immediately. Returns Ok(true) if removed,
 /// Ok(false) if skipped (preparation error), Err on execution error.
-fn try_remove(
-    candidate: &Candidate,
-    repo: &Repository,
-    config: &UserConfig,
-    foreground: bool,
-    run_hooks: bool,
-    worktrees: &[WorktreeInfo],
-    snapshot: &RefSnapshot,
-) -> anyhow::Result<bool> {
+fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result<bool> {
+    // Exclude all in-flight integration readers for the duration of the
+    // removal: the write guard blocks until every outstanding read guard
+    // (i.e. every running `integration_reason` git process) has dropped, and
+    // blocks new ones until removal completes — so no `.git/config` reader is
+    // alive while `git branch -D` rewrites it. Held over the whole body
+    // (rather than just the deep `branch -D` call site) keeps the lock
+    // confined to this file; the extra reader-exclusion during the fast
+    // rename/prune is harmless. See the `check_lock` rationale at the
+    // par_iter spawn for the Windows mechanism and its fast-path scope.
+    //
+    // The guard protects `()` — there is no shared state to corrupt, so a
+    // poisoned lock is meaningless here. Recover the guard rather than
+    // `.expect()`-ing: a panic elsewhere should surface as itself, not as a
+    // cascade of secondary poison panics on every later removal/reader.
+    let _write = ctx.check_lock.write().unwrap_or_else(|e| e.into_inner());
+
     let target = match candidate.kind {
         CandidateKind::Current => RemoveTarget::Current,
         CandidateKind::BranchOnly => RemoveTarget::Branch(
@@ -160,14 +186,14 @@ fn try_remove(
             ),
         },
     };
-    let plan = match repo.prepare_worktree_removal(
+    let plan = match ctx.repo.prepare_worktree_removal(
         target,
         BranchDeletionMode::SafeDelete,
         false,
-        config,
+        ctx.config,
         None,
-        Some(worktrees),
-        Some(snapshot),
+        Some(ctx.worktrees),
+        Some(ctx.snapshot),
     ) {
         Ok(plan) => plan,
         Err(_) => {
@@ -176,8 +202,12 @@ fn try_remove(
             return Ok(false);
         }
     };
-    let mut announcer = HookAnnouncer::new(repo, config, true);
-    handle_remove_output(&plan, foreground, run_hooks, true, false, &mut announcer)?;
+    let mut announcer = HookAnnouncer::new(ctx.repo, ctx.config, true);
+    // Read the Copy fields into locals so the call stays on one line (rustfmt
+    // breaks it past `ctx.`-prefixed args), keeping it identical to its form
+    // before the context-struct refactor.
+    let (foreground, hook_plan) = (ctx.foreground, ctx.hook_plan);
+    handle_remove_output(&plan, foreground, hook_plan, true, false, &mut announcer)?;
     announcer.flush()?;
     Ok(true)
 }
@@ -381,27 +411,32 @@ fn render_dry_run(
     Ok(())
 }
 
-/// Approve the project commands `wt step prune` may run, mirroring the
-/// executors' `.config/wt.toml` resolution via
-/// [`collect_remove_hook_commands`].
+/// Build and approve, once, the frozen hook plan `wt step prune` may run.
 ///
 /// `pre-remove` runs only when a *live linked* worktree is removed (stale-
 /// metadata and orphan-branch removals delete just the branch — no
 /// `pre-remove`/`post-remove`/`post-switch`). The integration checks haven't
-/// run yet, so every linked worktree is fed to the helper — its `pre-remove`
-/// approval is a superset of what executes. `post-switch` resolves from the
-/// primary worktree's config: a prune candidate is never the primary worktree,
-/// so each removal's `RemoveResult::destination_path()` is `home_path()`. No
-/// fallback between worktrees — each `.config/wt.toml` stands alone.
+/// run yet, so every linked worktree is fed to the plan — its `pre-remove`
+/// selection is a superset of what executes (extra anchors are simply never
+/// looked up). `post-switch` is anchored at the primary worktree: a prune
+/// candidate is never the primary, so each removal's
+/// `RemoveResult::destination_path()` is `home_path()`. No fallback between
+/// worktrees — each `.config/wt.toml` stands alone.
 ///
-/// Returns `true` when hooks should run, `false` when the user declined.
+/// A declined prompt yields an empty plan — every executor runs no hooks.
 fn approve_prune_hooks(
     repo: &Repository,
+    config: &UserConfig,
     worktrees: &[WorktreeInfo],
     check_items: &[CheckItem],
     yes: bool,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<ApprovedHookPlan> {
     let primary_path = repo.home_path()?;
+    // Non-fatal: prune candidates with no project hooks must still prune even
+    // when the project identifier can't be resolved (the plan ends up empty
+    // and `approve` never needs it).
+    let project_id = repo.project_identifier().ok();
+    let pid = project_id.as_deref();
 
     let removed_worktree_paths: Vec<&Path> = check_items
         .iter()
@@ -410,23 +445,37 @@ fn approve_prune_hooks(
             _ => None,
         })
         .collect();
-    let all_commands =
-        collect_remove_hook_commands(&removed_worktree_paths, &[primary_path.as_path()])?;
 
-    if all_commands.is_empty() {
-        return Ok(true);
-    }
-
-    let project_id = repo.project_identifier()?;
-    let approvals = Approvals::load().context("Failed to load approvals")?;
-    let approved = approve_command_batch(&all_commands, &project_id, &approvals, yes, false)?;
-    if !approved {
-        eprintln!(
-            "{}",
-            info_message("Commands declined, continuing removal without hooks")
+    let mut builder = HookPlanBuilder::new();
+    for &wt_path in &removed_worktree_paths {
+        let cfg = Repository::at(wt_path)?.load_project_config()?;
+        builder.add(
+            wt_path,
+            &[HookType::PreRemove, HookType::PostRemove],
+            cfg.as_ref(),
+            config,
+            pid,
         );
     }
-    Ok(approved)
+    let primary_cfg = Repository::at(&primary_path)?.load_project_config()?;
+    builder.add(
+        &primary_path,
+        &[HookType::PostSwitch],
+        primary_cfg.as_ref(),
+        config,
+        pid,
+    );
+
+    match builder.finish().approve(pid, yes)? {
+        Some(plan) => Ok(plan),
+        None => {
+            eprintln!(
+                "{}",
+                info_message("Commands declined, continuing removal without hooks")
+            );
+            Ok(ApprovedHookPlan::empty())
+        }
+    }
 }
 
 /// Remove worktrees and branches integrated into the default branch.
@@ -477,11 +526,12 @@ pub fn step_prune(
     // the actually-pruned set.
     let check_items = gather_check_items(&repo, worktrees, default_branch.as_deref())?;
 
-    // For non-dry-run, approve hooks upfront so we can remove inline.
-    let run_hooks = if dry_run {
-        false // unused in dry-run path
+    // For non-dry-run, build & approve the frozen hook plan upfront so we can
+    // remove inline. Dry-run runs no hooks → empty plan.
+    let hook_plan = if dry_run {
+        ApprovedHookPlan::empty()
     } else {
-        approve_prune_hooks(&repo, worktrees, &check_items, yes)?
+        approve_prune_hooks(&repo, &config, worktrees, &check_items, yes)?
     };
 
     let mut removed: Vec<Candidate> = Vec::new();
@@ -496,6 +546,32 @@ pub fn step_prune(
     // messages, and removing candidates immediately. This overlaps integration
     // checking with removal — output appears as soon as the first check
     // completes instead of waiting for all checks to finish.
+    //
+    // `check_lock` serializes the parallel `integration_reason` readers
+    // against the removal writer. Each `integration_reason` call (which fans
+    // out git subprocesses that *read* `.git/config`) is held under a read
+    // guard; `try_remove` is held under the write guard. On Windows the
+    // config rewrite in `git branch -D` (lockfile+rename) briefly holds
+    // `.git/config` with delete access, and a concurrent reader's `fopen` —
+    // which does not pass `FILE_SHARE_DELETE` and is not retried — fails with
+    // "Permission denied". The RwLock keeps no integration reader in flight
+    // while a removal runs, without serializing the (parallel) checks
+    // themselves. POSIX is unaffected but takes the same path.
+    //
+    // Scope of the guarantee: this closes the race on the instant-removal
+    // fast path, where `git branch -D` runs *synchronously* inside
+    // `try_remove` (after the worktree is renamed into trash) and is thus
+    // under the write guard — that is the path the observed Windows failure
+    // took. On the cross-filesystem / `.gitmodules` / Windows-file-lock
+    // fallback, `execute_instant_removal_or_fallback` *must* defer branch
+    // deletion into the detached `git worktree remove && git branch -D`
+    // command (the worktree still references the branch until it is removed,
+    // so an in-process `branch -D` would fail) — that deferred write runs
+    // after the guard drops and is NOT covered here. The fallback is rare for
+    // prune targets (integrated worktrees the user is done with; the
+    // lock-prone current worktree is deferred last, after the check thread
+    // has drained), so the residual exposure is small but non-zero.
+    let check_lock = Arc::new(RwLock::new(()));
     let (tx, rx) = chan::unbounded();
     let integration_refs: Vec<String> = check_items
         .iter()
@@ -510,18 +586,35 @@ pub fn step_prune(
     let target = integration_target.clone();
     // Share by Arc — main thread keeps `snapshot_arc` for `try_remove`; the
     // rayon worker takes a refcount-bump clone. No deep snapshot copy.
-    let snapshot_arc = std::sync::Arc::new(snapshot);
-    let snapshot_for_thread = std::sync::Arc::clone(&snapshot_arc);
+    let snapshot_arc = Arc::new(snapshot);
+    let snapshot_for_thread = Arc::clone(&snapshot_arc);
+    let lock_for_thread = Arc::clone(&check_lock);
     std::thread::spawn(move || {
         integration_refs
             .into_par_iter()
             .enumerate()
             .for_each(|(idx, ref_name)| {
-                let result =
-                    repo_clone.integration_reason(&snapshot_for_thread, &ref_name, &target);
+                // Hold the read guard only across `integration_reason` (all
+                // its child git readers), then drop it before `send` so a
+                // waiting writer is not blocked by channel backpressure.
+                let result = {
+                    let _read = lock_for_thread.read().unwrap_or_else(|e| e.into_inner());
+                    repo_clone.integration_reason(&snapshot_for_thread, &ref_name, &target)
+                };
                 let _ = tx.send((idx, result));
             });
     });
+
+    // Loop-invariant context shared by every `try_remove` call below.
+    let removal_ctx = RemovalContext {
+        repo: &repo,
+        config: &config,
+        foreground,
+        hook_plan: &hook_plan,
+        worktrees,
+        snapshot: &snapshot_arc,
+        check_lock: &check_lock,
+    };
 
     // Collect integration context alongside candidates for dry-run display.
     let mut dry_run_info: Vec<(Candidate, DryRunInfo)> = Vec::new();
@@ -584,16 +677,8 @@ pub fn step_prune(
                 dry_run_info.push((candidate, info));
             } else if is_current {
                 deferred_current = Some(candidate);
-            } else if try_remove(
-                &candidate,
-                &repo,
-                &config,
-                foreground,
-                run_hooks,
-                worktrees,
-                &snapshot_arc,
-            )
-            .with_context(|| candidate.removal_context())?
+            } else if try_remove(&candidate, &removal_ctx)
+                .with_context(|| candidate.removal_context())?
             {
                 removed.push(candidate);
             }
@@ -639,16 +724,8 @@ pub fn step_prune(
                 suffix,
             };
             dry_run_info.push((candidate, info));
-        } else if try_remove(
-            &candidate,
-            &repo,
-            &config,
-            foreground,
-            run_hooks,
-            worktrees,
-            &snapshot_arc,
-        )
-        .with_context(|| candidate.removal_context())?
+        } else if try_remove(&candidate, &removal_ctx)
+            .with_context(|| candidate.removal_context())?
         {
             removed.push(candidate);
         }
@@ -660,16 +737,7 @@ pub fn step_prune(
 
     // Remove deferred current worktree last (cd-to-primary happens here)
     if let Some(current) = deferred_current
-        && try_remove(
-            &current,
-            &repo,
-            &config,
-            foreground,
-            run_hooks,
-            worktrees,
-            &snapshot_arc,
-        )
-        .with_context(|| current.removal_context())?
+        && try_remove(&current, &removal_ctx).with_context(|| current.removal_context())?
     {
         removed.push(current);
     }
