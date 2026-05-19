@@ -1,6 +1,6 @@
 use anyhow::Context;
 use color_print::cformat;
-use shell_escape::escape;
+use shell_escape::unix::escape;
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};

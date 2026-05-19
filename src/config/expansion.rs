@@ -20,7 +20,7 @@ use minijinja::value::{Enumerator, Object, ObjectRepr};
 use minijinja::{Environment, ErrorKind, UndefinedBehavior, Value};
 use regex::Regex;
 use sha2::{Digest, Sha256};
-use shell_escape::escape;
+use shell_escape::unix::escape;
 
 use crate::git::{Diagnostic, HookType, Repository};
 use crate::path::to_posix_path;

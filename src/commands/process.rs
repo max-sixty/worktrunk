@@ -210,7 +210,7 @@ fn spawn_detached_unix(
             // Wrap command in braces to ensure proper grouping with &&, ||, etc.
             format!(
                 "printf '%s' {} | {{ {}{} }}",
-                shell_escape::escape(json.into()),
+                shell_escape::unix::escape(json.into()),
                 command,
                 posix_command_separator(command)
             )
@@ -284,7 +284,7 @@ fn spawn_detached_windows(
                 // Use printf to pipe JSON to the command's stdin (same as Unix)
                 format!(
                     "printf '%s' {} | {{ {}{} }}",
-                    shell_escape::escape(json.into()),
+                    shell_escape::unix::escape(json.into()),
                     command,
                     posix_command_separator(command)
                 )
@@ -504,7 +504,7 @@ pub fn sweep_stale_trash(repo: &Repository) {
     // background process regardless of how many entries are stale.
     let escaped: Vec<String> = stale
         .iter()
-        .map(|p| shell_escape::escape(p.to_string_lossy().as_ref().into()).into_owned())
+        .map(|p| shell_escape::unix::escape(p.to_string_lossy().as_ref().into()).into_owned())
         .collect();
     let command = format!("rm -rf -- {}", escaped.join(" "));
 
@@ -669,7 +669,7 @@ pub fn build_remove_command_staged(
     original_path: &std::path::Path,
     changed_directory: bool,
 ) -> String {
-    use shell_escape::escape;
+    use shell_escape::unix::escape;
 
     let staged_path_str = staged_path.to_string_lossy();
     let staged_escaped = escape(staged_path_str.as_ref().into());
@@ -713,7 +713,7 @@ pub fn build_remove_command(
     force_worktree: bool,
     changed_directory: bool,
 ) -> String {
-    use shell_escape::escape;
+    use shell_escape::unix::escape;
 
     let worktree_path_str = worktree_path.to_string_lossy();
     let worktree_escaped = escape(worktree_path_str.as_ref().into());

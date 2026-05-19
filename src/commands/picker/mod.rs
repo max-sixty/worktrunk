@@ -567,11 +567,11 @@ pub fn handle_picker(
     };
 
     let signal_path_escaped =
-        shell_escape::escape(signal_path.display().to_string().into()).into_owned();
+        shell_escape::unix::escape(signal_path.display().to_string().into()).into_owned();
 
     // Get state path for key bindings (shell-escaped for safety)
     let state_path_display = state.path.display().to_string();
-    let state_path_str = shell_escape::escape(state_path_display.into()).into_owned();
+    let state_path_str = shell_escape::unix::escape(state_path_display.into()).into_owned();
 
     // Calculate half-page scroll: skim uses 90% of terminal height, half of that = 45%
     let half_page = terminal_size::terminal_size()
