@@ -7,7 +7,7 @@ use clap::FromArgMatches;
 use clap::error::ErrorKind as ClapErrorKind;
 use color_print::{ceprintln, cformat};
 use std::process;
-use worktrunk::config::{Approvals, UserConfig, set_config_path};
+use worktrunk::config::{UserConfig, set_config_path};
 use worktrunk::git::{
     ErrorExt, Repository, ResolvedWorktree, WorktrunkError, current_or_recover, cwd_removed_hint,
     set_base_path,
@@ -16,10 +16,10 @@ use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, hint_message, info_message, warning_message,
 };
 
-use commands::command_approval::approve_command_batch;
+use commands::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use commands::hooks::HookAnnouncer;
-use commands::project_config::collect_remove_hook_commands;
 use commands::worktree::RemoveResult;
+use worktrunk::HookType;
 
 mod cli;
 mod commands;
@@ -901,37 +901,58 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 .into());
             }
 
-            // Helper: approve every command the removal will run, in one batch.
-            // `pre-remove` / `post-remove` resolve their `.config/wt.toml` from
-            // each worktree being removed (`removed_worktree_paths`); `post-switch`
-            // resolves from each removal's post-removal destination
-            // (`destination_paths` — `RemoveResult::destination_path()`, normally
-            // the primary worktree, cwd when the primary worktree is itself the
-            // removal target). No fallback between worktrees, same rule as the
-            // executors. The shared helper assembles them all, dedup'd by template.
-            // Returns `true` when the prompt was accepted or there was nothing to
-            // approve.
-            let approve_remove =
-                |removed_worktree_paths: &[&Path], destination_paths: &[&Path], yes: bool| -> anyhow::Result<bool> {
-                    let commands = collect_remove_hook_commands(
-                        removed_worktree_paths,
-                        destination_paths,
-                    )?;
-                    if commands.is_empty() {
-                        return Ok(true);
+            // Helper: build and approve, once, the frozen hook plan the
+            // removal will run. `pre-remove` / `post-remove` are anchored at
+            // each removed worktree (their `.config/wt.toml`); `post-switch`
+            // at each removal's post-removal destination
+            // (`RemoveResult::destination_path()`, normally the primary
+            // worktree, cwd when the primary worktree is itself the removal
+            // target). No fallback between worktrees, same rule as the
+            // executors. `!verify` (`--no-hooks`) or a declined prompt yields
+            // an empty plan — every executor then runs no project hooks.
+            let approve_remove = |removed_worktree_paths: &[&Path],
+                                  destination_paths: &[&Path],
+                                  yes: bool|
+             -> anyhow::Result<ApprovedHookPlan> {
+                if !verify {
+                    return Ok(ApprovedHookPlan::empty());
+                }
+                // Non-fatal: a worktree with no project hooks must remove even
+                // when the project identifier can't be resolved (the plan ends
+                // up empty and `approve` never needs it). Matches the pre-plan
+                // behaviour where the empty-batch fast path ran first.
+                let project_id = repo.project_identifier().ok();
+                let pid = project_id.as_deref();
+                let mut builder = HookPlanBuilder::new();
+                for &wt_path in removed_worktree_paths {
+                    let cfg = Repository::at(wt_path)?.load_project_config()?;
+                    builder.add(
+                        wt_path,
+                        &[HookType::PreRemove, HookType::PostRemove],
+                        cfg.as_ref(),
+                        &config,
+                        pid,
+                    );
+                }
+                let mut seen_dests = std::collections::HashSet::new();
+                for &dest in destination_paths {
+                    if !seen_dests.insert(dest) {
+                        continue;
                     }
-                    let project_id = repo.project_identifier()?;
-                    let approvals = Approvals::load().context("Failed to load approvals")?;
-                    let approved =
-                        approve_command_batch(&commands, &project_id, &approvals, yes, false)?;
-                    if !approved {
+                    let cfg = Repository::at(dest)?.load_project_config()?;
+                    builder.add(dest, &[HookType::PostSwitch], cfg.as_ref(), &config, pid);
+                }
+                match builder.finish().approve(pid, yes)? {
+                    Some(plan) => Ok(plan),
+                    None => {
                         eprintln!(
                             "{}",
                             info_message("Commands declined, continuing removal without hooks")
                         );
+                        Ok(ApprovedHookPlan::empty())
                     }
-                    Ok(approved)
-                };
+                }
+            };
 
             let branches = args.branches;
 
@@ -955,18 +976,17 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 }
 
                 // "Approve at the Gate": approval happens AFTER validation passes
-                let run_hooks = verify
-                    && approve_remove(
-                        result.removed_worktree_path().as_slice(),
-                        result.destination_path().as_slice(),
-                        yes,
-                    )?;
+                let plan = approve_remove(
+                    result.removed_worktree_path().as_slice(),
+                    result.destination_path().as_slice(),
+                    yes,
+                )?;
 
                 let mut announcer = HookAnnouncer::new(&repo, &config, false);
                 handle_remove_output(
                     &result,
                     args.foreground,
-                    run_hooks,
+                    &plan,
                     false,
                     false,
                     &mut announcer,
@@ -1018,8 +1038,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     all_plans().filter_map(|r| r.removed_worktree_path()).collect();
                 let destination_targets: Vec<&Path> =
                     all_plans().filter_map(|r| r.destination_path()).collect();
-                let run_hooks =
-                    verify && approve_remove(&removed_targets, &destination_targets, yes)?;
+                let plan = approve_remove(&removed_targets, &destination_targets, yes)?;
 
                 // Execute all validated plans: others first, branch-only next, current last
                 let show_branch =
@@ -1029,7 +1048,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     handle_remove_output(
                         result,
                         args.foreground,
-                        run_hooks,
+                        &plan,
                         false,
                         false,
                         &mut announcer,

@@ -11,6 +11,7 @@ mod for_each;
 mod hook_announcement;
 mod hook_commands;
 mod hook_filter;
+pub(crate) mod hook_plan;
 pub(crate) mod hooks;
 pub(crate) mod init;
 pub(crate) mod list;
