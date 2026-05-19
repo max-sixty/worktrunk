@@ -127,7 +127,7 @@ jobs:
 
     - name: 📊 Upload test results to Codecov
       if: ${{ !cancelled() }}
-      uses: codecov/codecov-action@v6.0.0
+      uses: codecov/codecov-action@v6.0.1
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: target/nextest/default/junit.xml
@@ -404,7 +404,7 @@ jobs:
         path: cobertura.xml
 
     - name: Upload to codecov.io
-      uses: codecov/codecov-action@v6.0.0
+      uses: codecov/codecov-action@v6.0.1
       with:
         files: cobertura.xml
         # Soft-fail on fork PRs: secrets aren't available there, so we rely on
