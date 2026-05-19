@@ -2341,6 +2341,39 @@ fn test_config_show_gemini_available_extension_not_installed(
 }
 
 #[rstest]
+fn test_config_show_gemini_extension_invalid_manifest(mut repo: TestRepo, temp_home: TempDir) {
+    // A malformed gemini-extension.json should fall through the JSON-parse
+    // branch and report the extension as not installed (the install hint).
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_gemini_installed();
+
+    let extension_dir = temp_home.path().join(".gemini/extensions/worktrunk");
+    fs::create_dir_all(&extension_dir).unwrap();
+    fs::write(extension_dir.join("gemini-extension.json"), "not json\n").unwrap();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
 fn test_config_show_gemini_extension_installed(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic output
     repo.setup_mock_ci_tools_unauthenticated();
