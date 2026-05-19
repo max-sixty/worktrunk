@@ -84,6 +84,32 @@ When adding new positioned elements:
 - Test anchor navigation to verify no visual jumps
 - Check both with and without page scroll
 
+## Doc sync taxonomy
+
+Three categories, kept in sync by `test_docs_are_in_sync` (run it after any doc change; it auto-updates out-of-sync pages):
+
+1. **Command pages** (config, hook, list, merge, remove, step, switch): `dev/*.example.toml` (via `include_str!`) → `src/cli/mod.rs` *(PRIMARY SOURCE — edit `after_long_help`, never the docs)* → `docs/content/{command}.md` → `skills/worktrunk/reference/{command}.md`.
+2. **Non-command docs** (claude-code, faq, llm-commits, tips-patterns, worktrunk): `docs/content/*.md` is PRIMARY; edit it directly, the skill reference auto-syncs.
+3. **Skill-only files** (shell-integration.md, troubleshooting.md): edit `skills/worktrunk/reference/` directly, no docs equivalent. When adding one, also add a `linguist-generated=false` line to `.gitattributes` — the broad `skills/worktrunk/reference/*.md linguist-generated=true` rule otherwise marks it generated, collapsing real edits in GitHub PR diffs.
+
+Never hand-edit a generated mirror.
+
+### Help text authoring
+
+Help text renders in three contexts; check all three when editing:
+
+1. **Terminal** (`wt step X --help`): `about` and `subtitle` at the top, `after_long_help` below the Options block — separated by distance.
+2. **Web docs**: `combine_command_docs()` concatenates `about` + optional `subtitle` + `after_long_help` as consecutive paragraphs.
+3. **Skill reference**: mirrors web docs.
+
+Because web docs concatenate everything, the `after_long_help` opener must not restate `about`/`subtitle` — start with new information (see "Command documentation structure" below for opener patterns). Link text must stand alone when the URL is stripped (terminal help drops the URL, keeping only the text): use `` [`wt foo`](...) `` for commands (the backticks signal a `--help` lookup) or a descriptive phrase for doc sections; avoid bare labels that match the destination's heading.
+
+After editing `after_long_help`, also refresh the help snapshots: `cargo insta test --accept -- --test integration "test_help"`.
+
+### Config doc TOML blocks
+
+Config docs (`USER_CONFIG_START` / `PROJECT_CONFIG_START` sections in `src/cli/mod.rs`) generate `dev/*.example.toml` files where every line is `#`-commented, so TOML comments inside code blocks become double-commented (`# # comment`). Use plain-text descriptions ending with a colon before each code block; inline end-of-line comments (`key = "value"  # explanation`) are fine.
+
 ## Command documentation
 
 Command pages (e.g., `switch.md`, `merge.md`, `list.md`) are **generated from the CLI source code**. Each file has a **skeleton** (frontmatter) with a marker region that gets replaced by generated content.
