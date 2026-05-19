@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -133,6 +134,7 @@ fn prune_summary(candidates: &[Candidate]) -> String {
 
 /// Try to remove a candidate immediately. Returns Ok(true) if removed,
 /// Ok(false) if skipped (preparation error), Err on execution error.
+#[allow(clippy::too_many_arguments)]
 fn try_remove(
     candidate: &Candidate,
     repo: &Repository,
@@ -141,7 +143,24 @@ fn try_remove(
     run_hooks: bool,
     worktrees: &[WorktreeInfo],
     snapshot: &RefSnapshot,
+    check_lock: &RwLock<()>,
 ) -> anyhow::Result<bool> {
+    // Exclude all in-flight integration readers for the duration of the
+    // removal: the write guard blocks until every outstanding read guard
+    // (i.e. every running `integration_reason` git process) has dropped, and
+    // blocks new ones until removal completes — so no `.git/config` reader is
+    // alive while `git branch -D` rewrites it. Held over the whole body
+    // (rather than just the deep `branch -D` call site) keeps the lock
+    // confined to this file; the extra reader-exclusion during the fast
+    // rename/prune is harmless. See the `check_lock` rationale at the
+    // par_iter spawn for the Windows mechanism and its fast-path scope.
+    //
+    // The guard protects `()` — there is no shared state to corrupt, so a
+    // poisoned lock is meaningless here. Recover the guard rather than
+    // `.expect()`-ing: a panic elsewhere should surface as itself, not as a
+    // cascade of secondary poison panics on every later removal/reader.
+    let _write = check_lock.write().unwrap_or_else(|e| e.into_inner());
+
     let target = match candidate.kind {
         CandidateKind::Current => RemoveTarget::Current,
         CandidateKind::BranchOnly => RemoveTarget::Branch(
@@ -493,6 +512,32 @@ pub fn step_prune(
     // messages, and removing candidates immediately. This overlaps integration
     // checking with removal — output appears as soon as the first check
     // completes instead of waiting for all checks to finish.
+    //
+    // `check_lock` serializes the parallel `integration_reason` readers
+    // against the removal writer. Each `integration_reason` call (which fans
+    // out git subprocesses that *read* `.git/config`) is held under a read
+    // guard; `try_remove` is held under the write guard. On Windows the
+    // config rewrite in `git branch -D` (lockfile+rename) briefly holds
+    // `.git/config` with delete access, and a concurrent reader's `fopen` —
+    // which does not pass `FILE_SHARE_DELETE` and is not retried — fails with
+    // "Permission denied". The RwLock keeps no integration reader in flight
+    // while a removal runs, without serializing the (parallel) checks
+    // themselves. POSIX is unaffected but takes the same path.
+    //
+    // Scope of the guarantee: this closes the race on the instant-removal
+    // fast path, where `git branch -D` runs *synchronously* inside
+    // `try_remove` (after the worktree is renamed into trash) and is thus
+    // under the write guard — that is the path the observed Windows failure
+    // took. On the cross-filesystem / `.gitmodules` / Windows-file-lock
+    // fallback, `execute_instant_removal_or_fallback` *must* defer branch
+    // deletion into the detached `git worktree remove && git branch -D`
+    // command (the worktree still references the branch until it is removed,
+    // so an in-process `branch -D` would fail) — that deferred write runs
+    // after the guard drops and is NOT covered here. The fallback is rare for
+    // prune targets (integrated worktrees the user is done with; the
+    // lock-prone current worktree is deferred last, after the check thread
+    // has drained), so the residual exposure is small but non-zero.
+    let check_lock = Arc::new(RwLock::new(()));
     let (tx, rx) = chan::unbounded();
     let integration_refs: Vec<String> = check_items
         .iter()
@@ -507,15 +552,21 @@ pub fn step_prune(
     let target = integration_target.clone();
     // Share by Arc — main thread keeps `snapshot_arc` for `try_remove`; the
     // rayon worker takes a refcount-bump clone. No deep snapshot copy.
-    let snapshot_arc = std::sync::Arc::new(snapshot);
-    let snapshot_for_thread = std::sync::Arc::clone(&snapshot_arc);
+    let snapshot_arc = Arc::new(snapshot);
+    let snapshot_for_thread = Arc::clone(&snapshot_arc);
+    let lock_for_thread = Arc::clone(&check_lock);
     std::thread::spawn(move || {
         integration_refs
             .into_par_iter()
             .enumerate()
             .for_each(|(idx, ref_name)| {
-                let result =
-                    repo_clone.integration_reason(&snapshot_for_thread, &ref_name, &target);
+                // Hold the read guard only across `integration_reason` (all
+                // its child git readers), then drop it before `send` so a
+                // waiting writer is not blocked by channel backpressure.
+                let result = {
+                    let _read = lock_for_thread.read().unwrap_or_else(|e| e.into_inner());
+                    repo_clone.integration_reason(&snapshot_for_thread, &ref_name, &target)
+                };
                 let _ = tx.send((idx, result));
             });
     });
@@ -589,6 +640,7 @@ pub fn step_prune(
                 run_hooks,
                 worktrees,
                 &snapshot_arc,
+                &check_lock,
             )
             .with_context(|| candidate.removal_context())?
             {
@@ -644,6 +696,7 @@ pub fn step_prune(
             run_hooks,
             worktrees,
             &snapshot_arc,
+            &check_lock,
         )
         .with_context(|| candidate.removal_context())?
         {
@@ -665,6 +718,7 @@ pub fn step_prune(
             run_hooks,
             worktrees,
             &snapshot_arc,
+            &check_lock,
         )
         .with_context(|| current.removal_context())?
     {
