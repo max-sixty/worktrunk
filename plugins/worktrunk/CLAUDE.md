@@ -2,28 +2,34 @@
 
 ## Directory Layout
 
-One plugin payload, two tools. The plugin lives entirely in this directory
-(`plugins/worktrunk/`); only the two loader-mandated marketplace pointers stay
-at the repo root, because Claude Code and Codex each hardcode their marketplace
-path with no fallback.
+This directory (`plugins/worktrunk/`) is the Claude Code + Codex payload. Each
+tool hardcodes its loader path with no fallback, so the repo root carries one
+pointer per tool: Claude's and Codex's both `source → ./plugins/worktrunk`,
+while Gemini resolves its extension at the repo root itself (see repo CLAUDE.md
+→ "Plugin Layout"; Gemini's hooks call the canonical `hooks/wt.sh` below).
 
 ```
 worktrunk/                          ← repo root = marketplace root
 ├── .claude-plugin/marketplace.json ← Claude pointer  (source → ./plugins/worktrunk)
 ├── .agents/plugins/marketplace.json← Codex pointer   (source → ./plugins/worktrunk)
-└── plugins/worktrunk/              ← plugin root (both tools resolve source here)
+├── gemini-extension.json           ← Gemini manifest (extensionPath = repo root)
+├── hooks/hooks.json                ← Gemini activity hooks (call the wt.sh below)
+├── skills -> (this dir)            ← Gemini reads ${extensionPath}/skills = repo-root skills/
+└── plugins/worktrunk/              ← plugin root (Claude + Codex resolve source here)
     ├── plugin.json                 ← Claude manifest (NO .claude-plugin/ wrapper —
     │                                  the wrapper is marketplace-root-only)
     ├── .codex-plugin/plugin.json   ← Codex manifest (Codex's required wrapper)
     ├── hooks/hooks.json            ← Claude activity + WorktreeCreate/Remove hooks
-    ├── hooks/wt.sh                  ← hook helper (referenced via ${CLAUDE_PLUGIN_ROOT})
-    ├── skills -> ../../skills       ← symlink; single-sources skills across both
-    │                                  plugins and the docs auto-sync
+    ├── hooks/wt.sh                 ← canonical hook shim; Claude/Codex reach it via
+    │                                  ${CLAUDE_PLUGIN_ROOT}, Gemini via
+    │                                  ${extensionPath}/plugins/worktrunk/hooks/wt.sh
+    ├── skills -> ../../skills       ← symlink; single-sources skills across all
+    │                                  tools and the docs auto-sync
     ├── CLAUDE.md / README.md
     └── (Codex ships no hooks — see repo CLAUDE.md → "Plugin Layout")
 ```
 
-Path resolution differs by tool, both verified end-to-end against the real CLIs:
+Path resolution differs by tool, all verified end-to-end against the real CLIs:
 
 - **Claude**: `.claude-plugin/marketplace.json` `source: "./plugins/worktrunk"`.
   Claude reads `plugins/worktrunk/plugin.json` (at the plugin root, *not* a
@@ -34,10 +40,15 @@ Path resolution differs by tool, both verified end-to-end against the real CLIs:
   `{ "source": "local", "path": "./plugins/worktrunk" }`. Codex reads
   `plugins/worktrunk/.codex-plugin/plugin.json`. `skills: "./skills/"` resolves
   through the same symlink.
+- **Gemini**: `gemini-extension.json` at the repo root; `${extensionPath}` is
+  the repo root, so `${extensionPath}/skills/` is the repo-root `skills/`
+  directly and `hooks/hooks.json` (repo root) calls the canonical shim at
+  `${extensionPath}/plugins/worktrunk/hooks/wt.sh`. No symlink or copy.
 
-Each Claude skill directory must be listed in `plugin.json`'s `skills` array;
-Codex picks up the whole `skills/` dir via the symlink (accepted tradeoff — see
-repo CLAUDE.md → "Plugin Layout").
+Each Claude skill directory must be listed in `plugin.json`'s `skills` array
+(Claude has no auto-discovery — `test_plugin_layout_is_consolidated` enforces
+that every repo-root skill is listed); Codex and Gemini pick up the whole
+`skills/` dir (accepted tradeoff — see repo CLAUDE.md → "Plugin Layout").
 
 ## Known Limitations
 

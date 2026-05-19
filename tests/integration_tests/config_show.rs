@@ -3615,28 +3615,25 @@ fn test_codex_plugin_metadata_is_valid_json() {
     assert_eq!(marketplace["interface"]["displayName"], "Worktrunk");
 }
 
-/// Claude Code + Codex share `plugins/worktrunk/`; Gemini gets its own
-/// `plugins/gemini/`. Every tool's payload lives under `plugins/`, leaving only
-/// loader-mandated pointers at the repo root. Verified end-to-end against the
-/// real CLIs: Claude (claude-cli 2.1.x) wants its manifest at the plugin root
-/// with NO `.claude-plugin/` wrapper (`source: "./plugins/worktrunk"` +
-/// `<subdir>/.claude-plugin/` fails "Plugin not found"); Gemini (gemini-cli
-/// 0.42) hard-probes `${extensionPath}/{hooks,skills}/` with no path
-/// indirection and `install` *copies* the extension dir, so it must be
-/// self-contained (bundled `wt.sh`, no `../worktrunk` reference).
+/// Claude Code + Codex share `plugins/worktrunk/`; Gemini's manifest is a
+/// third loader-mandated repo-root pointer (`gemini-extension.json` +
+/// `hooks/hooks.json` — Gemini hard-probes `${extensionPath}/{hooks,skills}/`
+/// at the extension root with no path indirection). Verified end-to-end
+/// against the real CLIs: Claude (claude-cli 2.1.x) wants its manifest at the
+/// plugin root with NO `.claude-plugin/` wrapper (`source:
+/// "./plugins/worktrunk"` + `<subdir>/.claude-plugin/` fails "Plugin not
+/// found"); Gemini (gemini-cli 0.42) resolves the extension at the repo root,
+/// so `${extensionPath}/skills/` is the real single-sourced repo-root
+/// `skills/` and its hooks call the canonical
+/// `${extensionPath}/plugins/worktrunk/hooks/wt.sh` — no symlink, no bundled
+/// copy, and `gemini extensions install owner/repo` works natively.
 ///
-/// Gemini install constraints (the manifest moving under `plugins/gemini/`
-/// trades these away — install via a local path, `gemini extensions install
-/// <repo>/plugins/gemini`, until a `wt config plugins gemini install` command
-/// exists): github-URL install (`owner/repo`) reads `<clone-root>/
-/// gemini-extension.json` and so can't see the manifest; and `fs.cp` rewrites
-/// the relative `skills` symlink to an absolute path, so the skills resolve
-/// only while the source repo stays in place (a git/URL install loses them to
-/// the deleted tempdir — silently empty). Robust fix = bundle copied SKILL.md
-/// trees at release time, drift-guarded like `wt.sh`; tracked with the install
-/// command. Duplicated
-/// strings/shims can't be `include!`d into JSON, so this test is the drift
-/// guard.
+/// Duplicated strings can't be `include!`d into JSON, so this test is the
+/// drift guard: the Claude marketplace/manifest descriptions stay
+/// byte-identical, every product description shares the canonical opening
+/// sentence, and every repo-root skill is listed in the Claude manifest
+/// (Claude has no skill auto-discovery — an unlisted skill is silently
+/// dropped).
 #[test]
 fn test_plugin_layout_is_consolidated() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -3672,12 +3669,17 @@ fn test_plugin_layout_is_consolidated() {
         ".claude-plugin/marketplace.json and plugins/worktrunk/plugin.json descriptions drifted"
     );
 
-    // Gemini extension: own payload dir, nothing at the repo root.
+    // Gemini extension: manifest + hooks are loader-mandated repo-root
+    // pointers (Gemini hard-probes ${extensionPath}/{hooks,skills}/ at the
+    // extension root). Relocating to the root — instead of a plugins/gemini/
+    // sibling — is what makes `gemini extensions install owner/repo` work and
+    // lets the extension reuse the real repo-root skills/ + the canonical
+    // worktrunk shim instead of a symlink and a bundled copy.
     assert!(
-        !root.join("gemini-extension.json").exists() && !root.join("hooks").exists(),
-        "Gemini extension lives in plugins/gemini/, not at the repo root"
+        !root.join("plugins/gemini").exists(),
+        "Gemini extension was relocated to the repo root; plugins/gemini/ must not exist"
     );
-    let gemini = json("plugins/gemini/gemini-extension.json");
+    let gemini = json("gemini-extension.json");
     assert_eq!(gemini["name"], "worktrunk");
     assert!(
         gemini["description"]
@@ -3685,25 +3687,72 @@ fn test_plugin_layout_is_consolidated() {
             .is_some_and(|d| !d.is_empty()),
         "gemini-extension.json needs a description (shown in `gemini extensions list`)"
     );
-    // Gemini `install` copies the extension dir, so it must be self-contained:
-    // bundled wt.sh, hooks referencing it via ${extensionPath}/hooks/, never a
-    // cross-dir `../worktrunk` or the old `.claude-plugin/` path.
+    // Gemini reuses the single-sourced repo-root skills/ (a real dir that
+    // survives `gemini extensions install`'s copy) — not a symlink or bundle.
     assert!(
-        root.join("plugins/gemini/skills").is_symlink(),
-        "plugins/gemini/skills must be a symlink reusing the repo-root skills/"
+        root.join("skills").is_dir() && !root.join("skills").is_symlink(),
+        "repo-root skills/ must be a real directory Gemini resolves via ${{extensionPath}}/skills"
     );
-    let gemini_hooks = read("plugins/gemini/hooks/hooks.json");
+    // Gemini hooks call the canonical worktrunk shim by its real path — no
+    // bundled ${extensionPath}/hooks/wt.sh, no cross-dir `../`, no old wrapper.
+    let gemini_hooks = read("hooks/hooks.json");
     assert!(
-        gemini_hooks.contains("${extensionPath}/hooks/wt.sh")
-            && !gemini_hooks.contains("../worktrunk")
+        gemini_hooks.contains("${extensionPath}/plugins/worktrunk/hooks/wt.sh")
+            && !gemini_hooks.contains("${extensionPath}/hooks/wt.sh")
+            && !gemini_hooks.contains("../")
             && !gemini_hooks.contains(".claude-plugin/"),
-        "Gemini hooks must call the bundled ${{extensionPath}}/hooks/wt.sh (self-contained)"
+        "Gemini hooks must call the canonical ${{extensionPath}}/plugins/worktrunk/hooks/wt.sh"
     );
-    assert_eq!(
-        read("plugins/gemini/hooks/wt.sh"),
-        read("plugins/worktrunk/hooks/wt.sh"),
-        "bundled Gemini wt.sh drifted from the canonical plugins/worktrunk/hooks/wt.sh"
+    assert!(
+        !root.join("hooks/wt.sh").exists(),
+        "no bundled Gemini wt.sh — hooks reference the canonical worktrunk shim"
     );
+
+    // Claude has no skill auto-discovery, so every repo-root skill dir MUST be
+    // listed explicitly in plugin.json — otherwise a new skill is silently
+    // invisible to Claude while Codex/Gemini (whole-dir) pick it up.
+    let listed: std::collections::BTreeSet<&str> = claude["skills"]
+        .as_array()
+        .expect("plugin.json `skills` must be an array")
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    for entry in fs::read_dir(root.join("skills")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_dir() {
+            let listed_form = format!("./skills/{}", entry.file_name().to_string_lossy());
+            assert!(
+                listed.contains(listed_form.as_str()),
+                "repo-root skill {listed_form} is not in plugins/worktrunk/plugin.json \
+                 `skills` (Claude has no auto-discovery — add it or it is silently dropped)"
+            );
+        }
+    }
+
+    // The product description must not drift across tools. Byte-identical is
+    // schema-impossible (Codex omits the activity clause, Gemini says
+    // "extension"), but every manifest shares the canonical opening sentence.
+    const STEM: &str =
+        "Worktrunk is a CLI for Git worktree management, designed for parallel AI agent workflows.";
+    let codex = json("plugins/worktrunk/.codex-plugin/plugin.json");
+    for (label, val) in [
+        ("plugins/worktrunk/plugin.json", &claude["description"]),
+        (
+            ".claude-plugin/marketplace.json",
+            &claude_mkt["plugins"][0]["description"],
+        ),
+        (
+            "plugins/worktrunk/.codex-plugin/plugin.json",
+            &codex["description"],
+        ),
+        ("gemini-extension.json", &gemini["description"]),
+    ] {
+        let val = val.as_str().unwrap();
+        assert!(
+            val.starts_with(STEM),
+            "{label} description must start with the canonical product sentence; got: {val}"
+        );
+    }
 }
 
 // ==================== Plugin Install-Statusline Tests ====================
