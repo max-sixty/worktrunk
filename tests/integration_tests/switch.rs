@@ -108,6 +108,31 @@ fn test_switch_create_existing_with_execute(mut repo: TestRepo) {
     );
 }
 
+/// When --execute carries shell metacharacters (spaces, `$(...)`, embedded
+/// single quotes), the rendered suggestion must POSIX-single-quote the value
+/// so a copy-paste into bash/zsh/fish runs the intended literal command
+/// instead of executing a command substitution. Guards the
+/// `unix::escape(exec)` call on `run_switch`'s `suggestion_ctx` path against
+/// regressing to platform-sensitive escaping (which on Windows-without-MSYSTEM
+/// produces cmd.exe double-quote quoting — still subject to POSIX command
+/// substitution when spliced into bash).
+#[rstest]
+fn test_switch_create_existing_with_execute_metachars(mut repo: TestRepo) {
+    repo.add_worktree("emails");
+
+    snapshot_switch(
+        "switch_create_existing_with_execute_metachars",
+        &repo,
+        &[
+            "--create",
+            "--execute=echo \"$x's\"",
+            "emails",
+            "--",
+            "Check my emails",
+        ],
+    );
+}
+
 /// When --execute is passed and the branch doesn't exist (without --create),
 /// the "create" suggestion should include --execute and trailing args.
 #[rstest]

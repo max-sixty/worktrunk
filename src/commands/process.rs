@@ -500,13 +500,7 @@ pub fn sweep_stale_trash(repo: &Repository) {
         return;
     }
 
-    // Join all paths into a single `rm -rf` invocation so we spawn one
-    // background process regardless of how many entries are stale.
-    let escaped: Vec<String> = stale
-        .iter()
-        .map(|p| shell_escape::unix::escape(p.to_string_lossy().as_ref().into()).into_owned())
-        .collect();
-    let command = format!("rm -rf -- {}", escaped.join(" "));
+    let command = build_trash_sweep_command(&stale);
 
     // The sweep is repo-wide (not branch-scoped), so it logs under
     // `internal/trash-sweep.log` alongside the other shared logs
@@ -522,6 +516,19 @@ pub fn sweep_stale_trash(repo: &Repository) {
     ) {
         log::debug!("Failed to spawn stale trash sweep: {e}");
     }
+}
+
+/// Build the `rm -rf -- …` command that [`sweep_stale_trash`] hands to
+/// [`spawn_detached`]. All entries are joined into a single invocation so the
+/// sweep spawns one background process regardless of how many stale entries
+/// exist; each path is POSIX-escaped so directories with spaces or shell
+/// metacharacters round-trip safely through the wrapping `sh -c`.
+fn build_trash_sweep_command(paths: &[PathBuf]) -> String {
+    let escaped: Vec<String> = paths
+        .iter()
+        .map(|p| shell_escape::unix::escape(p.to_string_lossy().as_ref().into()).into_owned())
+        .collect();
+    format!("rm -rf -- {}", escaped.join(" "))
 }
 
 /// Collect paths in `trash_dir` whose embedded timestamp is older than
@@ -877,6 +884,40 @@ mod tests {
         let special_path = PathBuf::from("/tmp/repo/.git/wt/trash/test worktree-123");
         let special_original = PathBuf::from("/tmp/test worktree");
         assert_snapshot!(build_remove_command_staged(&special_path, &special_original, true), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null; rm -rf -- '/tmp/repo/.git/wt/trash/test worktree-123'");
+    }
+
+    #[test]
+    fn test_build_trash_sweep_command() {
+        // Empty list still produces a well-formed command — the caller
+        // (`sweep_stale_trash`) bails before we get here, but the helper itself
+        // must not panic on an empty slice.
+        assert_snapshot!(build_trash_sweep_command(&[]), @"rm -rf -- ");
+
+        // Plain paths — joined with spaces, no quoting.
+        let paths = [
+            PathBuf::from("/tmp/repo/.git/wt/trash/feature-1700000000"),
+            PathBuf::from("/tmp/repo/.git/wt/trash/bugfix-1700000100"),
+        ];
+        assert_snapshot!(
+            build_trash_sweep_command(&paths),
+            @"rm -rf -- /tmp/repo/.git/wt/trash/feature-1700000000 /tmp/repo/.git/wt/trash/bugfix-1700000100"
+        );
+
+        // Shell metacharacters — POSIX single-quote escaping isolates each path
+        // so the wrapping `sh -c` reads them as literal arguments. The embedded
+        // single quote uses the standard `'\''` idiom. This is the regression
+        // guard for the platform/MSYSTEM-sensitive `shell_escape::escape` we
+        // replaced: under cmd.exe quoting `$(echo pwned)` would still execute
+        // when spliced into a POSIX shell.
+        let nasty = [
+            PathBuf::from("/tmp/trash/with space-1"),
+            PathBuf::from("/tmp/trash/$(echo pwned)-2"),
+            PathBuf::from("/tmp/trash/a'b-3"),
+        ];
+        assert_snapshot!(
+            build_trash_sweep_command(&nasty),
+            @"rm -rf -- '/tmp/trash/with space-1' '/tmp/trash/$(echo pwned)-2' '/tmp/trash/a'\\''b-3'"
+        );
     }
 
     #[test]
