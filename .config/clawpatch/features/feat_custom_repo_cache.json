@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_custom_repo_cache",
+  "title": "Repository caching invariants and worktree list mutation",
+  "summary": "Repository<Arc<RepoCache>> caches read-only values to avoid re-querying git. Mutating paths (switch --create / remove) must NOT read list_worktrees() through the same Repository after their own mutation - cache is now stale. Per CLAUDE.md, dirty/HEAD must NOT be cached. Stale cache reads here surface as missing worktrees or wrong commit in hook template vars.",
+  "kind": "library",
+  "source": "manual",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/git/repository/mod.rs",
+      "symbol": "Repository",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/git/repository/mod.rs",
+      "reason": "Repository + RepoCache definitions"
+    },
+    {
+      "path": "src/git/repository/worktrees.rs",
+      "reason": "list_worktrees caching path"
+    },
+    {
+      "path": "src/git/repository/branches.rs",
+      "reason": "branch cache"
+    },
+    {
+      "path": "src/git/repository/working_tree.rs",
+      "reason": "dirty / HEAD — explicitly NOT cached"
+    },
+    {
+      "path": "src/git/repository/sha_cache.rs",
+      "reason": "SHA cache"
+    },
+    {
+      "path": "src/git/repository/ref_snapshot.rs",
+      "reason": "ref snapshot"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "src/git/repository/remotes.rs",
+      "reason": "remote URL cache"
+    },
+    {
+      "path": "src/git/repository/config.rs",
+      "reason": "repo config cache"
+    },
+    {
+      "path": "src/commands/worktree/switch.rs",
+      "reason": "mutating caller"
+    },
+    {
+      "path": "src/commands/picker/mod.rs",
+      "reason": "mutating caller (remove)"
+    },
+    {
+      "path": "CLAUDE.md",
+      "reason": "caching contract"
+    }
+  ],
+  "tests": [
+    {
+      "path": "tests/integration_tests/list.rs",
+      "command": "cargo test --test integration list"
+    }
+  ],
+  "tags": [
+    "rust",
+    "caching",
+    "concurrency",
+    "invariants"
+  ],
+  "trustBoundaries": [],
+  "status": "reviewed",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-custom-repo-cache-fa107_0b8ee04f50",
+    "fnd_sig-feat-custom-repo-cache-4a612_c50420c545"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260516T210804-353f93",
+      "kind": "review",
+      "summary": "2 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-16T21:13:53.940Z"
+    },
+    {
+      "runId": "20260517T050139-b247d5",
+      "kind": "review",
+      "summary": "0 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T05:06:19.386Z"
+    }
+  ],
+  "createdAt": "2026-05-16T21:00:00.000Z",
+  "updatedAt": "2026-05-17T05:06:19.386Z"
+}

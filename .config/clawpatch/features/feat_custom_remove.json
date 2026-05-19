@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_custom_remove",
+  "title": "wt remove and picker-driven removal: data-loss surface",
+  "summary": "Worktree removal is the highest-stakes destructive operation. Force-remove must require explicit user consent; cleanup must not silently discard uncommitted changes or untracked files. Race conditions between safety checks and the actual delete must fail closed (retain data). The picker also routes alt-r through handle_remove_output - must consult approvals read-only and skip rather than prompt mid-render. See CLAUDE.md > Data Safety, Time-of-check vs time-of-use.",
+  "kind": "library",
+  "source": "manual",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/commands/picker/mod.rs",
+      "symbol": "do_removal",
+      "route": null,
+      "command": "wt remove (interactive)"
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/commands/picker/mod.rs",
+      "reason": "interactive removal entry"
+    },
+    {
+      "path": "src/git/repository/worktrees.rs",
+      "reason": "worktree list/remove primitives"
+    },
+    {
+      "path": "src/remove_dir.rs",
+      "reason": "filesystem removal logic"
+    },
+    {
+      "path": "src/commands/relocate.rs",
+      "reason": "relocate/move worktree (also destructive)"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "src/commands/command_approval.rs",
+      "reason": "approval system for pre-remove hooks"
+    },
+    {
+      "path": "src/commands/hooks.rs",
+      "reason": "pre/post-remove hook execution"
+    },
+    {
+      "path": "src/git/repository/working_tree.rs",
+      "reason": "dirty detection"
+    },
+    {
+      "path": "docs/content/faq.md",
+      "reason": "documented destructive surface"
+    },
+    {
+      "path": "CLAUDE.md",
+      "reason": "data safety invariants"
+    }
+  ],
+  "tests": [
+    {
+      "path": "tests/integration_tests/remove.rs",
+      "command": "cargo test --test integration remove"
+    }
+  ],
+  "tags": [
+    "rust",
+    "data-safety",
+    "destructive"
+  ],
+  "trustBoundaries": [
+    "filesystem",
+    "user-input"
+  ],
+  "status": "needs-fix",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-custom-remove-3fc85fbc9_2fb36531bc",
+    "fnd_sig-feat-custom-remove-d1e281e8e_f4081924e6",
+    "fnd_sig-feat-custom-remove-54cc3614f_9edd442ab5",
+    "fnd_sig-feat-custom-remove-1dbe5d2d1_10faa93f43",
+    "fnd_sig-feat-custom-remove-7e79725d5_26a2834e00",
+    "fnd_sig-feat-custom-remove-3f4296191_028f92e016",
+    "fnd_sig-feat-custom-remove-34d4e5259_2210c7a66b",
+    "fnd_sig-feat-custom-remove-087a0b4bb_5c82e2c2a5"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260516T210804-353f93",
+      "kind": "review",
+      "summary": "4 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-16T21:13:20.172Z"
+    },
+    {
+      "runId": "20260517T050139-b247d5",
+      "kind": "review",
+      "summary": "4 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T05:10:23.387Z"
+    }
+  ],
+  "createdAt": "2026-05-16T21:00:00.000Z",
+  "updatedAt": "2026-05-17T05:10:23.387Z"
+}

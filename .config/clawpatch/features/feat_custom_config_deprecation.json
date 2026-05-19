@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_custom_config_deprecation",
+  "title": "Config loading, deprecation, and migration",
+  "summary": "Pre-deserialization TOML migration rewrites deprecated patterns into canonical form. A silent migration bug here changes user-facing behavior without warning. Must: emit warnings exactly once per process, never drop unknown keys silently, and produce a stable .new file. Config format is an external interface (CLAUDE.md > Project Status). See CLAUDE.md > Config Deprecation.",
+  "kind": "library",
+  "source": "manual",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/config/deprecation.rs",
+      "symbol": "check_and_migrate",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/config/deprecation.rs",
+      "reason": "deprecation detection + migration"
+    },
+    {
+      "path": "src/config/mod.rs",
+      "reason": "config loading orchestration"
+    },
+    {
+      "path": "src/config/unknown_tree.rs",
+      "reason": "unknown-field tracking"
+    },
+    {
+      "path": "src/config/expansion.rs",
+      "reason": "config field expansion"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "src/config/hooks.rs",
+      "reason": "hook config schema"
+    },
+    {
+      "path": "src/config/commands.rs",
+      "reason": "command/alias config schema"
+    },
+    {
+      "path": "src/config/project.rs",
+      "reason": "project config schema"
+    },
+    {
+      "path": "src/config/approvals.rs",
+      "reason": "approvals config schema"
+    },
+    {
+      "path": "CLAUDE.md",
+      "reason": "config compatibility policy and deprecation recipe"
+    }
+  ],
+  "tests": [
+    {
+      "path": "tests/integration_tests/config_show.rs",
+      "command": "cargo test --test integration config_"
+    }
+  ],
+  "tags": [
+    "rust",
+    "config",
+    "deprecation",
+    "external-interface"
+  ],
+  "trustBoundaries": [
+    "filesystem"
+  ],
+  "status": "needs-fix",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-custom-config-deprecati_9d0e822819",
+    "fnd_sig-feat-custom-config-deprecati_79b2b12026",
+    "fnd_sig-feat-custom-config-deprecati_2cdc3ec70a",
+    "fnd_sig-feat-custom-config-deprecati_0e8e3b1526",
+    "fnd_sig-feat-custom-config-deprecati_bba4ffd8ac",
+    "fnd_sig-feat-custom-config-deprecati_b5b81b84e7"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260516T210804-353f93",
+      "kind": "review",
+      "summary": "3 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-16T21:12:52.547Z"
+    },
+    {
+      "runId": "20260517T050139-b247d5",
+      "kind": "review",
+      "summary": "3 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T05:07:43.153Z"
+    }
+  ],
+  "createdAt": "2026-05-16T21:00:00.000Z",
+  "updatedAt": "2026-05-17T05:07:43.153Z"
+}
