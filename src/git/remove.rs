@@ -8,9 +8,12 @@
 //!
 //! # What happens during removal
 //!
-//! 1. **fsmonitor daemon stopped** (best effort). `git fsmonitor--daemon stop`
-//!    runs against the target worktree before its path disappears, preventing
-//!    zombie daemons on platforms that use builtin fsmonitor.
+//! 1. **fsmonitor daemon stopped** (best effort). [`stop_fsmonitor_daemon`]
+//!    runs against the target worktree before its path disappears: it sends
+//!    the graceful `git fsmonitor--daemon stop` IPC request, then verifies the
+//!    daemon is actually gone and force-kills it by PID if it has wedged.
+//!    Without this, a daemon that has stopped answering its socket leaks
+//!    forever once its worktree is removed.
 //! 2. **Fast-path trash staging.** The worktree directory is renamed into
 //!    `<git-common-dir>/wt/trash/<name>-<timestamp>/`. Same-filesystem renames
 //!    are instant metadata operations, so the user's workspace clears
@@ -58,9 +61,156 @@
 //! ```
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
+use crate::git::repository::WorkingTree;
 use crate::git::{IntegrationReason, Repository};
+use crate::shell_exec::Cmd;
 use crate::utils::epoch_now;
+
+/// Bound on the graceful `git fsmonitor--daemon stop` IPC request.
+///
+/// `stop` is itself an IPC call to the daemon, so a wedged daemon (the failure
+/// this whole helper exists for) makes it hang. The force-kill path below is
+/// what actually reaps such a daemon; this timeout just stops the graceful
+/// attempt from blocking `wt remove` while the daemon ignores it.
+const FSMONITOR_STOP_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Bound on the `lsof` socket→PID lookup.
+const FSMONITOR_LSOF_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// How long to wait for a daemon to exit after SIGTERM before escalating to
+/// SIGKILL. Polled, not slept — a daemon that exits promptly returns early.
+#[cfg(unix)]
+const FSMONITOR_SIGTERM_GRACE: Duration = Duration::from_millis(1500);
+
+/// Stop the fsmonitor daemon serving `worktree`, force-killing it if it has
+/// stopped answering its IPC socket.
+///
+/// `git fsmonitor--daemon` is a per-worktree, self-respawning filesystem-watch
+/// cache git starts when `core.fsmonitor=true`. The graceful shutdown,
+/// `git fsmonitor--daemon stop`, is an IPC request *to the daemon itself*: a
+/// wedged daemon (one that has stopped answering its socket — the common
+/// failure, which also hangs `git status` in that worktree) silently ignores
+/// `stop` and then leaks forever once its worktree is gone, since nothing else
+/// references it. Worktree removal is the one moment we can still identify the
+/// daemon by its socket, so this verifies the daemon is actually gone after
+/// `stop` and, on Unix, kills it by PID (SIGTERM, brief wait, SIGKILL) if not.
+///
+/// This is the single canonical fsmonitor-stop path. It runs **synchronously
+/// while the worktree path still exists** (the socket lives under the
+/// per-worktree git dir and is needed to resolve the owning PID), so every
+/// removal path — the library `remove_worktree_with_cleanup`, the foreground
+/// handler, and the background `spawn_background_removal` — calls it in the
+/// foreground before the directory is staged or pruned. The detached
+/// `rm -rf` background process never touches the daemon; keeping daemon
+/// management in the Rust foreground avoids reimplementing socket/PID
+/// resolution and signal escalation as a shell string.
+///
+/// Best-effort and fail-open: every step is bounded by a timeout and every
+/// error is logged at debug level and swallowed. A failure here must never
+/// fail or materially slow `wt remove`. The PID is only ever resolved from the
+/// IPC socket *inside the specific worktree being removed*, so a signal can
+/// only ever reach that worktree's own daemon, never another worktree's.
+pub fn stop_fsmonitor_daemon(worktree: &WorkingTree) {
+    // Graceful path first: a healthy daemon exits cleanly on this IPC request.
+    let _ = Cmd::new("git")
+        .args(["fsmonitor--daemon", "stop"])
+        .current_dir(worktree.path())
+        .context(crate::git::repository::path_to_logging_context(
+            worktree.path(),
+        ))
+        .timeout(FSMONITOR_STOP_TIMEOUT)
+        .run();
+
+    // Resolve the per-worktree git dir via git (handles the `.git` *file* a
+    // linked worktree uses — never hand-construct `<path>/.git`). The daemon
+    // binds its IPC socket at `<git-dir>/fsmonitor--daemon.ipc`.
+    let socket = match worktree.git_dir() {
+        Ok(git_dir) => git_dir.join("fsmonitor--daemon.ipc"),
+        Err(e) => {
+            log::debug!("fsmonitor: could not resolve git dir, skipping force-kill: {e}");
+            return;
+        }
+    };
+
+    force_kill_fsmonitor_via_socket(&socket);
+}
+
+/// Unix: if `socket` still exists, find the daemon owning it via `lsof` and
+/// terminate it (SIGTERM, bounded wait, SIGKILL).
+///
+/// `lsof -t -- <socket>` prints just the owning PID(s), one per line, and
+/// exits 0 when found / 1 when nothing holds the socket. (`--` ends option
+/// parsing so a socket path is never mistaken for a flag.) Matching by socket
+/// path (not process name) guarantees a signal only ever reaches the daemon
+/// for *this* worktree: a different worktree's daemon binds a different socket,
+/// and once the daemon exits nothing holds the socket so `lsof` returns no
+/// PID — a dead daemon's reused PID is therefore never reported here.
+#[cfg(unix)]
+fn force_kill_fsmonitor_via_socket(socket: &Path) {
+    // No socket means `stop` already reaped a healthy daemon (or one never ran).
+    if !socket.exists() {
+        return;
+    }
+
+    let output = match Cmd::new("lsof")
+        .arg("-t")
+        .arg("--")
+        .arg(socket.to_string_lossy().into_owned())
+        .timeout(FSMONITOR_LSOF_TIMEOUT)
+        .run()
+    {
+        Ok(output) => output,
+        Err(e) => {
+            log::debug!("fsmonitor: lsof failed, cannot force-kill: {e}");
+            return;
+        }
+    };
+
+    for pid in String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse::<i32>().ok())
+    {
+        terminate_pid(pid);
+    }
+}
+
+/// SIGTERM a PID, poll briefly for it to exit, then SIGKILL if it's still
+/// alive. `kill(pid, None)` (signal 0) is the liveness probe — `Ok` means the
+/// process still exists, `Err(ESRCH)` means it's gone.
+#[cfg(unix)]
+fn terminate_pid(pid: i32) {
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+
+    let pid = Pid::from_raw(pid);
+
+    if let Err(e) = kill(pid, Signal::SIGTERM) {
+        // ESRCH: the daemon already exited (likely the graceful `stop` won the
+        // race). Anything else (e.g. EPERM) we can't act on — log and move on.
+        log::debug!("fsmonitor: SIGTERM to {pid} failed (likely already gone): {e}");
+        return;
+    }
+
+    let deadline = std::time::Instant::now() + FSMONITOR_SIGTERM_GRACE;
+    while std::time::Instant::now() < deadline {
+        if kill(pid, None).is_err() {
+            log::debug!("fsmonitor: daemon {pid} exited after SIGTERM");
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    log::debug!("fsmonitor: daemon {pid} still alive after SIGTERM, sending SIGKILL");
+    let _ = kill(pid, Signal::SIGKILL);
+}
+
+/// Non-Unix: the daemon uses a named pipe rather than a Unix-domain socket, so
+/// the `lsof`-by-socket reaping doesn't apply. The graceful IPC `stop` in
+/// [`stop_fsmonitor_daemon`] is the only stop mechanism here.
+#[cfg(not(unix))]
+fn force_kill_fsmonitor_via_socket(_socket: &Path) {}
 
 /// How the branch should be handled after worktree removal.
 ///
@@ -204,11 +354,9 @@ pub fn remove_worktree_with_cleanup(
     worktree_path: &Path,
     options: RemoveOptions,
 ) -> anyhow::Result<RemovalOutput> {
-    // Stop fsmonitor daemon (best effort — prevents zombie daemons when using
-    // builtin fsmonitor). Must happen while the worktree path still exists.
-    let _ = repo
-        .worktree_at(worktree_path)
-        .run_command(&["fsmonitor--daemon", "stop"]);
+    // Stop the fsmonitor daemon, force-killing a wedged one. Must happen while
+    // the worktree path still exists (the IPC socket lives under its git dir).
+    stop_fsmonitor_daemon(&repo.worktree_at(worktree_path));
 
     // Fast path: rename into .git/wt/trash/ (instant on same filesystem),
     // then prune git metadata. Falls back to `git worktree remove` if the
@@ -399,5 +547,128 @@ mod tests {
         let name = removing_path.file_name().unwrap().to_string_lossy();
         assert!(name.starts_with("feature-branch-"));
         assert!(removing_path.starts_with(&trash_dir));
+    }
+
+    /// A linked worktree uses a `.git` *file* pointing at
+    /// `<common>/.git/worktrees/<name>`, not a `.git` directory. The fsmonitor
+    /// IPC socket the force-kill path resolves must land under that
+    /// per-worktree git dir, never under a hand-constructed `<path>/.git`.
+    #[test]
+    fn test_fsmonitor_socket_resolves_to_linked_worktree_git_dir() {
+        use crate::git::Repository;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let gitconfig = tmp.path().join("gitconfig");
+        std::fs::write(
+            &gitconfig,
+            "[init]\n\tdefaultBranch = main\n[user]\n\tname = t\n\temail = t@t\n",
+        )
+        .unwrap();
+        let git = |dir: &Path| {
+            Cmd::new("git")
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", &gitconfig)
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        };
+
+        let main = tmp.path().join("repo");
+        std::fs::create_dir(&main).unwrap();
+        git(&main).args(["init", "-b", "main"]).run().unwrap();
+        git(&main)
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .run()
+            .unwrap();
+
+        let linked = tmp.path().join("repo.feature");
+        git(&main)
+            .args(["worktree", "add", linked.to_str().unwrap(), "-b", "feature"])
+            .run()
+            .unwrap();
+        // The defining property of a linked worktree: `.git` is a file.
+        assert!(linked.join(".git").is_file());
+
+        let repo = Repository::at(&main).unwrap();
+        let wt = repo.worktree_at(&linked);
+        let git_dir = wt.git_dir().unwrap();
+
+        // git_dir points into the shared common dir's worktrees/ subtree,
+        // not the worktree's own directory.
+        assert!(
+            git_dir.ends_with("worktrees/repo.feature"),
+            "expected per-worktree git dir, got {}",
+            git_dir.display()
+        );
+        let socket = git_dir.join("fsmonitor--daemon.ipc");
+        assert!(
+            !socket.starts_with(&linked),
+            "socket must resolve via the .git file, not <worktree>/.git: {}",
+            socket.display()
+        );
+
+        // No daemon ever ran, so the socket is absent and the whole force-kill
+        // path is a no-op that returns cleanly.
+        assert!(!socket.exists());
+        stop_fsmonitor_daemon(&wt);
+    }
+
+    /// SIGTERM-honoring process: `terminate_pid` sends SIGTERM, the child
+    /// exits, and the poll loop returns before the SIGKILL escalation.
+    #[cfg(unix)]
+    #[test]
+    fn test_terminate_pid_sigterm_honored() {
+        use std::process::Command;
+
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        let pid = child.id() as i32;
+
+        terminate_pid(pid);
+
+        // `sleep` exits on SIGTERM; it must be reaped and have a
+        // signal-derived (non-success) status.
+        let status = child.wait().unwrap();
+        assert!(!status.success());
+    }
+
+    /// SIGTERM-ignoring process: the child traps and ignores SIGTERM, so
+    /// `terminate_pid` must escalate to SIGKILL after the grace window.
+    #[cfg(unix)]
+    #[test]
+    fn test_terminate_pid_escalates_to_sigkill() {
+        use std::process::Command;
+
+        // `trap '' TERM` makes SIGTERM a no-op; only SIGKILL can stop it. The
+        // child touches `ready` *after* the trap is installed; the test waits
+        // for that file so the first SIGTERM can't race trap installation
+        // (which would let the child die on SIGTERM and report signal 15).
+        let tmp = tempfile::tempdir().unwrap();
+        let ready = tmp.path().join("ready");
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "trap '' TERM; : > {}; sleep 30",
+                ready.to_str().unwrap()
+            ))
+            .spawn()
+            .unwrap();
+        let pid = child.id() as i32;
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !ready.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "child never installed SIGTERM trap"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        terminate_pid(pid);
+
+        // Must have been SIGKILLed despite ignoring SIGTERM.
+        use std::os::unix::process::ExitStatusExt;
+        let status = child.wait().unwrap();
+        assert_eq!(
+            status.signal(),
+            Some(nix::sys::signal::Signal::SIGKILL as i32)
+        );
     }
 }

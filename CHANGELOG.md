@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`wt remove` reaps a wedged fsmonitor daemon**: When `core.fsmonitor=true`, git runs a per-worktree `git fsmonitor--daemon`. Removal already sent `git fsmonitor--daemon stop`, but `stop` is an IPC request to the daemon itself, so a daemon that had stopped answering its socket ignored it and then leaked forever once its worktree was gone (dozens could accumulate, and one wedged daemon hangs `wt list`). Removal now resolves the daemon's PID from its IPC socket and force-terminates it (SIGTERM, brief wait, SIGKILL) when `stop` doesn't take. The signal only ever targets the daemon whose socket resolves to the worktree being removed.
+
 ## 0.51.0
 
 ### Improved

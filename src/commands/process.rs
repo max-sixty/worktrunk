@@ -718,24 +718,22 @@ pub fn build_remove_command(
     let worktree_path_str = worktree_path.to_string_lossy();
     let worktree_escaped = escape(worktree_path_str.as_ref().into());
 
-    // Stop fsmonitor daemon first (best effort - ignore errors)
-    // This prevents zombie daemons from accumulating when using builtin fsmonitor
-    let stop_fsmonitor = format!(
-        "{{ git -C {} fsmonitor--daemon stop 2>/dev/null || true; }}",
-        worktree_escaped
-    );
-
     let force_flag = if force_worktree { " --force" } else { "" };
 
+    // The fsmonitor daemon is stopped (and force-killed if wedged) synchronously
+    // in the Rust foreground by `stop_fsmonitor_daemon`, before this command is
+    // built — see `spawn_background_removal`. The detached process only does the
+    // `git worktree remove` / `rm -rf`.
+    //
     // When removing the current worktree, delay so the shell wrapper can cd away
     // before the directory is removed. The primary fix for the "shell-init: error
     // retrieving current directory" race is in the fish wrapper (using builtins
     // instead of subprocesses to read the directive), but this provides defense in
     // depth for other shells and edge cases.
     let prefix = if changed_directory {
-        format!("sleep 1 && {} && ", stop_fsmonitor)
+        "sleep 1 && ".to_string()
     } else {
-        format!("{} && ", stop_fsmonitor)
+        String::new()
     };
 
     match branch_to_delete {
@@ -847,19 +845,19 @@ mod tests {
         let path = PathBuf::from("/tmp/test-worktree");
 
         // changed_directory=true: sleep before removal
-        assert_snapshot!(build_remove_command(&path, None, false, true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree");
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree && git branch -D feature-branch");
+        assert_snapshot!(build_remove_command(&path, None, false, true), @"sleep 1 && git worktree remove /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, true), @"sleep 1 && git worktree remove /tmp/test-worktree && git branch -D feature-branch");
 
         // changed_directory=false: no sleep
-        assert_snapshot!(build_remove_command(&path, None, false, false), @"{ git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree");
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, false), @"{ git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree && git branch -D feature-branch");
+        assert_snapshot!(build_remove_command(&path, None, false, false), @"git worktree remove /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, false), @"git worktree remove /tmp/test-worktree && git branch -D feature-branch");
 
         // With force flag
-        assert_snapshot!(build_remove_command(&path, None, true, true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove --force /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, None, true, true), @"sleep 1 && git worktree remove --force /tmp/test-worktree");
 
         // Shell escaping for special characters
         let special_path = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false, true), @"sleep 1 && { git -C '/tmp/test worktree' fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove '/tmp/test worktree' && git branch -D feature/branch");
+        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false, true), @"sleep 1 && git worktree remove '/tmp/test worktree' && git branch -D feature/branch");
     }
 
     #[test]

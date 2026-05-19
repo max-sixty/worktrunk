@@ -115,7 +115,7 @@ done
 
 For a specific hung worktree, kill the daemon whose socket path matches it, or just `pkill -9 -f 'git fsmonitor--daemon'` and let the next `wt list` respawn the live ones. Disabling fsmonitor globally (`git config --global core.fsmonitor false`) avoids the class of problem entirely at the cost of some `git status` speed on large repos.
 
-Daemons leak when a worktree is removed while its daemon is already unresponsive — `wt remove` calls `git fsmonitor--daemon stop`, but a daemon that can't answer its IPC can't be stopped through it.
+`wt remove` reaps the removed worktree's daemon even when it's wedged: it sends `git fsmonitor--daemon stop`, then resolves the daemon's PID from its IPC socket and force-terminates it (SIGTERM, brief wait, SIGKILL) if it didn't exit. So removal doesn't leak. A daemon only accumulates for a worktree that's never removed and whose daemon wedges in place, or from `wt list` starting a fresh daemon against an already-wedged one. `pkill -9 -f 'git fsmonitor--daemon'` clears those; the live ones respawn on the next `wt list`.
 
 ## PowerShell on Windows
 
