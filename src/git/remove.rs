@@ -672,4 +672,75 @@ mod tests {
             Some(nix::sys::signal::Signal::SIGKILL as i32)
         );
     }
+
+    /// Fail-open contract: when the per-worktree git dir can't be resolved
+    /// (the path is not a git worktree), `stop_fsmonitor_daemon` logs and
+    /// returns without panicking and without attempting a force-kill.
+    #[test]
+    fn test_fsmonitor_stop_unresolvable_git_dir_is_noop() {
+        use crate::git::Repository;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let gitconfig = tmp.path().join("gitconfig");
+        std::fs::write(
+            &gitconfig,
+            "[init]\n\tdefaultBranch = main\n[user]\n\tname = t\n\temail = t@t\n",
+        )
+        .unwrap();
+        let main = tmp.path().join("repo");
+        std::fs::create_dir(&main).unwrap();
+        Cmd::new("git")
+            .current_dir(&main)
+            .env("GIT_CONFIG_GLOBAL", &gitconfig)
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .args(["init", "-b", "main"])
+            .run()
+            .unwrap();
+        let repo = Repository::at(&main).unwrap();
+
+        // A path that is not a git worktree: `git_dir()` errors.
+        let not_a_worktree = tmp.path().join("nope");
+        std::fs::create_dir(&not_a_worktree).unwrap();
+        let wt = repo.worktree_at(&not_a_worktree);
+        assert!(wt.git_dir().is_err(), "precondition: git dir unresolvable");
+
+        // Hits the git_dir() Err arm: log + early return, no panic.
+        stop_fsmonitor_daemon(&wt);
+    }
+
+    /// A socket file that no process holds: the force-kill path runs `lsof`,
+    /// resolves no owning PID, and is a clean no-op — nothing is signalled and
+    /// the path is left intact. Exercises the real `lsof` lookup without a
+    /// live daemon.
+    #[cfg(unix)]
+    #[test]
+    fn test_fsmonitor_force_kill_unheld_socket_is_noop() {
+        use crate::git::Repository;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let gitconfig = tmp.path().join("gitconfig");
+        std::fs::write(
+            &gitconfig,
+            "[init]\n\tdefaultBranch = main\n[user]\n\tname = t\n\temail = t@t\n",
+        )
+        .unwrap();
+        let main = tmp.path().join("repo");
+        std::fs::create_dir(&main).unwrap();
+        Cmd::new("git")
+            .current_dir(&main)
+            .env("GIT_CONFIG_GLOBAL", &gitconfig)
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .args(["init", "-b", "main"])
+            .run()
+            .unwrap();
+        let repo = Repository::at(&main).unwrap();
+        let wt = repo.worktree_at(&main);
+        let socket = wt.git_dir().unwrap().join("fsmonitor--daemon.ipc");
+
+        // Plant a regular file where the IPC socket would be. No process holds
+        // it, so `lsof` resolves no PID and nothing is signalled.
+        std::fs::write(&socket, b"").unwrap();
+        stop_fsmonitor_daemon(&wt);
+        assert!(socket.exists(), "no-op path must not delete the socket");
+    }
 }
