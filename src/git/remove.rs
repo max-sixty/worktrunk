@@ -77,6 +77,7 @@ use crate::utils::epoch_now;
 const FSMONITOR_STOP_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Bound on the `lsof` socket→PID lookup.
+#[cfg(unix)]
 const FSMONITOR_LSOF_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How long to wait for a daemon to exit after SIGTERM before escalating to
