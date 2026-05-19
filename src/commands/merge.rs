@@ -2,18 +2,16 @@ use std::path::Path;
 
 use anyhow::Context;
 use worktrunk::HookType;
-use worktrunk::config::{Approvals, MergeConfig, UserConfig};
+use worktrunk::config::{MergeConfig, UserConfig};
 use worktrunk::git::Repository;
 use worktrunk::styling::{eprintln, info_message};
 
-use super::command_approval::{approve_command_batch, approve_commit_template_append};
+use super::command_approval::approve_commit_template_append;
 use super::command_executor::FailureStrategy;
 use super::commit::{CommitOptions, HookGate};
 use super::context::CommandEnv;
-use super::hooks::{HookAnnouncer, execute_hook};
-use super::project_config::{
-    ApprovableCommand, collect_commands_for_hooks, collect_remove_hook_commands,
-};
+use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder, execute_planned_hook};
+use super::hooks::HookAnnouncer;
 use super::repository_ext::RepositoryCliExt;
 use super::template_vars::TemplateVars;
 use super::worktree::{
@@ -76,67 +74,94 @@ pub struct MergeOptions<'a> {
     pub format: crate::cli::SwitchFormat,
 }
 
-/// Collect all commands that will be executed during merge, for batch approval.
+/// Build the frozen [`ApprovedHookPlan`] for the merge's covered hooks, gating
+/// every project command once.
 ///
-/// Returns (commands, project_identifier). Each hook is approved against the
-/// `.config/wt.toml` of the worktree it runs in (and is resolved from):
+/// Each hook is anchored to the worktree it reads `.config/wt.toml` from:
 ///
-/// - `pre-commit` / `post-commit` / `pre-merge` → the feature worktree
-///   (= `repo`'s cwd).
-/// - `post-merge` → the merge destination (`destination_path`).
-/// - `pre-remove` / `post-remove` / `post-switch` (when the feature worktree
-///   is being removed) → resolved by [`collect_remove_hook_commands`], which
-///   reads `pre-remove` from the feature worktree's own `.config/wt.toml`
-///   and `post-remove` / `post-switch` from the destination — mirroring
-///   `output::handlers::execute_pre_remove_hooks_if_needed`. No fallback
-///   between worktrees — each `.config/wt.toml` stands alone.
-fn collect_merge_commands(
+/// - `pre-commit` / `post-commit` / `pre-merge` / `pre-remove` / `post-remove`
+///   → the feature worktree (`repo`'s cwd).
+/// - `post-merge` / `post-switch` → the merge destination.
+///
+/// `pre-commit`/`post-commit` execute via the unchanged commit/squash path
+/// (no gate→exec state mutation precedes the commit), but are included here so
+/// the single approval prompt is byte-identical to before; the TOCTOU-covered
+/// hooks (`pre-merge` onward) execute *only* from the returned plan.
+///
+/// `Ok(None)` ⇒ the user declined; the caller proceeds without hooks.
+#[allow(clippy::too_many_arguments)]
+fn approve_merge_plan(
     repo: &Repository,
+    config: &UserConfig,
+    feature_root: &Path,
     destination_path: &Path,
+    project_id: &str,
     commit: bool,
     verify: bool,
     will_remove: bool,
     squash_enabled: bool,
-) -> anyhow::Result<(Vec<ApprovableCommand>, String)> {
-    let mut feature_hooks = Vec::new();
-    let mut destination_hooks = Vec::new();
+    yes: bool,
+) -> anyhow::Result<Option<ApprovedHookPlan>> {
+    let pid = Some(project_id);
 
-    // Pre-commit hooks run when a commit will actually be created
+    // Every feature-worktree hook shares one anchor: the feature worktree's
+    // canonical root, the exact path `finish_after_merge` records as
+    // `RemoveResult::worktree_path` and `handle_merge` passes as the
+    // `pre-merge` executor anchor, so every plan lookup is an exact match.
+    // `pre-commit`/`post-commit` run via the unchanged `execute_hook` path and
+    // are listed only so the single prompt is complete; their anchor is never
+    // looked up.
+    let mut feature_hooks = Vec::new();
     let will_create_commit = repo.current_worktree().is_dirty()? || squash_enabled;
     if commit && verify && will_create_commit {
         feature_hooks.push(HookType::PreCommit);
         feature_hooks.push(HookType::PostCommit);
     }
-
     if verify {
         feature_hooks.push(HookType::PreMerge);
-        destination_hooks.push(HookType::PostMerge);
+    }
+    if verify && will_remove {
+        feature_hooks.push(HookType::PreRemove);
+        feature_hooks.push(HookType::PostRemove);
     }
 
-    let mut all_commands = Vec::new();
-    if let Some(cfg) = repo.load_project_config()? {
-        all_commands.extend(collect_commands_for_hooks(&cfg, &feature_hooks));
+    // Read each `.config/wt.toml` only when a hook actually needs it: with
+    // `--no-hooks` (`verify` false) nothing is selected, so a malformed or
+    // inaccessible destination/feature config must not fail the merge.
+    let mut builder = HookPlanBuilder::new();
+    if !feature_hooks.is_empty() {
+        let feature_cfg = repo.load_project_config()?;
+        builder.add(
+            feature_root,
+            &feature_hooks,
+            feature_cfg.as_ref(),
+            config,
+            pid,
+        );
     }
-    if !destination_hooks.is_empty() || (verify && will_remove) {
-        let destination_repo = Repository::at(destination_path)?;
-        if !destination_hooks.is_empty()
-            && let Some(cfg) = destination_repo.load_project_config()?
-        {
-            all_commands.extend(collect_commands_for_hooks(&cfg, &destination_hooks));
-        }
-        if verify && will_remove {
-            let current_wt = repo.current_worktree();
-            let feature_path = current_wt.path();
-            // The feature worktree is removed; the user lands in the merge
-            // destination, so `post-switch` reads `destination_path`'s config.
-            all_commands.extend(collect_remove_hook_commands(
-                &[feature_path],
-                &[destination_path],
-            )?);
+    if verify {
+        // `post-merge` reads the destination; `post-switch` (feature worktree
+        // removed → user lands here) reads the same destination config.
+        let dest_cfg = Repository::at(destination_path)?.load_project_config()?;
+        builder.add(
+            destination_path,
+            &[HookType::PostMerge],
+            dest_cfg.as_ref(),
+            config,
+            pid,
+        );
+        if will_remove {
+            builder.add(
+                destination_path,
+                &[HookType::PostSwitch],
+                dest_cfg.as_ref(),
+                config,
+                pid,
+            );
         }
     }
 
-    Ok((all_commands, repo.project_identifier()?))
+    builder.finish().approve(pid, yes)
 }
 
 pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
@@ -214,21 +239,28 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let on_target = current_branch == target_branch;
     let remove_requested = remove && !on_target;
 
-    // Collect and approve all commands upfront for batch permission request
-    let (all_commands, project_id) = collect_merge_commands(
+    // Build and approve the frozen hook plan once, at the gate. Every covered
+    // hook (`pre-merge` / `post-merge` / `pre-remove` / `post-remove` /
+    // `post-switch`) executes only from this immutable value — re-reading the
+    // (by-then-rebased / merged) on-disk config is structurally impossible.
+    let project_id = repo.project_identifier()?;
+    // One anchor for every feature-worktree hook: the canonical root, the same
+    // value `finish_after_merge` records as `RemoveResult::worktree_path`.
+    let feature_root = current_wt.root()?;
+    let plan = approve_merge_plan(
         repo,
+        config,
+        &feature_root,
         &destination_path,
+        &project_id,
         commit,
         verify,
         remove_requested,
         squash_enabled,
+        yes,
     )?;
-
-    // Approve hook commands in a single batch (shows templates, not expanded
-    // values). The project commit-append is gated separately below so that
-    // declining it never skips hooks.
-    let approvals = Approvals::load().context("Failed to load approvals")?;
-    let approved = approve_command_batch(&all_commands, &project_id, &approvals, yes, false)?;
+    let approved = plan.is_some();
+    let plan = plan.unwrap_or_else(ApprovedHookPlan::empty);
 
     // Commit-phase gate uses the original `verify` (before the shadow below) so it can
     // distinguish --no-hooks from declined-approval; CommitOptions and handle_squash
@@ -332,7 +364,9 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         if let Some(p) = target_worktree_path.as_deref() {
             vars = vars.with_target_worktree_path(p);
         }
-        execute_hook(
+        execute_planned_hook(
+            &plan,
+            &feature_root,
             &ctx,
             HookType::PreMerge,
             &vars.as_extra_vars(),
@@ -367,6 +401,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             remove,
             verify,
             yes,
+            plan: &plan,
         },
     )?;
 

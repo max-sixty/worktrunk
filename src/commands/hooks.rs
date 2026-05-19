@@ -5,59 +5,54 @@
 //!
 //! # Which `.config/wt.toml` a hook reads
 //!
-//! **Every hook is anchored to one worktree — the worktree it's *about*.** It
-//! reads that worktree's `.config/wt.toml`. When the worktree isn't on disk at
-//! the moment we need to read it, read a snapshot.
+//! Every hook is anchored to one worktree: the worktree it is *about*. It runs
+//! the commands selected from that worktree's `.config/wt.toml`. Two execution
+//! models split on whether a state mutation separates the approval gate from
+//! execution.
 //!
-//! Most hooks resolve their project config from `ctx.repo.load_project_config()`
-//! — [`execute_hook`], [`prepare_background_pipelines`], and
-//! [`super::command_approval::approve_hooks`] all do this — so the construction
-//! sites just have to root `ctx.repo` at the anchor worktree. Two hooks resolve
-//! the config from a snapshot instead, because the anchor isn't on disk at
-//! preparation time: see "Snapshot paths" below.
+//! **Plan-backed (the TOCTOU-covered set):** `pre-merge`, `post-merge`,
+//! `pre-remove`, `post-remove`, `post-switch`, `pre-start`, `post-start`. A
+//! merge, rebase, removal, or `git worktree add` runs between the gate and
+//! these hooks, so a second config read could select a command the user never
+//! approved. Each command gate selects the commands once and freezes them into
+//! a [`super::hook_plan::ApprovedHookPlan`]; the executor renders and runs only
+//! that frozen value via [`super::hook_plan::execute_planned_hook`] /
+//! [`super::hook_plan::register_planned`], holding no `ProjectConfig` to
+//! re-derive from. See the [`super::hook_plan`] module spec.
 //!
-//! Each worktree's `.config/wt.toml` stands alone — there is no fallback to
-//! the primary worktree's config when the anchor has none, and a
-//! present-but-malformed config aborts the operation rather than silently
-//! using a different one.
-//!
-//! | Hook | Anchor worktree | Set in |
+//! | Plan-backed hook | Anchor worktree | Gate builds the plan in |
 //! |---|---|---|
-//! | `pre-remove`, `post-remove` | the worktree being removed (`pre-remove` reads it on disk; `post-remove` reads a snapshot taken before removal, stashed on [`super::worktree::RemoveResult::RemovedWorktree::removed_project_config`]) | `output::handlers::execute_pre_remove_hooks_if_needed` and `output::handlers::spawn_hooks_after_remove`; the three approval call sites (`main.rs`'s `approve_remove` for `wt remove`, `merge::collect_merge_commands` for `wt merge`, `step::prune::approve_prune_hooks` for `wt step prune`) all delegate to [`super::project_config::collect_remove_hook_commands`] |
-//! | `post-merge` | the merge destination (target branch's worktree if it has one, otherwise the primary) | `worktree::finish::finish_after_merge`; approval in `merge::collect_merge_commands` |
-//! | `post-switch` after a removal | the post-removal working directory the user lands in ([`super::worktree::RemoveResult::destination_path`]) — usually the primary worktree, cwd when the primary worktree is itself removed (bare repo), the merge destination for `wt merge` | `output::handlers::spawn_hooks_after_remove`; approval through `collect_remove_hook_commands` |
-//! | `pre-commit` / `post-commit` | the worktree being committed — the cwd worktree, or `<b>`'s worktree for `wt step commit --branch <b>` | `commands::commit`, `step::commit` (via `CommandEnv::for_branch`) |
-//! | `wt switch`'s `pre-start` / `post-start` / `post-switch` | the new (`--create`) or destination (`wt switch <existing>`) worktree | `worktree::switch` — `hook_repo_for_worktree` (execution); `switch_hook_project_config` (approval / pre-flight, see Snapshot paths below) |
-//! | `pre-switch`, `pre-merge`, `wt hook <type>`, aliases | the worktree `wt` was invoked in | the respective command entry points |
+//! | `pre-merge`, `pre-remove`, `post-remove` | the feature/removed worktree | `merge::approve_merge_plan`, `main.rs`'s `approve_remove`, `step::prune::approve_prune_hooks` |
+//! | `post-merge`, `post-switch` (after a removal) | the merge/removal destination | the same gates |
+//! | `pre-start`, `post-start`, `post-switch` (on switch) | the new/destination worktree (the `--create` base ref's committed config, read via `git show` by `switch_hook_project_config`) | `worktree::switch::approve_switch_hooks` |
 //!
-//! ## Snapshot paths
+//! **Invocation-resolved (no gate→exec mutation):** `pre-commit`,
+//! `post-commit`, `pre-switch`, `wt hook <type>`, aliases. They resolve config
+//! from `ctx.repo.load_project_config()` at invocation via [`execute_hook`] /
+//! [`HookAnnouncer::register`]. Two facts make that re-read safe, and a new
+//! call site must preserve **both**: (1) nothing between the gate and the
+//! executor mutates the worktree `.config/wt.toml`; (2) the executor reads
+//! through the **same `Repository` instance** the gate used —
+//! `load_project_config` reads the working-tree file and memoizes it in a
+//! never-invalidated `OnceCell` (`RepoCache::project_config`), so the
+//! executor's call is a cache hit returning the gate's exact bytes. A
+//! refactor that runs an uncovered executor through a fresh `Repository::at()`
+//! (empty cache) breaks (2) and silently reintroduces the TOCTOU even if (1)
+//! still holds — there is no compile-time guard here, unlike the plan-backed
+//! set. (Aliases get the property structurally instead: the body is frozen
+//! into `AliasEntry` before the gate, like `ApprovedHookPlan`.) Anchors:
+//! `pre-commit`/`post-commit` the worktree being committed (cwd, or `<b>`'s
+//! worktree for `wt step commit --branch <b>`); `pre-switch`, `pre-merge`'s
+//! manual `wt hook`, and aliases the worktree `wt` was invoked in.
 //!
-//! Two hooks need the anchor's config when the anchor itself isn't on disk:
-//!
-//! - **`post-remove`** runs after the anchor worktree was just deleted. The
-//!   removed worktree's `ProjectConfig` is loaded by `prepare_worktree_removal`
-//!   (or `finish_after_merge` for `wt merge`) *before* the deletion and stashed
-//!   on `RemoveResult::RemovedWorktree::removed_project_config`. The executor
-//!   reads it via [`HookAnnouncer::register_with_project_config`].
-//! - **`wt switch --create`'s post-switch hooks** (approval-time only) anchor at
-//!   a worktree that doesn't exist yet — `git worktree add` runs after the
-//!   approval gate. The approval prompt and template pre-flight read the base
-//!   ref's committed `.config/wt.toml` via `git show` (`git fetch`ing a
-//!   `pr:`/`mr:` fork head first), assembled by `switch_hook_project_config` and
-//!   passed to [`super::command_approval::approve_or_skip_with_config`]. By
-//!   execution time the worktree exists and the executor reads its on-disk
-//!   config the normal way.
-//!
-//! Different physical sources, same role: produce the anchor's config when the
-//! anchor isn't on disk.
-//!
+//! Each worktree's `.config/wt.toml` stands alone: no fallback to the primary
+//! worktree's config when the anchor has none, and a present-but-malformed
+//! config aborts the operation rather than silently using a different one.
 //! `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path regardless of the root
-//! (test isolation). User config (`~/.config/worktrunk/config.toml`) is global
-//! and unaffected. Every hook is approved against the same `.config/wt.toml`
-//! it executes against. The one exception is `wt step prune`, which calls
-//! [`super::project_config::collect_remove_hook_commands`] over every linked
-//! worktree it might prune (the integrated set isn't known until the checks
-//! run), a superset of what executes.
+//! (test isolation); user config (`~/.config/worktrunk/config.toml`) is global
+//! and unaffected. `wt step prune` selects over every linked worktree it might
+//! prune (the integrated set isn't known until the checks run), a superset of
+//! what executes.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -280,11 +275,10 @@ impl<'a> HookAnnouncer<'a> {
 
     /// Prepare and add user+project pipelines for a single hook type, reading
     /// the project config from `ctx.repo.load_project_config()` — the worktree
-    /// this hook acts on, per the spec. Use [`Self::register_with_project_config`]
-    /// when the anchor worktree isn't on disk and the config came from a
-    /// snapshot or git ref (`post-remove` after the worktree is gone; `wt
-    /// switch`'s post-switch hooks before `--create` materializes the new
-    /// worktree).
+    /// this hook acts on. Used by the invocation-resolved hooks
+    /// (`pre-commit` / `post-commit` and `wt hook <type>`'s filter path), where
+    /// nothing mutates config between approval and execution. The plan-backed
+    /// hooks use [`super::hook_plan::register_planned`] instead.
     pub fn register(
         &mut self,
         ctx: &CommandContext<'_>,
@@ -293,27 +287,13 @@ impl<'a> HookAnnouncer<'a> {
         display_path: Option<&Path>,
     ) -> anyhow::Result<()> {
         let project_config = ctx.repo.load_project_config()?;
-        self.register_with_project_config(
+        let pipelines = prepare_background_pipelines(
             ctx,
             project_config.as_ref(),
             hook_type,
             extra_vars,
             display_path,
-        )
-    }
-
-    /// Like [`Self::register`], but reads the project config from an explicit
-    /// snapshot instead of `ctx.repo.load_project_config()`.
-    pub fn register_with_project_config(
-        &mut self,
-        ctx: &CommandContext<'_>,
-        project_config: Option<&worktrunk::config::ProjectConfig>,
-        hook_type: HookType,
-        extra_vars: &[(&str, &str)],
-        display_path: Option<&Path>,
-    ) -> anyhow::Result<()> {
-        let pipelines =
-            prepare_background_pipelines(ctx, project_config, hook_type, extra_vars, display_path)?;
+        )?;
         self.extend(pipelines);
         Ok(())
     }
@@ -480,13 +460,10 @@ pub(crate) fn into_source_groups(flat: Vec<SourcedStep>) -> Vec<Vec<SourcedStep>
 /// group is returned with its `(hook_type, display_path)` metadata.
 ///
 /// `project_config` is the resolved `.config/wt.toml` for this hook's anchor
-/// worktree — normally `ctx.repo.load_project_config()` (what
-/// [`HookAnnouncer::register`] passes), or a snapshot / git-ref-derived config
-/// when the anchor isn't on disk at preparation time: `post-remove` (worktree
-/// just removed; config snapshotted on [`super::worktree::RemoveResult::RemovedWorktree`])
-/// and `wt switch`'s post-switch hooks before `--create` materializes the new
-/// worktree (config from the base ref via `git show`). See the module-level
-/// "Which `.config/wt.toml` a hook reads" docs.
+/// worktree, passed by [`HookAnnouncer::register`] from
+/// `ctx.repo.load_project_config()`. Only the invocation-resolved hooks reach
+/// here; plan-backed hooks render from the frozen plan instead (see the
+/// module-level "Which `.config/wt.toml` a hook reads" docs).
 pub(crate) fn prepare_background_pipelines<'c>(
     ctx: &CommandContext<'c>,
     project_config: Option<&worktrunk::config::ProjectConfig>,

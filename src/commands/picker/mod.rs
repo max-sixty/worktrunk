@@ -105,14 +105,15 @@ use anyhow::Context;
 // bounded/unbounded/Sender are re-exported by skim::prelude
 use skim::prelude::*;
 use skim::reader::CommandCollector;
+use worktrunk::HookType;
 use worktrunk::config::Approvals;
 use worktrunk::git::{Repository, current_or_recover};
 use worktrunk::styling::eprintln;
 
+use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::hooks::HookAnnouncer;
 use super::list::collect;
 use super::list::progressive::RenderTarget;
-use super::project_config::collect_remove_hook_commands;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::template_vars::TemplateVars;
 use super::worktree::{
@@ -166,7 +167,7 @@ struct PickerCollector {
     /// its `pre-remove` / `post-remove` / `post-switch` hooks only when every
     /// one is in here — the picker can't show an approval prompt mid-render, so
     /// unapproved project commands are skipped, never run. See
-    /// [`removal_hooks_approved`].
+    /// [`approved_removal_plan`].
     approvals: Arc<Approvals>,
 }
 
@@ -177,9 +178,10 @@ impl PickerCollector {
     /// silent (TUI) mode — the git worktree removal with no `wt`-generated
     /// messages, spinner, or `cd` directive (skim owns the terminal). Its
     /// `pre-remove` / `post-remove` / `post-switch` hooks run only when they're
-    /// already approved ([`removal_hooks_approved`] — a read-only `Approvals`
-    /// check, no prompt): the picker can't prompt mid-render, so unapproved
-    /// project commands are skipped, never run. (A hook that *does* run still
+    /// already approved ([`approved_removal_plan`] — a read-only `Approvals`
+    /// filter, no prompt): the picker can't prompt mid-render, so unapproved
+    /// project commands are dropped from the plan, never run. (A hook that
+    /// *does* run still
     /// streams its own output to stderr, like any hook — a rough edge of
     /// removing inside the picker.) A `BranchOnly` result just deletes the
     /// branch if it's safe to.
@@ -204,13 +206,12 @@ impl PickerCollector {
                 ..
             } => {
                 let main_repo = Repository::at(main_path)?;
-                let verify =
-                    removal_hooks_approved(&main_repo, main_path, worktree_path, approvals)?;
+                let plan = approved_removal_plan(&main_repo, main_path, worktree_path, approvals)?;
                 let mut announcer = HookAnnouncer::new(&main_repo, main_repo.user_config(), false);
                 handle_remove_output(
                     result,
                     /* foreground */ true,
-                    verify,
+                    &plan,
                     /* quiet */ true,
                     /* silent */ true,
                     &mut announcer,
@@ -362,20 +363,37 @@ impl CommandCollector for PickerCollector {
 /// they're already approved (e.g. from a prior `wt remove` / `wt merge`) and
 /// skips them otherwise — unapproved project commands must never run. See
 /// CLAUDE.md → "Project Commands Run Only After Approval".
-fn removal_hooks_approved(
+fn approved_removal_plan(
     main_repo: &Repository,
     main_path: &Path,
     worktree_path: &Path,
     approvals: &Approvals,
-) -> anyhow::Result<bool> {
-    let commands = collect_remove_hook_commands(&[worktree_path], &[main_path])?;
-    if commands.is_empty() {
-        return Ok(true); // nothing to run — `verify` is moot
-    }
-    let project_id = main_repo.project_identifier()?;
-    Ok(commands
-        .iter()
-        .all(|c| approvals.is_command_approved(&project_id, &c.command.template)))
+) -> anyhow::Result<ApprovedHookPlan> {
+    // Non-fatal: an unresolvable project identifier just means no project
+    // pipeline can be matched against approvals — `approve_readonly` then
+    // drops them (fail-closed), rather than aborting the picker removal.
+    let project_id = main_repo.project_identifier().ok();
+    let pid = project_id.as_deref();
+    let user = main_repo.user_config();
+    let removed_cfg = Repository::at(worktree_path)?.load_project_config()?;
+    let dest_cfg = Repository::at(main_path)?.load_project_config()?;
+
+    let mut builder = HookPlanBuilder::new();
+    builder.add(
+        worktree_path,
+        &[HookType::PreRemove, HookType::PostRemove],
+        removed_cfg.as_ref(),
+        user,
+        pid,
+    );
+    builder.add(
+        main_path,
+        &[HookType::PostSwitch],
+        dest_cfg.as_ref(),
+        user,
+        pid,
+    );
+    Ok(builder.finish().approve_readonly(approvals, pid))
 }
 
 pub fn handle_picker(
@@ -537,8 +555,8 @@ pub fn handle_picker(
     // Cleaned up in PreviewState::Drop.
     let signal_path = state.path.with_extension("remove");
 
-    // Approvals snapshot for the session — alt-r removals consult it (read-only)
-    // to decide whether their hooks may run; see `removal_hooks_approved`.
+    // Approvals snapshot for the session: alt-r removals consult it read-only
+    // to filter the hook plan; see `approved_removal_plan`.
     let approvals = Arc::new(Approvals::load().context("Failed to load approvals")?);
 
     let collector = PickerCollector {
@@ -803,7 +821,7 @@ pub fn handle_picker(
         // new/destination worktree's, or for `--create` the base ref's) so the
         // approval prompt lists the exact commands `execute_switch` will run.
         let hook_project_config = switch_hook_project_config(&repo, &plan)?;
-        let hooks_approved = approve_switch_hooks(
+        let (hooks_approved, hook_plan) = approve_switch_hooks(
             &repo,
             &config,
             &plan,
@@ -826,7 +844,8 @@ pub fn handle_picker(
             hook_project_config.as_ref(),
         )?;
 
-        let (result, branch_info) = execute_switch(&repo, plan, &config, false, hooks_approved)?;
+        let (result, branch_info) =
+            execute_switch(&repo, plan, &config, false, hooks_approved, &hook_plan)?;
 
         // Compute path mismatch lazily (deferred from plan_switch for existing worktrees).
         // Skip for detached HEAD worktrees (branch is None).
@@ -865,6 +884,7 @@ pub fn handle_picker(
                 false,
                 &extra_vars,
                 hooks_display_path.as_deref(),
+                &hook_plan,
             )?;
         }
     }
@@ -906,10 +926,7 @@ fn resolve_identifier(
 #[cfg(test)]
 pub mod tests {
     use super::preview::{PreviewLayout, PreviewMode, PreviewStateData};
-    use super::{
-        PickerAction, PickerCollector, drain_stashed_warnings, removal_hooks_approved,
-        resolve_identifier,
-    };
+    use super::{PickerAction, PickerCollector, drain_stashed_warnings, resolve_identifier};
     use crate::commands::worktree::RemoveResult;
     use std::fs;
     use std::sync::Mutex;
@@ -1031,7 +1048,6 @@ pub mod tests {
             force_worktree: false,
             expected_path: None,
             removed_commit: None,
-            removed_project_config: None,
         };
 
         PickerCollector::do_removal(&repo, &result, &Approvals::default()).unwrap();
@@ -1128,7 +1144,6 @@ pub mod tests {
             force_worktree: false,
             expected_path: None,
             removed_commit: None,
-            removed_project_config: None,
         };
 
         PickerCollector::do_removal(&repo, &result, &Approvals::default()).unwrap();
@@ -1175,16 +1190,11 @@ pub mod tests {
             force_worktree: false,
             expected_path: None,
             removed_commit: None,
-            removed_project_config: None,
         };
 
-        // Empty approvals → the hook is unapproved.
+        // Empty approvals → `approve_readonly` drops the unapproved project
+        // `pre-remove` pipeline from the plan, so it never runs.
         let approvals = Approvals::default();
-        assert!(
-            !removal_hooks_approved(&repo, test.path(), &wt_path, &approvals).unwrap(),
-            "an unapproved pre-remove hook is not approved"
-        );
-
         PickerCollector::do_removal(&repo, &result, &approvals).unwrap();
         assert!(!wt_path.exists(), "worktree should be removed");
         assert!(!marker.exists(), "unapproved pre-remove hook must not run");

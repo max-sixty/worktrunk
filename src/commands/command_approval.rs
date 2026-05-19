@@ -348,35 +348,3 @@ pub fn approve_commit_template_append(
     }
     Ok(Some(owned))
 }
-
-/// Like [`approve_or_skip`] but approves against an already-resolved
-/// `ProjectConfig` rather than `ctx.repo.load_project_config()`.
-///
-/// `wt switch`'s post-switch hooks (`pre-start` / `post-start` / `post-switch`)
-/// resolve their config from the new/destination worktree, which for
-/// `--create` doesn't exist yet at approval time — the config is read from the
-/// base ref via `git show` and passed in here so the prompt lists the exact
-/// commands the hooks will execute. `project_id` (the approvals namespace) is
-/// still taken from `ctx.repo`: it's repo-wide and independent of which
-/// worktree the commands come from.
-pub fn approve_or_skip_with_config(
-    ctx: &super::command_executor::CommandContext<'_>,
-    project_config: Option<&worktrunk::config::ProjectConfig>,
-    hook_types: &[HookType],
-    on_decline: &str,
-) -> anyhow::Result<bool> {
-    let Some(project_config) = project_config else {
-        return Ok(true); // no project config = no commands to approve
-    };
-    let commands = collect_commands_for_hooks(project_config, hook_types);
-    if commands.is_empty() {
-        return Ok(true);
-    }
-    let project_id = ctx.repo.project_identifier()?;
-    let approvals = Approvals::load().context("Failed to load approvals")?;
-    let approved = approve_command_batch(&commands, &project_id, &approvals, ctx.yes, false)?;
-    if !approved {
-        worktrunk::styling::eprintln!("{}", worktrunk::styling::info_message(on_decline));
-    }
-    Ok(approved)
-}

@@ -3771,3 +3771,104 @@ fn test_merge_removes_branch_when_local_main_diverged_from_upstream(
         "feature branch should be deleted after a clean merge"
     );
 }
+
+/// Approval-boundary TOCTOU regression: a `post-merge` command that exists only
+/// in the *feature branch's* committed `.config/wt.toml` must not run.
+///
+/// The merge destination (the primary worktree on `main`) has no project
+/// config, so the gate freezes an empty *project* `post-merge` selection. The
+/// merge then fast-forwards `main` to the feature tip, bringing the feature's
+/// `.config/wt.toml` (with its injected `post-merge`) onto the destination.
+/// The pre-fix executor re-read the destination's now-mutated config and ran
+/// the never-approved command — remote code execution on a fresh clone. With
+/// the frozen `ApprovedHookPlan` the destination config is read once, before
+/// the merge, so the injected command is never selected.
+///
+/// The wait is bounded *causally*, not by a fixed sleep: a user-config
+/// `post-merge` (no approval, runs via the same background pipeline as project
+/// post-merge, spawned by the same `announcer.flush()` before `wt merge`
+/// returns) writes `control`. Observing `control` proves the post-merge
+/// background runner has started and drained for this scenario on this
+/// machine/load — the dominant CI-load failure mode (cold spawn under
+/// llvm-cov) is then excluded, so the injected marker's absence is meaningful
+/// rather than a fixed-timeout false negative. Sibling detached pipelines
+/// (user vs project source) differ only by a `touch`'s sub-millisecond skew
+/// once spawned; the short grace covers it.
+#[rstest]
+fn test_post_merge_hook_from_merged_feature_config_does_not_run(
+    merge_scenario: (TestRepo, PathBuf),
+) {
+    let (repo, feature_wt) = merge_scenario;
+
+    // Markers live at the repo root — they outlive the feature worktree, which
+    // `wt merge` removes.
+    let control = repo.root_path().join("post-merge-control-ran");
+    let injected = repo.root_path().join("injected-post-merge-ran");
+
+    // Positive control: a user-config `post-merge` (needs no approval, always
+    // selected). Its marker landing is the causal bound for the assertion.
+    repo.write_test_config(&format!(
+        "[post-merge]\ncontrol = \"touch {}\"\n",
+        control.to_slash_lossy()
+    ));
+
+    // Inject the malicious `post-merge` only on the feature branch.
+    fs::create_dir_all(feature_wt.join(".config")).unwrap();
+    fs::write(
+        feature_wt.join(".config/wt.toml"),
+        format!(r#"post-merge = "touch {}""#, injected.to_slash_lossy()),
+    )
+    .unwrap();
+    repo.run_git_in(&feature_wt, &["add", ".config/wt.toml"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "inject post-merge"]);
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_wt)
+        .args(["merge", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The merge fast-forwarded `main` to the feature tip, so the destination
+    // worktree's `.config/wt.toml` now contains the injected hook. Wait for the
+    // control (post-merge ran), then a short grace for the sibling pipeline.
+    wait_for_file(&control);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert!(
+        !injected.exists(),
+        "an unapproved post-merge command from the merged-in feature config must not run"
+    );
+}
+
+/// `wt merge --no-hooks` runs no hooks, so it must not parse the destination's
+/// `.config/wt.toml` at all. A malformed destination config must not fail a
+/// hooks-disabled merge (regression: the plan rewrite read the destination
+/// config unconditionally, before gating on `verify`).
+#[rstest]
+fn test_merge_no_hooks_ignores_malformed_destination_config(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+
+    // Malformed config in the primary worktree = the merge destination.
+    repo.write_project_config("post-merge = = not valid toml");
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_wt)
+        .args(["merge", "--no-hooks", "--yes"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "--no-hooks merge must not read the destination config; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("expected") && !stderr.contains("TOML parse"),
+        "destination .config/wt.toml must not be parsed with --no-hooks; stderr:\n{stderr}"
+    );
+}

@@ -1851,10 +1851,11 @@ fn test_remove_aborts_on_malformed_worktree_config(mut repo: TestRepo) {
 }
 
 /// Removing a worktree that has no `.config/wt.toml` does NOT fall back to the
-/// primary worktree's config — neither for execution (per #2714) nor for
-/// approval (the shared `collect_remove_hook_commands` helper). Without `--yes`
-/// and without prior approval, the command must succeed (the approval prompt
-/// has no commands to surface) rather than block on the primary's `pre-remove`.
+/// primary worktree's config: neither for execution (per #2714) nor for
+/// approval (`HookPlanBuilder::add` selects per removed-worktree anchor with no
+/// primary fallback). Without `--yes` and without prior approval, the command
+/// must succeed (the approval prompt has no commands to surface) rather than
+/// block on the primary's `pre-remove`.
 #[rstest]
 fn test_remove_no_fallback_to_primary_pre_remove(mut repo: TestRepo) {
     // Add the feature worktree first, off HEAD, so it doesn't carry the
@@ -1892,6 +1893,44 @@ fn test_remove_no_fallback_to_primary_pre_remove(mut repo: TestRepo) {
         !marker_file.exists(),
         "primary's pre-remove must not fire when the removed worktree has \
          no .config/wt.toml"
+    );
+}
+
+/// Removing a worktree with no project hooks must not touch approval state.
+/// A malformed `approvals.toml` aborts only when there is a project command to
+/// authorize; with an empty plan the gate never loads approvals (regression:
+/// the plan rewrite briefly loaded `Approvals` unconditionally).
+#[rstest]
+fn test_remove_no_project_hooks_ignores_malformed_approvals(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-no-hooks");
+
+    // No `.config/wt.toml` anywhere ⇒ the hook plan is empty. A broken
+    // approvals file would only matter if there were a command to check.
+    repo.write_test_approvals("this is not = = valid toml");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "--foreground",
+            "--force",
+            "--yes",
+            "feature-no-hooks",
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "remove with no project hooks must not parse approvals.toml; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("Failed to parse approvals"),
+        "approvals must not be loaded for an empty plan; stderr:\n{stderr}"
+    );
+    assert!(
+        !worktree_path.exists(),
+        "feature worktree should be removed"
     );
 }
 

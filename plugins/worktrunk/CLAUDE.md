@@ -5,8 +5,8 @@
 This directory (`plugins/worktrunk/`) is the Claude Code + Codex payload. Each
 tool hardcodes its loader path with no fallback, so the repo root carries one
 pointer per tool: Claude's and Codex's both `source → ./plugins/worktrunk`,
-while Gemini resolves its extension at the repo root itself (see repo CLAUDE.md
-→ "Plugin Layout"; Gemini's hooks call the canonical `hooks/wt.sh` below).
+while Gemini resolves its extension at the repo root itself; Gemini's hooks
+call the canonical `hooks/wt.sh` below.
 
 ```
 worktrunk/                          ← repo root = marketplace root
@@ -26,7 +26,7 @@ worktrunk/                          ← repo root = marketplace root
     ├── skills -> ../../skills       ← symlink; single-sources skills across all
     │                                  tools and the docs auto-sync
     ├── CLAUDE.md / README.md
-    └── (Codex ships no hooks — see repo CLAUDE.md → "Plugin Layout")
+    └── (Codex ships no hooks — see Known Limitations below)
 ```
 
 Path resolution differs by tool, all verified end-to-end against the real CLIs:
@@ -48,7 +48,7 @@ Path resolution differs by tool, all verified end-to-end against the real CLIs:
 Each Claude skill directory must be listed in `plugin.json`'s `skills` array
 (Claude has no auto-discovery — `test_plugin_layout_is_consolidated` enforces
 that every repo-root skill is listed); Codex and Gemini pick up the whole
-`skills/` dir (accepted tradeoff — see repo CLAUDE.md → "Plugin Layout").
+`skills/` dir (accepted tradeoff — see Known Limitations below).
 
 ## Known Limitations
 
@@ -65,4 +65,10 @@ The Claude hooks track activity via git config (`worktrunk.status.{branch}`):
 
 ### Codex ships no activity hooks
 
-Codex-cli 0.130.0's hook event vocabulary has no `Stop`/turn-end event, so a 🤖 marker could never return to 💬. The Codex manifest deliberately carries no `hooks` key. See repo CLAUDE.md → "Plugin Layout" for the re-enablement conditions.
+The Claude manifest carries `hooks: "./hooks/hooks.json"`; the Codex manifest has no `hooks` key and Codex ships no hooks. Codex's `HookEventNameWire` vocabulary (codex-cli 0.130.0: `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`, `SessionStart`, `UserPromptSubmit`) has no `Stop`/turn-end event, so a 🤖 marker set on `UserPromptSubmit` could never return to 💬 — it would stick at "working" indefinitely.
+
+Re-add a Codex `hooks.json`, the `hooks` manifest key, the install hints in `src/commands/config/codex.rs`, and the docs (`docs/content/claude-code.md` "Activity tracking", `src/cli/config.rs` plugin list) once Codex exposes a turn-end hook event.
+
+### Accepted tradeoff: shared `skills/` exposes `wt-switch-create`
+
+Codex's `"skills": "./skills/"` and Gemini's `${extensionPath}/skills/` both resolve the entire repo-root `skills/`, including `wt-switch-create`, which depends on Claude session-cwd switching and the `WorktreeCreate` hook neither provides. Accepted: a tool loading a skill it can't act on is harmless, and a single repo-root `skills/` keeps the `worktrunk` skill single-source across all three tools and the docs sync. Don't add per-tool skills subtrees to exclude it.
