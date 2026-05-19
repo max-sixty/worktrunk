@@ -477,6 +477,30 @@ fn spawn_detached_exec_windows(
     Ok(())
 }
 
+/// Repo-wide internal cleanup op, run fire-and-forget after `wt remove`'s
+/// primary user-visible output.
+///
+/// This is worktrunk's opportunistic janitor: it reclaims resources orphaned
+/// by interrupted or out-of-band operations. It runs on the `wt remove`
+/// cadence (not a timer, not a user command, not a read-only command), and
+/// after primary output so it can never delay a user-visible message. Every
+/// step is best-effort and additive — failures log at debug level and the
+/// `wt remove` operation proceeds regardless.
+///
+/// Steps:
+///
+/// 1. [`sweep_stale_trash`] — delete stale `.git/wt/trash/` entries left by
+///    an interrupted background removal.
+/// 2. [`worktrunk::git::fsmonitor::reap_orphan_fsmonitor_daemons`] — terminate
+///    `git fsmonitor--daemon` processes whose worktree no longer exists.
+///    Defense-in-depth for daemons orphaned by paths that bypass `wt remove`
+///    (plain `git worktree remove`, manual `rm -rf`, a crashed `wt`); the
+///    `wt remove` source itself stops the daemon synchronously.
+pub fn run_internal_sweep(repo: &Repository) {
+    sweep_stale_trash(repo);
+    worktrunk::git::fsmonitor::reap_orphan_fsmonitor_daemons(repo);
+}
+
 /// How old a `.git/wt/trash/` entry must be before [`sweep_stale_trash`] deletes it.
 pub const TRASH_STALE_THRESHOLD_SECS: u64 = 24 * 60 * 60;
 

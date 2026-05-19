@@ -6,6 +6,7 @@ use std::path::PathBuf;
 mod ci_platform;
 mod diff;
 mod error;
+pub mod fsmonitor;
 mod parse;
 pub mod recover;
 pub mod remote_ref;

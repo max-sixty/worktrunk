@@ -18,6 +18,8 @@
 
 - **Config deprecation-layer correctness**: Three independent fixes — structural migration now preserves unrelated `[ci]` keys and unparsable deprecated sections instead of discarding them; `config update` aborts on an approvals-copy I/O failure instead of silently dropping approvals; deprecated template-variable renaming rewrites the parsed TOML tree instead of doing a raw text replace that corrupted occurrences inside escaped strings. ([#2783](https://github.com/max-sixty/worktrunk/pull/2783))
 
+- **Orphaned fsmonitor daemons are reaped**: `wt remove`'s background internal sweep now terminates (`SIGTERM`, then `SIGKILL` after a short bounded wait) any `git fsmonitor--daemon` whose IPC socket no longer resolves to a live worktree. This reclaims daemons orphaned by paths that bypass `wt remove`'s synchronous daemon stop (plain `git worktree remove`, manual `rm -rf`, or a crashed `wt`), which otherwise accumulate until reboot and can hang `wt list` when wedged. A daemon serving a live worktree is never reaped.
+
 - **Data-safety and correctness fixes**: Six independent single-file fixes — `wt step relocate --clobber` refuses to overwrite an existing backup; `wt remove` re-checks cleanliness immediately before a forced submodule removal (time-of-check/time-of-use); `wt switch` re-discovers the base worktree via a fresh `Repository` after `worktree add` instead of reading a stale cached list; `wt switch pr:<N>` derives owner/repo from the forge remote rather than the primary remote and validates an empty Azure source branch at the provider boundary; user-controllable branch operands are guarded with `--`. ([#2784](https://github.com/max-sixty/worktrunk/pull/2784))
 
 ### Documentation
