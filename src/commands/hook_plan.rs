@@ -37,8 +37,8 @@
 //! [`Approvals`] stores and the prompt shows.
 //!
 //! `ApprovedHookPlan` is obtainable *only* via [`HookPlan::approve`] (the
-//! interactive / `--yes` gate) or [`HookPlan::approve_readonly`] (the picker,
-//! which can't prompt mid-render). [`HookPlanBuilder::add`] — the sole
+//! interactive / `--yes` gate) or `HookPlan::approve_readonly` (the picker,
+//! which can't prompt mid-render; `#[cfg(unix)]`). [`HookPlanBuilder::add`] — the sole
 //! config→commands step for the covered hooks — is the only place
 //! `load_project_config()`'s result is selected from.
 
@@ -252,7 +252,7 @@ impl HookPlan {
 }
 
 /// The only value executors accept. Constructible solely via
-/// [`HookPlan::approve`] / [`HookPlan::approve_readonly`] / [`Self::empty`].
+/// [`HookPlan::approve`] / `HookPlan::approve_readonly` / [`Self::empty`].
 /// Holds no `Repository` / `ProjectConfig`, only the frozen selection.
 pub struct ApprovedHookPlan {
     entries: Vec<PlanEntry>,
