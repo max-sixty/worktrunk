@@ -25,7 +25,6 @@ use std::sync::{LazyLock, Mutex, OnceLock};
 use anyhow::Context;
 use color_print::cformat;
 use minijinja::Environment;
-use regex::Regex;
 use shell_escape::unix::escape;
 
 use crate::config::WorktrunkConfig;
@@ -56,18 +55,6 @@ pub fn suppress_warnings() {
 fn warnings_suppressed() -> bool {
     SUPPRESS_WARNINGS.get().is_some()
 }
-
-/// Pre-compiled regexes for deprecated variable word-boundary matching.
-/// Compiled once on first use, shared across all calls to normalize/replace.
-static DEPRECATED_VAR_REGEXES: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
-    DEPRECATED_VARS
-        .iter()
-        .map(|&(old, new)| {
-            let re = Regex::new(&format!(r"\b{}\b", regex::escape(old))).unwrap();
-            (re, new)
-        })
-        .collect()
-});
 
 /// Tracks which config paths have already shown unknown field warnings this process.
 /// Prevents repeated warnings when config is loaded multiple times.
@@ -146,11 +133,206 @@ pub fn normalize_template_vars(template: &str) -> Cow<'_, str> {
         return Cow::Borrowed(template);
     }
 
-    let mut result = template.to_string();
-    for (re, new) in DEPRECATED_VAR_REGEXES.iter() {
-        result = re.replace_all(&result, *new).into_owned();
+    let env = Environment::new();
+    let Ok(parsed) = env.template_from_str(template) else {
+        return Cow::Borrowed(template);
+    };
+    let used_vars = parsed.undeclared_variables(false);
+    let replacements: Vec<_> = DEPRECATED_VARS
+        .iter()
+        .copied()
+        .filter(|(old, _)| used_vars.contains(*old))
+        .collect();
+    if replacements.is_empty() {
+        return Cow::Borrowed(template);
     }
-    Cow::Owned(result)
+
+    rewrite_template_var_identifiers(template, &replacements)
+        .map(Cow::Owned)
+        .unwrap_or(Cow::Borrowed(template))
+}
+
+fn rewrite_template_var_identifiers(
+    template: &str,
+    replacements: &[(&str, &'static str)],
+) -> Option<String> {
+    let mut out = String::with_capacity(template.len());
+    let mut cursor = 0;
+    let mut changed = false;
+    let mut in_raw = false;
+
+    while let Some((tag_start, tag_kind)) = find_next_template_tag(template, cursor) {
+        out.push_str(&template[cursor..tag_start]);
+
+        let (body_start, close_delim) = match tag_kind {
+            TemplateTagKind::Variable => (tag_start + 2, "}}"),
+            TemplateTagKind::Block => (tag_start + 2, "%}"),
+            TemplateTagKind::Comment => {
+                let end = template[tag_start + 2..].find("#}")? + tag_start + 4;
+                out.push_str(&template[tag_start..end]);
+                cursor = end;
+                continue;
+            }
+        };
+        let tag_end = template[body_start..].find(close_delim)? + body_start;
+        let full_tag_end = tag_end + close_delim.len();
+
+        if tag_kind == TemplateTagKind::Block
+            && matches!(
+                template_block_name(&template[body_start..tag_end]),
+                Some("raw")
+            )
+        {
+            in_raw = true;
+        }
+
+        if in_raw {
+            out.push_str(&template[tag_start..full_tag_end]);
+            if tag_kind == TemplateTagKind::Block
+                && matches!(
+                    template_block_name(&template[body_start..tag_end]),
+                    Some("endraw")
+                )
+            {
+                in_raw = false;
+            }
+        } else {
+            let body_start =
+                body_start + usize::from(template[body_start..tag_end].starts_with('-'));
+            let body_end = tag_end - usize::from(template[body_start..tag_end].ends_with('-'));
+            let (rewritten_body, body_changed) =
+                rewrite_template_tag_body(&template[body_start..body_end], replacements);
+            out.push_str(&template[tag_start..body_start]);
+            out.push_str(&rewritten_body);
+            out.push_str(&template[body_end..full_tag_end]);
+            changed |= body_changed;
+        }
+
+        cursor = full_tag_end;
+    }
+
+    out.push_str(&template[cursor..]);
+    changed.then_some(out)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TemplateTagKind {
+    Variable,
+    Block,
+    Comment,
+}
+
+fn find_next_template_tag(template: &str, from: usize) -> Option<(usize, TemplateTagKind)> {
+    let mut search_from = from;
+    loop {
+        let rel = template[search_from..].find('{')?;
+        let idx = search_from + rel;
+        let rest = &template[idx..];
+        let kind = if rest.starts_with("{{") {
+            TemplateTagKind::Variable
+        } else if rest.starts_with("{%") {
+            TemplateTagKind::Block
+        } else if rest.starts_with("{#") {
+            TemplateTagKind::Comment
+        } else {
+            search_from = idx + 1;
+            continue;
+        };
+        return Some((idx, kind));
+    }
+}
+
+fn template_block_name(body: &str) -> Option<&str> {
+    let body = body.strip_prefix('-').unwrap_or(body).trim_start();
+    let end = body
+        .find(|c: char| !is_template_identifier_char(c))
+        .unwrap_or(body.len());
+    (end > 0).then_some(&body[..end])
+}
+
+fn rewrite_template_tag_body(body: &str, replacements: &[(&str, &'static str)]) -> (String, bool) {
+    let mut out = String::with_capacity(body.len());
+    let mut cursor = 0;
+    let mut changed = false;
+
+    while cursor < body.len() {
+        let Some(ch) = body[cursor..].chars().next() else {
+            break;
+        };
+        if ch == '"' || ch == '\'' {
+            let end = quoted_template_string_end(body, cursor, ch);
+            out.push_str(&body[cursor..end]);
+            cursor = end;
+        } else if is_template_identifier_start(ch) {
+            let end = identifier_end(body, cursor);
+            let ident = &body[cursor..end];
+            if !is_template_attribute_or_assignment(body, cursor, end)
+                && let Some((_, new)) = replacements.iter().find(|(old, _)| *old == ident)
+            {
+                out.push_str(new);
+                changed = true;
+            } else {
+                out.push_str(ident);
+            }
+            cursor = end;
+        } else {
+            out.push(ch);
+            cursor += ch.len_utf8();
+        }
+    }
+
+    (out, changed)
+}
+
+fn quoted_template_string_end(body: &str, start: usize, quote: char) -> usize {
+    let mut escaped = false;
+    let mut cursor = start + quote.len_utf8();
+    while cursor < body.len() {
+        let Some(ch) = body[cursor..].chars().next() else {
+            break;
+        };
+        cursor += ch.len_utf8();
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == quote {
+            break;
+        }
+    }
+    cursor
+}
+
+fn identifier_end(body: &str, start: usize) -> usize {
+    let mut cursor = start;
+    while cursor < body.len() {
+        let Some(ch) = body[cursor..].chars().next() else {
+            break;
+        };
+        if !is_template_identifier_char(ch) {
+            break;
+        }
+        cursor += ch.len_utf8();
+    }
+    cursor
+}
+
+fn is_template_attribute_or_assignment(body: &str, start: usize, end: usize) -> bool {
+    let previous = body[..start].chars().rev().find(|c| !c.is_whitespace());
+    if previous == Some('.') {
+        return true;
+    }
+
+    let next = body[end..].trim_start();
+    next.starts_with('=') && !next.starts_with("==")
+}
+
+fn is_template_identifier_start(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphabetic()
+}
+
+fn is_template_identifier_char(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphanumeric()
 }
 
 /// Core logic for deprecated var detection, operating on pre-extracted template strings
@@ -222,11 +404,10 @@ fn collect_strings_from_edit_value(value: &toml_edit::Value, strings: &mut Vec<S
 /// Rewrite deprecated template variables inside one string, returning the
 /// new value when it changed.
 fn rewrite_deprecated_vars(original: &str) -> Option<String> {
-    let mut modified = original.to_string();
-    for (re, new) in DEPRECATED_VAR_REGEXES.iter() {
-        modified = re.replace_all(&modified, *new).into_owned();
+    match normalize_template_vars(original) {
+        Cow::Borrowed(_) => None,
+        Cow::Owned(modified) => Some(modified),
     }
-    (modified != original).then_some(modified)
 }
 
 /// Replace deprecated template vars in every string value of the document,
@@ -2259,6 +2440,17 @@ timeout = 30
         assert_eq!(compute_migrated_content(content), content);
     }
 
+    #[test]
+    fn test_compute_migrated_content_does_not_rewrite_literal_text_when_other_template_uses_deprecated_var()
+     {
+        let content = "pre-start = \"echo repo_root\"\npost-start = \"echo {{ repo_root }}\"\n";
+        let migrated = compute_migrated_content(content);
+        assert_eq!(
+            migrated,
+            "pre-start = \"echo repo_root\"\npost-start = \"echo {{ repo_path }}\"\n"
+        );
+    }
+
     /// The `replace_deprecated_vars` helper must return the input untouched
     /// when it cannot be parsed as TOML, rather than panicking.
     #[test]
@@ -2280,7 +2472,6 @@ timeout = 30
 
     #[test]
     fn test_replace_in_statement_blocks() {
-        // Word boundary replacement handles {% %} blocks too
         let content = r#"cmd = "{% if repo_root %}echo {{ repo_root }}{% endif %}""#;
         let result = replace_deprecated_vars(content);
         assert_eq!(
@@ -2297,6 +2488,40 @@ timeout = 30
         let result = normalize_template_vars(template);
         assert!(matches!(result, Cow::Borrowed(_)), "Should not allocate");
         assert_eq!(result, template);
+    }
+
+    #[test]
+    fn test_normalize_does_not_rewrite_literal_text() {
+        let template = "echo repo_root";
+        let result = normalize_template_vars(template);
+        assert!(matches!(result, Cow::Borrowed(_)), "Should not allocate");
+        assert_eq!(result, template);
+    }
+
+    #[test]
+    fn test_normalize_only_rewrites_template_identifiers() {
+        let template = "echo repo_root && echo {{ repo_root }}";
+        let result = normalize_template_vars(template);
+        assert_eq!(result, "echo repo_root && echo {{ repo_path }}");
+    }
+
+    /// When `repo_root` is bound as a `{% set %}` local it is no longer the
+    /// deprecated global, so minijinja reports no undeclared `repo_root` and
+    /// the template is left untouched — the local name is not silently renamed.
+    #[test]
+    fn test_normalize_skips_set_assignment_target() {
+        let template = "{% set repo_root = \"x\" %}{{ repo_root }}";
+        let result = normalize_template_vars(template);
+        assert!(matches!(result, Cow::Borrowed(_)), "Should not allocate");
+        assert_eq!(result, template);
+    }
+
+    /// Identifiers inside `{# #}` comments must not be rewritten.
+    #[test]
+    fn test_normalize_skips_comment_tags() {
+        let template = "{# repo_root #}{{ repo_root }}";
+        let result = normalize_template_vars(template);
+        assert_eq!(result, "{# repo_root #}{{ repo_path }}");
     }
 
     #[test]
