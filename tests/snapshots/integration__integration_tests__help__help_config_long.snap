@@ -22,9 +22,11 @@ info:
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
@@ -273,7 +275,9 @@ For context:
 - User configs generally apply to all projects.
 - User configs _also_ has a [2m[projects][0m table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.
 
-Entries are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m). Scalar values (like [2mworktree-path[0m) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
+Entries are keyed by project identifier — [2m<host>/<owner>/<repo>[0m derived from the primary remote URL (no [2m.git[0m suffix), or the canonical repo path when there is no remote. Run [2mwt config show[0m inside the repo to see the identifier for the current project; it appears in the [2mPROJECT CONFIG[0m section as [2mIdentifier: …[0m.
+
+Scalar values (like [2mworktree-path[0m) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
 
 [107m [0m [2m[36m[projects."github.com/user/repo"][0m
 [107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
@@ -283,6 +287,25 @@ Entries are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m). Sc
 [107m [0m [2mpre-start.env = [0m[2m[32m"cp .env.example .env"[0m
 [107m [0m [2mstep.copy-ignored.exclude = [[0m[2m[32m".repo-local-cache/"[0m[2m][0m
 [107m [0m [2maliases.deploy = [0m[2m[32m"make deploy BRANCH={{ branch }}"[0m
+
+Hooks support all three hook forms. A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence. The dotted-key examples below are equivalent to the table forms — TOML treats [2mprojects."github.com/user/repo".post-start.server = "..."[0m and a [2m[projects."github.com/user/repo".post-start][0m table the same way:
+
+[107m [0m [2m# Single command[0m
+[107m [0m [2m[36m[projects."github.com/user/repo"][0m
+[107m [0m [2mpost-start = [0m[2m[32m"mise trust"[0m
+[107m [0m 
+[107m [0m [2m# Multiple commands, running concurrently[0m
+[107m [0m [2m[36m[projects."github.com/user/repo".post-start][0m
+[107m [0m [2mmise = [0m[2m[32m"mise trust"[0m
+[107m [0m [2mserver = [0m[2m[32m"npm run dev"[0m
+[107m [0m 
+[107m [0m [2m# Pipeline: steps run in sequence[0m
+[107m [0m [2m[36m[[projects."github.com/user/repo".post-start]][0m
+[107m [0m [2minstall = [0m[2m[32m"npm ci"[0m
+[107m [0m 
+[107m [0m [2m[36m[[projects."github.com/user/repo".post-start]][0m
+[107m [0m [2mbuild = [0m[2m[32m"npm run build"[0m
+[107m [0m [2mserver = [0m[2m[32m"npm run dev"[0m
 
 [32mCustom prompt templates[0m
 

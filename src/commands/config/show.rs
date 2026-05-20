@@ -104,12 +104,18 @@ fn handle_config_show_json() -> anyhow::Result<()> {
         None
     };
 
-    let (project_path, project_config) = if let Ok(repo) = Repository::current() {
+    let (project_path, project_config, project_identifier) = if let Ok(repo) = Repository::current()
+    {
         let path = repo.project_config_path()?;
         let config = repo.load_project_config()?;
-        (path, config.map(|c| serde_json::to_value(&c)).transpose()?)
+        let identifier = repo.project_identifier().ok();
+        (
+            path,
+            config.map(|c| serde_json::to_value(&c)).transpose()?,
+            identifier,
+        )
     } else {
-        (None, None)
+        (None, None, None)
     };
 
     let system_path = system_config_path().or_else(default_system_config_path);
@@ -124,6 +130,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
         "project": {
             "path": project_path,
             "exists": project_path.as_ref().is_some_and(|p| p.exists()),
+            "identifier": project_identifier,
             "config": project_config,
         },
         "system": {
@@ -749,6 +756,17 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             Some(&format!("@ {}", format_path_for_display(&config_path)))
         )
     )?;
+
+    // Project identifier — used as the key for [projects."..."] sections in
+    // user config. Surface it here so users can find the right key without
+    // hand-deriving it from the remote URL.
+    if let Ok(project_id) = repo.project_identifier() {
+        writeln!(
+            out,
+            "{}",
+            info_message(cformat!("Identifier: <bold>{project_id}</>"))
+        )?;
+    }
 
     // Check if file exists
     if !config_path.exists() {

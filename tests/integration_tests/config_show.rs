@@ -1434,16 +1434,13 @@ fn test_config_show_github_remote(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 
-    // Add GitHub remote
-    repo.git_command()
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/example/repo.git",
-        ])
-        .run()
-        .unwrap();
+    // The fixture already has an `origin`; point it at a GitHub host.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/example/repo.git",
+    ]);
 
     // Create fake global config
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -1473,16 +1470,13 @@ fn test_config_show_gitlab_remote(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 
-    // Add GitLab remote
-    repo.git_command()
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "https://gitlab.com/example/repo.git",
-        ])
-        .run()
-        .unwrap();
+    // The fixture already has an `origin`; point it at a GitLab host.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/example/repo.git",
+    ]);
 
     // Create fake global config
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
