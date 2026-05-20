@@ -1710,6 +1710,82 @@ approved-commands = ["echo 'hook ran' > {}"]
     );
 }
 
+#[rstest]
+fn test_pre_remove_hook_dirtying_worktree_blocks_foreground_remove(mut repo: TestRepo) {
+    let hook = "echo dirty > hook-created.txt";
+    repo.write_project_config(&format!(r#"pre-remove = "{hook}""#));
+    repo.commit("Add config");
+    repo.write_test_approvals(&format!(
+        r#"[projects."../origin"]
+approved-commands = ["{hook}"]
+"#
+    ));
+
+    let worktree_path = repo.add_worktree("feature-hook-dirties");
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "feature-hook-dirties"])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "remove should fail after pre-remove dirties the worktree; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        worktree_path.exists(),
+        "worktree must be preserved when the post-hook clean check fails"
+    );
+    assert!(
+        worktree_path.join("hook-created.txt").exists(),
+        "hook-created file should remain recoverable in the worktree"
+    );
+}
+
+#[rstest]
+fn test_pre_remove_hook_new_commit_retains_branch_in_background_remove(mut repo: TestRepo) {
+    use crate::common::wait_for_worktree_removed;
+
+    let hook = "echo hook > late-commit.txt && git add late-commit.txt && git commit -m late-hook";
+    repo.write_project_config(&format!(r#"pre-remove = "{hook}""#));
+    repo.commit("Add config");
+    repo.write_test_approvals(&format!(
+        r#"[projects."../origin"]
+approved-commands = ["{hook}"]
+"#
+    ));
+
+    let worktree_path = repo.add_worktree("feature-hook-commit");
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-hook-commit"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "remove should keep the worktree cleanup path successful; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    wait_for_worktree_removed(&worktree_path);
+
+    let branch = repo
+        .git_command()
+        .args([
+            "show-ref",
+            "--verify",
+            "--quiet",
+            "refs/heads/feature-hook-commit",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        branch.status.success(),
+        "branch must be retained after a pre-remove hook adds an unintegrated commit"
+    );
+}
+
 /// `pre-remove` resolves `.config/wt.toml` from the worktree being removed, not
 /// the primary worktree — so a hook added on a feature branch fires even before
 /// that `.config/wt.toml` reaches the default branch. The primary worktree here
