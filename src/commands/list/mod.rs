@@ -128,9 +128,6 @@ pub mod progressive;
 mod progressive_table;
 pub(crate) mod render;
 
-#[cfg(test)]
-mod spacing_test;
-
 // Layout is calculated in collect/mod.rs
 use anstyle::Style;
 use anyhow::Context;

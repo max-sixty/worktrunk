@@ -952,8 +952,6 @@ fn test_complete_init_shell_all_variations(repo: TestRepo) {
     assert!(shells.contains(&"zsh"));
 }
 
-// test_complete_init_shell_all_with_source removed - duplicate of test_complete_init_shell_with_source_flag
-
 #[rstest]
 fn test_complete_list_format_flag(repo: TestRepo) {
     repo.commit("initial");
