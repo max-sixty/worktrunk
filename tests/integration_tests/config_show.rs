@@ -2404,6 +2404,38 @@ fn test_config_show_gemini_extension_installed(mut repo: TestRepo, temp_home: Te
     });
 }
 
+/// Each `is_*_available()` short-circuits on the `WORKTRUNK_TEST_*_INSTALLED`
+/// override the harness sets, so the production `which::which` PATH lookup is
+/// otherwise never exercised. `setup_mock_clis_on_path()` drops the overrides
+/// and prepends real mock executables, so this single run covers the
+/// PATH-detection path for all four AI CLIs at once.
+#[rstest]
+fn test_config_show_clis_detected_via_path(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_clis_on_path();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 // =============================================================================
 // OpenCode plugin install/uninstall
 // =============================================================================

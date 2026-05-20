@@ -788,6 +788,9 @@ pub struct TestRepo {
     opencode_installed: bool,
     /// Whether Gemini CLI should be treated as installed
     gemini_installed: bool,
+    /// Whether to drop the `WORKTRUNK_TEST_*_INSTALLED` overrides so
+    /// `is_*_available()` exercises its real `which::which` PATH lookup
+    detect_clis_via_path: bool,
 }
 
 impl TestRepo {
@@ -884,6 +887,7 @@ impl TestRepo {
             codex_installed: false,
             opencode_installed: false,
             gemini_installed: false,
+            detect_clis_via_path: false,
         };
 
         // Mock gh/glab as authenticated to prevent CI hints in test output
@@ -936,6 +940,7 @@ impl TestRepo {
             codex_installed: false,
             opencode_installed: false,
             gemini_installed: false,
+            detect_clis_via_path: false,
         }
     }
 
@@ -984,6 +989,7 @@ impl TestRepo {
             codex_installed: false,
             opencode_installed: false,
             gemini_installed: false,
+            detect_clis_via_path: false,
         }
     }
 
@@ -1814,6 +1820,28 @@ impl TestRepo {
         self.gemini_installed = true;
     }
 
+    /// Make `claude`, `codex`, `opencode`, and `gemini` resolvable on `PATH`.
+    ///
+    /// The `setup_mock_*_installed` helpers force detection through the
+    /// `WORKTRUNK_TEST_*_INSTALLED` env overrides, so the `which::which`
+    /// lookup inside each `is_*_available()` never runs under test. This
+    /// helper instead drops those overrides and prepends real mock
+    /// executables, exercising the production PATH-detection path for all
+    /// four AI CLIs at once. Call `setup_mock_ci_tools_unauthenticated()`
+    /// first to create the mock bin directory.
+    pub fn setup_mock_clis_on_path(&mut self) {
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("call setup_mock_ci_tools_unauthenticated() first");
+        // `wt config show` only `which`-detects these CLIs (never runs
+        // them), so the mocks need no command behavior.
+        for cli in ["claude", "codex", "opencode", "gemini"] {
+            MockConfig::new(cli).write(mock_bin);
+        }
+        self.detect_clis_via_path = true;
+    }
+
     /// Setup the worktrunk extension as installed in Gemini CLI
     ///
     /// `gemini extensions install` clones the extension into
@@ -2330,24 +2358,33 @@ impl TestRepo {
             cmd.env(&path_var_name, new_path);
         }
 
-        // Override Claude installed status if setup_mock_claude_installed() was called
-        if self.claude_installed {
-            cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "1");
-        }
-
-        // Override Codex installed status if setup_mock_codex_installed() was called
-        if self.codex_installed {
-            cmd.env("WORKTRUNK_TEST_CODEX_INSTALLED", "1");
-        }
-
-        // Override OpenCode installed status if setup_mock_opencode_installed() was called
-        if self.opencode_installed {
-            cmd.env("WORKTRUNK_TEST_OPENCODE_INSTALLED", "1");
-        }
-
-        // Override Gemini installed status if setup_mock_gemini_installed() was called
-        if self.gemini_installed {
-            cmd.env("WORKTRUNK_TEST_GEMINI_INSTALLED", "1");
+        // AI CLI detection. `setup_mock_clis_on_path()` drops the
+        // `WORKTRUNK_TEST_*_INSTALLED` overrides so `is_*_available()`
+        // exercises its real `which::which` PATH lookup against the mock
+        // executables prepended above. Otherwise each override forces
+        // detection on for the CLIs whose `setup_mock_*_installed()` ran.
+        if self.detect_clis_via_path {
+            for var in [
+                "WORKTRUNK_TEST_CLAUDE_INSTALLED",
+                "WORKTRUNK_TEST_CODEX_INSTALLED",
+                "WORKTRUNK_TEST_OPENCODE_INSTALLED",
+                "WORKTRUNK_TEST_GEMINI_INSTALLED",
+            ] {
+                cmd.env_remove(var);
+            }
+        } else {
+            if self.claude_installed {
+                cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "1");
+            }
+            if self.codex_installed {
+                cmd.env("WORKTRUNK_TEST_CODEX_INSTALLED", "1");
+            }
+            if self.opencode_installed {
+                cmd.env("WORKTRUNK_TEST_OPENCODE_INSTALLED", "1");
+            }
+            if self.gemini_installed {
+                cmd.env("WORKTRUNK_TEST_GEMINI_INSTALLED", "1");
+            }
         }
     }
 
