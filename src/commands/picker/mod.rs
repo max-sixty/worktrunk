@@ -988,7 +988,6 @@ pub mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
-            integration_reason: None,
             force_worktree: false,
             expected_path: None,
             removed_commit: None,
@@ -1084,7 +1083,6 @@ pub mod tests {
             branch_name: None,
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
-            integration_reason: None,
             force_worktree: false,
             expected_path: None,
             removed_commit: None,
@@ -1241,7 +1239,10 @@ pub mod tests {
         .unwrap();
 
         // A `pre-remove` hook in the removed worktree's `.config/wt.toml` that
-        // would write a marker (outside the worktree) if it ever ran.
+        // would write a marker (outside the worktree) if it ever ran. Commit it
+        // so the worktree stays clean: the real picker only reaches `do_removal`
+        // after `prepare_worktree_removal` has verified cleanliness, and
+        // `do_removal` re-checks before removal.
         let marker_dir = tempfile::tempdir().unwrap();
         let marker = marker_dir.path().join("pre-remove-ran");
         fs::create_dir_all(wt_path.join(".config")).unwrap();
@@ -1250,6 +1251,16 @@ pub mod tests {
             format!("pre-remove = {:?}\n", format!("touch {}", marker.display())),
         )
         .unwrap();
+        worktrunk::shell_exec::Cmd::new("git")
+            .args(["add", ".config/wt.toml"])
+            .current_dir(&wt_path)
+            .run()
+            .unwrap();
+        worktrunk::shell_exec::Cmd::new("git")
+            .args(["commit", "-m", "Add pre-remove hook"])
+            .current_dir(&wt_path)
+            .run()
+            .unwrap();
 
         let result = RemoveResult::RemovedWorktree {
             main_path: test.path().to_path_buf(),
@@ -1258,7 +1269,6 @@ pub mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
-            integration_reason: None,
             force_worktree: false,
             expected_path: None,
             removed_commit: None,
