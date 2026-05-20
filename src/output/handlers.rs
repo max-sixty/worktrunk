@@ -86,6 +86,17 @@ struct BackgroundRemoval<'a> {
     changed_directory: bool,
 }
 
+#[derive(Clone, Copy)]
+enum BackgroundFallbackMode {
+    Detached,
+    SynchronousForNonCurrent,
+}
+
+enum BackgroundRemovalPlan {
+    Detached(String),
+    CompletedSynchronously,
+}
+
 /// Spawn background worktree removal: stop fsmonitor, rename-then-prune, spawn detached rm.
 ///
 /// Shared sequence for both detached HEAD and branch background removal paths.
@@ -95,38 +106,44 @@ fn spawn_background_removal(
     main_path: &Path,
     removal: &BackgroundRemoval<'_>,
     log_label: &str,
+    fallback_mode: BackgroundFallbackMode,
 ) -> anyhow::Result<()> {
     // Stop the fsmonitor daemon BEFORE rename (must happen while the path
     // still exists — the IPC socket lives under its git dir). Force-kills a
     // wedged daemon so it can't leak once the worktree is gone.
     stop_fsmonitor_daemon(&repo.worktree_at(removal.worktree_path));
 
-    let remove_command = execute_instant_removal_or_fallback(repo, removal)?;
+    let remove_plan = execute_instant_removal_or_fallback(repo, removal, fallback_mode)?;
 
-    spawn_detached(
-        repo,
-        main_path,
-        &remove_command,
-        log_label,
-        &HookLog::internal(InternalOp::Remove),
-        None,
-    )?;
+    if let BackgroundRemovalPlan::Detached(remove_command) = remove_plan {
+        spawn_detached(
+            repo,
+            main_path,
+            &remove_command,
+            log_label,
+            &HookLog::internal(InternalOp::Remove),
+            None,
+        )?;
+    }
     Ok(())
 }
 
-/// Execute instant worktree removal via rename-then-prune, returning the background command.
+/// Execute instant worktree removal via rename-then-prune.
 ///
 /// This function has side effects: it renames the worktree directory and prunes git metadata.
 /// On the fast path, the branch is also deleted synchronously (since after prune, the branch
 /// is no longer checked out in any worktree), and the background command is just `rm -rf`.
-/// If rename fails (cross-filesystem, permissions, Windows file locking), returns the legacy
-/// `git worktree remove` command with branch deletion deferred to the background.
+/// If rename fails (cross-filesystem, permissions, Windows file locking), either returns the
+/// legacy `git worktree remove` command with branch deletion deferred to the background, or
+/// runs that fallback synchronously for non-current worktrees when the caller needs to keep
+/// the fallback's `.git/config` rewrite serialized with other git readers.
 ///
-/// The caller is responsible for spawning the returned command in the background.
+/// The caller is responsible for spawning detached plans in the background.
 fn execute_instant_removal_or_fallback(
     repo: &Repository,
     removal: &BackgroundRemoval<'_>,
-) -> anyhow::Result<String> {
+    fallback_mode: BackgroundFallbackMode,
+) -> anyhow::Result<BackgroundRemovalPlan> {
     let BackgroundRemoval {
         worktree_path,
         branch_name,
@@ -170,12 +187,18 @@ fn execute_instant_removal_or_fallback(
             // is that Nushell may still emit PWD errors — not a correctness issue.
             let _ = std::fs::create_dir(worktree_path);
         }
-        Ok(build_remove_command_staged(
-            &staged_path,
-            worktree_path,
-            changed_directory,
-        ))
+        Ok(build_remove_command_staged(&staged_path, worktree_path, changed_directory).into())
     } else {
+        if matches!(
+            fallback_mode,
+            BackgroundFallbackMode::SynchronousForNonCurrent
+        ) && !changed_directory
+        {
+            repo.remove_worktree(worktree_path, force_worktree)?;
+            delete_branch_in_synchronous_fallback(repo, branch_name, deletion_mode);
+            return Ok(BackgroundRemovalPlan::CompletedSynchronously);
+        }
+
         // Fallback: cross-filesystem, permissions, Windows file locking, etc.
         // Use legacy git worktree remove which handles these cases. Safe-delete
         // uses Git's non-forcing branch deletion in the detached command; if
@@ -195,7 +218,35 @@ fn execute_instant_removal_or_fallback(
             ),
             _ => build_remove_command(worktree_path, None, force_worktree, changed_directory),
         };
-        Ok(command)
+        Ok(BackgroundRemovalPlan::Detached(command))
+    }
+}
+
+impl From<String> for BackgroundRemovalPlan {
+    fn from(command: String) -> Self {
+        Self::Detached(command)
+    }
+}
+
+fn delete_branch_in_synchronous_fallback(
+    repo: &Repository,
+    branch_name: Option<&str>,
+    deletion_mode: BranchDeletionMode,
+) {
+    let Some(branch) = branch_name else {
+        return;
+    };
+    if deletion_mode.should_keep() {
+        return;
+    }
+
+    let flag = if deletion_mode.is_force() { "-D" } else { "-d" };
+    if let Err(e) = repo.run_command(&["branch", flag, branch]) {
+        log::debug!(
+            "Failed to delete branch {} in synchronous fallback: {}",
+            branch,
+            e
+        );
     }
 }
 
@@ -801,6 +852,45 @@ pub fn handle_remove_output(
     silent: bool,
     announcer: &mut HookAnnouncer<'_>,
 ) -> anyhow::Result<()> {
+    handle_remove_output_with_fallback_mode(
+        result,
+        foreground,
+        plan,
+        quiet,
+        silent,
+        announcer,
+        BackgroundFallbackMode::Detached,
+    )
+}
+
+pub(crate) fn handle_remove_output_serialized_fallback(
+    result: &RemoveResult,
+    foreground: bool,
+    plan: &ApprovedHookPlan,
+    quiet: bool,
+    silent: bool,
+    announcer: &mut HookAnnouncer<'_>,
+) -> anyhow::Result<()> {
+    handle_remove_output_with_fallback_mode(
+        result,
+        foreground,
+        plan,
+        quiet,
+        silent,
+        announcer,
+        BackgroundFallbackMode::SynchronousForNonCurrent,
+    )
+}
+
+fn handle_remove_output_with_fallback_mode(
+    result: &RemoveResult,
+    foreground: bool,
+    plan: &ApprovedHookPlan,
+    quiet: bool,
+    silent: bool,
+    announcer: &mut HookAnnouncer<'_>,
+    background_fallback_mode: BackgroundFallbackMode,
+) -> anyhow::Result<()> {
     match result {
         RemoveResult::RemovedWorktree {
             main_path,
@@ -826,6 +916,7 @@ pub fn handle_remove_output(
                 plan,
                 foreground,
                 silent,
+                background_fallback_mode,
             },
             announcer,
         ),
@@ -1242,6 +1333,7 @@ struct RemovedWorktreeOutputContext<'a> {
     /// progress/success messages, no trash-cleanup spinner, and no `cd`
     /// directive — see [`handle_remove_output`].
     silent: bool,
+    background_fallback_mode: BackgroundFallbackMode,
 }
 
 struct RefreshedRemovalSafety {
@@ -1423,6 +1515,7 @@ fn handle_detached_removed_worktree_output(
                 changed_directory: ctx.changed_directory,
             },
             "detached",
+            ctx.background_fallback_mode,
         )?;
     }
 
@@ -1529,6 +1622,7 @@ fn handle_named_removed_worktree_background(
             changed_directory: ctx.changed_directory,
         },
         branch_name,
+        ctx.background_fallback_mode,
     )?;
 
     spawn_hooks_after_remove(repo, ctx, branch_name, announcer)?;

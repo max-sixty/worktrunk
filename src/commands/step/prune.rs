@@ -18,7 +18,7 @@ use worktrunk::styling::{eprintln, hint_message, info_message, println, success_
 use super::super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
-use crate::output::handle_remove_output;
+use crate::output::handle_remove_output_serialized_fallback;
 
 /// A candidate worktree or branch selected for removal.
 struct Candidate {
@@ -207,7 +207,14 @@ fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result
     // breaks it past `ctx.`-prefixed args), keeping it identical to its form
     // before the context-struct refactor.
     let (foreground, hook_plan) = (ctx.foreground, ctx.hook_plan);
-    handle_remove_output(&plan, foreground, hook_plan, true, false, &mut announcer)?;
+    handle_remove_output_serialized_fallback(
+        &plan,
+        foreground,
+        hook_plan,
+        true,
+        false,
+        &mut announcer,
+    )?;
     announcer.flush()?;
     Ok(true)
 }
@@ -558,19 +565,14 @@ pub fn step_prune(
     // while a removal runs, without serializing the (parallel) checks
     // themselves. POSIX is unaffected but takes the same path.
     //
-    // Scope of the guarantee: this closes the race on the instant-removal
-    // fast path, where `git branch -D` runs *synchronously* inside
-    // `try_remove` (after the worktree is renamed into trash) and is thus
-    // under the write guard — that is the path the observed Windows failure
-    // took. On the cross-filesystem / `.gitmodules` / Windows-file-lock
-    // fallback, `execute_instant_removal_or_fallback` *must* defer branch
-    // deletion into the detached `git worktree remove && git branch -D`
-    // command (the worktree still references the branch until it is removed,
-    // so an in-process `branch -D` would fail) — that deferred write runs
-    // after the guard drops and is NOT covered here. The fallback is rare for
-    // prune targets (integrated worktrees the user is done with; the
-    // lock-prone current worktree is deferred last, after the check thread
-    // has drained), so the residual exposure is small but non-zero.
+    // Scope of the guarantee: this covers both removal paths for non-current
+    // worktrees. The fast path deletes the branch synchronously after the
+    // worktree is renamed into trash. The rename-failure fallback first runs
+    // `git worktree remove`, then deletes the branch synchronously, so its
+    // `.git/config` rewrite is also inside this write guard. The lock-prone
+    // current worktree still uses the detached fallback when needed so the
+    // parent shell can cd away first, but it is deferred until after the
+    // integration-check thread has drained.
     let check_lock = Arc::new(RwLock::new(()));
     let (tx, rx) = chan::unbounded();
     let integration_refs: Vec<String> = check_items
