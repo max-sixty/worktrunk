@@ -53,8 +53,9 @@ curl -sL "https://api.codecov.io/api/v2/gh/${REPO%/*}/repos/${REPO#*/}/compare/?
 # Patch-level summary per file:
 jq '.files[] | {name: .name.head, patch: .totals.patch}' /tmp/codecov.json
 
-# Uncovered added lines in a specific changed file:
-jq '.files[] | select(.name.head == "<path>") | .lines[] | select(.is_diff and .added and .coverage.head == 0) | {line: .number.head, code: (.value | .[0:80])}' /tmp/codecov.json
+# Uncovered added lines in a specific changed file
+# (coverage.head is a LineType enum: 0=hit, 1=miss, 2=partial — filter on 1=miss):
+jq '.files[] | select(.name.head == "<path>") | .lines[] | select(.is_diff and .added and .coverage.head == 1) | {line: .number.head, code: .value}' /tmp/codecov.json
 ```
 
 If the Codecov API markers aren't enough, download the `code-coverage-report`
