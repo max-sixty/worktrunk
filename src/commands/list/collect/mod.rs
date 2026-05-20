@@ -1596,10 +1596,10 @@ pub fn collect(
         ),
     });
 
-    if let Some(table_render) = table_render {
-        if table_render.render()? {
-            return Ok(None);
-        }
+    if let Some(table_render) = table_render
+        && table_render.render()?
+    {
+        return Ok(None);
     }
 
     // Status symbols are now computed during data collection (both modes), no fallback needed
