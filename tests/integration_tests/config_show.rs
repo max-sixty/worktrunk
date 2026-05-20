@@ -609,6 +609,73 @@ fn test_system_config_unknown_keys_warning_during_load(repo: TestRepo) {
     );
 }
 
+/// System config should use the same deprecation warning gate as user config.
+#[rstest]
+fn test_system_config_deprecation_warning_during_load(repo: TestRepo) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(
+        &system_config_path,
+        r#"[select]
+pager = "delta --paging=never"
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
+    cmd.arg("list").current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "Command should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("System config") && stderr.contains("[select]"),
+        "Expected deprecation warning from system config load, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("[switch.picker]"),
+        "Expected replacement section in warning, got: {stderr}"
+    );
+}
+
+/// Fatal deprecations in system config should warn and skip that config layer,
+/// rather than allowing the removed key to remain active after migration.
+#[rstest]
+fn test_post_create_in_system_config_warns_and_skips(repo: TestRepo) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(&system_config_path, "post-create = \"npm install\"\n").unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
+    cmd.args(["hook", "show", "pre-start"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "Command should succeed with system config skipped: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("System config")
+            && stderr.contains("post-create")
+            && stderr.contains("pre-start"),
+        "warning should describe the rename, got: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("npm install"),
+        "removed post-create hook should not remain active, got: {stdout}"
+    );
+}
+
 #[rstest]
 fn test_config_show_outside_git_repo(mut repo: TestRepo, temp_home: TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
