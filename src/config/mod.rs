@@ -148,6 +148,7 @@ mod tests {
     use insta::assert_snapshot;
 
     use super::*;
+    use crate::shell_exec::ShellEscapeMode;
     use crate::testing::TestRepo;
 
     fn test_repo() -> TestRepo {
@@ -476,7 +477,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let result = expand_template(
             "../{{ main_worktree }}.{{ branch }}",
             &vars,
-            true,
+            ShellEscapeMode::Posix,
             &test.repo,
             "test",
         )
@@ -498,7 +499,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let result = expand_template(
             "{{ main_worktree }}/{{ branch | sanitize }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -511,7 +512,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let result = expand_template(
             ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -530,7 +531,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let result = expand_template(
             "{{ repo_root }}/target -> {{ worktree }}/target",
             &vars,
-            true,
+            ShellEscapeMode::Posix,
             &test_repo().repo,
             "test",
         )

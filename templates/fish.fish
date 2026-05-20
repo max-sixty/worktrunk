@@ -22,12 +22,16 @@ function {{ cmd }}
     set -l cd_file (mktemp)
     set -l exec_file (mktemp)
 
+    # WORKTRUNK_SHELL tells the binary to escape the exec directive for fish's
+    # `eval` below — fish treats `\` as an escape inside '...', unlike POSIX.
     # --source: use cargo run (builds from source)
     if test $use_source = true
         env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file WORKTRUNK_DIRECTIVE_EXEC_FILE=$exec_file \
+            WORKTRUNK_SHELL=fish \
             cargo run --bin {{ cmd }} --quiet -- $args
     else
         env WORKTRUNK_DIRECTIVE_CD_FILE=$cd_file WORKTRUNK_DIRECTIVE_EXEC_FILE=$exec_file \
+            WORKTRUNK_SHELL=fish \
             $WORKTRUNK_BIN $args
     end
     set -l exit_code $status

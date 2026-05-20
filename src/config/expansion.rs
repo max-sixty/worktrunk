@@ -1,14 +1,17 @@
 //! Template expansion utilities for worktrunk
 //!
-//! Uses minijinja for template rendering. Single generic function with escaping flag:
-//! - `shell_escape: true` — Shell-escaped for safe command execution
-//! - `shell_escape: false` — Literal values for filesystem paths
+//! Uses minijinja for template rendering. A single generic function takes a
+//! [`ShellEscapeMode`] selecting how interpolated values are escaped:
+//! - `Posix` — POSIX single-quoting, for command lines fed to `Cmd::shell`
+//!   (`sh`/Git Bash): hooks, aliases.
+//! - `PowerShell` — PowerShell single-quoting, for the `--execute` payload
+//!   when the active directive shell is the PowerShell wrapper.
+//! - `Literal` — values substituted verbatim, for filesystem paths.
 //!
 //! All templates support Jinja2 syntax including filters, conditionals, and loops.
 //!
 //! See `wt hook --help` for available filters and functions.
 
-use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -20,10 +23,10 @@ use minijinja::value::{Enumerator, Object, ObjectRepr};
 use minijinja::{Environment, ErrorKind, UndefinedBehavior, Value};
 use regex::Regex;
 use sha2::{Digest, Sha256};
-use shell_escape::unix::escape;
 
 use crate::git::{Diagnostic, HookType, Repository};
 use crate::path::to_posix_path;
+use crate::shell_exec::{ShellEscapeMode, shell_escape_for};
 use crate::styling::{
     eprintln, error_message, format_bash_with_gutter, format_with_gutter, hint_message,
     info_message, verbosity,
@@ -307,11 +310,15 @@ pub fn alias_context_filter(mut referenced: BTreeSet<String>) -> BTreeSet<String
 /// behave as expected because the object reports as an
 /// [`ObjectRepr::Seq`].
 ///
-/// Shell escaping happens at render time via `shell_escape::unix::escape`
+/// Shell escaping happens at render time via POSIX [`shell_escape_for`]
 /// rather than through the template environment's formatter — the formatter
 /// would otherwise quote the already-escaped joined string as a whole. The
 /// formatter installed by `expand_template` detects `ShellArgs` and writes
 /// it through unmodified.
+///
+/// `args` exists only in alias scope, whose bodies always run through
+/// `Cmd::shell` (POSIX) — so this rendering is unconditionally POSIX,
+/// independent of the active directive shell.
 #[derive(Debug)]
 struct ShellArgs(Vec<String>);
 
@@ -340,12 +347,12 @@ impl Object for ShellArgs {
     }
 }
 
-/// Space-join shell-escaped args — the canonical rendering of `{{ args }}`
-/// used by both `ShellArgs::render` (template expansion) and the alias
-/// `-v` variable table.
+/// Space-join POSIX-shell-escaped args — the canonical rendering of
+/// `{{ args }}` used by both `ShellArgs::render` (template expansion) and the
+/// alias `-v` variable table. Always POSIX: see [`ShellArgs`].
 fn shell_join(args: &[String]) -> String {
     args.iter()
-        .map(|a| escape(Cow::Borrowed(a)).into_owned())
+        .map(|a| shell_escape_for(ShellEscapeMode::Posix, a))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -839,8 +846,14 @@ pub fn validate_template(
 /// # Arguments
 /// * `template` - Template string using Jinja2 syntax (e.g., `{{ branch }}`)
 /// * `vars` - Variables to substitute
-/// * `shell_escape` - If true, shell-escape all values for safe command execution.
-///   If false, substitute values literally (for filesystem paths).
+/// * `escape_mode` - How to escape interpolated values:
+///   - [`ShellEscapeMode::Posix`] / [`ShellEscapeMode::PowerShell`] — escape
+///     for safe splicing into a command line of that shell. Callers that feed
+///     the result to `Cmd::shell` (hooks, aliases) always pass `Posix`; only
+///     the `--execute` payload, parsed by the active directive shell, may pass
+///     `PowerShell`.
+///   - [`ShellEscapeMode::Literal`] — substitute values verbatim (filesystem
+///     paths).
 /// * `repo` - Repository for looking up worktree paths
 ///
 /// # Filters
@@ -861,7 +874,7 @@ pub fn validate_template(
 pub fn expand_template(
     template: &str,
     vars: &HashMap<&str, &str>,
-    shell_escape: bool,
+    escape_mode: ShellEscapeMode,
     repo: &Repository,
     name: &str,
 ) -> Result<String, TemplateExpandError> {
@@ -908,7 +921,7 @@ pub fn expand_template(
     }
 
     let mut env = setup_template_env(repo);
-    if shell_escape {
+    if escape_mode != ShellEscapeMode::Literal {
         // Preserve trailing newlines in templates (important for multiline shell commands)
         env.set_keep_trailing_newline(true);
 
@@ -916,7 +929,7 @@ pub fn expand_template(
         // This ensures filters (sanitize, sanitize_db, etc.) operate on raw values
         // and the escaping is applied to the final output, preventing corruption
         // when filters modify already-escaped strings.
-        env.set_formatter(|out, _state, value| {
+        env.set_formatter(move |out, _state, value| {
             if value.is_none() {
                 return Ok(());
             }
@@ -929,8 +942,7 @@ pub fn expand_template(
                 write!(out, "{value}")?;
                 return Ok(());
             }
-            let s = value.to_string();
-            let escaped = escape(Cow::Borrowed(&s));
+            let escaped = shell_escape_for(escape_mode, &value.to_string());
             write!(out, "{escaped}")?;
             Ok(())
         });
@@ -1139,30 +1151,57 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("name", "world");
         assert_eq!(
-            expand_template("Hello {{ name }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "Hello {{ name }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "Hello world"
         );
 
         // Multiple variables
         vars.insert("repo", "myrepo");
         assert_eq!(
-            expand_template("{{ repo }}/{{ name }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ repo }}/{{ name }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "myrepo/world"
         );
 
         // Empty/static cases
         let empty: HashMap<&str, &str> = HashMap::new();
         assert_eq!(
-            expand_template("", &empty, false, &test.repo, "test").unwrap(),
+            expand_template("", &empty, ShellEscapeMode::Literal, &test.repo, "test").unwrap(),
             ""
         );
         assert_eq!(
-            expand_template("static text", &empty, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "static text",
+                &empty,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "static text"
         );
         // Undefined variables now error in SemiStrict mode
-        let err = expand_template("no {{ variables }} here", &empty, false, &test.repo, "test")
-            .unwrap_err();
+        let err = expand_template(
+            "no {{ variables }} here",
+            &empty,
+            ShellEscapeMode::Literal,
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
         assert!(
             err.message.contains("undefined value"),
             "got: {}",
@@ -1175,18 +1214,39 @@ mod tests {
         let test = test_repo();
         let mut vars = HashMap::new();
         vars.insert("path", "my path");
-        let expanded = expand_template("cd {{ path }}", &vars, true, &test.repo, "test").unwrap();
+        let expanded = expand_template(
+            "cd {{ path }}",
+            &vars,
+            ShellEscapeMode::Posix,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert!(expanded.contains("'my path'") || expanded.contains(r"my\ path"));
 
         // Command injection prevention
         vars.insert("arg", "test;rm -rf");
-        let expanded = expand_template("echo {{ arg }}", &vars, true, &test.repo, "test").unwrap();
+        let expanded = expand_template(
+            "echo {{ arg }}",
+            &vars,
+            ShellEscapeMode::Posix,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert!(!expanded.contains(";rm") || expanded.contains("'"));
 
         // No escape for literal mode
         vars.insert("branch", "feature/foo");
         assert_eq!(
-            expand_template("{{ branch }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ branch }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "feature/foo"
         );
     }
@@ -1195,9 +1255,25 @@ mod tests {
     fn test_expand_template_errors() {
         let test = test_repo();
         let vars = HashMap::new();
-        let err = expand_template("{{ unclosed", &vars, false, &test.repo, "test").unwrap_err();
+        let err = expand_template(
+            "{{ unclosed",
+            &vars,
+            ShellEscapeMode::Literal,
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
         assert!(err.message.contains("syntax error"), "got: {}", err.message);
-        assert!(expand_template("{{ 1 + }}", &vars, false, &test.repo, "test").is_err());
+        assert!(
+            expand_template(
+                "{{ 1 + }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .is_err()
+        );
 
         // Diagnostic::render produces source line but no available vars hint for syntax errors
         assert_snapshot!(crate::git::Diagnostic::render(&err), @"
@@ -1213,8 +1289,14 @@ mod tests {
         vars.insert("branch", "main");
         vars.insert("remote", "origin");
 
-        let err =
-            expand_template("echo {{ target }}", &vars, false, &test.repo, "test").unwrap_err();
+        let err = expand_template(
+            "echo {{ target }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
         assert!(
             err.message.contains("undefined value"),
             "should mention undefined value: {}",
@@ -1241,7 +1323,7 @@ mod tests {
             expand_template(
                 "{% if debug %}DEBUG{% endif %}",
                 &vars,
-                false,
+                ShellEscapeMode::Literal,
                 &test.repo,
                 "test"
             )
@@ -1254,7 +1336,7 @@ mod tests {
             expand_template(
                 "{% if debug %}DEBUG{% endif %}",
                 &vars,
-                false,
+                ShellEscapeMode::Literal,
                 &test.repo,
                 "test"
             )
@@ -1267,7 +1349,7 @@ mod tests {
             expand_template(
                 "{{ missing | default('fallback') }}",
                 &empty,
-                false,
+                ShellEscapeMode::Literal,
                 &test.repo,
                 "test",
             )
@@ -1277,7 +1359,14 @@ mod tests {
 
         vars.insert("name", "hello");
         assert_eq!(
-            expand_template("{{ name | upper }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ name | upper }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "HELLO"
         );
     }
@@ -1293,7 +1382,7 @@ mod tests {
             expand_template(
                 "{{ branch | replace('feature/', '') }}",
                 &vars,
-                false,
+                ShellEscapeMode::Literal,
                 &test.repo,
                 "test"
             )
@@ -1306,7 +1395,7 @@ mod tests {
             expand_template(
                 "{{ branch | replace('feature/', '') | sanitize }}",
                 &vars,
-                false,
+                ShellEscapeMode::Literal,
                 &test.repo,
                 "test"
             )
@@ -1320,7 +1409,7 @@ mod tests {
             expand_template(
                 "{{ branch | replace('feature/', '') }}",
                 &vars,
-                false,
+                ShellEscapeMode::Literal,
                 &test.repo,
                 "test"
             )
@@ -1331,7 +1420,14 @@ mod tests {
         // Slicing for prefix-only removal (avoids replacing mid-string)
         vars.insert("branch", "feature/nested/feature/deep");
         assert_eq!(
-            expand_template("{{ branch[8:] }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ branch[8:] }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "nested/feature/deep"
         );
 
@@ -1340,7 +1436,7 @@ mod tests {
             expand_template(
                 "{% if branch[:8] == 'feature/' %}{{ branch[8:] }}{% else %}{{ branch }}{% endif %}",
                 &vars,
-                false,
+                ShellEscapeMode::Literal,
                 &test.repo,
                 "test"
             )
@@ -1354,7 +1450,7 @@ mod tests {
             expand_template(
                 "{% if branch[:8] == 'feature/' %}{{ branch[8:] }}{% else %}{{ branch }}{% endif %}",
                 &vars,
-                false,
+                ShellEscapeMode::Literal,
                 &test.repo,
                 "test"
             )
@@ -1369,28 +1465,56 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("branch", "feature/foo");
         assert_eq!(
-            expand_template("{{ branch | sanitize }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ branch | sanitize }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "feature-foo"
         );
 
         // Backslashes are also sanitized
         vars.insert("branch", r"feature\bar");
         assert_eq!(
-            expand_template("{{ branch | sanitize }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ branch | sanitize }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "feature-bar"
         );
 
         // Multiple slashes
         vars.insert("branch", "user/feature/task");
         assert_eq!(
-            expand_template("{{ branch | sanitize }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ branch | sanitize }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "user-feature-task"
         );
 
         // Raw branch is unchanged
         vars.insert("branch", "feature/foo");
         assert_eq!(
-            expand_template("{{ branch }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ branch }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "feature/foo"
         );
 
@@ -1398,8 +1522,14 @@ mod tests {
         // Previously, shell escaping was applied BEFORE filters, corrupting the result
         // when values contained shell-special characters (quotes, backslashes).
         vars.insert("branch", "user's/feature");
-        let result =
-            expand_template("{{ branch | sanitize }}", &vars, true, &test.repo, "test").unwrap();
+        let result = expand_template(
+            "{{ branch | sanitize }}",
+            &vars,
+            ShellEscapeMode::Posix,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         // sanitize replaces / with -, producing "user's-feature"
         // shell_escape wraps it: 'user'\''s-feature' (valid shell for user's-feature)
         assert_eq!(result, r"'user'\''s-feature'", "sanitize + shell escape");
@@ -1408,7 +1538,14 @@ mod tests {
         // sanitize would replace the / and \ in the already-escaped value.
 
         // Shell escaping without filter: raw value with special chars
-        let result = expand_template("{{ branch }}", &vars, true, &test.repo, "test").unwrap();
+        let result = expand_template(
+            "{{ branch }}",
+            &vars,
+            ShellEscapeMode::Posix,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         // shell_escape wraps: 'user'\''s/feature' (valid shell for user's/feature)
         assert_eq!(
             result, r"'user'\''s/feature'",
@@ -1416,8 +1553,14 @@ mod tests {
         );
 
         // Shell-escape formatter handles none values (renders as empty string)
-        let result =
-            expand_template("prefix-{{ none }}-suffix", &vars, true, &test.repo, "test").unwrap();
+        let result = expand_template(
+            "prefix-{{ none }}-suffix",
+            &vars,
+            ShellEscapeMode::Posix,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert_eq!(result, "prefix--suffix", "none renders as empty");
     }
 
@@ -1431,7 +1574,7 @@ mod tests {
         let result = expand_template(
             "{{ branch | sanitize_db }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -1443,7 +1586,7 @@ mod tests {
         let result = expand_template(
             "{{ branch | sanitize_db }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -1455,7 +1598,7 @@ mod tests {
         let result = expand_template(
             "{{ branch | sanitize_db }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -1465,7 +1608,14 @@ mod tests {
         // Raw branch is unchanged
         vars.insert("branch", "feature/foo");
         assert_eq!(
-            expand_template("{{ branch }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ branch }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "feature/foo"
         );
     }
@@ -1476,9 +1626,15 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("cmd", "echo hello");
         assert!(
-            expand_template("{{ cmd }}\n", &vars, true, &test.repo, "test")
-                .unwrap()
-                .ends_with('\n')
+            expand_template(
+                "{{ cmd }}\n",
+                &vars,
+                ShellEscapeMode::Posix,
+                &test.repo,
+                "test"
+            )
+            .unwrap()
+            .ends_with('\n')
         );
     }
 
@@ -1499,8 +1655,14 @@ mod tests {
         vars.insert("branch", "feature/very-long-branch-name");
 
         // Filter produces a 3-char base36 digest
-        let result =
-            expand_template("{{ branch | hash }}", &vars, false, &test.repo, "test").unwrap();
+        let result = expand_template(
+            "{{ branch | hash }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert_eq!(result.len(), 3);
         assert!(
             result
@@ -1510,17 +1672,38 @@ mod tests {
         );
 
         // Deterministic: same input produces same hash across calls
-        let r1 = expand_template("{{ branch | hash }}", &vars, false, &test.repo, "test").unwrap();
-        let r2 = expand_template("{{ branch | hash }}", &vars, false, &test.repo, "test").unwrap();
+        let r1 = expand_template(
+            "{{ branch | hash }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
+        let r2 = expand_template(
+            "{{ branch | hash }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert_eq!(r1, r2);
 
         // Composable: hash reflects the upstream filter's output
         vars.insert("branch", "feature/auth");
-        let raw = expand_template("{{ branch | hash }}", &vars, false, &test.repo, "test").unwrap();
+        let raw = expand_template(
+            "{{ branch | hash }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         let sanitized = expand_template(
             "{{ branch | sanitize | hash }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -1532,7 +1715,7 @@ mod tests {
         let truncated = expand_template(
             "{{ (branch | sanitize)[:8] }}_{{ branch | sanitize | hash }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -1542,8 +1725,14 @@ mod tests {
 
         // Empty input: still produces a 3-char digest (empty-string hash is stable)
         vars.insert("branch", "");
-        let empty =
-            expand_template("{{ branch | hash }}", &vars, false, &test.repo, "test").unwrap();
+        let empty = expand_template(
+            "{{ branch | hash }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert_eq!(empty.len(), 3);
     }
 
@@ -1553,12 +1742,18 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("branch", "feature/very-long-branch-name");
 
-        let default =
-            expand_template("{{ branch | codename }}", &vars, false, &test.repo, "test").unwrap();
+        let default = expand_template(
+            "{{ branch | codename }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         let explicit_default = expand_template(
             "{{ branch | codename(2) }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -1569,7 +1764,7 @@ mod tests {
         let one_word = expand_template(
             "{{ branch | codename(1) }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -1582,27 +1777,39 @@ mod tests {
         let three_words = expand_template(
             "{{ branch | codename(3) }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
         .unwrap();
         assert_eq!(three_words.split('-').count(), 3, "got: {three_words}");
 
-        let repeat =
-            expand_template("{{ branch | codename }}", &vars, false, &test.repo, "test").unwrap();
+        let repeat = expand_template(
+            "{{ branch | codename }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert_eq!(default, repeat);
 
         vars.insert("branch", "feature/different-name");
-        let other =
-            expand_template("{{ branch | codename }}", &vars, false, &test.repo, "test").unwrap();
+        let other = expand_template(
+            "{{ branch | codename }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert_eq!(other.split('-').count(), 2, "got: {other}");
 
         vars.insert("branch", "feature/73");
         let ticket_73 = expand_template(
             "{{ branch | codename(3) }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -1611,7 +1818,7 @@ mod tests {
         let ticket_149 = expand_template(
             "{{ branch | codename(3) }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -1628,7 +1835,7 @@ mod tests {
         let zero = expand_template(
             "{{ branch | codename(0) }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -1642,7 +1849,7 @@ mod tests {
         let too_many = expand_template(
             "{{ branch | codename(9) }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -1754,8 +1961,14 @@ mod tests {
         vars.insert("repo", "myrepo");
 
         // Filter produces a number in range
-        let result =
-            expand_template("{{ branch | hash_port }}", &vars, false, &test.repo, "test").unwrap();
+        let result = expand_template(
+            "{{ branch | hash_port }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         let port: u16 = result.parse().expect("should be a number");
         assert!((10000..20000).contains(&port));
 
@@ -1763,7 +1976,7 @@ mod tests {
         let r1 = expand_template(
             "{{ (repo ~ '-' ~ branch) | hash_port }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -1772,7 +1985,7 @@ mod tests {
         let r2 = expand_template(
             "{{ (repo ~ '-' ~ branch) | hash_port }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -1796,7 +2009,7 @@ mod tests {
         let result = expand_template(
             "{{ repo_path | dirname | basename }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -1808,7 +2021,7 @@ mod tests {
         let result = expand_template(
             "{{ repo_path }}/../{{ repo_path | dirname | basename }}.{{ branch | sanitize }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -1820,7 +2033,7 @@ mod tests {
         let dirname = expand_template(
             "{{ repo_path | dirname }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -1831,7 +2044,7 @@ mod tests {
         let basename = expand_template(
             "{{ repo_path | basename }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -1844,7 +2057,7 @@ mod tests {
             expand_template(
                 "{{ repo_path | dirname }}",
                 &vars,
-                false,
+                ShellEscapeMode::Literal,
                 &test.repo,
                 "test"
             )
@@ -1855,7 +2068,7 @@ mod tests {
             expand_template(
                 "{{ repo_path | basename }}",
                 &vars,
-                false,
+                ShellEscapeMode::Literal,
                 &test.repo,
                 "test"
             )
@@ -1949,11 +2162,25 @@ mod tests {
 
         // Access vars via dot notation
         assert_eq!(
-            expand_template("{{ vars.env }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ vars.env }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "staging"
         );
         assert_eq!(
-            expand_template("{{ vars.port }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ vars.port }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "3000"
         );
 
@@ -1962,7 +2189,7 @@ mod tests {
             expand_template(
                 "{{ vars.missing | default('fallback') }}",
                 &vars,
-                false,
+                ShellEscapeMode::Literal,
                 &test.repo,
                 "test"
             )
@@ -1975,7 +2202,7 @@ mod tests {
             expand_template(
                 "{% if vars.env %}env={{ vars.env }}{% endif %}",
                 &vars,
-                false,
+                ShellEscapeMode::Literal,
                 &test.repo,
                 "test"
             )
@@ -2022,23 +2249,51 @@ mod tests {
 
         // Dot access into JSON object
         assert_eq!(
-            expand_template("{{ vars.config.port }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ vars.config.port }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "3000"
         );
         assert_eq!(
-            expand_template("{{ vars.config.debug }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ vars.config.debug }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "true"
         );
 
         // Array index access
         assert_eq!(
-            expand_template("{{ vars.tags[0] }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ vars.tags[0] }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "alpha"
         );
 
         // Plain string still works
         assert_eq!(
-            expand_template("{{ vars.env }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ vars.env }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "staging"
         );
 
@@ -2047,7 +2302,7 @@ mod tests {
             expand_template(
                 "{{ vars.config.missing | default('fallback') }}",
                 &vars,
-                false,
+                ShellEscapeMode::Literal,
                 &test.repo,
                 "test"
             )
@@ -2074,12 +2329,24 @@ mod tests {
         vars.insert("branch", "main");
 
         // Shell escaping should work on JSON-parsed nested values
-        let result =
-            expand_template("{{ vars.config.name }}", &vars, true, &test.repo, "test").unwrap();
+        let result = expand_template(
+            "{{ vars.config.name }}",
+            &vars,
+            ShellEscapeMode::Posix,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert_eq!(result, "'my project'");
 
-        let result =
-            expand_template("{{ vars.config.cmd }}", &vars, true, &test.repo, "test").unwrap();
+        let result = expand_template(
+            "{{ vars.config.cmd }}",
+            &vars,
+            ShellEscapeMode::Posix,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert_eq!(result, "'echo hello'");
     }
 
@@ -2093,7 +2360,7 @@ mod tests {
             expand_template(
                 "{{ vars | default('none') }}",
                 &vars,
-                false,
+                ShellEscapeMode::Literal,
                 &test.repo,
                 "test"
             )
@@ -2113,7 +2380,7 @@ mod tests {
             expand_template(
                 "{{ vars.env | default('dev') }}",
                 &vars,
-                false,
+                ShellEscapeMode::Literal,
                 &test.repo,
                 "test"
             )
@@ -2132,23 +2399,51 @@ mod tests {
         // Bare {{ args }} with shell escaping: space-joined, per-element escaped,
         // NOT wrapped in outer quotes as a single token.
         assert_eq!(
-            expand_template("wt switch {{ args }}", &vars, true, &test.repo, "test").unwrap(),
+            expand_template(
+                "wt switch {{ args }}",
+                &vars,
+                ShellEscapeMode::Posix,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "wt switch foo 'bar baz' qux"
         );
 
         // Indexing returns a plain string — flows through the shell-escape formatter.
         assert_eq!(
-            expand_template("{{ args[0] }}", &vars, true, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ args[0] }}",
+                &vars,
+                ShellEscapeMode::Posix,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "foo"
         );
         assert_eq!(
-            expand_template("{{ args[1] }}", &vars, true, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ args[1] }}",
+                &vars,
+                ShellEscapeMode::Posix,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "'bar baz'"
         );
 
         // Length works like any sequence.
         assert_eq!(
-            expand_template("{{ args | length }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ args | length }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "3"
         );
 
@@ -2157,7 +2452,7 @@ mod tests {
             expand_template(
                 "{% for a in args %}[{{ a }}]{% endfor %}",
                 &vars,
-                true,
+                ShellEscapeMode::Posix,
                 &test.repo,
                 "test"
             )
@@ -2175,13 +2470,27 @@ mod tests {
 
         // Empty args renders empty. No stray whitespace, no error.
         assert_eq!(
-            expand_template("wt switch{{ args }}", &vars, true, &test.repo, "test").unwrap(),
+            expand_template(
+                "wt switch{{ args }}",
+                &vars,
+                ShellEscapeMode::Posix,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "wt switch"
         );
 
         // Length still defined for empty.
         assert_eq!(
-            expand_template("{{ args | length }}", &vars, false, &test.repo, "test").unwrap(),
+            expand_template(
+                "{{ args | length }}",
+                &vars,
+                ShellEscapeMode::Literal,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
             "0"
         );
 
@@ -2190,7 +2499,7 @@ mod tests {
             expand_template(
                 "{% for a in args %}X{% endfor %}",
                 &vars,
-                true,
+                ShellEscapeMode::Posix,
                 &test.repo,
                 "test"
             )
@@ -2203,14 +2512,21 @@ mod tests {
     fn test_expand_template_args_shell_metachar_safety() {
         // The point of ShellArgs is that bare {{ args }} is safe to splice into
         // a command line even when args contain shell metacharacters — each
-        // element is individually single-quoted by `shell_escape::unix::escape`,
-        // and the outer formatter doesn't re-quote the joined result.
+        // element is individually POSIX single-quoted by `shell_join`, and the
+        // outer formatter doesn't re-quote the joined result.
         let test = test_repo();
         let args_json = serde_json::to_string(&["; rm -rf /", "$(whoami)", "a'b"]).unwrap();
         let mut vars = HashMap::new();
         vars.insert("args", args_json.as_str());
 
-        let rendered = expand_template("echo {{ args }}", &vars, true, &test.repo, "test").unwrap();
+        let rendered = expand_template(
+            "echo {{ args }}",
+            &vars,
+            ShellEscapeMode::Posix,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         assert_eq!(rendered, r#"echo '; rm -rf /' '$(whoami)' 'a'\''b'"#);
     }
 

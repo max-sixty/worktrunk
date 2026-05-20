@@ -4,6 +4,7 @@
 //! edge cases in template variable substitution.
 
 use super::expand_template;
+use crate::shell_exec::ShellEscapeMode;
 use crate::testing::TestRepo;
 use std::collections::HashMap;
 
@@ -27,7 +28,7 @@ fn test_expand_template_normal() {
     let result = expand_template(
         "echo {{ branch }} {{ main_worktree }}",
         &vars,
-        true,
+        ShellEscapeMode::Posix,
         &test.repo,
         "test",
     )
@@ -43,7 +44,7 @@ fn test_expand_template_branch_with_slashes() {
     let result = expand_template(
         "echo {{ branch | sanitize }}",
         &vars,
-        true,
+        ShellEscapeMode::Posix,
         &test.repo,
         "test",
     )
@@ -60,7 +61,7 @@ fn test_expand_template_sanitize_hash_filter() {
     let result = expand_template(
         "{{ branch | sanitize_hash }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &test.repo,
         "test",
     )
@@ -72,7 +73,7 @@ fn test_expand_template_sanitize_hash_filter() {
     let result = expand_template(
         "{{ branch | sanitize_hash }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &test.repo,
         "test",
     )
@@ -86,7 +87,7 @@ fn test_expand_template_sanitize_hash_filter() {
     let result = expand_template(
         "{{ name | sanitize_hash }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &test.repo,
         "test",
     )
@@ -100,7 +101,14 @@ fn test_expand_template_branch_raw_with_slashes() {
     let test = test_repo();
     // Raw branch preserves slashes
     let vars = vars_with_branch("feature/nested/branch");
-    let result = expand_template("echo {{ branch }}", &vars, true, &test.repo, "test").unwrap();
+    let result = expand_template(
+        "echo {{ branch }}",
+        &vars,
+        ShellEscapeMode::Posix,
+        &test.repo,
+        "test",
+    )
+    .unwrap();
     assert_eq!(result, "echo feature/nested/branch");
 }
 
@@ -113,7 +121,7 @@ fn test_expand_template_branch_escaping() {
         expand_template(
             "echo {{ branch }}",
             &vars_with_branch(input),
-            true,
+            ShellEscapeMode::Posix,
             &test.repo,
             "test",
         )
@@ -130,7 +138,14 @@ fn test_expand_template_branch_escaping() {
 fn snapshot_expand_template_branch_with_quotes() {
     let test = test_repo();
     let vars = vars_with_branch("feature'test");
-    let result = expand_template("echo '{{ branch }}'", &vars, true, &test.repo, "test").unwrap();
+    let result = expand_template(
+        "echo '{{ branch }}'",
+        &vars,
+        ShellEscapeMode::Posix,
+        &test.repo,
+        "test",
+    )
+    .unwrap();
     insta::assert_snapshot!(result, @r"echo ''feature'\''test''");
 }
 
@@ -142,7 +157,7 @@ fn test_expand_template_extra_vars_path_escaping() {
         expand_template(
             "cd {{ worktree }}",
             &HashMap::from([("worktree", path)]),
-            true,
+            ShellEscapeMode::Posix,
             &test.repo,
             "test",
         )
@@ -162,8 +177,14 @@ fn snapshot_expand_template_extra_vars_with_command_substitution() {
     let test = test_repo();
     let mut extras = HashMap::new();
     extras.insert("target", "main; rm -rf /");
-    let result =
-        expand_template("git merge {{ target }}", &extras, true, &test.repo, "test").unwrap();
+    let result = expand_template(
+        "git merge {{ target }}",
+        &extras,
+        ShellEscapeMode::Posix,
+        &test.repo,
+        "test",
+    )
+    .unwrap();
 
     insta::assert_snapshot!(result, @"git merge 'main; rm -rf /'");
 }
@@ -174,7 +195,14 @@ fn test_expand_template_variable_override() {
     // Variables in the hashmap take precedence
     let mut vars = HashMap::new();
     vars.insert("branch", "overridden");
-    let result = expand_template("echo {{ branch }}", &vars, true, &test.repo, "test").unwrap();
+    let result = expand_template(
+        "echo {{ branch }}",
+        &vars,
+        ShellEscapeMode::Posix,
+        &test.repo,
+        "test",
+    )
+    .unwrap();
 
     assert_eq!(result, "echo overridden");
 }
@@ -184,7 +212,13 @@ fn test_expand_template_missing_variable() {
     let test = test_repo();
     // Undefined variables error in SemiStrict mode (catches typos)
     let vars: HashMap<&str, &str> = HashMap::new();
-    let result = expand_template("echo {{ undefined }}", &vars, true, &test.repo, "test");
+    let result = expand_template(
+        "echo {{ undefined }}",
+        &vars,
+        ShellEscapeMode::Posix,
+        &test.repo,
+        "test",
+    );
 
     assert!(result.is_err());
     let err = result.unwrap_err();
@@ -201,7 +235,14 @@ fn test_expand_template_empty_branch() {
     let test = test_repo();
     let mut vars = HashMap::new();
     vars.insert("branch", "");
-    let result = expand_template("echo {{ branch }}", &vars, true, &test.repo, "test").unwrap();
+    let result = expand_template(
+        "echo {{ branch }}",
+        &vars,
+        ShellEscapeMode::Posix,
+        &test.repo,
+        "test",
+    )
+    .unwrap();
 
     // Empty string is shell-escaped to ''
     assert_eq!(result, "echo ''");
@@ -213,7 +254,14 @@ fn test_expand_template_unicode_in_branch() {
     let test = test_repo();
     // Unicode characters in branch name are shell-escaped
     let vars = vars_with_branch("feature-\u{1F680}");
-    let result = expand_template("echo {{ branch }}", &vars, true, &test.repo, "test").unwrap();
+    let result = expand_template(
+        "echo {{ branch }}",
+        &vars,
+        ShellEscapeMode::Posix,
+        &test.repo,
+        "test",
+    )
+    .unwrap();
 
     // Unicode is preserved but quoted for shell safety
     assert_eq!(result, "echo 'feature-\u{1F680}'");
@@ -228,7 +276,7 @@ fn test_expand_template_backslash_in_branch() {
     let result = expand_template(
         "path/{{ branch | sanitize }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &test.repo,
         "test",
     )
@@ -248,7 +296,7 @@ fn test_expand_template_multiple_replacements() {
     let result = expand_template(
         "cd {{ worktree }} && git merge {{ target }} from {{ branch }}",
         &vars,
-        true,
+        ShellEscapeMode::Posix,
         &test.repo,
         "test",
     )
@@ -262,7 +310,8 @@ fn test_expand_template_curly_braces_without_variables() {
     let test = test_repo();
     // Just curly braces, not variables
     let vars: HashMap<&str, &str> = HashMap::new();
-    let result = expand_template("echo {}", &vars, true, &test.repo, "test").unwrap();
+    let result =
+        expand_template("echo {}", &vars, ShellEscapeMode::Posix, &test.repo, "test").unwrap();
 
     assert_eq!(result, "echo {}");
 }
@@ -275,7 +324,7 @@ fn test_expand_template_nested_curly_braces() {
     let result = expand_template(
         "echo {{ '{' ~ branch ~ '}' }}",
         &vars,
-        true,
+        ShellEscapeMode::Posix,
         &test.repo,
         "test",
     )
@@ -314,7 +363,14 @@ fn snapshot_shell_escaping_special_chars() {
     let mut results = Vec::new();
     for (name, branch) in test_cases {
         let vars = vars_with_branch(branch);
-        let result = expand_template("echo {{ branch }}", &vars, true, &test.repo, "test").unwrap();
+        let result = expand_template(
+            "echo {{ branch }}",
+            &vars,
+            ShellEscapeMode::Posix,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         results.push((name, branch, result));
     }
 
@@ -336,7 +392,14 @@ fn snapshot_shell_escaping_quotes() {
     let mut results = Vec::new();
     for (name, branch) in test_cases {
         let vars = vars_with_branch(branch);
-        let result = expand_template("echo {{ branch }}", &vars, true, &test.repo, "test").unwrap();
+        let result = expand_template(
+            "echo {{ branch }}",
+            &vars,
+            ShellEscapeMode::Posix,
+            &test.repo,
+            "test",
+        )
+        .unwrap();
         results.push((name, branch, result));
     }
 
@@ -363,7 +426,7 @@ fn snapshot_shell_escaping_paths() {
         let result = expand_template(
             "cd {{ worktree }} && echo {{ branch }}",
             &vars,
-            true,
+            ShellEscapeMode::Posix,
             &test.repo,
             "test",
         )
@@ -405,7 +468,8 @@ fn snapshot_complex_templates() {
         vars.insert("main_worktree", "/repo/path");
         vars.insert("worktree", "/path with spaces/wt");
         vars.insert("target", "main; rm -rf /");
-        let result = expand_template(template, &vars, true, &test.repo, "test").unwrap();
+        let result =
+            expand_template(template, &vars, ShellEscapeMode::Posix, &test.repo, "test").unwrap();
         results.push((name, template, branch, result));
     }
 
@@ -423,7 +487,7 @@ fn test_expand_template_literal_normal() {
     let result = expand_template(
         "{{ main_worktree }}.{{ branch }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &test.repo,
         "test",
     )
@@ -441,7 +505,7 @@ fn test_expand_template_literal_unicode_no_escaping() {
     let result = expand_template(
         "{{ main_worktree }}.{{ branch }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &test.repo,
         "test",
     )
@@ -464,7 +528,7 @@ fn test_expand_template_literal_spaces_no_escaping() {
     let result = expand_template(
         "{{ main_worktree }}.{{ branch }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &test.repo,
         "test",
     )
@@ -487,7 +551,7 @@ fn test_expand_template_literal_sanitizes_slashes() {
     let result = expand_template(
         "{{ main_worktree }}.{{ branch | sanitize }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &test.repo,
         "test",
     )
@@ -505,8 +569,16 @@ fn test_expand_template_literal_vs_escaped_unicode() {
     vars.insert("branch", "test-\u{2282}");
     let template = "{{ main_worktree }}.{{ branch }}";
 
-    let literal_result = expand_template(template, &vars, false, &test.repo, "test").unwrap();
-    let escaped_result = expand_template(template, &vars, true, &test.repo, "test").unwrap();
+    let literal_result = expand_template(
+        template,
+        &vars,
+        ShellEscapeMode::Literal,
+        &test.repo,
+        "test",
+    )
+    .unwrap();
+    let escaped_result =
+        expand_template(template, &vars, ShellEscapeMode::Posix, &test.repo, "test").unwrap();
 
     // Literal has no quotes
     assert_eq!(literal_result, "myrepo.test-\u{2282}");

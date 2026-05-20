@@ -334,6 +334,98 @@ pub fn scrub_directive_env_vars(cmd: &mut std::process::Command) {
 }
 
 // ============================================================================
+// Directive-Payload Shell Escaping
+// ============================================================================
+
+/// Environment variable a shell wrapper sets to identify itself.
+///
+/// The PowerShell wrapper sets `WORKTRUNK_SHELL=powershell` and the fish
+/// wrapper sets `WORKTRUNK_SHELL=fish`; bash, zsh, and nushell leave it unset.
+/// Absence therefore means "POSIX", which is correct for those three wrappers
+/// *and* for the non-integration path where wt runs the `--execute` payload
+/// itself through `sh -c`.
+pub const WORKTRUNK_SHELL_ENV_VAR: &str = "WORKTRUNK_SHELL";
+
+/// How to single-quote a value spliced into a directive payload.
+///
+/// `wt switch --execute` builds one command string and hands it to the active
+/// shell — directly (`sh -c`) or, under shell integration, by writing it to the
+/// EXEC directive file the wrapper evaluates. POSIX shells, PowerShell, and
+/// fish all single-quote, but escape the string body differently — POSIX takes
+/// `\` literally inside `'…'` while fish treats it as an escape — so the
+/// escaper must be keyed on which shell will parse the payload.
+///
+/// `Literal` is the no-escaping mode for filesystem-path templates that are
+/// never spliced into a shell command line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellEscapeMode {
+    /// Substitute values verbatim — used for filesystem paths.
+    Literal,
+    /// POSIX single-quoting (`'it'\''s'`). The wrapper-independent default for
+    /// bash, zsh, and nushell, plus `Cmd::shell` (hooks, aliases).
+    Posix,
+    /// PowerShell single-quoting (`'it''s'`), for the PowerShell wrapper's
+    /// `Invoke-Expression` of the EXEC directive file.
+    PowerShell,
+    /// fish single-quoting (`'it\'s'`), for the fish wrapper's `eval` of the
+    /// EXEC directive file. fish — unlike POSIX — treats `\` as an escape
+    /// inside `'…'`, so the POSIX escaper corrupts backslashes there.
+    Fish,
+}
+
+/// Escape mode for a payload the *active directive shell* will parse.
+///
+/// Reads [`WORKTRUNK_SHELL_ENV_VAR`] — the single source of truth for the
+/// per-shell escaping decision shared by `escape_legacy_cd`, the `--execute`
+/// command template, and its trailing args. `powershell` ⇒
+/// [`ShellEscapeMode::PowerShell`], `fish` ⇒ [`ShellEscapeMode::Fish`], any
+/// other value or absent ⇒ [`ShellEscapeMode::Posix`].
+pub fn directive_shell_escape_mode() -> ShellEscapeMode {
+    match std::env::var(WORKTRUNK_SHELL_ENV_VAR) {
+        Ok(v) if v.eq_ignore_ascii_case("powershell") => ShellEscapeMode::PowerShell,
+        Ok(v) if v.eq_ignore_ascii_case("fish") => ShellEscapeMode::Fish,
+        _ => ShellEscapeMode::Posix,
+    }
+}
+
+/// Single-quote `s` for PowerShell: wrap in `'…'`, doubling every embedded `'`.
+///
+/// PowerShell's literal string is `'…'` with `''` as the escape for one quote
+/// (`'can''t'` is `can't`). The POSIX `'\''` idiom is invalid here — that is
+/// the bug B1 fixes for the PowerShell wrapper's `Invoke-Expression` path.
+/// Empty input yields `''`.
+pub fn powershell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+/// Single-quote `s` for fish: wrap in `'…'`, backslash-escaping `\` and `'`.
+///
+/// fish's single-quoted string — unlike POSIX — treats `\` as an escape
+/// character, with only `\\` and `\'` recognized inside `'…'`. So `\` must be
+/// doubled and `'` backslash-escaped; backslash *before* quote, since escaping
+/// the quote introduces a backslash that must not be doubled again. The POSIX
+/// `'\''` idiom would corrupt backslashes (and leave a trailing-`\` argument
+/// as an unterminated string) under the fish wrapper's `eval`. Empty input
+/// yields `''`.
+pub fn fish_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\\', r"\\").replace('\'', r"\'"))
+}
+
+/// Shell-escape `s` for the given [`ShellEscapeMode`].
+///
+/// The single dispatcher every directive-payload escaper routes through.
+pub fn shell_escape_for(mode: ShellEscapeMode, s: &str) -> String {
+    match mode {
+        ShellEscapeMode::Literal => s.to_string(),
+        ShellEscapeMode::Posix => {
+            shell_escape::unix::escape(std::borrow::Cow::Borrowed(s)).into_owned()
+        }
+        ShellEscapeMode::PowerShell => powershell_escape(s),
+        ShellEscapeMode::Fish => fish_escape(s),
+    }
+}
+
+// ============================================================================
 // Thread-Local Command Timeout
 // ============================================================================
 
@@ -1482,6 +1574,66 @@ pub fn forward_signal_with_escalation(pgid: i32, sig: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_powershell_escape() {
+        // Plain word: wrapped but unchanged inside the quotes.
+        assert_eq!(powershell_escape("rg"), "'rg'");
+        // Embedded single quote: doubled (PowerShell's only escape).
+        assert_eq!(powershell_escape("can't"), "'can''t'");
+        // `$(...)` is inert inside a PowerShell single-quoted string — no
+        // expansion, no doubling needed.
+        assert_eq!(powershell_escape("$(whoami)"), "'$(whoami)'");
+        // Spaces are covered by the surrounding quotes.
+        assert_eq!(powershell_escape("with space"), "'with space'");
+        // Empty string still produces a valid empty literal.
+        assert_eq!(powershell_escape(""), "''");
+        // Multiple quotes each double independently.
+        assert_eq!(powershell_escape("a'b'c"), "'a''b''c'");
+    }
+
+    #[test]
+    fn test_fish_escape() {
+        // Plain word: wrapped but unchanged inside the quotes.
+        assert_eq!(fish_escape("rg"), "'rg'");
+        // Two consecutive backslashes: each doubled, so fish's `eval`
+        // collapses `\\\\` back to `\\` — POSIX `'…'` would corrupt this.
+        assert_eq!(fish_escape(r"a\\b"), r"'a\\\\b'");
+        // Trailing backslash: doubled, so the closing `'` is not swallowed
+        // (the POSIX form `'end\'` is an unterminated string for fish).
+        assert_eq!(fish_escape(r"end\"), r"'end\\'");
+        // Embedded single quote: backslash-escaped (fish's escape inside `'…'`).
+        assert_eq!(fish_escape("can't"), r"'can\'t'");
+        // `$(...)` and backticks are inert inside a fish single-quoted string.
+        assert_eq!(fish_escape("$(whoami)"), "'$(whoami)'");
+        assert_eq!(fish_escape("`whoami`"), "'`whoami`'");
+        // Empty string still produces a valid empty literal.
+        assert_eq!(fish_escape(""), "''");
+        // Backslash then quote: `\` doubled first, then `'` escaped, so the
+        // escaping backslash of `\'` is not itself doubled.
+        assert_eq!(fish_escape(r"\'"), r"'\\\''");
+    }
+
+    #[test]
+    fn test_shell_escape_for_dispatch() {
+        // Literal passes the value through untouched.
+        assert_eq!(shell_escape_for(ShellEscapeMode::Literal, "can't"), "can't");
+        // Posix uses the `'\''` idiom for an embedded quote.
+        assert_eq!(
+            shell_escape_for(ShellEscapeMode::Posix, "can't"),
+            r"'can'\''t'"
+        );
+        // PowerShell doubles the embedded quote.
+        assert_eq!(
+            shell_escape_for(ShellEscapeMode::PowerShell, "can't"),
+            "'can''t'"
+        );
+        // Fish backslash-escapes the embedded quote.
+        assert_eq!(
+            shell_escape_for(ShellEscapeMode::Fish, "can't"),
+            r"'can\'t'"
+        );
+    }
 
     #[test]
     fn test_compute_git_env_overrides() {

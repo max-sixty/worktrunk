@@ -83,6 +83,35 @@ fn test_switch_legacy_directive_file_powershell(#[from(repo_with_remote)] mut re
     });
 }
 
+/// Legacy directive file in fish mode: the `cd` path is fish-escaped (`\`
+/// doubled, `'` backslash-escaped) instead of using the POSIX `'\''` idiom,
+/// which the fish wrapper's `eval` would mis-parse.
+#[rstest]
+fn test_switch_legacy_directive_file_fish(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let _feature_wt = repo.add_worktree("feature");
+    let (directive_path, _guard) = legacy_directive_file();
+
+    let settings = setup_snapshot_settings(&repo);
+
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        configure_legacy_directive_file(&mut cmd, &directive_path);
+        cmd.env("WORKTRUNK_SHELL", "fish");
+        cmd.arg("switch")
+            .arg("feature")
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+
+        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        assert!(
+            directives.contains("cd '"),
+            "Legacy directive file should contain cd command, got: {directives}",
+        );
+    });
+}
+
 /// Legacy directive file with --execute: both cd and execute commands
 /// should be written to the single file.
 #[rstest]
