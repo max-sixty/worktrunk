@@ -73,8 +73,11 @@ const IPC_SOCKET_NAME: &str = "fsmonitor--daemon.ipc";
 /// in their IPC handling, not in signal handling, so they almost always die
 /// on `SIGTERM` well within this budget; the `SIGKILL` tail only fires for a
 /// daemon that ignores `SIGTERM`.
+///
+/// Shared with [`crate::git::remove`]'s `force_kill_fsmonitor_via_socket` so
+/// both fsmonitor-stop paths apply the same grace window.
 #[cfg(unix)]
-const REAP_KILL_DEADLINE: std::time::Duration = std::time::Duration::from_millis(1500);
+pub(crate) const REAP_KILL_DEADLINE: std::time::Duration = std::time::Duration::from_millis(1500);
 
 /// One running fsmonitor daemon: its PID and the IPC socket path `lsof`
 /// reported for it. `socket` is [`None`] when `lsof` printed the bare,
@@ -225,7 +228,7 @@ pub fn classify_orphans(
 /// is only reached when a daemon ignores `SIGTERM`. Returns the count of
 /// daemons confirmed gone (terminated or already absent).
 #[cfg(unix)]
-fn escalate_terminate<S: ProcessSignaller>(
+pub(crate) fn escalate_terminate<S: ProcessSignaller>(
     signaller: &S,
     pids: &[u32],
     deadline: std::time::Duration,
@@ -263,7 +266,7 @@ fn escalate_terminate<S: ProcessSignaller>(
 
 /// Real signal delivery via `nix`, used in production.
 #[cfg(unix)]
-struct NixSignaller;
+pub(crate) struct NixSignaller;
 
 #[cfg(unix)]
 impl ProcessSignaller for NixSignaller {
@@ -697,5 +700,79 @@ mod tests {
             0
         );
         assert!(fake.term_calls.borrow().is_empty());
+    }
+
+    /// End-to-end: `NixSignaller` actually delivers `SIGTERM` and a
+    /// responsive child exits from it. The `FakeSignaller` tests above cover
+    /// the escalation logic; this asserts the real signal-delivery path that
+    /// production calls go through.
+    ///
+    /// The `gone` count returned by `escalate_terminate` is not asserted on
+    /// here: a SIGTERM'd *direct* child becomes a zombie until `wait()`, and
+    /// `kill(pid, 0)` (the liveness probe) reports zombies as alive — so the
+    /// count under-reports for this test setup. Production daemons are not
+    /// children of `wt`; their parent reaps them and `is_alive` flips to
+    /// false promptly, so the count is meaningful there.
+    #[cfg(unix)]
+    #[test]
+    fn nix_signaller_terminates_responsive_child_with_sigterm() {
+        use std::process::Command;
+
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        let pid = child.id();
+
+        escalate_terminate(&NixSignaller, &[pid], std::time::Duration::from_millis(500));
+
+        // `sleep` exits on SIGTERM; it must be reaped and have a
+        // signal-derived (non-success) status.
+        let status = child.wait().unwrap();
+        assert!(!status.success());
+    }
+
+    /// End-to-end: a child that ignores `SIGTERM` is SIGKILL'd after the
+    /// bounded wait via the real `NixSignaller`.
+    #[cfg(unix)]
+    #[test]
+    fn nix_signaller_escalates_to_sigkill_when_sigterm_ignored() {
+        use std::process::Command;
+        use std::time::Duration;
+
+        // `trap '' TERM` makes SIGTERM a no-op; only SIGKILL can stop it. The
+        // child touches `ready` *after* the trap is installed; the test waits
+        // for that file so the first SIGTERM can't race trap installation
+        // (which would let the child die on SIGTERM and report signal 15).
+        let tmp = tempfile::tempdir().unwrap();
+        let ready = tmp.path().join("ready");
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "trap '' TERM; : > {}; sleep 30",
+                ready.to_str().unwrap()
+            ))
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+
+        let wait_deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !ready.exists() {
+            assert!(
+                std::time::Instant::now() < wait_deadline,
+                "child never installed SIGTERM trap"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // Short escalation deadline keeps the test fast; the FakeSignaller
+        // tests already cover that the production `REAP_KILL_DEADLINE` value
+        // flows through unchanged.
+        escalate_terminate(&NixSignaller, &[pid], Duration::from_millis(200));
+
+        // Must have been SIGKILLed despite ignoring SIGTERM.
+        use std::os::unix::process::ExitStatusExt;
+        let status = child.wait().unwrap();
+        assert_eq!(
+            status.signal(),
+            Some(nix::sys::signal::Signal::SIGKILL as i32)
+        );
     }
 }
