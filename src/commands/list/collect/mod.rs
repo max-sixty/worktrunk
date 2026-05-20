@@ -262,14 +262,30 @@ struct TableRenderPlan {
 }
 
 impl TableRenderPlan {
-    fn render(mut self) -> anyhow::Result<()> {
+    fn render(mut self) -> anyhow::Result<bool> {
+        if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
+            if self.progressive_table.is_none() {
+                print_first_buffered_line(&self.header)?;
+            }
+            return Ok(true);
+        }
+
         if let Some(mut table) = self.progressive_table.take() {
             table.finalize(self.rows, self.summary)?;
         } else {
             print_buffered_table(&self.header, &self.rows, &self.summary);
         }
-        Ok(())
+        Ok(false)
     }
+}
+
+fn print_first_buffered_line(header: &str) -> anyhow::Result<()> {
+    use std::io::Write as _;
+
+    let mut stdout = std::io::stdout();
+    writeln!(stdout, "{header}")?;
+    stdout.flush()?;
+    Ok(())
 }
 
 fn print_buffered_table(header: &str, rows: &[String], summary: &str) {
@@ -1093,9 +1109,12 @@ pub fn collect(
         .unwrap_or(PLACEHOLDER_REVEAL_DELAY);
     let placeholder_reveal_at = std::time::Instant::now() + reveal_delay;
 
-    // Early exit for benchmarking skeleton render time / time-to-first-output
+    // Early exit for benchmarking skeleton render time / progressive
+    // time-to-first-output. Buffered/piped TTFP continues to the first real
+    // table write below, because there is no skeleton output in that mode.
     if std::env::var_os("WORKTRUNK_SKELETON_ONLY").is_some()
-        || std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some()
+        || (std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some()
+            && (show_progress || progressive_handler.is_some()))
     {
         return Ok(None);
     }
@@ -1578,7 +1597,9 @@ pub fn collect(
     });
 
     if let Some(table_render) = table_render {
-        table_render.render()?;
+        if table_render.render()? {
+            return Ok(None);
+        }
     }
 
     // Status symbols are now computed during data collection (both modes), no fallback needed
