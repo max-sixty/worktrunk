@@ -314,6 +314,52 @@ To create a worktree and immediately attach:
 <span class="cmd">wt switch --create feature -x 'tmux attach -t {{ branch | sanitize }}'</span>
 {% end %}
 
+## cmux workspace per worktree
+
+Each worktree gets its own [cmux](https://cmux.com) workspace. Switching worktrees switches workspaces; removing a worktree closes its workspace. Configuration contributed by [@endigma](https://github.com/endigma) ([#2796](https://github.com/max-sixty/worktrunk/issues/2796)).
+
+**Prerequisites:** [jq](https://jqlang.org) (`brew install jq`)
+
+```toml
+# ~/.config/worktrunk/config.toml
+
+# cmux is the navigation primitive; don't also cd the invoking shell.
+[switch]
+cd = false
+
+[aliases]
+# Two-step the picker: with cd=false, `wt switch` (no args) prints the chosen
+# branch and exits without firing hooks. Capture that and feed it back so the
+# pre-switch hook runs.
+pick = """
+b=$(wt switch)
+[ -n "$b" ] && wt switch "$b"
+"""
+
+[pre-start]
+cmux = "cmux new-workspace --name {{ repo | sanitize }}/{{ branch | sanitize }} --cwd {{ worktree_path }} --focus true"
+
+[pre-switch]
+cmux = """
+WS=$(cmux --json list-workspaces 2>/dev/null \\
+  | jq -r --arg t '{{ repo | sanitize }}/{{ branch | sanitize }}' \\
+      '.workspaces[] | select(.title == $t) | .ref' | head -1)
+[ -n "$WS" ] && cmux select-workspace --workspace "$WS" || true
+"""
+
+[pre-remove]
+cmux = """
+WS=$(cmux --json list-workspaces 2>/dev/null \\
+  | jq -r --arg t '{{ repo | sanitize }}/{{ branch | sanitize }}' \\
+      '.workspaces[] | select(.title == $t) | .ref' | head -1)
+[ -n "$WS" ] && cmux close-workspace --workspace "$WS" || true
+"""
+```
+
+Use `wt pick` to open the interactive picker; `wt switch --create <branch>` and `wt switch <branch>` continue to work directly.
+
+**Why `pre-*` instead of `post-*`?** cmux restricts socket access to processes spawned inside a cmux terminal. `post-*` hooks run as detached background processes, breaking the process ancestry chain. `pre-*` hooks run in the foreground and inherit the terminal's process lineage.
+
 ## Xcode DerivedData cleanup
 
 Clean up Xcode's DerivedData when removing a worktree. Each DerivedData directory contains an `info.plist` recording its project path — grep for the worktree path to find and remove the matching build cache:
