@@ -69,4 +69,10 @@ impl<'a> ParsedFilter<'a> {
     pub(crate) fn matches_source(&self, source: HookSource) -> bool {
         self.source.is_none() || self.source == Some(source)
     }
+
+    /// Check if this filter matches a command from the given source.
+    pub(crate) fn matches_command(&self, source: HookSource, name: Option<&str>) -> bool {
+        self.matches_source(source)
+            && (self.name.is_empty() || name.is_some_and(|n| n == self.name))
+    }
 }
