@@ -4276,6 +4276,65 @@ fn test_switch_pr_forge_platform_invalid_bails(#[from(repo_with_remote)] repo: T
     });
 }
 
+/// Malformed project config must fail closed before `pr:` provider fallback.
+/// Otherwise an intended `forge.platform` override on an opaque/self-hosted
+/// remote can be ignored and route to the wrong CLI.
+#[rstest]
+fn test_switch_pr_malformed_project_config_bails_before_provider_selection(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://git.internal.example.com/owner/test-repo.git",
+    ]);
+
+    let project_config = repo.root_path().join(".config/wt.toml");
+    fs::create_dir_all(project_config.parent().unwrap()).unwrap();
+    fs::write(&project_config, "[forge]\nplatform = [\"gitea\"\n").unwrap();
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command(
+            "repo set-default --view",
+            MockResponse::output("owner/test-repo\n"),
+        )
+        .command(
+            "api",
+            MockResponse::stderr("GH provider fallback was invoked\n").with_exit_code(42),
+        )
+        .command("_default", MockResponse::exit(42))
+        .write(&mock_bin);
+
+    let output = {
+        let mut cmd = repo.wt_command();
+        cmd.args(["switch", "pr:101"]);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        cmd.output().unwrap()
+    };
+
+    assert!(
+        !output.status.success(),
+        "switch should fail on malformed project config"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Failed to load project config"),
+        "expected project-config load error, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("failed to parse"),
+        "expected TOML parse diagnostic, got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("GH provider fallback was invoked"),
+        "provider fallback should not run after malformed project config:\n{stderr}"
+    );
+}
+
 /// With no parseable remote URL, dispatch defaults to GitHub. Without `gh`
 /// installed the GitHub provider bails with the install hint — a single,
 /// readable error rather than a wrapped two-provider message.

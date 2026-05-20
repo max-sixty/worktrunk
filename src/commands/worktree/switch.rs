@@ -98,9 +98,7 @@ enum PrProviderChoice {
 /// wrapped two-provider error.
 fn choose_pr_provider(repo: &Repository) -> anyhow::Result<PrProviderChoice> {
     if let Some(platform_raw) = repo
-        .load_project_config()
-        .ok()
-        .flatten()
+        .load_project_config()?
         .and_then(|c| c.forge_platform().map(str::to_string))
     {
         let platform = platform_raw.to_ascii_lowercase();
