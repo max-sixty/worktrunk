@@ -1168,6 +1168,188 @@ fn test_install_uninstall_roundtrip(repo: TestRepo, temp_home: TempDir) {
 }
 
 #[rstest]
+fn test_uninstall_shell_custom_cmd_removes_matching_zsh_line(repo: TestRepo, temp_home: TempDir) {
+    let zshrc_path = temp_home.path().join(".zshrc");
+    fs::write(
+        &zshrc_path,
+        "# Existing config\nif command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init zsh)\"; fi\n",
+    )
+    .unwrap();
+
+    let mut install_cmd = wt_command();
+    repo.configure_wt_cmd(&mut install_cmd);
+    set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("SHELL", "/bin/zsh");
+    install_cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+    install_cmd
+        .args([
+            "config", "shell", "install", "zsh", "--yes", "--cmd", "git-wt",
+        ])
+        .current_dir(repo.root_path());
+
+    let install_output = install_cmd.output().expect("Failed to execute install");
+    assert!(
+        install_output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+    let installed = fs::read_to_string(&zshrc_path).unwrap();
+    assert!(installed.contains("git-wt config shell init zsh"));
+
+    let mut uninstall_cmd = wt_command();
+    repo.configure_wt_cmd(&mut uninstall_cmd);
+    set_temp_home_env(&mut uninstall_cmd, temp_home.path());
+    uninstall_cmd.env("SHELL", "/bin/zsh");
+    uninstall_cmd
+        .args([
+            "config",
+            "shell",
+            "uninstall",
+            "zsh",
+            "--yes",
+            "--cmd",
+            "git-wt",
+        ])
+        .current_dir(repo.root_path());
+
+    let uninstall_output = uninstall_cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        uninstall_output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&uninstall_output.stderr)
+    );
+
+    let content = fs::read_to_string(&zshrc_path).unwrap();
+    assert!(
+        !content.contains("git-wt config shell init zsh"),
+        "Custom command integration should be removed"
+    );
+    assert!(
+        content.contains("wt config shell init zsh"),
+        "Default command integration should be preserved"
+    );
+}
+
+#[rstest]
+fn test_uninstall_shell_custom_cmd_removes_fish_files(repo: TestRepo, temp_home: TempDir) {
+    let fish_functions = temp_home.path().join(".config/fish/functions");
+    let fish_completions = temp_home.path().join(".config/fish/completions");
+    fs::create_dir_all(&fish_functions).unwrap();
+    fs::create_dir_all(&fish_completions).unwrap();
+    let default_function = fish_functions.join("wt.fish");
+    let default_completion = fish_completions.join("wt.fish");
+    fs::write(&default_function, "function wt\nend\n").unwrap();
+    fs::write(&default_completion, "complete --command wt\n").unwrap();
+
+    let mut install_cmd = wt_command();
+    repo.configure_wt_cmd(&mut install_cmd);
+    set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("SHELL", "/bin/fish");
+    install_cmd
+        .args([
+            "config", "shell", "install", "fish", "--yes", "--cmd", "git-wt",
+        ])
+        .current_dir(repo.root_path());
+
+    let install_output = install_cmd.output().expect("Failed to execute install");
+    assert!(
+        install_output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+    let custom_function = fish_functions.join("git-wt.fish");
+    let custom_completion = fish_completions.join("git-wt.fish");
+    assert!(custom_function.exists());
+    assert!(custom_completion.exists());
+
+    let mut uninstall_cmd = wt_command();
+    repo.configure_wt_cmd(&mut uninstall_cmd);
+    set_temp_home_env(&mut uninstall_cmd, temp_home.path());
+    uninstall_cmd.env("SHELL", "/bin/fish");
+    uninstall_cmd
+        .args([
+            "config",
+            "shell",
+            "uninstall",
+            "fish",
+            "--yes",
+            "--cmd",
+            "git-wt",
+        ])
+        .current_dir(repo.root_path());
+
+    let uninstall_output = uninstall_cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        uninstall_output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&uninstall_output.stderr)
+    );
+
+    assert!(!custom_function.exists());
+    assert!(!custom_completion.exists());
+    assert!(default_function.exists());
+    assert!(default_completion.exists());
+}
+
+#[rstest]
+fn test_uninstall_shell_custom_cmd_removes_nushell_file(repo: TestRepo, temp_home: TempDir) {
+    let home = std::fs::canonicalize(temp_home.path()).unwrap();
+    let nu_autoload = home
+        .join(".config")
+        .join("nushell")
+        .join("vendor")
+        .join("autoload");
+    fs::create_dir_all(&nu_autoload).unwrap();
+    let default_config = nu_autoload.join("wt.nu");
+    fs::write(&default_config, "def --env --wrapped wt [] {}\n").unwrap();
+
+    let mut install_cmd = wt_command();
+    repo.configure_wt_cmd(&mut install_cmd);
+    set_temp_home_env(&mut install_cmd, temp_home.path());
+    install_cmd.env("SHELL", "/bin/nu");
+    install_cmd
+        .args([
+            "config", "shell", "install", "nu", "--yes", "--cmd", "git-wt",
+        ])
+        .current_dir(repo.root_path());
+
+    let install_output = install_cmd.output().expect("Failed to execute install");
+    assert!(
+        install_output.status.success(),
+        "Install should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+    let custom_config = nu_autoload.join("git-wt.nu");
+    assert!(custom_config.exists());
+
+    let mut uninstall_cmd = wt_command();
+    repo.configure_wt_cmd(&mut uninstall_cmd);
+    set_temp_home_env(&mut uninstall_cmd, temp_home.path());
+    uninstall_cmd.env("SHELL", "/bin/nu");
+    uninstall_cmd
+        .args([
+            "config",
+            "shell",
+            "uninstall",
+            "nu",
+            "--yes",
+            "--cmd",
+            "git-wt",
+        ])
+        .current_dir(repo.root_path());
+
+    let uninstall_output = uninstall_cmd.output().expect("Failed to execute uninstall");
+    assert!(
+        uninstall_output.status.success(),
+        "Uninstall should succeed:\nstderr: {}",
+        String::from_utf8_lossy(&uninstall_output.stderr)
+    );
+
+    assert!(!custom_config.exists());
+    assert!(default_config.exists());
+}
+
+#[rstest]
 fn test_install_uninstall_no_blank_line_accumulation(repo: TestRepo, temp_home: TempDir) {
     // Create initial config file matching the user's real zshrc structure
     let zshrc_path = temp_home.path().join(".zshrc");
