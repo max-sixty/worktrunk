@@ -316,12 +316,14 @@ pub struct CollectOptions {
 
     /// Captured ref state for this list invocation.
     ///
-    /// Built once during the pre-skeleton phase by
-    /// [`Repository::capture_refs_with_ahead_behind`] and shared (cheaply,
-    /// behind `Arc`) into every task. Tasks resolve target ref names to
-    /// commit SHAs through this snapshot, then call the `_by_sha` variants
-    /// of cached methods — bypassing the ambient ref→SHA cache entirely.
-    /// `None` when capture failed (degraded mode).
+    /// Built once during the pre-skeleton phase (or during single-item
+    /// population) and shared (cheaply, behind `Arc`) into every task.
+    /// Tasks resolve target ref names to commit SHAs through this snapshot,
+    /// then call the `_by_sha` variants of cached methods — bypassing the
+    /// ambient ref→SHA cache entirely. The full list path may include
+    /// batched ahead/behind data; single-item callers intentionally use a
+    /// plain ref snapshot and let per-row tasks fall back to per-pair
+    /// queries. `None` when capture failed (degraded mode).
     pub snapshot: Option<std::sync::Arc<worktrunk::git::RefSnapshot>>,
 
     /// Whether `WorkingTreeDiffTask` should include untracked files in
@@ -1805,11 +1807,11 @@ pub fn populate_item(
         options.default_branch = repo.default_branch();
     }
     if options.snapshot.is_none() {
-        options.snapshot = match options.default_branch.as_deref() {
-            Some(db) => repo.capture_refs_with_ahead_behind(db).ok(),
-            None => repo.capture_refs().ok(),
-        }
-        .map(std::sync::Arc::new);
+        // Statusline needs one row. Avoid the list path's repo-wide
+        // `for-each-ref %(ahead-behind:BASE)` prelude here; the
+        // AheadBehind/Upstream tasks already have cached per-pair
+        // fallbacks that do work only for this item.
+        options.snapshot = repo.capture_refs().ok().map(std::sync::Arc::new);
     }
     if options.integration_targets.is_none() {
         options.integration_targets = options
