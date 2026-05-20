@@ -400,6 +400,15 @@ jobs:
     - name: 🎯 Run affected tests
       env:
         NEXTEST_NO_INPUT_HANDLER: 1
+        # An empty affected selection is a valid outcome — a diff can touch
+        # nothing with recorded coverage. nextest's default exits 4 ("no
+        # tests to run"), which fails this advisory job spuriously. Windows
+        # hits this every run: the `#[cfg_attr(windows, ignore)]` tests never
+        # execute during `collect` (nextest skips ignored tests), so they get
+        # no coverage rows and cargo-affected keeps re-flagging them as `new`
+        # and selecting them — then `nextest run` skips them as ignored too,
+        # so zero run. `warn` exits 0 and leaves the breadcrumb in the log.
+        NEXTEST_NO_TESTS: warn
       run: cargo affected run --report-json target/affected/report.json -- --features shell-integration-tests
 
     # Report writes BEFORE nextest runs, so it survives test failures —
