@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_custom_performance",
+  "title": "Startup latency and parallel status collection",
+  "summary": "`wt` runs on the interactive path: `wt list` and `wt statusline` execute constantly, statusline on every shell prompt, so time-to-first-output (TTFP) and the parallelism of worktree-status collection are first-class concerns. The collection layer fans per-worktree git queries out across worker threads; the parallelism must be correct (independent work not serialized, no over-spawn beyond the logical CPU count, cached Repository values reused rather than re-queried) and must stream results rather than buffer. Findings here are `performance` and `concurrency` category, code-level anti-patterns (needless work, blocking I/O on the hot path, missing parallelism); the benchmarks measure the actual latency. Pair with `cargo bench --bench time_to_first_output` / `--bench list` and `cargo run -p wt-perf -- timeline` for evidence.",
+  "kind": "library",
+  "source": "manual",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/commands/list/collect/mod.rs",
+      "symbol": "collect",
+      "route": null,
+      "command": "wt list"
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/commands/list/collect/mod.rs",
+      "reason": "collect: status-collection orchestration and result streaming"
+    },
+    {
+      "path": "src/commands/list/collect/execution.rs",
+      "reason": "parallel work-item dispatch across worker threads"
+    },
+    {
+      "path": "src/commands/list/collect/tasks.rs",
+      "reason": "per-worktree git query tasks: the units fanned out in parallel"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "src/main.rs",
+      "reason": "process startup path before first output (TTFP)"
+    },
+    {
+      "path": "src/git/repository/mod.rs",
+      "reason": "RepoCache: cached values that must be reused, not re-queried per task"
+    },
+    {
+      "path": "src/trace/emit.rs",
+      "reason": "[wt-trace] timing instrumentation"
+    },
+    {
+      "path": "CLAUDE.md",
+      "reason": "Benchmarks & Traces; Repository Caching"
+    },
+    {
+      "path": "benches/CLAUDE.md",
+      "reason": "benchmark filter map and expected numbers"
+    }
+  ],
+  "tests": [
+    {
+      "path": "benches/time_to_first_output.rs",
+      "command": "cargo bench --bench time_to_first_output"
+    },
+    {
+      "path": "tests/integration_tests/list.rs",
+      "command": "cargo test --test integration list"
+    }
+  ],
+  "tags": [
+    "rust",
+    "performance",
+    "concurrency",
+    "startup"
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-05-19T00:00:00.000Z",
+  "updatedAt": "2026-05-19T00:00:00.000Z"
+}

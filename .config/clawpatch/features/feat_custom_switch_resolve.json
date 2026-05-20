@@ -32,6 +32,22 @@
       "reason": "remote ref parsing (PR/MR URLs)"
     },
     {
+      "path": "src/git/remote_ref/github.rs",
+      "reason": "GitHub PR fetch and owner/repo URL derivation from the forge remote"
+    },
+    {
+      "path": "src/git/remote_ref/gitlab.rs",
+      "reason": "GitLab MR fetch and project URL parsing"
+    },
+    {
+      "path": "src/git/remote_ref/gitea.rs",
+      "reason": "Gitea PR fetch and URL parsing"
+    },
+    {
+      "path": "src/git/remote_ref/azure.rs",
+      "reason": "Azure DevOps PR fetch and source-branch validation"
+    },
+    {
       "path": "src/git/repository/branch.rs",
       "reason": "branch name handling"
     }
@@ -101,5 +117,5 @@
     }
   ],
   "createdAt": "2026-05-16T21:00:00.000Z",
-  "updatedAt": "2026-05-17T05:12:27.656Z"
+  "updatedAt": "2026-05-19T00:00:00.000Z"
 }

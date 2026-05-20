@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_custom_signal_handling",
+  "title": "Signal handling: Ctrl-C aborts every child-process loop",
+  "summary": "wt installs a signal_hook SIGINT/SIGTERM handler that forwards signals to child process groups, so wt itself does not die from the user's Ctrl-C, only the current child does. Every foreground loop that runs multiple child processes (`wt step for-each`, hook pipelines, alias steps, concurrent groups) MUST abort on a signal-derived child exit instead of charging into the next iteration: otherwise one Ctrl-C against `wt merge` runs the remaining hook steps, with FailureStrategy::Warn silently swallowing each interrupt. Detect via `err.interrupt_exit_code()` (the worktrunk::git::ErrorExt trait); the check happens before any FailureStrategy branch. The structured channel is WorktrunkError::ChildProcessExited { signal }, never sniff code >= 128. See CLAUDE.md > Signal Handling.",
+  "kind": "library",
+  "source": "manual",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/commands/command_executor.rs",
+      "symbol": "handle_command_error",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/commands/command_executor.rs",
+      "reason": "handle_command_error: enforces signal-abort for hook and alias pipelines, foreground and concurrent groups"
+    },
+    {
+      "path": "src/commands/for_each.rs",
+      "reason": "wt step for-each: per-worktree loop must break on a signal-derived child exit"
+    },
+    {
+      "path": "src/git/error.rs",
+      "reason": "ErrorExt::interrupt_exit_code and the WorktrunkError::ChildProcessExited signal channel"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "src/shell_exec.rs",
+      "reason": "Cmd: spawns children into the process groups the signal handler forwards to"
+    },
+    {
+      "path": "src/commands/command_approval.rs",
+      "reason": "FailureStrategy::Warn must not swallow signal-derived errors"
+    },
+    {
+      "path": "CLAUDE.md",
+      "reason": "Signal Handling policy: every child-process loop aborts on a signal"
+    }
+  ],
+  "tests": [
+    {
+      "path": "tests/integration_tests/user_hooks.rs",
+      "command": "cargo test --test integration user_hooks"
+    }
+  ],
+  "tags": [
+    "rust",
+    "signal-handling",
+    "concurrency",
+    "interrupt"
+  ],
+  "trustBoundaries": [
+    "process-exec",
+    "concurrency"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-05-19T00:00:00.000Z",
+  "updatedAt": "2026-05-19T00:00:00.000Z"
+}

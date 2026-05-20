@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_custom_network_boundary",
+  "title": "Local-first network-access boundary",
+  "summary": "Worktrunk is local-first: the network is touched only when the user explicitly asked for it. The single sanctioned exception is the first `Repository::default_branch()` per repo, which may fall through to `git ls-remote` and then caches into `worktrunk.default-branch`; every later call is local. No other accessor (alias dispatch, hook context build, `wt statusline`, recovery paths, background TTL-cache refreshes) may reach the wire. This feature audits every potential egress (`git fetch`, `git ls-remote`, `gh`, `glab`, `az`, HTTP) and verifies each call site is one the user explicitly invoked. See CLAUDE.md > Network Access.",
+  "kind": "library",
+  "source": "manual",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/git/repository/config.rs",
+      "symbol": "default_branch",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/git/repository/config.rs",
+      "reason": "default_branch(): the one sanctioned ls-remote fallback and its worktrunk.default-branch cache"
+    },
+    {
+      "path": "src/commands/statusline.rs",
+      "reason": "runs on every shell prompt: must never reach the wire"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "src/git/remote_ref/mod.rs",
+      "reason": "PR/MR fetch: the legitimate user-invoked egress, must not run on background paths"
+    },
+    {
+      "path": "src/shell_exec.rs",
+      "reason": "Cmd: where external commands (git, gh, glab) spawn"
+    },
+    {
+      "path": "src/commands/alias.rs",
+      "reason": "alias dispatch must resolve locally, no fallthrough to the wire"
+    },
+    {
+      "path": "CLAUDE.md",
+      "reason": "Network Access policy and the single default_branch exception"
+    }
+  ],
+  "tests": [
+    {
+      "path": "tests/integration_tests/switch.rs",
+      "command": "cargo test --test integration switch"
+    }
+  ],
+  "tags": [
+    "rust",
+    "network-policy",
+    "performance",
+    "audit"
+  ],
+  "trustBoundaries": [
+    "network",
+    "process-exec"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-05-19T00:00:00.000Z",
+  "updatedAt": "2026-05-19T00:00:00.000Z"
+}
