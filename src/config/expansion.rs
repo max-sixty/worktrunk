@@ -674,6 +674,36 @@ fn build_template_error(
     }
 }
 
+fn sorted_available_vars(vars: &[&str]) -> Vec<String> {
+    let mut keys: Vec<String> = vars.iter().map(|k| k.to_string()).collect();
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+fn build_undefined_vars_error(
+    name: &str,
+    undefined_vars: &[String],
+    available_vars: Vec<String>,
+) -> TemplateExpandError {
+    let names = undefined_vars
+        .iter()
+        .map(|var| format!("`{var}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let noun = if undefined_vars.len() == 1 {
+        "value"
+    } else {
+        "values"
+    };
+
+    TemplateExpandError {
+        message: format!("Failed to expand {name}: undefined {noun}: {names}"),
+        source_line: None,
+        available_vars,
+    }
+}
+
 /// Set up a minijinja environment with worktrunk's custom filters and functions.
 ///
 /// Shared by [`expand_template`] and [`validate_template`] to ensure both use
@@ -824,12 +854,24 @@ pub fn validate_template(
         .template_from_named_str(name, template)
         .map_err(|e| build_template_error(&e, template, name, Vec::new()))?;
 
+    let mut allowed: BTreeSet<String> = available.iter().map(|k| k.to_string()).collect();
+    allowed.insert("vars".to_string());
+    let mut undefined: Vec<String> = tmpl
+        .undeclared_variables(false)
+        .into_iter()
+        .filter(|var| !allowed.contains(var))
+        .collect();
+    undefined.sort();
+    if !undefined.is_empty() {
+        return Err(build_undefined_vars_error(
+            name,
+            &undefined,
+            sorted_available_vars(&available),
+        ));
+    }
+
     tmpl.render(minijinja::Value::from_object(context))
-        .map_err(|e| {
-            let mut keys: Vec<String> = available.iter().map(|k| k.to_string()).collect();
-            keys.sort();
-            build_template_error(&e, template, name, keys)
-        })?;
+        .map_err(|e| build_template_error(&e, template, name, sorted_available_vars(&available)))?;
 
     Ok(())
 }
@@ -2304,6 +2346,21 @@ mod tests {
             )
             .is_ok()
         );
+
+        // Typos in conditional predicates must not be hidden by SemiStrict truthiness.
+        let err = validate_template(
+            "{% if targte %}echo {{ target }}{% endif %}",
+            ValidationScope::Hook(HookType::PreMerge),
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("undefined value"),
+            "got: {}",
+            err.message
+        );
+        assert!(err.message.contains("targte"), "got: {}", err.message);
 
         // `pr_number`/`pr_url` are available in pre-start (populated when
         // creating via `pr:N` / `mr:N`).
