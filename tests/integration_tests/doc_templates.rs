@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use rstest::rstest;
 use worktrunk::config::expand_template;
 use worktrunk::git::Repository;
+use worktrunk::shell_exec::ShellEscapeMode;
 
 use crate::common::{TestRepo, repo};
 
@@ -39,19 +40,47 @@ fn test_doc_basic_variables(repo: TestRepo) {
 
     // Each variable substitutes correctly
     assert_eq!(
-        expand_template("{{ repo }}", &vars, false, &repository, "test").unwrap(),
+        expand_template(
+            "{{ repo }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &repository,
+            "test"
+        )
+        .unwrap(),
         "myproject"
     );
     assert_eq!(
-        expand_template("{{ branch }}", &vars, false, &repository, "test").unwrap(),
+        expand_template(
+            "{{ branch }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &repository,
+            "test"
+        )
+        .unwrap(),
         "feature/auth"
     );
     assert_eq!(
-        expand_template("{{ worktree }}", &vars, false, &repository, "test").unwrap(),
+        expand_template(
+            "{{ worktree }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &repository,
+            "test"
+        )
+        .unwrap(),
         "/home/user/myproject.feature-auth"
     );
     assert_eq!(
-        expand_template("{{ default_branch }}", &vars, false, &repository, "test").unwrap(),
+        expand_template(
+            "{{ default_branch }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &repository,
+            "test"
+        )
+        .unwrap(),
         "main"
     );
 }
@@ -69,14 +98,28 @@ fn test_doc_sanitize_filter(repo: TestRepo) {
     // From docs: {{ branch | sanitize }} replaces / and \ with -
     vars.insert("branch", "feature/foo");
     assert_eq!(
-        expand_template("{{ branch | sanitize }}", &vars, false, &repository, "test").unwrap(),
+        expand_template(
+            "{{ branch | sanitize }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &repository,
+            "test"
+        )
+        .unwrap(),
         "feature-foo",
         "sanitize should replace / with -"
     );
 
     vars.insert("branch", r"user\task");
     assert_eq!(
-        expand_template("{{ branch | sanitize }}", &vars, false, &repository, "test").unwrap(),
+        expand_template(
+            "{{ branch | sanitize }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &repository,
+            "test"
+        )
+        .unwrap(),
         "user-task",
         r"sanitize should replace \ with -"
     );
@@ -84,7 +127,14 @@ fn test_doc_sanitize_filter(repo: TestRepo) {
     // Nested paths
     vars.insert("branch", "user/feature/task");
     assert_eq!(
-        expand_template("{{ branch | sanitize }}", &vars, false, &repository, "test").unwrap(),
+        expand_template(
+            "{{ branch | sanitize }}",
+            &vars,
+            ShellEscapeMode::Literal,
+            &repository,
+            "test"
+        )
+        .unwrap(),
         "user-feature-task",
         "sanitize should handle multiple slashes"
     );
@@ -106,7 +156,7 @@ fn test_doc_sanitize_db_filter(repo: TestRepo) {
     let result = expand_template(
         "{{ branch | sanitize_db }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &repository,
         "test",
     )
@@ -121,7 +171,7 @@ fn test_doc_sanitize_db_filter(repo: TestRepo) {
     let result = expand_template(
         "{{ branch | sanitize_db }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &repository,
         "test",
     )
@@ -136,7 +186,7 @@ fn test_doc_sanitize_db_filter(repo: TestRepo) {
     let result = expand_template(
         "{{ branch | sanitize_db }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &repository,
         "test",
     )
@@ -151,7 +201,7 @@ fn test_doc_sanitize_db_filter(repo: TestRepo) {
     let result = expand_template(
         "{{ branch | sanitize_db }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &repository,
         "test",
     )
@@ -166,7 +216,7 @@ fn test_doc_sanitize_db_filter(repo: TestRepo) {
     let result1 = expand_template(
         "{{ branch | sanitize_db }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &repository,
         "test",
     )
@@ -175,7 +225,7 @@ fn test_doc_sanitize_db_filter(repo: TestRepo) {
     let result2 = expand_template(
         "{{ branch | sanitize_db }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &repository,
         "test",
     )
@@ -197,7 +247,7 @@ fn test_doc_sanitize_db_truncation(repo: TestRepo) {
     let result = expand_template(
         "{{ branch | sanitize_db }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &repository,
         "test",
     )
@@ -223,7 +273,7 @@ fn test_doc_hash_port_filter(repo: TestRepo) {
     let result = expand_template(
         "{{ branch | hash_port }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &repository,
         "test",
     )
@@ -239,7 +289,7 @@ fn test_doc_hash_port_filter(repo: TestRepo) {
     let result2 = expand_template(
         "{{ branch | hash_port }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &repository,
         "test",
     )
@@ -268,7 +318,7 @@ fn test_doc_hash_port_concatenation_precedence(repo: TestRepo) {
     let with_parens = expand_template(
         "{{ ('db-' ~ branch) | hash_port }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &repository,
         "test",
     )
@@ -286,7 +336,7 @@ fn test_doc_hash_port_concatenation_precedence(repo: TestRepo) {
     let without_parens = expand_template(
         "{{ 'db-' ~ branch | hash_port }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &repository,
         "test",
     )
@@ -321,7 +371,7 @@ fn test_doc_hash_port_repo_branch_concatenation(repo: TestRepo) {
     let result = expand_template(
         "{{ (repo ~ '-' ~ branch) | hash_port }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &repository,
         "test",
     )
@@ -356,7 +406,14 @@ fn test_doc_example_docker_postgres(repo: TestRepo) {
   -p {{ ('db-' ~ branch) | hash_port }}:5432 \
   postgres:16"#;
 
-    let result = expand_template(template, &vars, false, &repository, "test").unwrap();
+    let result = expand_template(
+        template,
+        &vars,
+        ShellEscapeMode::Literal,
+        &repository,
+        "test",
+    )
+    .unwrap();
 
     // Check the container name uses sanitized branch
     assert!(
@@ -384,7 +441,14 @@ fn test_doc_example_database_url(repo: TestRepo) {
 
     let template = "DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ repo }}";
 
-    let result = expand_template(template, &vars, false, &repository, "test").unwrap();
+    let result = expand_template(
+        template,
+        &vars,
+        ShellEscapeMode::Literal,
+        &repository,
+        "test",
+    )
+    .unwrap();
 
     let expected_port = hash_port("db-feature");
     assert_eq!(
@@ -404,7 +468,14 @@ fn test_doc_example_dev_server(repo: TestRepo) {
 
     let template = "npm run dev -- --host {{ branch }}.localhost --port {{ branch | hash_port }}";
 
-    let result = expand_template(template, &vars, false, &repository, "test").unwrap();
+    let result = expand_template(
+        template,
+        &vars,
+        ShellEscapeMode::Literal,
+        &repository,
+        "test",
+    )
+    .unwrap();
 
     let expected_port = hash_port("feature-auth");
     assert_eq!(
@@ -425,7 +496,14 @@ fn test_doc_example_worktree_path_sanitize(repo: TestRepo) {
 
     let template = "{{ main_worktree }}.{{ branch | sanitize }}";
 
-    let result = expand_template(template, &vars, false, &repository, "test").unwrap();
+    let result = expand_template(
+        template,
+        &vars,
+        ShellEscapeMode::Literal,
+        &repository,
+        "test",
+    )
+    .unwrap();
     assert_eq!(result, "/home/user/project.feature-user-auth");
 }
 
@@ -442,7 +520,7 @@ fn test_doc_hash_port_empty_string(repo: TestRepo) {
     let result = expand_template(
         "{{ branch | hash_port }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &repository,
         "test",
     )
@@ -461,8 +539,14 @@ fn test_doc_sanitize_no_slashes(repo: TestRepo) {
     let mut vars = HashMap::new();
     vars.insert("branch", "simple-branch");
 
-    let result =
-        expand_template("{{ branch | sanitize }}", &vars, false, &repository, "test").unwrap();
+    let result = expand_template(
+        "{{ branch | sanitize }}",
+        &vars,
+        ShellEscapeMode::Literal,
+        &repository,
+        "test",
+    )
+    .unwrap();
     assert_eq!(
         result, "simple-branch",
         "sanitize should be no-op without slashes"
@@ -479,7 +563,7 @@ fn test_doc_combined_filters(repo: TestRepo) {
     let result = expand_template(
         "{{ branch | sanitize | hash_port }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &repository,
         "test",
     )
@@ -503,7 +587,7 @@ fn test_worktree_path_of_branch_function_registered(repo: TestRepo) {
     let result = expand_template(
         "{{ worktree_path_of_branch('nonexistent') }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &repository,
         "test",
     );
@@ -536,7 +620,7 @@ fn test_worktree_path_of_branch_shell_escape(repo: TestRepo) {
     let result_literal = expand_template(
         "{{ worktree_path_of_branch('test-branch') }}",
         &vars,
-        false,
+        ShellEscapeMode::Literal,
         &repository,
         "test",
     )
@@ -551,7 +635,7 @@ fn test_worktree_path_of_branch_shell_escape(repo: TestRepo) {
     let result_escaped = expand_template(
         "{{ worktree_path_of_branch('test-branch') }}",
         &vars,
-        true,
+        ShellEscapeMode::Posix,
         &repository,
         "test",
     )

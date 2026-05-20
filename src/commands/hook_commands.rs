@@ -693,10 +693,15 @@ fn expand_command_template(
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    // Use the standard template expansion (shell-escaped)
+    // Standard template expansion. Hooks always run through `Cmd::shell`
+    // (POSIX), so the preview is POSIX-escaped.
     // On any error, show both the template and error message
-    Ok(
-        worktrunk::config::expand_template(template, &vars, true, ctx.repo, "hook preview")
-            .unwrap_or_else(|err| format!("# {}\n{}", err.message, template)),
+    Ok(worktrunk::config::expand_template(
+        template,
+        &vars,
+        worktrunk::shell_exec::ShellEscapeMode::Posix,
+        ctx.repo,
+        "hook preview",
     )
+    .unwrap_or_else(|err| format!("# {}\n{}", err.message, template)))
 }

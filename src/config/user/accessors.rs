@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use crate::config::HooksConfig;
 use crate::config::commands::CommandConfig;
 use crate::config::expansion::expand_template;
+use crate::shell_exec::ShellEscapeMode;
 
 use super::UserConfig;
 use super::merge::Merge;
@@ -223,9 +224,13 @@ impl UserConfig {
         if let Some(ref owner) = owner {
             vars.insert("owner", owner.as_str());
         }
-        Ok(
-            expand_template(&template, &vars, false, repo, "worktree-path")
-                .map(|p| shellexpand::tilde(&p).into_owned())?,
+        Ok(expand_template(
+            &template,
+            &vars,
+            ShellEscapeMode::Literal,
+            repo,
+            "worktree-path",
         )
+        .map(|p| shellexpand::tilde(&p).into_owned())?)
     }
 }
