@@ -33,8 +33,9 @@
 //! # Log layout invariant
 //!
 //! Inside `wt_logs_dir()`, top-level *files* are shared logs (`commands.jsonl*`,
-//! `trace.log`, `output.log`, `diagnostic.md`) and top-level *directories* are
-//! per-branch log trees (`{branch}/{source|internal}/{hook-type}/{name}.log`).
+//! `internal-*.log`, `trace.log`, `output.log`, `diagnostic.md`) and top-level
+//! *directories* are per-branch log trees
+//! (`{branch}/{source|internal}/{hook-type}/{name}.log`).
 //! Categorization
 //! relies on this file-vs-directory distinction: new top-level shared entries
 //! must remain files. If a future category needs multiple files, it should live
@@ -110,8 +111,15 @@ pub fn require_user_config_path() -> anyhow::Result<PathBuf> {
 /// Top-level files created by `-vv` under `wt_logs_dir()`.
 const DIAGNOSTIC_FILES: &[&str] = &["trace.log", "output.log", "diagnostic.md"];
 
+/// Whether a top-level file is a diagnostic log.
+///
+/// Covers the fixed `-vv` files and repo-wide internal-operation logs
+/// (`internal-{op}.log`, e.g. `internal-trash-sweep.log`) — both are
+/// branch-agnostic shared files, distinct from the per-branch hook-output
+/// subtrees and the `commands.jsonl` audit log.
 fn is_diagnostic_file(name: &str) -> bool {
     DIAGNOSTIC_FILES.contains(&name)
+        || (name.starts_with("internal-") && name.ends_with(".log"))
 }
 
 /// Truncate a string for a display cell, counting by Unicode scalars.

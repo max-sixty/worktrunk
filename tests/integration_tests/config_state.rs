@@ -28,6 +28,11 @@ fn internal_log_rel_path(branch: &str, op: &str) -> PathBuf {
         .join(format!("{op}.log"))
 }
 
+/// Relative path of a repo-wide internal-operation log under the wt logs directory.
+fn shared_internal_log_rel_path(op: &str) -> PathBuf {
+    PathBuf::from(format!("internal-{op}.log"))
+}
+
 /// Write a log file at `log_dir / relative`, creating parent directories.
 fn write_log_at(log_dir: &Path, relative: &Path, contents: &str) {
     let full = log_dir.join(relative);
@@ -2148,6 +2153,38 @@ fn test_logs_get_json_internal_op_structure(repo: TestRepo) {
     assert_eq!(hook["hook_type"], serde_json::Value::Null);
     assert_eq!(hook["name"], "remove");
     assert!(hook["branch"].as_str().unwrap().starts_with("feature"));
+}
+
+/// Repo-wide internal logs are top-level shared files, not branch subtrees.
+/// They must surface under `diagnostic` rather than being silently dropped.
+#[rstest]
+fn test_logs_get_json_shared_internal_log_is_not_hook_output(repo: TestRepo) {
+    let log_dir = repo.root_path().join(".git/wt/logs");
+    let relative = shared_internal_log_rel_path("trash-sweep");
+    write_log_at(&log_dir, &relative, "sweep output");
+
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(
+        parsed["hook_output"].as_array().unwrap().is_empty(),
+        "shared internal log must not be reported as branch hook output: {stdout}"
+    );
+    assert!(
+        !log_dir.join("internal").exists(),
+        "shared internal log must not create a branch-like internal directory"
+    );
+    let diagnostic = parsed["diagnostic"].as_array().unwrap();
+    assert_eq!(
+        diagnostic.len(),
+        1,
+        "shared internal log must surface as a diagnostic: {stdout}"
+    );
+    assert_eq!(diagnostic[0]["file"], "internal-trash-sweep.log");
 }
 
 /// Log files that don't match the expected branch subtree layout (`{branch}/{source}/{hook_type}/{name}.log`
