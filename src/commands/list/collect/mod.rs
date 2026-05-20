@@ -264,9 +264,11 @@ struct TableRenderPlan {
 impl TableRenderPlan {
     fn render(mut self) -> anyhow::Result<bool> {
         if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
-            if self.progressive_table.is_none() {
-                print_first_buffered_line(&self.header)?;
-            }
+            // `progressive_table` is always `None` here: `collect()` early-exits
+            // for `WORKTRUNK_FIRST_OUTPUT` whenever progressive rendering is on
+            // (`show_progress || progressive_handler.is_some()`), so this render
+            // path runs only in buffered mode.
+            print_first_buffered_line(&self.header)?;
             return Ok(true);
         }
 

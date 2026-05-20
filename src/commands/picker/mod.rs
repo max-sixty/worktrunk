@@ -1226,18 +1226,70 @@ pub mod tests {
         };
 
         let (_planning_repo, result) = collector.prepare_removal("(detached)").unwrap();
-        let RemoveResult::RemovedWorktree {
-            worktree_path,
-            branch_name,
-            ..
-        } = result
-        else {
-            panic!("detached picker removal should resolve to a worktree");
+        let canonical_second = dunce::canonicalize(&second_path).unwrap();
+        assert!(
+            matches!(
+                &result,
+                RemoveResult::RemovedWorktree { worktree_path, branch_name: None, .. }
+                    if dunce::canonicalize(worktree_path).unwrap() == canonical_second
+            ),
+            "detached picker removal should resolve to the surviving detached worktree"
+        );
+    }
+
+    /// A branch with no worktree resolves to `RemoveTarget::Branch` — it
+    /// matches no worktree path, so `prepare_removal` falls through to the
+    /// branch-only disposition rather than a worktree removal.
+    #[test]
+    fn test_prepare_removal_resolves_branch_only_item() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+
+        // A branch at the same commit as main, with no worktree. There are no
+        // detached worktrees, so the detached fallback can't capture it.
+        repo.run_command(&["branch", "branch-only-feature"])
+            .unwrap();
+
+        let state_dir = tempfile::tempdir().unwrap();
+        let collector = PickerCollector {
+            items: Arc::new(Mutex::new(Vec::new())),
+            signal_path: state_dir.path().join("remove"),
+            repo,
+            approvals: Arc::new(Approvals::default()),
         };
-        assert_eq!(branch_name, None);
-        assert_eq!(
-            dunce::canonicalize(worktree_path).unwrap(),
-            dunce::canonicalize(second_path).unwrap()
+
+        let (_planning_repo, result) = collector.prepare_removal("branch-only-feature").unwrap();
+        assert!(
+            matches!(&result, RemoveResult::BranchOnly { branch_name, .. } if branch_name == "branch-only-feature"),
+            "a branch with no worktree should resolve to BranchOnly"
+        );
+    }
+
+    /// A selection that names neither a worktree nor a local branch fails the
+    /// `prepare_worktree_removal` validation, so `prepare_removal` returns the
+    /// error rather than touching the picker list.
+    #[test]
+    fn test_prepare_removal_errors_on_unknown_target() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+
+        let state_dir = tempfile::tempdir().unwrap();
+        let collector = PickerCollector {
+            items: Arc::new(Mutex::new(Vec::new())),
+            signal_path: state_dir.path().join("remove"),
+            repo,
+            approvals: Arc::new(Approvals::default()),
+        };
+
+        // `RemoveResult` isn't `Debug`; drop the Ok payload so `unwrap_err`
+        // (which needs `T: Debug`) can report a failure cleanly.
+        let err = collector
+            .prepare_removal("no-such-branch")
+            .map(|_| ())
+            .expect_err("unknown removal target should fail validation");
+        assert!(
+            err.to_string().contains("no-such-branch"),
+            "error should name the unresolved target: {err:#}"
         );
     }
 
@@ -1291,9 +1343,86 @@ pub mod tests {
         assert!(!marker.exists(), "unapproved pre-remove hook must not run");
     }
 
-    // Note: skim's `as_any().downcast_ref::<WorktreeSkimItem>()` fails at
-    // runtime due to TypeId mismatch between skim's reader thread and the main
-    // compilation unit (skim 0.20 bug). The invoke() code path uses output()
-    // matching instead. Full invoke() tests require interactive skim — verified
-    // via tmux-cli during development.
+    /// alt-r on the *current* worktree: `invoke()` validates and removes the
+    /// item, then — because the picker's working directory just disappeared —
+    /// cd's the process to the home worktree and re-anchors `self.repo` there.
+    /// Exercises the `changed_directory` branch end to end.
+    ///
+    /// Skim drives `invoke()` directly here; the trait takes `&mut self` and a
+    /// dummy `components_to_stop` counter, so no live skim event loop is needed.
+    /// (skim's `as_any().downcast_ref::<WorktreeSkimItem>()` is the part that
+    /// can't run off the reader thread — `invoke()` itself matches on
+    /// `output()`, so plain `String` skim items suffice.)
+    #[test]
+    fn test_invoke_removes_current_worktree_and_relocates() {
+        use std::sync::atomic::AtomicUsize;
+
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let main_repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let wt_dir = tempfile::tempdir().unwrap();
+        let victim_path = wt_dir.path().join("victim");
+        let keeper_path = wt_dir.path().join("keeper");
+        for (branch, path) in [
+            ("victim", victim_path.as_path()),
+            ("keeper", keeper_path.as_path()),
+        ] {
+            main_repo
+                .run_command(&["worktree", "add", "-b", branch, path.to_str().unwrap()])
+                .unwrap();
+        }
+
+        // The picker's repo is anchored at the worktree it was launched from —
+        // `victim` — so removing it counts as removing the current worktree.
+        let collector_repo = worktrunk::git::Repository::at(&victim_path).unwrap();
+        let state_dir = tempfile::tempdir().unwrap();
+        let items: Vec<Arc<dyn skim::SkimItem>> = vec![
+            Arc::new("victim".to_string()),
+            Arc::new("keeper".to_string()),
+        ];
+        let mut collector = PickerCollector {
+            items: Arc::new(Mutex::new(items)),
+            signal_path: state_dir.path().join("remove"),
+            repo: collector_repo,
+            approvals: Arc::new(Approvals::default()),
+        };
+        std::fs::write(&collector.signal_path, "victim\n").unwrap();
+
+        // `invoke()` cd's the process out of the deleted worktree. Restore the
+        // original cwd afterwards so the mutation can't leak to other tests.
+        // The cd target is this test's own home-worktree tempdir — distinct
+        // from every other test's tempdir — so even within the restore window
+        // nothing else can observe a colliding path.
+        let original_cwd = std::env::current_dir().unwrap();
+        {
+            use super::CommandCollector;
+            let _ = collector.invoke("remove", Arc::new(AtomicUsize::new(0)));
+        }
+        std::env::set_current_dir(&original_cwd).unwrap();
+
+        // The removal runs on a background thread — wait for it to finish.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while victim_path.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "background removal did not delete the worktree"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(keeper_path.exists(), "non-selected worktree should remain");
+
+        // The picker dropped the removed item and re-anchored its repo at the
+        // home worktree (the deleted worktree's discovery path is gone).
+        let remaining: Vec<String> = collector
+            .items
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|i| i.output().into_owned())
+            .collect();
+        assert_eq!(remaining, ["keeper"]);
+        assert_eq!(
+            dunce::canonicalize(collector.repo.discovery_path()).unwrap(),
+            dunce::canonicalize(test.path()).unwrap(),
+        );
+    }
 }
