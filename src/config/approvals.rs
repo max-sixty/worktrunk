@@ -20,6 +20,7 @@
 //! convenience.
 
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -146,10 +147,9 @@ impl Approvals {
 impl Approvals {
     /// Save approvals to a specific file path.
     pub fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| ConfigError(format!("Failed to create approvals directory: {e}")))?;
-        }
+        let parent = save_parent(path);
+        std::fs::create_dir_all(parent)
+            .map_err(|e| ConfigError(format!("Failed to create approvals directory: {e}")))?;
 
         let mut doc = toml_edit::DocumentMut::new();
 
@@ -178,11 +178,38 @@ impl Approvals {
             output
         };
 
-        std::fs::write(path, output)
-            .map_err(|e| ConfigError(format!("Failed to write approvals file: {e}")))?;
+        write_approvals_file(path, &output)?;
 
         Ok(())
     }
+}
+
+fn save_parent(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+fn write_approvals_file(path: &Path, output: &str) -> Result<(), ConfigError> {
+    let parent = save_parent(path);
+    let mut temp = tempfile::Builder::new()
+        .prefix(".approvals.")
+        .suffix(".tmp")
+        .tempfile_in(parent)
+        .map_err(|e| ConfigError(format!("Failed to create temporary approvals file: {e}")))?;
+
+    temp.write_all(output.as_bytes())
+        .map_err(|e| ConfigError(format!("Failed to write temporary approvals file: {e}")))?;
+    temp.flush()
+        .map_err(|e| ConfigError(format!("Failed to flush temporary approvals file: {e}")))?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|e| ConfigError(format!("Failed to sync temporary approvals file: {e}")))?;
+
+    temp.persist(path)
+        .map_err(|e| ConfigError(format!("Failed to replace approvals file: {}", e.error)))?;
+
+    Ok(())
 }
 
 // =========================================================================
@@ -402,6 +429,18 @@ mod tests {
         Approvals::load_from_file(path)
     }
 
+    #[cfg(unix)]
+    struct WritableOnDrop(PathBuf);
+
+    #[cfg(unix)]
+    impl Drop for WritableOnDrop {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+
     #[test]
     fn test_empty_approvals() {
         let approvals = Approvals::default();
@@ -540,6 +579,55 @@ mod tests {
         let loaded = load_from_path(&path).unwrap();
         assert!(loaded.is_command_approved("github.com/user/repo", "npm install"));
         assert!(loaded.is_command_approved("github.com/user/repo", "npm test"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_save_failure_preserves_existing_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let approvals_dir = temp_dir.path().join("readonly");
+        std::fs::create_dir(&approvals_dir).unwrap();
+        let path = approvals_dir.join("approvals.toml");
+
+        let mut original = Approvals::default();
+        original.projects.insert(
+            "github.com/user/repo".to_string(),
+            super::ApprovedProject {
+                approved_commands: vec!["npm install".to_string()],
+            },
+        );
+        original.save_to(&path).unwrap();
+        let original_content = std::fs::read_to_string(&path).unwrap();
+
+        std::fs::set_permissions(&approvals_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let _restore = WritableOnDrop(approvals_dir.clone());
+        let test_file = approvals_dir.join("test_write");
+        if std::fs::write(&test_file, "test").is_ok() {
+            let _ = std::fs::remove_file(test_file);
+            return;
+        }
+
+        let mut replacement = Approvals::default();
+        replacement.projects.insert(
+            "github.com/user/repo".to_string(),
+            super::ApprovedProject {
+                approved_commands: vec!["npm test".to_string()],
+            },
+        );
+        let err = replacement.save_to(&path).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Failed to create temporary approvals file"),
+            "Expected temporary file creation error, got: {}",
+            err
+        );
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original_content);
+        let loaded = Approvals::load_from_file(&path).unwrap();
+        assert!(loaded.is_command_approved("github.com/user/repo", "npm install"));
+        assert!(!loaded.is_command_approved("github.com/user/repo", "npm test"));
     }
 
     #[test]
