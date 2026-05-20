@@ -118,13 +118,7 @@ Why: wt installs a `signal_hook` SIGINT/SIGTERM handler so it can forward signal
 
 ## Hook Output Logs
 
-Centralized in `.git/wt/logs/` (the main worktree's git directory). Per-branch logs live in subtrees; the same operation on the same branch overwrites the previous log.
-
-- Background hooks: `{branch}/{source}/{hook-type}/{name}.log` (source: `user` or `project`)
-- Background removal: `{branch}/internal/remove.log`
-- Repo-wide internal ops (e.g. trash sweep): `internal/{op}.log` (no branch segment)
-
-Top-level *files* are shared logs (`commands.jsonl*`, `trace.log`, `output.log`, `diagnostic.md`); the top-level `internal/` directory holds repo-wide internal-op logs; every other top-level directory is a per-branch tree. Branch and hook names go through `sanitize_for_filename` (already-safe names pass through; invalid characters become `-` plus a short collision-avoidance hash).
+`.git/wt/logs/` layout — per-branch and repo-wide log paths, plus the `sanitize_for_filename` filename rule: the `HookLog` spec in `src/commands/process.rs`. The top-level file-vs-directory split that `wt config state` walks: the "Log layout invariant" in `src/commands/config/state.rs`.
 
 ## Coverage
 
@@ -182,7 +176,7 @@ No `get_*` — bare nouns follow Rust stdlib convention.
 
 ## Repository Caching
 
-`Repository` caches read-only values (remote URLs, config, branch metadata) via `Arc<RepoCache>`; cloning a Repository shares the cache. **Not cached** (they mutate mid-command): `is_dirty()`, `head_sha()` (a stale SHA would surface in `{{ commit }}` for hooks firing after the move). `list_worktrees()` *is* cached even though `wt switch --create` / `wt remove` mutate the list — a mutating path must not re-read the list through the same `Repository` after its own mutation: read once up front and thread the slice through, or call `Repository::at(...)` for a fresh cache before any post-mutation probe. Patterns and the full contract: `RepoCache` in `src/git/repository/mod.rs`.
+`Repository` caches read-only values via `Arc<RepoCache>` (cloning shares it). What is and isn't cached, the `list_worktrees()` post-mutation invariant, and the two storage patterns: the `# Caching` section in `src/git/repository/mod.rs`.
 
 ## Releases
 

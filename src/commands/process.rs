@@ -29,9 +29,17 @@ pub enum InternalOp {
 /// This is the single source of truth for hook log file paths.
 /// Used by log creation in `spawn_detached` to place background hook output.
 ///
+/// All hook output is centralized under the main worktree's `.git/wt/logs/`
+/// directory (`Repository::wt_logs_dir()`); per-branch logs live in subtrees,
+/// and rerunning the same operation on the same branch overwrites its previous
+/// log. The complementary categorization rule — top-level *files* are shared
+/// logs, top-level *directories* are per-branch trees — is the "Log layout
+/// invariant" documented in `commands::config::state`.
+///
 /// # Log file layout
 ///
 /// Hook commands produce logs at: `{branch}/{source}/{hook-type}/{name}.log`
+/// (`source` is `user` or `project`)
 /// - Example: `feature/user/post-start/server.log`
 ///
 /// Per-branch internal operations produce logs at: `{branch}/internal/{op}.log`
