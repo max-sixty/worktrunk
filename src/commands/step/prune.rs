@@ -29,9 +29,9 @@ struct Candidate {
     branch: Option<String>,
     /// Display label: branch name or abbreviated commit SHA
     label: String,
-    /// Worktree path (for Path-based removal of detached worktrees)
+    /// Worktree path (for detached worktrees and stale metadata)
     path: Option<PathBuf>,
-    /// Current worktree, other worktree, or branch-only (no worktree)
+    /// Current worktree, other worktree, branch-only, or stale detached metadata
     kind: CandidateKind,
 }
 
@@ -43,6 +43,9 @@ impl Candidate {
                 self.branch
                     .as_ref()
                     .context("BranchOnly candidate missing branch")?,
+            )),
+            CandidateKind::StaleDetached => Err(anyhow::anyhow!(
+                "stale detached candidate has no remove target"
             )),
             CandidateKind::Other => match &self.branch {
                 Some(branch) => Ok(RemoveTarget::Branch(branch)),
@@ -60,6 +63,7 @@ impl Candidate {
     fn removal_context(&self) -> String {
         match self.kind {
             CandidateKind::BranchOnly => format!("removing branch {}", self.label),
+            CandidateKind::StaleDetached => format!("pruning stale worktree for {}", self.label),
             CandidateKind::Current | CandidateKind::Other => {
                 format!("removing worktree for {}", self.label)
             }
@@ -72,6 +76,7 @@ enum CandidateKind {
     Current,
     Other,
     BranchOnly,
+    StaleDetached,
 }
 
 impl CandidateKind {
@@ -80,6 +85,7 @@ impl CandidateKind {
             CandidateKind::Current => "current",
             CandidateKind::Other => "worktree",
             CandidateKind::BranchOnly => "branch_only",
+            CandidateKind::StaleDetached => "stale_worktree",
         }
     }
 }
@@ -87,7 +93,7 @@ impl CandidateKind {
 /// Where a candidate originated, used to drive integration checks and dry-run labels.
 enum CheckSource {
     /// Worktree with directory gone (prunable)
-    Prunable { branch: String },
+    Prunable { wt_idx: usize },
     /// Linked worktree
     Linked { wt_idx: usize },
     /// Local branch without a worktree entry
@@ -125,9 +131,13 @@ fn prune_summary(candidates: &[Candidate]) -> String {
             (CandidateKind::Current | CandidateKind::Other, Some(_)) => {
                 worktree_with_branch += 1;
             }
-            (CandidateKind::Current | CandidateKind::Other, None) => {
+            (
+                CandidateKind::Current | CandidateKind::Other | CandidateKind::StaleDetached,
+                None,
+            ) => {
                 detached_worktree += 1;
             }
+            (CandidateKind::StaleDetached, Some(_)) => unreachable!(),
         }
     }
     let mut parts = Vec::new();
@@ -190,6 +200,11 @@ fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result
     // cascade of secondary poison panics on every later removal/reader.
     let _write = ctx.check_lock.write().unwrap_or_else(|e| e.into_inner());
 
+    if matches!(candidate.kind, CandidateKind::StaleDetached) {
+        ctx.repo.prune_worktrees()?;
+        return Ok(true);
+    }
+
     let target = candidate.remove_target()?;
     let plan = match ctx.repo.prepare_worktree_removal(
         target,
@@ -231,7 +246,10 @@ fn can_attempt_candidate_removal(
     worktrees: &[WorktreeInfo],
     snapshot: &RefSnapshot,
 ) -> anyhow::Result<bool> {
-    if matches!(candidate.kind, CandidateKind::BranchOnly) {
+    if matches!(
+        candidate.kind,
+        CandidateKind::BranchOnly | CandidateKind::StaleDetached
+    ) {
         return Ok(true);
     }
 
@@ -280,14 +298,11 @@ fn gather_check_items(
         }
 
         if wt.is_prunable() {
-            if let Some(branch) = &wt.branch {
-                check_items.push(CheckItem {
-                    integration_ref: branch.clone(),
-                    source: CheckSource::Prunable {
-                        branch: branch.clone(),
-                    },
-                });
-            }
+            let integration_ref = wt.branch.clone().unwrap_or_else(|| wt.head.clone());
+            check_items.push(CheckItem {
+                integration_ref,
+                source: CheckSource::Prunable { wt_idx: idx },
+            });
             continue;
         }
 
@@ -475,7 +490,7 @@ fn approve_prune_hooks(
         .iter()
         .filter_map(|candidate| match candidate.kind {
             CandidateKind::Current | CandidateKind::Other => candidate.path.as_deref(),
-            CandidateKind::BranchOnly => None,
+            CandidateKind::BranchOnly | CandidateKind::StaleDetached => None,
         })
         .collect();
 
@@ -679,16 +694,46 @@ pub fn step_prune(
             continue;
         }
 
-        // Branch-only candidates: prunable (stale worktree) and orphan branches
-        let (branch, suffix) = match &item.source {
-            CheckSource::Prunable { branch } => (branch, " (stale)"),
-            CheckSource::Orphan => (&item.integration_ref, " (branch only)"),
+        // Stale detached metadata and branch-only candidates: prunable
+        // branch worktrees and orphan branches.
+        let (branch, label, path, kind, suffix) = match &item.source {
+            CheckSource::Prunable { wt_idx } => {
+                let wt = &worktrees[*wt_idx];
+                let label = wt.branch.clone().unwrap_or_else(|| {
+                    let short = repo.short_sha(&wt.head).unwrap_or_else(|_| wt.head.clone());
+                    format!("(detached {short})")
+                });
+                match &wt.branch {
+                    Some(branch) => (
+                        Some(branch.clone()),
+                        label,
+                        None,
+                        CandidateKind::BranchOnly,
+                        " (stale)",
+                    ),
+                    None => (
+                        None,
+                        label,
+                        Some(wt.path.clone()),
+                        CandidateKind::StaleDetached,
+                        " (stale)",
+                    ),
+                }
+            }
+            CheckSource::Orphan => (
+                Some(item.integration_ref.clone()),
+                item.integration_ref.clone(),
+                None,
+                CandidateKind::BranchOnly,
+                " (branch only)",
+            ),
             CheckSource::Linked { .. } => unreachable!(),
         };
 
         // Age check for orphan branches via reflog creation timestamp
         if matches!(&item.source, CheckSource::Orphan)
             && min_age_duration > Duration::ZERO
+            && let Some(branch) = &branch
             && let Some(age) = orphan_branch_age(&repo, branch, now_secs)
             && age < min_age_duration
         {
@@ -701,10 +746,10 @@ pub fn step_prune(
 
         let candidate = Candidate {
             check_idx: idx,
-            label: branch.clone(),
-            branch: Some(branch.clone()),
-            path: None,
-            kind: CandidateKind::BranchOnly,
+            label,
+            branch,
+            path,
+            kind,
         };
         if dry_run {
             let info = DryRunInfo {

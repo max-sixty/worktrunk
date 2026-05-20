@@ -375,6 +375,68 @@ fn test_prune_stale_worktree(mut repo: TestRepo) {
     ));
 }
 
+/// Prune handles stale detached metadata without deleting any branch.
+#[rstest]
+fn test_prune_stale_detached_worktree(repo: TestRepo) {
+    repo.commit("initial");
+
+    let wt_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("repo.stale-detached");
+    let wt_path_str = wt_path.to_str().unwrap();
+    repo.run_git(&["worktree", "add", "--detach", wt_path_str, "HEAD"]);
+    let wt_path = std::fs::canonicalize(wt_path).unwrap();
+    let wt_path_str = wt_path.to_str().unwrap();
+    let branches_before = repo.git_output(&["branch", "--format=%(refname:short)"]);
+
+    std::fs::remove_dir_all(&wt_path).unwrap();
+    let list_before = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(
+        list_before.contains("prunable"),
+        "Git should report stale detached worktree metadata before prune"
+    );
+
+    let output = repo
+        .wt_command()
+        .args([
+            "step",
+            "prune",
+            "--yes",
+            "--min-age=0s",
+            "--format=json",
+            "--foreground",
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
+    assert!(output.status.success(), "prune failed\nstderr:\n{stderr}");
+
+    let items: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        items.len(),
+        1,
+        "expected one pruned item\nstderr:\n{stderr}"
+    );
+    assert!(items[0]["branch"].is_null());
+    assert_eq!(items[0]["kind"].as_str(), Some("stale_worktree"));
+    assert_eq!(items[0]["path"].as_str(), Some(wt_path_str));
+
+    let list_after = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(
+        !list_after.contains(wt_path_str),
+        "Stale detached worktree metadata should be pruned"
+    );
+    let branches_after = repo.git_output(&["branch", "--format=%(refname:short)"]);
+    assert_eq!(
+        branches_after, branches_before,
+        "Pruning stale detached metadata should not delete branches"
+    );
+}
+
 /// Min-age check passes when worktrees are old enough.
 ///
 /// Uses a far-future epoch (2030) so real worktrees (created Feb 2026) appear
