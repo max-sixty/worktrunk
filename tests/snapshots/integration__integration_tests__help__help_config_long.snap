@@ -22,9 +22,11 @@ info:
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
@@ -273,16 +275,35 @@ For context:
 - User configs generally apply to all projects.
 - User configs _also_ has a [2m[projects][0m table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.
 
-Entries are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m). Scalar values (like [2mworktree-path[0m) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
+Entries are keyed by project identifier — [2m<host>/<owner>/<repo>[0m derived from the primary git remote (e.g. [2mgithub.com/user/repo[0m), or the canonical repo path when there is no remote. [2mwt config show[0m prints the identifier under [2mPROJECT CONFIG[0m; copy that value into [2m[projects."..."][0m.
+
+Scalar values (like [2mworktree-path[0m) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
 
 [107m [0m [2m[36m[projects."github.com/user/repo"][0m
 [107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
 [107m [0m [2mlist.full = [0m[2m[33mtrue[0m
 [107m [0m [2mmerge.squash = [0m[2m[33mfalse[0m
 [107m [0m [2mremove.delete-branch = [0m[2m[33mfalse[0m
-[107m [0m [2mpre-start.env = [0m[2m[32m"cp .env.example .env"[0m
 [107m [0m [2mstep.copy-ignored.exclude = [[0m[2m[32m".repo-local-cache/"[0m[2m][0m
 [107m [0m [2maliases.deploy = [0m[2m[32m"make deploy BRANCH={{ branch }}"[0m
+
+Hooks use the same three forms as elsewhere — a string is one command, a table runs commands concurrently, a [2m[[...]][0m array is a pipeline of steps. Each form is keyed under [2mprojects."..."[0m:
+
+[107m [0m [2m# Single command[0m
+[107m [0m [2m[36m[projects."github.com/user/repo"][0m
+[107m [0m [2mpost-start = [0m[2m[32m"mise trust"[0m
+[107m [0m 
+[107m [0m [2m# Concurrent commands[0m
+[107m [0m [2m[36m[projects."github.com/user/repo".post-start][0m
+[107m [0m [2mtrust = [0m[2m[32m"mise trust"[0m
+[107m [0m [2mfocus = [0m[2m[32m"zellij action go-to-tab-name {{ branch | sanitize }} 2>/dev/null || true"[0m
+[107m [0m 
+[107m [0m [2m# Pipeline (steps run in order)[0m
+[107m [0m [2m[36m[[projects."github.com/user/repo".post-start]][0m
+[107m [0m [2mtrust = [0m[2m[32m"mise trust"[0m
+[107m [0m 
+[107m [0m [2m[36m[[projects."github.com/user/repo".post-start]][0m
+[107m [0m [2mfocus = [0m[2m[32m"zellij action go-to-tab-name {{ branch | sanitize }} 2>/dev/null || true"[0m
 
 [32mCustom prompt templates[0m
 

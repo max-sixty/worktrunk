@@ -104,13 +104,19 @@ fn handle_config_show_json() -> anyhow::Result<()> {
         None
     };
 
-    let (project_path, project_config) = if let Ok(repo) = Repository::current() {
-        let path = repo.project_config_path()?;
-        let config = repo.load_project_config()?;
-        (path, config.map(|c| serde_json::to_value(&c)).transpose()?)
-    } else {
-        (None, None)
-    };
+    let (project_path, project_config, project_identifier) =
+        if let Ok(repo) = Repository::current() {
+            let path = repo.project_config_path()?;
+            let config = repo.load_project_config()?;
+            let identifier = repo.project_identifier().ok();
+            (
+                path,
+                config.map(|c| serde_json::to_value(&c)).transpose()?,
+                identifier,
+            )
+        } else {
+            (None, None, None)
+        };
 
     let system_path = system_config_path().or_else(default_system_config_path);
     let system_exists = system_path.as_ref().is_some_and(|p| p.exists());
@@ -125,6 +131,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
             "path": project_path,
             "exists": project_path.as_ref().is_some_and(|p| p.exists()),
             "config": project_config,
+            "identifier": project_identifier,
         },
         "system": {
             "path": system_path,
@@ -749,6 +756,18 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             Some(&format!("@ {}", format_path_for_display(&config_path)))
         )
     )?;
+
+    // Surface the project identifier so users can target it from their user
+    // config's [projects."..."] table. The identifier is computed from the
+    // primary remote URL, falling back to the canonical repo path — neither
+    // is obvious from `git config` output alone.
+    if let Ok(project_id) = repo.project_identifier() {
+        writeln!(
+            out,
+            "{}",
+            info_message(cformat!("Identifier: <bold>{project_id}</>"))
+        )?;
+    }
 
     // Check if file exists
     if !config_path.exists() {

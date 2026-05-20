@@ -23,9 +23,11 @@ info:
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
@@ -225,16 +227,35 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# - User configs generally apply to all projects.[0m
 [107m [0m [2m# - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Entries are keyed by project identifier (e.g., `github.com/user/repo`). Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.[0m
+[107m [0m [2m# Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary git remote (e.g. `github.com/user/repo`), or the canonical repo path when there is no remote. `wt config show` prints the identifier under `PROJECT CONFIG`; copy that value into `[projects."..."]`.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [projects."github.com/user/repo"][0m
 [107m [0m [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
 [107m [0m [2m# list.full = true[0m
 [107m [0m [2m# merge.squash = false[0m
 [107m [0m [2m# remove.delete-branch = false[0m
-[107m [0m [2m# pre-start.env = "cp .env.example .env"[0m
 [107m [0m [2m# step.copy-ignored.exclude = [".repo-local-cache/"][0m
 [107m [0m [2m# aliases.deploy = "make deploy BRANCH={{ branch }}"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Hooks (https://worktrunk.dev/hook/) use the same three forms as elsewhere — a string is one command, a table runs commands concurrently, a `[[...]]` array is a pipeline of steps. Each form is keyed under `projects."..."`:[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# # Single command[0m
+[107m [0m [2m# [projects."github.com/user/repo"][0m
+[107m [0m [2m# post-start = "mise trust"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# # Concurrent commands[0m
+[107m [0m [2m# [projects."github.com/user/repo".post-start][0m
+[107m [0m [2m# trust = "mise trust"[0m
+[107m [0m [2m# focus = "zellij action go-to-tab-name {{ branch | sanitize }} 2>/dev/null || true"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# # Pipeline (steps run in order)[0m
+[107m [0m [2m# [[projects."github.com/user/repo".post-start]][0m
+[107m [0m [2m# trust = "mise trust"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [[projects."github.com/user/repo".post-start]][0m
+[107m [0m [2m# focus = "zellij action go-to-tab-name {{ branch | sanitize }} 2>/dev/null || true"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Custom prompt templates[0m
 [107m [0m [2m#[0m

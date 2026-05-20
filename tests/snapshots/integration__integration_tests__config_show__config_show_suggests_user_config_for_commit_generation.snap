@@ -42,6 +42,7 @@ info:
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
@@ -58,6 +59,7 @@ exit_code: 0
 [2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
 
 [36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
+[2m○[22m Identifier: [1m../origin[22m
 [33m▲[39m [33mProject config: [1m[commit-generation][22m is deprecated in favor of [1m[commit.generation][22m[39m
 [2m↳[22m [2mTo apply: [4mwt config update[24m[22m
 [2m○[22m Proposed diff:

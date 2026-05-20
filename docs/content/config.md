@@ -259,7 +259,9 @@ For context:
 - User configs generally apply to all projects.
 - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.
 
-Entries are keyed by project identifier (e.g., `github.com/user/repo`). Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
+Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary git remote (e.g. `github.com/user/repo`), or the canonical repo path when there is no remote. `wt config show` prints the identifier under `PROJECT CONFIG`; copy that value into `[projects."..."]`.
+
+Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
 
 ```toml
 [projects."github.com/user/repo"]
@@ -267,9 +269,28 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
 list.full = true
 merge.squash = false
 remove.delete-branch = false
-pre-start.env = "cp .env.example .env"
 step.copy-ignored.exclude = [".repo-local-cache/"]
 aliases.deploy = "make deploy BRANCH={{ branch }}"
+```
+
+[Hooks](@/hook.md) use the same three forms as elsewhere — a string is one command, a table runs commands concurrently, a `[[...]]` array is a pipeline of steps. Each form is keyed under `projects."..."`:
+
+```toml
+# Single command
+[projects."github.com/user/repo"]
+post-start = "mise trust"
+
+# Concurrent commands
+[projects."github.com/user/repo".post-start]
+trust = "mise trust"
+focus = "zellij action go-to-tab-name {{ branch | sanitize }} 2>/dev/null || true"
+
+# Pipeline (steps run in order)
+[[projects."github.com/user/repo".post-start]]
+trust = "mise trust"
+
+[[projects."github.com/user/repo".post-start]]
+focus = "zellij action go-to-tab-name {{ branch | sanitize }} 2>/dev/null || true"
 ```
 
 ### Custom prompt templates
