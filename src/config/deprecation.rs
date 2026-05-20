@@ -404,11 +404,7 @@ fn find_commit_generation_from_doc(doc: &toml_edit::DocumentMut) -> CommitGenera
 
     // Check if new [commit.generation] already exists as a valid table
     // (skip deprecation warning if so)
-    let has_new_section = doc
-        .get("commit")
-        .and_then(|c| c.as_table())
-        .and_then(|t| t.get("generation"))
-        .is_some_and(|g| g.is_table() || g.is_inline_table());
+    let has_new_section = has_table_like_child(doc.get("commit"), "generation");
 
     // Check top-level [commit-generation] - only flag if non-empty and new section doesn't exist
     // Handle both regular tables and inline tables
@@ -429,11 +425,8 @@ fn find_commit_generation_from_doc(doc: &toml_edit::DocumentMut) -> CommitGenera
         for (project_key, project_value) in projects.iter() {
             if let Some(project_table) = project_value.as_table() {
                 // Check if this project has new section as a valid table
-                let has_new_project_section = project_table
-                    .get("commit")
-                    .and_then(|c| c.as_table())
-                    .and_then(|t| t.get("generation"))
-                    .is_some_and(|g| g.is_table() || g.is_inline_table());
+                let has_new_project_section =
+                    has_table_like_child(project_table.get("commit"), "generation");
 
                 // Only flag if old section exists, is non-empty, and new doesn't exist
                 // Handle both regular tables and inline tables
@@ -469,6 +462,38 @@ fn can_host_subtable(item: Option<&toml_edit::Item>) -> bool {
     item.is_none_or(is_table_like)
 }
 
+fn has_table_like_child(item: Option<&toml_edit::Item>, key: &str) -> bool {
+    match item {
+        Some(toml_edit::Item::Table(t)) => t.get(key).is_some_and(is_table_like),
+        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(t))) => t
+            .get(key)
+            .is_some_and(|v| matches!(v, toml_edit::Value::InlineTable(_))),
+        _ => false,
+    }
+}
+
+/// Ensure a table-like parent is writable as a standard table.
+///
+/// Inline tables can deserialize like tables, but TOML forbids extending them
+/// with later subtables. Convert before inserting migrated nested sections so
+/// existing inline parent fields survive alongside the new child table.
+fn ensure_standard_table_parent<'a>(
+    table: &'a mut toml_edit::Table,
+    key: &str,
+) -> Option<&'a mut toml_edit::Table> {
+    if !table.contains_key(key) {
+        let mut parent = toml_edit::Table::new();
+        parent.set_implicit(true);
+        table.insert(key, toml_edit::Item::Table(parent));
+    }
+
+    let item = table.get_mut(key)?;
+    if let Some(inline) = item.as_inline_table().cloned() {
+        *item = toml_edit::Item::Table(inline.into_table());
+    }
+    item.as_table_mut()
+}
+
 /// Convert a table-like TOML item into a `Table`. Returns `None` for other shapes.
 fn into_table(item: toml_edit::Item) -> Option<toml_edit::Table> {
     match item {
@@ -483,11 +508,7 @@ fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
 
     // Check if new [commit.generation] already exists as a valid table - if so, skip migration
     // (new format takes precedence, don't overwrite it)
-    let has_new_section = doc
-        .get("commit")
-        .and_then(|c| c.as_table())
-        .and_then(|t| t.get("generation"))
-        .is_some_and(|g| g.is_table() || g.is_inline_table());
+    let has_new_section = has_table_like_child(doc.get("commit"), "generation");
 
     // Migrate top-level [commit-generation] → [commit.generation]
     // Only if new section doesn't already exist
@@ -510,14 +531,8 @@ fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
         // Ensure [commit] section exists.
         // Mark as implicit so it doesn't render a separate [commit] header
         // (only [commit.generation] will render)
-        if !doc.contains_key("commit") {
-            let mut commit_table = toml_edit::Table::new();
-            commit_table.set_implicit(true);
-            doc.insert("commit", toml_edit::Item::Table(commit_table));
-        }
-
         // Move to [commit.generation]
-        if let Some(commit_table) = doc["commit"].as_table_mut() {
+        if let Some(commit_table) = ensure_standard_table_parent(doc.as_table_mut(), "commit") {
             commit_table.insert("generation", toml_edit::Item::Table(table));
         }
 
@@ -529,11 +544,8 @@ fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
         for (_project_key, project_value) in projects.iter_mut() {
             if let Some(project_table) = project_value.as_table_mut() {
                 // Check if new section already exists as a valid table for this project
-                let has_new_project_section = project_table
-                    .get("commit")
-                    .and_then(|c| c.as_table())
-                    .and_then(|t| t.get("generation"))
-                    .is_some_and(|g| g.is_table() || g.is_inline_table());
+                let has_new_project_section =
+                    has_table_like_child(project_table.get("commit"), "generation");
 
                 // Peek before removing so a malformed value is preserved.
                 // Same scalar-parent guard as the top-level case above.
@@ -551,14 +563,10 @@ fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
 
                     // Ensure [projects."...".commit] section exists.
                     // Mark as implicit so it doesn't render a separate header
-                    if !project_table.contains_key("commit") {
-                        let mut commit_table = toml_edit::Table::new();
-                        commit_table.set_implicit(true);
-                        project_table.insert("commit", toml_edit::Item::Table(commit_table));
-                    }
-
                     // Move to [projects."...".commit.generation]
-                    if let Some(commit_table) = project_table["commit"].as_table_mut() {
+                    if let Some(commit_table) =
+                        ensure_standard_table_parent(project_table, "commit")
+                    {
                         commit_table.insert("generation", toml_edit::Item::Table(table));
                     }
 
@@ -644,11 +652,7 @@ fn find_select_from_doc(doc: &toml_edit::DocumentMut) -> bool {
 
 /// Check if a table has a non-empty `select` section without `switch.picker`.
 fn has_select_without_picker(table: &toml_edit::Table) -> bool {
-    let has_new_section = table
-        .get("switch")
-        .and_then(|s| s.as_table())
-        .and_then(|t| t.get("picker"))
-        .is_some_and(|p| p.is_table() || p.is_inline_table());
+    let has_new_section = has_table_like_child(table.get("switch"), "picker");
 
     if has_new_section {
         return false;
@@ -778,11 +782,7 @@ fn migrate_select_doc(doc: &mut toml_edit::DocumentMut) -> bool {
 /// it — silently dropping it would lose user config when a sibling migration
 /// also rewrites the document.
 fn migrate_select_table(table: &mut toml_edit::Table, modified: &mut bool) {
-    let has_new_section = table
-        .get("switch")
-        .and_then(|s| s.as_table())
-        .and_then(|t| t.get("picker"))
-        .is_some_and(|p| p.is_table() || p.is_inline_table());
+    let has_new_section = has_table_like_child(table.get("switch"), "picker");
 
     if has_new_section {
         return;
@@ -801,13 +801,7 @@ fn migrate_select_table(table: &mut toml_edit::Table, modified: &mut bool) {
     let select_table =
         into_table(table.remove("select").unwrap()).expect("checked is_table_like above");
 
-    if !table.contains_key("switch") {
-        let mut switch_table = toml_edit::Table::new();
-        switch_table.set_implicit(true);
-        table.insert("switch", toml_edit::Item::Table(switch_table));
-    }
-
-    if let Some(switch_table) = table["switch"].as_table_mut() {
+    if let Some(switch_table) = ensure_standard_table_parent(table, "switch") {
         switch_table.insert("picker", toml_edit::Item::Table(select_table));
     }
 
@@ -831,7 +825,7 @@ fn collect_pre_hook_table_form_keys(
 ) {
     for &key in PRE_HOOK_KEYS {
         if let Some(item) = table.get(key)
-            && item.as_table().is_some_and(|t| t.len() >= 2)
+            && table_like_len(item).is_some_and(|len| len >= 2)
         {
             if prefix.is_empty() {
                 found.push(key.to_string());
@@ -864,6 +858,14 @@ fn find_pre_hook_table_form_from_doc(doc: &toml_edit::DocumentMut) -> Vec<String
     }
 
     found
+}
+
+fn table_like_len(item: &toml_edit::Item) -> Option<usize> {
+    match item {
+        toml_edit::Item::Table(t) => Some(t.len()),
+        toml_edit::Item::Value(toml_edit::Value::InlineTable(t)) => Some(t.len()),
+        _ => None,
+    }
 }
 
 fn find_ci_section_from_doc(doc: &toml_edit::DocumentMut) -> bool {
@@ -1027,25 +1029,44 @@ fn migrate_pre_hook_table_in(table: &mut toml_edit::Table, modified: &mut bool) 
         .iter()
         .filter(|(k, v)| {
             PRE_HOOK_KEYS.contains(k)
-                && v.as_table()
-                    .is_some_and(|t| t.len() >= 2 && t.iter().all(|(_, v)| v.as_str().is_some()))
+                && pre_hook_pipeline_entries(v).is_some_and(|entries| entries.len() >= 2)
         })
         .map(|(k, _)| k.to_string())
         .collect();
 
     for key in keys_to_migrate {
         let item = table.get_mut(&key).unwrap();
-        let entries = item.as_table().unwrap();
+        let entries = pre_hook_pipeline_entries(item).unwrap();
 
         let mut arr = toml_edit::ArrayOfTables::new();
         for (name, value) in entries.iter() {
             let mut block = toml_edit::Table::new();
-            block.insert(name, toml_edit::value(value.as_str().unwrap()));
+            block.insert(name, toml_edit::value(value.as_str()));
             arr.push(block);
         }
 
         *item = toml_edit::Item::ArrayOfTables(arr);
         *modified = true;
+    }
+}
+
+fn pre_hook_pipeline_entries(item: &toml_edit::Item) -> Option<Vec<(String, String)>> {
+    match item {
+        toml_edit::Item::Table(t) => {
+            let entries = t
+                .iter()
+                .map(|(name, value)| Some((name.to_string(), value.as_str()?.to_string())))
+                .collect::<Option<Vec<_>>>()?;
+            Some(entries)
+        }
+        toml_edit::Item::Value(toml_edit::Value::InlineTable(t)) => {
+            let entries = t
+                .iter()
+                .map(|(name, value)| Some((name.to_string(), value.as_str()?.to_string())))
+                .collect::<Option<Vec<_>>>()?;
+            Some(entries)
+        }
+        _ => None,
     }
 }
 
@@ -2876,6 +2897,61 @@ no-ff = true
         );
     }
 
+    #[test]
+    fn test_commit_generation_migrates_when_commit_parent_is_inline_table() {
+        let content = r#"commit = { stage = "tracked" }
+
+[commit-generation]
+command = "llm"
+"#;
+        let result = migrate_content(content);
+        let doc: toml_edit::DocumentMut = result.parse().unwrap();
+        let commit = doc["commit"].as_table().expect("commit table");
+        assert_eq!(
+            commit["stage"].as_str(),
+            Some("tracked"),
+            "inline parent fields must survive: {result}"
+        );
+        assert_eq!(
+            commit["generation"]["command"].as_str(),
+            Some("llm"),
+            "deprecated section should move under commit.generation: {result}"
+        );
+        assert!(
+            doc.get("commit-generation").is_none(),
+            "old section should be removed after migration: {result}"
+        );
+    }
+
+    #[test]
+    fn test_project_commit_generation_migrates_when_commit_parent_is_inline_table() {
+        let content = r#"
+[projects."github.com/user/repo"]
+commit = { stage = "tracked" }
+commit-generation = { command = "llm" }
+"#;
+        let result = migrate_content(content);
+        let doc: toml_edit::DocumentMut = result.parse().unwrap();
+        let project = doc["projects"]["github.com/user/repo"]
+            .as_table()
+            .expect("project table");
+        let commit = project["commit"].as_table().expect("project commit table");
+        assert_eq!(
+            commit["stage"].as_str(),
+            Some("tracked"),
+            "inline project parent fields must survive: {result}"
+        );
+        assert_eq!(
+            commit["generation"]["command"].as_str(),
+            Some("llm"),
+            "project deprecated section should move under commit.generation: {result}"
+        );
+        assert!(
+            project.get("commit-generation").is_none(),
+            "old project section should be removed after migration: {result}"
+        );
+    }
+
     /// Same shape for `[select]` when `switch = "x"` is scalar.
     #[test]
     fn test_select_preserved_when_switch_is_scalar() {
@@ -3492,6 +3568,32 @@ pager = "delta --paging=never"
         assert!(
             !result.contains("[select]"),
             "Should remove [select]: {result}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_select_when_switch_parent_is_inline_table() {
+        let content = r#"switch = { cd = false }
+
+[select]
+pager = "delta"
+"#;
+        let result = migrate_select_to_switch_picker(content);
+        let doc: toml_edit::DocumentMut = result.parse().unwrap();
+        let switch = doc["switch"].as_table().expect("switch table");
+        assert_eq!(
+            switch["cd"].as_bool(),
+            Some(false),
+            "inline switch fields must survive: {result}"
+        );
+        assert_eq!(
+            switch["picker"]["pager"].as_str(),
+            Some("delta"),
+            "select should move under switch.picker: {result}"
+        );
+        assert!(
+            doc.get("select").is_none(),
+            "old select section should be removed after migration: {result}"
         );
     }
 
@@ -4117,6 +4219,10 @@ ff = true
         let found = find_pre_hook_table_form("pre-merge = \"cargo test\"\n");
         assert!(found.is_empty());
 
+        // Inline table form → detected like section table form
+        let found = find_pre_hook_table_form("pre-merge = { test = \"t\", lint = \"l\" }\n");
+        assert_eq!(found, vec!["pre-merge"]);
+
         // Array/pipeline form → not detected
         let found = find_pre_hook_table_form("pre-merge = [{test = \"t\"}, {lint = \"l\"}]\n");
         assert!(found.is_empty());
@@ -4198,6 +4304,20 @@ lint = "cargo clippy"
             second.get("lint").unwrap().as_str().unwrap(),
             "cargo clippy"
         );
+    }
+
+    #[test]
+    fn test_migrate_pre_hook_inline_table_form_converts_to_pipeline() {
+        let content = r#"pre-merge = { test = "cargo test", lint = "cargo clippy" }
+"#;
+        let result = migrate_pre_hook_table_form(content);
+        let doc: toml_edit::DocumentMut = result.parse().unwrap();
+        let arr = doc["pre-merge"]
+            .as_array_of_tables()
+            .expect("should be array of tables");
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr.get(0).unwrap()["test"].as_str(), Some("cargo test"));
+        assert_eq!(arr.get(1).unwrap()["lint"].as_str(), Some("cargo clippy"));
     }
 
     #[test]
