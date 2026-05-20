@@ -32,6 +32,7 @@ use crate::path::format_path_for_display;
 
 /// Approved commands, stored in `approvals.toml`.
 #[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Approvals {
     #[serde(default)]
     projects: BTreeMap<String, ApprovedProject>,
@@ -39,6 +40,7 @@ pub struct Approvals {
 
 /// Per-project approved commands.
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 struct ApprovedProject {
     #[serde(
         default,
@@ -789,6 +791,46 @@ approved-commands = ["npm install"]
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("approvals.toml");
         std::fs::write(&path, "this is { not valid toml").unwrap();
+        let err = Approvals::load_from_file(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("Failed to parse approvals file"),
+            "Expected parse error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_load_from_file_rejects_unknown_top_level_key() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("approvals.toml");
+        std::fs::write(
+            &path,
+            r#"
+[project."github.com/user/repo"]
+approved-commands = ["npm test"]
+"#,
+        )
+        .unwrap();
+        let err = Approvals::load_from_file(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("Failed to parse approvals file"),
+            "Expected parse error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_load_from_file_rejects_unknown_project_key() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("approvals.toml");
+        std::fs::write(
+            &path,
+            r#"
+[projects."github.com/user/repo"]
+approved-command = ["npm test"]
+"#,
+        )
+        .unwrap();
         let err = Approvals::load_from_file(&path).unwrap_err();
         assert!(
             err.to_string().contains("Failed to parse approvals file"),
