@@ -465,7 +465,7 @@ fn configure_shell_file(
 
         let reader = BufReader::new(file);
 
-        // Check for the exact conditional wrapper we would write
+        // Check for the canonical line and older/manual forms for this shell.
         for line in reader.lines() {
             let line = line.map_err(|e| {
                 format!(
@@ -475,8 +475,7 @@ fn configure_shell_file(
                 )
             })?;
 
-            // Canonical detection: check if the line matches exactly what we write
-            if line.trim() == config_line {
+            if is_install_shell_integration_line(&line, shell, cmd) {
                 return Ok(Some(ConfigureResult {
                     shell,
                     path: path.to_path_buf(),
@@ -564,6 +563,13 @@ fn configure_shell_file(
             Ok(None)
         }
     }
+}
+
+fn is_install_shell_integration_line(line: &str, shell: Shell, cmd: &str) -> bool {
+    shell::is_shell_integration_line(line, cmd)
+        && line
+            .to_ascii_lowercase()
+            .contains(&format!("config shell init {shell}"))
 }
 
 /// Extract non-comment, non-blank lines from fish source for comparison.

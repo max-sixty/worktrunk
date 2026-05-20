@@ -166,6 +166,39 @@ fn test_configure_shell_already_exists(repo: TestRepo, temp_home: TempDir) {
 }
 
 #[rstest]
+fn test_configure_shell_already_exists_noncanonical_line(repo: TestRepo, temp_home: TempDir) {
+    let zshrc_path = temp_home.path().join(".zshrc");
+    fs::write(
+        &zshrc_path,
+        "# Existing config\neval \"$(wt config shell init zsh)\"\n",
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.env("SHELL", "/bin/zsh");
+    cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+    cmd.arg("config")
+        .arg("shell")
+        .arg("install")
+        .arg("zsh")
+        .arg("--yes")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "install should treat the existing manual line as configured:\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(&zshrc_path).unwrap();
+    let count = content.matches("wt config shell init").count();
+    assert_eq!(count, 1, "Should not append a duplicate shell init line");
+}
+
+#[rstest]
 fn test_configure_shell_fish(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
