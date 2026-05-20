@@ -24,6 +24,7 @@ use worktrunk::git::{
     GitError, GitRemoteUrl, RefContext, RefType, Repository, SwitchSuggestionCtx,
     current_or_recover,
 };
+use worktrunk::shell_exec::{ShellEscapeMode, directive_shell_escape_mode, shell_escape_for};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, suggest_command,
     warning_message,
@@ -1749,21 +1750,38 @@ pub fn run_switch(
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
 
-        // Expand template variables in command (shell_escape: true for safety)
-        let expanded_cmd = expand_template(cmd, &vars, true, &repo, "--execute command")?;
+        // The `--execute` payload is parsed by the active directive shell: the
+        // PowerShell wrapper `Invoke-Expression`s the EXEC directive file, every
+        // other wrapper (and the direct `sh -c` non-integration path) is POSIX.
+        // Escape interpolated values for whichever it is — the one place the
+        // escaping is shell-aware (hooks/aliases stay POSIX). See
+        // `worktrunk::shell_exec::directive_shell_escape_mode`.
+        let escape_mode = directive_shell_escape_mode();
 
-        // Append any trailing args (after --) to the execute command
-        // Each arg is also expanded, then shell-escaped
+        // Expand template variables in command, escaped for the directive shell.
+        let expanded_cmd = expand_template(cmd, &vars, escape_mode, &repo, "--execute command")?;
+
+        // Append any trailing args (after --) to the execute command.
+        // Each arg is template-expanded literally, then escaped for the
+        // directive shell so the wrapper parses it as one literal argument.
         let full_cmd = if execute_args.is_empty() {
             expanded_cmd
         } else {
             let expanded_args: Result<Vec<_>, _> = execute_args
                 .iter()
-                .map(|arg| expand_template(arg, &vars, false, &repo, "--execute argument"))
+                .map(|arg| {
+                    expand_template(
+                        arg,
+                        &vars,
+                        ShellEscapeMode::Literal,
+                        &repo,
+                        "--execute argument",
+                    )
+                })
                 .collect();
             let escaped_args: Vec<_> = expanded_args?
                 .iter()
-                .map(|arg| shell_escape::unix::escape(arg.into()).into_owned())
+                .map(|arg| shell_escape_for(escape_mode, arg))
                 .collect();
             format!("{} {}", expanded_cmd, escaped_args.join(" "))
         };

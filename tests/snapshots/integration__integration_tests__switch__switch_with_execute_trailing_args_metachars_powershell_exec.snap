@@ -1,0 +1,5 @@
+---
+source: tests/integration_tests/switch.rs
+expression: "&exec_contents"
+---
+echo '$x''s hello' 'with space'

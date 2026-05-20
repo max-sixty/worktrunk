@@ -80,11 +80,6 @@ const FSMONITOR_STOP_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(unix)]
 const FSMONITOR_LSOF_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// How long to wait for a daemon to exit after SIGTERM before escalating to
-/// SIGKILL. Polled, not slept — a daemon that exits promptly returns early.
-#[cfg(unix)]
-const FSMONITOR_SIGTERM_GRACE: Duration = Duration::from_millis(1500);
-
 /// Stop the fsmonitor daemon serving `worktree`, force-killing it if it has
 /// stopped answering its IPC socket.
 ///
@@ -169,42 +164,15 @@ fn force_kill_fsmonitor_via_socket(socket: &Path) {
         }
     };
 
-    for pid in String::from_utf8_lossy(&output.stdout)
+    let pids: Vec<u32> = String::from_utf8_lossy(&output.stdout)
         .lines()
-        .filter_map(|line| line.trim().parse::<i32>().ok())
-    {
-        terminate_pid(pid);
-    }
-}
-
-/// SIGTERM a PID, poll briefly for it to exit, then SIGKILL if it's still
-/// alive. `kill(pid, None)` (signal 0) is the liveness probe — `Ok` means the
-/// process still exists, `Err(ESRCH)` means it's gone.
-#[cfg(unix)]
-fn terminate_pid(pid: i32) {
-    use nix::sys::signal::{Signal, kill};
-    use nix::unistd::Pid;
-
-    let pid = Pid::from_raw(pid);
-
-    if let Err(e) = kill(pid, Signal::SIGTERM) {
-        // ESRCH: the daemon already exited (likely the graceful `stop` won the
-        // race). Anything else (e.g. EPERM) we can't act on — log and move on.
-        log::debug!("fsmonitor: SIGTERM to {pid} failed (likely already gone): {e}");
-        return;
-    }
-
-    let deadline = std::time::Instant::now() + FSMONITOR_SIGTERM_GRACE;
-    while std::time::Instant::now() < deadline {
-        if kill(pid, None).is_err() {
-            log::debug!("fsmonitor: daemon {pid} exited after SIGTERM");
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-
-    log::debug!("fsmonitor: daemon {pid} still alive after SIGTERM, sending SIGKILL");
-    let _ = kill(pid, Signal::SIGKILL);
+        .filter_map(|line| line.trim().parse::<u32>().ok())
+        .collect();
+    super::fsmonitor::escalate_terminate(
+        &super::fsmonitor::NixSignaller,
+        &pids,
+        super::fsmonitor::REAP_KILL_DEADLINE,
+    );
 }
 
 /// Non-Unix: the daemon uses a named pipe rather than a Unix-domain socket, so
@@ -610,67 +578,6 @@ mod tests {
         // path is a no-op that returns cleanly.
         assert!(!socket.exists());
         stop_fsmonitor_daemon(&wt);
-    }
-
-    /// SIGTERM-honoring process: `terminate_pid` sends SIGTERM, the child
-    /// exits, and the poll loop returns before the SIGKILL escalation.
-    #[cfg(unix)]
-    #[test]
-    fn test_terminate_pid_sigterm_honored() {
-        use std::process::Command;
-
-        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
-        let pid = child.id() as i32;
-
-        terminate_pid(pid);
-
-        // `sleep` exits on SIGTERM; it must be reaped and have a
-        // signal-derived (non-success) status.
-        let status = child.wait().unwrap();
-        assert!(!status.success());
-    }
-
-    /// SIGTERM-ignoring process: the child traps and ignores SIGTERM, so
-    /// `terminate_pid` must escalate to SIGKILL after the grace window.
-    #[cfg(unix)]
-    #[test]
-    fn test_terminate_pid_escalates_to_sigkill() {
-        use std::process::Command;
-
-        // `trap '' TERM` makes SIGTERM a no-op; only SIGKILL can stop it. The
-        // child touches `ready` *after* the trap is installed; the test waits
-        // for that file so the first SIGTERM can't race trap installation
-        // (which would let the child die on SIGTERM and report signal 15).
-        let tmp = tempfile::tempdir().unwrap();
-        let ready = tmp.path().join("ready");
-        let mut child = Command::new("sh")
-            .arg("-c")
-            .arg(format!(
-                "trap '' TERM; : > {}; sleep 30",
-                ready.to_str().unwrap()
-            ))
-            .spawn()
-            .unwrap();
-        let pid = child.id() as i32;
-
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while !ready.exists() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "child never installed SIGTERM trap"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
-
-        terminate_pid(pid);
-
-        // Must have been SIGKILLed despite ignoring SIGTERM.
-        use std::os::unix::process::ExitStatusExt;
-        let status = child.wait().unwrap();
-        assert_eq!(
-            status.signal(),
-            Some(nix::sys::signal::Signal::SIGKILL as i32)
-        );
     }
 
     /// Fail-open contract: when the per-worktree git dir can't be resolved

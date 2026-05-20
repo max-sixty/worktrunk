@@ -532,6 +532,96 @@ fn test_switch_with_execute_trailing_args_metachars(repo: TestRepo) {
         );
     });
 }
+
+/// Same scenario as `test_switch_with_execute_trailing_args_metachars`, but
+/// with `WORKTRUNK_SHELL=powershell` — the env var the PowerShell wrapper
+/// sets. The wrapper evaluates the EXEC directive file via `Invoke-Expression`,
+/// where the POSIX `'\''` idiom is invalid; each trailing arg must instead use
+/// PowerShell single-quoting (embedded `'` doubled to `''`). Guards the
+/// `directive_shell_escape_mode()` branch in `run_switch`'s `escaped_args`.
+#[rstest]
+fn test_switch_with_execute_trailing_args_metachars_powershell(repo: TestRepo) {
+    let (cd_path, exec_path, _guard) = directive_files();
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &[
+                "--create",
+                "exec-trailing-psh",
+                "--execute",
+                "echo",
+                "--",
+                "$x's hello",
+                "with space",
+            ],
+            None,
+        );
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        cmd.env("WORKTRUNK_SHELL", "powershell");
+        assert_cmd_snapshot!(
+            "switch_with_execute_trailing_args_metachars_powershell_stderr",
+            cmd
+        );
+
+        // Under PowerShell, the exec file must contain the trailing args
+        // PowerShell-escaped: wrapped in `'…'` with embedded `'` doubled to
+        // `''`. `$(...)` / `$x` are inert inside a PowerShell single-quoted
+        // string, so they need no further escaping.
+        let exec_contents = fs::read_to_string(&exec_path).unwrap();
+        insta::assert_snapshot!(
+            "switch_with_execute_trailing_args_metachars_powershell_exec",
+            &exec_contents
+        );
+    });
+}
+
+/// Same scenario as `test_switch_with_execute_trailing_args_metachars`, but
+/// with `WORKTRUNK_SHELL=fish` — the env var the fish wrapper sets. The wrapper
+/// evaluates the EXEC directive file via `eval`, where fish treats `\` as an
+/// escape inside `'…'`; the POSIX escaper would collapse a `\\` pair and turn
+/// a trailing `\` into an unterminated string. Each trailing arg must instead
+/// use fish single-quoting (`\` doubled, `'` backslash-escaped). The args
+/// carry a literal backslash — the byte that POSIX and fish escaping diverge
+/// on. Guards the `directive_shell_escape_mode()` branch in `run_switch`.
+#[rstest]
+fn test_switch_with_execute_trailing_args_metachars_fish(repo: TestRepo) {
+    let (cd_path, exec_path, _guard) = directive_files();
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &[
+                "--create",
+                "exec-trailing-fish",
+                "--execute",
+                "echo",
+                "--",
+                r"a\\b's hello",
+                "with space",
+            ],
+            None,
+        );
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        cmd.env("WORKTRUNK_SHELL", "fish");
+        assert_cmd_snapshot!(
+            "switch_with_execute_trailing_args_metachars_fish_stderr",
+            cmd
+        );
+
+        // Under fish, the exec file must contain the trailing args
+        // fish-escaped: wrapped in `'…'` with each `\` doubled and each `'`
+        // backslash-escaped — not the POSIX `'\''` idiom, which fish's `eval`
+        // would mis-parse.
+        let exec_contents = fs::read_to_string(&exec_path).unwrap();
+        insta::assert_snapshot!(
+            "switch_with_execute_trailing_args_metachars_fish_exec",
+            &exec_contents
+        );
+    });
+}
 // Error tests
 #[rstest]
 fn test_switch_error_missing_worktree_directory(mut repo: TestRepo) {

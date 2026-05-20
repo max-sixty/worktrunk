@@ -59,6 +59,7 @@ exit_code: 0
 [2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
 
 [36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
+[2m○[22m Identifier: [1m../origin[22m
 [2m↳[22m [2mNot found[22m
 
 [36mSHELL INTEGRATION[39m
