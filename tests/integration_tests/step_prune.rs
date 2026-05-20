@@ -1042,6 +1042,70 @@ fn test_prune_branch_local_pre_remove_needs_approval(mut repo: TestRepo) {
     );
 }
 
+/// An unmerged worktree's branch-local `pre-remove` is outside prune's removal
+/// set, so it must not be part of the approval gate.
+#[rstest]
+fn test_prune_unmerged_pre_remove_is_not_approved(mut repo: TestRepo) {
+    repo.write_project_config(r#"pre-remove = "echo unmerged pre-remove""#);
+    repo.commit("Add pre-remove hook");
+    let wt_path = repo.add_worktree_with_commit(
+        "unmerged-with-hook",
+        "unmerged.txt",
+        "content",
+        "unmerged commit",
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["step", "prune", "--foreground", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "prune should not gate on an unmerged worktree's pre-remove; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("No merged worktrees to remove"),
+        "prune should report no removable worktrees; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("needs approval"),
+        "unmerged pre-remove must not be requested for approval; stderr:\n{stderr}"
+    );
+    assert!(wt_path.exists(), "unmerged worktree should remain");
+}
+
+/// Removing only non-current worktrees does not switch directories, so the
+/// primary worktree's `post-switch` is outside prune's approval gate.
+#[rstest]
+fn test_prune_non_current_removal_does_not_approve_post_switch(mut repo: TestRepo) {
+    repo.write_project_config(r#"post-switch = "echo primary post-switch""#);
+    repo.commit("Add post-switch hook");
+    let wt_path = repo.add_worktree("merged-no-current");
+
+    let output = repo
+        .wt_command()
+        .args(["step", "prune", "--foreground", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "prune should not gate on post-switch for non-current removals; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("needs approval"),
+        "primary post-switch must not be requested for approval; stderr:\n{stderr}"
+    );
+    assert!(
+        !wt_path.exists(),
+        "the merged non-current worktree should be removed"
+    );
+}
+
 /// With `--yes`, `wt step prune` runs the approved `pre-remove` hook from each
 /// pruned worktree's own `.config/wt.toml`.
 #[rstest]

@@ -21,6 +21,7 @@ use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use crate::output::handle_remove_output_serialized_fallback;
 
 /// A candidate worktree or branch selected for removal.
+#[derive(Clone)]
 struct Candidate {
     /// Original index in `check_items` (for deterministic output ordering)
     check_idx: usize,
@@ -35,6 +36,25 @@ struct Candidate {
 }
 
 impl Candidate {
+    fn remove_target(&self) -> anyhow::Result<RemoveTarget<'_>> {
+        match self.kind {
+            CandidateKind::Current => Ok(RemoveTarget::Current),
+            CandidateKind::BranchOnly => Ok(RemoveTarget::Branch(
+                self.branch
+                    .as_ref()
+                    .context("BranchOnly candidate missing branch")?,
+            )),
+            CandidateKind::Other => match &self.branch {
+                Some(branch) => Ok(RemoveTarget::Branch(branch)),
+                None => Ok(RemoveTarget::Path(
+                    self.path
+                        .as_ref()
+                        .context("detached candidate missing path")?,
+                )),
+            },
+        }
+    }
+
     /// Error context for `try_remove` failures: distinguishes branch-only
     /// removals (no worktree exists) from worktree removals.
     fn removal_context(&self) -> String {
@@ -47,6 +67,7 @@ impl Candidate {
     }
 }
 
+#[derive(Clone, Copy)]
 enum CandidateKind {
     Current,
     Other,
@@ -83,6 +104,11 @@ struct DryRunInfo {
     reason_desc: String,
     effective_target: String,
     suffix: &'static str,
+}
+
+enum PruneEvent {
+    Candidate(usize),
+    SkippedYoung(String),
 }
 
 /// Build a human-readable count like "3 worktrees & branches".
@@ -152,15 +178,11 @@ struct RemovalContext<'a> {
 /// Try to remove a candidate immediately. Returns Ok(true) if removed,
 /// Ok(false) if skipped (preparation error), Err on execution error.
 fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result<bool> {
-    // Exclude all in-flight integration readers for the duration of the
-    // removal: the write guard blocks until every outstanding read guard
-    // (i.e. every running `integration_reason` git process) has dropped, and
-    // blocks new ones until removal completes — so no `.git/config` reader is
-    // alive while `git branch -D` rewrites it. Held over the whole body
-    // (rather than just the deep `branch -D` call site) keeps the lock
-    // confined to this file; the extra reader-exclusion during the fast
-    // rename/prune is harmless. See the `check_lock` rationale at the
-    // par_iter spawn for the Windows mechanism and its fast-path scope.
+    // Take the same write guard used by integration-check readers. The current
+    // phase ordering drains those readers before removal so approval can be
+    // exact; keeping the guard here preserves the Windows `.git/config`
+    // serialization if this flow is refactored back to overlap checks and
+    // removals. Held over the whole body keeps the lock confined to this file.
     //
     // The guard protects `()` — there is no shared state to corrupt, so a
     // poisoned lock is meaningless here. Recover the guard rather than
@@ -168,24 +190,7 @@ fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result
     // cascade of secondary poison panics on every later removal/reader.
     let _write = ctx.check_lock.write().unwrap_or_else(|e| e.into_inner());
 
-    let target = match candidate.kind {
-        CandidateKind::Current => RemoveTarget::Current,
-        CandidateKind::BranchOnly => RemoveTarget::Branch(
-            candidate
-                .branch
-                .as_ref()
-                .context("BranchOnly candidate missing branch")?,
-        ),
-        CandidateKind::Other => match &candidate.branch {
-            Some(branch) => RemoveTarget::Branch(branch),
-            None => RemoveTarget::Path(
-                candidate
-                    .path
-                    .as_ref()
-                    .context("detached candidate missing path")?,
-            ),
-        },
-    };
+    let target = candidate.remove_target()?;
     let plan = match ctx.repo.prepare_worktree_removal(
         target,
         BranchDeletionMode::SafeDelete,
@@ -217,6 +222,31 @@ fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result
     )?;
     announcer.flush()?;
     Ok(true)
+}
+
+fn can_attempt_candidate_removal(
+    candidate: &Candidate,
+    repo: &Repository,
+    config: &UserConfig,
+    worktrees: &[WorktreeInfo],
+    snapshot: &RefSnapshot,
+) -> anyhow::Result<bool> {
+    if matches!(candidate.kind, CandidateKind::BranchOnly) {
+        return Ok(true);
+    }
+
+    let target = candidate.remove_target()?;
+    Ok(repo
+        .prepare_worktree_removal(
+            target,
+            BranchDeletionMode::SafeDelete,
+            false,
+            config,
+            None,
+            Some(worktrees),
+            Some(snapshot),
+        )
+        .is_ok())
 }
 
 /// Walk the worktree list and the local branch list to build the set of
@@ -422,34 +452,30 @@ fn render_dry_run(
 ///
 /// `pre-remove` runs only when a *live linked* worktree is removed (stale-
 /// metadata and orphan-branch removals delete just the branch — no
-/// `pre-remove`/`post-remove`/`post-switch`). The integration checks haven't
-/// run yet, so every linked worktree is fed to the plan — its `pre-remove`
-/// selection is a superset of what executes (extra anchors are simply never
-/// looked up). `post-switch` is anchored at the primary worktree: a prune
-/// candidate is never the primary, so each removal's
-/// `RemoveResult::destination_path()` is `home_path()`. No fallback between
-/// worktrees — each `.config/wt.toml` stands alone.
+/// `pre-remove`/`post-remove`/`post-switch`). Approval is built after
+/// integration, age, and removability checks have selected the exact live
+/// worktrees prune will attempt to remove. `post-switch` is anchored at the
+/// primary worktree only when the current worktree is in that removal set. No
+/// fallback between worktrees — each `.config/wt.toml` stands alone.
 ///
 /// A declined prompt yields an empty plan — every executor runs no hooks.
 fn approve_prune_hooks(
     repo: &Repository,
     config: &UserConfig,
-    worktrees: &[WorktreeInfo],
-    check_items: &[CheckItem],
+    candidates: &[Candidate],
     yes: bool,
 ) -> anyhow::Result<ApprovedHookPlan> {
-    let primary_path = repo.home_path()?;
     // Non-fatal: prune candidates with no project hooks must still prune even
     // when the project identifier can't be resolved (the plan ends up empty
     // and `approve` never needs it).
     let project_id = repo.project_identifier().ok();
     let pid = project_id.as_deref();
 
-    let removed_worktree_paths: Vec<&Path> = check_items
+    let removed_worktree_paths: Vec<&Path> = candidates
         .iter()
-        .filter_map(|item| match &item.source {
-            CheckSource::Linked { wt_idx } => Some(worktrees[*wt_idx].path.as_path()),
-            _ => None,
+        .filter_map(|candidate| match candidate.kind {
+            CandidateKind::Current | CandidateKind::Other => candidate.path.as_deref(),
+            CandidateKind::BranchOnly => None,
         })
         .collect();
 
@@ -464,14 +490,20 @@ fn approve_prune_hooks(
             pid,
         );
     }
-    let primary_cfg = Repository::at(&primary_path)?.load_project_config()?;
-    builder.add(
-        &primary_path,
-        &[HookType::PostSwitch],
-        primary_cfg.as_ref(),
-        config,
-        pid,
-    );
+    if candidates
+        .iter()
+        .any(|candidate| matches!(candidate.kind, CandidateKind::Current))
+    {
+        let primary_path = repo.home_path()?;
+        let primary_cfg = Repository::at(&primary_path)?.load_project_config()?;
+        builder.add(
+            &primary_path,
+            &[HookType::PostSwitch],
+            primary_cfg.as_ref(),
+            config,
+            pid,
+        );
+    }
 
     match builder.finish().approve(pid, yes)? {
         Some(plan) => Ok(plan),
@@ -527,52 +559,30 @@ pub fn step_prune(
 
     let default_branch = repo.default_branch();
 
-    // Build the candidate set before approval: `approve_prune_hooks` needs the
-    // linked worktrees prune might remove (each `pre-remove` is approved against
-    // that worktree's own config). The integration checks below narrow this to
-    // the actually-pruned set.
+    // Build the broad integration-check set first. Hook approval happens after
+    // these checks, age filtering, and a live-worktree removability preflight
+    // have selected the exact worktrees prune will attempt to remove.
     let check_items = gather_check_items(&repo, worktrees, default_branch.as_deref())?;
 
-    // For non-dry-run, build & approve the frozen hook plan upfront so we can
-    // remove inline. Dry-run runs no hooks → empty plan.
-    let hook_plan = if dry_run {
-        ApprovedHookPlan::empty()
-    } else {
-        approve_prune_hooks(&repo, &config, worktrees, &check_items, yes)?
-    };
-
-    let mut removed: Vec<Candidate> = Vec::new();
-    let mut deferred_current: Option<Candidate> = None;
     let mut skipped_young: Vec<String> = Vec::new();
+    let mut candidates: Vec<Candidate> = Vec::new();
+    let mut events: Vec<PruneEvent> = Vec::new();
 
-    // Parallel integration checks with inline removals.
+    // Parallel integration checks.
     //
     // Spawn integration checks on a background thread via rayon par_iter,
     // sending each result through a channel as it completes. The main thread
     // processes results as they arrive: age-filtering, printing "Skipped"
-    // messages, and removing candidates immediately. This overlaps integration
-    // checking with removal — output appears as soon as the first check
-    // completes instead of waiting for all checks to finish.
+    // messages, and collecting removal candidates. The hook approval gate runs
+    // only after this has narrowed the broad check set.
     //
-    // `check_lock` serializes the parallel `integration_reason` readers
-    // against the removal writer. Each `integration_reason` call (which fans
-    // out git subprocesses that *read* `.git/config`) is held under a read
-    // guard; `try_remove` is held under the write guard. On Windows the
-    // config rewrite in `git branch -D` (lockfile+rename) briefly holds
-    // `.git/config` with delete access, and a concurrent reader's `fopen` —
-    // which does not pass `FILE_SHARE_DELETE` and is not retried — fails with
-    // "Permission denied". The RwLock keeps no integration reader in flight
-    // while a removal runs, without serializing the (parallel) checks
-    // themselves. POSIX is unaffected but takes the same path.
-    //
-    // Scope of the guarantee: this covers both removal paths for non-current
-    // worktrees. The fast path deletes the branch synchronously after the
-    // worktree is renamed into trash. The rename-failure fallback first runs
-    // `git worktree remove`, then deletes the branch synchronously, so its
-    // `.git/config` rewrite is also inside this write guard. The lock-prone
-    // current worktree still uses the detached fallback when needed so the
-    // parent shell can cd away first, but it is deferred until after the
-    // integration-check thread has drained.
+    // `check_lock` marks the Windows `.git/config` critical section. Each
+    // `integration_reason` call (which fans out git subprocesses that read
+    // `.git/config`) is held under a read guard. Later removals take the write
+    // guard around the branch-deleting paths that rewrite `.git/config` via
+    // lockfile+rename. The exact-approval phase ordering drains this thread
+    // before removals begin, but the explicit guard keeps the serialization
+    // local to prune if checks/removals are overlapped again.
     let check_lock = Arc::new(RwLock::new(()));
     let (tx, rx) = chan::unbounded();
     let integration_refs: Vec<String> = check_items
@@ -607,17 +617,6 @@ pub fn step_prune(
             });
     });
 
-    // Loop-invariant context shared by every `try_remove` call below.
-    let removal_ctx = RemovalContext {
-        repo: &repo,
-        config: &config,
-        foreground,
-        hook_plan: &hook_plan,
-        worktrees,
-        snapshot: &snapshot_arc,
-        check_lock: &check_lock,
-    };
-
     // Collect integration context alongside candidates for dry-run display.
     let mut dry_run_info: Vec<(Candidate, DryRunInfo)> = Vec::new();
 
@@ -646,12 +645,7 @@ pub fn step_prune(
                 && age < min_age_duration
             {
                 if !dry_run {
-                    eprintln!(
-                        "{}",
-                        info_message(cformat!(
-                            "Skipped <bold>{label}</> (younger than {min_age})"
-                        ))
-                    );
+                    events.push(PruneEvent::SkippedYoung(label.clone()));
                 }
                 skipped_young.push(label);
                 continue;
@@ -677,12 +671,10 @@ pub fn step_prune(
                     suffix: "",
                 };
                 dry_run_info.push((candidate, info));
-            } else if is_current {
-                deferred_current = Some(candidate);
-            } else if try_remove(&candidate, &removal_ctx)
-                .with_context(|| candidate.removal_context())?
-            {
-                removed.push(candidate);
+            } else {
+                let candidate_idx = candidates.len();
+                candidates.push(candidate);
+                events.push(PruneEvent::Candidate(candidate_idx));
             }
             continue;
         }
@@ -701,12 +693,7 @@ pub fn step_prune(
             && age < min_age_duration
         {
             if !dry_run {
-                eprintln!(
-                    "{}",
-                    info_message(cformat!(
-                        "Skipped <bold>{branch}</> (younger than {min_age})"
-                    ))
-                );
+                events.push(PruneEvent::SkippedYoung(branch.clone()));
             }
             skipped_young.push(branch.clone());
             continue;
@@ -726,15 +713,72 @@ pub fn step_prune(
                 suffix,
             };
             dry_run_info.push((candidate, info));
-        } else if try_remove(&candidate, &removal_ctx)
-            .with_context(|| candidate.removal_context())?
-        {
-            removed.push(candidate);
+        } else {
+            let candidate_idx = candidates.len();
+            candidates.push(candidate);
+            events.push(PruneEvent::Candidate(candidate_idx));
         }
     }
 
     if dry_run {
         return render_dry_run(dry_run_info, skipped_young, min_age, format);
+    }
+
+    let mut removable = Vec::with_capacity(candidates.len());
+    let mut approval_candidates = Vec::new();
+    for candidate in &candidates {
+        let can_remove = can_attempt_candidate_removal(
+            candidate,
+            &repo,
+            &config,
+            worktrees,
+            snapshot_arc.as_ref(),
+        )?;
+        removable.push(can_remove);
+        if can_remove {
+            approval_candidates.push(candidate.clone());
+        }
+    }
+
+    let hook_plan = approve_prune_hooks(&repo, &config, &approval_candidates, yes)?;
+
+    // Loop-invariant context shared by every `try_remove` call below.
+    let removal_ctx = RemovalContext {
+        repo: &repo,
+        config: &config,
+        foreground,
+        hook_plan: &hook_plan,
+        worktrees,
+        snapshot: &snapshot_arc,
+        check_lock: &check_lock,
+    };
+
+    let mut removed: Vec<Candidate> = Vec::new();
+    let mut deferred_current: Option<Candidate> = None;
+    for event in events {
+        match event {
+            PruneEvent::SkippedYoung(label) => {
+                eprintln!(
+                    "{}",
+                    info_message(cformat!(
+                        "Skipped <bold>{label}</> (younger than {min_age})"
+                    ))
+                );
+            }
+            PruneEvent::Candidate(candidate_idx) => {
+                if !removable[candidate_idx] {
+                    continue;
+                }
+                let candidate = candidates[candidate_idx].clone();
+                if matches!(candidate.kind, CandidateKind::Current) {
+                    deferred_current = Some(candidate);
+                } else if try_remove(&candidate, &removal_ctx)
+                    .with_context(|| candidate.removal_context())?
+                {
+                    removed.push(candidate);
+                }
+            }
+        }
     }
 
     // Remove deferred current worktree last (cd-to-primary happens here)
