@@ -761,11 +761,8 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     // user config. Surface it here so users can find the right key without
     // hand-deriving it from the remote URL.
     if let Ok(project_id) = repo.project_identifier() {
-        writeln!(
-            out,
-            "{}",
-            info_message(cformat!("Identifier: <bold>{project_id}</>"))
-        )?;
+        let line = info_message(cformat!("Identifier: <bold>{project_id}</>"));
+        writeln!(out, "{line}")?;
     }
 
     // Check if file exists
