@@ -1064,21 +1064,18 @@ impl Cmd {
     /// inspect either child's exit status and stderr. `source_output.stdout`
     /// is empty (it was routed to the sink via OS pipe).
     ///
-    /// Timeouts, `stdin_bytes`, and `external()` logging are not supported on
-    /// either side. The pipeline consumes one semaphore permit even though it
-    /// runs two processes concurrently — acquiring two would deadlock under
-    /// `concurrency = 1`.
+    /// `stdin_bytes` on the source feeds the pipeline's input (the sink's
+    /// stdin always comes from the source). Timeouts and `external()` logging
+    /// are not supported on either side. The pipeline consumes one semaphore
+    /// permit even though it runs two processes concurrently — acquiring two
+    /// would deadlock under `concurrency = 1`.
     pub fn pipe_into(
-        self,
+        mut self,
         next: Cmd,
     ) -> std::io::Result<(std::process::Output, std::process::Output)> {
         assert!(
             !self.shell_wrap && !next.shell_wrap,
             "Cmd::shell() commands cannot be used with pipe_into"
-        );
-        assert!(
-            self.stdin_data.is_none(),
-            "pipe_into source cannot also use stdin_bytes"
         );
         assert!(
             next.stdin_data.is_none(),
@@ -1112,10 +1109,16 @@ impl Cmd {
         let first_log = WtTraceLog::new(self.context.as_deref(), &first_cmd_str);
         let second_log = WtTraceLog::new(next.context.as_deref(), &second_cmd_str);
 
+        let source_stdin = self.stdin_data.take();
+
         let mut first = self.direct_command();
         self.apply_common_settings(&mut first);
         first
-            .stdin(Stdio::null())
+            .stdin(if source_stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -1124,6 +1127,17 @@ impl Cmd {
             .stdout
             .take()
             .expect("stdout was configured as piped");
+        // Pair the source's stdin pipe with the data to write; a writer
+        // thread (below) drains it concurrently with the rest of the pipeline.
+        let first_stdin = source_stdin.map(|data| {
+            (
+                first_child
+                    .stdin
+                    .take()
+                    .expect("stdin was configured as piped"),
+                data,
+            )
+        });
 
         let mut second = next.direct_command();
         next.apply_common_settings(&mut second);
@@ -1158,6 +1172,19 @@ impl Cmd {
                 let mut buf = Vec::new();
                 first_stderr_pipe.read_to_end(&mut buf).map(|_| buf)
             });
+
+            // Feed the source's stdin (e.g. a `git rev-list` commit list
+            // piped into `git diff-tree --stdin`) on a thread, concurrent
+            // with the drain below — writing it all up front would deadlock
+            // once the source's stdout pipe fills. A short write (the source
+            // exited early) surfaces as its non-zero exit status, which
+            // callers already inspect.
+            if let Some((mut stdin, data)) = first_stdin {
+                s.spawn(move || {
+                    let _ = stdin.write_all(&data);
+                    // `stdin` drops here, closing the pipe so the source sees EOF.
+                });
+            }
 
             // Drain `next` first (its `wait_with_output` reads its own
             // stdout/stderr), so `first`'s writes can complete.
