@@ -923,32 +923,6 @@ pub fn expand_template(
         }
     }
 
-    // Inject vars data as a nested object: {{ vars.env }}, {{ vars.config.port }}
-    // When branch is present, always inject (even if empty map) so {{ vars.key | default(...) }}
-    // works in SemiStrict mode. Only look up vars data if the template references it (avoids a
-    // git process spawn per expansion). JSON objects/arrays are parsed so dot access works
-    // ({{ vars.config.port }}); plain strings and numbers stay as-is.
-    //
-    // Use "vars." to avoid false positives from branch names or URLs containing "vars"
-    // (e.g., "envvars.internal"). Template access is always `vars.<key>`.
-    if template.contains("vars.")
-        && let Some(branch) = vars.get("branch")
-    {
-        let entries = repo.vars_entries(branch);
-        let vars_map: std::collections::BTreeMap<String, Value> = entries
-            .into_iter()
-            .map(|(k, v)| {
-                let value = serde_json::from_str::<serde_json::Value>(&v)
-                    .ok()
-                    .filter(|j| j.is_object() || j.is_array())
-                    .map(|j| Value::from_serialize(&j))
-                    .unwrap_or_else(|| Value::from(v));
-                (k, value)
-            })
-            .collect();
-        context.insert("vars".to_string(), Value::from_serialize(&vars_map));
-    }
-
     let mut env = setup_template_env(repo);
     if shell_escape {
         // Preserve trailing newlines in templates (important for multiline shell commands)
@@ -1002,6 +976,32 @@ pub fn expand_template(
     let tmpl = env
         .template_from_named_str(name, template)
         .map_err(|e| build_template_error(&e, template, name, Vec::new()))?;
+
+    // Inject vars data as a nested object: {{ vars.env }}, {{ vars["env"] }},
+    // {{ vars.config.port }}. When branch is present, always inject (even if
+    // empty map) so {{ vars.key | default(...) }} works in SemiStrict mode.
+    // Only look up vars data if the parsed template references the top-level
+    // `vars` object (avoids a git process spawn per expansion while supporting
+    // every MiniJinja access form without false positives from literal text).
+    // JSON objects/arrays are parsed so nested access works; plain strings and
+    // numbers stay as-is.
+    if tmpl.undeclared_variables(false).contains("vars")
+        && let Some(branch) = vars.get("branch")
+    {
+        let entries = repo.vars_entries(branch);
+        let vars_map: std::collections::BTreeMap<String, Value> = entries
+            .into_iter()
+            .map(|(k, v)| {
+                let value = serde_json::from_str::<serde_json::Value>(&v)
+                    .ok()
+                    .filter(|j| j.is_object() || j.is_array())
+                    .map(|j| Value::from_serialize(&j))
+                    .unwrap_or_else(|| Value::from(v));
+                (k, value)
+            })
+            .collect();
+        context.insert("vars".to_string(), Value::from_serialize(&vars_map));
+    }
 
     let result = tmpl
         .render(minijinja::Value::from_object(context))
@@ -1993,6 +1993,21 @@ mod tests {
         assert_eq!(
             expand_template("{{ vars.env }}", &vars, false, &test.repo, "test").unwrap(),
             "staging"
+        );
+        assert_eq!(
+            expand_template(r#"{{ vars["env"] }}"#, &vars, false, &test.repo, "test").unwrap(),
+            "staging"
+        );
+        assert_eq!(
+            expand_template(
+                "{% if vars %}vars loaded{% endif %}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "vars loaded"
         );
         assert_eq!(
             expand_template("{{ vars.port }}", &vars, false, &test.repo, "test").unwrap(),
