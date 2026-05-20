@@ -48,14 +48,14 @@ use super::config::ApprovalsCommand;
 /// Canonical list of hook type names accepted after `wt hook`. Shared by
 /// [`parse_hook_type`], `completion::inject_hook_subcommands`, and the
 /// `wt hook show` value parser so drift is caught by tests rather than at
-/// runtime. `post-create` is the deprecated alias for `pre-start`; it's
-/// accepted by [`parse_hook_type`] but not listed here — completion lists
-/// the canonical names only.
+/// runtime. `pre-start`/`post-start` are deprecated aliases for
+/// `pre-create`/`post-create`; they're accepted by [`parse_hook_type`] but
+/// not listed here — completion lists the canonical names only.
 pub const HOOK_TYPE_NAMES: &[&str] = &[
     "pre-switch",
     "post-switch",
-    "pre-start",
-    "post-start",
+    "pre-create",
+    "post-create",
     "pre-commit",
     "post-commit",
     "pre-merge",
@@ -135,17 +135,15 @@ pub struct HookOptions {
 /// Map a hook type name to its [`HookType`] variant. Emits a did-you-mean
 /// hint on typos (same `did_you_mean` helper used for unknown subcommands).
 ///
-/// `post-create` is the deprecated alias for `pre-start` — accepted here so
-/// scripted invocations keep working. The deprecation warning for the config
-/// section `[post-create]` is emitted by the config loader; the warning for
-/// the CLI invocation `wt hook post-create` is emitted by the dispatcher in
-/// `main.rs` before `HookOptions::parse` runs.
+/// `pre-start`/`post-start` are deprecated aliases for `pre-create`/`post-create`,
+/// accepted here so scripted invocations keep working through the rename. They
+/// map silently — no warning until the deprecation cycle's next phase.
 pub fn parse_hook_type(name: &str) -> anyhow::Result<HookType> {
     match name {
         "pre-switch" => Ok(HookType::PreSwitch),
         "post-switch" => Ok(HookType::PostSwitch),
-        "pre-start" | "post-create" => Ok(HookType::PreStart),
-        "post-start" => Ok(HookType::PostStart),
+        "pre-create" | "pre-start" => Ok(HookType::PreCreate),
+        "post-create" | "post-start" => Ok(HookType::PostCreate),
         "pre-commit" => Ok(HookType::PreCommit),
         "post-commit" => Ok(HookType::PostCommit),
         "pre-merge" => Ok(HookType::PreMerge),
@@ -319,8 +317,8 @@ mod tests {
 
     #[test]
     fn test_parse_flags() {
-        let opts = parse(&["post-start", "--yes", "--dry-run", "--foreground"]).unwrap();
-        assert_eq!(opts.hook_type, HookType::PostStart);
+        let opts = parse(&["post-create", "--yes", "--dry-run", "--foreground"]).unwrap();
+        assert_eq!(opts.hook_type, HookType::PostCreate);
         assert!(opts.yes);
         assert!(opts.dry_run);
         assert_eq!(opts.foreground, Some(true));
@@ -347,10 +345,10 @@ mod tests {
         assert_eq!(opts.shorthand_vars, vec!["branch=feature/x"]);
         // Value with `=` inside (URL, etc.) preserves everything after the
         // first `=` as the value.
-        let opts = parse(&["pre-start", "--url=http://host?a=1"]).unwrap();
+        let opts = parse(&["pre-create", "--url=http://host?a=1"]).unwrap();
         assert_eq!(opts.shorthand_vars, vec!["url=http://host?a=1"]);
         // Empty value.
-        let opts = parse(&["pre-start", "--branch="]).unwrap();
+        let opts = parse(&["pre-create", "--branch="]).unwrap();
         assert_eq!(opts.shorthand_vars, vec!["branch="]);
     }
 
@@ -444,9 +442,12 @@ mod tests {
 
     #[test]
     fn test_parse_hook_type_aliases() {
-        // `post-create` is the deprecated alias for `pre-start`.
-        let opts = parse(&["post-create"]).unwrap();
-        assert_eq!(opts.hook_type, HookType::PreStart);
+        // `pre-start`/`post-start` are deprecated aliases for
+        // `pre-create`/`post-create`.
+        let opts = parse(&["pre-start"]).unwrap();
+        assert_eq!(opts.hook_type, HookType::PreCreate);
+        let opts = parse(&["post-start"]).unwrap();
+        assert_eq!(opts.hook_type, HookType::PostCreate);
     }
 
     #[test]

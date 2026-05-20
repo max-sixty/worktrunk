@@ -1108,9 +1108,9 @@ pub fn execute_switch(
                 })
                 .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
-            // PR/MR identity travels into both the pre-start hook below and the
+            // PR/MR identity travels into both the pre-create hook below and the
             // SwitchResult — TemplateVars::for_post_switch then forwards it to
-            // background post-switch / post-start hooks.
+            // background post-switch / post-create hooks.
             let (pr_number, pr_url) = match &method {
                 CreationMethod::ForkRef {
                     number, ref_url, ..
@@ -1118,7 +1118,7 @@ pub fn execute_switch(
                 CreationMethod::Regular { .. } => (None, None),
             };
 
-            // Execute pre-start commands. The hook resolves its `.config/wt.toml`
+            // Execute pre-create commands. The hook resolves its `.config/wt.toml`
             // from the new worktree (created just above) — see
             // `hook_repo_for_worktree`.
             if run_hooks {
@@ -1139,7 +1139,7 @@ pub fn execute_switch(
                         vars = vars.with_pr(Some(*number), Some(ref_url));
                     }
                 }
-                ctx.execute_pre_start_commands(&vars.as_extra_vars(), hook_plan, &worktree_path)?;
+                ctx.execute_pre_create_commands(&vars.as_extra_vars(), hook_plan, &worktree_path)?;
             }
 
             // Record successful switch in history
@@ -1313,13 +1313,13 @@ pub(crate) fn run_pre_switch_hooks(
 
 /// Hook types that apply after a switch operation.
 ///
-/// Creates trigger pre-start + post-start + post-switch hooks;
+/// Creates trigger pre-create + post-create + post-switch hooks;
 /// existing worktrees trigger only post-switch.
 fn switch_post_hook_types(is_create: bool) -> &'static [HookType] {
     if is_create {
         &[
-            HookType::PreStart,
-            HookType::PostStart,
+            HookType::PreCreate,
+            HookType::PostCreate,
             HookType::PostSwitch,
         ]
     } else {
@@ -1357,7 +1357,7 @@ fn base_ref_for_create(
     // Multiple remotes: replicate `git worktree add <branch>`'s DWIM — when
     // `checkout.defaultRemote` names one of these remotes, that's the ref the
     // new worktree will check out, so the hook preview must match. Without
-    // this, a `pre-start` on `<defaultRemote>/<branch>` could run unapproved
+    // this, a `pre-create` on `<defaultRemote>/<branch>` could run unapproved
     // because the preview defaulted to `HEAD`.
     if remotes.len() > 1
         && let Ok(Some(default)) = repo.config_value("checkout.defaultRemote")
@@ -1368,8 +1368,8 @@ fn base_ref_for_create(
     "HEAD".to_string()
 }
 
-/// The `.config/wt.toml` that `wt switch`'s post-switch hooks (`pre-start` /
-/// `post-start` / `post-switch`) will resolve against, viewed from *before*
+/// The `.config/wt.toml` that `wt switch`'s post-switch hooks (`pre-create` /
+/// `post-create` / `post-switch`) will resolve against, viewed from *before*
 /// the worktree is created — so the approval prompt and the pre-flight
 /// template validation see the exact config `execute_switch` /
 /// [`spawn_switch_background_hooks`] (via [`hook_repo_for_worktree`]) read at
@@ -1433,7 +1433,7 @@ fn hook_repo_for_worktree(worktree_path: &Path) -> anyhow::Result<Repository> {
 ///
 /// Returns `(hooks_approved, plan)`. `hooks_approved` is `false` and the plan
 /// empty when `!verify` or the user declined; the covered switch hooks
-/// (`pre-start` / `post-start` / `post-switch`) execute only from `plan`.
+/// (`pre-create` / `post-create` / `post-switch`) execute only from `plan`.
 pub(crate) fn approve_switch_hooks(
     repo: &Repository,
     config: &UserConfig,
@@ -1473,7 +1473,7 @@ pub(crate) fn approve_switch_hooks(
     }
 }
 
-/// Spawn post-switch (and post-start for creates) background hooks.
+/// Spawn post-switch (and post-create for creates) background hooks.
 pub(crate) fn spawn_switch_background_hooks(
     config: &UserConfig,
     result: &SwitchResult,
@@ -1507,7 +1507,7 @@ pub(crate) fn spawn_switch_background_hooks(
             hook_plan,
             result.path(),
             &ctx,
-            HookType::PostStart,
+            HookType::PostCreate,
             extra_vars,
             hooks_display_path,
         )?;
@@ -1718,7 +1718,7 @@ pub fn run_switch(
 
     // Spawn background hooks after success message
     // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)
-    // - post-start: runs only when creating a NEW worktree
+    // - post-create: runs only when creating a NEW worktree
     // Batch hooks into a single message when both types are present
     if hooks_approved {
         spawn_switch_background_hooks(
@@ -1732,7 +1732,7 @@ pub fn run_switch(
         )?;
     }
 
-    // Execute user command after post-start hooks have been spawned
+    // Execute user command after post-create hooks have been spawned
     // Note: execute_args requires execute via clap's `requires` attribute
     if let Some(cmd) = execute {
         // Build template context for expansion (includes base vars when creating)
@@ -1806,7 +1806,7 @@ pub fn run_switch(
 /// Validates:
 /// - `--execute` command template (if present)
 /// - `--execute` trailing arg templates (if present)
-/// - Hook templates (pre-start, post-start, post-switch) from user and project config
+/// - Hook templates (pre-create, post-create, post-switch) from user and project config
 pub(crate) fn validate_switch_templates(
     repo: &Repository,
     config: &UserConfig,

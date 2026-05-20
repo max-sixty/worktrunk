@@ -1,4 +1,4 @@
-[post-start]
+[post-create]
 # Copy target/ from main worktree using CoW (~3s vs ~68s full rebuild)
 deps = "wt step copy-ignored"
 assets = "task fetch-assets"

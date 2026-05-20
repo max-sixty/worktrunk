@@ -214,14 +214,14 @@ Use the appropriate helper function:
 
 2. **Post-hooks** — User will cd to destination if shell integration is active.
    Use `output::post_hook_display_path(destination)`.
-   Examples: pre-start, post-switch, post-start, post-merge (after removal).
+   Examples: pre-create, post-switch, post-create, post-merge (after removal).
 
 ```rust
 // Pre-hooks: user is at cwd, no cd happens
 run_hook_with_filter(..., crate::output::pre_hook_display_path(ctx.worktree_path))?;
 
 // Post-hooks: user will cd to destination if shell integration active
-ctx.spawn_post_start_commands(crate::output::post_hook_display_path(&destination))?;
+ctx.spawn_post_create_commands(crate::output::post_hook_display_path(&destination))?;
 ```
 
 **Avoid pronouns with cross-message referents:** Hints appear as separate

@@ -326,22 +326,28 @@ mod tests {
     #[test]
     fn test_deserialize_all_hooks() {
         let contents = r#"
-post-create = "npm install"
-post-start = "npm run watch"
+pre-switch = "echo switching"
 post-switch = "rename-tab"
+pre-create = "npm install"
+post-create = "npm run watch"
 pre-commit = "cargo fmt --check"
+post-commit = "echo committed"
 pre-merge = "cargo test"
 post-merge = "git push"
 pre-remove = "echo bye"
+post-remove = "echo removed"
 "#;
         let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.hooks.post_create.is_some());
-        assert!(config.hooks.post_start.is_some());
+        assert!(config.hooks.pre_switch.is_some());
         assert!(config.hooks.post_switch.is_some());
+        assert!(config.hooks.pre_create.is_some());
+        assert!(config.hooks.post_create.is_some());
         assert!(config.hooks.pre_commit.is_some());
+        assert!(config.hooks.post_commit.is_some());
         assert!(config.hooks.pre_merge.is_some());
         assert!(config.hooks.post_merge.is_some());
         assert!(config.hooks.pre_remove.is_some());
+        assert!(config.hooks.post_remove.is_some());
     }
 
     // ============================================================================

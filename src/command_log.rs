@@ -193,7 +193,7 @@ mod tests {
         let entry = serde_json::json!({
             "ts": "2026-02-17T10:00:00Z",
             "wt": "wt switch",
-            "label": "post-start user:server",
+            "label": "post-create user:server",
             "cmd": "npm run dev",
             "exit": null,
             "dur_ms": null,

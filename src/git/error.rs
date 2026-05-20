@@ -1900,12 +1900,12 @@ mod tests {
         assert_snapshot!(err.render(), @"[31m✗[39m [31mpre-merge command failed: [1mlint[22m: lint failed[39m");
 
         let err = WorktrunkError::HookCommandFailed {
-            hook_type: HookType::PreStart,
+            hook_type: HookType::PreCreate,
             command_name: None,
             error: "setup failed".into(),
             exit_code: None,
         };
-        assert_snapshot!(err.render(), @"[31m✗[39m [31mpre-start command failed: setup failed[39m");
+        assert_snapshot!(err.render(), @"[31m✗[39m [31mpre-create command failed: setup failed[39m");
 
         // Silent errors produce empty output
         assert_eq!(format!("{}", WorktrunkError::CommandNotApproved), "");

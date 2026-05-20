@@ -131,7 +131,7 @@ fn build_manual_hook_template_vars(
             .with_target(branch)
             .with_target_worktree_path(worktree_path),
         // Switch hooks: base = current (we're "switching from" here)
-        HookType::PreSwitch | HookType::PreStart | HookType::PostStart | HookType::PostSwitch => {
+        HookType::PreSwitch | HookType::PreCreate | HookType::PostCreate | HookType::PostSwitch => {
             TemplateVars::new()
                 .with_base(branch, worktree_path)
                 .with_target(branch)
@@ -209,10 +209,10 @@ pub struct HookCliArgs<'a> {
 ///   regardless of whether any template references the key.
 ///
 /// The `foreground` parameter controls execution mode for hooks that normally run
-/// in background (post-start, post-switch):
+/// in background (post-create, post-switch):
 /// - `None` = use default behavior for this hook type
 /// - `Some(true)` = run in foreground (for debugging)
-/// - `Some(false)` = run in background (default for post-start/post-switch)
+/// - `Some(false)` = run in background (default for post-create/post-switch)
 pub fn run_hook(
     hook_type: HookType,
     yes: bool,
@@ -384,8 +384,8 @@ pub fn handle_hook_show(
     // Parse hook type filter if provided
     let filter: Option<HookType> = hook_type_filter.map(|s| match s {
         "pre-switch" => HookType::PreSwitch,
-        "pre-start" | "post-create" => HookType::PreStart,
-        "post-start" => HookType::PostStart,
+        "pre-create" => HookType::PreCreate,
+        "post-create" => HookType::PostCreate,
         "post-switch" => HookType::PostSwitch,
         "pre-commit" => HookType::PreCommit,
         "post-commit" => HookType::PostCommit,
@@ -548,7 +548,6 @@ fn render_user_hooks(
 
     // Collect all user hooks (global hooks from the user config file)
     // Note: uses overrides.hooks for display, not the merged hooks() accessor.
-    // get() handles the post-create → pre-start deprecation merge.
     let user_hooks = &config.hooks;
     let hooks: Vec<_> = HookType::iter()
         .filter_map(|ht| user_hooks.get(ht).map(|cfg| (ht, cfg)))
@@ -602,7 +601,7 @@ fn render_project_hooks(
         return Ok(());
     };
 
-    // Collect all project hooks (get() handles post-create → pre-start merge)
+    // Collect all project hooks
     let hooks: Vec<_> = HookType::iter()
         .filter_map(|ht| config.hooks.get(ht).map(|cfg| (ht, cfg)))
         .collect();

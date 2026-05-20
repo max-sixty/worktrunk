@@ -181,14 +181,6 @@ fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
             // which parses against a clap tree augmented with hook-type
             // subcommand stubs and renders their help directly. Execution flow
             // only reaches here for non-help invocations.
-            if args.first().and_then(|s| s.to_str()) == Some("post-create") {
-                eprintln!(
-                    "{}",
-                    warning_message(
-                        "wt hook post-create is deprecated; use wt hook pre-start instead"
-                    )
-                );
-            }
             let opts = HookOptions::parse(&args)?;
             run_hook(
                 opts.hook_type,
