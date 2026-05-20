@@ -212,6 +212,52 @@ fn test_switch_remote_prefix_stripped_slash_in_branch(#[from(repo_with_remote)] 
     );
 }
 
+/// A local branch literally named like a remote-tracking ref must win over the
+/// remote-prefix stripping used for picker/DWIM remote-only branches.
+#[rstest]
+fn test_switch_remote_prefix_preserves_same_named_local_branch(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    // Remote `collision`, with no local `collision` branch.
+    repo.run_git(&["branch", "collision"]);
+    repo.run_git(&["push", "origin", "collision"]);
+    repo.run_git(&["branch", "-D", "collision"]);
+
+    // Local branch literally named `origin/collision`.
+    repo.run_git(&["checkout", "-b", "origin/collision"]);
+    fs::write(repo.root_path().join("local-collision.txt"), "local").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "Local origin/collision"]);
+    repo.run_git(&["checkout", "main"]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "origin/collision"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let worktrees = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(
+        worktrees.contains("branch refs/heads/origin/collision"),
+        "should create worktree for local origin/collision, not stripped collision: {worktrees}"
+    );
+
+    let stripped_branch = repo
+        .git_command()
+        .args(["show-ref", "--verify", "refs/heads/collision"])
+        .run()
+        .unwrap();
+    assert!(
+        !stripped_branch.status.success(),
+        "switch must not create stripped local branch collision"
+    );
+}
+
 /// When a branch exists on multiple remotes, DWIM should fail with an error
 /// since git can't determine which remote to track.
 #[rstest]

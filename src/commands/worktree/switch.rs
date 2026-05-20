@@ -549,8 +549,13 @@ fn resolve_switch_target(
         .context("Failed to resolve branch name")?;
 
     // Handle remote-tracking ref names (e.g., "origin/username/feature-1" from the picker).
-    // Strip the remote prefix so DWIM can create a local tracking branch.
-    if !create && let Some(local_name) = repo.strip_remote_prefix(&resolved_branch) {
+    // Strip the remote prefix only when there is no exact local branch/worktree,
+    // so a local branch literally named `origin/foo` is not retargeted to `foo`.
+    if !create
+        && repo.worktree_for_branch(&resolved_branch)?.is_none()
+        && !repo.branch(&resolved_branch).exists_locally()?
+        && let Some(local_name) = repo.strip_remote_prefix(&resolved_branch)
+    {
         resolved_branch = local_name;
     }
 
