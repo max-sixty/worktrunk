@@ -8,6 +8,10 @@ use std::path::PathBuf;
 
 use crate::path::home_dir;
 
+fn invalid_command_name_error(message: String) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidInput, message)
+}
+
 /// Get the user's home directory or return an error.
 pub fn home_dir_required() -> Result<PathBuf, std::io::Error> {
     home_dir().ok_or_else(|| {
@@ -135,6 +139,8 @@ pub fn powershell_profile_paths(home: &std::path::Path) -> Vec<PathBuf> {
 /// The `cmd` parameter affects the Fish functions filename (e.g., `wt.fish` or `git-wt.fish`).
 /// Returns paths in order of preference. The first existing file should be used.
 pub fn config_paths(shell: super::Shell, cmd: &str) -> Result<Vec<PathBuf>, std::io::Error> {
+    super::validate_shell_command_name(cmd).map_err(invalid_command_name_error)?;
+
     let home = home_dir_required()?;
 
     Ok(match shell {
@@ -186,6 +192,8 @@ pub fn config_paths(shell: super::Shell, cmd: &str) -> Result<Vec<PathBuf>, std:
 /// `functions/{cmd}.fish` instead. This method returns the legacy path so install/uninstall
 /// can clean it up.
 pub fn legacy_fish_conf_d_path(cmd: &str) -> Result<PathBuf, std::io::Error> {
+    super::validate_shell_command_name(cmd).map_err(invalid_command_name_error)?;
+
     let home = home_dir_required()?;
     Ok(home
         .join(".config")
@@ -203,6 +211,8 @@ pub fn legacy_fish_conf_d_path(cmd: &str) -> Result<PathBuf, std::io::Error> {
 /// (installed by `wt config shell install`) that uses $WORKTRUNK_BIN to bypass
 /// the shell function wrapper.
 pub fn completion_path(shell: super::Shell, cmd: &str) -> Result<PathBuf, std::io::Error> {
+    super::validate_shell_command_name(cmd).map_err(invalid_command_name_error)?;
+
     let home = home_dir_required()?;
 
     // Use etcetera for XDG-compliant paths when available

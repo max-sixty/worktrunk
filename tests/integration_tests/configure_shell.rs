@@ -89,6 +89,43 @@ fn test_configure_shell_specific_shell(repo: TestRepo, temp_home: TempDir) {
 }
 
 #[rstest]
+fn test_configure_shell_rejects_unsafe_cmd_without_modifying_rc(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    let zshrc_path = temp_home.path().join(".zshrc");
+    let original = "# Existing config\n";
+    fs::write(&zshrc_path, original).unwrap();
+
+    let mut cmd = wt_command();
+    repo.configure_wt_cmd(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.arg("config")
+        .arg("shell")
+        .arg("install")
+        .arg("zsh")
+        .arg("--yes")
+        .arg("--cmd")
+        .arg("wt; touch /tmp/pwn")
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "unsafe command name must not emit shell code:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Invalid shell integration command name"),
+        "expected validation error, got:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fs::read_to_string(&zshrc_path).unwrap(), original);
+}
+
+#[rstest]
 fn test_configure_shell_already_exists(repo: TestRepo, temp_home: TempDir) {
     // Create a fake .zshrc file with the line already present
     let zshrc_path = temp_home.path().join(".zshrc");

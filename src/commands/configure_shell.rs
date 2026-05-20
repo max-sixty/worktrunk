@@ -183,6 +183,8 @@ pub fn handle_configure_shell(
     dry_run: bool,
     cmd: String,
 ) -> Result<ScanResult, String> {
+    shell::validate_shell_command_name(&cmd)?;
+
     // First, do a dry-run to see what would be changed
     let preview = scan_shell_configs(shell_filter, true, &cmd)?;
 
@@ -330,6 +332,8 @@ pub fn scan_shell_configs(
     dry_run: bool,
     cmd: &str,
 ) -> Result<ScanResult, String> {
+    shell::validate_shell_command_name(cmd)?;
+
     // Iterate every supported shell. Shells the user doesn't have are filtered
     // out of the Skipped output by `is_installed()` below, matching how
     // bash/zsh/fish/nushell are handled.
@@ -825,6 +829,8 @@ pub fn process_shell_completions(
     dry_run: bool,
     cmd: &str,
 ) -> Result<Vec<CompletionResult>, String> {
+    shell::validate_shell_command_name(cmd)?;
+
     let mut results = Vec::new();
     let fish_completion = fish_completion_content(cmd);
 
@@ -899,6 +905,8 @@ pub fn handle_unconfigure_shell(
     dry_run: bool,
     cmd: &str,
 ) -> Result<UninstallScanResult, String> {
+    shell::validate_shell_command_name(cmd)?;
+
     // First, do a dry-run to see what would be changed
     let preview = scan_for_uninstall(shell_filter, true, cmd)?;
 
@@ -935,6 +943,8 @@ fn scan_for_uninstall(
     dry_run: bool,
     cmd: &str,
 ) -> Result<UninstallScanResult, String> {
+    shell::validate_shell_command_name(cmd)?;
+
     // For uninstall, always include PowerShell to clean up any existing profiles
     let default_shells = vec![
         Shell::Bash,

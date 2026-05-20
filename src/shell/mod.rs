@@ -21,6 +21,31 @@ pub use detection::{
 pub use paths::{completion_path, config_paths, legacy_fish_conf_d_path};
 pub use utils::{current_shell, detect_zsh_compinit, extract_filename_from_path};
 
+/// Validate a command name before embedding it in shell syntax or shell-owned paths.
+pub fn validate_shell_command_name(cmd: &str) -> Result<(), String> {
+    if cmd.is_empty() {
+        return Err("Invalid shell integration command name: command name cannot be empty".into());
+    }
+
+    if cmd.starts_with('-') {
+        return Err(
+            "Invalid shell integration command name: command name cannot start with '-'".into(),
+        );
+    }
+
+    if !cmd
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    {
+        return Err(
+            "Invalid shell integration command name: use only ASCII letters, numbers, '.', '_', and '-'"
+                .into(),
+        );
+    }
+
+    Ok(())
+}
+
 /// Supported shells
 ///
 /// Currently supported: bash, fish, nushell (experimental), zsh, powershell
@@ -133,6 +158,8 @@ impl Shell {
     /// Note: The generated line does not include `--cmd` because `binary_name()` already
     /// detects the command name from argv\[0\] at runtime.
     pub fn config_line(&self, cmd: &str) -> String {
+        validate_shell_command_name(cmd).unwrap_or_else(|message| panic!("{message}"));
+
         match self {
             Self::Bash | Self::Zsh => {
                 format!(
@@ -208,6 +235,7 @@ pub struct ShellInit {
 
 impl ShellInit {
     pub fn with_prefix(shell: Shell, cmd: String) -> Self {
+        validate_shell_command_name(&cmd).unwrap_or_else(|message| panic!("{message}"));
         Self { shell, cmd }
     }
 
@@ -495,6 +523,28 @@ mod tests {
     fn test_shell_init_with_custom_prefix() {
         let init = ShellInit::with_prefix(Shell::Bash, "custom".to_string());
         insta::assert_snapshot!(init.generate().expect("Should generate with custom prefix"));
+    }
+
+    #[rstest]
+    #[case("wt")]
+    #[case("git-wt")]
+    #[case("my.app_1")]
+    fn test_validate_shell_command_name_accepts_safe_names(#[case] cmd: &str) {
+        assert!(validate_shell_command_name(cmd).is_ok());
+    }
+
+    #[rstest]
+    #[case("")]
+    #[case("-wt")]
+    #[case("wt; touch")]
+    #[case("wt touch")]
+    #[case("wt/touch")]
+    #[case("wt\\touch")]
+    #[case("wt\ntouch")]
+    #[case("wt'touch")]
+    #[case("wüt")]
+    fn test_validate_shell_command_name_rejects_shell_syntax(#[case] cmd: &str) {
+        assert!(validate_shell_command_name(cmd).is_err());
     }
 
     /// Verify that `config_line()` generates lines that
