@@ -11,7 +11,7 @@
 /// When invoked as `git-wt`, returns "git-wt"; when invoked as `wt`, returns "wt".
 /// On Windows, strips `.exe` extension — users should use `wt` not `wt.exe` in aliases.
 pub fn binary_name() -> String {
-    std::env::args()
+    std::env::args_os()
         .next()
         .and_then(|arg0| {
             std::path::Path::new(&arg0)
@@ -40,9 +40,9 @@ pub fn is_git_subcommand() -> bool {
 /// Returns the full invocation path (e.g., `target/debug/wt`, `./wt`, `wt`).
 /// Backslashes are normalized to forward slashes on Windows for consistent display.
 pub fn invocation_path() -> String {
-    std::env::args()
+    std::env::args_os()
         .next()
-        .map(|s| s.replace('\\', "/"))
+        .map(|s| s.to_string_lossy().replace('\\', "/"))
         .unwrap_or_else(|| "wt".to_string())
 }
 
@@ -105,8 +105,11 @@ pub fn invocation_path() -> String {
 /// The argv\[0\] heuristic is simple, fast, and catches all cases where shell
 /// integration won't work because the shell wrapper wasn't invoked.
 pub fn was_invoked_with_explicit_path() -> bool {
-    std::env::args()
+    std::env::args_os()
         .next()
-        .map(|arg0| arg0.contains('/') || arg0.contains('\\'))
+        .map(|arg0| {
+            let arg0 = arg0.to_string_lossy();
+            arg0.contains('/') || arg0.contains('\\')
+        })
         .unwrap_or(false)
 }

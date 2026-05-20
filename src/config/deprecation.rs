@@ -1189,7 +1189,8 @@ fn merge_args_into_command(table: &mut toml_edit::Table) {
         .unwrap();
     let cmd_str = command.as_str().unwrap();
 
-    // Filter to string args only (non-strings are dropped)
+    // `can_merge` guarantees every element is a string; `filter_map` here just
+    // extracts them.
     let args_str: Vec<&str> = args_array.iter().filter_map(|a| a.as_str()).collect();
     if !args_str.is_empty() {
         // Only add space if command is non-empty
