@@ -1188,15 +1188,18 @@ pub fn migrate_content(content: &str) -> String {
 ///
 /// Called by `wt config update` before overwriting the config with migrated
 /// content, so the approvals data survives the rewrite. `Ok(None)` for the
-/// benign no-op cases (`approvals.toml` already exists, or the config has no
-/// approved-commands entries). Returns `Err` when a copy was attempted but
-/// failed — the caller must abort before rewriting config.toml, otherwise the
-/// legacy approvals are silently lost.
+/// benign no-op cases (a valid `approvals.toml` already exists, or the config
+/// has no approved-commands entries). Returns `Err` when the existing
+/// approvals file cannot be validated or a copy was attempted but failed — the
+/// caller must abort before rewriting config.toml, otherwise the legacy
+/// approvals are silently lost.
 pub fn copy_approved_commands_to_approvals_file(
     config_path: &Path,
 ) -> anyhow::Result<Option<PathBuf>> {
     let approvals_path = config_path.with_file_name("approvals.toml");
+    let _lock = super::user::mutation::acquire_config_lock(&approvals_path)?;
     if approvals_path.exists() {
+        validate_existing_approvals_file(&approvals_path)?;
         return Ok(None); // Already authoritative, don't overwrite
     }
 
@@ -1218,6 +1221,22 @@ pub fn copy_approved_commands_to_approvals_file(
         )
     })?;
     Ok(Some(approvals_path))
+}
+
+fn validate_existing_approvals_file(approvals_path: &Path) -> anyhow::Result<()> {
+    let content = std::fs::read_to_string(approvals_path).with_context(|| {
+        format!(
+            "Failed to read existing approvals file {}",
+            crate::path::format_path_for_display(approvals_path)
+        )
+    })?;
+    toml::from_str::<super::approvals::Approvals>(&content).with_context(|| {
+        format!(
+            "Failed to parse existing approvals file {}",
+            crate::path::format_path_for_display(approvals_path)
+        )
+    })?;
+    Ok(())
 }
 
 /// Merge args array into command string
@@ -3262,6 +3281,32 @@ approved-commands = ["npm install"]
         // Verify existing file was not overwritten
         let existing = std::fs::read_to_string(&approvals_path).unwrap();
         assert_eq!(existing, "# existing approvals\n");
+    }
+
+    #[test]
+    fn test_copy_approved_commands_errors_when_existing_approvals_invalid() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let approvals_path = temp_dir.path().join("approvals.toml");
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = ["npm install"]
+"#;
+        std::fs::write(&config_path, content).unwrap();
+        std::fs::write(&approvals_path, "this is = = not valid toml\n").unwrap();
+
+        let result = copy_approved_commands_to_approvals_file(&config_path);
+        assert!(
+            result.is_err(),
+            "Invalid existing approvals.toml must surface as Err; got {result:?}"
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to parse existing approvals file"),
+            "Error should identify the invalid approvals file"
+        );
     }
 
     #[test]

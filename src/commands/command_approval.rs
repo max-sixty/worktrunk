@@ -241,20 +241,13 @@ pub fn approve_hooks_filtered(
 
     let mut commands = collect_commands_for_hooks(&project_config, hook_types);
 
-    // Apply name filters before approval to only prompt for targeted commands
-    // Collect non-empty name parts from filters
-    // Empty names (e.g., "project:") mean match all project commands - no filtering
-    let filter_names: Vec<&str> = parsed_filters
-        .iter()
-        .map(|f| f.name)
-        .filter(|n| !n.is_empty())
-        .collect();
-    if !filter_names.is_empty() {
+    // Apply source-aware filters before approval to only prompt for targeted
+    // project commands. User-scoped filters never match project commands.
+    if !parsed_filters.is_empty() {
         commands.retain(|cmd| {
-            cmd.command
-                .name
-                .as_deref()
-                .is_some_and(|n| filter_names.contains(&n))
+            parsed_filters
+                .iter()
+                .any(|f| f.matches_command(HookSource::Project, cmd.command.name.as_deref()))
         });
     }
 

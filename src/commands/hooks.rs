@@ -133,7 +133,7 @@ fn prepare_sourced_steps(
         let is_pipeline = config.is_pipeline();
         let steps = prepare_steps(config, ctx, extra_vars, hook_type, source)?;
         for step in steps {
-            if let Some(filtered) = filter_step_by_name(step, &parsed_filters) {
+            if let Some(filtered) = filter_step_by_name(step, source, &parsed_filters) {
                 result.push(SourcedStep {
                     step: filtered,
                     source,
@@ -150,24 +150,17 @@ fn prepare_sourced_steps(
 /// filtered out. A `Concurrent` group reduced to one command collapses to `Single`.
 fn filter_step_by_name(
     step: PreparedStep,
+    source: HookSource,
     parsed_filters: &[ParsedFilter<'_>],
 ) -> Option<PreparedStep> {
     if parsed_filters.is_empty() {
         return Some(step);
     }
-    let filter_names: Vec<&str> = parsed_filters
-        .iter()
-        .map(|f| f.name)
-        .filter(|n| !n.is_empty())
-        .collect();
-    if filter_names.is_empty() {
-        return Some(step);
-    }
 
     let matches = |cmd: &PreparedCommand| {
-        cmd.name
-            .as_deref()
-            .is_some_and(|n| filter_names.contains(&n))
+        parsed_filters
+            .iter()
+            .any(|f| f.matches_command(source, cmd.name.as_deref()))
     };
 
     match step {

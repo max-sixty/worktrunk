@@ -903,6 +903,25 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_command_error_warn_signal_aborts() {
+        let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            code: 143,
+            message: "terminated".into(),
+            signal: Some(15),
+        }
+        .into();
+        let cmd = make_cmd(Some("cleanup"));
+        let wrapper = hook_error_wrapper(HookType::PostStart);
+        let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::Warn);
+        let err = result.unwrap_err();
+        let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
+        assert!(matches!(
+            wt_err,
+            WorktrunkError::AlreadyDisplayed { exit_code: 143 }
+        ));
+    }
+
+    #[test]
     fn test_handle_command_error_warn_unnamed() {
         // Covers the `cmd.name = None` branch of the Warn arm.
         let err = anyhow::anyhow!("unexpected failure");

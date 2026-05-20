@@ -674,6 +674,36 @@ fn build_template_error(
     }
 }
 
+fn sorted_available_vars(vars: &[&str]) -> Vec<String> {
+    let mut keys: Vec<String> = vars.iter().map(|k| k.to_string()).collect();
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+fn build_undefined_vars_error(
+    name: &str,
+    undefined_vars: &[String],
+    available_vars: Vec<String>,
+) -> TemplateExpandError {
+    let names = undefined_vars
+        .iter()
+        .map(|var| format!("`{var}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let noun = if undefined_vars.len() == 1 {
+        "value"
+    } else {
+        "values"
+    };
+
+    TemplateExpandError {
+        message: format!("Failed to expand {name}: undefined {noun}: {names}"),
+        source_line: None,
+        available_vars,
+    }
+}
+
 /// Set up a minijinja environment with worktrunk's custom filters and functions.
 ///
 /// Shared by [`expand_template`] and [`validate_template`] to ensure both use
@@ -824,12 +854,24 @@ pub fn validate_template(
         .template_from_named_str(name, template)
         .map_err(|e| build_template_error(&e, template, name, Vec::new()))?;
 
+    let mut allowed: BTreeSet<String> = available.iter().map(|k| k.to_string()).collect();
+    allowed.insert("vars".to_string());
+    let mut undefined: Vec<String> = tmpl
+        .undeclared_variables(false)
+        .into_iter()
+        .filter(|var| !allowed.contains(var))
+        .collect();
+    undefined.sort();
+    if !undefined.is_empty() {
+        return Err(build_undefined_vars_error(
+            name,
+            &undefined,
+            sorted_available_vars(&available),
+        ));
+    }
+
     tmpl.render(minijinja::Value::from_object(context))
-        .map_err(|e| {
-            let mut keys: Vec<String> = available.iter().map(|k| k.to_string()).collect();
-            keys.sort();
-            build_template_error(&e, template, name, keys)
-        })?;
+        .map_err(|e| build_template_error(&e, template, name, sorted_available_vars(&available)))?;
 
     Ok(())
 }
@@ -879,32 +921,6 @@ pub fn expand_template(
                 minijinja::Value::from((*value).to_string()),
             );
         }
-    }
-
-    // Inject vars data as a nested object: {{ vars.env }}, {{ vars.config.port }}
-    // When branch is present, always inject (even if empty map) so {{ vars.key | default(...) }}
-    // works in SemiStrict mode. Only look up vars data if the template references it (avoids a
-    // git process spawn per expansion). JSON objects/arrays are parsed so dot access works
-    // ({{ vars.config.port }}); plain strings and numbers stay as-is.
-    //
-    // Use "vars." to avoid false positives from branch names or URLs containing "vars"
-    // (e.g., "envvars.internal"). Template access is always `vars.<key>`.
-    if template.contains("vars.")
-        && let Some(branch) = vars.get("branch")
-    {
-        let entries = repo.vars_entries(branch);
-        let vars_map: std::collections::BTreeMap<String, Value> = entries
-            .into_iter()
-            .map(|(k, v)| {
-                let value = serde_json::from_str::<serde_json::Value>(&v)
-                    .ok()
-                    .filter(|j| j.is_object() || j.is_array())
-                    .map(|j| Value::from_serialize(&j))
-                    .unwrap_or_else(|| Value::from(v));
-                (k, value)
-            })
-            .collect();
-        context.insert("vars".to_string(), Value::from_serialize(&vars_map));
     }
 
     let mut env = setup_template_env(repo);
@@ -960,6 +976,32 @@ pub fn expand_template(
     let tmpl = env
         .template_from_named_str(name, template)
         .map_err(|e| build_template_error(&e, template, name, Vec::new()))?;
+
+    // Inject vars data as a nested object: {{ vars.env }}, {{ vars["env"] }},
+    // {{ vars.config.port }}. When branch is present, always inject (even if
+    // empty map) so {{ vars.key | default(...) }} works in SemiStrict mode.
+    // Only look up vars data if the parsed template references the top-level
+    // `vars` object (avoids a git process spawn per expansion while supporting
+    // every MiniJinja access form without false positives from literal text).
+    // JSON objects/arrays are parsed so nested access works; plain strings and
+    // numbers stay as-is.
+    if tmpl.undeclared_variables(false).contains("vars")
+        && let Some(branch) = vars.get("branch")
+    {
+        let entries = repo.vars_entries(branch);
+        let vars_map: std::collections::BTreeMap<String, Value> = entries
+            .into_iter()
+            .map(|(k, v)| {
+                let value = serde_json::from_str::<serde_json::Value>(&v)
+                    .ok()
+                    .filter(|j| j.is_object() || j.is_array())
+                    .map(|j| Value::from_serialize(&j))
+                    .unwrap_or_else(|| Value::from(v));
+                (k, value)
+            })
+            .collect();
+        context.insert("vars".to_string(), Value::from_serialize(&vars_map));
+    }
 
     let result = tmpl
         .render(minijinja::Value::from_object(context))
@@ -1953,6 +1995,21 @@ mod tests {
             "staging"
         );
         assert_eq!(
+            expand_template(r#"{{ vars["env"] }}"#, &vars, false, &test.repo, "test").unwrap(),
+            "staging"
+        );
+        assert_eq!(
+            expand_template(
+                "{% if vars %}vars loaded{% endif %}",
+                &vars,
+                false,
+                &test.repo,
+                "test"
+            )
+            .unwrap(),
+            "vars loaded"
+        );
+        assert_eq!(
             expand_template("{{ vars.port }}", &vars, false, &test.repo, "test").unwrap(),
             "3000"
         );
@@ -2304,6 +2361,21 @@ mod tests {
             )
             .is_ok()
         );
+
+        // Typos in conditional predicates must not be hidden by SemiStrict truthiness.
+        let err = validate_template(
+            "{% if targte %}echo {{ target }}{% endif %}",
+            ValidationScope::Hook(HookType::PreMerge),
+            &test.repo,
+            "test",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("undefined value"),
+            "got: {}",
+            err.message
+        );
+        assert!(err.message.contains("targte"), "got: {}", err.message);
 
         // `pr_number`/`pr_url` are available in pre-create (populated when
         // creating via `pr:N` / `mr:N`).

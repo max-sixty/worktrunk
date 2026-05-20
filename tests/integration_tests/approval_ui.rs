@@ -546,6 +546,53 @@ test = "echo 'user test'"
 }
 
 #[rstest]
+fn test_mixed_source_name_filters_do_not_cross_match(repo: TestRepo) {
+    repo.write_test_config(
+        r#"[pre-merge]
+lint = "echo 'user lint' > user_lint.txt"
+deploy = "echo 'user deploy' > user_deploy.txt"
+"#,
+    );
+    repo.write_project_config(
+        r#"[pre-merge]
+lint = "echo 'project lint' > project_lint.txt"
+deploy = "echo 'project deploy' > project_deploy.txt"
+"#,
+    );
+    repo.commit("Add pre-merge hooks");
+
+    let output = repo
+        .wt_command()
+        .args(["--yes", "hook", "pre-merge", "project:deploy", "user:lint"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to run wt hook pre-merge");
+
+    assert!(
+        output.status.success(),
+        "wt hook pre-merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(
+        fs::read_to_string(repo.root_path().join("project_deploy.txt")).unwrap(),
+        "project deploy\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.root_path().join("user_lint.txt")).unwrap(),
+        "user lint\n"
+    );
+    assert!(
+        !repo.root_path().join("project_lint.txt").exists(),
+        "project lint should not run for a user-scoped lint filter"
+    );
+    assert!(
+        !repo.root_path().join("user_deploy.txt").exists(),
+        "user deploy should not run for a project-scoped deploy filter"
+    );
+}
+
+#[rstest]
 fn test_step_hook_run_all_commands(repo: TestRepo) {
     // Config with multiple named commands
     repo.write_project_config(
