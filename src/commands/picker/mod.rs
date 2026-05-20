@@ -1343,6 +1343,15 @@ pub mod tests {
         assert!(!marker.exists(), "unapproved pre-remove hook must not run");
     }
 
+    /// Serializes the one test that mutates process-global cwd against itself
+    /// and any future cwd-touching test — Rust runs `#[test]`s in parallel
+    /// threads of one process, and `invoke()`'s `changed_directory` branch
+    /// calls `std::env::set_current_dir`. Holding this lock for the whole
+    /// `invoke()` + restore window keeps the mutation invisible to every other
+    /// cooperating test (`tests/CLAUDE.md` → "No Global State Mutations in
+    /// Tests"). A new test that reads or sets cwd must take this lock too.
+    static CWD_MUTATION_GUARD: Mutex<()> = Mutex::new(());
+
     /// alt-r on the *current* worktree: `invoke()` validates and removes the
     /// item, then — because the picker's working directory just disappeared —
     /// cd's the process to the home worktree and re-anchors `self.repo` there.
@@ -1353,6 +1362,13 @@ pub mod tests {
     /// (skim's `as_any().downcast_ref::<WorktreeSkimItem>()` is the part that
     /// can't run off the reader thread — `invoke()` itself matches on
     /// `output()`, so plain `String` skim items suffice.)
+    ///
+    /// `invoke()` mutates process-global cwd; this can't be a subprocess test
+    /// because a `wt` picker that has removed its own worktree never exits on
+    /// abort (skim stops responding to Escape after the alt-r reload), so a PTY
+    /// child would hang and never flush coverage. Instead the cwd mutation is
+    /// confined here behind `CWD_MUTATION_GUARD` and restored before the lock
+    /// is released.
     #[test]
     fn test_invoke_removes_current_worktree_and_relocates() {
         use std::sync::atomic::AtomicUsize;
@@ -1387,17 +1403,16 @@ pub mod tests {
         };
         std::fs::write(&collector.signal_path, "victim\n").unwrap();
 
-        // `invoke()` cd's the process out of the deleted worktree. Restore the
-        // original cwd afterwards so the mutation can't leak to other tests.
-        // The cd target is this test's own home-worktree tempdir — distinct
-        // from every other test's tempdir — so even within the restore window
-        // nothing else can observe a colliding path.
+        // `invoke()` cd's the process out of the deleted worktree. Serialize
+        // the call + restore behind the cwd guard so the mutation is invisible
+        // to other tests, and restore the original cwd before releasing it.
         let original_cwd = std::env::current_dir().unwrap();
         {
             use super::CommandCollector;
+            let _cwd_guard = CWD_MUTATION_GUARD.lock().unwrap_or_else(|e| e.into_inner());
             let _ = collector.invoke("remove", Arc::new(AtomicUsize::new(0)));
+            std::env::set_current_dir(&original_cwd).unwrap();
         }
-        std::env::set_current_dir(&original_cwd).unwrap();
 
         // The removal runs on a background thread — wait for it to finish.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
