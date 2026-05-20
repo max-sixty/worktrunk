@@ -13,5 +13,7 @@ PNGs = "PNGs"
 deplyo = "deplyo"
 comit = "comit"
 siwtch = "siwtch"
+# Intentional typo in expansion.rs exercising conditional undefined-var validation
+targte = "targte"
 # Intentional typo in CHANGELOG.md illustrating the unreferenced-var warning
 brnach = "brnach"
