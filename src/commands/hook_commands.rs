@@ -381,20 +381,12 @@ pub fn handle_hook_show(
     let approvals = Approvals::load().context("Failed to load approvals")?;
     let project_id = repo.project_identifier().ok();
 
-    // Parse hook type filter if provided
-    let filter: Option<HookType> = hook_type_filter.map(|s| match s {
-        "pre-switch" => HookType::PreSwitch,
-        "pre-create" => HookType::PreCreate,
-        "post-create" => HookType::PostCreate,
-        "post-switch" => HookType::PostSwitch,
-        "pre-commit" => HookType::PreCommit,
-        "post-commit" => HookType::PostCommit,
-        "pre-merge" => HookType::PreMerge,
-        "post-merge" => HookType::PostMerge,
-        "pre-remove" => HookType::PreRemove,
-        "post-remove" => HookType::PostRemove,
-        _ => unreachable!("clap validates hook type"),
-    });
+    // Parse hook type filter if provided. clap's value parser already
+    // validated the string (canonical name or deprecated `-start` alias);
+    // `parse_hook_type` maps both to the canonical `HookType`.
+    let filter: Option<HookType> = hook_type_filter
+        .map(crate::cli::parse_hook_type)
+        .transpose()?;
 
     // Build context for template expansion (only used if --expanded)
     // Need to keep CommandEnv alive for the lifetime of ctx

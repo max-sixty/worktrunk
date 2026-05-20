@@ -272,7 +272,7 @@ impl ProjectConfig {
         // emit_inline_warnings=true: print per-kind warnings inline during config load
         let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
         let repo_for_hints = if write_hints { Some(repo) } else { None };
-        super::deprecation::check_and_migrate(
+        let migrated = super::deprecation::check_and_migrate(
             &config_path,
             &contents,
             is_main_worktree,
@@ -280,9 +280,12 @@ impl ProjectConfig {
             repo_for_hints,
             true, // emit_inline_warnings
         )
-        .map_err(|e| ConfigError(e.to_string()))?;
+        .map_err(|e| ConfigError(e.to_string()))?
+        .migrated_content;
 
         // Warn about unknown fields (only in main worktree where it's actionable).
+        // Runs on the raw contents so deprecated keys are detected as written;
+        // `DEPRECATED_SECTION_KEYS` defers them to the deprecation messaging.
         if is_main_worktree {
             super::deprecation::warn_unknown_fields::<ProjectConfig>(
                 &contents,
@@ -291,7 +294,9 @@ impl ProjectConfig {
             );
         }
 
-        let config: ProjectConfig = toml::from_str(&contents).map_err(|e| {
+        // Deserialize the structurally migrated content so deprecated keys
+        // (e.g. `pre-start`/`post-start`) still load into their canonical fields.
+        let config: ProjectConfig = toml::from_str(&migrated).map_err(|e| {
             ConfigError(format!(
                 "Project config at {} failed to parse:\n{e}",
                 crate::path::format_path_for_display(&config_path),

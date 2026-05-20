@@ -9,7 +9,7 @@ pub(crate) use config::{
     ConfigPluginsOpencodeCommand, ConfigShellCommand, DefaultBranchAction, HintsAction, LogsAction,
     MarkerAction, PreviousBranchAction, StateCommand, StateWrite, VarsAction,
 };
-pub(crate) use hook::{HOOK_TYPE_NAMES, HookCommand, HookOptions};
+pub(crate) use hook::{HOOK_TYPE_NAMES, HookCommand, HookOptions, parse_hook_type};
 pub(crate) use list::ListSubcommand;
 pub(crate) use step::StepCommand;
 

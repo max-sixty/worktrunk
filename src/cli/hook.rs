@@ -46,11 +46,12 @@ use worktrunk::HookType;
 use super::config::ApprovalsCommand;
 
 /// Canonical list of hook type names accepted after `wt hook`. Shared by
-/// [`parse_hook_type`], `completion::inject_hook_subcommands`, and the
-/// `wt hook show` value parser so drift is caught by tests rather than at
-/// runtime. `pre-start`/`post-start` are deprecated aliases for
-/// `pre-create`/`post-create`; they're accepted by [`parse_hook_type`] but
-/// not listed here — completion lists the canonical names only.
+/// [`parse_hook_type`], `completion::inject_hook_subcommands`, and (via
+/// `hook_show_possible_values`) the `wt hook show` value parser, so drift
+/// is caught by tests rather than at runtime. `pre-start`/`post-start` are
+/// deprecated aliases for `pre-create`/`post-create`: not listed here, so
+/// help and completion advertise only the canonical names, but accepted by
+/// [`parse_hook_type`] and by `wt hook show` as hidden aliases.
 pub const HOOK_TYPE_NAMES: &[&str] = &[
     "pre-switch",
     "post-switch",
@@ -64,6 +65,22 @@ pub const HOOK_TYPE_NAMES: &[&str] = &[
     "post-remove",
 ];
 
+/// `PossibleValue` set for the `wt hook show` type argument: the canonical
+/// names from [`HOOK_TYPE_NAMES`], with `pre-start`/`post-start` attached as
+/// hidden aliases. `wt hook show post-start` keeps working through the rename
+/// without the deprecated names showing up in help or completion.
+fn hook_show_possible_values() -> Vec<clap::builder::PossibleValue> {
+    use clap::builder::PossibleValue;
+    HOOK_TYPE_NAMES
+        .iter()
+        .map(|&name| match name {
+            "pre-create" => PossibleValue::new(name).alias("pre-start"),
+            "post-create" => PossibleValue::new(name).alias("post-start"),
+            _ => PossibleValue::new(name),
+        })
+        .collect()
+}
+
 // Ordering: `show` first (read-only introspection), then the external
 // subcommand catch-all, then hidden commands. Hook types aren't listed
 // as clap variants — `Run` catches them.
@@ -75,7 +92,7 @@ pub enum HookCommand {
     /// Lists user and project hooks. Project hooks show approval status (❓ = needs approval).
     Show {
         /// Hook type to show (default: all)
-        #[arg(value_parser = PossibleValuesParser::new(HOOK_TYPE_NAMES))]
+        #[arg(value_parser = PossibleValuesParser::new(hook_show_possible_values()))]
         hook_type: Option<String>,
 
         /// Show expanded commands with current variables

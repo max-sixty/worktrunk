@@ -362,6 +362,57 @@ my-lint = "my-lint-tool"
     );
 }
 
+/// A current-worktree `.config/wt.toml` that still uses the deprecated
+/// `pre-start`/`post-start` hook keys keeps working through `wt hook show`:
+/// `ProjectConfig::load` migrates the keys to `pre-create`/`post-create`
+/// before deserializing, the value parser accepts both the canonical type
+/// argument and the deprecated alias, and Phase 1 of the rename (issue #2838)
+/// migrates silently — no deprecation warning.
+#[rstest]
+fn test_hook_show_accepts_deprecated_start_hooks(repo: TestRepo) {
+    // Single-token commands so the bash highlighter doesn't split them with
+    // ANSI codes (same shape as the deep-merge `hook show` tests above).
+    repo.write_project_config(
+        r#"[pre-start]
+deps = "pre-start-tool"
+
+[post-start]
+deps = "post-start-tool"
+"#,
+    );
+
+    // The `-create` arg exercises the load-time migration (the `[*-start]` key
+    // must deserialize into the `*_create` field); the `-start` arg additionally
+    // exercises the value parser accepting the deprecated alias.
+    let cases = [
+        ("pre-create", "pre-start-tool"),
+        ("pre-start", "pre-start-tool"),
+        ("post-create", "post-start-tool"),
+        ("post-start", "post-start-tool"),
+    ];
+    for (type_arg, expected) in cases {
+        let mut cmd = repo.wt_command();
+        cmd.args(["hook", "show", type_arg])
+            .current_dir(repo.root_path());
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "`wt hook show {type_arg}` should succeed, stderr: {stderr}"
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains(expected),
+            "`wt hook show {type_arg}` should list the migrated hook, got:\n{stdout}"
+        );
+        // Phase 1 migrates silently — no deprecation warning, no config-show hint.
+        assert!(
+            !stderr.to_lowercase().contains("deprecated") && !stderr.contains("config show"),
+            "`wt hook show {type_arg}` should migrate silently, stderr:\n{stderr}"
+        );
+    }
+}
+
 #[rstest]
 fn test_config_show_system_config_hint_under_user_config(repo: TestRepo, temp_home: TempDir) {
     // When no system config exists but user config does, config show should
