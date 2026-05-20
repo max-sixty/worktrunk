@@ -25,7 +25,7 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 
 use color_print::cformat;
-use shell_escape::escape;
+use shell_escape::unix::escape;
 
 use super::HookType;
 use crate::path::format_path_for_display;

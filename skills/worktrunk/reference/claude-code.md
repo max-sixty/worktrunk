@@ -1,14 +1,15 @@
-# Claude Code & Codex Integration
+# Agent Integration
 
-Worktrunk ships plugins for Claude Code and Codex. Both bundle a **configuration skill** — documentation the agent can read, so it can help set up LLM commits, hooks, and troubleshoot issues.
+Worktrunk ships a plugin for each supported agent CLI. What a plugin provides depends on the hooks that CLI exposes:
 
-The Claude Code plugin additionally provides:
+| Capability | Claude Code | Codex | OpenCode | Gemini CLI |
+|---|:-:|:-:|:-:|:-:|
+| Configuration skill | ✓ | ✓ |  | ✓ |
+| Activity tracking (🤖/💬 in `wt list`) | ✓ |  | ✓ | ✓ |
+| Worktree isolation | ✓ |  |  |  |
+| `/wt-switch-create` command | ✓ |  |  |  |
 
-1. **Activity tracking** — Status markers in `wt list` showing which worktrees have active agent sessions (🤖 working, 💬 waiting)
-2. **Worktree isolation** — Routes agent-created isolated worktrees through `wt switch --create` / `wt remove` instead of raw `git`
-3. **`/wt-switch-create` command** — Creates a worktrunk worktree and moves the current Claude session into it
-
-Codex exposes no turn-end or worktree-lifecycle hooks, so the Codex plugin ships only the configuration skill.
+The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation and `/wt-switch-create` need worktree-lifecycle hooks that only Claude Code exposes, so Codex, OpenCode, and Gemini users invoke `wt switch --create` and `wt remove` directly. Codex omits activity tracking because its hooks have no turn-end event, so a 🤖 marker could never clear back to 💬.
 
 ## Installation
 
@@ -39,6 +40,22 @@ codex plugin marketplace add max-sixty/worktrunk
 
 To remove the marketplace entry, run `wt config plugins codex uninstall`. Already-installed plugins are left unchanged.
 
+### OpenCode
+
+```bash
+wt config plugins opencode install
+```
+
+This writes the activity-tracking plugin to OpenCode's global plugins directory, `~/.config/opencode/plugins/worktrunk.ts` (honoring `$OPENCODE_CONFIG_DIR` and `$XDG_CONFIG_HOME`). `wt config plugins opencode uninstall` removes it.
+
+### Gemini CLI
+
+```bash
+gemini extensions install https://github.com/max-sixty/worktrunk
+```
+
+Gemini loads the extension natively from the repository, so there is no `wt` wrapper. `gemini extensions uninstall worktrunk` removes it.
+
 ## Configuration skill
 
 The plugin includes a skill — documentation the agent can read — covering Worktrunk's configuration system. After installation, the agent can help with:
@@ -50,9 +67,9 @@ The plugin includes a skill — documentation the agent can read — covering Wo
 
 Claude Code is designed to load the skill automatically when it detects worktrunk-related questions.
 
-## Activity tracking (Claude Code only)
+## Activity tracking
 
-The Claude Code plugin tracks Claude sessions with status markers in `wt list`:
+The Claude Code, OpenCode, and Gemini plugins track agent sessions with status markers in `wt list`:
 
 ```bash
 $ wt list
@@ -68,7 +85,7 @@ $ wt list
 - 🤖 — agent is working
 - 💬 — agent is waiting or idle
 
-The plugin clears the marker when a session ends. A stale marker can remain if the Claude process is killed before its stop hook runs; `wt config state marker clear` removes a marker manually.
+The plugin clears the marker when a session ends. A stale marker can remain if the agent process is killed before its session-end hook runs; `wt config state marker clear` removes a marker manually.
 
 ### Manual status markers
 
@@ -83,8 +100,6 @@ $ git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Di
 ## Worktree isolation (Claude Code only)
 
 Claude Code agents can run in isolated worktrees (`isolation: "worktree"`). By default, Claude Code creates these with `git worktree add`. The plugin's `WorktreeCreate` and `WorktreeRemove` hooks route this through `wt switch --create` and `wt remove` instead, so worktrees created by agents get worktrunk's naming conventions, hooks, and lifecycle management.
-
-Codex does not currently expose equivalent hook events, so Codex users should invoke `wt switch --create` and `wt remove` directly.
 
 ## `/wt-switch-create` command (Claude Code only)
 

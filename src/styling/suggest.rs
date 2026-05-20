@@ -37,7 +37,7 @@
 //! assert_eq!(cmd, "wt -C /tmp/repo config update");
 //! ```
 
-use shell_escape::escape;
+use shell_escape::unix::escape;
 use std::borrow::Cow;
 use std::path::Path;
 

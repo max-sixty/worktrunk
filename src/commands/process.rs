@@ -116,6 +116,25 @@ fn posix_command_separator(command: &str) -> &'static str {
     }
 }
 
+/// Build the POSIX-shell payload for a detached spawn that pipes optional
+/// `context_json` into `command`'s stdin. With a JSON context, wraps the
+/// command in a `printf '%s' '…' | { …; }` group so the inner command receives
+/// the JSON verbatim and pipeline parsing isn't perturbed by `&&`/`||` inside
+/// `command`. Without one, returns `command` unchanged. Shared by the Unix
+/// path and the Windows Git-Bash branch — both feed POSIX shells, so the JSON
+/// is POSIX-single-quote-escaped regardless of host.
+fn build_printf_pipe_command(command: &str, context_json: Option<&str>) -> String {
+    match context_json {
+        Some(json) => format!(
+            "printf '%s' {} | {{ {}{} }}",
+            shell_escape::unix::escape(json.into()),
+            command,
+            posix_command_separator(command)
+        ),
+        None => command.to_string(),
+    }
+}
+
 /// Create the log directory and file for a detached process.
 ///
 /// Returns `(log_path, log_file)`. Shared by `spawn_detached` and
@@ -202,21 +221,7 @@ fn spawn_detached_unix(
 ) -> anyhow::Result<()> {
     use std::os::unix::process::CommandExt;
 
-    // Build the command, optionally piping JSON context to stdin
-    let full_command = match context_json {
-        Some(json) => {
-            // Use printf to pipe JSON to the command's stdin
-            // printf is more portable than echo for arbitrary content
-            // Wrap command in braces to ensure proper grouping with &&, ||, etc.
-            format!(
-                "printf '%s' {} | {{ {}{} }}",
-                shell_escape::escape(json.into()),
-                command,
-                posix_command_separator(command)
-            )
-        }
-        None => command.to_string(),
-    };
+    let full_command = build_printf_pipe_command(command, context_json);
 
     // Wrap in braces so `&` backgrounds the entire compound command.
     // Without braces, `cmd1 && cmd2; cmd3 &` parses as two statements:
@@ -279,18 +284,7 @@ fn spawn_detached_windows(
     // Build the command based on shell type
     let mut cmd = if shell.is_posix() {
         // Git Bash available - use same syntax as Unix
-        let full_command = match context_json {
-            Some(json) => {
-                // Use printf to pipe JSON to the command's stdin (same as Unix)
-                format!(
-                    "printf '%s' {} | {{ {}{} }}",
-                    shell_escape::escape(json.into()),
-                    command,
-                    posix_command_separator(command)
-                )
-            }
-            None => command.to_string(),
-        };
+        let full_command = build_printf_pipe_command(command, context_json);
         shell.command(&full_command)
     } else {
         // PowerShell fallback
@@ -477,6 +471,30 @@ fn spawn_detached_exec_windows(
     Ok(())
 }
 
+/// Repo-wide internal cleanup op, run fire-and-forget after `wt remove`'s
+/// primary user-visible output.
+///
+/// This is worktrunk's opportunistic janitor: it reclaims resources orphaned
+/// by interrupted or out-of-band operations. It runs on the `wt remove`
+/// cadence (not a timer, not a user command, not a read-only command), and
+/// after primary output so it can never delay a user-visible message. Every
+/// step is best-effort and additive — failures log at debug level and the
+/// `wt remove` operation proceeds regardless.
+///
+/// Steps:
+///
+/// 1. [`sweep_stale_trash`] — delete stale `.git/wt/trash/` entries left by
+///    an interrupted background removal.
+/// 2. [`worktrunk::git::fsmonitor::reap_orphan_fsmonitor_daemons`] — terminate
+///    `git fsmonitor--daemon` processes whose worktree no longer exists.
+///    Defense-in-depth for daemons orphaned by paths that bypass `wt remove`
+///    (plain `git worktree remove`, manual `rm -rf`, a crashed `wt`); the
+///    `wt remove` source itself stops the daemon synchronously.
+pub fn run_internal_sweep(repo: &Repository) {
+    sweep_stale_trash(repo);
+    worktrunk::git::fsmonitor::reap_orphan_fsmonitor_daemons(repo);
+}
+
 /// How old a `.git/wt/trash/` entry must be before [`sweep_stale_trash`] deletes it.
 pub const TRASH_STALE_THRESHOLD_SECS: u64 = 24 * 60 * 60;
 
@@ -500,13 +518,7 @@ pub fn sweep_stale_trash(repo: &Repository) {
         return;
     }
 
-    // Join all paths into a single `rm -rf` invocation so we spawn one
-    // background process regardless of how many entries are stale.
-    let escaped: Vec<String> = stale
-        .iter()
-        .map(|p| shell_escape::escape(p.to_string_lossy().as_ref().into()).into_owned())
-        .collect();
-    let command = format!("rm -rf -- {}", escaped.join(" "));
+    let command = build_trash_sweep_command(&stale);
 
     // The sweep is repo-wide (not branch-scoped), so it logs under
     // `internal/trash-sweep.log` alongside the other shared logs
@@ -522,6 +534,19 @@ pub fn sweep_stale_trash(repo: &Repository) {
     ) {
         log::debug!("Failed to spawn stale trash sweep: {e}");
     }
+}
+
+/// Build the `rm -rf -- …` command that [`sweep_stale_trash`] hands to
+/// [`spawn_detached`]. All entries are joined into a single invocation so the
+/// sweep spawns one background process regardless of how many stale entries
+/// exist; each path is POSIX-escaped so directories with spaces or shell
+/// metacharacters round-trip safely through the wrapping `sh -c`.
+fn build_trash_sweep_command(paths: &[PathBuf]) -> String {
+    let escaped: Vec<String> = paths
+        .iter()
+        .map(|p| shell_escape::unix::escape(p.to_string_lossy().as_ref().into()).into_owned())
+        .collect();
+    format!("rm -rf -- {}", escaped.join(" "))
 }
 
 /// Collect paths in `trash_dir` whose embedded timestamp is older than
@@ -669,7 +694,7 @@ pub fn build_remove_command_staged(
     original_path: &std::path::Path,
     changed_directory: bool,
 ) -> String {
-    use shell_escape::escape;
+    use shell_escape::unix::escape;
 
     let staged_path_str = staged_path.to_string_lossy();
     let staged_escaped = escape(staged_path_str.as_ref().into());
@@ -713,29 +738,27 @@ pub fn build_remove_command(
     force_worktree: bool,
     changed_directory: bool,
 ) -> String {
-    use shell_escape::escape;
+    use shell_escape::unix::escape;
 
     let worktree_path_str = worktree_path.to_string_lossy();
     let worktree_escaped = escape(worktree_path_str.as_ref().into());
 
-    // Stop fsmonitor daemon first (best effort - ignore errors)
-    // This prevents zombie daemons from accumulating when using builtin fsmonitor
-    let stop_fsmonitor = format!(
-        "{{ git -C {} fsmonitor--daemon stop 2>/dev/null || true; }}",
-        worktree_escaped
-    );
-
     let force_flag = if force_worktree { " --force" } else { "" };
 
+    // The fsmonitor daemon is stopped (and force-killed if wedged) synchronously
+    // in the Rust foreground by `stop_fsmonitor_daemon`, before this command is
+    // built — see `spawn_background_removal`. The detached process only does the
+    // `git worktree remove` / `rm -rf`.
+    //
     // When removing the current worktree, delay so the shell wrapper can cd away
     // before the directory is removed. The primary fix for the "shell-init: error
     // retrieving current directory" race is in the fish wrapper (using builtins
     // instead of subprocesses to read the directive), but this provides defense in
     // depth for other shells and edge cases.
     let prefix = if changed_directory {
-        format!("sleep 1 && {} && ", stop_fsmonitor)
+        "sleep 1 && ".to_string()
     } else {
-        format!("{} && ", stop_fsmonitor)
+        String::new()
     };
 
     match branch_to_delete {
@@ -847,19 +870,19 @@ mod tests {
         let path = PathBuf::from("/tmp/test-worktree");
 
         // changed_directory=true: sleep before removal
-        assert_snapshot!(build_remove_command(&path, None, false, true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree");
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree && git branch -D feature-branch");
+        assert_snapshot!(build_remove_command(&path, None, false, true), @"sleep 1 && git worktree remove /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, true), @"sleep 1 && git worktree remove /tmp/test-worktree && git branch -D feature-branch");
 
         // changed_directory=false: no sleep
-        assert_snapshot!(build_remove_command(&path, None, false, false), @"{ git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree");
-        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, false), @"{ git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove /tmp/test-worktree && git branch -D feature-branch");
+        assert_snapshot!(build_remove_command(&path, None, false, false), @"git worktree remove /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, Some("feature-branch"), false, false), @"git worktree remove /tmp/test-worktree && git branch -D feature-branch");
 
         // With force flag
-        assert_snapshot!(build_remove_command(&path, None, true, true), @"sleep 1 && { git -C /tmp/test-worktree fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove --force /tmp/test-worktree");
+        assert_snapshot!(build_remove_command(&path, None, true, true), @"sleep 1 && git worktree remove --force /tmp/test-worktree");
 
         // Shell escaping for special characters
         let special_path = PathBuf::from("/tmp/test worktree");
-        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false, true), @"sleep 1 && { git -C '/tmp/test worktree' fsmonitor--daemon stop 2>/dev/null || true; } && git worktree remove '/tmp/test worktree' && git branch -D feature/branch");
+        assert_snapshot!(build_remove_command(&special_path, Some("feature/branch"), false, true), @"sleep 1 && git worktree remove '/tmp/test worktree' && git branch -D feature/branch");
     }
 
     #[test]
@@ -877,6 +900,73 @@ mod tests {
         let special_path = PathBuf::from("/tmp/repo/.git/wt/trash/test worktree-123");
         let special_original = PathBuf::from("/tmp/test worktree");
         assert_snapshot!(build_remove_command_staged(&special_path, &special_original, true), @"sleep 1 && rmdir -- '/tmp/test worktree' 2>/dev/null; rm -rf -- '/tmp/repo/.git/wt/trash/test worktree-123'");
+    }
+
+    #[test]
+    fn test_build_printf_pipe_command() {
+        // No JSON context: command passes through unchanged.
+        assert_snapshot!(
+            build_printf_pipe_command("echo hi", None),
+            @"echo hi"
+        );
+
+        // With JSON: command wrapped in a printf-pipe group. The JSON is
+        // POSIX-single-quote-escaped, the closing `}` is preceded by `;`
+        // because the command doesn't already end with one.
+        assert_snapshot!(
+            build_printf_pipe_command("jq .", Some(r#"{"branch":"main"}"#)),
+            @r#"printf '%s' '{"branch":"main"}' | { jq .; }"#
+        );
+
+        // Command that already ends in a semicolon: separator suppressed.
+        assert_snapshot!(
+            build_printf_pipe_command("jq .;", Some(r#"{"k":"v"}"#)),
+            @r#"printf '%s' '{"k":"v"}' | { jq .; }"#
+        );
+
+        // JSON containing characters POSIX shells treat specially must end up
+        // inside single quotes so command substitution doesn't fire inside the
+        // detached `sh -c` wrapping the spawn. The embedded single quote uses
+        // the standard `'\''` idiom. Regression guard for
+        // shell_escape::escape vs unix::escape on Windows.
+        assert_snapshot!(
+            build_printf_pipe_command("jq .", Some(r#"{"x":"$(echo pwned)","y":"a'b"}"#)),
+            @r#"printf '%s' '{"x":"$(echo pwned)","y":"a'\''b"}' | { jq .; }"#
+        );
+    }
+
+    #[test]
+    fn test_build_trash_sweep_command() {
+        // Empty list still produces a well-formed command — the caller
+        // (`sweep_stale_trash`) bails before we get here, but the helper itself
+        // must not panic on an empty slice.
+        assert_snapshot!(build_trash_sweep_command(&[]), @"rm -rf -- ");
+
+        // Plain paths — joined with spaces, no quoting.
+        let paths = [
+            PathBuf::from("/tmp/repo/.git/wt/trash/feature-1700000000"),
+            PathBuf::from("/tmp/repo/.git/wt/trash/bugfix-1700000100"),
+        ];
+        assert_snapshot!(
+            build_trash_sweep_command(&paths),
+            @"rm -rf -- /tmp/repo/.git/wt/trash/feature-1700000000 /tmp/repo/.git/wt/trash/bugfix-1700000100"
+        );
+
+        // Shell metacharacters — POSIX single-quote escaping isolates each path
+        // so the wrapping `sh -c` reads them as literal arguments. The embedded
+        // single quote uses the standard `'\''` idiom. This is the regression
+        // guard for the platform/MSYSTEM-sensitive `shell_escape::escape` we
+        // replaced: under cmd.exe quoting `$(echo pwned)` would still execute
+        // when spliced into a POSIX shell.
+        let nasty = [
+            PathBuf::from("/tmp/trash/with space-1"),
+            PathBuf::from("/tmp/trash/$(echo pwned)-2"),
+            PathBuf::from("/tmp/trash/a'b-3"),
+        ];
+        assert_snapshot!(
+            build_trash_sweep_command(&nasty),
+            @"rm -rf -- '/tmp/trash/with space-1' '/tmp/trash/$(echo pwned)-2' '/tmp/trash/a'\\''b-3'"
+        );
     }
 
     #[test]

@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`wt remove` reaps a wedged fsmonitor daemon**: When `core.fsmonitor=true`, git runs a per-worktree `git fsmonitor--daemon`. Removal already sent `git fsmonitor--daemon stop`, but `stop` is an IPC request to the daemon itself, so a daemon that had stopped answering its socket ignored it and then leaked forever once its worktree was gone (dozens could accumulate, and one wedged daemon hangs `wt list`). Removal now resolves the daemon's PID from its IPC socket and force-terminates it (SIGTERM, brief wait, SIGKILL) when `stop` doesn't take. The signal only ever targets the daemon whose socket resolves to the worktree being removed.
+
+- **Orphaned fsmonitor daemons are reaped**: `wt remove`'s background internal sweep now terminates (`SIGTERM`, then `SIGKILL` after a short bounded wait) any `git fsmonitor--daemon` whose IPC socket no longer resolves to a live worktree. This reclaims daemons orphaned by paths that bypass `wt remove`'s synchronous daemon stop (plain `git worktree remove`, manual `rm -rf`, or a crashed `wt`), which otherwise accumulate until reboot and can hang `wt list` when wedged. A daemon serving a live worktree is never reaped.
+
+## 0.52.0
+
+### Improved
+
+- **`wt step tether`**: New `[experimental]` operation that runs a command in its own process group and kills the whole group when the command exits or its worktree is removed (a 250ms portable poll — `killpg` on Unix, `taskkill /T /F` on Windows). A single `post-start` hook (`wt step tether -- npm run dev`) replaces the usual `post-start`-to-launch / `pre-remove`-to-stop pair, and unlike `pre-remove` it also cleans up after a `git worktree remove`, an `rm -rf`, or a crashed hook — the leak path that eventually saturates macOS `fseventsd`. Arguments after `--` run directly with no shell, matching `wt step for-each`. ([#2785](https://github.com/max-sixty/worktrunk/pull/2785))
+
+- **Gemini CLI extension**: Worktrunk now ships a Gemini CLI extension for `wt list` activity tracking, installable with `gemini extensions install max-sixty/worktrunk`. The extension's manifest, hooks, and skills resolve at the repo root, so the GitHub-name install path works without a local clone. ([#2803](https://github.com/max-sixty/worktrunk/pull/2803), [#2807](https://github.com/max-sixty/worktrunk/pull/2807), thanks @rafavital for the request in [#2763](https://github.com/max-sixty/worktrunk/issues/2763))
+
+### Fixed
+
+- **Project hooks are frozen at the approval gate**: A project-defined `pre-*`/`post-*` hook command was selected from `.config/wt.toml` twice — once to build the approval prompt, once at execution — and the operation itself mutates state between the two reads (a merge moves the target ref, an auto-rebase rewrites the feature config, a removal scrubs the worktree, `git worktree add` materializes a `--create` worktree). The second read could select a command the user never approved; on a freshly cloned repo that is unapproved code execution. The gate now freezes the command set into an immutable plan that the executor consumes verbatim, so post-operation hooks can never run an unapproved command. Behavior is otherwise unchanged, and `wt merge --no-hooks` (or a declined/empty plan) now returns before loading approvals, so a malformed `approvals.toml` no longer aborts a command that had nothing to authorize. ([#2806](https://github.com/max-sixty/worktrunk/pull/2806))
+
+- **Declining the `wt merge` commit-append no longer skips hooks**: When a project's `pre-merge`/`post-merge` hooks were already approved, `wt merge` bundled the commit-message append into the same prompt; declining the lone append prompt skipped every hook for that run even though the user only meant to skip the append. The append is now gated on its own path (the same one `wt step commit`/`wt step squash` use), so declining it drops only the append. On a fresh repo where both the hooks and the append are unapproved this is now two prompts instead of one bundled prompt. Decline messages are also canonicalized across `merge`, `remove`, `prune`, and `switch` (`Commands declined, … without hooks`). ([#2802](https://github.com/max-sixty/worktrunk/pull/2802))
+
+- **Windows `wt step prune` `.git/config` race**: `wt step prune` could intermittently fail on Windows with `unable to access '.git/config': Permission denied` — its parallel branch-integration checks read `.git/config` while an inline `git branch -D` rewrote it via git's lockfile rename, which on Windows briefly blocks concurrent readers. Branch-integration reads are now excluded from overlapping the `git branch -D` that rewrites config. ([#2808](https://github.com/max-sixty/worktrunk/pull/2808))
+
 ## 0.51.0
 
 ### Improved

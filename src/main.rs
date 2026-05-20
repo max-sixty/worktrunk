@@ -874,10 +874,11 @@ fn validate_remove_targets(
 ///      directory. Cross-filesystem or locked worktrees fall back to
 ///      `git worktree remove` in the detached process.
 /// 4. **Post-remove hooks** run in the background after dispatch.
-/// 5. **Sweep stale trash** (fire-and-forget, after primary output): entries
-///    in `.git/wt/trash/` older than 24 hours are removed by a detached
-///    `rm -rf`. Runs last so it never delays the user-visible progress or
-///    success message. See [`commands::process::sweep_stale_trash`].
+/// 5. **Internal sweep** (fire-and-forget, after primary output): stale
+///    `.git/wt/trash/` entries older than 24 hours are removed by a detached
+///    `rm -rf`, and orphaned `git fsmonitor--daemon` processes (worktree gone)
+///    are terminated. Runs last so it never delays the user-visible progress
+///    or success message. See [`commands::process::run_internal_sweep`].
 fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
     let json_mode = args.format == SwitchFormat::Json;
     let verify = resolve_verify(args.verify, args.no_verify_deprecated);
@@ -996,10 +997,10 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     let json = serde_json::json!([result.to_json()]);
                     println!("{}", serde_json::to_string_pretty(&json)?);
                 }
-                // Fire-and-forget cleanup of stale `.git/wt/trash/` entries —
-                // runs after primary output so it never delays the user-visible
-                // progress/success message.
-                commands::process::sweep_stale_trash(&repo);
+                // Fire-and-forget repo-wide internal cleanup (stale trash +
+                // orphaned fsmonitor daemons) — runs after primary output so
+                // it never delays the user-visible progress/success message.
+                commands::process::run_internal_sweep(&repo);
                 Ok(())
             } else {
                 // Multi-worktree removal: validate ALL first, then approve, then execute
@@ -1076,10 +1077,10 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     println!("{}", serde_json::to_string_pretty(&json_items)?);
                 }
 
-                // Fire-and-forget cleanup of stale `.git/wt/trash/` entries —
-                // runs after primary output so it never delays the user-visible
-                // progress/success messages.
-                commands::process::sweep_stale_trash(&repo);
+                // Fire-and-forget repo-wide internal cleanup (stale trash +
+                // orphaned fsmonitor daemons) — runs after primary output so
+                // it never delays the user-visible progress/success messages.
+                commands::process::run_internal_sweep(&repo);
 
                 if !plans.errors.is_empty() {
                     anyhow::bail!("");

@@ -539,6 +539,8 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env("WORKTRUNK_TEST_CODEX_INSTALLED", "0");
     // Treat OpenCode as not installed by default (tests can override with "1")
     cmd.env("WORKTRUNK_TEST_OPENCODE_INSTALLED", "0");
+    // Treat Gemini as not installed by default (tests can override with "1")
+    cmd.env("WORKTRUNK_TEST_GEMINI_INSTALLED", "0");
 
     // Apply shared static env vars (see STATIC_TEST_ENV_VARS)
     for &(key, value) in STATIC_TEST_ENV_VARS {
@@ -784,6 +786,8 @@ pub struct TestRepo {
     codex_installed: bool,
     /// Whether OpenCode CLI should be treated as installed
     opencode_installed: bool,
+    /// Whether Gemini CLI should be treated as installed
+    gemini_installed: bool,
 }
 
 impl TestRepo {
@@ -879,6 +883,7 @@ impl TestRepo {
             claude_installed: false,
             codex_installed: false,
             opencode_installed: false,
+            gemini_installed: false,
         };
 
         // Mock gh/glab as authenticated to prevent CI hints in test output
@@ -930,6 +935,7 @@ impl TestRepo {
             claude_installed: false,
             codex_installed: false,
             opencode_installed: false,
+            gemini_installed: false,
         }
     }
 
@@ -977,6 +983,7 @@ impl TestRepo {
             claude_installed: false,
             codex_installed: false,
             opencode_installed: false,
+            gemini_installed: false,
         }
     }
 
@@ -1800,6 +1807,29 @@ impl TestRepo {
         .unwrap();
     }
 
+    /// Setup mock `gemini` CLI as installed
+    ///
+    /// Call this to simulate Gemini CLI being available on the system.
+    pub fn setup_mock_gemini_installed(&mut self) {
+        self.gemini_installed = true;
+    }
+
+    /// Setup the worktrunk extension as installed in Gemini CLI
+    ///
+    /// `gemini extensions install` clones the extension into
+    /// `~/.gemini/extensions/<name>/`; this writes the resulting
+    /// `gemini-extension.json` under the temp home directory (which must
+    /// already be set up via `set_temp_home_env` on the command).
+    pub fn setup_gemini_extension_installed(temp_home: &std::path::Path) {
+        let extension_dir = temp_home.join(".gemini/extensions/worktrunk");
+        std::fs::create_dir_all(&extension_dir).unwrap();
+        std::fs::write(
+            extension_dir.join("gemini-extension.json"),
+            include_str!("../../gemini-extension.json"),
+        )
+        .unwrap();
+    }
+
     /// Setup mock `claude` CLI with plugin subcommand support
     ///
     /// Creates a mock claude binary that handles `plugin marketplace`,
@@ -2313,6 +2343,11 @@ impl TestRepo {
         // Override OpenCode installed status if setup_mock_opencode_installed() was called
         if self.opencode_installed {
             cmd.env("WORKTRUNK_TEST_OPENCODE_INSTALLED", "1");
+        }
+
+        // Override Gemini installed status if setup_mock_gemini_installed() was called
+        if self.gemini_installed {
+            cmd.env("WORKTRUNK_TEST_GEMINI_INSTALLED", "1");
         }
     }
 

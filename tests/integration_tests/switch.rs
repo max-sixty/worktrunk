@@ -108,6 +108,31 @@ fn test_switch_create_existing_with_execute(mut repo: TestRepo) {
     );
 }
 
+/// When --execute carries shell metacharacters (spaces, `$(...)`, embedded
+/// single quotes), the rendered suggestion must POSIX-single-quote the value
+/// so a copy-paste into bash/zsh/fish runs the intended literal command
+/// instead of executing a command substitution. Guards the
+/// `unix::escape(exec)` call on `run_switch`'s `suggestion_ctx` path against
+/// regressing to platform-sensitive escaping (which on Windows-without-MSYSTEM
+/// produces cmd.exe double-quote quoting — still subject to POSIX command
+/// substitution when spliced into bash).
+#[rstest]
+fn test_switch_create_existing_with_execute_metachars(mut repo: TestRepo) {
+    repo.add_worktree("emails");
+
+    snapshot_switch(
+        "switch_create_existing_with_execute_metachars",
+        &repo,
+        &[
+            "--create",
+            "--execute=echo \"$x's\"",
+            "emails",
+            "--",
+            "Check my emails",
+        ],
+    );
+}
+
 /// When --execute is passed and the branch doesn't exist (without --create),
 /// the "create" suggestion should include --execute and trailing args.
 #[rstest]
@@ -464,6 +489,48 @@ fn test_switch_internal_with_execute(repo: TestRepo) {
         &repo,
         &["--create", "exec-internal", "--execute", execute_cmd],
     );
+}
+
+/// `--execute` with trailing `-- args` containing shell metacharacters: the
+/// constructed command appended to the exec directive file must POSIX-escape
+/// each trailing arg so the user's shell wrapper (`sh -c`, `bash -c`, …)
+/// reads them as literal arguments — no command substitution, no $-expansion,
+/// embedded single quotes via the standard `'\''` idiom. Guards
+/// `run_switch`'s `escaped_args` map at `worktree/switch.rs` from regressing
+/// to platform-sensitive escaping.
+#[rstest]
+fn test_switch_with_execute_trailing_args_metachars(repo: TestRepo) {
+    let (cd_path, exec_path, _guard) = directive_files();
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &[
+                "--create",
+                "exec-trailing",
+                "--execute",
+                "echo",
+                "--",
+                "$x's hello",
+                "with space",
+            ],
+            None,
+        );
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        assert_cmd_snapshot!("switch_with_execute_trailing_args_metachars_stderr", cmd);
+
+        // The exec file is what the shell wrapper would source. It must contain
+        // the trailing args POSIX-escaped — exactly the form a POSIX shell
+        // parses back to the original literal values. (No command
+        // substitution, no `$` expansion; embedded single quote uses the
+        // standard `'\''` idiom.)
+        let exec_contents = fs::read_to_string(&exec_path).unwrap();
+        insta::assert_snapshot!(
+            "switch_with_execute_trailing_args_metachars_exec",
+            &exec_contents
+        );
+    });
 }
 // Error tests
 #[rstest]

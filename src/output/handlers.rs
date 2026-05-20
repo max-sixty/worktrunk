@@ -26,7 +26,7 @@ use worktrunk::git::Repository;
 use worktrunk::git::path_dir_name;
 use worktrunk::git::{
     BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemoveOptions,
-    remove_worktree_with_cleanup, stage_worktree_removal,
+    remove_worktree_with_cleanup, stage_worktree_removal, stop_fsmonitor_daemon,
 };
 use worktrunk::path::format_path_for_display;
 use worktrunk::progress::{Progress, format_stats_paren};
@@ -84,11 +84,10 @@ fn spawn_background_removal(
     log_label: &str,
     changed_directory: bool,
 ) -> anyhow::Result<()> {
-    // Stop fsmonitor daemon BEFORE rename (must happen while path still exists).
-    // Best effort — prevents zombie daemons from accumulating.
-    let _ = repo
-        .worktree_at(worktree_path)
-        .run_command(&["fsmonitor--daemon", "stop"]);
+    // Stop the fsmonitor daemon BEFORE rename (must happen while the path
+    // still exists — the IPC socket lives under its git dir). Force-kills a
+    // wedged daemon so it can't leak once the worktree is gone.
+    stop_fsmonitor_daemon(&repo.worktree_at(worktree_path));
 
     let remove_command = execute_instant_removal_or_fallback(
         repo,

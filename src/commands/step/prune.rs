@@ -132,19 +132,26 @@ fn prune_summary(candidates: &[Candidate]) -> String {
     parts.join(", ")
 }
 
+/// Loop-invariant context for [`try_remove`]: every field is identical at all
+/// three call sites in [`step_prune`] (only the `Candidate` varies). Built once
+/// and passed by reference.
+struct RemovalContext<'a> {
+    repo: &'a Repository,
+    config: &'a UserConfig,
+    foreground: bool,
+    hook_plan: &'a ApprovedHookPlan,
+    worktrees: &'a [WorktreeInfo],
+    snapshot: &'a RefSnapshot,
+    /// Serializes the parallel `integration_reason` readers against the
+    /// removal writer — load-bearing for the Windows `.git/config` race fix.
+    /// `try_remove` acquires the write guard at the top of its body and holds
+    /// it over the whole body.
+    check_lock: &'a RwLock<()>,
+}
+
 /// Try to remove a candidate immediately. Returns Ok(true) if removed,
 /// Ok(false) if skipped (preparation error), Err on execution error.
-#[allow(clippy::too_many_arguments)]
-fn try_remove(
-    candidate: &Candidate,
-    repo: &Repository,
-    config: &UserConfig,
-    foreground: bool,
-    hook_plan: &ApprovedHookPlan,
-    worktrees: &[WorktreeInfo],
-    snapshot: &RefSnapshot,
-    check_lock: &RwLock<()>,
-) -> anyhow::Result<bool> {
+fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result<bool> {
     // Exclude all in-flight integration readers for the duration of the
     // removal: the write guard blocks until every outstanding read guard
     // (i.e. every running `integration_reason` git process) has dropped, and
@@ -159,7 +166,7 @@ fn try_remove(
     // poisoned lock is meaningless here. Recover the guard rather than
     // `.expect()`-ing: a panic elsewhere should surface as itself, not as a
     // cascade of secondary poison panics on every later removal/reader.
-    let _write = check_lock.write().unwrap_or_else(|e| e.into_inner());
+    let _write = ctx.check_lock.write().unwrap_or_else(|e| e.into_inner());
 
     let target = match candidate.kind {
         CandidateKind::Current => RemoveTarget::Current,
@@ -179,14 +186,14 @@ fn try_remove(
             ),
         },
     };
-    let plan = match repo.prepare_worktree_removal(
+    let plan = match ctx.repo.prepare_worktree_removal(
         target,
         BranchDeletionMode::SafeDelete,
         false,
-        config,
+        ctx.config,
         None,
-        Some(worktrees),
-        Some(snapshot),
+        Some(ctx.worktrees),
+        Some(ctx.snapshot),
     ) {
         Ok(plan) => plan,
         Err(_) => {
@@ -195,7 +202,11 @@ fn try_remove(
             return Ok(false);
         }
     };
-    let mut announcer = HookAnnouncer::new(repo, config, true);
+    let mut announcer = HookAnnouncer::new(ctx.repo, ctx.config, true);
+    // Read the Copy fields into locals so the call stays on one line (rustfmt
+    // breaks it past `ctx.`-prefixed args), keeping it identical to its form
+    // before the context-struct refactor.
+    let (foreground, hook_plan) = (ctx.foreground, ctx.hook_plan);
     handle_remove_output(&plan, foreground, hook_plan, true, false, &mut announcer)?;
     announcer.flush()?;
     Ok(true)
@@ -594,6 +605,17 @@ pub fn step_prune(
             });
     });
 
+    // Loop-invariant context shared by every `try_remove` call below.
+    let removal_ctx = RemovalContext {
+        repo: &repo,
+        config: &config,
+        foreground,
+        hook_plan: &hook_plan,
+        worktrees,
+        snapshot: &snapshot_arc,
+        check_lock: &check_lock,
+    };
+
     // Collect integration context alongside candidates for dry-run display.
     let mut dry_run_info: Vec<(Candidate, DryRunInfo)> = Vec::new();
 
@@ -655,17 +677,8 @@ pub fn step_prune(
                 dry_run_info.push((candidate, info));
             } else if is_current {
                 deferred_current = Some(candidate);
-            } else if try_remove(
-                &candidate,
-                &repo,
-                &config,
-                foreground,
-                &hook_plan,
-                worktrees,
-                &snapshot_arc,
-                &check_lock,
-            )
-            .with_context(|| candidate.removal_context())?
+            } else if try_remove(&candidate, &removal_ctx)
+                .with_context(|| candidate.removal_context())?
             {
                 removed.push(candidate);
             }
@@ -711,17 +724,8 @@ pub fn step_prune(
                 suffix,
             };
             dry_run_info.push((candidate, info));
-        } else if try_remove(
-            &candidate,
-            &repo,
-            &config,
-            foreground,
-            &hook_plan,
-            worktrees,
-            &snapshot_arc,
-            &check_lock,
-        )
-        .with_context(|| candidate.removal_context())?
+        } else if try_remove(&candidate, &removal_ctx)
+            .with_context(|| candidate.removal_context())?
         {
             removed.push(candidate);
         }
@@ -733,17 +737,7 @@ pub fn step_prune(
 
     // Remove deferred current worktree last (cd-to-primary happens here)
     if let Some(current) = deferred_current
-        && try_remove(
-            &current,
-            &repo,
-            &config,
-            foreground,
-            &hook_plan,
-            worktrees,
-            &snapshot_arc,
-            &check_lock,
-        )
-        .with_context(|| current.removal_context())?
+        && try_remove(&current, &removal_ctx).with_context(|| current.removal_context())?
     {
         removed.push(current);
     }

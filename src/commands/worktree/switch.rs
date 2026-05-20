@@ -1572,7 +1572,7 @@ pub fn run_switch(
     // Without this, errors like "branch already exists" would suggest `wt switch <branch>`
     // instead of the full `wt switch <branch> --execute=<cmd> -- <args>`.
     let suggestion_ctx = execute.map(|exec| {
-        let escaped = shell_escape::escape(exec.into());
+        let escaped = shell_escape::unix::escape(exec.into());
         SwitchSuggestionCtx {
             extra_flags: vec![format!("--execute={escaped}")],
             trailing_args: execute_args.to_vec(),
@@ -1763,7 +1763,7 @@ pub fn run_switch(
                 .collect();
             let escaped_args: Vec<_> = expanded_args?
                 .iter()
-                .map(|arg| shell_escape::escape(arg.into()).into_owned())
+                .map(|arg| shell_escape::unix::escape(arg.into()).into_owned())
                 .collect();
             format!("{} {}", expanded_cmd, escaped_args.join(" "))
         };

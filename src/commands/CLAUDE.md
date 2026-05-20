@@ -77,6 +77,13 @@ cargo run --quiet -- -C /path/to/repo switch
 wt --source -C /path/to/repo switch
 ```
 
+## Adding a CLI Command
+
+1. Add the subcommand to the `Cli` enum in `src/cli/mod.rs`.
+2. Implement it in `src/commands/` (e.g. `src/commands/mycommand.rs`).
+3. Add an `after_long_help` attribute — it is the source of truth for `docs/content/{command}.md`.
+4. Run `cargo test --test integration test_docs_are_in_sync`.
+
 ## Shell Completion for CLI Arguments
 
 Branch and worktree arguments should include shell completion for better UX. Add completion helpers to CLI definitions:

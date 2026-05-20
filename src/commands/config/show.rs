@@ -72,6 +72,12 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
         render_opencode_status(&mut show_output)?;
     }
 
+    // Render Gemini status (only when gemini CLI is available)
+    if is_gemini_available() {
+        show_output.push('\n');
+        render_gemini_status(&mut show_output)?;
+    }
+
     // Run full diagnostic checks if requested (includes slow network calls)
     if full {
         show_output.push('\n');
@@ -336,6 +342,57 @@ fn render_opencode_status(out: &mut String) -> anyhow::Result<()> {
             "{}",
             hint_message(cformat!(
                 "Plugin not installed. To install, run <underline>wt config plugins opencode install</>"
+            ))
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Check if Gemini CLI is available
+fn is_gemini_available() -> bool {
+    // Allow tests to override detection
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_GEMINI_INSTALLED") {
+        return val == "1";
+    }
+    which::which("gemini").is_ok()
+}
+
+/// Check if the worktrunk extension is installed in Gemini CLI.
+///
+/// `gemini extensions install` clones the extension into
+/// `~/.gemini/extensions/<name>/`, so a worktrunk install leaves a
+/// `gemini-extension.json` whose `name` is `worktrunk` at that path.
+fn is_gemini_extension_installed() -> bool {
+    let Some(home) = home_dir() else {
+        return false;
+    };
+
+    let manifest = home.join(".gemini/extensions/worktrunk/gemini-extension.json");
+    let Ok(content) = std::fs::read_to_string(&manifest) else {
+        return false;
+    };
+
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+
+    json.get("name").and_then(|n| n.as_str()) == Some("worktrunk")
+}
+
+/// Render GEMINI CLI section (extension status).
+/// Caller must check `is_gemini_available()` first.
+fn render_gemini_status(out: &mut String) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("GEMINI CLI", None))?;
+
+    if is_gemini_extension_installed() {
+        writeln!(out, "{}", success_message("Extension installed"))?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "Extension not installed. To install, run <underline>gemini extensions install https://github.com/max-sixty/worktrunk</>"
             ))
         )?;
     }
