@@ -819,7 +819,7 @@ pub fn validate_template_syntax(template: &str, name: &str) -> Result<(), miniji
 /// available in `scope` (see [`vars_available_in`]). Catches syntax errors and
 /// undefined variable references *before* irreversible operations like worktree
 /// creation — including context-mismatch typos like `{{ args }}` in a hook or
-/// `{{ target }}` in a `pre-create` hook.
+/// `{{ target }}` in a `pre-start` hook.
 ///
 /// This is deliberately more permissive than real expansion: conditional vars
 /// like `upstream` are provided even when they may be absent at runtime. A
@@ -2663,7 +2663,7 @@ mod tests {
             err.message
         );
 
-        // `base` is available in pre-create.
+        // `base` is available in pre-start.
         assert!(
             validate_template(
                 "{{ base }}",
@@ -2700,7 +2700,7 @@ mod tests {
         );
         assert!(err.message.contains("targte"), "got: {}", err.message);
 
-        // `pr_number`/`pr_url` are available in pre-create (populated when
+        // `pr_number`/`pr_url` are available in pre-start (populated when
         // creating via `pr:N` / `mr:N`).
         for var in ["pr_number", "pr_url"] {
             assert!(
@@ -2711,7 +2711,7 @@ mod tests {
                     "test"
                 )
                 .is_ok(),
-                "{var} should validate in pre-create scope"
+                "{var} should validate in pre-start scope"
             );
         }
 

@@ -4,9 +4,9 @@
     {
       "name": "worktrunk",
       "type": "skill-md",
-      "description": "Guidance for Worktrunk (the `wt` CLI) — git worktree management, hooks, and config. Load when editing .config/wt.toml or ~/.config/worktrunk/config.toml; adding, modifying, or debugging hooks (post-merge, post-create, pre-commit, pre-merge, post-switch, etc.); configuring commit message generation or command aliases; or troubleshooting wt behavior. Also answers general worktrunk/wt questions.",
+      "description": "Guidance for Worktrunk (the `wt` CLI) — git worktree management, hooks, and config. Load when editing .config/wt.toml or ~/.config/worktrunk/config.toml; adding, modifying, or debugging hooks (post-merge, post-start, pre-commit, pre-merge, post-switch, etc.); configuring commit message generation or command aliases; or troubleshooting wt behavior. Also answers general worktrunk/wt questions.",
       "url": "./worktrunk/SKILL.md",
-      "digest": "sha256:b929448a3425ceb32eae20b433e512e8498f54cf04a1f571c8c1ae79b17412db"
+      "digest": "sha256:1723b48a5a3a8a0a1b314dfadc96eed03aa5382ce7b572b62fd8a6248a543e82"
     }
   ]
 }

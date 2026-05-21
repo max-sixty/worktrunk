@@ -88,7 +88,7 @@ mod tests {
     fn make_project_config_with_hooks() -> ProjectConfig {
         // Use TOML deserialization to create ProjectConfig
         let toml_content = r#"
-pre-create = "npm install"
+pre-start = "npm install"
 pre-merge = "cargo test"
 "#;
         toml::from_str(toml_content).unwrap()
@@ -151,7 +151,7 @@ pre-merge = "cargo test"
     #[test]
     fn test_collect_commands_for_hooks_named_commands() {
         let toml_content = r#"
-[pre-create]
+[pre-start]
 install = "npm install"
 build = "npm run build"
 "#;

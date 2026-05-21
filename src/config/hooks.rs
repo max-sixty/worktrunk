@@ -27,7 +27,8 @@ pub struct HooksConfig {
     /// Commands to execute before worktree creation (blocking)
     #[serde(
         default,
-        rename = "pre-create",
+        rename = "pre-start",
+        alias = "pre-create",
         skip_serializing_if = "Option::is_none"
     )]
     pub pre_create: Option<CommandConfig>,
@@ -35,7 +36,8 @@ pub struct HooksConfig {
     /// Commands to execute after worktree creation (background)
     #[serde(
         default,
-        rename = "post-create",
+        rename = "post-start",
+        alias = "post-create",
         skip_serializing_if = "Option::is_none"
     )]
     pub post_create: Option<CommandConfig>,

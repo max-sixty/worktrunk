@@ -209,10 +209,10 @@ pub struct HookCliArgs<'a> {
 ///   regardless of whether any template references the key.
 ///
 /// The `foreground` parameter controls execution mode for hooks that normally run
-/// in background (post-create, post-switch):
+/// in background (post-start, post-switch):
 /// - `None` = use default behavior for this hook type
 /// - `Some(true)` = run in foreground (for debugging)
-/// - `Some(false)` = run in background (default for post-create/post-switch)
+/// - `Some(false)` = run in background (default for post-start/post-switch)
 pub fn run_hook(
     hook_type: HookType,
     yes: bool,

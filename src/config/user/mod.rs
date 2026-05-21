@@ -388,15 +388,30 @@ impl UserConfig {
         if let Some(system_path) = path::system_config_path()
             && let Ok(content) = std::fs::read_to_string(&system_path)
         {
-            super::deprecation::warn_unknown_fields::<UserConfig>(
-                &content,
+            match super::deprecation::check_and_migrate(
                 &system_path,
+                &content,
+                true,
                 "System config",
-            );
-            let migrated = super::deprecation::migrate_content(&content);
-            match load_config_file(&system_path, &migrated, "System config") {
-                Ok(table) => deep_merge_table(&mut merged_table, table),
-                Err(e) => warnings.push(e),
+                None,
+                true,
+            ) {
+                Ok(result) => {
+                    super::deprecation::warn_unknown_fields::<UserConfig>(
+                        &content,
+                        &system_path,
+                        "System config",
+                    );
+
+                    match load_config_file(&system_path, &result.migrated_content, "System config")
+                    {
+                        Ok(table) => deep_merge_table(&mut merged_table, table),
+                        Err(e) => warnings.push(e),
+                    }
+                }
+                Err(err) => {
+                    warnings.push(LoadError::Validation(err.to_string()));
+                }
             }
         }
 

@@ -66,11 +66,11 @@ exit_code: 0
 [2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
-[2m○[22m Expanding [1muser post-create hook[22m
+[2m○[22m Expanding [1muser post-start hook[22m
 [107m [0m [2m[0m[2m[34mecho[0m[2m user-hook
 [107m [0m [2m→[22m
 [107m [0m [2m[0m[2m[34mecho[0m[2m user-hook
-[2m○[22m Expanding [1mproject post-create hook[22m
+[2m○[22m Expanding [1mproject post-start hook[22m
 [107m [0m [2m[0m[2m[34mecho[0m[2m project-hook
 [107m [0m [2m→[22m
 [107m [0m [2m[0m[2m[34mecho[0m[2m project-hook
@@ -78,8 +78,8 @@ exit_code: 0
 [107m [0m branch                = feature
 [107m [0m worktree_path         = _REPO_.feature
 [107m [0m worktree_name         = repo.feature
-[107m [0m commit                = 5fd290273dcb433c49ba3d0d37601e1d034a113d
-[107m [0m short_commit          = 5fd2902
+[107m [0m commit                = 26c70caa73d841981f190bafd2a2a6e1d4eed34e
+[107m [0m short_commit          = 26c70ca
 [107m [0m upstream              = (unset)
 [107m [0m base                  = main
 [107m [0m base_worktree_path    = _REPO_
@@ -95,6 +95,6 @@ exit_code: 0
 [107m [0m remote                = origin
 [107m [0m remote_url            = ../origin.git
 [107m [0m cwd                   = _REPO_.feature
-[107m [0m hook_type             = post-create
+[107m [0m hook_type             = post-start
 [107m [0m hook_name             = (unset)
-[36m◎[39m [36mRunning post-create: user; project @ [1m_REPO_.feature[22m[39m
+[36m◎[39m [36mRunning post-start: user; project @ [1m_REPO_.feature[22m[39m

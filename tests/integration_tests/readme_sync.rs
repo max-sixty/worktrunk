@@ -1242,10 +1242,11 @@ fn test_config_docs_include_all_sections() {
 
     let all_keys = valid_user_config_keys();
 
-    // Hook keys from HookType enum + removed post-create (kept in schema but rejected at load)
+    // Hook keys from HookType enum + `pre-create`/`post-create` aliases (see
+    // `HooksConfig` in src/config/hooks.rs).
     let hook_keys: HashSet<String> = HookType::iter()
         .map(|h| h.to_string())
-        .chain(std::iter::once("post-create".to_string()))
+        .chain(["pre-create".to_string(), "post-create".to_string()])
         .collect();
 
     // Keys that are bare scalars or internal flags, not TOML section headers
@@ -1306,10 +1307,11 @@ fn test_project_config_docs_include_all_sections() {
 
     let all_keys = valid_project_config_keys();
 
-    // Hook keys from HookType enum + removed post-create (kept in schema but rejected at load)
+    // Hook keys from HookType enum + `pre-create`/`post-create` aliases (see
+    // `HooksConfig` in src/config/hooks.rs).
     let hook_keys: HashSet<String> = HookType::iter()
         .map(|h| h.to_string())
-        .chain(std::iter::once("post-create".to_string()))
+        .chain(["pre-create".to_string(), "post-create".to_string()])
         .collect();
 
     // Separate schema keys into section keys and hook keys
