@@ -1177,11 +1177,11 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_switch_picker_no_cd_prints_branch_without_switching(mut repo: TestRepo) {
+fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
 
-    // Create a worktree to select
+    // Create a worktree to switch to
     repo.add_worktree("target-branch");
 
     let (cd_path, exec_path, _guard) = directive_files_for_pty();
@@ -1196,35 +1196,38 @@ fn test_switch_picker_no_cd_prints_branch_without_switching(mut repo: TestRepo) 
         exec_path.display().to_string(),
     ));
 
-    // Run `wt switch --no-cd`, filter to "target", press Enter to select
+    // `wt switch --no-cd` opens the picker and switches identically to
+    // `wt switch <branch> --no-cd` — it only suppresses the cd directive.
+    // `--format=json` is the observable proof the switch pipeline ran: the
+    // structured result reaches stdout only after `execute_switch`.
     let result = exec_in_pty_with_input_expectations(
         wt_bin().to_str().unwrap(),
-        &["switch", "--no-cd"],
+        &["switch", "--no-cd", "--format=json"],
         repo.root_path(),
         &env_vars,
         &[
             // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default
             // for the rationale (matcher-driven row redraw can lag the cursor).
             ("target", Some("target-branch has no uncommitted changes")),
-            ("\r", None), // Enter to select
+            ("\r", None), // Enter to switch
         ],
     );
 
     assert_eq!(
         result.exit_code, 0,
-        "Expected exit code 0 for --no-cd selection"
+        "Expected exit code 0 for --no-cd switch"
     );
 
+    // The structured result reaches stdout only after execute_switch — the
+    // old print-only path emitted a bare branch name and never reached it.
     let screen = result.screen();
-
-    // --no-cd should output the branch name
     assert!(
-        screen.contains("target-branch"),
-        "Expected branch name in output with --no-cd.\nScreen:\n{}",
+        screen.contains("\"action\""),
+        "Expected --format=json switch result on screen.\nScreen:\n{}",
         screen
     );
 
-    // --no-cd should NOT emit a cd directive (read-only operation)
+    // --no-cd suppresses only the cd directive; the switch still ran.
     let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
     assert!(
         cd_content.trim().is_empty(),

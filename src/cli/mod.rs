@@ -337,9 +337,6 @@ pub(crate) struct SwitchArgs {
     ///
     /// Hooks still run normally. Useful when hooks handle navigation
     /// (e.g., tmux workflows) or for CI/automation. Use --cd to override.
-    ///
-    /// In picker mode (no branch argument), prints the selected branch
-    /// name and exits without switching. Useful for scripting.
     #[arg(long, overrides_with = "cd")]
     pub(crate) no_cd: bool,
 
@@ -359,7 +356,7 @@ pub(crate) struct SwitchArgs {
     ///
     /// JSON prints structured result to stdout. Designed for tool
     /// integration (e.g., Claude Code WorktreeCreate hooks).
-    #[arg(long, default_value = "text", requires = "branch", conflicts_with_all = ["branches", "remotes"], help_heading = "Automation")]
+    #[arg(long, default_value = "text", help_heading = "Automation")]
     pub(crate) format: SwitchFormat,
 }
 

@@ -51,7 +51,7 @@ const STDOUT_ALLOWED_PATHS: &[&str] = &[
     "step/prune.rs",
     // JSON output for wt step relocate --format=json
     "step/relocate.rs",
-    // --no-cd flag: branch name output for scripting
+    // Dry-run cache inventory dump (WORKTRUNK_PICKER_DRY_RUN)
     "picker/mod.rs",
     // JSON output for wt switch --format=json
     "worktree/switch.rs",

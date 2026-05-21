@@ -1244,6 +1244,25 @@ impl SwitchJsonOutput {
     }
 }
 
+/// Emit the structured `--format=json` result to stdout when requested.
+///
+/// Shared by the argument path and the interactive picker so `wt switch
+/// --format=json` produces identical output regardless of how the branch
+/// was chosen. A no-op for `SwitchFormat::Text`.
+pub(crate) fn emit_switch_json(
+    format: SwitchFormat,
+    result: &SwitchResult,
+    branch_info: &SwitchBranchInfo,
+) -> anyhow::Result<()> {
+    if format != SwitchFormat::Json {
+        return Ok(());
+    }
+    let json = SwitchJsonOutput::from_result(result, branch_info);
+    let json = serde_json::to_string(&json).context("Failed to serialize to JSON")?;
+    println!("{json}");
+    Ok(())
+}
+
 /// Options for the switch command
 pub struct SwitchOptions<'a> {
     pub branch: &'a str,
@@ -1656,11 +1675,7 @@ pub fn run_switch(
 
     // --format=json: write structured result to stdout. All behavior (hooks,
     // --execute, shell integration) proceeds normally — format only affects output.
-    if format == SwitchFormat::Json {
-        let json = SwitchJsonOutput::from_result(&result, &branch_info);
-        let json = serde_json::to_string(&json).context("Failed to serialize to JSON")?;
-        println!("{json}");
-    }
+    emit_switch_json(format, &result, &branch_info)?;
 
     // Early exit for benchmarking time-to-first-output
     if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {

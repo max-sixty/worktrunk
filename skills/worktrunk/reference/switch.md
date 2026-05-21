@@ -176,9 +176,6 @@ Options:
           Hooks still run normally. Useful when hooks handle navigation (e.g., tmux workflows) or
           for CI/automation. Use --cd to override.
 
-          In picker mode (no branch argument), prints the selected branch name and exits without
-          switching. Useful for scripting.
-
   -h, --help
           Print help (see a summary with '-h')
 

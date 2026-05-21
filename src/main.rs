@@ -661,7 +661,7 @@ fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
     // Deprecated: show warning and delegate to handle_picker
     warn_select_deprecated();
     worktrunk::config::suppress_warnings();
-    handle_picker(branches, remotes, None)
+    handle_picker(branches, remotes, None, SwitchFormat::Text)
 }
 
 #[cfg(not(unix))]
@@ -691,7 +691,12 @@ fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> {
             let Some(branch) = args.branch else {
                 #[cfg(unix)]
                 {
-                    return handle_picker(args.branches, args.remotes, change_dir_flag);
+                    return handle_picker(
+                        args.branches,
+                        args.remotes,
+                        change_dir_flag,
+                        args.format,
+                    );
                 }
 
                 #[cfg(not(unix))]

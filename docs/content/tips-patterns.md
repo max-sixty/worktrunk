@@ -17,7 +17,7 @@ Create a worktree and launch Claude in one command:
 
 ## `wt` aliases
 
-Compose with template filters and [vars](@/tips-patterns.md#per-branch-variables) for branch-specific shortcuts:
+Compose with template filters and [vars](@/tips-patterns.md#per-branch-variables):
 
 ```toml
 # .config/wt.toml
@@ -27,6 +27,9 @@ open = "open http://localhost:{{ branch | hash_port }}"
 
 # Test with branch-specific features from vars
 test = "cargo test --features {{ vars.features | default('default') }}"
+
+# Switch via the interactive picker, print the chosen branch
+pick = "wt switch --format=json | jq -r '.branch'"
 ```
 
 See [Aliases](@/extending.md#aliases) for scoping, approval, and reference.
@@ -327,15 +330,6 @@ Each worktree gets its own [cmux](https://cmux.com) workspace. Switching worktre
 [switch]
 cd = false
 
-[aliases]
-# Two-step the picker: with cd=false, `wt switch` (no args) prints the chosen
-# branch and exits without firing hooks. Capture that and feed it back so the
-# pre-switch hook runs.
-pick = """
-b=$(wt switch)
-[ -n "$b" ] && wt switch "$b"
-"""
-
 [pre-start]
 cmux = "cmux new-workspace --name {{ repo | sanitize }}/{{ branch | sanitize }} --cwd {{ worktree_path }} --focus true"
 
@@ -355,8 +349,6 @@ WS=$(cmux --json list-workspaces 2>/dev/null \\
 [ -n "$WS" ] && cmux close-workspace --workspace "$WS" || true
 """
 ```
-
-Use `wt pick` to open the interactive picker; `wt switch --create <branch>` and `wt switch <branch>` continue to work directly.
 
 **Why `pre-*` instead of `post-*`?** cmux restricts socket access to processes spawned inside a cmux terminal. `post-*` hooks run as detached background processes, breaking the process ancestry chain. `pre-*` hooks run in the foreground and inherit the terminal's process lineage.
 

@@ -117,10 +117,12 @@ use super::list::progressive::RenderTarget;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::template_vars::TemplateVars;
 use super::worktree::{
-    RemoveResult, SwitchBranchInfo, SwitchResult, approve_switch_hooks, execute_switch,
-    offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch, run_pre_switch_hooks,
-    spawn_switch_background_hooks, switch_hook_project_config, validate_switch_templates,
+    RemoveResult, SwitchBranchInfo, SwitchResult, approve_switch_hooks, emit_switch_json,
+    execute_switch, offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
+    run_pre_switch_hooks, spawn_switch_background_hooks, switch_hook_project_config,
+    validate_switch_templates,
 };
+use crate::cli::SwitchFormat;
 use crate::output::{handle_remove_output, handle_switch_output};
 use worktrunk::git::{BranchDeletionMode, delete_branch_if_safe};
 
@@ -400,6 +402,7 @@ pub fn handle_picker(
     cli_branches: bool,
     cli_remotes: bool,
     change_dir_flag: Option<bool>,
+    format: SwitchFormat,
 ) -> anyhow::Result<()> {
     // Interactive picker requires a terminal for the TUI. The dry-run and
     // preview-bench paths bypass skim entirely, so no TTY is required —
@@ -764,18 +767,6 @@ pub fn handle_picker(
             _ => PickerAction::Switch,
         };
 
-        // --no-cd: just output the selected branch name and exit (read-only, no side effects)
-        if !change_dir {
-            let selected_name = out
-                .selected_items
-                .first()
-                .map(|item| item.output().to_string());
-            let query = out.query.trim().to_string();
-            let identifier = resolve_identifier(&action, query, selected_name)?;
-            println!("{identifier}");
-            return Ok(());
-        }
-
         let should_create = matches!(action, PickerAction::Create);
 
         // Get branch name: from query if creating new, from selected item if switching.
@@ -847,6 +838,10 @@ pub fn handle_picker(
         let (result, branch_info) =
             execute_switch(&repo, plan, &config, false, hooks_approved, &hook_plan)?;
 
+        // --format=json: structured result to stdout, identical to the
+        // argument path. All switch behavior above proceeds normally.
+        emit_switch_json(format, &result, &branch_info)?;
+
         // Compute path mismatch lazily (deferred from plan_switch for existing worktrees).
         // Skip for detached HEAD worktrees (branch is None).
         let branch_info = match &result {
@@ -894,8 +889,7 @@ pub fn handle_picker(
 
 /// Resolve the branch identifier from picker output.
 ///
-/// Extracted from the picker callback for testability. Used by both the
-/// interactive path and the `--no-cd` print path.
+/// Extracted from the picker's accept handler for testability.
 fn resolve_identifier(
     action: &PickerAction,
     query: String,
