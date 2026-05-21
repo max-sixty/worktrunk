@@ -609,6 +609,81 @@ fn test_system_config_unknown_keys_warning_during_load(repo: TestRepo) {
     );
 }
 
+/// System config should use the same deprecation warning gate as user config.
+#[rstest]
+fn test_system_config_deprecation_warning_during_load(repo: TestRepo) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(
+        &system_config_path,
+        r#"[select]
+pager = "delta --paging=never"
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
+    cmd.arg("list").current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "Command should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("System config") && stderr.contains("[select]"),
+        "Expected deprecation warning from system config load, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("[switch.picker]"),
+        "Expected replacement section in warning, got: {stderr}"
+    );
+}
+
+/// System config is routed through the same deprecation gate as user config:
+/// a non-fatal deprecation surfaces a warning, and a deprecated hook key is
+/// migrated to its canonical name and stays active.
+#[rstest]
+fn test_system_config_deprecations_pass_through_gate(repo: TestRepo) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(
+        &system_config_path,
+        r#"post-start = "npm install"
+
+[select]
+pager = "delta --paging=never"
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path)
+        .env("NO_COLOR", "1");
+    cmd.args(["hook", "show", "post-create"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "Command should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("System config") && stderr.contains("[select]"),
+        "non-fatal deprecation in system config should warn, got: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("npm install"),
+        "post-start in system config should migrate to post-create and stay active, got: {stdout}"
+    );
+}
+
 #[rstest]
 fn test_config_show_outside_git_repo(mut repo: TestRepo, temp_home: TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
