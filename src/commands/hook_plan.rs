@@ -12,7 +12,7 @@
 //! authorization (project templates ∈ [`Approvals`]) and rendering
 //! (template → shell string, needs live git) are three separate concerns.
 //! Operation-driven hooks (`pre-merge`, `post-merge`, `pre-remove`,
-//! `post-remove`, `post-switch`, `pre-create`, `post-create`) are gated *before*
+//! `post-remove`, `post-switch`, `pre-start`, `post-start`) are gated *before*
 //! a state mutation (auto-rebase rewrites the feature `.config/wt.toml`; a
 //! merge moves the target ref; a removal scrubs the worktree; `git worktree
 //! add` materializes a `--create` worktree) and executed *after* it. When
@@ -312,7 +312,7 @@ fn render_planned(
 
 /// Foreground execution of a covered hook from the approved plan.
 ///
-/// Replaces `execute_hook` for `pre-merge` / `pre-remove` / `pre-create`. The
+/// Replaces `execute_hook` for `pre-merge` / `pre-remove` / `pre-start`. The
 /// signature carries no config — only the plan, the render context, and the
 /// failure strategy.
 ///
@@ -344,7 +344,7 @@ pub fn execute_planned_hook(
 }
 
 /// Register a covered background hook (`post-merge` / `post-remove` /
-/// `post-switch` / `post-create`) from the approved plan onto `announcer`.
+/// `post-switch` / `post-start`) from the approved plan onto `announcer`.
 ///
 /// The plan-backed counterpart of `HookAnnouncer::register`: steps are
 /// rendered from the frozen selection and added via the announcer's existing

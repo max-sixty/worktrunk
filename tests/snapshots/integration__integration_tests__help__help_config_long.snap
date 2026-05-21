@@ -108,7 +108,7 @@ Organizations can also deploy a system-wide config file for shared defaults — 
 [1mProject config[0m — shared team settings:
 
 [107m [0m [2m# .config/wt.toml[0m
-[107m [0m [2m[36m[pre-create][0m
+[107m [0m [2m[36m[pre-start][0m
 [107m [0m [2mdeps = [0m[2m[32m"npm ci"[0m
 [107m [0m 
 [107m [0m [2m[36m[pre-merge][0m
@@ -284,26 +284,26 @@ Scalar values (like [2mworktree-path[0m) replace the global value; everything 
 [107m [0m [2mlist.full = [0m[2m[33mtrue[0m
 [107m [0m [2mmerge.squash = [0m[2m[33mfalse[0m
 [107m [0m [2mremove.delete-branch = [0m[2m[33mfalse[0m
-[107m [0m [2mpre-create.env = [0m[2m[32m"cp .env.example .env"[0m
+[107m [0m [2mpre-start.env = [0m[2m[32m"cp .env.example .env"[0m
 [107m [0m [2mstep.copy-ignored.exclude = [[0m[2m[32m".repo-local-cache/"[0m[2m][0m
 [107m [0m [2maliases.deploy = [0m[2m[32m"make deploy BRANCH={{ branch }}"[0m
 
-Hooks support all three hook forms. A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence. The dotted-key examples below are equivalent to the table forms — TOML treats [2mprojects."github.com/user/repo".post-create.server = "..."[0m and a [2m[projects."github.com/user/repo".post-create][0m table the same way:
+Hooks support all three hook forms. A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence. The dotted-key examples below are equivalent to the table forms — TOML treats [2mprojects."github.com/user/repo".post-start.server = "..."[0m and a [2m[projects."github.com/user/repo".post-start][0m table the same way:
 
 [107m [0m [2m# Single command[0m
 [107m [0m [2m[36m[projects."github.com/user/repo"][0m
-[107m [0m [2mpost-create = [0m[2m[32m"mise trust"[0m
+[107m [0m [2mpost-start = [0m[2m[32m"mise trust"[0m
 [107m [0m 
 [107m [0m [2m# Multiple commands, running concurrently[0m
-[107m [0m [2m[36m[projects."github.com/user/repo".post-create][0m
+[107m [0m [2m[36m[projects."github.com/user/repo".post-start][0m
 [107m [0m [2mmise = [0m[2m[32m"mise trust"[0m
 [107m [0m [2mserver = [0m[2m[32m"npm run dev"[0m
 [107m [0m 
 [107m [0m [2m# Pipeline: steps run in sequence[0m
-[107m [0m [2m[36m[[projects."github.com/user/repo".post-create]][0m
+[107m [0m [2m[36m[[projects."github.com/user/repo".post-start]][0m
 [107m [0m [2minstall = [0m[2m[32m"npm ci"[0m
 [107m [0m 
-[107m [0m [2m[36m[[projects."github.com/user/repo".post-create]][0m
+[107m [0m [2m[36m[[projects."github.com/user/repo".post-start]][0m
 [107m [0m [2mbuild = [0m[2m[32m"npm run build"[0m
 [107m [0m [2mserver = [0m[2m[32m"npm run dev"[0m
 
@@ -434,8 +434,8 @@ To create a starter file with commented-out examples, run [2mwt config create -
 
 Project hooks apply to this repository only. See [2mwt hook[0m for hook types, execution order, and examples.
 
-[107m [0m [2mpre-create = [0m[2m[32m"npm ci"[0m
-[107m [0m [2mpost-create = [0m[2m[32m"npm run dev"[0m
+[107m [0m [2mpre-start = [0m[2m[32m"npm ci"[0m
+[107m [0m [2mpost-start = [0m[2m[32m"npm run dev"[0m
 [107m [0m [2mpre-merge = [0m[2m[32m"npm test"[0m
 
 [1m[32mDev server URL[0m

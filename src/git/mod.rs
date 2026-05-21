@@ -469,7 +469,17 @@ pub fn branch_tracks_ref(
 pub enum HookType {
     PreSwitch,
     PostSwitch,
+    // Canonical display is `pre-start`/`post-start`; `pre-create`/`post-create`
+    // are accepted as silent aliases via `FromStr`. The Rust variant name uses
+    // the future canonical (`-create`) so the eventual flip is a Display-only
+    // change.
+    #[strum(to_string = "pre-start", serialize = "pre-create")]
+    #[serde(rename = "pre-start", alias = "pre-create")]
+    #[cfg_attr(feature = "cli", value(name = "pre-start", alias = "pre-create"))]
     PreCreate,
+    #[strum(to_string = "post-start", serialize = "post-create")]
+    #[serde(rename = "post-start", alias = "post-create")]
+    #[cfg_attr(feature = "cli", value(name = "post-start", alias = "post-create"))]
     PostCreate,
     PreCommit,
     PostCommit,

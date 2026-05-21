@@ -14,7 +14,7 @@
 //! approval gate from execution.
 //!
 //! **Plan-backed (the TOCTOU-covered set):** `pre-merge`, `post-merge`,
-//! `pre-remove`, `post-remove`, `post-switch`, `pre-create`, `post-create`. A
+//! `pre-remove`, `post-remove`, `post-switch`, `pre-start`, `post-start`. A
 //! merge, rebase, removal, or `git worktree add` runs between the gate and
 //! these hooks, so a second config read could select a command the user never
 //! approved. Each command gate selects the commands once and freezes them into
@@ -27,7 +27,7 @@
 //! |---|---|---|
 //! | `pre-merge`, `pre-remove`, `post-remove` | the feature/removed worktree | `merge::approve_merge_plan`, `main.rs`'s `approve_remove`, `step::prune::approve_prune_hooks` |
 //! | `post-merge`, `post-switch` (after a removal) | the merge/removal destination | the same gates |
-//! | `pre-create`, `post-create`, `post-switch` (on switch) | the new/destination worktree — but for `--create` the config comes from the **invoking** worktree, since the new one doesn't exist yet (`switch_hook_project_config`) | `worktree::switch::approve_switch_hooks` |
+//! | `pre-start`, `post-start`, `post-switch` (on switch) | the new/destination worktree — but for `--create` the config comes from the **invoking** worktree, since the new one doesn't exist yet (`switch_hook_project_config`) | `worktree::switch::approve_switch_hooks` |
 //!
 //! **Invocation-resolved (no gate→exec mutation):** `pre-commit`,
 //! `post-commit`, `pre-switch`, `wt hook <type>`, aliases. They resolve config

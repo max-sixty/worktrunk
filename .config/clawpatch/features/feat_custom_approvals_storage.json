@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_custom_approvals_storage",
+  "title": "Approvals storage: the approvals.toml trust store",
+  "summary": "`approvals.toml` records which project commands the user has approved; the approval gate (feat_custom_approval_gate) consults it to decide what may run without a prompt. This feature covers the integrity of the store itself: path resolution, loading, parsing, saving, and the legacy copy from config.toml. A parse that fails open, a save that partially writes, or a path-resolution bug that reads the wrong file would let an unapproved command run or silently drop the user's approvals. `Approvals::load_from_config_file` and `copy_approved_commands_to_approvals_file` must fail closed: an error aborts, never degrades to 'nothing approved' or 'everything approved'.",
+  "kind": "library",
+  "source": "manual",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/config/approvals.rs",
+      "symbol": "Approvals",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/config/approvals.rs",
+      "reason": "Approvals struct: load/save/path resolution for approvals.toml"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "src/commands/command_approval.rs",
+      "reason": "the approval gate that consumes the store"
+    },
+    {
+      "path": "src/config/deprecation.rs",
+      "reason": "copy_approved_commands_to_approvals_file: legacy migration into the store, must fail closed"
+    },
+    {
+      "path": "src/config/mod.rs",
+      "reason": "config path resolution"
+    },
+    {
+      "path": "CLAUDE.md",
+      "reason": "Project Commands Run Only After Approval"
+    }
+  ],
+  "tests": [
+    {
+      "path": "tests/integration_tests/user_hooks.rs",
+      "command": "cargo test --test integration user_hooks"
+    },
+    {
+      "path": "tests/integration_tests/custom.rs",
+      "command": "cargo test --test integration custom"
+    }
+  ],
+  "tags": [
+    "rust",
+    "security",
+    "approval-gate",
+    "serialization"
+  ],
+  "trustBoundaries": [
+    "filesystem",
+    "permissions",
+    "serialization"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-05-19T00:00:00.000Z",
+  "updatedAt": "2026-05-19T00:00:00.000Z"
+}

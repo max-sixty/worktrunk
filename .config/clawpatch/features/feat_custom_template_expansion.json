@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_custom_template_expansion",
+  "title": "MiniJinja template expansion of project-supplied commands",
+  "summary": "Hook commands, alias steps, and `-x/--execute` bodies are MiniJinja templates rendered at runtime with a context of worktree/repo variables. The templates come from project config (a repo the user may have just cloned) and from CLI args. Risks: a rendering or escaping bug that mis-expands a variable into a command, undeclared-variable handling that silently produces an empty or wrong command, and the ShellArgs object's quoting. Expansion happens before the approval gate sees the final string, so a mismatch between what is approved and what is rendered would bypass approval. Detection must use minijinja::undeclared_variables, never substring or regex on `{{ }}`.",
+  "kind": "library",
+  "source": "manual",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/commands/hook_commands.rs",
+      "symbol": "expand_command_template",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/commands/hook_commands.rs",
+      "reason": "expand_command_template: runtime render of hook command templates"
+    },
+    {
+      "path": "src/config/expansion.rs",
+      "reason": "variable catalog, ShellArgs minijinja object, shell-arg quoting"
+    },
+    {
+      "path": "src/commands/alias.rs",
+      "reason": "alias step template rendering"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "src/config/project.rs",
+      "reason": "project config that supplies the templates"
+    },
+    {
+      "path": "src/commands/command_approval.rs",
+      "reason": "approval gate: must see the same string the renderer produces"
+    },
+    {
+      "path": "src/cli/mod.rs",
+      "reason": "-x/--execute bodies expanded as templates"
+    }
+  ],
+  "tests": [
+    {
+      "path": "tests/integration_tests/step_alias.rs",
+      "command": "cargo test --test integration step_alias"
+    },
+    {
+      "path": "tests/integration_tests/user_hooks.rs",
+      "command": "cargo test --test integration user_hooks"
+    }
+  ],
+  "tags": [
+    "rust",
+    "user-input",
+    "template-injection",
+    "minijinja"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "process-exec"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-05-19T00:00:00.000Z",
+  "updatedAt": "2026-05-19T00:00:00.000Z"
+}

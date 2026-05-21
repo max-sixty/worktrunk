@@ -1015,10 +1015,10 @@ fn test_switch_picker_create_with_empty_query_fails(mut repo: TestRepo) {
 /// Picker-create validates hook templates *before* `git worktree add`, mirroring
 /// the pre-flight that `wt switch --create` already performs.
 ///
-/// Without this, a broken `pre-create` template would let the worktree be
+/// Without this, a broken `pre-start` template would let the worktree be
 /// created, then fail at expansion time — leaving a half-state that blocks
 /// re-running (the branch already exists). The test commits a syntax-broken
-/// `pre-create` to the user config, fires picker-create, asserts that no branch
+/// `pre-start` to the user config, fires picker-create, asserts that no branch
 /// or worktree was created, then fixes the template and confirms re-running
 /// succeeds — proving the pre-flight aborts cleanly rather than leaving a
 /// half-created worktree behind.
@@ -1027,12 +1027,12 @@ fn test_switch_picker_create_validates_templates_before_worktree(mut repo: TestR
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
 
-    // Broken `pre-create` in user config: unbalanced `{{` is a minijinja parse
+    // Broken `pre-start` in user config: unbalanced `{{` is a minijinja parse
     // error, so `validate_template` rejects it without needing approvals.
     // Project config would also trigger the validation path, but it routes
     // through the approval gate first and would prompt for a TTY response —
     // user-config hooks are trusted and exercise validation directly.
-    repo.write_test_config(r#"pre-create = "echo {{ unclosed""#);
+    repo.write_test_config(r#"pre-start = "echo {{ unclosed""#);
 
     let env_vars = repo.test_env_vars();
 
@@ -1050,7 +1050,7 @@ fn test_switch_picker_create_validates_templates_before_worktree(mut repo: TestR
     assert_ne!(
         result.exit_code,
         0,
-        "Expected non-zero exit when pre-create template is broken.\nScreen:\n{}",
+        "Expected non-zero exit when pre-start template is broken.\nScreen:\n{}",
         result.screen()
     );
 
@@ -1082,7 +1082,7 @@ fn test_switch_picker_create_validates_templates_before_worktree(mut repo: TestR
     );
 
     // Fix the template and re-run — proves no half-state was left behind.
-    repo.write_test_config(r#"pre-create = "true""#);
+    repo.write_test_config(r#"pre-start = "true""#);
 
     let result = exec_in_pty_with_input_expectations(
         wt_bin().to_str().unwrap(),
@@ -1234,4 +1234,55 @@ fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
         "CD file should be empty with --no-cd, got: {}",
         cd_content
     );
+}
+
+/// A project `pre-switch` hook must pass through the approval gate when the
+/// picker switches — the picker has no `--yes`, so an unapproved project
+/// command is shown for approval, never auto-run.
+///
+/// Regression: the picker previously passed `yes = true` to
+/// `run_pre_switch_hooks`, silently executing project `pre-switch` commands
+/// without a prompt — inconsistent with every other hook the picker gates, and
+/// a hole in "Project Commands Run Only After Approval". Here the hook is
+/// declined at the prompt; it must not run, and the switch must still succeed.
+#[rstest]
+fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("target-branch");
+
+    // Project `pre-switch` hook (in `.config/wt.toml`, so it routes through the
+    // approval gate) that touches a marker outside the worktree if it runs.
+    let marker_dir = tempfile::tempdir().unwrap();
+    let marker = marker_dir.path().join("pre-switch-ran");
+    repo.write_project_config(&format!(
+        "pre-switch = {:?}\n",
+        format!("touch {}", marker.display())
+    ));
+
+    let env_vars = repo.test_env_vars();
+    // Select target-branch, press Enter, then decline the approval prompt.
+    let result = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default.
+            ("target", Some("target-branch has no uncommitted changes")),
+            ("\r", Some("needs approval")), // Enter; wait for the approval prompt
+            ("n\n", None),                  // decline
+        ],
+    );
+
+    let screen = result.screen();
+    assert_eq!(
+        result.exit_code, 0,
+        "switch should still succeed after declining the pre-switch hook.\nScreen:\n{screen}"
+    );
+    assert!(
+        screen.contains("needs approval"),
+        "picker must prompt before running a project pre-switch hook.\nScreen:\n{screen}"
+    );
+    assert!(!marker.exists(), "a declined pre-switch hook must not run");
 }

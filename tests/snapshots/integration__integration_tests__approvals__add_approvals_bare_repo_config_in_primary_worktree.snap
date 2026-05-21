@@ -52,7 +52,7 @@ exit_code: 1
 
 ----- stderr -----
 ▲ repo needs approval to execute 1 command:
-○ pre-create:
+○ pre-start:
   echo 'hello'
 ✗ Cannot prompt for approval in non-interactive environment
 ↳ To skip prompts in CI/CD, add --yes; to pre-approve commands, run wt config approvals add

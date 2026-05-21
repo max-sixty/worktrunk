@@ -9,23 +9,21 @@ Hooks are shell commands that run at key points in the worktree lifecycle — au
 | Event | `pre-` — blocking | `post-` — background |
 |-------|-------------------|---------------------|
 | **switch** | `pre-switch` | `post-switch` |
-| **create** | `pre-create` | `post-create` |
+| **create** | `pre-start` | `post-start` |
 | **commit** | `pre-commit` | `post-commit` |
 | **merge** | `pre-merge` | `post-merge` |
 | **remove** | `pre-remove` | `post-remove` |
 
 `pre-*` hooks block — failure aborts the operation. `post-*` hooks run in the background with output logged (use [`wt config state logs`](https://worktrunk.dev/config/#wt-config-state-logs) to find and manage log files). Use `-v` to see expanded command details for background hooks.
 
-The most common creation hook is `post-create` — it runs background tasks (dev servers, file copying, builds) without blocking worktree creation. Prefer `post-create` over `pre-create` unless a later step needs the work completed first.
-
-`pre-start`/`post-start` are accepted as deprecated aliases for the renamed `pre-create`/`post-create` hooks, in config and on the command line. The [hook rename plan](https://github.com/max-sixty/worktrunk/issues/2838) tracks the deprecation.
+The most common creation hook is `post-start` — it runs background tasks (dev servers, file copying, builds) without blocking worktree creation. Prefer `post-start` over `pre-start` unless a later step needs the work completed first.
 
 | Hook | Purpose |
 |------|---------|
 | `pre-switch` | Runs before branch resolution or worktree creation. `{{ branch }}` is the destination as typed (before resolution) |
 | `post-switch` | Triggers on all switch results: creating, switching to existing, or staying on current |
-| `pre-create` | Runs once when a new worktree is created, blocking `post-create`/`--execute` until complete: dependency install, env file generation |
-| `post-create` | Runs once when a new worktree is created, in the background: dev servers, long builds, file watchers, copying caches |
+| `pre-start` | Runs once when a new worktree is created, blocking `post-start`/`--execute` until complete: dependency install, env file generation |
+| `post-start` | Runs once when a new worktree is created, in the background: dev servers, long builds, file watchers, copying caches |
 | `pre-commit` | Formatters, linters, type checking — runs during `wt merge` before the squash commit |
 | `post-commit` | CI triggers, notifications, background linting |
 | `pre-merge` | Tests, security scans, build verification — runs after rebase, before merge to target |
@@ -42,11 +40,11 @@ Project commands require approval on first run:
 ```
 ▲ repo needs approval to execute 3 commands:
 
-○ pre-create install:
+○ pre-start install:
    npm ci
-○ pre-create build:
+○ pre-start build:
    cargo build --release
-○ pre-create env:
+○ pre-start env:
    echo 'PORT={{ branch | hash_port }}' > .env.local
 
 ❯ Allow and remember? [y/N]
@@ -71,13 +69,13 @@ Hooks take one of three forms, determined by their TOML shape.
 A string is a single command:
 
 ```toml
-pre-create = "npm install"
+pre-start = "npm install"
 ```
 
 A table is multiple commands that run concurrently:
 
 ```toml
-[post-create]
+[post-start]
 server = "npm run dev"
 watch = "npm run watch"
 ```
@@ -85,10 +83,10 @@ watch = "npm run watch"
 A pipeline is a sequence of `[[hook]]` blocks run in order. Each block is one step; multiple keys within a block run concurrently. A failing step aborts the rest of the pipeline:
 
 ```toml
-[[post-create]]
+[[post-start]]
 install = "npm ci"
 
-[[post-create]]
+[[post-start]]
 build = "npm run build"
 server = "npm run dev"
 ```
@@ -136,7 +134,7 @@ Hooks can use template variables that expand at runtime:
 |           | `{{ remote }}`                | Primary remote name |
 |           | `{{ remote_url }}`            | Remote URL |
 | exec      | `{{ cwd }}`                   | Directory where the hook command runs |
-|           | `{{ hook_type }}`             | Hook type being run (e.g. `pre-create`, `pre-merge`) |
+|           | `{{ hook_type }}`             | Hook type being run (e.g. `pre-start`, `pre-merge`) |
 |           | `{{ hook_name }}`             | Hook command name (if named) |
 |           | `{{ args }}`                  | Tokens forwarded from the CLI — see [Running Hooks Manually](#running-hooks-manually) |
 | user      | `{{ vars.<key> }}`            | Per-branch variables from [`wt config state vars`](https://worktrunk.dev/config/#wt-config-state-vars) |
@@ -150,12 +148,12 @@ Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the ope
 | merge | feature being merged | = bare vars | merge target |
 | remove | branch being removed | = bare vars | where you end up |
 
-Pre and post hooks share the same perspective — `{{ branch | hash_port }}` produces the same port in `post-create` and `post-remove`. `cwd` is the worktree root where the hook command runs. It differs from `worktree_path` in three cases: pre-switch, where the hook runs in the source but `worktree_path` is the destination; post-remove, where the active worktree is gone so the hook runs in primary; and post-merge with removal, same — the active worktree is gone, so the hook runs in target.
+Pre and post hooks share the same perspective — `{{ branch | hash_port }}` produces the same port in `post-start` and `post-remove`. `cwd` is the worktree root where the hook command runs. It differs from `worktree_path` in three cases: pre-switch, where the hook runs in the source but `worktree_path` is the destination; post-remove, where the active worktree is gone so the hook runs in primary; and post-merge with removal, same — the active worktree is gone, so the hook runs in target.
 
-Some variables are conditional: `upstream` requires remote tracking; `base` only appears in switch/create hooks; `target_worktree_path` requires the target to have a worktree; `pr_number`/`pr_url` are populated for `post-switch`, `pre-create`, and `post-create` hooks when creating via `pr:N` or `mr:N`; `vars` keys may not exist. Undefined variables error — use conditionals or defaults for optional behavior:
+Some variables are conditional: `upstream` requires remote tracking; `base` only appears in switch/create hooks; `target_worktree_path` requires the target to have a worktree; `pr_number`/`pr_url` are populated for `post-switch`, `pre-start`, and `post-start` hooks when creating via `pr:N` or `mr:N`; `vars` keys may not exist. Undefined variables error — use conditionals or defaults for optional behavior:
 
 ```toml
-[pre-create]
+[pre-start]
 # Rebase onto upstream if tracking a remote branch (e.g., wt switch --create feature origin/feature)
 sync = "{% if upstream %}git fetch && git rebase {{ upstream }}{% endif %}"
 ```
@@ -165,7 +163,7 @@ Run any hook-firing command with `-v` to see the resolved variables for the actu
 Variables use dot access and the `default` filter for missing keys. JSON object/array values are parsed automatically, so `{{ vars.config.port }}` works when the value is `{"port": 3000}`:
 
 ```toml
-[post-create]
+[post-start]
 dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.config.port | default('3000') }}"
 ```
 
@@ -214,7 +212,7 @@ worktree-path = "{{ repo_path }}/../{{ repo_path | dirname | basename }}.{{ bran
 The `hash_port` filter is useful for running dev servers on unique ports per worktree:
 
 ```toml
-[post-create]
+[post-start]
 dev = "npm run dev -- --host {{ branch }}.localhost --port {{ branch | hash_port }}"
 ```
 
@@ -238,7 +236,7 @@ Templates also support functions for dynamic lookups:
 The `worktree_path_of_branch` function returns the filesystem path of a worktree given a branch name, or an empty string if no worktree exists for that branch. This is useful for referencing files in other worktrees:
 
 ```toml
-[pre-create]
+[pre-start]
 # Copy config from main worktree
 setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path }}"
 ```
@@ -248,8 +246,8 @@ setup = "cp {{ worktree_path_of_branch('main') }}/config.local {{ worktree_path 
 Hooks receive all template variables as JSON on stdin, enabling complex logic that templates can't express:
 
 ```toml
-[pre-create]
-setup = "python3 scripts/pre-create-setup.py"
+[pre-start]
+setup = "python3 scripts/pre-start-setup.py"
 ```
 
 ```python
@@ -264,7 +262,7 @@ if ctx['branch'].startswith('feature/') and 'backend' in ctx['repo']:
 One specific command worth calling out: [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored). Git worktrees share the repository but not untracked files, and this copies gitignored files between worktrees:
 
 ```toml
-[post-create]
+[post-start]
 copy = "wt step copy-ignored"
 ```
 
@@ -280,7 +278,7 @@ $ wt hook pre-merge user:        # Run all user hooks
 $ wt hook pre-merge project:     # Run all project hooks
 $ wt hook pre-merge user:test    # Run only user's "test" hook
 $ wt hook pre-merge --yes        # Skip approval prompts (for CI)
-$ wt hook pre-create --branch=feature/test    # Override a template variable
+$ wt hook pre-start --branch=feature/test    # Override a template variable
 $ wt hook pre-merge -- --extra args     # Forward tokens into {{ args }}
 ```
 
@@ -307,8 +305,8 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 ```
 
 ```bash
-$ wt hook post-create
-◎ Running post-create: project @ ~/acme
+$ wt hook post-start
+◎ Running post-start: project @ ~/acme
 ```
 
 ## Passing values
@@ -321,9 +319,9 @@ The long form `--var KEY=VALUE` is deprecated but still supported. It force-bind
 
 # Recipes
 
-- [Eliminate cold starts](https://worktrunk.dev/tips-patterns/#eliminate-cold-starts): `wt step copy-ignored` in `post-create` shares build caches and dependencies; use a `[[post-create]]` pipeline when a later hook depends on the copy
-- [Dev server per worktree](https://worktrunk.dev/tips-patterns/#dev-server-per-worktree): `wt step tether` in `post-create` runs the dev server and kills its whole process group when the worktree is removed, with optional subdomain routing
-- [Database per worktree](https://worktrunk.dev/tips-patterns/#database-per-worktree): a `post-create` pipeline stores container name, port, and connection string as [per-branch vars](https://worktrunk.dev/config/#wt-config-state-vars) that later hooks reference
+- [Eliminate cold starts](https://worktrunk.dev/tips-patterns/#eliminate-cold-starts): `wt step copy-ignored` in `post-start` shares build caches and dependencies; use a `[[post-start]]` pipeline when a later hook depends on the copy
+- [Dev server per worktree](https://worktrunk.dev/tips-patterns/#dev-server-per-worktree): `wt step tether` in `post-start` runs the dev server and kills its whole process group when the worktree is removed, with optional subdomain routing
+- [Database per worktree](https://worktrunk.dev/tips-patterns/#database-per-worktree): a `post-start` pipeline stores container name, port, and connection string as [per-branch vars](https://worktrunk.dev/config/#wt-config-state-vars) that later hooks reference
 - [Progressive validation](https://worktrunk.dev/tips-patterns/#progressive-validation): quick lint/typecheck in `pre-commit`, expensive tests and builds in `pre-merge`
 - [Target-specific hooks](https://worktrunk.dev/tips-patterns/#target-specific-hooks): branch on `{{ target }}` in `post-merge` for per-environment deploys
 
@@ -338,8 +336,8 @@ Commands:
   show         Show configured hooks
   pre-switch   Run pre-switch hooks
   post-switch  Run post-switch hooks
-  pre-create   Run pre-create hooks
-  post-create  Run post-create hooks
+  pre-start    Run pre-start hooks
+  post-start   Run post-start hooks
   pre-commit   Run pre-commit hooks
   post-commit  Run post-commit hooks
   pre-merge    Run pre-merge hooks
