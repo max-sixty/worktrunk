@@ -1953,6 +1953,84 @@ pub fn run_switch(
     .run()
 }
 
+/// Whether `value` is a single clean program-name token — the form `--execute`
+/// keeps accepting unchanged once it switches to the argv input model.
+///
+/// First character `[A-Za-z0-9._/@]`, the rest additionally `+`/`-`. On
+/// Windows, `\` and `:` are also allowed so native paths (`C:\dir\tool`) are
+/// not flagged; on POSIX they are shell metacharacters and stay excluded.
+/// This rejects a leading `-`/`+` (an option-like `argv[0]` resolves
+/// differently), whitespace, `{{ }}` template markup, and every shell
+/// metacharacter — any of which means the value is not a bare program name.
+fn is_clean_program_token(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    let first_ok = first.is_ascii_alphanumeric()
+        || matches!(first, '.' | '_' | '/' | '@')
+        || (cfg!(windows) && first == '\\');
+    first_ok
+        && chars.all(|c| {
+            c.is_ascii_alphanumeric()
+                || matches!(c, '.' | '_' | '/' | '@' | '+' | '-')
+                || (cfg!(windows) && matches!(c, '\\' | ':'))
+        })
+}
+
+/// Warn when a `--execute` value will change behavior under the upcoming argv
+/// input model.
+///
+/// A future release runs `-x` as a single program (with arguments after `--`),
+/// not a shell command line. Warn now for any value that is not a single
+/// program token — shell syntax, multiple words, or `{{ }}` markup (flagged
+/// conservatively, even when it would expand to a clean name).
+///
+/// A single program token — including a path — is unaffected and stays silent.
+/// A bare name that is really a shell alias/function/builtin is not detectable
+/// here without the user's shell, so it is left to fail loudly at the cutover
+/// rather than guessed at. Informational only — it never blocks the switch.
+///
+/// The migration hint reconstructs the command line that runs today — the
+/// `-x` value with its trailing args appended, the way `run_switch` joins
+/// them — and wraps it for whichever shell the active wrapper evaluates the
+/// payload with (`sh` / `fish` / `pwsh`). That keeps the suggestion
+/// behavior-preserving on fish/PowerShell, not just POSIX sh, and complete
+/// when trailing args are present.
+fn warn_if_execute_form_deprecated(cmd: &str, execute_args: &[String]) {
+    if is_clean_program_token(cmd) {
+        return;
+    }
+    let mode = directive_shell_escape_mode();
+    let (shell, flag) = match mode {
+        ShellEscapeMode::PowerShell => ("pwsh", "-Command"),
+        ShellEscapeMode::Fish => ("fish", "-c"),
+        _ => ("sh", "-c"),
+    };
+    let command_line = if execute_args.is_empty() {
+        cmd.to_string()
+    } else {
+        let escaped: Vec<String> = execute_args
+            .iter()
+            .map(|arg| shell_escape_for(mode, arg))
+            .collect();
+        format!("{} {}", cmd, escaped.join(" "))
+    };
+    let suggested = shell_escape_for(mode, &command_line);
+    eprintln!(
+        "{}",
+        warning_message(cformat!(
+            "<bold>--execute</> will change in a future release: it will run a single program, with arguments after <bold>--</>, not a shell command line"
+        ))
+    );
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "To run this command line unchanged, pass it to a shell: <underline>--execute {shell} -- {flag} {suggested}</>"
+        ))
+    );
+}
+
 /// Validate all templates that will be expanded after worktree creation.
 ///
 /// Catches syntax errors and undefined variable references *before* the
@@ -2012,6 +2090,7 @@ fn validate_switch_templates(
                 "--execute argument",
             )?;
         }
+        warn_if_execute_form_deprecated(cmd, execute_args);
     }
 
     // Validate hook templates only when hooks will actually run
@@ -2055,6 +2134,45 @@ fn validate_switch_templates(
 mod tests {
     use super::*;
     use worktrunk::testing::TestRepo;
+
+    #[test]
+    fn is_clean_program_token_matches_only_bare_names() {
+        // Bare program names — unchanged under the argv input model.
+        for ok in [
+            "git",
+            "claude",
+            "node18",
+            "my-tool",
+            "tool.sh",
+            "/usr/bin/env",
+            "./build",
+            "_x",
+            "@scope/pkg",
+        ] {
+            assert!(is_clean_program_token(ok), "expected clean token: {ok:?}");
+        }
+        // Not bare names — empty, whitespace, shell syntax, template markup,
+        // or an option-like leading character.
+        for bad in [
+            "",
+            "npm run dev",
+            "a && b",
+            "echo $HOME",
+            "code {{ worktree_path }}",
+            "a|b",
+            "-flag",
+            "+x",
+        ] {
+            assert!(!is_clean_program_token(bad), "expected non-token: {bad:?}");
+        }
+        // A native Windows path is a clean token only when targeting Windows;
+        // on POSIX, `\` and `:` are shell metacharacters.
+        assert_eq!(
+            is_clean_program_token(r"C:\Tools\foo.exe"),
+            cfg!(windows),
+            "Windows path classification should follow the target OS"
+        );
+    }
 
     #[test]
     fn capture_switch_source_returns_empty_when_recovered() {

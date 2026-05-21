@@ -668,6 +668,62 @@ fn test_switch_with_execute_trailing_args_metachars_fish(repo: TestRepo) {
         );
     });
 }
+
+/// A `--execute` value that is a shell command line rather than a single
+/// program name gets a deprecation warning for the upcoming argv input model;
+/// a single program name stays silent.
+#[rstest]
+fn test_switch_execute_argv_deprecation_warning(repo: TestRepo) {
+    let (cd_path, exec_path, _guard) = directive_files();
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        // Shell syntax / multiple words — not a single program name.
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &["--create", "dep-shell", "--execute", "echo hi && ls"],
+            None,
+        );
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        assert_cmd_snapshot!("switch_execute_deprecation_shell_syntax", cmd);
+
+        // A single program name — unaffected, no warning.
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &["--create", "dep-ok", "--execute", "git"],
+            None,
+        );
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        assert_cmd_snapshot!("switch_execute_deprecation_compatible", cmd);
+
+        // Trailing args are folded into the suggested command line, not dropped.
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &["--create", "dep-args", "--execute", "npm run", "--", "test"],
+            None,
+        );
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        assert_cmd_snapshot!("switch_execute_deprecation_trailing_args", cmd);
+
+        // Under a fish wrapper the suggestion wraps in `fish`, not POSIX `sh`.
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &[
+                "--create",
+                "dep-fish",
+                "--execute",
+                "set -lx FOO bar; echo $FOO",
+            ],
+            None,
+        );
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        cmd.env("WORKTRUNK_SHELL", "fish");
+        assert_cmd_snapshot!("switch_execute_deprecation_fish_wrapper", cmd);
+    });
+}
 // Error tests
 #[rstest]
 fn test_switch_error_missing_worktree_directory(mut repo: TestRepo) {

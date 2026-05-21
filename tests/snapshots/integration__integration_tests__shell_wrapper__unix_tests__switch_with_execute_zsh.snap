@@ -3,8 +3,6 @@ source: tests/integration_tests/shell_wrapper.rs
 expression: "&output.combined"
 ---
 
-[33m▲[39m [33m[1m--execute[22m will change in a future release: it will run a single program, with arguments after [1m--[22m, not a shell command line[39m
-[2m↳[22m [2mTo run this command line unchanged, pass it to a shell: [4m--execute sh -- -c 'echo executed'[24m[22m
 [32m✓[39m [32mCreated branch [1mtest-exec[22m from [1mmain[22m and worktree @ [1m_REPO_.test-exec[22m[39m
 [2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
 [36m◎[39m [36mExecuting (--execute):[39m

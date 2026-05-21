@@ -316,8 +316,8 @@ pub(crate) struct SwitchArgs {
     /// `wsc feature -- 'Fix GH #322'` runs `claude 'Fix GH #322'`,
     /// starting Claude with a prompt.
     ///
-    /// Template example: `-x 'code {{ worktree_path }}'` opens VS Code
-    /// at the worktree, `-x 'tmux new -s {{ branch | sanitize }}'` starts
+    /// Template example: `-x code -- '{{ worktree_path }}'` opens VS Code
+    /// at the worktree, `-x tmux -- new -s '{{ branch | sanitize }}'` starts
     /// a tmux session named after the branch.
     #[arg(short = 'x', long, requires = "branch")]
     pub(crate) execute: Option<String>,
