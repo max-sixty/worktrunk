@@ -1129,7 +1129,6 @@ pub mod tests {
             branch_name: None,
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
-            integration_reason: None,
             force_worktree: false,
             expected_path: None,
             removed_commit: None,
