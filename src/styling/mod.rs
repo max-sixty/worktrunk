@@ -104,8 +104,8 @@ pub fn terminal_width() -> usize {
 /// stdout, and stderr — so [`terminal_width`] always falls through to its
 /// `usize::MAX` sentinel, and the statusline output would overflow the bar.
 /// As a last resort, this walks up to 10 parent processes looking for a TTY
-/// and asks `stty size` for its dimensions, reserving 20% for Claude Code's
-/// own UI messages.
+/// and asks `stty size` for its dimensions, reserving 5 columns for Claude
+/// Code's own UI messages.
 ///
 /// Every other caller should use [`terminal_width`] — the parent-TTY walk is
 /// a statusline-specific workaround, not a general fallback.
@@ -133,8 +133,8 @@ fn statusline_width_fallback(base: usize) -> usize {
 /// direct TTY access. Walks up to 10 parent processes looking for one with a TTY,
 /// then queries that TTY's size.
 ///
-/// Returns 80% of the detected width to reserve space for Claude Code's UI messages
-/// (like "Approaching context limit").
+/// Returns the detected width minus 5 columns, reserving space for Claude Code's
+/// UI messages (like "Approaching context limit").
 #[cfg(unix)]
 fn detect_parent_tty_width() -> Option<usize> {
     use crate::shell_exec::Cmd;
@@ -166,8 +166,8 @@ fn detect_parent_tty_width() -> Option<usize> {
                 .parse::<usize>()
                 .ok()?;
 
-            // Reserve 20% for Claude Code UI messages
-            return Some(cols * 80 / 100);
+            // Reserve 5 columns for Claude Code UI messages
+            return Some(cols.saturating_sub(5));
         }
 
         if ppid == "1" || ppid == "0" {
