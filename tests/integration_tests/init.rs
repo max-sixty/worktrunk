@@ -76,6 +76,7 @@ fn test_init_invalid_shell(repo: TestRepo) {
 #[case("fish")]
 #[case("nu")]
 #[case("powershell")]
+#[case("zsh")]
 fn test_init_rejects_unsafe_cmd(#[case] shell: &str, repo: TestRepo) {
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);

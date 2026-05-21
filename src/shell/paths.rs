@@ -362,4 +362,21 @@ mod tests {
             "Fallback should end with 'nushell': {result:?}"
         );
     }
+
+    #[test]
+    fn test_path_accessors_reject_invalid_command_name() {
+        // The three `cmd`-taking accessors validate before touching the filesystem,
+        // surfacing the rejection as an `InvalidInput` io::Error. Every CLI entry
+        // point validates first, so this structural guard documents the contract.
+        let bad = "wt; touch";
+
+        let err = config_paths(super::super::Shell::Fish, bad).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+
+        let err = legacy_fish_conf_d_path(bad).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+
+        let err = completion_path(super::super::Shell::Fish, bad).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
 }
