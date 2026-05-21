@@ -791,4 +791,24 @@ mod tests {
             "destination must not be replaced by source"
         );
     }
+
+    #[test]
+    fn backup_blocking_path_reports_other_rename_errors() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("missing");
+        let dest = temp.path().join("dest");
+
+        let err = backup_blocking_path(&missing, &dest).unwrap_err();
+
+        // A non-AlreadyExists failure (here, the source does not exist) flows
+        // through the generic error arm, keeping the "Failed to backup" context.
+        assert!(
+            err.to_string().contains("Failed to backup"),
+            "expected wrapped error, got: {err}"
+        );
+        assert!(
+            !dest.exists(),
+            "destination must not be created on a failed rename"
+        );
+    }
 }
