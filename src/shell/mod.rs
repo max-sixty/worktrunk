@@ -155,11 +155,12 @@ impl Shell {
     /// The `cmd` parameter specifies the command name (e.g., `wt` or `git-wt`).
     /// All shells use a conditional wrapper to avoid errors when the command doesn't exist.
     ///
+    /// `cmd` must already be validated by [`validate_shell_command_name`]; command
+    /// entry points (`handle_init`, `handle_configure_shell`) validate at the edge.
+    ///
     /// Note: The generated line does not include `--cmd` because `binary_name()` already
     /// detects the command name from argv\[0\] at runtime.
     pub fn config_line(&self, cmd: &str) -> String {
-        validate_shell_command_name(cmd).unwrap_or_else(|message| panic!("{message}"));
-
         match self {
             Self::Bash | Self::Zsh => {
                 format!(
@@ -234,8 +235,9 @@ pub struct ShellInit {
 }
 
 impl ShellInit {
+    /// `cmd` must already be validated by [`validate_shell_command_name`]; command
+    /// entry points (`handle_init`, `handle_configure_shell`) validate at the edge.
     pub fn with_prefix(shell: Shell, cmd: String) -> Self {
-        validate_shell_command_name(&cmd).unwrap_or_else(|message| panic!("{message}"));
         Self { shell, cmd }
     }
 
