@@ -288,6 +288,27 @@ git grep -niE "claude|codex"
 
 Check the latest IDs at <https://docs.anthropic.com/en/docs/about-claude/models> and <https://developers.openai.com/codex/models>. The recommended commit-message commands should use the most recent fastest model from each vendor (Haiku for Anthropic, the smallest current Codex variant for OpenAI).
 
+## Weekly Maintenance: Agent App Integration Surfaces
+
+Worktrunk ships a plugin for each agent CLI it integrates with, and those CLIs
+change their integration surfaces without notice. Each week, scan the upstream
+changelogs and flag changes that affect what Worktrunk consumes or produces.
+
+| App | Source to check | Integration surface |
+|-----|-----------------|---------------------|
+| Claude Code | `gh api repos/anthropics/claude-code/contents/CHANGELOG.md -H 'Accept: application/vnd.github.raw'`, plus `curl -sL https://code.claude.com/docs/en/statusline.md` for the statusline JSON schema | statusline stdin JSON, `WorktreeCreate`/`WorktreeRemove` hooks, plugin marketplace, `/wt-switch-create` |
+| Codex | `gh release list -R openai/codex -L 10` | plugin marketplace |
+| Gemini CLI | `gh release list -R google-gemini/gemini-cli -L 10` | native extension loading |
+| OpenCode | `gh release list -R sst/opencode -L 10` | plugins API in `~/.config/opencode/plugins/` |
+
+What to flag:
+
+- **New statusline JSON fields** — `src/commands/statusline.rs` parses `workspace.current_dir`, `model.display_name`, and `context_window.used_percentage`. A newly added field (rate limits, session cost, PR review state) may be worth surfacing in `wt list statusline`.
+- **Renamed or removed hook events** — `WorktreeCreate`/`WorktreeRemove` route agent worktree creation through `wt`; a renamed event silently disables isolation rather than erroring.
+- **Changed plugin install mechanisms** — `wt config plugins {claude,codex,opencode} install` and the Gemini extension manifest break if the marketplace or plugins-directory contract changes.
+
+Don't open a PR speculatively. File one issue per relevant change, linking the upstream entry and noting what Worktrunk would need to do. If nothing changed, say so and move on.
+
 ## README Date Check
 
 The README blockquote opens with a month+year (e.g., "**April 2026**"). During daily
