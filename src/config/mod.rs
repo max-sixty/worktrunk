@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn test_command_config_single() {
-        let toml = r#"post-create = "npm install""#;
+        let toml = r#"post-start = "npm install""#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.post_create.unwrap();
         let commands: Vec<_> = cmd_config.commands().collect();
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn test_command_config_named() {
         let toml = r#"
-            [post-create]
+            [post-start]
             server = "npm run dev"
             watch = "npm run watch"
         "#;
@@ -363,7 +363,7 @@ mod tests {
     fn test_command_config_task_order() {
         // Test exact ordering as used in post_create tests
         let toml = r#"
-[post-create]
+[post-start]
 task1 = "echo 'Task 1 running' > task1.txt"
 task2 = "echo 'Task 2 running' > task2.txt"
 "#;
@@ -427,18 +427,18 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
     #[test]
     fn test_command_config_roundtrip_single() {
-        let original = r#"post-create = "npm install""#;
+        let original = r#"post-start = "npm install""#;
         let config: ProjectConfig = toml::from_str(original).unwrap();
         let serialized = toml::to_string(&config).unwrap();
         let config2: ProjectConfig = toml::from_str(&serialized).unwrap();
         assert_eq!(config, config2);
-        assert_snapshot!(serialized, @r#"post-create = "npm install""#);
+        assert_snapshot!(serialized, @r#"post-start = "npm install""#);
     }
 
     #[test]
     fn test_command_config_roundtrip_named() {
         let original = r#"
-            [post-create]
+            [post-start]
             server = "npm run dev"
             watch = "npm run watch"
         "#;
@@ -447,7 +447,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let config2: ProjectConfig = toml::from_str(&serialized).unwrap();
         assert_eq!(config, config2);
         assert_snapshot!(serialized, @r#"
-        [post-create]
+        [post-start]
         server = "npm run dev"
         watch = "npm run watch"
         "#);
@@ -677,7 +677,7 @@ squash-template-file = "~/file.txt"
         let toml_str = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
-[post-create]
+[post-start]
 log = "echo '{{ repo }}' >> ~/.log"
 
 [pre-merge]
@@ -686,11 +686,11 @@ lint = "cargo clippy"
 "#;
         let config: UserConfig = toml::from_str(toml_str).unwrap();
 
-        // Check post-create
+        // Check post-start
         let post_create = config
             .hooks
             .post_create
-            .expect("post-create should be present");
+            .expect("post-start should be present");
         let commands: Vec<_> = post_create.commands().collect();
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].name.as_deref(), Some("log"));
@@ -707,14 +707,14 @@ lint = "cargo clippy"
     fn test_user_hooks_config_single_command() {
         let toml_str = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
-post-create = "npm install"
+post-start = "npm install"
 "#;
         let config: UserConfig = toml::from_str(toml_str).unwrap();
 
         let post_create = config
             .hooks
             .post_create
-            .expect("post-create should be present");
+            .expect("post-start should be present");
         let commands: Vec<_> = post_create.commands().collect();
         assert_eq!(commands.len(), 1);
         assert!(commands[0].name.is_none()); // single command has no name
@@ -725,7 +725,7 @@ post-create = "npm install"
     fn test_user_hooks_not_reported_as_unknown() {
         let toml_str = r#"
 worktree-path = "../test"
-post-create = "npm install"
+post-start = "npm install"
 
 [pre-merge]
 test = "cargo test"

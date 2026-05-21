@@ -236,26 +236,26 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# list.full = true[0m
 [107m [0m [2m# merge.squash = false[0m
 [107m [0m [2m# remove.delete-branch = false[0m
-[107m [0m [2m# pre-create.env = "cp .env.example .env"[0m
+[107m [0m [2m# pre-start.env = "cp .env.example .env"[0m
 [107m [0m [2m# step.copy-ignored.exclude = [".repo-local-cache/"][0m
 [107m [0m [2m# aliases.deploy = "make deploy BRANCH={{ branch }}"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence. The dotted-key examples below are equivalent to the table forms — TOML treats `projects."github.com/user/repo".post-create.server = "..."` and a `[projects."github.com/user/repo".post-create]` table the same way:[0m
+[107m [0m [2m# Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence. The dotted-key examples below are equivalent to the table forms — TOML treats `projects."github.com/user/repo".post-start.server = "..."` and a `[projects."github.com/user/repo".post-start]` table the same way:[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# # Single command[0m
 [107m [0m [2m# [projects."github.com/user/repo"][0m
-[107m [0m [2m# post-create = "mise trust"[0m
+[107m [0m [2m# post-start = "mise trust"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# # Multiple commands, running concurrently[0m
-[107m [0m [2m# [projects."github.com/user/repo".post-create][0m
+[107m [0m [2m# [projects."github.com/user/repo".post-start][0m
 [107m [0m [2m# mise = "mise trust"[0m
 [107m [0m [2m# server = "npm run dev"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# # Pipeline: steps run in sequence[0m
-[107m [0m [2m# [[projects."github.com/user/repo".post-create]][0m
+[107m [0m [2m# [[projects."github.com/user/repo".post-start]][0m
 [107m [0m [2m# install = "npm ci"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# [[projects."github.com/user/repo".post-create]][0m
+[107m [0m [2m# [[projects."github.com/user/repo".post-start]][0m
 [107m [0m [2m# build = "npm run build"[0m
 [107m [0m [2m# server = "npm run dev"[0m
 [107m [0m [2m#[0m
@@ -395,8 +395,8 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m#[0m
 [107m [0m [2m# Project hooks apply to this repository only. See `wt hook` (https://worktrunk.dev/hook/) for hook types, execution order, and examples.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# pre-create = "npm ci"[0m
-[107m [0m [2m# post-create = "npm run dev"[0m
+[107m [0m [2m# pre-start = "npm ci"[0m
+[107m [0m [2m# post-start = "npm run dev"[0m
 [107m [0m [2m# pre-merge = "npm test"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Dev server URL[0m

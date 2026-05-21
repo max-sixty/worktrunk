@@ -4,7 +4,7 @@
 
 ### Improved
 
-- **Worktree-creation hooks renamed to `pre-create`/`post-create`**: `pre-start` and `post-start` are renamed so the name matches when the hooks fire (worktree creation). Old configs keep working: the old keys migrate to the new names silently on load, `wt config update` rewrites them on disk, and `wt hook pre-start`/`post-start` still run. No deprecation warning yet. The semantic flip to watch: before v0.32.0 the key `post-create` named a _blocking_ creation hook, and it now names the _background_ one. A pre-0.32.0 `post-create` config has been a fatal load error since v0.44.0, so any such config was forced to migrate well before the name was reclaimed. Full plan: [#2838](https://github.com/max-sixty/worktrunk/issues/2838).
+- **`pre-create`/`post-create` accepted as aliases for the worktree-creation hooks**: `pre-create` and `post-create` now load as silent aliases for the canonical `pre-start`/`post-start` hooks, in config (top-level, `[hooks.*]`, and per-project sections, in string, table, and array-of-tables form) and on the `wt hook` command line. The fatal load error for pre-0.32.0 `post-create` configs is removed — `post-create` is now valid TOML and loads as the background creation hook (formerly named `post-start`). The semantic flip to watch: before v0.32.0 `post-create` named a _blocking_ creation hook; it now names the _background_ one. A pre-0.32.0 `post-create` config has been a fatal load error since v0.44.0, so any such config was forced to migrate well before the name was reclaimed. Docs continue to recommend `pre-start`/`post-start` while users update; the canonical form may switch in a later release. Full plan: [#2838](https://github.com/max-sixty/worktrunk/issues/2838).
 
 ### Fixed
 

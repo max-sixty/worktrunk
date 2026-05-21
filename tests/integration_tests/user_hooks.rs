@@ -36,22 +36,22 @@ fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
 }
 
 #[rstest]
-fn test_user_pre_create_hook_executes(repo: TestRepo) {
-    // Write user config with pre-create hook (no project config)
+fn test_user_pre_start_hook_executes(repo: TestRepo) {
+    // Write user config with pre-start hook (no project config)
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 log = "echo 'USER_PRE_CREATE_RAN' > user_hook_marker.txt"
 "#,
     );
 
-    snapshot_switch("user_pre_create_executes", &repo, &["--create", "feature"]);
+    snapshot_switch("user_pre_start_executes", &repo, &["--create", "feature"]);
 
     // Verify user hook actually ran
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let marker_file = worktree_path.join("user_hook_marker.txt");
     assert!(
         marker_file.exists(),
-        "User pre-create hook should have created marker file"
+        "User pre-start hook should have created marker file"
     );
 
     let contents = fs::read_to_string(&marker_file).unwrap();
@@ -63,13 +63,13 @@ log = "echo 'USER_PRE_CREATE_RAN' > user_hook_marker.txt"
 
 #[rstest]
 fn test_user_hooks_run_before_project_hooks(repo: TestRepo) {
-    // Create project config with pre-create hook
-    repo.write_project_config(r#"pre-create = "echo 'PROJECT_HOOK' >> hook_order.txt""#);
+    // Create project config with pre-start hook
+    repo.write_project_config(r#"pre-start = "echo 'PROJECT_HOOK' >> hook_order.txt""#);
     repo.commit("Add project config");
 
     // Write user config with user hook AND pre-approve project command
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 log = "echo 'USER_HOOK' >> hook_order.txt"
 "#,
     );
@@ -99,7 +99,7 @@ fn test_user_hooks_no_approval_required(repo: TestRepo) {
     // Write user config with hook but NO pre-approved commands
     // (unlike project hooks, user hooks don't require approval)
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 setup = "echo 'NO_APPROVAL_NEEDED' > no_approval.txt"
 "#,
     );
@@ -117,13 +117,13 @@ setup = "echo 'NO_APPROVAL_NEEDED' > no_approval.txt"
 
 #[rstest]
 fn test_no_hooks_flag_skips_all_hooks(repo: TestRepo) {
-    // Create project config with pre-create hook
-    repo.write_project_config(r#"pre-create = "echo 'PROJECT_HOOK' > project_marker.txt""#);
+    // Create project config with pre-start hook
+    repo.write_project_config(r#"pre-start = "echo 'PROJECT_HOOK' > project_marker.txt""#);
     repo.commit("Add project config");
 
     // Write user config with both user hook and pre-approved project command
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 log = "echo 'USER_HOOK' > user_marker.txt"
 "#,
     );
@@ -158,24 +158,24 @@ approved-commands = ["echo 'PROJECT_HOOK' > project_marker.txt"]
 }
 
 #[rstest]
-fn test_user_post_create_hook_failure(repo: TestRepo) {
+fn test_user_post_start_hook_failure(repo: TestRepo) {
     // Write user config with failing hook
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 failing = "exit 1"
 "#,
     );
 
-    // Failing pre-create hook (via deprecated pre-create name) aborts with FailFast.
-    // The worktree is already created before pre-create runs (it was renamed from
-    // pre-create), so the worktree exists but the command exits non-zero.
-    snapshot_switch("user_post_create_failure", &repo, &["--create", "feature"]);
+    // Failing pre-start hook (via deprecated pre-start name) aborts with FailFast.
+    // The worktree is already created before pre-start runs (it was renamed from
+    // pre-start), so the worktree exists but the command exits non-zero.
+    snapshot_switch("user_post_start_failure", &repo, &["--create", "feature"]);
 
-    // Worktree exists (created before pre-create ran) but the command failed
+    // Worktree exists (created before pre-start ran) but the command failed
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     assert!(
         worktree_path.exists(),
-        "Worktree should exist — it was created before pre-create ran"
+        "Worktree should exist — it was created before pre-start ran"
     );
 }
 
@@ -184,15 +184,15 @@ failing = "exit 1"
 // ============================================================================
 
 #[rstest]
-fn test_user_post_create_hook_executes(repo: TestRepo) {
-    // Write user config with post-create hook (background)
+fn test_user_post_start_hook_executes(repo: TestRepo) {
+    // Write user config with post-start hook (background)
     repo.write_test_config(
-        r#"[post-create]
+        r#"[post-start]
 bg = "echo 'USER_POST_CREATE_RAN' > user_bg_marker.txt"
 "#,
     );
 
-    snapshot_switch("user_post_create_executes", &repo, &["--create", "feature"]);
+    snapshot_switch("user_post_start_executes", &repo, &["--create", "feature"]);
 
     // Wait for background hook to complete and write content
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
@@ -202,7 +202,7 @@ bg = "echo 'USER_POST_CREATE_RAN' > user_bg_marker.txt"
     let contents = fs::read_to_string(&marker_file).unwrap();
     assert!(
         contents.contains("USER_POST_CREATE_RAN"),
-        "User post-create hook should have run in background"
+        "User post-start hook should have run in background"
     );
 }
 
@@ -214,11 +214,11 @@ fn test_background_hook_sees_worktrunk_foreground_env_var(repo: TestRepo) {
     // `pre-*` hooks run synchronously in the foreground `wt` process, so they
     // must NOT see the sentinel.
     repo.write_test_config(
-        r#"[post-create]
-capture-bg = "echo \"bg=$WORKTRUNK_FOREGROUND\" > post_create_env.txt"
+        r#"[post-start]
+capture-bg = "echo \"bg=$WORKTRUNK_FOREGROUND\" > post_start_env.txt"
 
-[pre-create]
-capture-fg = "echo \"fg=$WORKTRUNK_FOREGROUND\" > pre_create_env.txt"
+[pre-start]
+capture-fg = "echo \"fg=$WORKTRUNK_FOREGROUND\" > pre_start_env.txt"
 "#,
     );
 
@@ -230,37 +230,37 @@ capture-fg = "echo \"fg=$WORKTRUNK_FOREGROUND\" > pre_create_env.txt"
 
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
 
-    // pre-create wrote its marker synchronously; post-create runs in the
+    // pre-start wrote its marker synchronously; post-start runs in the
     // background, so poll for the file.
-    let bg_marker = worktree_path.join("post_create_env.txt");
+    let bg_marker = worktree_path.join("post_start_env.txt");
     wait_for_file_content(&bg_marker);
     let bg = fs::read_to_string(&bg_marker).unwrap();
     assert_eq!(
         bg.trim(),
         "bg=-1",
-        "post-create (background) hook should see WORKTRUNK_FOREGROUND=-1, got {bg:?}"
+        "post-start (background) hook should see WORKTRUNK_FOREGROUND=-1, got {bg:?}"
     );
 
-    let fg_marker = worktree_path.join("pre_create_env.txt");
+    let fg_marker = worktree_path.join("pre_start_env.txt");
     let fg = fs::read_to_string(&fg_marker).unwrap();
     assert_eq!(
         fg.trim(),
         "fg=",
-        "pre-create (foreground) hook should NOT see WORKTRUNK_FOREGROUND set, got {fg:?}"
+        "pre-start (foreground) hook should NOT see WORKTRUNK_FOREGROUND set, got {fg:?}"
     );
 }
 
 #[rstest]
-fn test_user_post_create_skipped_with_no_hooks(repo: TestRepo) {
-    // Write user config with post-create hook
+fn test_user_post_start_skipped_with_no_hooks(repo: TestRepo) {
+    // Write user config with post-start hook
     repo.write_test_config(
-        r#"[post-create]
+        r#"[post-start]
 bg = "echo 'USER_BG' > user_bg_marker.txt"
 "#,
     );
 
     snapshot_switch(
-        "user_post_create_skipped_no_hooks",
+        "user_post_start_skipped_no_hooks",
         &repo,
         &["--create", "feature", "--no-hooks"],
     );
@@ -272,7 +272,7 @@ bg = "echo 'USER_BG' > user_bg_marker.txt"
     let marker_file = worktree_path.join("user_bg_marker.txt");
     assert!(
         !marker_file.exists(),
-        "User post-create hook should be skipped with --no-hooks"
+        "User post-start hook should be skipped with --no-hooks"
     );
 }
 
@@ -1371,7 +1371,7 @@ failing = "exit 1"
 fn test_user_hook_template_variables(repo: TestRepo) {
     // Write user config with hook using template variables
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 vars = "echo 'repo={{ repo }} branch={{ branch }}' > template_vars.txt"
 "#,
     );
@@ -1465,14 +1465,14 @@ fn test_hook_template_variables_from_subdirectory(repo: TestRepo) {
 /// Test that both user and project unnamed hooks of the same type run and get unique log names.
 /// This exercises the unnamed index tracking when multiple unnamed hooks share the same hook type.
 #[rstest]
-fn test_user_and_project_unnamed_post_create(repo: TestRepo) {
-    // Create project config with unnamed post-create hook
-    repo.write_project_config(r#"post-create = "echo 'PROJECT_POST_START' > project_bg.txt""#);
+fn test_user_and_project_unnamed_post_start(repo: TestRepo) {
+    // Create project config with unnamed post-start hook
+    repo.write_project_config(r#"post-start = "echo 'PROJECT_POST_START' > project_bg.txt""#);
     repo.commit("Add project config");
 
     // Write user config with unnamed hook AND pre-approve project command
     repo.write_test_config(
-        r#"post-create = "echo 'USER_POST_START' > user_bg.txt"
+        r#"post-start = "echo 'USER_POST_START' > user_bg.txt"
 "#,
     );
     repo.write_test_approvals(
@@ -1482,7 +1482,7 @@ approved-commands = ["echo 'PROJECT_POST_START' > project_bg.txt"]
     );
 
     snapshot_switch(
-        "user_and_project_unnamed_post_create",
+        "user_and_project_unnamed_post_start",
         &repo,
         &["--create", "feature"],
     );
@@ -1496,23 +1496,23 @@ approved-commands = ["echo 'PROJECT_POST_START' > project_bg.txt"]
     // Both should have run
     assert!(
         worktree_path.join("user_bg.txt").exists(),
-        "User post-create should have run"
+        "User post-start should have run"
     );
     assert!(
         worktree_path.join("project_bg.txt").exists(),
-        "Project post-create should have run"
+        "Project post-start should have run"
     );
 }
 
 #[rstest]
-fn test_user_and_project_post_create_both_run(repo: TestRepo) {
-    // Create project config with post-create hook
-    repo.write_project_config(r#"post-create = "echo 'PROJECT_POST_START' > project_bg.txt""#);
+fn test_user_and_project_post_start_both_run(repo: TestRepo) {
+    // Create project config with post-start hook
+    repo.write_project_config(r#"post-start = "echo 'PROJECT_POST_START' > project_bg.txt""#);
     repo.commit("Add project config");
 
     // Write user config with user hook AND pre-approve project command
     repo.write_test_config(
-        r#"[post-create]
+        r#"[post-start]
 bg = "echo 'USER_POST_START' > user_bg.txt"
 "#,
     );
@@ -1523,7 +1523,7 @@ approved-commands = ["echo 'PROJECT_POST_START' > project_bg.txt"]
     );
 
     snapshot_switch(
-        "user_and_project_post_create",
+        "user_and_project_post_start",
         &repo,
         &["--create", "feature"],
     );
@@ -1537,11 +1537,11 @@ approved-commands = ["echo 'PROJECT_POST_START' > project_bg.txt"]
     // Both should have run
     assert!(
         worktree_path.join("user_bg.txt").exists(),
-        "User post-create should have run"
+        "User post-start should have run"
     );
     assert!(
         worktree_path.join("project_bg.txt").exists(),
-        "Project post-create should have run"
+        "Project post-start should have run"
     );
 }
 
@@ -1573,17 +1573,17 @@ fn test_standalone_hook_failure_omits_skip_hint(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_standalone_hook_pre_create(repo: TestRepo) {
-    // Write project config with pre-create hook
-    repo.write_project_config(r#"pre-create = "echo 'STANDALONE_PRE_CREATE' > hook_ran.txt""#);
+fn test_standalone_hook_pre_start(repo: TestRepo) {
+    // Write project config with pre-start hook
+    repo.write_project_config(r#"pre-start = "echo 'STANDALONE_PRE_CREATE' > hook_ran.txt""#);
 
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "pre-create", "--yes"]);
+    cmd.args(["hook", "pre-start", "--yes"]);
 
     let output = cmd.output().unwrap();
-    assert!(output.status.success(), "wt hook pre-create should succeed");
+    assert!(output.status.success(), "wt hook pre-start should succeed");
 
     let marker = repo.root_path().join("hook_ran.txt");
     crate::common::wait_for_file_content(&marker);
@@ -1593,9 +1593,9 @@ fn test_standalone_hook_pre_create(repo: TestRepo) {
 
 #[rstest]
 fn test_standalone_hook_start_alias_runs_silently(repo: TestRepo) {
-    // `wt hook pre-start` is a deprecated alias for `wt hook pre-create`. It
+    // `wt hook pre-start` is a deprecated alias for `wt hook pre-start`. It
     // still runs, and Phase 1 of the rename emits no warning (issue #2838).
-    repo.write_project_config(r#"pre-create = "echo 'START_ALIAS' > hook_ran.txt""#);
+    repo.write_project_config(r#"pre-start = "echo 'START_ALIAS' > hook_ran.txt""#);
 
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
@@ -1605,7 +1605,7 @@ fn test_standalone_hook_start_alias_runs_silently(repo: TestRepo) {
     let output = cmd.output().unwrap();
     assert!(
         output.status.success(),
-        "wt hook pre-start should succeed (alias for pre-create)"
+        "wt hook pre-start should succeed (alias for pre-start)"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -1621,38 +1621,35 @@ fn test_standalone_hook_start_alias_runs_silently(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_standalone_hook_pre_create_fails_on_failure(repo: TestRepo) {
-    // pre-create hooks use FailFast like all other pre-* hooks — consistent with
+fn test_standalone_hook_pre_start_fails_on_failure(repo: TestRepo) {
+    // pre-start hooks use FailFast like all other pre-* hooks — consistent with
     // the symmetric pre (blocking, fail-fast) / post (background, warn) pattern.
-    repo.write_project_config(r#"pre-create = "exit 1""#);
+    repo.write_project_config(r#"pre-start = "exit 1""#);
 
     let output = repo
         .wt_command()
-        .args(["hook", "pre-create", "--yes"])
+        .args(["hook", "pre-start", "--yes"])
         .output()
         .unwrap();
 
     assert!(
         !output.status.success(),
-        "wt hook pre-create should exit non-zero when the hook fails (fail-fast, like all pre-* hooks)"
+        "wt hook pre-start should exit non-zero when the hook fails (fail-fast, like all pre-* hooks)"
     );
 }
 
 #[rstest]
-fn test_standalone_hook_post_create(repo: TestRepo) {
-    // Write project config with post-create hook
-    repo.write_project_config(r#"post-create = "echo 'STANDALONE_POST_START' > hook_ran.txt""#);
+fn test_standalone_hook_post_start(repo: TestRepo) {
+    // Write project config with post-start hook
+    repo.write_project_config(r#"post-start = "echo 'STANDALONE_POST_START' > hook_ran.txt""#);
 
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "post-create", "--yes"]);
+    cmd.args(["hook", "post-start", "--yes"]);
 
     let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "wt hook post-create should succeed"
-    );
+    assert!(output.status.success(), "wt hook post-start should succeed");
 
     // Hook spawns in background - wait for marker file
     let marker = repo.root_path().join("hook_ran.txt");
@@ -1662,21 +1659,21 @@ fn test_standalone_hook_post_create(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_standalone_hook_post_create_foreground(repo: TestRepo) {
-    // Write project config with post-create hook that echoes to both file and stdout
+fn test_standalone_hook_post_start_foreground(repo: TestRepo) {
+    // Write project config with post-start hook that echoes to both file and stdout
     repo.write_project_config(
-        r#"post-create = "echo 'FOREGROUND_POST_START' && echo 'marker' > hook_ran.txt""#,
+        r#"post-start = "echo 'FOREGROUND_POST_START' && echo 'marker' > hook_ran.txt""#,
     );
 
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "post-create", "--yes", "--foreground"]);
+    cmd.args(["hook", "post-start", "--yes", "--foreground"]);
 
     let output = cmd.output().unwrap();
     assert!(
         output.status.success(),
-        "wt hook post-create --foreground should succeed"
+        "wt hook post-start --foreground should succeed"
     );
 
     // With --foreground, marker file should exist immediately (no waiting)
@@ -1829,7 +1826,7 @@ fn test_standalone_hook_no_hooks_configured(repo: TestRepo) {
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "pre-create", "--yes"]);
+    cmd.args(["hook", "pre-start", "--yes"]);
 
     let output = cmd.output().unwrap();
     assert!(
@@ -1840,7 +1837,7 @@ fn test_standalone_hook_no_hooks_configured(repo: TestRepo) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("No pre-create hooks configured"),
+        stderr.contains("No pre-start hooks configured"),
         "stderr should warn about missing hooks, got: {stderr}"
     );
 }
@@ -1869,12 +1866,12 @@ fn test_hook_dry_run_shows_expanded_command(repo: TestRepo) {
 /// --dry-run does not execute the hook command
 #[rstest]
 fn test_hook_dry_run_does_not_execute(repo: TestRepo) {
-    repo.write_project_config(r#"pre-create = "echo 'SHOULD_NOT_RUN' > hook_ran.txt""#);
+    repo.write_project_config(r#"pre-start = "echo 'SHOULD_NOT_RUN' > hook_ran.txt""#);
 
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "pre-create", "--dry-run"]);
+    cmd.args(["hook", "pre-start", "--dry-run"]);
 
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "dry-run should succeed");
@@ -1910,37 +1907,37 @@ fn test_hook_dry_run_named_hooks(repo: TestRepo) {
 }
 
 // ============================================================================
-// Background Hook Execution Tests (post-create, post-switch)
+// Background Hook Execution Tests (post-start, post-switch)
 // ============================================================================
 
 #[rstest]
 fn test_concurrent_hook_single_failure(repo: TestRepo) {
     // Write project config with a hook that writes output before failing
-    repo.write_project_config(r#"post-create = "echo HOOK_OUTPUT_MARKER; exit 1""#);
+    repo.write_project_config(r#"post-start = "echo HOOK_OUTPUT_MARKER; exit 1""#);
 
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "post-create", "--yes"]);
+    cmd.args(["hook", "post-start", "--yes"]);
 
     let output = cmd.output().unwrap();
     // Background spawning always succeeds (spawn succeeded, failure is logged)
     assert!(
         output.status.success(),
-        "wt hook post-create should succeed (spawns in background)"
+        "wt hook post-start should succeed (spawns in background)"
     );
 
     // Wait for log files: runner log + per-command log (cmd-0, unnamed single command)
     let log_dir = resolve_git_common_dir(repo.root_path()).join("wt/logs");
     wait_for_file_count(&log_dir, "log", 2);
 
-    // Hook logs live at `{branch}/project/post-create/{name}.log`.
-    let post_create_dir = log_dir
+    // Hook logs live at `{branch}/project/post-start/{name}.log`.
+    let post_start_dir = log_dir
         .join(worktrunk::path::sanitize_for_filename("main"))
         .join("project")
-        .join("post-create");
-    let cmd_log = fs::read_dir(&post_create_dir)
-        .unwrap_or_else(|e| panic!("reading {post_create_dir:?}: {e}"))
+        .join("post-start");
+    let cmd_log = fs::read_dir(&post_start_dir)
+        .unwrap_or_else(|e| panic!("reading {post_start_dir:?}: {e}"))
         .filter_map(|e| e.ok())
         .find(|e| e.file_name().to_string_lossy().contains("cmd-0"))
         .expect("Should have a cmd-0 log file");
@@ -1962,7 +1959,7 @@ fn test_concurrent_hook_multiple_failures(repo: TestRepo) {
     // Map configs run as a concurrent group in one pipeline runner,
     // each command producing its own log file.
     repo.write_project_config(
-        r#"[post-create]
+        r#"[post-start]
 first = "echo FIRST_OUTPUT"
 second = "echo SECOND_OUTPUT"
 "#,
@@ -1971,26 +1968,26 @@ second = "echo SECOND_OUTPUT"
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "post-create", "--yes"]);
+    cmd.args(["hook", "post-start", "--yes"]);
 
     let output = cmd.output().unwrap();
     // Background spawning always succeeds (spawn succeeded)
     assert!(
         output.status.success(),
-        "wt hook post-create should succeed (spawns in background)"
+        "wt hook post-start should succeed (spawns in background)"
     );
 
     // Wait for per-command log files: runner log + first + second
     let log_dir = resolve_git_common_dir(repo.root_path()).join("wt/logs");
     wait_for_file_count(&log_dir, "log", 3);
 
-    // Hook logs live at `{branch}/project/post-create/{name}.log`.
-    let post_create_dir = log_dir
+    // Hook logs live at `{branch}/project/post-start/{name}.log`.
+    let post_start_dir = log_dir
         .join(worktrunk::path::sanitize_for_filename("main"))
         .join("project")
-        .join("post-create");
-    let log_files: Vec<_> = fs::read_dir(&post_create_dir)
-        .unwrap_or_else(|e| panic!("reading {post_create_dir:?}: {e}"))
+        .join("post-start");
+    let log_files: Vec<_> = fs::read_dir(&post_start_dir)
+        .unwrap_or_else(|e| panic!("reading {post_start_dir:?}: {e}"))
         .filter_map(|e| e.ok())
         .collect();
 
@@ -2012,25 +2009,25 @@ second = "echo SECOND_OUTPUT"
 
 #[rstest]
 fn test_concurrent_hook_user_and_project(repo: TestRepo) {
-    // Write user config with post-create hook (using table format for named hook)
+    // Write user config with post-start hook (using table format for named hook)
     repo.write_test_config(
-        r#"[post-create]
+        r#"[post-start]
 user = "echo 'USER_HOOK' > user_hook_ran.txt"
 "#,
     );
 
-    // Write project config with post-create hook
-    repo.write_project_config(r#"post-create = "echo 'PROJECT_HOOK' > project_hook_ran.txt""#);
+    // Write project config with post-start hook
+    repo.write_project_config(r#"post-start = "echo 'PROJECT_HOOK' > project_hook_ran.txt""#);
 
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "post-create", "--yes"]);
+    cmd.args(["hook", "post-start", "--yes"]);
 
     let output = cmd.output().unwrap();
     assert!(
         output.status.success(),
-        "wt hook post-create should succeed, stderr: {}",
+        "wt hook post-start should succeed, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -2074,7 +2071,7 @@ fn test_concurrent_hook_post_switch(repo: TestRepo) {
 fn test_concurrent_hook_with_name_filter(repo: TestRepo) {
     // Write project config with multiple named hooks
     repo.write_project_config(
-        r#"[post-create]
+        r#"[post-start]
 first = "echo 'FIRST' > first.txt"
 second = "echo 'SECOND' > second.txt"
 "#,
@@ -2084,12 +2081,12 @@ second = "echo 'SECOND' > second.txt"
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "post-create", "--yes", "first"]);
+    cmd.args(["hook", "post-start", "--yes", "first"]);
 
     let output = cmd.output().unwrap();
     assert!(
         output.status.success(),
-        "wt hook post-create --name first should succeed, stderr: {}",
+        "wt hook post-start --name first should succeed, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -2108,7 +2105,7 @@ second = "echo 'SECOND' > second.txt"
 fn test_concurrent_hook_invalid_name_filter(repo: TestRepo) {
     // Write project config with named hooks
     repo.write_project_config(
-        r#"[post-create]
+        r#"[post-start]
 first = "echo 'FIRST'"
 "#,
     );
@@ -2117,12 +2114,12 @@ first = "echo 'FIRST'"
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "post-create", "--yes", "nonexistent"]);
+    cmd.args(["hook", "post-start", "--yes", "nonexistent"]);
 
     let output = cmd.output().unwrap();
     assert!(
         !output.status.success(),
-        "wt hook post-create --name nonexistent should fail"
+        "wt hook post-start --name nonexistent should fail"
     );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -2185,7 +2182,7 @@ first = "echo FIRST"
 fn test_var_flag_overrides_template_variable(repo: TestRepo) {
     // Write user config with a hook that uses a template variable
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 test = "echo '{{ target }}' > target_output.txt"
 "#,
     );
@@ -2194,7 +2191,7 @@ test = "echo '{{ target }}' > target_output.txt"
         .wt_command()
         .args([
             "hook",
-            "pre-create",
+            "pre-start",
             "--yes",
             "--var",
             "target=CUSTOM_TARGET",
@@ -2216,7 +2213,7 @@ test = "echo '{{ target }}' > target_output.txt"
 fn test_var_flag_multiple_variables(repo: TestRepo) {
     // Write user config with a hook that uses multiple template variables
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 test = "echo '{{ target }} {{ remote }}' > multi_var_output.txt"
 "#,
     );
@@ -2225,7 +2222,7 @@ test = "echo '{{ target }} {{ remote }}' > multi_var_output.txt"
         .wt_command()
         .args([
             "hook",
-            "pre-create",
+            "pre-start",
             "--yes",
             "--var",
             "target=FIRST",
@@ -2249,7 +2246,7 @@ test = "echo '{{ target }} {{ remote }}' > multi_var_output.txt"
 fn test_var_flag_overrides_builtin_variable(repo: TestRepo) {
     // Write user config with a hook that uses the builtin branch variable
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 test = "echo '{{ branch }}' > branch_output.txt"
 "#,
     );
@@ -2258,7 +2255,7 @@ test = "echo '{{ branch }}' > branch_output.txt"
         .wt_command()
         .args([
             "hook",
-            "pre-create",
+            "pre-start",
             "--yes",
             "--var",
             "branch=CUSTOM_BRANCH_NAME",
@@ -2280,7 +2277,7 @@ test = "echo '{{ branch }}' > branch_output.txt"
 fn test_var_flag_invalid_format_fails() {
     // Test that invalid KEY=VALUE format is rejected
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_wt"))
-        .args(["hook", "pre-create", "--var", "no_equals_sign"])
+        .args(["hook", "pre-start", "--var", "no_equals_sign"])
         .output()
         .expect("Failed to run wt");
 
@@ -2298,14 +2295,14 @@ fn test_var_flag_custom_variable(repo: TestRepo) {
     // Custom variable names (not built-in template vars) are accepted and
     // injected into the template context, matching alias behavior.
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 test = "echo '{{ custom_var }}' > custom_var_output.txt"
 "#,
     );
 
     let output = repo
         .wt_command()
-        .args(["hook", "pre-create", "--yes", "--var", "custom_var=hello"])
+        .args(["hook", "pre-start", "--yes", "--var", "custom_var=hello"])
         .output()
         .expect("Failed to run wt hook");
 
@@ -2327,7 +2324,7 @@ test = "echo '{{ custom_var }}' > custom_var_output.txt"
 fn test_var_flag_last_value_wins(repo: TestRepo) {
     // Test that when the same variable is specified multiple times, the last value wins
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 test = "echo '{{ target }}' > target_output.txt"
 "#,
     );
@@ -2336,7 +2333,7 @@ test = "echo '{{ target }}' > target_output.txt"
         .wt_command()
         .args([
             "hook",
-            "pre-create",
+            "pre-start",
             "--yes",
             "--var",
             "target=FIRST",
@@ -2360,14 +2357,14 @@ test = "echo '{{ target }}' > target_output.txt"
 fn test_var_shorthand_overrides_template_variable(repo: TestRepo) {
     // `--KEY=VALUE` is equivalent to `--var KEY=VALUE` for template variables.
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 test = "echo '{{ branch }}' > shorthand_output.txt"
 "#,
     );
 
     let output = repo
         .wt_command()
-        .args(["hook", "pre-create", "--yes", "--branch=SHORTHAND_BRANCH"])
+        .args(["hook", "pre-start", "--yes", "--branch=SHORTHAND_BRANCH"])
         .output()
         .expect("Failed to run wt hook");
 
@@ -2389,7 +2386,7 @@ test = "echo '{{ branch }}' > shorthand_output.txt"
 fn test_var_shorthand_mixed_with_long_form(repo: TestRepo) {
     // Shorthand and `--var` forms coexist in the same invocation.
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 test = "echo '{{ branch }} {{ target }}' > mixed_output.txt"
 "#,
     );
@@ -2398,7 +2395,7 @@ test = "echo '{{ branch }} {{ target }}' > mixed_output.txt"
         .wt_command()
         .args([
             "hook",
-            "pre-create",
+            "pre-start",
             "--yes",
             "--branch=SHORT",
             "--var",
@@ -2423,14 +2420,14 @@ fn test_var_shorthand_custom_variable(repo: TestRepo) {
     // injected into the template context, matching alias behavior. Hyphens in
     // variable names are canonicalized to underscores.
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 test = "echo '{{ my_env }}' > custom_output.txt"
 "#,
     );
 
     let output = repo
         .wt_command()
-        .args(["hook", "pre-create", "--yes", "--my-env=staging"])
+        .args(["hook", "pre-start", "--yes", "--my-env=staging"])
         .output()
         .expect("Failed to run wt hook");
 
@@ -2453,14 +2450,14 @@ fn test_shorthand_unreferenced_forwards_to_args(repo: TestRepo) {
     // `--KEY=VALUE` shorthand for an unreferenced KEY is smart-routed to
     // `{{ args }}` — the hook template captures the flag verbatim.
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 test = "echo '{{ args }}' > args_output.txt"
 "#,
     );
 
     let output = repo
         .wt_command()
-        .args(["hook", "pre-create", "--yes", "--unused-var=value"])
+        .args(["hook", "pre-start", "--yes", "--unused-var=value"])
         .output()
         .expect("Failed to run wt hook");
 
@@ -2482,14 +2479,14 @@ fn test_shorthand_referenced_binds_not_args(repo: TestRepo) {
     // When KEY is referenced by any hook template, `--KEY=VALUE` binds
     // `{{ KEY }}` and is NOT forwarded to `{{ args }}`.
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 test = "echo '{{ my_env }}:{{ args }}' > combined_output.txt"
 "#,
     );
 
     let output = repo
         .wt_command()
-        .args(["hook", "pre-create", "--yes", "--my-env=staging"])
+        .args(["hook", "pre-start", "--yes", "--my-env=staging"])
         .output()
         .expect("Failed to run wt hook");
 
@@ -2503,14 +2500,14 @@ test = "echo '{{ my_env }}:{{ args }}' > combined_output.txt"
 fn test_post_double_dash_forwards_to_args(repo: TestRepo) {
     // Tokens after `--` forward verbatim into `{{ args }}`.
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 test = "echo '{{ args }}' > dashdash_output.txt"
 "#,
     );
 
     let output = repo
         .wt_command()
-        .args(["hook", "pre-create", "--yes", "--", "--fast", "extra"])
+        .args(["hook", "pre-start", "--yes", "--", "--fast", "extra"])
         .output()
         .expect("Failed to run wt hook");
 
@@ -2532,14 +2529,14 @@ fn test_var_deprecation_warning(repo: TestRepo) {
     // Explicit `--var` still force-binds but emits a deprecation warning
     // pointing at `--KEY=VALUE` shorthand.
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 test = "echo '{{ my_env }}' > deprecated_output.txt"
 "#,
     );
 
     let output = repo
         .wt_command()
-        .args(["hook", "pre-create", "--yes", "--var", "my_env=staging"])
+        .args(["hook", "pre-start", "--yes", "--var", "my_env=staging"])
         .output()
         .expect("Failed to run wt hook");
 
@@ -2560,14 +2557,14 @@ fn test_args_indexing_and_length_in_hook_template(repo: TestRepo) {
     // `{{ args }}` is a ShellArgs sequence — indexing, length, and iteration
     // all work the same as in alias templates.
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 test = "echo '{{ args[0] | default('none') }}:{{ args | length }}' > args_seq.txt"
 "#,
     );
 
     let output = repo
         .wt_command()
-        .args(["hook", "pre-create", "--yes", "--", "first", "second"])
+        .args(["hook", "pre-start", "--yes", "--", "first", "second"])
         .output()
         .expect("Failed to run wt hook");
 
@@ -2583,7 +2580,7 @@ fn test_mixed_var_shorthand_and_forwarded_args(repo: TestRepo) {
     // + post-`--` tokens forward — all coexist in one invocation without
     // cross-contamination.
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 test = "echo '{{ my_env }}|{{ override }}|{{ args }}' > mixed_output.txt"
 "#,
     );
@@ -2592,7 +2589,7 @@ test = "echo '{{ my_env }}|{{ override }}|{{ args }}' > mixed_output.txt"
         .wt_command()
         .args([
             "hook",
-            "pre-create",
+            "pre-start",
             "--yes",
             "--my-env=prod",
             "--var",
@@ -2644,7 +2641,7 @@ fn test_var_shorthand_does_not_leak_into_hook_show() {
 fn test_var_flag_deprecated_alias_works(repo: TestRepo) {
     // Test that deprecated variable aliases (main_worktree, repo_root, worktree) can be overridden
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 test = "echo '{{ main_worktree }}' > alias_output.txt"
 "#,
     );
@@ -2653,7 +2650,7 @@ test = "echo '{{ main_worktree }}' > alias_output.txt"
         .wt_command()
         .args([
             "hook",
-            "pre-create",
+            "pre-start",
             "--yes",
             "--var",
             "main_worktree=/custom/path",
@@ -2682,7 +2679,7 @@ fn test_user_hooks_preserve_toml_order(repo: TestRepo) {
     // Write user config with hooks in specific order (NOT alphabetical: vscode, claude, copy, submodule)
     // If order were alphabetical, it would be: claude, copy, submodule, vscode
     repo.write_test_config(
-        r#"[pre-create]
+        r#"[pre-start]
 vscode = "echo '1' >> hook_order.txt"
 claude = "echo '2' >> hook_order.txt"
 copy = "echo '3' >> hook_order.txt"
@@ -3122,12 +3119,12 @@ check = "test -d {{ cwd }} && echo 'cwd_exists=true' > ../cwd_check.txt || echo 
 // ============================================================================
 
 #[rstest]
-fn test_user_post_create_pipeline_serial_ordering(repo: TestRepo) {
+fn test_user_post_start_pipeline_serial_ordering(repo: TestRepo) {
     // Pipeline: serial step creates a marker, concurrent step reads it.
     // Serial steps run in order, so the marker exists when the
     // concurrent step runs.
     repo.write_test_config(
-        r#"post-create = [
+        r#"post-start = [
     "echo SETUP_DONE > pipeline_marker.txt",
     { bg = "cat pipeline_marker.txt > bg_saw_marker.txt" }
 ]
@@ -3135,7 +3132,7 @@ fn test_user_post_create_pipeline_serial_ordering(repo: TestRepo) {
     );
 
     snapshot_switch(
-        "user_post_create_pipeline_ordering",
+        "user_post_start_pipeline_ordering",
         &repo,
         &["--create", "feature"],
     );
@@ -3152,10 +3149,10 @@ fn test_user_post_create_pipeline_serial_ordering(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_user_post_create_pipeline_failure_skips_later_steps(repo: TestRepo) {
+fn test_user_post_start_pipeline_failure_skips_later_steps(repo: TestRepo) {
     // First step fails → second step should not run (pipeline aborts on failure).
     repo.write_test_config(
-        r#"post-create = [
+        r#"post-start = [
     "exit 1",
     { bg = "echo SHOULD_NOT_RUN > should_not_exist.txt" }
 ]
@@ -3163,7 +3160,7 @@ fn test_user_post_create_pipeline_failure_skips_later_steps(repo: TestRepo) {
     );
 
     snapshot_switch(
-        "user_post_create_pipeline_failure",
+        "user_post_start_pipeline_failure",
         &repo,
         &["--create", "feature"],
     );
@@ -3180,12 +3177,12 @@ fn test_user_post_create_pipeline_failure_skips_later_steps(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_user_post_create_pipeline_lazy_vars_foreground(repo: TestRepo) {
+fn test_user_post_start_pipeline_lazy_vars_foreground(repo: TestRepo) {
     // Pipeline step 1 sets a var, step 2 uses it via {{ vars.name }}.
     // Foreground mode exercises the in-process lazy re-expansion path
     // in run_hook_with_filter.
     repo.write_test_config(
-        r#"post-create = [
+        r#"post-start = [
     "git config worktrunk.state.main.vars.name '{{ branch | sanitize }}-postgres'",
     { db = "echo {{ vars.name }} > lazy_expanded.txt" }
 ]
@@ -3197,7 +3194,7 @@ fn test_user_post_create_pipeline_lazy_vars_foreground(repo: TestRepo) {
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "post-create", "--yes", "--foreground"]);
+    cmd.args(["hook", "post-start", "--yes", "--foreground"]);
 
     let output = cmd.output().expect("Failed to run foreground hook");
 
@@ -3223,13 +3220,13 @@ fn test_user_post_create_pipeline_lazy_vars_foreground(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_user_post_create_pipeline_lazy_vars_background(repo: TestRepo) {
+fn test_user_post_start_pipeline_lazy_vars_background(repo: TestRepo) {
     // Pipeline step 1 sets a var via git config (not `wt config` — bare `wt`
     // isn't on PATH in the detached background process). Step 2 references
     // {{ vars.name }}, which is expanded just-in-time by the background
     // pipeline runner reading fresh vars from git config.
     repo.write_test_config(
-        r#"post-create = [
+        r#"post-start = [
     "git config worktrunk.state.{{ branch }}.vars.name '{{ branch | sanitize }}-postgres'",
     { db = "echo {{ vars.name }} > lazy_bg_expanded.txt" }
 ]
@@ -3237,7 +3234,7 @@ fn test_user_post_create_pipeline_lazy_vars_background(repo: TestRepo) {
     );
 
     snapshot_switch(
-        "user_post_create_pipeline_lazy_vars_bg",
+        "user_post_start_pipeline_lazy_vars_bg",
         &repo,
         &["--create", "feature"],
     );
@@ -3254,17 +3251,17 @@ fn test_user_post_create_pipeline_lazy_vars_background(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_user_post_create_pipeline_concurrent_all_run(repo: TestRepo) {
+fn test_user_post_start_pipeline_concurrent_all_run(repo: TestRepo) {
     // Concurrent group: both commands should run and produce output.
     repo.write_test_config(
-        r#"post-create = [
+        r#"post-start = [
     { a = "echo AAA > concurrent_a.txt", b = "echo BBB > concurrent_b.txt" }
 ]
 "#,
     );
 
     snapshot_switch(
-        "user_post_create_pipeline_concurrent_all",
+        "user_post_start_pipeline_concurrent_all",
         &repo,
         &["--create", "feature"],
     );
@@ -3288,12 +3285,12 @@ fn test_user_post_create_pipeline_concurrent_all_run(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_user_post_create_pipeline_concurrent_partial_failure(repo: TestRepo) {
+fn test_user_post_start_pipeline_concurrent_partial_failure(repo: TestRepo) {
     // One command in a concurrent group fails. The other should still
     // complete (pipeline waits for all children), and later steps should
     // not run (group reported as failed).
     repo.write_test_config(
-        r#"post-create = [
+        r#"post-start = [
     { fail = "exit 1", ok = "echo SURVIVED > concurrent_survivor.txt" },
     "echo SHOULD_NOT_RUN > after_concurrent.txt"
 ]
@@ -3301,7 +3298,7 @@ fn test_user_post_create_pipeline_concurrent_partial_failure(repo: TestRepo) {
     );
 
     snapshot_switch(
-        "user_post_create_pipeline_concurrent_failure",
+        "user_post_start_pipeline_concurrent_failure",
         &repo,
         &["--create", "feature"],
     );
@@ -3327,13 +3324,13 @@ fn test_user_post_create_pipeline_concurrent_partial_failure(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_user_post_create_pipeline_shell_escaping(repo: TestRepo) {
+fn test_user_post_start_pipeline_shell_escaping(repo: TestRepo) {
     // Template values containing shell metacharacters must be safely
     // escaped. Step 1 sets a var with spaces, quotes, and a dollar sign.
     // Step 2 expands it into a shell command — without shell_escape=true,
     // the value would be word-split or trigger expansion.
     repo.write_test_config(
-        r#"post-create = [
+        r#"post-start = [
     "git config worktrunk.state.{{ branch }}.vars.tricky 'hello world $HOME \"quotes\"'",
     { check = "echo {{ vars.tricky }} > escaped_output.txt" }
 ]
@@ -3344,7 +3341,7 @@ fn test_user_post_create_pipeline_shell_escaping(repo: TestRepo) {
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "post-create", "--yes", "--foreground"]);
+    cmd.args(["hook", "post-start", "--yes", "--foreground"]);
 
     let output = cmd.output().expect("Failed to run foreground hook");
     assert!(
@@ -3377,12 +3374,12 @@ fn test_user_post_create_pipeline_shell_escaping(repo: TestRepo) {
 // ============================================================================
 
 #[rstest]
-fn test_user_post_create_pipeline_hook_name_per_step(repo: TestRepo) {
+fn test_user_post_start_pipeline_hook_name_per_step(repo: TestRepo) {
     // Each step in a pipeline should see its own hook_name, not the first step's name.
     // Before the fix, step 2 would see step 1's hook_name because the shared pipeline
     // context included hook_name from the first command's context_json.
     repo.write_test_config(
-        r#"post-create = [
+        r#"post-start = [
     { step_one = "echo {{ hook_name }} > step_one_name.txt" },
     { step_two = "echo {{ hook_name }} > step_two_name.txt" }
 ]
@@ -3390,7 +3387,7 @@ fn test_user_post_create_pipeline_hook_name_per_step(repo: TestRepo) {
     );
 
     snapshot_switch(
-        "user_post_create_pipeline_hook_name_per_step",
+        "user_post_start_pipeline_hook_name_per_step",
         &repo,
         &["--create", "feature"],
     );
@@ -3495,12 +3492,12 @@ fn test_user_post_remove_pipeline_serial_ordering(mut repo: TestRepo) {
 #[rstest]
 fn test_standalone_hook_name_filtered_lazy_template(repo: TestRepo) {
     // A pipeline step that uses {{ vars.X }} should expand correctly when
-    // name-filtered via `wt hook post-create db`. Before the fix, the flat
+    // name-filtered via `wt hook post-start db`. Before the fix, the flat
     // spawn path passed the raw unexpanded template to the shell.
     //
     // vars.* are read from git config, so we pre-set the value.
     repo.write_test_config(
-        r#"post-create = [
+        r#"post-start = [
     { setup = "echo setup" },
     { db = "echo {{ vars.name }} > lazy_filtered.txt" }
 ]
@@ -3515,7 +3512,7 @@ fn test_standalone_hook_name_filtered_lazy_template(repo: TestRepo) {
     // since name filtering bypasses the pipeline runner.
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(&repo, "hook", &["post-create", "db"], None);
+        let mut cmd = make_snapshot_cmd(&repo, "hook", &["post-start", "db"], None);
         assert_cmd_snapshot!("standalone_hook_name_filtered_lazy_template", cmd);
     });
 
@@ -3570,7 +3567,7 @@ fn test_foreground_hook_passes_directive_file(repo: TestRepo) {
     // installed" hint instead.
     repo.write_test_config(&format!(
         r#"
-[pre-create]
+[pre-start]
 setup = "'{wt_toml}' switch --create hook-created --no-hooks"
 "#,
     ));
@@ -3579,8 +3576,8 @@ setup = "'{wt_toml}' switch --create hook-created --no-hooks"
 
     let mut cmd = repo.wt_command();
     configure_directive_files(&mut cmd, &cd_path, &exec_path);
-    // Run the pre-create hook manually in foreground
-    cmd.args(["hook", "pre-create", "setup"]);
+    // Run the pre-start hook manually in foreground
+    cmd.args(["hook", "pre-start", "setup"]);
     let output = cmd.output().unwrap();
 
     assert!(
@@ -3728,12 +3725,12 @@ noop = "true"
 /// project configs contribute to the same hook — the table prints once, not
 /// once per source. Also exercises the `PreparedStep::Single` arm of
 /// `print_background_variable_tables`, which the all-named-commands case in
-/// `test_post_create_verbose_shows_per_hook_output` doesn't hit.
+/// `test_post_start_verbose_shows_per_hook_output` doesn't hit.
 #[rstest]
 fn test_hook_verbose_background_dedups_across_sources(repo: TestRepo) {
-    repo.write_test_config(r#"post-create = "echo user-hook""#);
-    repo.write_project_config(r#"post-create = "echo project-hook""#);
-    repo.commit("add post-create");
+    repo.write_test_config(r#"post-start = "echo user-hook""#);
+    repo.write_project_config(r#"post-start = "echo project-hook""#);
+    repo.commit("add post-start");
     repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["echo project-hook"]

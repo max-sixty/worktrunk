@@ -21,7 +21,7 @@ Type "wt switch alpha"
 Enter
 Sleep 1.5s
 
-# Create new worktree (runs post-create hooks)
+# Create new worktree (runs post-start hooks)
 Type "wt switch --create api"
 Enter
 Sleep 1.5s

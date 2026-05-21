@@ -34,9 +34,9 @@ approved-commands = ["npm install"]
     fs::create_dir_all(&config_dir).unwrap();
     fs::write(
         config_dir.join("wt.toml"),
-        r#"pre-create = "npm install"
+        r#"pre-start = "npm install"
 
-[post-create]
+[post-start]
 server = "npm run dev"
 "#,
     )
@@ -364,7 +364,7 @@ my-lint = "my-lint-tool"
 
 /// A current-worktree `.config/wt.toml` that still uses the deprecated
 /// `pre-start`/`post-start` hook keys keeps working through `wt hook show`:
-/// `ProjectConfig::load` migrates the keys to `pre-create`/`post-create`
+/// `ProjectConfig::load` migrates the keys to `pre-start`/`post-start`
 /// before deserializing, the value parser accepts both the canonical type
 /// argument and the deprecated alias, and Phase 1 of the rename (issue #2838)
 /// migrates silently — no deprecation warning.
@@ -385,9 +385,9 @@ deps = "post-start-tool"
     // must deserialize into the `*_create` field); the `-start` arg additionally
     // exercises the value parser accepting the deprecated alias.
     let cases = [
-        ("pre-create", "pre-start-tool"),
         ("pre-start", "pre-start-tool"),
-        ("post-create", "post-start-tool"),
+        ("pre-start", "pre-start-tool"),
+        ("post-start", "post-start-tool"),
         ("post-start", "post-start-tool"),
     ];
     for (type_arg, expected) in cases {
@@ -663,7 +663,7 @@ pager = "delta --paging=never"
     let mut cmd = repo.wt_command();
     cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path)
         .env("NO_COLOR", "1");
-    cmd.args(["hook", "show", "post-create"])
+    cmd.args(["hook", "show", "post-start"])
         .current_dir(repo.root_path());
 
     let output = cmd.output().unwrap();
@@ -680,7 +680,7 @@ pager = "delta --paging=never"
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("npm install"),
-        "post-start in system config should migrate to post-create and stay active, got: {stdout}"
+        "post-start in system config should migrate to post-start and stay active, got: {stdout}"
     );
 }
 
@@ -1862,7 +1862,7 @@ fn test_deprecated_template_variables_show_warning(repo: TestRepo, temp_home: Te
         // Use all deprecated variables: repo_root, worktree, main_worktree
         // Note: hooks are at top-level in user config, not in a [hooks] section
         r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-pre-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
+pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
 "#,
     )
     .unwrap();
@@ -1908,7 +1908,7 @@ fn test_deprecated_template_variables_verbose_shows_content(repo: TestRepo, temp
     fs::write(
         config_path,
         r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-pre-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
+pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
 "#,
     )
     .unwrap();
@@ -1980,7 +1980,7 @@ fn test_fixing_deprecated_config_then_reintroducing_still_warns(
 
     fs::write(
         &project_config_path,
-        r#"pre-create = "ln -sf {{ main_worktree }}/node_modules"
+        r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
 "#,
     )
     .unwrap();
@@ -1993,7 +1993,7 @@ fn test_fixing_deprecated_config_then_reintroducing_still_warns(
 
     fs::write(
         &project_config_path,
-        r#"pre-create = "ln -sf {{ repo }}/node_modules"
+        r#"pre-start = "ln -sf {{ repo }}/node_modules"
 "#,
     )
     .unwrap();
@@ -2012,7 +2012,7 @@ fn test_fixing_deprecated_config_then_reintroducing_still_warns(
 
     fs::write(
         &project_config_path,
-        r#"pre-create = "cd {{ worktree }} && npm install"
+        r#"pre-start = "cd {{ worktree }} && npm install"
 "#,
     )
     .unwrap();
@@ -2949,7 +2949,7 @@ fn test_config_show_displays_deprecation_details(mut repo: TestRepo, temp_home: 
     fs::write(
         &config_path,
         r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-pre-create = "ln -sf {{ repo_root }}/node_modules"
+pre-start = "ln -sf {{ repo_root }}/node_modules"
 "#,
     )
     .unwrap();
@@ -2990,7 +2990,7 @@ fn test_config_show_from_linked_worktree_shows_main_worktree_hint(
     fs::create_dir_all(&project_config_dir).unwrap();
     fs::write(
         project_config_dir.join("wt.toml"),
-        r#"pre-create = "ln -sf {{ main_worktree }}/node_modules"
+        r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
 "#,
     )
     .unwrap();
@@ -3135,7 +3135,7 @@ approved-commands = ["npm install", "npm test"]
 #[rstest]
 fn test_config_update_applies_project_config_migration(repo: TestRepo) {
     repo.write_project_config(
-        r#"pre-create = "ln -sf {{ main_worktree }}/node_modules"
+        r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
 "#,
     );
     repo.commit("Add deprecated project config");
@@ -3153,7 +3153,7 @@ fn test_config_update_applies_project_config_migration(repo: TestRepo) {
     );
 
     let updated = fs::read_to_string(&project_config_path).unwrap();
-    assert!(updated.contains("pre-create"));
+    assert!(updated.contains("pre-start"));
     assert!(updated.contains("{{ repo }}"));
     assert!(!updated.contains("main_worktree"));
 }
@@ -3164,7 +3164,7 @@ fn test_config_update_applies_project_config_migration(repo: TestRepo) {
 #[rstest]
 fn test_config_update_clean_project_config_is_noop(repo: TestRepo) {
     repo.write_project_config(
-        r#"pre-create = "echo ready"
+        r#"pre-start = "echo ready"
 "#,
     );
     repo.commit("Add clean project config");
@@ -3188,7 +3188,7 @@ fn test_config_update_clean_project_config_is_noop(repo: TestRepo) {
 #[rstest]
 fn test_config_update_project_config_from_linked_worktree_shows_hint(repo: TestRepo) {
     repo.write_project_config(
-        r#"pre-create = "ln -sf {{ main_worktree }}/node_modules"
+        r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
 "#,
     );
     repo.commit("Add deprecated project config");
@@ -3235,7 +3235,7 @@ fn test_config_update_print_emits_both_configs(repo: TestRepo) {
     )
     .unwrap();
     repo.write_project_config(
-        r#"pre-create = "ln -sf {{ main_worktree }}/node_modules"
+        r#"pre-start = "ln -sf {{ main_worktree }}/node_modules"
 "#,
     );
     repo.commit("Add deprecated project config");
@@ -3250,7 +3250,7 @@ fn test_config_update_print_emits_both_configs(repo: TestRepo) {
     assert!(stdout.contains("# User config"));
     assert!(stdout.contains("# Project config"));
     assert!(stdout.contains("{{ repo }}"));
-    assert!(stdout.contains("pre-create"));
+    assert!(stdout.contains("pre-start"));
 }
 
 /// `wt config update --print` on a clean config exits silently with empty
@@ -3344,7 +3344,7 @@ fn test_config_update_applies_template_var_migration(repo: TestRepo) {
     fs::write(
         config_path,
         r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-pre-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
+pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
 "#,
     )
     .unwrap();
@@ -3398,7 +3398,7 @@ fn test_config_show_displays_pre_hook_table_form_deprecation(
 test = "cargo test"
 lint = "cargo clippy"
 
-[pre-create]
+[pre-start]
 install = "npm ci"
 env = "cp .env.example .env"
 "#,
@@ -4578,12 +4578,12 @@ fn test_project_config_path_env_var_override(repo: TestRepo, temp_home: TempDir)
     // override points elsewhere.
     let in_repo_config = repo.root_path().join(".config").join("wt.toml");
     fs::create_dir_all(in_repo_config.parent().unwrap()).unwrap();
-    fs::write(&in_repo_config, "pre-create = \"in-repo-hook\"\n").unwrap();
+    fs::write(&in_repo_config, "pre-start = \"in-repo-hook\"\n").unwrap();
 
     // Write the override project config at an arbitrary path.
     let override_dir = tempfile::tempdir().unwrap();
     let override_path = override_dir.path().join("override.toml");
-    fs::write(&override_path, "pre-create = \"override-hook\"\n").unwrap();
+    fs::write(&override_path, "pre-start = \"override-hook\"\n").unwrap();
 
     let mut cmd = wt_command();
     repo.configure_wt_cmd(&mut cmd);
@@ -4602,7 +4602,7 @@ fn test_project_config_path_env_var_override(repo: TestRepo, temp_home: TempDir)
     let json: serde_json::Value =
         serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
     assert_eq!(
-        json["project"]["config"]["pre-create"], "override-hook",
+        json["project"]["config"]["pre-start"], "override-hook",
         "expected override config to be loaded, got: {}",
         json["project"]
     );
