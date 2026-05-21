@@ -33,6 +33,7 @@ use worktrunk::styling::{
     warning_message,
 };
 
+use super::backup;
 use super::commit::{CommitGenerator, StageMode};
 use super::worktree::compute_worktree_path;
 
@@ -314,31 +315,6 @@ pub fn validate_candidates(
 // Phase 3 & 4: Execute relocations
 // ============================================================================
 
-/// Move a blocking path aside to `backup_path` so `--clobber` can take its place.
-///
-/// The backup name is only second-resolution (`.bak-<YYYYmmdd-HHMMSS>`), so a
-/// process could create that path between any pre-check and the move. The move
-/// uses [`renamore::rename_exclusive`] — an atomic no-overwrite rename
-/// (`renameat2(RENAME_NOREPLACE)` / `renamex_np(RENAME_EXCL)` / `MoveFileExW`) —
-/// which fails closed rather than overwriting an existing backup. `std::fs::rename`
-/// silently replaces an existing file or empty directory and cannot be used here.
-fn backup_blocking_path(expected_path: &Path, backup_path: &Path) -> anyhow::Result<()> {
-    let src = format_path_for_display(expected_path);
-    let dest = format_path_for_display(backup_path);
-    eprintln!(
-        "{}",
-        progress_message(cformat!("Backing up {src} → {dest}"))
-    );
-
-    match renamore::rename_exclusive(expected_path, backup_path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-            anyhow::bail!("Backup path already exists: {dest}")
-        }
-        Err(err) => Err(anyhow::Error::new(err).context(format!("Failed to backup {src}"))),
-    }
-}
-
 impl<'a> RelocationExecutor<'a> {
     /// Create executor and classify targets (handling blockers with optional clobber).
     pub fn new(
@@ -400,19 +376,13 @@ impl<'a> RelocationExecutor<'a> {
             }
 
             if clobber {
-                // Backup the blocker
-                let timestamp_secs = worktrunk::utils::epoch_now() as i64;
-                let datetime = chrono::DateTime::from_timestamp(timestamp_secs, 0)
-                    .unwrap_or_else(chrono::Utc::now);
-                let suffix = datetime.format("%Y%m%d-%H%M%S");
-                let backup_path = expected_path.with_file_name(format!(
-                    "{}.bak-{suffix}",
-                    expected_path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                ));
-                backup_blocking_path(expected_path, &backup_path)?;
+                // Atomically move the blocker aside to a timestamped backup.
+                // A backup name already taken is never overwritten — the move
+                // falls back to the next free `-N` name.
+                let src = format_path_for_display(expected_path);
+                let backup_path = backup::back_up_clobbered_path_now(expected_path)?;
+                let dest = format_path_for_display(&backup_path);
+                eprintln!("{}", progress_message(cformat!("Backed up {src} → {dest}")));
             } else {
                 let blocked_path = format_path_for_display(expected_path);
                 let msg = cformat!("Skipping <bold>{branch}</> (target blocked: {blocked_path})");
@@ -758,57 +728,6 @@ pub fn show_all_skipped(skipped: usize) {
                 "Skipped {skipped} worktree{}",
                 if skipped == 1 { "" } else { "s" }
             ))
-        );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn backup_blocking_path_refuses_to_replace_existing_directory() {
-        let temp = tempfile::tempdir().unwrap();
-        let source = temp.path().join("source");
-        let dest = temp.path().join("dest");
-        std::fs::create_dir(&source).unwrap();
-        std::fs::write(source.join("source.txt"), "source").unwrap();
-        std::fs::create_dir(&dest).unwrap();
-
-        let err = backup_blocking_path(&source, &dest).unwrap_err();
-
-        assert!(
-            err.to_string().contains("Backup path already exists"),
-            "expected fail-closed error, got: {err}"
-        );
-        assert!(
-            source.join("source.txt").exists(),
-            "source must remain intact"
-        );
-        assert!(dest.exists(), "destination must remain intact");
-        assert!(
-            !dest.join("source.txt").exists(),
-            "destination must not be replaced by source"
-        );
-    }
-
-    #[test]
-    fn backup_blocking_path_reports_other_rename_errors() {
-        let temp = tempfile::tempdir().unwrap();
-        let missing = temp.path().join("missing");
-        let dest = temp.path().join("dest");
-
-        let err = backup_blocking_path(&missing, &dest).unwrap_err();
-
-        // A non-AlreadyExists failure (here, the source does not exist) flows
-        // through the generic error arm, keeping the "Failed to backup" context.
-        assert!(
-            err.to_string().contains("Failed to backup"),
-            "expected wrapped error, got: {err}"
-        );
-        assert!(
-            !dest.exists(),
-            "destination must not be created on a failed rename"
         );
     }
 }
