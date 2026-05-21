@@ -120,7 +120,7 @@ use crate::cli::SwitchFormat;
 use crate::output::handle_remove_output;
 use worktrunk::git::{BranchDeletionMode, delete_branch_if_safe};
 
-use items::{PreviewCache, WORKTREE_OUTPUT_PREFIX, WorktreeSkimItem};
+use items::{PreviewCache, WORKTREE_OUTPUT_PREFIX};
 use preview::{PreviewLayout, PreviewMode, PreviewState};
 use preview_orchestrator::PreviewOrchestrator;
 
@@ -168,22 +168,19 @@ impl PickerRemovalTarget {
     }
 }
 
-/// Resolve the switch identifier for a selected picker row: the worktree
-/// path for a detached worktree (so `wt switch` addresses it the same way
-/// `wt switch /path` does), the branch name otherwise.
+/// Resolve the switch identifier for a selected picker row, decoded from its
+/// `output()` token: the worktree path for any worktree-backed row, the branch
+/// name for a branch-only row.
+///
+/// `wt switch` accepts a worktree path for any existing worktree (`plan_switch`
+/// phase 2b), so a worktree-backed row always switches by its unique path —
+/// detached *and* branched alike. A branch-only row has no worktree, so its
+/// branch name is the only handle.
+///
+/// Decoding `output()` rather than `downcast_ref::<WorktreeSkimItem>()` also
+/// sidesteps skim 0.20's cross-thread `TypeId` mismatch, which makes the
+/// downcast fail when the item originates on the reader thread.
 fn picker_item_identifier(item: &dyn SkimItem) -> String {
-    if let Some(item) = item.as_any().downcast_ref::<WorktreeSkimItem>() {
-        if let Some(data) = item.item.worktree_data()
-            && data.detached
-        {
-            return data.path.to_string_lossy().into_owned();
-        }
-        return item.branch_name.clone();
-    }
-
-    // `as_any().downcast_ref` fails across skim's reader-thread / main-thread
-    // compilation units (TypeId mismatch, skim 0.20). Fall back to the
-    // `output()` token, decoding a `worktree-path:` prefix to the bare path.
     let output = item.output().to_string();
     match PickerRemovalTarget::from_signal(&output) {
         Some(PickerRemovalTarget::WorktreePath(path)) => path.to_string_lossy().into_owned(),
@@ -826,10 +823,10 @@ pub fn handle_picker(
 
         let should_create = matches!(action, PickerAction::Create);
 
-        // Get branch name: from query if creating new, from selected item if
-        // switching. `picker_item_identifier` yields the branch name for a
-        // branched worktree and the path for a detached one (same as
-        // `wt switch /path` from CLI) — never the raw `worktree-path:` token.
+        // Get the switch identifier: the query if creating new, otherwise the
+        // selected item. `picker_item_identifier` yields a worktree path for
+        // any worktree-backed row and the branch name for a branch-only row
+        // (same as `wt switch` from CLI) — never the raw `worktree-path:` token.
         let selected = out.selected_items.first();
         let selected_name = selected.map(|item| picker_item_identifier(item.as_ref()));
         let query = out.query.trim().to_string();
@@ -908,7 +905,7 @@ fn resolve_identifier(
 
 #[cfg(test)]
 pub mod tests {
-    use super::items::{PreviewCache, WorktreeSkimItem};
+    use super::items::WorktreeSkimItem;
     use super::preview::{PreviewLayout, PreviewMode, PreviewStateData};
     use super::{
         PickerAction, PickerCollector, PickerRemovalTarget, drain_stashed_warnings,
@@ -1032,38 +1029,25 @@ pub mod tests {
         ));
     }
 
-    /// A `SkimItem` that is not a `WorktreeSkimItem`, used to drive
-    /// `picker_item_identifier`'s `output()`-token fallback — the path skim's
-    /// cross-thread `downcast_ref` failure (skim 0.20) takes in production.
-    struct FakeSkimItem {
-        output: String,
-    }
-
-    impl SkimItem for FakeSkimItem {
-        fn text(&self) -> std::borrow::Cow<'_, str> {
-            std::borrow::Cow::Borrowed(&self.output)
-        }
-
-        fn output(&self) -> std::borrow::Cow<'_, str> {
-            std::borrow::Cow::Borrowed(&self.output)
-        }
-    }
-
-    /// When `downcast_ref::<WorktreeSkimItem>` fails, `picker_item_identifier`
-    /// falls back to the `output()` token: a `worktree-path:` token decodes to
-    /// the bare path, anything else is returned verbatim.
+    /// `picker_item_identifier` yields the worktree path for every
+    /// worktree-backed row — branched as well as detached — and the branch name
+    /// for a branch-only row, matching what each row's `output()` token carries.
     #[test]
-    fn test_picker_item_identifier_output_fallback() {
-        let worktree_row = FakeSkimItem {
-            output: "worktree-path:/tmp/detached".to_string(),
-        };
-        assert_eq!(worktree_row.text(), "worktree-path:/tmp/detached");
-        assert_eq!(picker_item_identifier(&worktree_row), "/tmp/detached");
+    fn test_picker_item_identifier() {
+        let branched = branched_picker_item("feature/foo", Path::new("/tmp/wt-branched"));
+        assert_eq!(
+            picker_item_identifier(branched.as_ref()),
+            "/tmp/wt-branched"
+        );
 
-        let branch_row = FakeSkimItem {
-            output: "feature/foo".to_string(),
-        };
-        assert_eq!(picker_item_identifier(&branch_row), "feature/foo");
+        let detached = detached_picker_item(Path::new("/tmp/wt-detached"));
+        assert_eq!(
+            picker_item_identifier(detached.as_ref()),
+            "/tmp/wt-detached"
+        );
+
+        let branch_only = branch_only_picker_item("feature/bar");
+        assert_eq!(picker_item_identifier(branch_only.as_ref()), "feature/bar");
     }
 
     #[test]
@@ -1303,6 +1287,17 @@ pub mod tests {
         assert!(!marker.exists(), "unapproved pre-remove hook must not run");
     }
 
+    /// Build a `WorktreeSkimItem` from a snapshot `ListItem`.
+    fn picker_item(branch_name: &str, item: ListItem) -> Arc<dyn SkimItem> {
+        Arc::new(WorktreeSkimItem {
+            search_text: branch_name.to_string(),
+            rendered: Arc::new(Mutex::new(String::new())),
+            branch_name: branch_name.to_string(),
+            item: Arc::new(item),
+            preview_cache: Arc::new(dashmap::DashMap::new()),
+        }) as Arc<dyn SkimItem>
+    }
+
     /// Build a `WorktreeSkimItem` standing in for a detached-worktree row.
     fn detached_picker_item(path: &Path) -> Arc<dyn SkimItem> {
         let mut item = ListItem::new_branch("abc123".to_string(), "(detached)".to_string());
@@ -1312,16 +1307,25 @@ pub mod tests {
             detached: true,
             ..Default::default()
         }));
-        let item = Arc::new(item);
-        let preview_cache: PreviewCache = Arc::new(dashmap::DashMap::new());
+        picker_item("(detached)", item)
+    }
 
-        Arc::new(WorktreeSkimItem {
-            search_text: format!("(detached) {}", path.display()),
-            rendered: Arc::new(Mutex::new(String::new())),
-            branch_name: "(detached)".to_string(),
-            item,
-            preview_cache,
-        }) as Arc<dyn SkimItem>
+    /// Build a `WorktreeSkimItem` standing in for a branched-worktree row.
+    fn branched_picker_item(branch: &str, path: &Path) -> Arc<dyn SkimItem> {
+        let mut item = ListItem::new_branch("abc123".to_string(), branch.to_string());
+        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+            path: path.to_path_buf(),
+            ..Default::default()
+        }));
+        picker_item(branch, item)
+    }
+
+    /// Build a `WorktreeSkimItem` standing in for a branch-only row (no worktree).
+    fn branch_only_picker_item(branch: &str) -> Arc<dyn SkimItem> {
+        picker_item(
+            branch,
+            ListItem::new_branch("abc123".to_string(), branch.to_string()),
+        )
     }
 
     /// Two detached worktrees both render the branch label `(detached)`, but
