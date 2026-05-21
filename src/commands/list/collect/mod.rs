@@ -262,14 +262,32 @@ struct TableRenderPlan {
 }
 
 impl TableRenderPlan {
-    fn render(mut self) -> anyhow::Result<()> {
+    fn render(mut self) -> anyhow::Result<bool> {
+        if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
+            // `progressive_table` is always `None` here: `collect()` early-exits
+            // for `WORKTRUNK_FIRST_OUTPUT` whenever progressive rendering is on
+            // (`show_progress || progressive_handler.is_some()`), so this render
+            // path runs only in buffered mode.
+            print_first_buffered_line(&self.header)?;
+            return Ok(true);
+        }
+
         if let Some(mut table) = self.progressive_table.take() {
             table.finalize(self.rows, self.summary)?;
         } else {
             print_buffered_table(&self.header, &self.rows, &self.summary);
         }
-        Ok(())
+        Ok(false)
     }
+}
+
+fn print_first_buffered_line(header: &str) -> anyhow::Result<()> {
+    use std::io::Write as _;
+
+    let mut stdout = std::io::stdout();
+    writeln!(stdout, "{header}")?;
+    stdout.flush()?;
+    Ok(())
 }
 
 fn print_buffered_table(header: &str, rows: &[String], summary: &str) {
@@ -316,12 +334,14 @@ pub struct CollectOptions {
 
     /// Captured ref state for this list invocation.
     ///
-    /// Built once during the pre-skeleton phase by
-    /// [`Repository::capture_refs_with_ahead_behind`] and shared (cheaply,
-    /// behind `Arc`) into every task. Tasks resolve target ref names to
-    /// commit SHAs through this snapshot, then call the `_by_sha` variants
-    /// of cached methods — bypassing the ambient ref→SHA cache entirely.
-    /// `None` when capture failed (degraded mode).
+    /// Built once during the pre-skeleton phase (or during single-item
+    /// population) and shared (cheaply, behind `Arc`) into every task.
+    /// Tasks resolve target ref names to commit SHAs through this snapshot,
+    /// then call the `_by_sha` variants of cached methods — bypassing the
+    /// ambient ref→SHA cache entirely. The full list path may include
+    /// batched ahead/behind data; single-item callers intentionally use a
+    /// plain ref snapshot and let per-row tasks fall back to per-pair
+    /// queries. `None` when capture failed (degraded mode).
     pub snapshot: Option<std::sync::Arc<worktrunk::git::RefSnapshot>>,
 
     /// Whether `WorkingTreeDiffTask` should include untracked files in
@@ -1091,9 +1111,12 @@ pub fn collect(
         .unwrap_or(PLACEHOLDER_REVEAL_DELAY);
     let placeholder_reveal_at = std::time::Instant::now() + reveal_delay;
 
-    // Early exit for benchmarking skeleton render time / time-to-first-output
+    // Early exit for benchmarking skeleton render time / progressive
+    // time-to-first-output. Buffered/piped TTFP continues to the first real
+    // table write below, because there is no skeleton output in that mode.
     if std::env::var_os("WORKTRUNK_SKELETON_ONLY").is_some()
-        || std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some()
+        || (std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some()
+            && (show_progress || progressive_handler.is_some()))
     {
         return Ok(None);
     }
@@ -1575,8 +1598,10 @@ pub fn collect(
         ),
     });
 
-    if let Some(table_render) = table_render {
-        table_render.render()?;
+    if let Some(table_render) = table_render
+        && table_render.render()?
+    {
+        return Ok(None);
     }
 
     // Status symbols are now computed during data collection (both modes), no fallback needed
@@ -1805,11 +1830,11 @@ pub fn populate_item(
         options.default_branch = repo.default_branch();
     }
     if options.snapshot.is_none() {
-        options.snapshot = match options.default_branch.as_deref() {
-            Some(db) => repo.capture_refs_with_ahead_behind(db).ok(),
-            None => repo.capture_refs().ok(),
-        }
-        .map(std::sync::Arc::new);
+        // Statusline needs one row. Avoid the list path's repo-wide
+        // `for-each-ref %(ahead-behind:BASE)` prelude here; the
+        // AheadBehind/Upstream tasks already have cached per-pair
+        // fallbacks that do work only for this item.
+        options.snapshot = repo.capture_refs().ok().map(std::sync::Arc::new);
     }
     if options.integration_targets.is_none() {
         options.integration_targets = options

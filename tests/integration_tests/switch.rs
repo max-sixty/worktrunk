@@ -212,6 +212,52 @@ fn test_switch_remote_prefix_stripped_slash_in_branch(#[from(repo_with_remote)] 
     );
 }
 
+/// A local branch literally named like a remote-tracking ref must win over the
+/// remote-prefix stripping used for picker/DWIM remote-only branches.
+#[rstest]
+fn test_switch_remote_prefix_preserves_same_named_local_branch(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    // Remote `collision`, with no local `collision` branch.
+    repo.run_git(&["branch", "collision"]);
+    repo.run_git(&["push", "origin", "collision"]);
+    repo.run_git(&["branch", "-D", "collision"]);
+
+    // Local branch literally named `origin/collision`.
+    repo.run_git(&["checkout", "-b", "origin/collision"]);
+    fs::write(repo.root_path().join("local-collision.txt"), "local").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "Local origin/collision"]);
+    repo.run_git(&["checkout", "main"]);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "origin/collision"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let worktrees = repo.git_output(&["worktree", "list", "--porcelain"]);
+    assert!(
+        worktrees.contains("branch refs/heads/origin/collision"),
+        "should create worktree for local origin/collision, not stripped collision: {worktrees}"
+    );
+
+    let stripped_branch = repo
+        .git_command()
+        .args(["show-ref", "--verify", "refs/heads/collision"])
+        .run()
+        .unwrap();
+    assert!(
+        !stripped_branch.status.success(),
+        "switch must not create stripped local branch collision"
+    );
+}
+
 /// When a branch exists on multiple remotes, DWIM should fail with an error
 /// since git can't determine which remote to track.
 #[rstest]
@@ -4318,6 +4364,65 @@ fn test_switch_pr_forge_platform_invalid_bails(#[from(repo_with_remote)] repo: T
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["pr:101"], None);
         assert_cmd_snapshot!("switch_pr_forge_platform_invalid_bails", cmd);
     });
+}
+
+/// Malformed project config must fail closed before `pr:` provider fallback.
+/// Otherwise an intended `forge.platform` override on an opaque/self-hosted
+/// remote can be ignored and route to the wrong CLI.
+#[rstest]
+fn test_switch_pr_malformed_project_config_bails_before_provider_selection(
+    #[from(repo_with_remote)] repo: TestRepo,
+) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://git.internal.example.com/owner/test-repo.git",
+    ]);
+
+    let project_config = repo.root_path().join(".config/wt.toml");
+    fs::create_dir_all(project_config.parent().unwrap()).unwrap();
+    fs::write(&project_config, "[forge]\nplatform = [\"gitea\"\n").unwrap();
+
+    let mock_bin = repo.root_path().join("mock-bin");
+    fs::create_dir_all(&mock_bin).unwrap();
+    MockConfig::new("gh")
+        .version("gh version 2.0.0 (mock)")
+        .command(
+            "repo set-default --view",
+            MockResponse::output("owner/test-repo\n"),
+        )
+        .command(
+            "api",
+            MockResponse::stderr("GH provider fallback was invoked\n").with_exit_code(42),
+        )
+        .command("_default", MockResponse::exit(42))
+        .write(&mock_bin);
+
+    let output = {
+        let mut cmd = repo.wt_command();
+        cmd.args(["switch", "pr:101"]);
+        configure_mock_cli_env(&mut cmd, &mock_bin);
+        cmd.output().unwrap()
+    };
+
+    assert!(
+        !output.status.success(),
+        "switch should fail on malformed project config"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Failed to load project config"),
+        "expected project-config load error, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("failed to parse"),
+        "expected TOML parse diagnostic, got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("GH provider fallback was invoked"),
+        "provider fallback should not run after malformed project config:\n{stderr}"
+    );
 }
 
 /// With no parseable remote URL, dispatch defaults to GitHub. Without `gh`

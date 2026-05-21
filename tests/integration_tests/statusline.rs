@@ -122,6 +122,36 @@ fn test_statusline_commits_ahead(mut repo: TestRepo) {
     assert_snapshot!(output, @"[0m feature  [2m↑[22m  [32m↑2[0m  ^[32m+2");
 }
 
+#[rstest]
+fn test_statusline_does_not_run_repo_wide_ahead_behind_scan(repo: TestRepo) {
+    for i in 0..12 {
+        repo.run_git(&["branch", &format!("unused-{i}")]);
+    }
+
+    let output = repo
+        .wt_command()
+        .args(["list", "statusline"])
+        .env("RUST_LOG", "debug")
+        .output()
+        .expect("statusline should run");
+    assert!(
+        output.status.success(),
+        "statusline failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("for-each-ref"),
+        "debug trace should include ref scans so this assertion is meaningful:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("%(ahead-behind:"),
+        "single-row statusline must not run repo-wide ahead/behind scans:\n{stderr}"
+    );
+}
+
 // --- Claude Code Mode Tests ---
 
 /// Create snapshot settings that normalize path output for statusline tests.
