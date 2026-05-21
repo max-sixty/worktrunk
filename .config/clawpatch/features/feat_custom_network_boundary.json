@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "featureId": "feat_custom_network_boundary",
   "title": "Local-first network-access boundary",
-  "summary": "Worktrunk is local-first: the network is touched only when the user explicitly asked for it. The single sanctioned exception is the first `Repository::default_branch()` per repo, which may fall through to `git ls-remote` and then caches into `worktrunk.default-branch`; every later call is local. No other accessor (alias dispatch, hook context build, `wt statusline`, recovery paths, background TTL-cache refreshes) may reach the wire. This feature audits every potential egress (`git fetch`, `git ls-remote`, `gh`, `glab`, `az`, HTTP) and verifies each call site is one the user explicitly invoked. See CLAUDE.md > Network Access.",
+  "summary": "Worktrunk is local-first: the network is touched only when the user asked for it. The audit keys on the calling command, not a fixed blocklist — an egress (`git fetch`, `git ls-remote`, `gh`, `glab`, `az`, HTTP) is a violation when it sits in a fast command or a synchronous hot path (a shell prompt) that cannot absorb the latency, or in a background TTL-cache refresh. A foreground command the user runs and waits on may reach the wire for the activity it was asked to perform. Sanctioned activities: CI status (`wt list --full`, `wt list statusline`), branch-summary and commit-message generation (`commit.generation` commands), PR/MR resolution (`wt switch pr:`/`mr:`), and the `wt config show --full` version check; plus the one detection-helper exception — the first `Repository::default_branch()` per repo may fall through to `git ls-remote`, caching into `worktrunk.default-branch`. Silent lookup fallthroughs (alias dispatch, hook context build, recovery) must stay local. See CLAUDE.md > Network Access.",
   "kind": "library",
   "source": "manual",
   "confidence": "high",
@@ -21,7 +21,7 @@
     },
     {
       "path": "src/commands/statusline.rs",
-      "reason": "runs on every shell prompt: must never reach the wire"
+      "reason": "`wt list statusline`: runs on every prompt but is not a fast command — Claude Code consumes its output asynchronously — so its CI-status egress is sanctioned; audit only that it adds no other unrequested network work"
     }
   ],
   "contextFiles": [
@@ -39,7 +39,7 @@
     },
     {
       "path": "CLAUDE.md",
-      "reason": "Network Access policy and the single default_branch exception"
+      "reason": "Network Access policy and the default_branch detection-helper exception"
     }
   ],
   "tests": [
@@ -64,5 +64,5 @@
   "patchAttemptIds": [],
   "analysisHistory": [],
   "createdAt": "2026-05-19T00:00:00.000Z",
-  "updatedAt": "2026-05-19T00:00:00.000Z"
+  "updatedAt": "2026-05-20T00:00:00.000Z"
 }
