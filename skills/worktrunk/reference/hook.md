@@ -62,6 +62,8 @@ Manage approvals with `wt config approvals add` and `wt config approvals clear`.
 
 Hooks can be defined in project config (`.config/wt.toml`) or user config (`~/.config/worktrunk/config.toml`). Both use the same format.
 
+Hooks read `.config/wt.toml` from the worktree the command ran in.
+
 ## Hook forms
 
 Hooks take one of three forms, determined by their TOML shape.

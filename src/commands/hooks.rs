@@ -5,29 +5,37 @@
 //!
 //! # Which `.config/wt.toml` a hook reads
 //!
-//! Every hook runs in one worktree: the worktree it is *about*. Its commands
-//! come from a `.config/wt.toml` that already exists on disk when the approval
-//! gate runs — normally that worktree's own. The creation hooks are the
-//! exception: the worktree they are about does not exist yet at the gate, so
-//! they select from the **invoking** worktree's config (where `wt switch`
-//! ran). Two execution models split on whether a state mutation separates the
+//! Every hook resolves its commands from the **invoking** worktree's
+//! `.config/wt.toml` — the worktree `wt` ran in, read from its working tree.
+//! That holds regardless of which worktree the hook is *about*: `post-merge`
+//! runs in the merge target and `post-start` in the newly created worktree,
+//! but both select their commands from the invoking worktree's config — the
+//! same file `wt config show` reads.
+//!
+//! Two execution models split on whether a state mutation separates the
 //! approval gate from execution.
 //!
 //! **Plan-backed (the TOCTOU-covered set):** `pre-merge`, `post-merge`,
 //! `pre-remove`, `post-remove`, `post-switch`, `pre-start`, `post-start`. A
 //! merge, rebase, removal, or `git worktree add` runs between the gate and
-//! these hooks, so a second config read could select a command the user never
-//! approved. Each command gate selects the commands once and freezes them into
-//! a [`super::hook_plan::ApprovedHookPlan`]; the executor renders and runs only
+//! these hooks; a rebase can even rewrite the invoking worktree's own
+//! `.config/wt.toml`, so a second config read could select a command the user
+//! never approved. Each command gate calls `load_project_config()` on the
+//! invoking worktree once, selects the commands, and freezes them into a
+//! [`super::hook_plan::ApprovedHookPlan`]; the executor renders and runs only
 //! that frozen value via [`super::hook_plan::execute_planned_hook`] /
 //! [`super::hook_plan::register_planned`], holding no `ProjectConfig` to
 //! re-derive from. See the [`super::hook_plan`] module spec.
 //!
-//! | Plan-backed hook | Anchor worktree | Gate builds the plan in |
+//! | Plan-backed hook | Runs in (the anchor) | Gate |
 //! |---|---|---|
 //! | `pre-merge`, `pre-remove`, `post-remove` | the feature/removed worktree | `merge::approve_merge_plan`, `main.rs`'s `approve_remove`, `step::prune::approve_prune_hooks` |
 //! | `post-merge`, `post-switch` (after a removal) | the merge/removal destination | the same gates |
-//! | `pre-start`, `post-start`, `post-switch` (on switch) | the new/destination worktree — but for `--create` the config comes from the **invoking** worktree, since the new one doesn't exist yet (`switch_hook_project_config`) | `worktree::switch::approve_switch_hooks` |
+//! | `pre-start`, `post-start`, `post-switch` (on switch) | the new/destination worktree | `worktree::switch::approve_switch_hooks` |
+//!
+//! "Runs in" is the *anchor* — the executor's plan lookup key and render root,
+//! not a config source. A `pre-start`'s new worktree need not exist when the
+//! gate runs; the config came from the invoking worktree regardless.
 //!
 //! **Invocation-resolved (no gate→exec mutation):** `pre-commit`,
 //! `post-commit`, `pre-switch`, `wt hook <type>`, aliases. They resolve config
@@ -43,19 +51,16 @@
 //! (empty cache) breaks (2) and silently reintroduces the TOCTOU even if (1)
 //! still holds — there is no compile-time guard here, unlike the plan-backed
 //! set. (Aliases get the property structurally instead: the body is frozen
-//! into `AliasEntry` before the gate, like `ApprovedHookPlan`.) Anchors:
-//! `pre-commit`/`post-commit` the worktree being committed (cwd, or `<b>`'s
-//! worktree for `wt step commit --branch <b>`); `pre-switch`, `pre-merge`'s
-//! manual `wt hook`, and aliases the worktree `wt` was invoked in.
+//! into `AliasEntry` before the gate, like `ApprovedHookPlan`.)
 //!
-//! Each hook resolves exactly one `.config/wt.toml`: no fallback to a second
-//! worktree's config when the chosen one has none, and a present-but-malformed
-//! config aborts the operation rather than silently using a different one.
-//! `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path regardless of the root
+//! `ctx.repo` is the invoking worktree — except `wt step commit --branch <b>`
+//! and `wt -C <path>` re-root the whole command (the commit, its hooks, and
+//! `ctx.repo` are all `<b>`), so "the invoking worktree" follows them.
+//!
+//! A present-but-malformed config aborts the operation rather than silently
+//! running something else. `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path
 //! (test isolation); user config (`~/.config/worktrunk/config.toml`) is global
-//! and unaffected. `wt step prune` selects over every linked worktree it might
-//! prune (the integrated set isn't known until the checks run), a superset of
-//! what executes.
+//! and unaffected.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

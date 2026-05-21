@@ -1160,18 +1160,23 @@ post-start = "echo post-start-from-invoking > {{ repo_path }}/post-start-marker.
     );
 }
 
-/// `wt switch <existing>` resolves `post-switch` from the destination worktree's
-/// `.config/wt.toml`, not the worktree `wt switch` ran in. Only the destination
-/// has a project config here.
+/// `wt switch <existing>` resolves `post-switch` from the **invoking** worktree's
+/// `.config/wt.toml` — the worktree `wt switch` ran in — not the destination's.
 #[rstest]
-fn test_switch_existing_reads_destination_worktree_config(mut repo: TestRepo) {
+fn test_switch_existing_reads_invoking_worktree_config(mut repo: TestRepo) {
+    // The destination worktree carries its own hook, which must be ignored.
     let dest = repo.add_worktree("dest");
     fs::create_dir_all(dest.join(".config")).unwrap();
     fs::write(
         dest.join(".config/wt.toml"),
-        r#"post-switch = "echo post-switch-from-dest > {{ repo_path }}/post-switch-marker.txt""#,
+        r#"post-switch = "echo from-dest > {{ repo_path }}/dest-marker.txt""#,
     )
     .unwrap();
+
+    // The invoking worktree (`main`, cwd) carries the hook that should run.
+    repo.write_project_config(
+        r#"post-switch = "echo from-invoking > {{ repo_path }}/post-switch-marker.txt""#,
+    );
 
     let output = repo
         .wt_command()
@@ -1188,20 +1193,26 @@ fn test_switch_existing_reads_destination_worktree_config(mut repo: TestRepo) {
     wait_for_file_content(&marker);
     assert_eq!(
         fs::read_to_string(&marker).unwrap().trim(),
-        "post-switch-from-dest",
-        "post-switch should run with the destination worktree's config"
+        "from-invoking",
+        "post-switch should run with the invoking worktree's config"
+    );
+
+    // The destination worktree's own hook must never run.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert!(
+        !repo.root_path().join("dest-marker.txt").exists(),
+        "the destination worktree's config must not be consulted"
     );
 }
 
-/// A destination worktree with a malformed `.config/wt.toml` makes `wt switch
-/// <existing>` abort with the parse error in stderr — no silent fall-through
-/// to a different config. The path is surfaced so the user can find and fix
-/// the offending file.
+/// A malformed `.config/wt.toml` in the invoking worktree makes `wt switch`
+/// abort with the parse error in stderr — no silent fall-through to a different
+/// config. The path is surfaced so the user can find and fix the offending file.
 #[rstest]
-fn test_switch_existing_aborts_on_malformed_destination_config(mut repo: TestRepo) {
-    let dest = repo.add_worktree("dest");
-    fs::create_dir_all(dest.join(".config")).unwrap();
-    fs::write(dest.join(".config/wt.toml"), "this is not [ valid toml").unwrap();
+fn test_switch_aborts_on_malformed_invoking_config(mut repo: TestRepo) {
+    repo.add_worktree("dest");
+    // Malformed config in the invoking worktree (`main`, cwd).
+    repo.write_project_config("this is not [ valid toml");
 
     let output = repo
         .wt_command()
@@ -1211,7 +1222,7 @@ fn test_switch_existing_aborts_on_malformed_destination_config(mut repo: TestRep
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !output.status.success(),
-        "wt switch should abort on a malformed destination config; stderr:\n{stderr}"
+        "wt switch should abort on a malformed invoking-worktree config; stderr:\n{stderr}"
     );
     assert!(
         stderr.contains("wt.toml"),

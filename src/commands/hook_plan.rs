@@ -83,7 +83,8 @@ pub struct HookPlan {
     entries: Vec<PlanEntry>,
 }
 
-/// Accumulates per-anchor selections from each worktree's resolved config.
+/// Accumulates per-anchor selections from the invoking worktree's resolved
+/// config.
 ///
 /// `add` is the only place `load_project_config()`'s result feeds command
 /// selection for the covered hook types — `pub(crate)` and called only from
@@ -318,9 +319,9 @@ fn render_planned(
 ///
 /// `anchor` is the worktree the hook runs in (usually `ctx.worktree_path`, but
 /// for `post-remove` the removed worktree while `ctx` runs in the destination).
-/// It is *not* a config handle — just the lookup key into the frozen plan, and
-/// it need not equal the worktree the config was selected from (the creation
-/// hooks select from the invoking worktree).
+/// It is *not* a config handle — just the lookup key into the frozen plan. The
+/// gate always selects from the invoking worktree's config, which need not be
+/// the anchor.
 pub fn execute_planned_hook(
     plan: &ApprovedHookPlan,
     anchor: &Path,

@@ -1373,34 +1373,6 @@ fn switch_post_hook_types(is_create: bool) -> &'static [HookType] {
     }
 }
 
-/// The `.config/wt.toml` that `wt switch`'s post-switch hooks (`pre-start` /
-/// `post-start` / `post-switch`) will resolve against, viewed from *before*
-/// the worktree operation runs — so the approval prompt and the pre-flight
-/// template validation see the exact config `execute_switch` /
-/// [`spawn_switch_background_hooks`] (via [`hook_repo_for_worktree`]) run at
-/// run time.
-///
-/// For an existing destination the worktree is on disk, so its config is read
-/// directly. For `--create` the new worktree does not exist yet, so the
-/// creation hooks resolve against the **invoking** worktree's `.config/wt.toml`
-/// — the worktree `wt switch` ran in, read from its working tree. (`pr:`/`mr:`
-/// switches are no exception: the PR/MR's own committed config is never
-/// consulted; the invoking worktree's hooks run for it too.)
-///
-/// `Ok(None)` means the resolved worktree has no `.config/wt.toml` — no
-/// project hooks run; no second worktree's config is consulted. A
-/// present-but-malformed config surfaces as `Err` so the user fixes it rather
-/// than silently running a different one.
-fn switch_hook_project_config(
-    repo: &Repository,
-    plan: &SwitchPlan,
-) -> anyhow::Result<Option<ProjectConfig>> {
-    match plan {
-        SwitchPlan::Existing { path, .. } => Repository::at(path)?.load_project_config(),
-        SwitchPlan::Create { .. } => repo.load_project_config(),
-    }
-}
-
 /// The `Repository` rooting the *render* context for post-switch hooks running
 /// in `worktree_path` — the new/destination worktree itself. It supplies only
 /// git context for template rendering; the command set is the frozen
@@ -1411,9 +1383,8 @@ fn hook_repo_for_worktree(worktree_path: &Path) -> anyhow::Result<Repository> {
 
 /// Approve switch hooks upfront and show "Commands declined" if needed.
 ///
-/// `project_config` is the `.config/wt.toml` the post-switch hooks will run
-/// against — the destination worktree's, or for `--create` the invoking
-/// worktree's — resolved by [`switch_hook_project_config`]. Passing it in
+/// `project_config` is the `.config/wt.toml` the switch hooks run against —
+/// the invoking worktree's, the worktree `wt switch` ran in. Passing it in
 /// (rather than letting the approval re-read config) freezes the exact
 /// commands `execute_switch` will run into the [`ApprovedHookPlan`].
 ///
@@ -1471,8 +1442,8 @@ fn spawn_switch_background_hooks(
 ) -> anyhow::Result<()> {
     // Background hooks run in the new/destination worktree. `hook_repo` roots
     // the *render* context there; the command set is the frozen `hook_plan`
-    // (selected at the gate from the destination worktree's config, or the
-    // invoking worktree's for `--create`), so no `.config/wt.toml` is re-read.
+    // (selected at the gate from the invoking worktree's config), so no
+    // `.config/wt.toml` is re-read.
     let hook_repo = hook_repo_for_worktree(result.path())?;
     let ctx = CommandContext::new(&hook_repo, config, branch, result.path(), yes);
 
@@ -1643,15 +1614,13 @@ impl SwitchPipeline<'_> {
             }
         })?;
 
-        // Resolve the `.config/wt.toml` the post-switch hooks will run against —
-        // the destination worktree's, or for `--create` the invoking worktree's
-        // (the new worktree doesn't exist yet). Computed once so the approval
-        // prompt and the template pre-flight below agree with what
-        // `execute_switch` / `spawn_switch_background_hooks` resolve at run
-        // time. Skip entirely when `--no-hooks` / `--no-verify` is in effect:
-        // the result is never used.
+        // Every switch hook resolves against the invoking worktree's
+        // `.config/wt.toml` — the worktree `wt switch` ran in. Read once so the
+        // approval prompt and the template pre-flight below agree with what
+        // `execute_switch` / `spawn_switch_background_hooks` run. Skipped under
+        // `--no-hooks` / `--no-verify`: the result is never used.
         let hook_project_config = if verify {
-            switch_hook_project_config(repo, &plan)?
+            repo.load_project_config()?
         } else {
             None
         };
@@ -1913,10 +1882,9 @@ pub fn run_switch(
 ///   completed successfully — template failure is a missed notification, not a
 ///   blocking state. The user can fix the template and run `wt hook` manually.
 ///
-/// `project_config` is the `.config/wt.toml` the post-switch hooks will run
-/// against — the destination worktree's, or for `--create` the invoking
-/// worktree's — resolved by [`switch_hook_project_config`], so the templates
-/// checked here are the ones that will actually be expanded.
+/// `project_config` is the `.config/wt.toml` the switch hooks run against —
+/// the invoking worktree's — so the templates checked here are the ones that
+/// will actually be expanded.
 ///
 /// Validates:
 /// - `--execute` command template (if present)

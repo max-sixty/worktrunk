@@ -147,7 +147,7 @@ pub fn finish_after_merge(
 
         // No config snapshot: `pre-remove` / `post-remove` were selected and
         // frozen into `plan` at the gate (anchored at `feature_path`), so the
-        // executor never re-reads the removed worktree's `.config/wt.toml`.
+        // executor needs no config — it runs only the frozen `plan`.
         let remove_result = RemoveResult::RemovedWorktree {
             main_path: destination_path.clone(),
             worktree_path: worktree_root,

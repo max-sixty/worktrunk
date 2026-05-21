@@ -3772,17 +3772,17 @@ fn test_merge_removes_branch_when_local_main_diverged_from_upstream(
     );
 }
 
-/// Approval-boundary TOCTOU regression: a `post-merge` command that exists only
-/// in the *feature branch's* committed `.config/wt.toml` must not run.
+/// Approval-boundary TOCTOU regression: a `post-merge` command that enters the
+/// invoking worktree's `.config/wt.toml` only via the rebase — after the gate
+/// froze the plan — must not run.
 ///
-/// The merge destination (the primary worktree on `main`) has no project
-/// config, so the gate freezes an empty *project* `post-merge` selection. The
-/// merge then fast-forwards `main` to the feature tip, bringing the feature's
-/// `.config/wt.toml` (with its injected `post-merge`) onto the destination.
-/// The pre-fix executor re-read the destination's now-mutated config and ran
-/// the never-approved command — remote code execution on a fresh clone. With
-/// the frozen `ApprovedHookPlan` the destination config is read once, before
-/// the merge, so the injected command is never selected.
+/// `wt merge` selects hooks from the feature worktree it runs in, at the gate,
+/// then rebases that worktree onto the target. Here the target branch carries
+/// an un-approved `post-merge`; the feature branch branched before it, so the
+/// gate sees a clean config and freezes an empty *project* selection. The
+/// rebase then brings the target's `.config/wt.toml` into the feature worktree,
+/// but the executor runs only the frozen `ApprovedHookPlan` — a re-read of the
+/// now-mutated config would be remote code execution on a fresh clone.
 ///
 /// The wait is bounded *causally*, not by a fixed sleep: a user-config
 /// `post-merge` (no approval, runs via the same background pipeline as project
@@ -3795,9 +3795,7 @@ fn test_merge_removes_branch_when_local_main_diverged_from_upstream(
 /// (user vs project source) differ only by a `touch`'s sub-millisecond skew
 /// once spawned; the short grace covers it.
 #[rstest]
-fn test_post_merge_hook_from_merged_feature_config_does_not_run(
-    merge_scenario: (TestRepo, PathBuf),
-) {
+fn test_post_merge_hook_from_rebased_in_config_does_not_run(merge_scenario: (TestRepo, PathBuf)) {
     let (repo, feature_wt) = merge_scenario;
 
     // Markers live at the repo root — they outlive the feature worktree, which
@@ -3812,15 +3810,15 @@ fn test_post_merge_hook_from_merged_feature_config_does_not_run(
         control.to_slash_lossy()
     ));
 
-    // Inject the malicious `post-merge` only on the feature branch.
-    fs::create_dir_all(feature_wt.join(".config")).unwrap();
-    fs::write(
-        feature_wt.join(".config/wt.toml"),
-        format!(r#"post-merge = "touch {}""#, injected.to_slash_lossy()),
-    )
-    .unwrap();
-    repo.run_git_in(&feature_wt, &["add", ".config/wt.toml"]);
-    repo.run_git_in(&feature_wt, &["commit", "-m", "inject post-merge"]);
+    // The target branch (`main`) gains an un-approved `post-merge` after
+    // `feature` branched off, so the gate — reading the feature worktree —
+    // never sees it. The rebase will bring this `.config/wt.toml` into the
+    // feature worktree before the executor runs.
+    repo.write_project_config(&format!(
+        r#"post-merge = "touch {}""#,
+        injected.to_slash_lossy()
+    ));
+    repo.commit("inject post-merge on main");
 
     let output = repo
         .wt_command()
@@ -3834,41 +3832,13 @@ fn test_post_merge_hook_from_merged_feature_config_does_not_run(
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // The merge fast-forwarded `main` to the feature tip, so the destination
-    // worktree's `.config/wt.toml` now contains the injected hook. Wait for the
-    // control (post-merge ran), then a short grace for the sibling pipeline.
+    // Wait for the control (post-merge ran), then a short grace for the sibling
+    // pipeline.
     wait_for_file(&control);
     std::thread::sleep(std::time::Duration::from_millis(200));
     assert!(
         !injected.exists(),
-        "an unapproved post-merge command from the merged-in feature config must not run"
-    );
-}
-
-/// `wt merge --no-hooks` runs no hooks, so it must not parse the destination's
-/// `.config/wt.toml` at all. A malformed destination config must not fail a
-/// hooks-disabled merge (regression: the plan rewrite read the destination
-/// config unconditionally, before gating on `verify`).
-#[rstest]
-fn test_merge_no_hooks_ignores_malformed_destination_config(merge_scenario: (TestRepo, PathBuf)) {
-    let (repo, feature_wt) = merge_scenario;
-
-    // Malformed config in the primary worktree = the merge destination.
-    repo.write_project_config("post-merge = = not valid toml");
-
-    let output = repo
-        .wt_command()
-        .current_dir(&feature_wt)
-        .args(["merge", "--no-hooks", "--yes"])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "--no-hooks merge must not read the destination config; stderr:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains("expected") && !stderr.contains("TOML parse"),
-        "destination .config/wt.toml must not be parsed with --no-hooks; stderr:\n{stderr}"
+        "a post-merge that entered the invoking worktree's config only via the \
+         rebase must not run — it was never in the frozen plan"
     );
 }
