@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use worktrunk::config::{UserConfig, expand_template};
 use worktrunk::git::Repository;
+use worktrunk::shell_exec::ShellEscapeMode;
 
 use crate::commands::command_executor::{CommandContext, build_hook_context};
 
@@ -33,7 +34,7 @@ pub fn step_eval(template: &str, dry_run: bool) -> anyhow::Result<()> {
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    let result = expand_template(template, &vars, false, &repo, "eval")?;
+    let result = expand_template(template, &vars, ShellEscapeMode::Literal, &repo, "eval")?;
 
     if dry_run {
         let mut keys: Vec<&str> = context_map.keys().map(|k| k.as_str()).collect();

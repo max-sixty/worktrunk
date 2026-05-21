@@ -364,7 +364,7 @@ struct HookStructure {
     branch: String,
     /// `"user"`, `"project"`, or `"internal"`.
     source: String,
-    /// Hook type (`post-start`, `post-switch`, …) for user/project hooks;
+    /// Hook type (`post-create`, `post-switch`, …) for user/project hooks;
     /// `None` for internal operations.
     hook_type: Option<String>,
     /// Sanitized hook name for user/project hooks; internal op name

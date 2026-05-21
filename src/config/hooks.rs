@@ -24,25 +24,21 @@ pub struct HooksConfig {
     )]
     pub post_switch: Option<CommandConfig>,
 
-    /// Commands to execute before worktree start (blocking)
-    #[serde(default, rename = "pre-start", skip_serializing_if = "Option::is_none")]
-    pub pre_start: Option<CommandConfig>,
+    /// Commands to execute before worktree creation (blocking)
+    #[serde(
+        default,
+        rename = "pre-create",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pre_create: Option<CommandConfig>,
 
-    /// Deprecated: use `pre-start` instead.
+    /// Commands to execute after worktree creation (background)
     #[serde(
         default,
         rename = "post-create",
         skip_serializing_if = "Option::is_none"
     )]
     pub post_create: Option<CommandConfig>,
-
-    /// Commands to execute after worktree creation (background)
-    #[serde(
-        default,
-        rename = "post-start",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub post_start: Option<CommandConfig>,
 
     /// Commands to execute before committing during merge (blocking, fail-fast)
     #[serde(
@@ -94,9 +90,8 @@ impl HooksConfig {
         match hook {
             HookType::PreSwitch => self.pre_switch.as_ref(),
             HookType::PostSwitch => self.post_switch.as_ref(),
-            // pre-start merges with deprecated post-create (pre-start takes precedence)
-            HookType::PreStart => self.pre_start.as_ref().or(self.post_create.as_ref()),
-            HookType::PostStart => self.post_start.as_ref(),
+            HookType::PreCreate => self.pre_create.as_ref(),
+            HookType::PostCreate => self.post_create.as_ref(),
             HookType::PreCommit => self.pre_commit.as_ref(),
             HookType::PostCommit => self.post_commit.as_ref(),
             HookType::PreMerge => self.pre_merge.as_ref(),
@@ -126,21 +121,12 @@ impl Merge for HooksConfig {
     /// Merge two hook configs using append semantics.
     ///
     /// Both global and per-project hooks run (global first, then per-project).
-    /// Deprecated `post_create` from either source is folded into `pre_start`
-    /// so hooks aren't silently dropped when one config uses the old name and
-    /// another uses the new name.
     fn merge_with(&self, other: &Self) -> Self {
-        // Fold post_create into pre_start for each source before merging,
-        // so cross-config old/new name combinations work correctly.
-        let self_pre_start = merge_append_hooks(&self.pre_start, &self.post_create);
-        let other_pre_start = merge_append_hooks(&other.pre_start, &other.post_create);
-
         Self {
             pre_switch: merge_append_hooks(&self.pre_switch, &other.pre_switch),
             post_switch: merge_append_hooks(&self.post_switch, &other.post_switch),
-            pre_start: merge_append_hooks(&self_pre_start, &other_pre_start),
-            post_create: None, // folded into pre_start above
-            post_start: merge_append_hooks(&self.post_start, &other.post_start),
+            pre_create: merge_append_hooks(&self.pre_create, &other.pre_create),
+            post_create: merge_append_hooks(&self.post_create, &other.post_create),
             pre_commit: merge_append_hooks(&self.pre_commit, &other.pre_commit),
             post_commit: merge_append_hooks(&self.post_commit, &other.post_commit),
             pre_merge: merge_append_hooks(&self.pre_merge, &other.pre_merge),

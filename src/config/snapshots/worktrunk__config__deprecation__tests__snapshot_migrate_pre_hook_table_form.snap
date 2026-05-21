@@ -9,5 +9,5 @@ expression: "migration_diff(content, &result)"
 +[[pre-merge]]
  lint = "cargo clippy"
  
- [post-start]
+ [post-create]
  server = "npm run dev"

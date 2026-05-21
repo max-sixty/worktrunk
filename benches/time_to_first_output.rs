@@ -80,7 +80,8 @@ fn bench_first_output(c: &mut Criterion) {
         });
     });
 
-    // list: exits after skeleton data collection, before render
+    // list: stdout is piped here, so first output is the first buffered table
+    // line after collection/render preparation, not the progressive skeleton.
     group.bench_function("list", |b| {
         b.iter(|| {
             let output = make_cmd(&["list"]).output().unwrap();
@@ -88,6 +89,10 @@ fn bench_first_output(c: &mut Criterion) {
                 output.status.success(),
                 "Benchmark command failed:\nstderr: {}",
                 String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                !output.stdout.is_empty(),
+                "WORKTRUNK_FIRST_OUTPUT should emit the first stdout line"
             );
         });
     });

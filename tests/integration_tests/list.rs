@@ -2266,7 +2266,7 @@ fn test_tips_dev_server_workflow(mut repo: TestRepo) {
 
     // Add project config with URL template for dev servers
     repo.write_project_config(
-        r#"[post-start]
+        r#"[post-create]
 server = "npm run dev -- --port {{ branch | hash_port }} &"
 
 [list]
@@ -2323,6 +2323,31 @@ fn test_list_progressive_with_branches(mut repo: TestRepo) {
         cmd.args(["--progressive", "--branches"]);
         cmd
     });
+}
+
+#[rstest]
+fn test_list_first_output_writes_buffered_stdout(mut repo: TestRepo) {
+    repo.add_worktree("feature-bench");
+
+    let output = list_snapshots::command(&repo, repo.root_path())
+        .env("WORKTRUNK_FIRST_OUTPUT", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "WORKTRUNK_FIRST_OUTPUT should exit 0: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.as_bytes().iter().filter(|&&b| b == b'\n').count(),
+        1,
+        "WORKTRUNK_FIRST_OUTPUT should emit exactly the first stdout line; stdout:\n{stdout}"
+    );
+    assert!(!stdout.trim().is_empty());
+    assert!(output.stderr.is_empty());
 }
 
 // ============================================================================

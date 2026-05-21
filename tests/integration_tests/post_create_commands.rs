@@ -1,0 +1,1557 @@
+use crate::common::{
+    TestRepo, make_snapshot_cmd, make_snapshot_cmd_with_global_flags, repo, repo_with_remote,
+    resolve_git_common_dir, set_temp_home_env, setup_snapshot_settings, wait_for_file,
+    wait_for_file_content, wait_for_file_count, wait_for_file_lines, wait_for_valid_json,
+};
+use insta::assert_snapshot;
+use insta_cmd::assert_cmd_snapshot;
+use rstest::rstest;
+use std::fs;
+use std::thread;
+use std::time::Duration; // Used for SLEEP_FOR_ABSENCE_CHECK
+use tempfile::TempDir;
+
+/// Wait duration when checking file absence (testing command did NOT run).
+/// Must be long enough that a background command would have started and created
+/// the file if it were going to. 500ms gives CI systems breathing room.
+const SLEEP_FOR_ABSENCE_CHECK: Duration = Duration::from_millis(500);
+
+/// Helper to create snapshot with normalized paths and SHAs
+///
+/// Tests should write to repo.test_config_path() to pre-approve commands.
+/// Uses an isolated HOME to prevent tests from being affected by developer's shell config.
+fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
+    // Create isolated HOME to ensure test determinism
+    let temp_home = TempDir::new().unwrap();
+
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "switch", args, None);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        assert_cmd_snapshot!(test_name, cmd);
+    });
+}
+
+// ============================================================================
+// Post-Create Command Tests (sequential, blocking)
+// ============================================================================
+
+#[rstest]
+fn test_post_create_no_config(repo: TestRepo) {
+    // Switch without project config should work normally
+    snapshot_switch("post_create_no_config", &repo, &["--create", "feature"]);
+}
+
+#[rstest]
+fn test_post_create_single_command(repo: TestRepo) {
+    // Create project config with a single command (string format)
+    repo.write_project_config(r#"pre-create = "echo 'Setup complete'""#);
+
+    repo.commit("Add config");
+
+    // Pre-approve the command by writing to the isolated test config
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo 'Setup complete'"]
+"#,
+    );
+
+    // Command should execute without prompting
+    snapshot_switch(
+        "post_create_single_command",
+        &repo,
+        &["--create", "feature"],
+    );
+}
+
+/// A config that still uses the deprecated `pre-start` hook key loads and runs:
+/// the key is silently migrated to `pre-create`. Phase 1 of the rename emits no
+/// warning (see https://github.com/max-sixty/worktrunk/issues/2838).
+#[rstest]
+fn test_deprecated_start_hook_key_runs_silently(repo: TestRepo) {
+    repo.write_project_config(r#"pre-start = "echo ran > marker.txt""#);
+    repo.commit("Add deprecated pre-start hook");
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo ran > marker.txt"]
+"#,
+    );
+
+    let temp_home = TempDir::new().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--create", "feature"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "switch with a deprecated pre-start hook should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The hook ran — the `pre-start` key was migrated to `pre-create`.
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    assert!(
+        worktree_path.join("marker.txt").exists(),
+        "deprecated pre-start hook should have run"
+    );
+
+    // Phase 1 migrates silently: no deprecation warning, and no stray
+    // "run wt config show" hint (the check_and_migrate empty-warnings guard).
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.to_lowercase().contains("deprecated") && !stderr.contains("config show"),
+        "no deprecation warning or hint expected in phase 1, got: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_post_create_named_commands(repo: TestRepo) {
+    // Create project config with named commands (table format)
+    repo.write_project_config(
+        r#"[pre-create]
+install = "echo 'Installing deps'"
+setup = "echo 'Running setup'"
+"#,
+    );
+
+    repo.commit("Add config with named commands");
+
+    // Pre-approve both commands in temp HOME
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = [
+    "echo 'Installing deps'",
+    "echo 'Running setup'",
+]
+"#,
+    );
+
+    // Commands should execute sequentially
+    snapshot_switch(
+        "post_create_named_commands",
+        &repo,
+        &["--create", "feature"],
+    );
+}
+
+#[rstest]
+fn test_post_create_failing_command(repo: TestRepo) {
+    // Create project config with a command that will fail
+    repo.write_project_config(r#"pre-create = "exit 1""#);
+
+    repo.commit("Add config with failing command");
+
+    // Pre-approve the command in temp HOME
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["exit 1"]
+"#,
+    );
+
+    // Failing pre-create hook (via deprecated pre-create name) aborts with FailFast
+    snapshot_switch(
+        "post_create_failing_command",
+        &repo,
+        &["--create", "feature"],
+    );
+}
+
+#[rstest]
+fn test_post_create_template_expansion(repo: TestRepo) {
+    // Create project config with template variables
+    repo.write_project_config(
+        r#"[pre-create]
+repo = "echo 'Repo: {{ repo }}' > info.txt"
+branch = "echo 'Branch: {{ branch }}' >> info.txt"
+hash_port = "echo 'Port: {{ branch | hash_port }}' >> info.txt"
+worktree = "echo 'Worktree: {{ worktree_path }}' >> info.txt"
+root = "echo 'Root: {{ repo_path }}' >> info.txt"
+"#,
+    );
+
+    repo.commit("Add config with templates");
+
+    // Pre-approve all commands in isolated test config
+    let repo_name = "repo";
+    repo.write_test_config(r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}""#);
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = [
+    "echo 'Repo: {{ repo }}' > info.txt",
+    "echo 'Branch: {{ branch }}' >> info.txt",
+    "echo 'Port: {{ branch | hash_port }}' >> info.txt",
+    "echo 'Worktree: {{ worktree_path }}' >> info.txt",
+    "echo 'Root: {{ repo_path }}' >> info.txt",
+]
+"#,
+    );
+
+    // Commands should execute with expanded templates
+    snapshot_switch(
+        "post_create_template_expansion",
+        &repo,
+        &["--create", "feature/test"],
+    );
+
+    // Verify template expansion actually worked by checking the output file
+    let worktree_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("{}.feature-test", repo_name));
+    let info_file = worktree_path.join("info.txt");
+
+    assert!(
+        info_file.exists(),
+        "info.txt should have been created in the worktree"
+    );
+
+    let contents = fs::read_to_string(&info_file).unwrap();
+
+    // Verify that template variables were actually expanded
+    assert!(
+        contents.contains(&format!("Repo: {}", repo_name)),
+        "Should contain expanded repo name, got: {}",
+        contents
+    );
+    assert!(
+        contents.contains("Branch: feature/test"),
+        "Should contain raw branch name, got: {}",
+        contents
+    );
+
+    // Verify port is a valid number in the expected range (10000-19999)
+    let port_line = contents
+        .lines()
+        .find(|l| l.starts_with("Port: "))
+        .expect("Should contain port line");
+    let port: u16 = port_line
+        .strip_prefix("Port: ")
+        .unwrap()
+        .parse()
+        .expect("Port should be a valid number");
+    assert!(
+        (10000..20000).contains(&port),
+        "Port should be in range 10000-19999, got: {}",
+        port
+    );
+}
+
+#[rstest]
+fn test_post_create_verbose_template_expansion(repo: TestRepo) {
+    // Test that -v shows template expansion for pre-create hooks
+    repo.write_project_config(
+        r#"[pre-create]
+setup = "echo 'Setting up {{ branch | sanitize }} in {{ worktree_path }}'"
+"#,
+    );
+
+    repo.commit("Add config with templates");
+
+    // Pre-approve commands
+    repo.write_test_config(r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}""#);
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = [
+    "echo 'Setting up {{ branch | sanitize }} in {{ worktree_path }}'",
+]
+"#,
+    );
+
+    // Create isolated HOME to ensure test determinism
+    let temp_home = tempfile::TempDir::new().unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd_with_global_flags(
+            &repo,
+            "switch",
+            &["--create", "verbose-hooks"],
+            None,
+            &["-v"],
+        );
+        set_temp_home_env(&mut cmd, temp_home.path());
+        assert_cmd_snapshot!("post_create_verbose_template_expansion", cmd);
+    });
+}
+
+#[rstest]
+fn test_post_create_default_branch_template(repo: TestRepo) {
+    // Create project config with default_branch template variable
+    repo.write_project_config(
+        r#"pre-create = "echo 'Default: {{ default_branch }}' > default.txt""#,
+    );
+
+    repo.commit("Add config with default_branch template");
+
+    // Pre-approve the command
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo 'Default: {{ default_branch }}' > default.txt"]
+"#,
+    );
+
+    // Create a feature branch worktree (--yes skips approval prompt)
+    snapshot_switch(
+        "post_create_default_branch_template",
+        &repo,
+        &["--create", "feature", "--yes"],
+    );
+
+    // Verify template expansion actually worked
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let default_file = worktree_path.join("default.txt");
+
+    assert!(
+        default_file.exists(),
+        "default.txt should have been created in the worktree"
+    );
+
+    let contents = fs::read_to_string(&default_file).unwrap();
+    assert!(
+        contents.contains("Default: main"),
+        "Should contain expanded default_branch, got: {}",
+        contents
+    );
+}
+
+#[rstest]
+fn test_post_create_git_variables_template(#[from(repo_with_remote)] repo: TestRepo) {
+    // Set up an upstream tracking branch
+    repo.git_command()
+        .args(["push", "-u", "origin", "main"])
+        .run()
+        .expect("failed to push");
+
+    // Create project config with git-related template variables
+    repo.write_project_config(
+        r#"[pre-create]
+commit = "echo 'Commit: {{ commit }}' > git_vars.txt"
+short = "echo 'Short: {{ short_commit }}' >> git_vars.txt"
+remote = "echo 'Remote: {{ remote }}' >> git_vars.txt"
+worktree_name = "echo 'Worktree Name: {{ worktree_name }}' >> git_vars.txt"
+"#,
+    );
+
+    repo.commit("Add config with git template variables");
+
+    // Create a feature branch worktree (--yes skips approval prompt)
+    snapshot_switch(
+        "post_create_git_variables_template",
+        &repo,
+        &["--create", "feature", "--yes"],
+    );
+
+    // Verify template expansion actually worked
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let vars_file = worktree_path.join("git_vars.txt");
+
+    assert!(
+        vars_file.exists(),
+        "git_vars.txt should have been created in the worktree"
+    );
+
+    let contents = fs::read_to_string(&vars_file).unwrap();
+
+    // Verify commit variable (should be 40 char hex)
+    assert!(
+        contents.contains("Commit: ")
+            && contents.lines().any(|l| {
+                l.starts_with("Commit: ") && l.len() == 48 // "Commit: " (8) + 40 hex chars
+            }),
+        "Should contain expanded commit SHA, got: {}",
+        contents
+    );
+
+    // Verify short_commit variable (should be 7 char hex)
+    assert!(
+        contents.contains("Short: ")
+            && contents.lines().any(|l| {
+                l.starts_with("Short: ") && l.len() == 14 // "Short: " (7) + 7 hex chars
+            }),
+        "Should contain expanded short_commit SHA, got: {}",
+        contents
+    );
+
+    // Verify remote variable
+    assert!(
+        contents.contains("Remote: origin"),
+        "Should contain expanded remote name, got: {}",
+        contents
+    );
+
+    // Verify worktree_name variable (basename of worktree path)
+    assert!(
+        contents.contains("Worktree Name: repo.feature"),
+        "Should contain expanded worktree_name, got: {}",
+        contents
+    );
+}
+
+#[rstest]
+fn test_post_create_upstream_template(#[from(repo_with_remote)] repo: TestRepo) {
+    // Push main to set up tracking
+    repo.git_command()
+        .args(["push", "-u", "origin", "main"])
+        .run()
+        .expect("failed to push main");
+
+    // Create project config with upstream template variable
+    // Note: {{ upstream }} errors when the new branch has no upstream tracking.
+    // The new feature branch won't have an upstream until it's pushed with -u.
+    // This test verifies the error case - see test_post_create_upstream_conditional for the fix.
+    repo.write_project_config(r#"pre-create = "echo 'Upstream: {{ upstream }}' > upstream.txt""#);
+
+    repo.commit("Add config with upstream template");
+
+    // Create a feature branch - it won't have upstream tracking configured yet
+    snapshot_switch(
+        "post_create_upstream_template",
+        &repo,
+        &["--create", "feature", "--yes"],
+    );
+
+    // Hook command should have errored due to undefined `upstream` variable
+    // (new branches don't have upstream tracking until pushed with -u)
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let upstream_file = worktree_path.join("upstream.txt");
+
+    assert!(
+        !upstream_file.exists(),
+        "upstream.txt should NOT have been created (command errored)"
+    );
+}
+
+#[rstest]
+fn test_post_create_upstream_conditional(#[from(repo_with_remote)] repo: TestRepo) {
+    // Push main to set up tracking
+    repo.git_command()
+        .args(["push", "-u", "origin", "main"])
+        .run()
+        .expect("failed to push main");
+
+    // Create project config with conditional upstream check
+    // Using {% if not upstream %} allows safe handling of undefined variables
+    repo.write_project_config(
+        r#"pre-create = "{% if not upstream %}echo 'no-upstream' > upstream.txt{% else %}echo '{{ upstream }}' > upstream.txt{% endif %}""#,
+    );
+
+    repo.commit("Add config with conditional upstream");
+
+    // Pre-approve the command
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["{% if not upstream %}echo 'no-upstream' > upstream.txt{% else %}echo '{{ upstream }}' > upstream.txt{% endif %}"]
+"#,
+    );
+
+    // Create a feature branch - it won't have upstream tracking configured yet
+    snapshot_switch(
+        "post_create_upstream_conditional",
+        &repo,
+        &["--create", "feature", "--yes"],
+    );
+
+    // Verify the conditional worked - new branch has no upstream, so "no-upstream" should be written
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let upstream_file = worktree_path.join("upstream.txt");
+
+    assert!(
+        upstream_file.exists(),
+        "upstream.txt should have been created (conditional worked)"
+    );
+
+    let contents = fs::read_to_string(&upstream_file).unwrap();
+    assert_eq!(
+        contents.trim(),
+        "no-upstream",
+        "Should contain 'no-upstream' since feature branch has no upstream tracking"
+    );
+}
+
+#[rstest]
+fn test_post_create_base_variables(repo: TestRepo) {
+    // Create project config with base template variables
+    repo.write_project_config(
+        r#"[pre-create]
+base = "echo 'Base: {{ base }}' > base_info.txt"
+base_path = "echo 'Base Path: {{ base_worktree_path }}' >> base_info.txt"
+"#,
+    );
+
+    repo.commit("Add config with base template variables");
+
+    // Pre-approve the commands
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = [
+    "echo 'Base: {{ base }}' > base_info.txt",
+    "echo 'Base Path: {{ base_worktree_path }}' >> base_info.txt",
+]
+"#,
+    );
+
+    // Create a feature branch worktree from main
+    snapshot_switch(
+        "post_create_base_variables",
+        &repo,
+        &["--create", "feature", "--base", "main"],
+    );
+
+    // Verify template expansion actually worked
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let base_file = worktree_path.join("base_info.txt");
+
+    assert!(
+        base_file.exists(),
+        "base_info.txt should have been created in the worktree"
+    );
+
+    let contents = fs::read_to_string(&base_file).unwrap();
+
+    // Verify base variable (branch name we branched from)
+    assert!(
+        contents.contains("Base: main"),
+        "Should contain expanded base branch, got: {}",
+        contents
+    );
+
+    // Verify base_worktree_path variable (path to main worktree)
+    // The path should contain the repo root (main worktree is at repo root)
+    assert!(
+        contents.contains("Base Path: "),
+        "Should have base_worktree_path line, got: {}",
+        contents
+    );
+
+    // The base_worktree_path should be the main worktree's path (POSIX format)
+    let base_path_line = contents
+        .lines()
+        .find(|l| l.starts_with("Base Path: "))
+        .expect("Should have Base Path line");
+    let base_path = base_path_line.strip_prefix("Base Path: ").unwrap();
+
+    // Convert expected path to POSIX format for comparison
+    let expected_base_path = worktrunk::path::to_posix_path(&repo.root_path().to_string_lossy());
+    assert_eq!(
+        base_path, expected_base_path,
+        "Base path should match main worktree path"
+    );
+}
+
+#[rstest]
+fn test_pre_create_json_stdin(repo: TestRepo) {
+    use crate::common::wt_command;
+
+    // Create project config with a command that reads JSON from stdin
+    // Use cat to capture stdin to a file
+    repo.write_project_config(r#"pre-create = "cat > context.json""#);
+
+    repo.commit("Add config");
+
+    // Pre-approve the command
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["cat > context.json"]
+"#,
+    );
+
+    // Create worktree - this should pipe JSON to the hook's stdin
+    let temp_home = TempDir::new().unwrap();
+    let mut cmd = wt_command();
+    cmd.args(["switch", "--create", "feature-json"])
+        .current_dir(repo.root_path())
+        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
+        .env("WORKTRUNK_APPROVALS_PATH", repo.test_approvals_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().expect("failed to run wt switch");
+
+    assert!(
+        output.status.success(),
+        "wt switch should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Find the worktree and read the JSON
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature-json");
+    let json_file = worktree_path.join("context.json");
+
+    assert!(
+        json_file.exists(),
+        "context.json should have been created from stdin"
+    );
+
+    let contents = fs::read_to_string(&json_file).unwrap();
+
+    // Parse and verify the JSON contains expected fields
+    let json: serde_json::Value = serde_json::from_str(&contents)
+        .unwrap_or_else(|e| panic!("Should be valid JSON: {}\nContents: {}", e, contents));
+
+    assert!(
+        json.get("repo").is_some(),
+        "JSON should contain 'repo' field"
+    );
+    assert!(
+        json.get("branch").is_some(),
+        "JSON should contain 'branch' field"
+    );
+    assert_eq!(
+        json["branch"].as_str(),
+        Some("feature-json"),
+        "Branch should be sanitized (feature-json)"
+    );
+    assert!(
+        json.get("worktree").is_some(),
+        "JSON should contain 'worktree' field"
+    );
+    assert!(
+        json.get("repo_root").is_some(),
+        "JSON should contain 'repo_root' field"
+    );
+    assert_eq!(
+        json["hook_type"].as_str(),
+        Some("pre-create"),
+        "JSON should contain hook_type"
+    );
+}
+
+#[rstest]
+#[cfg(unix)]
+fn test_post_create_script_reads_json(repo: TestRepo) {
+    use crate::common::wt_command;
+    use std::os::unix::fs::PermissionsExt;
+
+    // Create a scripts directory and a Python script that reads JSON from stdin
+    let scripts_dir = repo.root_path().join("scripts");
+    fs::create_dir_all(&scripts_dir).unwrap();
+
+    // Resolve `python3` on PATH and bake the absolute path into the shebang.
+    // `#!/usr/bin/env python3` doesn't work in the nix sandbox where
+    // `/usr/bin/env` doesn't exist; the kernel runs the literal interpreter
+    // path, so shebang resolution can't piggyback on PATH directly.
+    let python = which::which("python3").expect("python3 in PATH for test");
+    let script_body = r#"
+import json
+import sys
+
+ctx = json.load(sys.stdin)
+with open('hook_output.txt', 'w') as f:
+    f.write(f"repo={ctx['repo']}\n")
+    f.write(f"branch={ctx['branch']}\n")
+    f.write(f"hook_type={ctx['hook_type']}\n")
+    f.write(f"hook_name={ctx.get('hook_name', 'unnamed')}\n")
+"#;
+    let script_content = format!("#!{}{}", python.display(), script_body);
+    let script_path = scripts_dir.join("setup.py");
+    fs::write(&script_path, script_content).unwrap();
+    fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+    // Create project config that runs the script
+    repo.write_project_config(
+        r#"[pre-create]
+setup = "./scripts/setup.py"
+"#,
+    );
+
+    repo.commit("Add setup script and config");
+
+    // Pre-approve the command
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["./scripts/setup.py"]
+"#,
+    );
+
+    // Create worktree
+    let temp_home = TempDir::new().unwrap();
+    let mut cmd = wt_command();
+    cmd.args(["switch", "--create", "feature-script"])
+        .current_dir(repo.root_path())
+        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
+        .env("WORKTRUNK_APPROVALS_PATH", repo.test_approvals_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().expect("failed to run wt switch");
+
+    assert!(
+        output.status.success(),
+        "wt switch should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Find the worktree and verify the script wrote the expected output
+    let worktree_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("repo.feature-script");
+    let output_file = worktree_path.join("hook_output.txt");
+
+    assert!(
+        output_file.exists(),
+        "Script should have created hook_output.txt"
+    );
+
+    let contents = fs::read_to_string(&output_file).unwrap();
+    assert!(
+        contents.contains("repo=repo"),
+        "Output should contain repo name: {}",
+        contents
+    );
+    assert!(
+        contents.contains("branch=feature-script"),
+        "Output should contain branch: {}",
+        contents
+    );
+    assert!(
+        contents.contains("hook_type=pre-create"),
+        "Output should contain hook_type: {}",
+        contents
+    );
+    assert!(
+        contents.contains("hook_name=setup"),
+        "Output should contain hook_name: {}",
+        contents
+    );
+}
+
+#[rstest]
+fn test_post_create_json_stdin(repo: TestRepo) {
+    use crate::common::wt_command;
+
+    // Create project config with a background command that reads JSON from stdin
+    repo.write_project_config(r#"post-create = "cat > context.json""#);
+
+    repo.commit("Add config");
+
+    // Pre-approve the command
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["cat > context.json"]
+"#,
+    );
+
+    // Create worktree
+    let temp_home = TempDir::new().unwrap();
+    let mut cmd = wt_command();
+    cmd.args(["switch", "--create", "bg-json"])
+        .current_dir(repo.root_path())
+        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
+        .env("WORKTRUNK_APPROVALS_PATH", repo.test_approvals_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().expect("failed to run wt switch");
+
+    assert!(
+        output.status.success(),
+        "wt switch should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Find the worktree and wait for valid JSON (polls until cat finishes writing)
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.bg-json");
+    let json_file = worktree_path.join("context.json");
+    let json = wait_for_valid_json(&json_file);
+
+    assert_eq!(
+        json["branch"].as_str(),
+        Some("bg-json"),
+        "Background hook should receive JSON with branch"
+    );
+    assert!(
+        json.get("repo").is_some(),
+        "Background hook should receive JSON with repo"
+    );
+    assert_eq!(
+        json["hook_type"].as_str(),
+        Some("post-create"),
+        "Background hook should receive hook_type"
+    );
+}
+
+// ============================================================================
+// Post-Start Command Tests (parallel, background)
+// ============================================================================
+
+#[rstest]
+fn test_post_create_single_background_command(repo: TestRepo) {
+    // Create project config with a background command
+    repo.write_project_config(
+        r#"post-create = "sleep 0.1 && echo 'Background task done' > background.txt""#,
+    );
+
+    repo.commit("Add background command");
+
+    // Pre-approve the command
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["sleep 0.1 && echo 'Background task done' > background.txt"]
+"#,
+    );
+
+    // Command should spawn in background (wt exits immediately)
+    snapshot_switch(
+        "post_create_single_background",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    // Verify log file was created in the common git directory
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let git_common_dir = resolve_git_common_dir(&worktree_path);
+    let log_dir = git_common_dir.join("wt/logs");
+    assert!(log_dir.exists());
+
+    // Wait for the background command to complete
+    let output_file = worktree_path.join("background.txt");
+    wait_for_file(output_file.as_path());
+}
+
+/// Test that -v shows verbose per-hook output for background hooks
+#[rstest]
+fn test_post_create_verbose_shows_per_hook_output(repo: TestRepo) {
+    // Create project config with a background command
+    repo.write_project_config(
+        r#"[post-create]
+setup = "echo 'verbose test' > verbose.txt"
+"#,
+    );
+
+    repo.commit("Add background command");
+
+    // Pre-approve the command
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo 'verbose test' > verbose.txt"]
+"#,
+    );
+
+    // With -v, should show detailed per-hook output with command in gutter
+    snapshot_switch(
+        "post_create_verbose_output",
+        &repo,
+        &["-v", "--create", "feature"],
+    );
+}
+
+#[rstest]
+fn test_post_create_multiple_background_commands(repo: TestRepo) {
+    // Create project config with multiple background commands (table format)
+    repo.write_project_config(
+        r#"[post-create]
+task1 = "echo 'Task 1 running' > task1.txt"
+task2 = "echo 'Task 2 running' > task2.txt"
+"#,
+    );
+
+    repo.commit("Add multiple background commands");
+
+    // Pre-approve both commands
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = [
+    "echo 'Task 1 running' > task1.txt",
+    "echo 'Task 2 running' > task2.txt",
+]
+"#,
+    );
+
+    // Commands should spawn in parallel
+    snapshot_switch(
+        "post_create_multiple_background",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    // Wait for both background commands
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    wait_for_file(worktree_path.join("task1.txt").as_path());
+    wait_for_file(worktree_path.join("task2.txt").as_path());
+}
+
+#[rstest]
+fn test_both_pre_create_and_post_create(repo: TestRepo) {
+    // Create project config with both a blocking and a background creation hook
+    repo.write_project_config(
+        r#"pre-create = "echo 'Setup done' > setup.txt"
+
+[post-create]
+server = "sleep 0.05 && echo 'Server running' > server.txt"
+"#,
+    );
+
+    repo.commit("Add both command types");
+
+    // Pre-approve all commands
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = [
+    "echo 'Setup done' > setup.txt",
+    "sleep 0.05 && echo 'Server running' > server.txt",
+]
+"#,
+    );
+
+    // pre-create runs first (blocking), then post-create (background)
+    snapshot_switch("both_pre_and_post_create", &repo, &["--create", "feature"]);
+
+    // Setup file should exist immediately (pre-create is blocking)
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    assert!(
+        worktree_path.join("setup.txt").exists(),
+        "Post-create command should have completed before wt exits"
+    );
+
+    // Wait for background command
+    wait_for_file(worktree_path.join("server.txt").as_path());
+}
+
+#[rstest]
+fn test_invalid_toml(repo: TestRepo) {
+    // Create invalid TOML
+    repo.write_project_config("pre-create = [invalid syntax\n");
+
+    repo.commit("Add invalid config");
+
+    // Should continue without executing commands, showing warning
+    snapshot_switch("invalid_toml", &repo, &["--create", "feature"]);
+}
+
+// ============================================================================
+// Additional Coverage Tests
+// ============================================================================
+
+#[rstest]
+fn test_post_create_log_file_captures_output(repo: TestRepo) {
+    // Create command that writes to both stdout and stderr
+    repo.write_project_config(
+        r#"post-create = "echo 'stdout output' && echo 'stderr output' >&2""#,
+    );
+
+    repo.commit("Add command with stdout/stderr");
+
+    // Pre-approve the command
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
+"#,
+    );
+
+    snapshot_switch(
+        "post_create_log_captures_output",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    // Wait for log file to be created (not just the directory)
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let git_common_dir = resolve_git_common_dir(&worktree_path);
+    let log_dir = git_common_dir.join("wt/logs");
+    // 2 log files: runner log + per-command log (cmd-0, unnamed single command)
+    wait_for_file_count(&log_dir, "log", 2);
+
+    // Find the command log file at `{branch}/project/post-create/cmd-0-*.log`.
+    let post_create_dir = log_dir
+        .join(worktrunk::path::sanitize_for_filename("feature"))
+        .join("project")
+        .join("post-create");
+    let cmd_log = fs::read_dir(&post_create_dir)
+        .unwrap_or_else(|e| panic!("reading {post_create_dir:?}: {e}"))
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("cmd-0"))
+        })
+        .expect("Should have a cmd-0 log file");
+
+    // Wait for both lines — `&&` sequences two writes (stdout, then stderr),
+    // so file size > 0 can hit after only the first landed.
+    wait_for_file_lines(&cmd_log, 2);
+
+    let log_contents = fs::read_to_string(&cmd_log).unwrap();
+
+    // Verify both stdout and stderr were captured
+    assert_snapshot!(log_contents, @"
+    stdout output
+    stderr output
+    ");
+}
+
+#[rstest]
+fn test_post_create_invalid_command_handling(repo: TestRepo) {
+    // Create command with syntax error (missing quote)
+    repo.write_project_config(r#"post-create = "echo 'unclosed quote""#);
+
+    repo.commit("Add invalid command");
+
+    // Pre-approve the command
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo 'unclosed quote"]
+"#,
+    );
+
+    // wt should still complete successfully even if background command has errors
+    snapshot_switch(
+        "post_create_invalid_command",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    // Verify worktree was created despite command error
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    assert!(
+        worktree_path.exists(),
+        "Worktree should be created even if post-create command fails"
+    );
+}
+
+#[rstest]
+fn test_post_create_multiple_commands_separate_logs(repo: TestRepo) {
+    // Create multiple background commands with distinct output
+    repo.write_project_config(
+        r#"[post-create]
+task1 = "echo 'TASK1_OUTPUT'"
+task2 = "echo 'TASK2_OUTPUT'"
+task3 = "echo 'TASK3_OUTPUT'"
+"#,
+    );
+
+    repo.commit("Add three background commands");
+
+    // Pre-approve all commands
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = [
+    "echo 'TASK1_OUTPUT'",
+    "echo 'TASK2_OUTPUT'",
+    "echo 'TASK3_OUTPUT'",
+]
+"#,
+    );
+
+    snapshot_switch("post_create_separate_logs", &repo, &["--create", "feature"]);
+
+    // Each command gets its own log file (task1, task2, task3) plus one runner log.
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let git_common_dir = resolve_git_common_dir(&worktree_path);
+    let log_dir = git_common_dir.join("wt/logs");
+    wait_for_file_count(&log_dir, "log", 4);
+
+    // Verify each task's output is in its own log file. Hook logs live at
+    // `{branch}/project/post-create/{task}.log` in the nested layout.
+    let post_create_dir = log_dir
+        .join(worktrunk::path::sanitize_for_filename("feature"))
+        .join("project")
+        .join("post-create");
+    let log_files: Vec<_> = fs::read_dir(&post_create_dir)
+        .unwrap_or_else(|e| panic!("reading {post_create_dir:?}: {e}"))
+        .filter_map(|e| e.ok())
+        .collect();
+    for (task, expected) in [
+        ("task1", "TASK1_OUTPUT"),
+        ("task2", "TASK2_OUTPUT"),
+        ("task3", "TASK3_OUTPUT"),
+    ] {
+        let log_file = log_files
+            .iter()
+            .find(|e| e.file_name().to_string_lossy().starts_with(task))
+            .unwrap_or_else(|| panic!("should have log file for {task} in {post_create_dir:?}"));
+
+        wait_for_file_content(&log_file.path());
+        let contents = fs::read_to_string(log_file.path()).unwrap();
+        assert!(
+            contents.contains(expected),
+            "Log for {task} should contain {expected}, got: {contents}"
+        );
+    }
+}
+
+#[rstest]
+fn test_execute_flag_with_post_create_commands(repo: TestRepo) {
+    // Create post-create command
+    repo.write_project_config(r#"post-create = "echo 'Background task' > background.txt""#);
+
+    repo.commit("Add background command");
+
+    // Pre-approve the command
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo 'Background task' > background.txt"]
+"#,
+    );
+
+    // Use --execute flag along with post-create command
+    snapshot_switch(
+        "execute_with_post_create",
+        &repo,
+        &[
+            "--create",
+            "feature",
+            "--execute",
+            "echo 'Execute flag' > execute.txt",
+        ],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+
+    // Execute flag file should exist immediately (synchronous)
+    assert!(
+        worktree_path.join("execute.txt").exists(),
+        "Execute command should run synchronously"
+    );
+
+    // Wait for background command to complete
+    wait_for_file(worktree_path.join("background.txt").as_path());
+}
+
+#[rstest]
+fn test_post_create_complex_shell_commands(repo: TestRepo) {
+    // Create command with pipes and redirects
+    repo.write_project_config(
+        r#"post-create = "echo 'line1\nline2\nline3' | grep line2 > filtered.txt""#,
+    );
+
+    repo.commit("Add complex shell command");
+
+    // Pre-approve the command
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo 'line1\nline2\nline3' | grep line2 > filtered.txt"]
+"#,
+    );
+
+    snapshot_switch("post_create_complex_shell", &repo, &["--create", "feature"]);
+
+    // Wait for background command to create the file AND flush content
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let filtered_file = worktree_path.join("filtered.txt");
+    wait_for_file_content(filtered_file.as_path());
+
+    let contents = fs::read_to_string(&filtered_file).unwrap();
+    assert_snapshot!(contents, @"line2");
+}
+
+#[rstest]
+fn test_post_create_multiline_commands_with_newlines(repo: TestRepo) {
+    // Create command with actual newlines (using TOML triple-quoted string)
+    repo.write_project_config(
+        r#"post-create = """
+echo 'first line' > multiline.txt
+echo 'second line' >> multiline.txt
+echo 'third line' >> multiline.txt
+"""
+"#,
+    );
+
+    repo.commit("Add multiline command with actual newlines");
+
+    // Pre-approve the command
+    let multiline_cmd = "echo 'first line' > multiline.txt
+echo 'second line' >> multiline.txt
+echo 'third line' >> multiline.txt
+";
+    repo.write_test_config(r#"worktree-path = "../{{ repo }}.{{ branch }}""#);
+    repo.write_test_approvals(&format!(
+        r#"[projects."../origin"]
+approved-commands = ["""
+{}"""]
+"#,
+        multiline_cmd
+    ));
+
+    snapshot_switch(
+        "post_create_multiline_with_newlines",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    // Wait for background command to write all 3 lines (not just the first)
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let output_file = worktree_path.join("multiline.txt");
+    wait_for_file_lines(output_file.as_path(), 3);
+
+    let contents = fs::read_to_string(&output_file).unwrap();
+    assert_snapshot!(contents, @"
+    first line
+    second line
+    third line
+    ");
+}
+
+#[rstest]
+fn test_post_create_multiline_with_control_structures(repo: TestRepo) {
+    // Test multiline command with if-else control structure
+    repo.write_project_config(
+        r#"pre-create = """
+if [ ! -f test.txt ]; then
+  echo 'File does not exist' > result.txt
+else
+  echo 'File exists' > result.txt
+fi
+"""
+"#,
+    );
+
+    repo.commit("Add multiline control structure");
+
+    // Pre-approve the command
+    let multiline_cmd = "if [ ! -f test.txt ]; then
+  echo 'File does not exist' > result.txt
+else
+  echo 'File exists' > result.txt
+fi
+";
+    repo.write_test_config(r#"worktree-path = "../{{ repo }}.{{ branch }}""#);
+    repo.write_test_approvals(&format!(
+        r#"[projects."../origin"]
+approved-commands = ["""
+{}"""]
+"#,
+        multiline_cmd
+    ));
+
+    snapshot_switch(
+        "post_create_multiline_control_structure",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    // Verify the command executed correctly
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let result_file = worktree_path.join("result.txt");
+    assert!(
+        result_file.exists(),
+        "Control structure command should create result file"
+    );
+
+    let contents = fs::read_to_string(&result_file).unwrap();
+    assert_snapshot!(contents, @"File does not exist");
+}
+
+// ============================================================================
+// Regression Tests
+// ============================================================================
+
+///
+/// This is a regression test for a bug where post-create commands were running on ALL
+/// `wt switch` operations instead of only on `wt switch --create`.
+#[rstest]
+fn test_post_create_skipped_on_existing_worktree(repo: TestRepo) {
+    // Create project config with post-create command
+    repo.write_project_config(r#"post-create = "echo 'POST-START-RAN' > post_create_marker.txt""#);
+
+    repo.commit("Add post-create config");
+
+    // Pre-approve the command
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo 'POST-START-RAN' > post_create_marker.txt"]
+"#,
+    );
+
+    // First: Create worktree - post-create SHOULD run
+    snapshot_switch(
+        "post_create_create_with_command",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    // Wait for background post-create command to complete
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let marker_file = worktree_path.join("post_create_marker.txt");
+    wait_for_file(marker_file.as_path());
+
+    // Remove the marker file to detect if post-create runs again
+    fs::remove_file(&marker_file).unwrap();
+
+    // Second: Switch to EXISTING worktree - post-create should NOT run
+    snapshot_switch("post_create_skip_existing", &repo, &["feature"]);
+
+    // Wait to ensure no background command starts (testing absence requires fixed wait)
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+
+    // Verify post-create did NOT run when switching to existing worktree
+    assert!(
+        !marker_file.exists(),
+        "Post-start should NOT run when switching to existing worktree"
+    );
+}
+
+// ============================================================================
+// Pipeline Tests (project config, list form)
+// ============================================================================
+
+#[rstest]
+fn test_post_create_project_pipeline(repo: TestRepo) {
+    // Project config with pipeline: serial setup, then concurrent tasks
+    repo.write_project_config(
+        r#"post-create = [
+    "echo SETUP > setup_marker.txt",
+    { task1 = "cat setup_marker.txt > task1_saw_setup.txt", task2 = "echo TASK2 > task2.txt" }
+]
+"#,
+    );
+    repo.commit("Add pipeline config");
+
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = [
+    "echo SETUP > setup_marker.txt",
+    "cat setup_marker.txt > task1_saw_setup.txt",
+    "echo TASK2 > task2.txt",
+]
+"#,
+    );
+
+    snapshot_switch(
+        "post_create_project_pipeline",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    // task1 reads the setup marker — verifies serial-before-concurrent ordering
+    let task1_file = worktree_path.join("task1_saw_setup.txt");
+    wait_for_file_content(&task1_file);
+
+    let content = fs::read_to_string(&task1_file).unwrap();
+    assert!(
+        content.contains("SETUP"),
+        "Concurrent task should see serial step's output, got: {content}"
+    );
+}
+
+#[rstest]
+fn test_post_create_pipeline_with_template_vars(repo: TestRepo) {
+    // Pipeline with template variable expansion
+    repo.write_project_config(
+        r#"post-create = [
+    "echo {{ branch }} > branch_marker.txt",
+    { check = "cat branch_marker.txt > branch_check.txt" }
+]
+"#,
+    );
+    repo.commit("Add pipeline with templates");
+
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = [
+    "echo {{ branch }} > branch_marker.txt",
+    "cat branch_marker.txt > branch_check.txt",
+]
+"#,
+    );
+
+    snapshot_switch(
+        "post_create_pipeline_template_vars",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let check_file = worktree_path.join("branch_check.txt");
+    wait_for_file_content(&check_file);
+
+    let content = fs::read_to_string(&check_file).unwrap();
+    assert!(
+        content.contains("feature"),
+        "Template variable should be expanded in pipeline, got: {content}"
+    );
+}
+
+#[rstest]
+fn test_post_create_target_variable_expands_to_branch(repo: TestRepo) {
+    // `{{ target }}` in post-create should equal the bare `{{ branch }}` —
+    // symmetric with `pre-switch`, which already injects `target`.
+    repo.write_project_config(r#"post-create = "echo '{{ target }}' > target_marker.txt""#);
+    repo.commit("Add post-create with target var");
+
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo '{{ target }}' > target_marker.txt"]
+"#,
+    );
+
+    snapshot_switch(
+        "post_create_target_variable",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let marker = worktree_path.join("target_marker.txt");
+    wait_for_file_content(&marker);
+
+    let content = fs::read_to_string(&marker).unwrap();
+    assert_eq!(
+        content.trim(),
+        "feature",
+        "target should resolve to the newly created branch, got: {content}"
+    );
+}
+
+#[rstest]
+fn test_post_switch_target_variable_on_existing_switch(repo: TestRepo) {
+    // `{{ target }}` in post-switch must equal the destination branch for
+    // switches to an existing worktree — not just creates.
+    repo.write_project_config(r#"post-switch = "echo '{{ target }}' > target_marker.txt""#);
+    repo.commit("Add post-switch with target var");
+
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo '{{ target }}' > target_marker.txt"]
+"#,
+    );
+
+    // Create the destination worktree first, then switch back to main so the
+    // next invocation exercises the existing-worktree switch path (not create).
+    repo.wt_command()
+        .args(["switch", "--create", "feature", "--no-hooks", "--yes"])
+        .output()
+        .expect("failed to pre-create feature worktree");
+    repo.wt_command()
+        .args(["switch", "main", "--no-hooks", "--yes"])
+        .output()
+        .expect("failed to switch back to main");
+
+    snapshot_switch("post_switch_target_variable_existing", &repo, &["feature"]);
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let marker = worktree_path.join("target_marker.txt");
+    wait_for_file_content(&marker);
+
+    let content = fs::read_to_string(&marker).unwrap();
+    assert_eq!(
+        content.trim(),
+        "feature",
+        "target should resolve to the switched-to branch, got: {content}"
+    );
+}
+
+#[rstest]
+fn test_post_create_mixed_user_pipeline_project_flat(repo: TestRepo) {
+    // User has a pipeline, project has flat concurrent commands.
+    // Both should execute.
+    repo.write_test_config(
+        r#"post-create = [
+    "echo USER_SETUP > user_pipeline_marker.txt",
+    { user_bg = "echo USER_BG > user_bg.txt" }
+]
+"#,
+    );
+
+    repo.write_project_config(
+        r#"[post-create]
+proj = "echo PROJECT > project_marker.txt"
+"#,
+    );
+    repo.commit("Add project config");
+
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo PROJECT > project_marker.txt"]
+"#,
+    );
+
+    snapshot_switch(
+        "post_create_mixed_user_pipeline_project_flat",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+
+    // User pipeline should run
+    wait_for_file_content(&worktree_path.join("user_bg.txt"));
+    let user_bg = fs::read_to_string(worktree_path.join("user_bg.txt")).unwrap();
+    assert!(user_bg.contains("USER_BG"));
+
+    // Project flat hook should also run
+    wait_for_file_content(&worktree_path.join("project_marker.txt"));
+    let project = fs::read_to_string(worktree_path.join("project_marker.txt")).unwrap();
+    assert!(project.contains("PROJECT"));
+}
+
+/// `WORKTRUNK_TEST_SERIAL_CONCURRENT=1` makes the background pipeline runner's
+/// concurrent group run commands one at a time in declaration order. The two
+/// commands append to the same file, so a deterministic ordering proves they
+/// ran serially (a true concurrent run could interleave the appends). The
+/// failing-first-command variant additionally exercises the bail-on-failure
+/// path inside the serial branch — second never gets to run.
+#[rstest]
+fn test_post_create_concurrent_serial_force(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[post-create]
+first = "echo FIRST >> serial_order.txt"
+second = "echo SECOND >> serial_order.txt"
+"#,
+    );
+    repo.commit("Add concurrent post-create");
+
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = [
+    "echo FIRST >> serial_order.txt",
+    "echo SECOND >> serial_order.txt",
+]
+"#,
+    );
+
+    let temp_home = TempDir::new().unwrap();
+    let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature"], None);
+    cmd.env("WORKTRUNK_TEST_SERIAL_CONCURRENT", "1");
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let _ = cmd.output().unwrap();
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let order_file = worktree_path.join("serial_order.txt");
+    wait_for_file_lines(&order_file, 2);
+
+    let content = fs::read_to_string(&order_file).unwrap();
+    assert_eq!(
+        content, "FIRST\nSECOND\n",
+        "serial run should append in declaration order"
+    );
+}
+
+#[rstest]
+fn test_post_create_concurrent_serial_bails_on_failure(repo: TestRepo) {
+    // First command writes a marker then fails; second writes a marker that
+    // would always exist if it ran. Serial mode bails after the first failure,
+    // so the second marker should be absent.
+    repo.write_project_config(
+        r#"[post-create]
+first = "echo FIRST > first_marker.txt && false"
+second = "echo SECOND > second_marker.txt"
+"#,
+    );
+    repo.commit("Add failing post-create");
+
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = [
+    "echo FIRST > first_marker.txt && false",
+    "echo SECOND > second_marker.txt",
+]
+"#,
+    );
+
+    let temp_home = TempDir::new().unwrap();
+    let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature"], None);
+    cmd.env("WORKTRUNK_TEST_SERIAL_CONCURRENT", "1");
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let _ = cmd.output().unwrap();
+
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    wait_for_file_content(&worktree_path.join("first_marker.txt"));
+
+    // Wait for any trailing background work, then assert the second never ran.
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
+    assert!(
+        !worktree_path.join("second_marker.txt").exists(),
+        "serial mode should bail on first failure — second command must not run"
+    );
+}

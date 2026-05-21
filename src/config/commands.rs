@@ -35,7 +35,7 @@
 //! Naming is user-visible: it changes the step from anonymous `Single` to
 //! named `Single`, which affects log file paths
 //! (`.../set-vars.log` vs. a positional slot) and hook-selection filtering
-//! (`wt hook post-start <name>`).
+//! (`wt hook post-create <name>`).
 
 use std::collections::BTreeMap;
 
@@ -94,9 +94,9 @@ pub enum HookStep {
 /// Configuration for commands — canonical representation.
 ///
 /// Internally stores a pipeline of `HookStep`s. Deserializes from three TOML forms:
-/// - Single string: `post-start = "npm install"`
-/// - Named table: `[post-start]` with `name = "command"` entries → one Concurrent step
-/// - Pipeline: `post-start = ["cmd", { a = "cmd1", b = "cmd2" }]` → serial steps
+/// - Single string: `post-create = "npm install"`
+/// - Named table: `[post-create]` with `name = "command"` entries → one Concurrent step
+/// - Pipeline: `post-create = ["cmd", { a = "cmd1", b = "cmd2" }]` → serial steps
 ///
 /// **Order preservation:** Named commands preserve TOML insertion order (IndexMap).
 #[derive(Debug, Clone, PartialEq)]

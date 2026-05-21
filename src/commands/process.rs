@@ -40,7 +40,7 @@ pub enum InternalOp {
 ///
 /// Hook commands produce logs at: `{branch}/{source}/{hook-type}/{name}.log`
 /// (`source` is `user` or `project`)
-/// - Example: `feature/user/post-start/server.log`
+/// - Example: `feature/user/post-create/server.log`
 ///
 /// Per-branch internal operations produce logs at: `{branch}/internal/{op}.log`
 /// - Example: `feature/internal/remove.log`
@@ -984,23 +984,23 @@ mod tests {
         let log_dir = Path::new("/repo/.git/wt/logs");
 
         // Hook path: {log_dir}/{sanitized-branch}/{source}/{hook-type}/{sanitized-name}.log
-        let log = HookLog::hook(HookSource::User, HookType::PostStart, "server");
+        let log = HookLog::hook(HookSource::User, HookType::PostCreate, "server");
         assert_snapshot!(
             log.path(log_dir, "main").to_slash_lossy(),
-            @"/repo/.git/wt/logs/main/user/post-start/server.log"
+            @"/repo/.git/wt/logs/main/user/post-create/server.log"
         );
 
         // Slash in branch name gets sanitized (feature/auth → feature-auth-{hash})
         assert_snapshot!(
             log.path(log_dir, "feature/auth").to_slash_lossy(),
-            @"/repo/.git/wt/logs/feature-auth-j34/user/post-start/server.log"
+            @"/repo/.git/wt/logs/feature-auth-j34/user/post-create/server.log"
         );
 
         // Project source
-        let log = HookLog::hook(HookSource::Project, HookType::PreStart, "build");
+        let log = HookLog::hook(HookSource::Project, HookType::PreCreate, "build");
         assert_snapshot!(
             log.path(log_dir, "main").to_slash_lossy(),
-            @"/repo/.git/wt/logs/main/project/pre-start/build.log"
+            @"/repo/.git/wt/logs/main/project/pre-create/build.log"
         );
 
         // Per-branch internal operation path: {log_dir}/{sanitized-branch}/internal/{op}.log

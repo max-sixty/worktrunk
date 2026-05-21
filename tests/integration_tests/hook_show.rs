@@ -31,7 +31,7 @@ user-lint = "pre-commit run --all-files"
     {test = "cargo test"},
 ]
 
-[post-start]
+[post-create]
 deps = "npm install"
 "#,
     );
@@ -88,7 +88,7 @@ fn setup_all_hook_types(repo: &TestRepo, temp_home: &TempDir) {
     {test = "cargo test"},
 ]
 
-[post-start]
+[post-create]
 deps = "npm install"
 
 [post-merge]
@@ -232,6 +232,47 @@ approved-commands = ["cargo build"]
     });
 }
 
+/// Hooks defined under `[projects."<id>"]` in the user config must show up
+/// in `wt hook show` alongside global user hooks, matching the merged set
+/// that the execution path actually runs.
+#[rstest]
+fn test_hook_show_merges_user_project_hooks(repo: TestRepo, temp_home: TempDir) {
+    // Remove origin so project_identifier falls back to the canonical path
+    repo.run_git(&["remote", "remove", "origin"]);
+    let project_id_str = repo.project_id();
+
+    let canonical_home = crate::common::canonicalize(temp_home.path())
+        .unwrap_or_else(|_| temp_home.path().to_path_buf());
+    let global_config_dir = canonical_home.join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    let config_path = global_config_dir.join("config.toml");
+    fs::write(
+        &config_path,
+        format!(
+            r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
+
+[post-create]
+global-hook = "echo global"
+
+[projects.'{project_id_str}'.post-create]
+project-hook = "echo per-project"
+"#
+        ),
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
+        cmd.arg("hook").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[rstest]
 fn test_error_with_context_formatting(temp_home: TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -350,7 +391,7 @@ broken = "echo {{ branch"
 }
 
 /// Test that undefined variable errors show both template and error with --expanded.
-/// The `base` variable is only defined for pre-start hooks, so using it in pre-commit
+/// The `base` variable is only defined for pre-create hooks, so using it in pre-commit
 /// will trigger an undefined variable error that shows both the error and raw template.
 #[rstest]
 fn test_hook_show_expanded_undefined_var(repo: TestRepo, temp_home: TempDir) {
@@ -364,7 +405,7 @@ fn test_hook_show_expanded_undefined_var(repo: TestRepo, temp_home: TempDir) {
     )
     .unwrap();
 
-    // Create project config with `base` variable (only defined for pre-start hooks)
+    // Create project config with `base` variable (only defined for pre-create hooks)
     // In pre-commit context, this will be undefined and should show error + template
     repo.write_project_config(
         r#"[pre-commit]
@@ -409,7 +450,7 @@ user-lint = "pre-commit run --all-files"
     {build = "cargo build"},
 ]
 
-[post-start]
+[post-create]
 deps = "npm install"
 "#,
     );
@@ -433,7 +474,7 @@ deps = "npm install"
     assert_eq!(
         entries.len(),
         3,
-        "user pre-commit + project pre-merge + project post-start"
+        "user pre-commit + project pre-merge + project post-create"
     );
 
     // User entry
@@ -470,7 +511,7 @@ fn test_hook_show_filtered_expanded_json(repo: TestRepo, temp_home: TempDir) {
 [pre-commit]
 user-lint = "echo {{ branch }}"
 
-[post-start]
+[post-create]
 user-greet = "echo hi"
 "#,
     )
@@ -479,7 +520,7 @@ user-greet = "echo hi"
         r#"[pre-commit]
 project-fmt = "echo fmt {{ branch }}"
 
-[post-start]
+[post-create]
 project-deps = "echo deps"
 "#,
     );
@@ -505,7 +546,7 @@ project-deps = "echo deps"
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
     let entries = parsed.as_array().expect("array");
 
-    // Filter dropped the post-start hooks from both user and project.
+    // Filter dropped the post-create hooks from both user and project.
     let names: Vec<&str> = entries
         .iter()
         .map(|e| e["name"].as_str().unwrap())

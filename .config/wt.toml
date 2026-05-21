@@ -1,3 +1,5 @@
+# Kept on `post-start` (not `post-create`): CI bootstraps with a pinned older
+# `wt` that predates the rename. Migrate once a release ships it (#2838).
 [post-start]
 # Copy target/ from main worktree using CoW (~3s vs ~68s full rebuild)
 deps = "wt step copy-ignored"

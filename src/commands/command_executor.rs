@@ -10,6 +10,7 @@ use worktrunk::config::{
 };
 use worktrunk::git::{ErrorExt, Repository, WorktrunkError};
 use worktrunk::path::{format_path_for_display, to_posix_path};
+use worktrunk::shell_exec::ShellEscapeMode;
 use worktrunk::styling::{
     eprintln, error_message, format_bash_with_gutter, format_with_gutter, info_message,
     progress_message, verbosity,
@@ -376,10 +377,12 @@ pub fn wait_first_error<E>(
 /// Expand a shell-command template against a context map.
 ///
 /// Builds the `&str` vars map required by `expand_template` and fixes
-/// `shell_escape=true` since every caller interpolates the result into a
-/// shell string. Used by the three execution paths — foreground hooks,
-/// background pipelines, and aliases — that defer `vars.*` expansion until
-/// just before the command runs so prior steps can set vars via git config.
+/// [`ShellEscapeMode::Posix`]: every caller (foreground hooks, background
+/// pipelines, aliases) interpolates the result into a command line run
+/// through `Cmd::shell` (`sh`/Git Bash), which is always POSIX — unlike the
+/// `--execute` payload, this never reaches a PowerShell wrapper. Used by the
+/// three execution paths that defer `vars.*` expansion until just before the
+/// command runs so prior steps can set vars via git config.
 pub fn expand_shell_template(
     template: &str,
     context: &HashMap<String, String>,
@@ -390,7 +393,13 @@ pub fn expand_shell_template(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    Ok(expand_template(template, &vars, true, repo, label)?)
+    Ok(expand_template(
+        template,
+        &vars,
+        ShellEscapeMode::Posix,
+        repo,
+        label,
+    )?)
 }
 
 /// Resolve the shell string to execute for a prepared command.
@@ -897,7 +906,7 @@ mod tests {
         }
         .into();
         let cmd = make_cmd(Some("lint"));
-        let wrapper = hook_error_wrapper(HookType::PostStart);
+        let wrapper = hook_error_wrapper(HookType::PostCreate);
         let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::Warn);
         assert!(result.is_ok());
     }
@@ -911,7 +920,7 @@ mod tests {
         }
         .into();
         let cmd = make_cmd(Some("cleanup"));
-        let wrapper = hook_error_wrapper(HookType::PostStart);
+        let wrapper = hook_error_wrapper(HookType::PostCreate);
         let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::Warn);
         let err = result.unwrap_err();
         let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
@@ -926,7 +935,7 @@ mod tests {
         // Covers the `cmd.name = None` branch of the Warn arm.
         let err = anyhow::anyhow!("unexpected failure");
         let cmd = make_cmd(None);
-        let wrapper = hook_error_wrapper(HookType::PostStart);
+        let wrapper = hook_error_wrapper(HookType::PostCreate);
         let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::Warn);
         assert!(result.is_ok());
     }

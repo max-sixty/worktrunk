@@ -24,6 +24,7 @@ use worktrunk::git::{
     GitError, GitRemoteUrl, RefContext, RefType, Repository, SwitchSuggestionCtx,
     current_or_recover,
 };
+use worktrunk::shell_exec::{ShellEscapeMode, directive_shell_escape_mode, shell_escape_for};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, suggest_command,
     warning_message,
@@ -98,9 +99,7 @@ enum PrProviderChoice {
 /// wrapped two-provider error.
 fn choose_pr_provider(repo: &Repository) -> anyhow::Result<PrProviderChoice> {
     if let Some(platform_raw) = repo
-        .load_project_config()
-        .ok()
-        .flatten()
+        .load_project_config()?
         .and_then(|c| c.forge_platform().map(str::to_string))
     {
         let platform = platform_raw.to_ascii_lowercase();
@@ -549,8 +548,13 @@ fn resolve_switch_target(
         .context("Failed to resolve branch name")?;
 
     // Handle remote-tracking ref names (e.g., "origin/username/feature-1" from the picker).
-    // Strip the remote prefix so DWIM can create a local tracking branch.
-    if !create && let Some(local_name) = repo.strip_remote_prefix(&resolved_branch) {
+    // Strip the remote prefix only when there is no exact local branch/worktree,
+    // so a local branch literally named `origin/foo` is not retargeted to `foo`.
+    if !create
+        && repo.worktree_for_branch(&resolved_branch)?.is_none()
+        && !repo.branch(&resolved_branch).exists_locally()?
+        && let Some(local_name) = repo.strip_remote_prefix(&resolved_branch)
+    {
         resolved_branch = local_name;
     }
 
@@ -1108,9 +1112,9 @@ pub fn execute_switch(
                 })
                 .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
-            // PR/MR identity travels into both the pre-start hook below and the
+            // PR/MR identity travels into both the pre-create hook below and the
             // SwitchResult — TemplateVars::for_post_switch then forwards it to
-            // background post-switch / post-start hooks.
+            // background post-switch / post-create hooks.
             let (pr_number, pr_url) = match &method {
                 CreationMethod::ForkRef {
                     number, ref_url, ..
@@ -1118,7 +1122,7 @@ pub fn execute_switch(
                 CreationMethod::Regular { .. } => (None, None),
             };
 
-            // Execute pre-start commands. The hook resolves its `.config/wt.toml`
+            // Execute pre-create commands. The hook resolves its `.config/wt.toml`
             // from the new worktree (created just above) — see
             // `hook_repo_for_worktree`.
             if run_hooks {
@@ -1139,7 +1143,7 @@ pub fn execute_switch(
                         vars = vars.with_pr(Some(*number), Some(ref_url));
                     }
                 }
-                ctx.execute_pre_start_commands(&vars.as_extra_vars(), hook_plan, &worktree_path)?;
+                ctx.execute_pre_create_commands(&vars.as_extra_vars(), hook_plan, &worktree_path)?;
             }
 
             // Record successful switch in history
@@ -1332,13 +1336,13 @@ pub(crate) fn run_pre_switch_hooks(
 
 /// Hook types that apply after a switch operation.
 ///
-/// Creates trigger pre-start + post-start + post-switch hooks;
+/// Creates trigger pre-create + post-create + post-switch hooks;
 /// existing worktrees trigger only post-switch.
 fn switch_post_hook_types(is_create: bool) -> &'static [HookType] {
     if is_create {
         &[
-            HookType::PreStart,
-            HookType::PostStart,
+            HookType::PreCreate,
+            HookType::PostCreate,
             HookType::PostSwitch,
         ]
     } else {
@@ -1376,7 +1380,7 @@ fn base_ref_for_create(
     // Multiple remotes: replicate `git worktree add <branch>`'s DWIM — when
     // `checkout.defaultRemote` names one of these remotes, that's the ref the
     // new worktree will check out, so the hook preview must match. Without
-    // this, a `pre-start` on `<defaultRemote>/<branch>` could run unapproved
+    // this, a `pre-create` on `<defaultRemote>/<branch>` could run unapproved
     // because the preview defaulted to `HEAD`.
     if remotes.len() > 1
         && let Ok(Some(default)) = repo.config_value("checkout.defaultRemote")
@@ -1387,8 +1391,8 @@ fn base_ref_for_create(
     "HEAD".to_string()
 }
 
-/// The `.config/wt.toml` that `wt switch`'s post-switch hooks (`pre-start` /
-/// `post-start` / `post-switch`) will resolve against, viewed from *before*
+/// The `.config/wt.toml` that `wt switch`'s post-switch hooks (`pre-create` /
+/// `post-create` / `post-switch`) will resolve against, viewed from *before*
 /// the worktree is created — so the approval prompt and the pre-flight
 /// template validation see the exact config `execute_switch` /
 /// [`spawn_switch_background_hooks`] (via [`hook_repo_for_worktree`]) read at
@@ -1452,7 +1456,7 @@ fn hook_repo_for_worktree(worktree_path: &Path) -> anyhow::Result<Repository> {
 ///
 /// Returns `(hooks_approved, plan)`. `hooks_approved` is `false` and the plan
 /// empty when `!verify` or the user declined; the covered switch hooks
-/// (`pre-start` / `post-start` / `post-switch`) execute only from `plan`.
+/// (`pre-create` / `post-create` / `post-switch`) execute only from `plan`.
 pub(crate) fn approve_switch_hooks(
     repo: &Repository,
     config: &UserConfig,
@@ -1492,7 +1496,7 @@ pub(crate) fn approve_switch_hooks(
     }
 }
 
-/// Spawn post-switch (and post-start for creates) background hooks.
+/// Spawn post-switch (and post-create for creates) background hooks.
 pub(crate) fn spawn_switch_background_hooks(
     config: &UserConfig,
     result: &SwitchResult,
@@ -1526,7 +1530,7 @@ pub(crate) fn spawn_switch_background_hooks(
             hook_plan,
             result.path(),
             &ctx,
-            HookType::PostStart,
+            HookType::PostCreate,
             extra_vars,
             hooks_display_path,
         )?;
@@ -1733,7 +1737,7 @@ pub fn run_switch(
 
     // Spawn background hooks after success message
     // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)
-    // - post-start: runs only when creating a NEW worktree
+    // - post-create: runs only when creating a NEW worktree
     // Batch hooks into a single message when both types are present
     if hooks_approved {
         spawn_switch_background_hooks(
@@ -1747,7 +1751,7 @@ pub fn run_switch(
         )?;
     }
 
-    // Execute user command after post-start hooks have been spawned
+    // Execute user command after post-create hooks have been spawned
     // Note: execute_args requires execute via clap's `requires` attribute
     if let Some(cmd) = execute {
         // Build template context for expansion (includes base vars when creating)
@@ -1764,21 +1768,38 @@ pub fn run_switch(
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
 
-        // Expand template variables in command (shell_escape: true for safety)
-        let expanded_cmd = expand_template(cmd, &vars, true, &repo, "--execute command")?;
+        // The `--execute` payload is parsed by the active directive shell: the
+        // PowerShell wrapper `Invoke-Expression`s the EXEC directive file, every
+        // other wrapper (and the direct `sh -c` non-integration path) is POSIX.
+        // Escape interpolated values for whichever it is — the one place the
+        // escaping is shell-aware (hooks/aliases stay POSIX). See
+        // `worktrunk::shell_exec::directive_shell_escape_mode`.
+        let escape_mode = directive_shell_escape_mode();
 
-        // Append any trailing args (after --) to the execute command
-        // Each arg is also expanded, then shell-escaped
+        // Expand template variables in command, escaped for the directive shell.
+        let expanded_cmd = expand_template(cmd, &vars, escape_mode, &repo, "--execute command")?;
+
+        // Append any trailing args (after --) to the execute command.
+        // Each arg is template-expanded literally, then escaped for the
+        // directive shell so the wrapper parses it as one literal argument.
         let full_cmd = if execute_args.is_empty() {
             expanded_cmd
         } else {
             let expanded_args: Result<Vec<_>, _> = execute_args
                 .iter()
-                .map(|arg| expand_template(arg, &vars, false, &repo, "--execute argument"))
+                .map(|arg| {
+                    expand_template(
+                        arg,
+                        &vars,
+                        ShellEscapeMode::Literal,
+                        &repo,
+                        "--execute argument",
+                    )
+                })
                 .collect();
             let escaped_args: Vec<_> = expanded_args?
                 .iter()
-                .map(|arg| shell_escape::unix::escape(arg.into()).into_owned())
+                .map(|arg| shell_escape_for(escape_mode, arg))
                 .collect();
             format!("{} {}", expanded_cmd, escaped_args.join(" "))
         };
@@ -1821,7 +1842,7 @@ pub fn run_switch(
 /// Validates:
 /// - `--execute` command template (if present)
 /// - `--execute` trailing arg templates (if present)
-/// - Hook templates (pre-start, post-start, post-switch) from user and project config
+/// - Hook templates (pre-create, post-create, post-switch) from user and project config
 pub(crate) fn validate_switch_templates(
     repo: &Repository,
     config: &UserConfig,

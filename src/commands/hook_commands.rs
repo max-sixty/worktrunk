@@ -131,7 +131,7 @@ fn build_manual_hook_template_vars(
             .with_target(branch)
             .with_target_worktree_path(worktree_path),
         // Switch hooks: base = current (we're "switching from" here)
-        HookType::PreSwitch | HookType::PreStart | HookType::PostStart | HookType::PostSwitch => {
+        HookType::PreSwitch | HookType::PreCreate | HookType::PostCreate | HookType::PostSwitch => {
             TemplateVars::new()
                 .with_base(branch, worktree_path)
                 .with_target(branch)
@@ -209,10 +209,10 @@ pub struct HookCliArgs<'a> {
 ///   regardless of whether any template references the key.
 ///
 /// The `foreground` parameter controls execution mode for hooks that normally run
-/// in background (post-start, post-switch):
+/// in background (post-create, post-switch):
 /// - `None` = use default behavior for this hook type
 /// - `Some(true)` = run in foreground (for debugging)
-/// - `Some(false)` = run in background (default for post-start/post-switch)
+/// - `Some(false)` = run in background (default for post-create/post-switch)
 pub fn run_hook(
     hook_type: HookType,
     yes: bool,
@@ -381,20 +381,12 @@ pub fn handle_hook_show(
     let approvals = Approvals::load().context("Failed to load approvals")?;
     let project_id = repo.project_identifier().ok();
 
-    // Parse hook type filter if provided
-    let filter: Option<HookType> = hook_type_filter.map(|s| match s {
-        "pre-switch" => HookType::PreSwitch,
-        "pre-start" | "post-create" => HookType::PreStart,
-        "post-start" => HookType::PostStart,
-        "post-switch" => HookType::PostSwitch,
-        "pre-commit" => HookType::PreCommit,
-        "post-commit" => HookType::PostCommit,
-        "pre-merge" => HookType::PreMerge,
-        "post-merge" => HookType::PostMerge,
-        "pre-remove" => HookType::PreRemove,
-        "post-remove" => HookType::PostRemove,
-        _ => unreachable!("clap validates hook type"),
-    });
+    // Parse hook type filter if provided. clap's value parser already
+    // validated the string (canonical name or deprecated `-start` alias);
+    // `parse_hook_type` maps both to the canonical `HookType`.
+    let filter: Option<HookType> = hook_type_filter
+        .map(crate::cli::parse_hook_type)
+        .transpose()?;
 
     // Build context for template expansion (only used if --expanded)
     // Need to keep CommandEnv alive for the lifetime of ctx
@@ -421,7 +413,13 @@ pub fn handle_hook_show(
     let mut output = String::new();
 
     // Render user hooks
-    render_user_hooks(&mut output, config, filter, ctx.as_ref())?;
+    render_user_hooks(
+        &mut output,
+        config,
+        project_id.as_deref(),
+        filter,
+        ctx.as_ref(),
+    )?;
     output.push('\n');
 
     // Render project hooks
@@ -492,8 +490,8 @@ fn emit_hook_show_json(
         Ok(())
     };
 
-    // User hooks
-    let user_hooks = &user_config.hooks;
+    // User hooks (merge global + per-project so the listing matches what runs)
+    let user_hooks = user_config.hooks(project_id);
     for hook_type in HookType::iter() {
         if let Some(f) = filter
             && f != hook_type
@@ -527,6 +525,7 @@ fn emit_hook_show_json(
 fn render_user_hooks(
     out: &mut String,
     config: &UserConfig,
+    project_id: Option<&str>,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
@@ -546,10 +545,9 @@ fn render_user_hooks(
         )
     )?;
 
-    // Collect all user hooks (global hooks from the user config file)
-    // Note: uses overrides.hooks for display, not the merged hooks() accessor.
-    // get() handles the post-create → pre-start deprecation merge.
-    let user_hooks = &config.hooks;
+    // Merge global and per-project user hooks so display matches what
+    // actually runs (the execution path also uses `config.hooks(project_id)`).
+    let user_hooks = config.hooks(project_id);
     let hooks: Vec<_> = HookType::iter()
         .filter_map(|ht| user_hooks.get(ht).map(|cfg| (ht, cfg)))
         .collect();
@@ -602,7 +600,7 @@ fn render_project_hooks(
         return Ok(());
     };
 
-    // Collect all project hooks (get() handles post-create → pre-start merge)
+    // Collect all project hooks
     let hooks: Vec<_> = HookType::iter()
         .filter_map(|ht| config.hooks.get(ht).map(|cfg| (ht, cfg)))
         .collect();
@@ -702,10 +700,15 @@ fn expand_command_template(
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    // Use the standard template expansion (shell-escaped)
+    // Standard template expansion. Hooks always run through `Cmd::shell`
+    // (POSIX), so the preview is POSIX-escaped.
     // On any error, show both the template and error message
-    Ok(
-        worktrunk::config::expand_template(template, &vars, true, ctx.repo, "hook preview")
-            .unwrap_or_else(|err| format!("# {}\n{}", err.message, template)),
+    Ok(worktrunk::config::expand_template(
+        template,
+        &vars,
+        worktrunk::shell_exec::ShellEscapeMode::Posix,
+        ctx.repo,
+        "hook preview",
     )
+    .unwrap_or_else(|err| format!("# {}\n{}", err.message, template)))
 }

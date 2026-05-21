@@ -280,7 +280,11 @@ fn test_help_description_unknown_command() {
 #[case("nested_subcommand_step_squash", "squash", "wt step squash")]
 #[case("nested_subcommand_step_commit", "commit", "wt step commit")]
 #[case("nested_subcommand_hook_pre_merge", "pre-merge", "wt hook pre-merge")]
-#[case("nested_subcommand_hook_pre_start", "pre-start", "wt hook pre-start")]
+#[case(
+    "nested_subcommand_hook_pre_create",
+    "pre-create",
+    "wt hook pre-create"
+)]
 fn test_nested_subcommand_suggestion(
     #[case] test_name: &str,
     #[case] subcommand: &str,

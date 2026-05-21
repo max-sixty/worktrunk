@@ -31,7 +31,7 @@ use std::process::Stdio;
 use color_print::cformat;
 use worktrunk::config::{UserConfig, expand_template};
 use worktrunk::git::{ErrorExt, Repository, WorktreeInfo, WorktrunkError};
-use worktrunk::shell_exec::Cmd;
+use worktrunk::shell_exec::{Cmd, ShellEscapeMode};
 use worktrunk::styling::{
     eprintln, error_message, format_with_gutter, progress_message, success_message, warning_message,
 };
@@ -86,7 +86,15 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
             .collect();
         let expanded: Vec<String> = args
             .iter()
-            .map(|arg| expand_template(arg, &vars, false, &repo, "for-each argument"))
+            .map(|arg| {
+                expand_template(
+                    arg,
+                    &vars,
+                    ShellEscapeMode::Literal,
+                    &repo,
+                    "for-each argument",
+                )
+            })
             .collect::<Result<_, _>>()?;
 
         // Build JSON context for stdin

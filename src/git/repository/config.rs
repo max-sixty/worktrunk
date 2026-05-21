@@ -670,14 +670,14 @@ mod tests {
         assert!(repo.project_config_at_ref("no-such-ref").unwrap().is_none());
 
         // Commit one and read it back at that branch.
-        test.write_project_config(r#"post-start = "echo hi""#);
+        test.write_project_config(r#"post-create = "echo hi""#);
         test.run_git(&["add", ".config/wt.toml"]);
         test.run_git(&["commit", "-m", "Add config"]);
         let cfg = repo
             .project_config_at_ref("HEAD")
             .unwrap()
             .expect("config committed at HEAD");
-        assert!(cfg.hooks.post_start.is_some());
+        assert!(cfg.hooks.post_create.is_some());
 
         // A committed file that doesn't parse → Err. Callers must abort rather
         // than silently fall through to a different config.
@@ -704,7 +704,7 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        test.write_project_config(r#"post-start = "echo hi""#);
+        test.write_project_config(r#"post-create = "echo hi""#);
         test.run_git(&["add", ".config/wt.toml"]);
         test.run_git(&["commit", "-m", "Add config"]);
 
@@ -717,7 +717,7 @@ mod tests {
             .project_config_at_ref("-foo")
             .unwrap()
             .expect("config readable at hyphen-prefixed ref");
-        assert!(cfg.hooks.post_start.is_some());
+        assert!(cfg.hooks.post_create.is_some());
     }
 
     #[test]

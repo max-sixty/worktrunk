@@ -65,6 +65,7 @@ use worktrunk::shell_exec::Cmd;
 use worktrunk::shell_exec::ShellConfig;
 use worktrunk::shell_exec::{
     DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR,
+    ShellEscapeMode, directive_shell_escape_mode,
 };
 use worktrunk::styling::{hint_message, warning_message};
 
@@ -333,21 +334,25 @@ fn write_cd_path(file: &Path, path: &Path) -> io::Result<()> {
     f.flush()
 }
 
-/// Escape a path as a POSIX-shell (or PowerShell) single-quoted string. Only
-/// used in legacy mode where we still emit shell commands.
+/// Escape a path as a single-quoted `cd` command for the active directive
+/// shell. Only used in legacy mode where we still emit shell commands.
+///
+/// Always wraps the path in `'…'` (even when the path has no metacharacters),
+/// unlike the POSIX `--execute` payload escaper which omits quotes around safe
+/// values — a constant `cd '…'` shape keeps the legacy directive predictable.
+/// The per-shell decision comes from the shared [`directive_shell_escape_mode`],
+/// so the path body is escaped for POSIX (`'\''`), PowerShell (`''`), or fish
+/// (`\\` and `\'`) consistently with the rest of the directive payload.
 fn escape_legacy_cd(path: &Path) -> String {
     let path_str = path.to_string_lossy();
-    // POSIX and PowerShell both single-quote, but escape embedded quotes
-    // differently:
-    //   POSIX: 'it'\''s'
-    //   PSH:   'it''s'
-    let is_powershell = std::env::var("WORKTRUNK_SHELL")
-        .map(|v| v.eq_ignore_ascii_case("powershell"))
-        .unwrap_or(false);
-    let escaped = if is_powershell {
-        path_str.replace('\'', "''")
-    } else {
-        path_str.replace('\'', r"'\''")
+    let escaped = match directive_shell_escape_mode() {
+        ShellEscapeMode::PowerShell => path_str.replace('\'', "''"),
+        // fish treats `\` as an escape inside `'…'`, so the path body must
+        // double `\` (before escaping `'`) — POSIX `'\''` would corrupt it.
+        ShellEscapeMode::Fish => path_str.replace('\\', r"\\").replace('\'', r"\'"),
+        // Literal is unreachable here (directive_shell_escape_mode yields only
+        // Posix/PowerShell/Fish); grouped with Posix as the safe default.
+        ShellEscapeMode::Literal | ShellEscapeMode::Posix => path_str.replace('\'', r"'\''"),
     };
     format!("cd '{}'", escaped)
 }
@@ -607,7 +612,7 @@ pub fn pre_hook_display_path(hooks_run_at: &std::path::Path) -> Option<&std::pat
 ///
 /// ```ignore
 /// // Register hooks with display path:
-/// announcer.register(&ctx, HookType::PostStart, &extra_vars, post_hook_display_path(&destination))?;
+/// announcer.register(&ctx, HookType::PostCreate, &extra_vars, post_hook_display_path(&destination))?;
 /// ```
 pub fn post_hook_display_path(destination: &std::path::Path) -> Option<&std::path::Path> {
     post_hook_display_path_with(destination, is_shell_integration_active())
