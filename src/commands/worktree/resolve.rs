@@ -238,10 +238,9 @@ pub(super) fn generate_backup_path(
 /// Renames `worktree_path` to a `.bak.<base_suffix>` sibling. If that name is
 /// already taken — a same-second clobber, or a path that raced in after
 /// planning — it counts up (`…-2`, `…-3`, …) until it finds a free name.
-/// Every attempt is an atomic no-overwrite rename
-/// ([`worktrunk::fs::rename_no_replace`]), so an existing backup is never
-/// overwritten; the move just lands on the next free name. Returns the path
-/// the stale directory was moved to.
+/// Every attempt is an atomic no-overwrite rename ([`renamore::rename_exclusive`]),
+/// so an existing backup is never overwritten; the move just lands on the next
+/// free name. Returns the path the stale directory was moved to.
 pub(super) fn back_up_clobbered_path(
     worktree_path: &Path,
     base_suffix: &str,
@@ -257,7 +256,7 @@ pub(super) fn back_up_clobbered_path(
             format!("{base_suffix}-{n}")
         };
         let candidate = generate_backup_path(worktree_path, &suffix)?;
-        match worktrunk::fs::rename_no_replace(worktree_path, &candidate) {
+        match renamore::rename_exclusive(worktree_path, &candidate) {
             Ok(()) => return Ok(candidate),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
             Err(err) => {

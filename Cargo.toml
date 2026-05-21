@@ -127,6 +127,10 @@ urlencoding = "2.1"
 regex = "1.12"
 ignore = "0.4"
 reflink-copy = "0.1"
+# Atomic, no-overwrite rename (renameat2 / renamex_np / MoveFileExW) for
+# `--clobber` backups — closes the check-then-rename TOCTOU. Keeps the FFI
+# (and its `unsafe`) out of this crate, which is `unsafe_code = "forbid"`.
+renamore = "0.3"
 dashmap = "6.2.1"
 fs2 = "0.4.3"
 sanitize-filename = "0.6.0"
@@ -158,18 +162,6 @@ wait-timeout = "0.2"
 skim = { version = "0.20", optional = true }
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
 signal-hook = "0.4"
-
-# Atomic, no-overwrite rename (`renameat2`/`renameatx_np`) for
-# `worktrunk::fs::rename_no_replace`. Already present transitively (tempfile,
-# which, …); declared directly here only to enable the `fs` feature.
-[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-rustix = { version = "1", features = ["fs"] }
-
-# Atomic, no-overwrite rename (`MoveFileExW` without MOVEFILE_REPLACE_EXISTING)
-# for `worktrunk::fs::rename_no_replace`. Already present transitively;
-# declared directly for the `Win32_Storage_FileSystem` binding.
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [build-dependencies]
 vergen-gitcl = { version = "9.1.0", features = ["build"] }
