@@ -232,6 +232,47 @@ approved-commands = ["cargo build"]
     });
 }
 
+/// Hooks defined under `[projects."<id>"]` in the user config must show up
+/// in `wt hook show` alongside global user hooks, matching the merged set
+/// that the execution path actually runs.
+#[rstest]
+fn test_hook_show_merges_user_project_hooks(repo: TestRepo, temp_home: TempDir) {
+    // Remove origin so project_identifier falls back to the canonical path
+    repo.run_git(&["remote", "remove", "origin"]);
+    let project_id_str = repo.project_id();
+
+    let canonical_home = crate::common::canonicalize(temp_home.path())
+        .unwrap_or_else(|_| temp_home.path().to_path_buf());
+    let global_config_dir = canonical_home.join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    let config_path = global_config_dir.join("config.toml");
+    fs::write(
+        &config_path,
+        format!(
+            r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
+
+[post-start]
+global-hook = "echo global"
+
+[projects.'{project_id_str}'.post-start]
+project-hook = "echo per-project"
+"#
+        ),
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
+        cmd.arg("hook").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[rstest]
 fn test_error_with_context_formatting(temp_home: TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();

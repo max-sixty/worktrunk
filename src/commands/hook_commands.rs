@@ -413,7 +413,13 @@ pub fn handle_hook_show(
     let mut output = String::new();
 
     // Render user hooks
-    render_user_hooks(&mut output, config, filter, ctx.as_ref())?;
+    render_user_hooks(
+        &mut output,
+        config,
+        project_id.as_deref(),
+        filter,
+        ctx.as_ref(),
+    )?;
     output.push('\n');
 
     // Render project hooks
@@ -484,8 +490,8 @@ fn emit_hook_show_json(
         Ok(())
     };
 
-    // User hooks
-    let user_hooks = &user_config.hooks;
+    // User hooks (merge global + per-project so the listing matches what runs)
+    let user_hooks = user_config.hooks(project_id);
     for hook_type in HookType::iter() {
         if let Some(f) = filter
             && f != hook_type
@@ -519,6 +525,7 @@ fn emit_hook_show_json(
 fn render_user_hooks(
     out: &mut String,
     config: &UserConfig,
+    project_id: Option<&str>,
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
@@ -538,9 +545,9 @@ fn render_user_hooks(
         )
     )?;
 
-    // Collect all user hooks (global hooks from the user config file)
-    // Note: uses overrides.hooks for display, not the merged hooks() accessor.
-    let user_hooks = &config.hooks;
+    // Merge global and per-project user hooks so display matches what
+    // actually runs (the execution path also uses `config.hooks(project_id)`).
+    let user_hooks = config.hooks(project_id);
     let hooks: Vec<_> = HookType::iter()
         .filter_map(|ht| user_hooks.get(ht).map(|cfg| (ht, cfg)))
         .collect();
