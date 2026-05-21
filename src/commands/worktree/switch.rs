@@ -1836,18 +1836,26 @@ pub fn run_switch(
 /// Whether `value` is a single clean program-name token — the form `--execute`
 /// keeps accepting unchanged once it switches to the argv input model.
 ///
-/// First character `[A-Za-z0-9._/@]`, the rest additionally `+`/`-`. This
-/// excludes a leading `-`/`+` (an option-like `argv[0]` resolves differently),
-/// whitespace, `{{ }}` template markup, and every shell metacharacter — any of
-/// which means the value is not a bare program name.
+/// First character `[A-Za-z0-9._/@]`, the rest additionally `+`/`-`. On
+/// Windows, `\` and `:` are also allowed so native paths (`C:\dir\tool`) are
+/// not flagged; on POSIX they are shell metacharacters and stay excluded.
+/// This rejects a leading `-`/`+` (an option-like `argv[0]` resolves
+/// differently), whitespace, `{{ }}` template markup, and every shell
+/// metacharacter — any of which means the value is not a bare program name.
 fn is_clean_program_token(value: &str) -> bool {
     let mut chars = value.chars();
     let Some(first) = chars.next() else {
         return false;
     };
-    (first.is_ascii_alphanumeric() || matches!(first, '.' | '_' | '/' | '@'))
-        && chars
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '@' | '+' | '-'))
+    let first_ok = first.is_ascii_alphanumeric()
+        || matches!(first, '.' | '_' | '/' | '@')
+        || (cfg!(windows) && first == '\\');
+    first_ok
+        && chars.all(|c| {
+            c.is_ascii_alphanumeric()
+                || matches!(c, '.' | '_' | '/' | '@' | '+' | '-')
+                || (cfg!(windows) && matches!(c, '\\' | ':'))
+        })
 }
 
 /// Warn when a `--execute` value will change behavior under the upcoming argv
@@ -2037,6 +2045,13 @@ mod tests {
         ] {
             assert!(!is_clean_program_token(bad), "expected non-token: {bad:?}");
         }
+        // A native Windows path is a clean token only when targeting Windows;
+        // on POSIX, `\` and `:` are shell metacharacters.
+        assert_eq!(
+            is_clean_program_token(r"C:\Tools\foo.exe"),
+            cfg!(windows),
+            "Windows path classification should follow the target OS"
+        );
     }
 
     #[test]
