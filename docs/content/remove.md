@@ -58,12 +58,12 @@ Worktrunk has two force flags for different situations:
 
 | Flag | Scope | When to use |
 |------|-------|-------------|
-| `--force` (`-f`) | Worktree | Worktree has untracked files |
+| `--force` (`-f`) | Worktree | Worktree has uncommitted changes |
 | `--force-delete` (`-D`) | Branch | Branch has unmerged commits |
 
-{{ terminal(cmd="wt remove feature --force       # Remove worktree with untracked files|||wt remove feature -D            # Delete unmerged branch|||wt remove feature --force -D    # Both") }}
+{{ terminal(cmd="wt remove feature --force       # Remove dirty worktree|||wt remove feature -D            # Delete unmerged branch|||wt remove feature --force -D    # Both") }}
 
-Without `--force`, removal fails if the worktree contains untracked files. Without `--force-delete`, removal keeps branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of merge status.
+Without `--force`, removal fails if the worktree has staged, modified, or untracked files. Without `--force-delete`, removal keeps branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of merge status.
 
 ## Background removal
 
@@ -110,8 +110,8 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
   <b><span class=c>-f</span></b>, <b><span class=c>--force</span></b>
           Force worktree removal
 
-          Remove worktrees even if they contain untracked files (like build artifacts). Without this
-          flag, removal fails if untracked files exist.
+          Remove a dirty worktree, including staged, modified, and untracked files. Without this
+          flag, removal fails if the worktree has any uncommitted changes.
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)

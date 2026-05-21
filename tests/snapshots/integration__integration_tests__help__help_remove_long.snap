@@ -11,20 +11,22 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    LLVM_PROFILE_FILE: /var/folders/v3/8k5q0_6j3_q6gl4h8czr66sh0000gn/T/wt-test-profraw/cov-%m_%p.profraw
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
-    WORKTRUNK_APPROVALS_PATH: /nonexistent/wt/approvals.toml
-    WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml
-    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
@@ -58,7 +60,7 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...[0m
   [1m[36m-f[0m, [1m[36m--force[0m
           Force worktree removal[0m
           
-          Remove worktrees even if they contain untracked files (like build artifacts). Without this flag, removal fails if untracked files exist.[0m
+          Remove a dirty worktree, including staged, modified, and untracked files. Without this flag, removal fails if the worktree has any uncommitted changes.[0m
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
@@ -136,16 +138,16 @@ Branches matching these conditions and with empty working trees are dimmed in [
 
 Worktrunk has two force flags for different situations:
 
-        Flag          Scope           When to use          
- ─────────────────── ──────── ──────────────────────────── 
- [2m--force[0m ([2m-f[0m)        Worktree Worktree has untracked files 
- [2m--force-delete[0m ([2m-D[0m) Branch   Branch has unmerged commits  
+        Flag          Scope             When to use            
+ ─────────────────── ──────── ──────────────────────────────── 
+ [2m--force[0m ([2m-f[0m)        Worktree Worktree has uncommitted changes 
+ [2m--force-delete[0m ([2m-D[0m) Branch   Branch has unmerged commits      
 
-[107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m--force[0m[2m       # Remove worktree with untracked files[0m[2m[0m
+[107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m--force[0m[2m       # Remove dirty worktree[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m-D[0m[2m            # Delete unmerged branch[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m--force[0m[2m [0m[2m[36m-D[0m[2m    # Both[0m[2m[0m
 
-Without [2m--force[0m, removal fails if the worktree contains untracked files. Without [2m--force-delete[0m, removal keeps branches with unmerged changes. Use [2m--no-delete-branch[0m to keep the branch regardless of merge status.
+Without [2m--force[0m, removal fails if the worktree has staged, modified, or untracked files. Without [2m--force-delete[0m, removal keeps branches with unmerged changes. Use [2m--no-delete-branch[0m to keep the branch regardless of merge status.
 
 [1m[32mBackground removal[0m
 
