@@ -22,7 +22,7 @@ Output "{{OUTPUT_GIF}}"
 # - wt list / wt list --full (URLs, CI status, diff stats)
 # - wt switch (interactive picker)
 # - wsl abbreviation (wt switch --execute=claude --create)
-# - wt switch --create (with post-start hooks)
+# - wt switch --create (with post-create hooks)
 # - wt step commit (LLM commit message, standalone)
 # - wt merge (on uncommitted work - commits, rebases, merges, cleans up)
 # - wt remove (cleanup)
@@ -101,7 +101,7 @@ Sleep 200ms
 Type "tn"
 Sleep 2s
 
-# wt switch --create - shows post-start hooks running
+# wt switch --create - shows post-create hooks running
 Type "wt switch --create feature"
 Enter
 Sleep 4.5s

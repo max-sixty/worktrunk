@@ -131,7 +131,7 @@ fn build_manual_hook_template_vars(
             .with_target(branch)
             .with_target_worktree_path(worktree_path),
         // Switch hooks: base = current (we're "switching from" here)
-        HookType::PreSwitch | HookType::PreStart | HookType::PostStart | HookType::PostSwitch => {
+        HookType::PreSwitch | HookType::PreCreate | HookType::PostCreate | HookType::PostSwitch => {
             TemplateVars::new()
                 .with_base(branch, worktree_path)
                 .with_target(branch)
@@ -209,10 +209,10 @@ pub struct HookCliArgs<'a> {
 ///   regardless of whether any template references the key.
 ///
 /// The `foreground` parameter controls execution mode for hooks that normally run
-/// in background (post-start, post-switch):
+/// in background (post-create, post-switch):
 /// - `None` = use default behavior for this hook type
 /// - `Some(true)` = run in foreground (for debugging)
-/// - `Some(false)` = run in background (default for post-start/post-switch)
+/// - `Some(false)` = run in background (default for post-create/post-switch)
 pub fn run_hook(
     hook_type: HookType,
     yes: bool,
@@ -381,20 +381,12 @@ pub fn handle_hook_show(
     let approvals = Approvals::load().context("Failed to load approvals")?;
     let project_id = repo.project_identifier().ok();
 
-    // Parse hook type filter if provided
-    let filter: Option<HookType> = hook_type_filter.map(|s| match s {
-        "pre-switch" => HookType::PreSwitch,
-        "pre-start" | "post-create" => HookType::PreStart,
-        "post-start" => HookType::PostStart,
-        "post-switch" => HookType::PostSwitch,
-        "pre-commit" => HookType::PreCommit,
-        "post-commit" => HookType::PostCommit,
-        "pre-merge" => HookType::PreMerge,
-        "post-merge" => HookType::PostMerge,
-        "pre-remove" => HookType::PreRemove,
-        "post-remove" => HookType::PostRemove,
-        _ => unreachable!("clap validates hook type"),
-    });
+    // Parse hook type filter if provided. clap's value parser already
+    // validated the string (canonical name or deprecated `-start` alias);
+    // `parse_hook_type` maps both to the canonical `HookType`.
+    let filter: Option<HookType> = hook_type_filter
+        .map(crate::cli::parse_hook_type)
+        .transpose()?;
 
     // Build context for template expansion (only used if --expanded)
     // Need to keep CommandEnv alive for the lifetime of ctx
@@ -608,7 +600,7 @@ fn render_project_hooks(
         return Ok(());
     };
 
-    // Collect all project hooks (get() handles post-create → pre-start merge)
+    // Collect all project hooks
     let hooks: Vec<_> = HookType::iter()
         .filter_map(|ht| config.hooks.get(ht).map(|cfg| (ht, cfg)))
         .collect();

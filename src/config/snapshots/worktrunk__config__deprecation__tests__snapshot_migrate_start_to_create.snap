@@ -1,0 +1,10 @@
+---
+source: src/config/deprecation.rs
+expression: "migration_diff(content, &migrated)"
+---
+-pre-start = "npm install"
++pre-create = "npm install"
+ 
+-[post-start]
++[post-create]
+ server = "npm run dev"

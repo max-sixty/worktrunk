@@ -31,7 +31,7 @@ use worktrunk::styling::{
 };
 
 use super::resolve::{
-    compute_clobber_backup, compute_worktree_path, offer_bare_repo_worktree_path_fix, path_mismatch,
+    back_up_clobbered_path, compute_worktree_path, offer_bare_repo_worktree_path_fix, path_mismatch,
 };
 use super::types::{CreationMethod, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::cli::SwitchFormat;
@@ -99,9 +99,7 @@ enum PrProviderChoice {
 /// wrapped two-provider error.
 fn choose_pr_provider(repo: &Repository) -> anyhow::Result<PrProviderChoice> {
     if let Some(platform_raw) = repo
-        .load_project_config()
-        .ok()
-        .flatten()
+        .load_project_config()?
         .and_then(|c| c.forge_platform().map(str::to_string))
     {
         let platform = platform_raw.to_ascii_lowercase();
@@ -550,8 +548,13 @@ fn resolve_switch_target(
         .context("Failed to resolve branch name")?;
 
     // Handle remote-tracking ref names (e.g., "origin/username/feature-1" from the picker).
-    // Strip the remote prefix so DWIM can create a local tracking branch.
-    if !create && let Some(local_name) = repo.strip_remote_prefix(&resolved_branch) {
+    // Strip the remote prefix only when there is no exact local branch/worktree,
+    // so a local branch literally named `origin/foo` is not retargeted to `foo`.
+    if !create
+        && repo.worktree_for_branch(&resolved_branch)?.is_none()
+        && !repo.branch(&resolved_branch).exists_locally()?
+        && let Some(local_name) = repo.strip_remote_prefix(&resolved_branch)
+    {
         resolved_branch = local_name;
     }
 
@@ -649,7 +652,7 @@ fn validate_worktree_creation(
     path: &Path,
     clobber: bool,
     method: &CreationMethod,
-) -> anyhow::Result<Option<std::path::PathBuf>> {
+) -> anyhow::Result<bool> {
     // For regular switches without --create, validate branch exists
     if let CreationMethod::Regular {
         create_branch: false,
@@ -683,7 +686,17 @@ fn validate_worktree_creation(
         .into());
     }
 
-    // Handle clobber for stale directories
+    // Handle clobber for stale directories. Returns whether `execute_switch`
+    // must back up a path occupying `worktree_path` before creating the
+    // worktree; the backup itself happens at execution time so a path that
+    // races in after planning is still moved atomically (see
+    // `back_up_clobbered_path`).
+    if !path.exists() {
+        return Ok(false);
+    }
+    if clobber {
+        return Ok(true);
+    }
     let is_create = matches!(
         method,
         CreationMethod::Regular {
@@ -691,7 +704,12 @@ fn validate_worktree_creation(
             ..
         }
     );
-    compute_clobber_backup(path, branch, clobber, is_create)
+    Err(GitError::WorktreePathExists {
+        branch: branch.to_string(),
+        path: path.to_path_buf(),
+        create: is_create,
+    }
+    .into())
 }
 
 /// Set up a local branch for a fork PR or MR.
@@ -828,7 +846,7 @@ pub fn plan_switch(
     let expected_path = compute_worktree_path(repo, &target.branch, config)?;
 
     // Phase 4: Validate we can create at this path
-    let clobber_backup = validate_worktree_creation(
+    let needs_clobber_backup = validate_worktree_creation(
         repo,
         &target.branch,
         &expected_path,
@@ -841,7 +859,7 @@ pub fn plan_switch(
         branch: target.branch,
         worktree_path: expected_path,
         method: target.method,
-        clobber_backup,
+        needs_clobber_backup,
         new_previous,
     })
 }
@@ -903,23 +921,32 @@ pub fn execute_switch(
             branch,
             worktree_path,
             method,
-            clobber_backup,
+            needs_clobber_backup,
             new_previous,
         } => {
             // Handle --clobber backup if needed (shared for all creation methods)
-            if let Some(backup_path) = &clobber_backup {
+            if needs_clobber_backup {
+                // Timestamped backup name, computed here at move time so the
+                // suffix reflects when the path is actually set aside.
+                let timestamp = worktrunk::utils::epoch_now() as i64;
+                let datetime =
+                    chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(chrono::Utc::now);
+                let base_suffix = datetime.format("%Y%m%d-%H%M%S").to_string();
+
+                // Atomically move the stale path aside. A backup name that is
+                // already taken (a same-second clobber, or one that raced in
+                // after planning) is never overwritten — the move falls back
+                // to the next free `-N` name.
+                let backup_path = back_up_clobbered_path(&worktree_path, &base_suffix)?;
+
                 let path_display = worktrunk::path::format_path_for_display(&worktree_path);
-                let backup_display = worktrunk::path::format_path_for_display(backup_path);
+                let backup_display = worktrunk::path::format_path_for_display(&backup_path);
                 eprintln!(
                     "{}",
                     warning_message(cformat!(
-                        "Moving <bold>{path_display}</> to <bold>{backup_display}</> (--clobber)"
+                        "Moved <bold>{path_display}</> to <bold>{backup_display}</> (--clobber)"
                     ))
                 );
-
-                std::fs::rename(&worktree_path, backup_path).with_context(|| {
-                    format!("Failed to move {path_display} to {backup_display}")
-                })?;
             }
 
             // Execute based on creation method
@@ -1109,9 +1136,9 @@ pub fn execute_switch(
                 })
                 .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
-            // PR/MR identity travels into both the pre-start hook below and the
+            // PR/MR identity travels into both the pre-create hook below and the
             // SwitchResult — TemplateVars::for_post_switch then forwards it to
-            // background post-switch / post-start hooks.
+            // background post-switch / post-create hooks.
             let (pr_number, pr_url) = match &method {
                 CreationMethod::ForkRef {
                     number, ref_url, ..
@@ -1119,7 +1146,7 @@ pub fn execute_switch(
                 CreationMethod::Regular { .. } => (None, None),
             };
 
-            // Execute pre-start commands. The hook resolves its `.config/wt.toml`
+            // Execute pre-create commands. The hook resolves its `.config/wt.toml`
             // from the new worktree (created just above) — see
             // `hook_repo_for_worktree`.
             if run_hooks {
@@ -1140,7 +1167,7 @@ pub fn execute_switch(
                         vars = vars.with_pr(Some(*number), Some(ref_url));
                     }
                 }
-                ctx.execute_pre_start_commands(&vars.as_extra_vars(), hook_plan, &worktree_path)?;
+                ctx.execute_pre_create_commands(&vars.as_extra_vars(), hook_plan, &worktree_path)?;
             }
 
             // Record successful switch in history
@@ -1245,6 +1272,25 @@ impl SwitchJsonOutput {
     }
 }
 
+/// Emit the structured `--format=json` result to stdout when requested.
+///
+/// Shared by the argument path and the interactive picker so `wt switch
+/// --format=json` produces identical output regardless of how the branch
+/// was chosen. A no-op for `SwitchFormat::Text`.
+pub(crate) fn emit_switch_json(
+    format: SwitchFormat,
+    result: &SwitchResult,
+    branch_info: &SwitchBranchInfo,
+) -> anyhow::Result<()> {
+    if format != SwitchFormat::Json {
+        return Ok(());
+    }
+    let json = SwitchJsonOutput::from_result(result, branch_info);
+    let json = serde_json::to_string(&json).context("Failed to serialize to JSON")?;
+    println!("{json}");
+    Ok(())
+}
+
 /// Options for the switch command
 pub struct SwitchOptions<'a> {
     pub branch: &'a str,
@@ -1314,13 +1360,13 @@ pub(crate) fn run_pre_switch_hooks(
 
 /// Hook types that apply after a switch operation.
 ///
-/// Creates trigger pre-start + post-start + post-switch hooks;
+/// Creates trigger pre-create + post-create + post-switch hooks;
 /// existing worktrees trigger only post-switch.
 fn switch_post_hook_types(is_create: bool) -> &'static [HookType] {
     if is_create {
         &[
-            HookType::PreStart,
-            HookType::PostStart,
+            HookType::PreCreate,
+            HookType::PostCreate,
             HookType::PostSwitch,
         ]
     } else {
@@ -1358,7 +1404,7 @@ fn base_ref_for_create(
     // Multiple remotes: replicate `git worktree add <branch>`'s DWIM — when
     // `checkout.defaultRemote` names one of these remotes, that's the ref the
     // new worktree will check out, so the hook preview must match. Without
-    // this, a `pre-start` on `<defaultRemote>/<branch>` could run unapproved
+    // this, a `pre-create` on `<defaultRemote>/<branch>` could run unapproved
     // because the preview defaulted to `HEAD`.
     if remotes.len() > 1
         && let Ok(Some(default)) = repo.config_value("checkout.defaultRemote")
@@ -1369,8 +1415,8 @@ fn base_ref_for_create(
     "HEAD".to_string()
 }
 
-/// The `.config/wt.toml` that `wt switch`'s post-switch hooks (`pre-start` /
-/// `post-start` / `post-switch`) will resolve against, viewed from *before*
+/// The `.config/wt.toml` that `wt switch`'s post-switch hooks (`pre-create` /
+/// `post-create` / `post-switch`) will resolve against, viewed from *before*
 /// the worktree is created — so the approval prompt and the pre-flight
 /// template validation see the exact config `execute_switch` /
 /// [`spawn_switch_background_hooks`] (via [`hook_repo_for_worktree`]) read at
@@ -1434,7 +1480,7 @@ fn hook_repo_for_worktree(worktree_path: &Path) -> anyhow::Result<Repository> {
 ///
 /// Returns `(hooks_approved, plan)`. `hooks_approved` is `false` and the plan
 /// empty when `!verify` or the user declined; the covered switch hooks
-/// (`pre-start` / `post-start` / `post-switch`) execute only from `plan`.
+/// (`pre-create` / `post-create` / `post-switch`) execute only from `plan`.
 pub(crate) fn approve_switch_hooks(
     repo: &Repository,
     config: &UserConfig,
@@ -1474,7 +1520,7 @@ pub(crate) fn approve_switch_hooks(
     }
 }
 
-/// Spawn post-switch (and post-start for creates) background hooks.
+/// Spawn post-switch (and post-create for creates) background hooks.
 pub(crate) fn spawn_switch_background_hooks(
     config: &UserConfig,
     result: &SwitchResult,
@@ -1508,7 +1554,7 @@ pub(crate) fn spawn_switch_background_hooks(
             hook_plan,
             result.path(),
             &ctx,
-            HookType::PostStart,
+            HookType::PostCreate,
             extra_vars,
             hooks_display_path,
         )?;
@@ -1657,11 +1703,7 @@ pub fn run_switch(
 
     // --format=json: write structured result to stdout. All behavior (hooks,
     // --execute, shell integration) proceeds normally — format only affects output.
-    if format == SwitchFormat::Json {
-        let json = SwitchJsonOutput::from_result(&result, &branch_info);
-        let json = serde_json::to_string(&json).context("Failed to serialize to JSON")?;
-        println!("{json}");
-    }
+    emit_switch_json(format, &result, &branch_info)?;
 
     // Early exit for benchmarking time-to-first-output
     if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
@@ -1719,7 +1761,7 @@ pub fn run_switch(
 
     // Spawn background hooks after success message
     // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)
-    // - post-start: runs only when creating a NEW worktree
+    // - post-create: runs only when creating a NEW worktree
     // Batch hooks into a single message when both types are present
     if hooks_approved {
         spawn_switch_background_hooks(
@@ -1733,7 +1775,7 @@ pub fn run_switch(
         )?;
     }
 
-    // Execute user command after post-start hooks have been spawned
+    // Execute user command after post-create hooks have been spawned
     // Note: execute_args requires execute via clap's `requires` attribute
     if let Some(cmd) = execute {
         // Build template context for expansion (includes base vars when creating)
@@ -1894,7 +1936,7 @@ fn warn_if_execute_form_deprecated(cmd: &str, execute_args: &[String]) {
 /// Validates:
 /// - `--execute` command template (if present)
 /// - `--execute` trailing arg templates (if present)
-/// - Hook templates (pre-start, post-start, post-switch) from user and project config
+/// - Hook templates (pre-create, post-create, post-switch) from user and project config
 pub(crate) fn validate_switch_templates(
     repo: &Repository,
     config: &UserConfig,

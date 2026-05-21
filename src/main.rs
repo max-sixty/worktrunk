@@ -181,14 +181,6 @@ fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
             // which parses against a clap tree augmented with hook-type
             // subcommand stubs and renders their help directly. Execution flow
             // only reaches here for non-help invocations.
-            if args.first().and_then(|s| s.to_str()) == Some("post-create") {
-                eprintln!(
-                    "{}",
-                    warning_message(
-                        "wt hook post-create is deprecated; use wt hook pre-start instead"
-                    )
-                );
-            }
             let opts = HookOptions::parse(&args)?;
             run_hook(
                 opts.hook_type,
@@ -661,7 +653,7 @@ fn handle_select_command(branches: bool, remotes: bool) -> anyhow::Result<()> {
     // Deprecated: show warning and delegate to handle_picker
     warn_select_deprecated();
     worktrunk::config::suppress_warnings();
-    handle_picker(branches, remotes, None)
+    handle_picker(branches, remotes, None, SwitchFormat::Text)
 }
 
 #[cfg(not(unix))]
@@ -691,7 +683,12 @@ fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> {
             let Some(branch) = args.branch else {
                 #[cfg(unix)]
                 {
-                    return handle_picker(args.branches, args.remotes, change_dir_flag);
+                    return handle_picker(
+                        args.branches,
+                        args.remotes,
+                        change_dir_flag,
+                        args.format,
+                    );
                 }
 
                 #[cfg(not(unix))]

@@ -39,7 +39,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// Run `command` supervised; tear its whole process tree down when the command
 /// exits or its worktree is removed.
 pub(crate) fn step_tether(command: &[String]) -> Result<()> {
-    // post-start hooks run with cwd at the worktree root; capture it now so
+    // post-create hooks run with cwd at the worktree root; capture it now so
     // the reaper can notice the worktree being removed. `None` (cwd
     // unavailable) degrades to "tear down only on the command's own exit",
     // never a false teardown.

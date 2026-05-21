@@ -31,7 +31,7 @@ user-lint = "pre-commit run --all-files"
     {test = "cargo test"},
 ]
 
-[post-start]
+[post-create]
 deps = "npm install"
 "#,
     );
@@ -88,7 +88,7 @@ fn setup_all_hook_types(repo: &TestRepo, temp_home: &TempDir) {
     {test = "cargo test"},
 ]
 
-[post-start]
+[post-create]
 deps = "npm install"
 
 [post-merge]
@@ -251,10 +251,10 @@ fn test_hook_show_merges_user_project_hooks(repo: TestRepo, temp_home: TempDir) 
         format!(
             r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
-[post-start]
+[post-create]
 global-hook = "echo global"
 
-[projects.'{project_id_str}'.post-start]
+[projects.'{project_id_str}'.post-create]
 project-hook = "echo per-project"
 "#
         ),
@@ -391,7 +391,7 @@ broken = "echo {{ branch"
 }
 
 /// Test that undefined variable errors show both template and error with --expanded.
-/// The `base` variable is only defined for pre-start hooks, so using it in pre-commit
+/// The `base` variable is only defined for pre-create hooks, so using it in pre-commit
 /// will trigger an undefined variable error that shows both the error and raw template.
 #[rstest]
 fn test_hook_show_expanded_undefined_var(repo: TestRepo, temp_home: TempDir) {
@@ -405,7 +405,7 @@ fn test_hook_show_expanded_undefined_var(repo: TestRepo, temp_home: TempDir) {
     )
     .unwrap();
 
-    // Create project config with `base` variable (only defined for pre-start hooks)
+    // Create project config with `base` variable (only defined for pre-create hooks)
     // In pre-commit context, this will be undefined and should show error + template
     repo.write_project_config(
         r#"[pre-commit]
@@ -450,7 +450,7 @@ user-lint = "pre-commit run --all-files"
     {build = "cargo build"},
 ]
 
-[post-start]
+[post-create]
 deps = "npm install"
 "#,
     );
@@ -474,7 +474,7 @@ deps = "npm install"
     assert_eq!(
         entries.len(),
         3,
-        "user pre-commit + project pre-merge + project post-start"
+        "user pre-commit + project pre-merge + project post-create"
     );
 
     // User entry
@@ -511,7 +511,7 @@ fn test_hook_show_filtered_expanded_json(repo: TestRepo, temp_home: TempDir) {
 [pre-commit]
 user-lint = "echo {{ branch }}"
 
-[post-start]
+[post-create]
 user-greet = "echo hi"
 "#,
     )
@@ -520,7 +520,7 @@ user-greet = "echo hi"
         r#"[pre-commit]
 project-fmt = "echo fmt {{ branch }}"
 
-[post-start]
+[post-create]
 project-deps = "echo deps"
 "#,
     );
@@ -546,7 +546,7 @@ project-deps = "echo deps"
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
     let entries = parsed.as_array().expect("array");
 
-    // Filter dropped the post-start hooks from both user and project.
+    // Filter dropped the post-create hooks from both user and project.
     let names: Vec<&str> = entries
         .iter()
         .map(|e| e["name"].as_str().unwrap())

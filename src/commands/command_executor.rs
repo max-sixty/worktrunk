@@ -906,7 +906,7 @@ mod tests {
         }
         .into();
         let cmd = make_cmd(Some("lint"));
-        let wrapper = hook_error_wrapper(HookType::PostStart);
+        let wrapper = hook_error_wrapper(HookType::PostCreate);
         let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::Warn);
         assert!(result.is_ok());
     }
@@ -920,7 +920,7 @@ mod tests {
         }
         .into();
         let cmd = make_cmd(Some("cleanup"));
-        let wrapper = hook_error_wrapper(HookType::PostStart);
+        let wrapper = hook_error_wrapper(HookType::PostCreate);
         let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::Warn);
         let err = result.unwrap_err();
         let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
@@ -935,7 +935,7 @@ mod tests {
         // Covers the `cmd.name = None` branch of the Warn arm.
         let err = anyhow::anyhow!("unexpected failure");
         let cmd = make_cmd(None);
-        let wrapper = hook_error_wrapper(HookType::PostStart);
+        let wrapper = hook_error_wrapper(HookType::PostCreate);
         let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::Warn);
         assert!(result.is_ok());
     }

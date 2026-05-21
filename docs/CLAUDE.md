@@ -4,7 +4,7 @@ This is the Zola-based documentation site for Worktrunk, published at worktrunk.
 
 ## Development workflow
 
-The docs dev server starts automatically via the post-start hook. Find the port with `wt list statusline`.
+The docs dev server starts automatically via the post-create hook. Find the port with `wt list statusline`.
 
 For static builds with local URLs (e.g., testing with a simple HTTP server):
 

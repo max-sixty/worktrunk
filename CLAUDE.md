@@ -91,11 +91,20 @@ When no structured alternative exists, document the fragility inline.
 
 ### Network Access
 
-worktrunk is local-first: the network is touched only when the user asked for it. **Single exception:** the *first* `Repository::default_branch()` per repo may fall through to `git ls-remote`; the result caches in `worktrunk.default-branch` and every later call is local. No other detection helper may add a similar fallback.
+worktrunk is local-first: the network is touched only when the user asked for it. **One detection helper is exempt:** the *first* `Repository::default_branch()` per repo may fall through to `git ls-remote`; the result caches in `worktrunk.default-branch` and every later call is local. No other detection helper may add a similar fallback.
 
-Why: silent "lookup" paths that walk to the wire (alias dispatch, hook context build, `wt statusline`, recovery) stall commands the user wouldn't expect to do network work, worst on a fresh clone. The `default_branch()` bootstrap keeps a fresh clone usable while bounding the exception to one helper firing at most once per repo.
+Why: silent "lookup" paths that walk to the wire (alias dispatch, hook context build, recovery) stall commands the user wouldn't expect to do network work, worst on a fresh clone. The `default_branch()` bootstrap keeps a fresh clone usable while bounding the exception to one helper firing at most once per repo.
 
-Before adding an accessor that could reach the wire (`gh`, `glab`, `git fetch`, `git ls-remote`, HTTP), confirm the call site is one the user explicitly invoked. Background polling on a TTL cache counts: a CI-status check on every shell prompt is invisible but still hits the wire, and is not allowed.
+Before adding an accessor that could reach the wire (`gh`, `glab`, `git fetch`, `git ls-remote`, HTTP), confirm the command that calls it is not intended to be fast. A foreground command the user runs and waits on absorbs the latency; a command in a synchronous hot path like a shell prompt cannot, and must not reach the wire. `wt list statusline` is not a fast command despite running on every prompt: Claude Code consumes its output asynchronously.
+
+What currently reaches the wire:
+
+- `wt list --full`, `wt list statusline` — CI status
+- generating a branch summary with a `commit.generation` command
+- generating a commit message with a `commit.generation` command
+- `wt switch pr:<n>`, `wt switch mr:<n>` — host API to resolve the PR/MR, then `git fetch` of its branch
+- `wt config show --full` — version check against GitHub
+- the first `Repository::default_branch()` per repo — `git ls-remote` (above)
 
 ### Signal Handling: Ctrl-C Cancels the Current Command
 

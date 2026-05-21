@@ -469,8 +469,8 @@ pub fn branch_tracks_ref(
 pub enum HookType {
     PreSwitch,
     PostSwitch,
-    PreStart,
-    PostStart,
+    PreCreate,
+    PostCreate,
     PreCommit,
     PostCommit,
     PreMerge,
@@ -489,12 +489,12 @@ impl HookType {
     pub fn is_pre(self) -> bool {
         match self {
             HookType::PreSwitch
-            | HookType::PreStart
+            | HookType::PreCreate
             | HookType::PreCommit
             | HookType::PreMerge
             | HookType::PreRemove => true,
             HookType::PostSwitch
-            | HookType::PostStart
+            | HookType::PostCreate
             | HookType::PostCommit
             | HookType::PostMerge
             | HookType::PostRemove => false,

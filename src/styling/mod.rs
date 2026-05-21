@@ -691,7 +691,7 @@ cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/bu
         // We never emit [39m ourselves - all our resets use [0m (full reset).
         // So any [39m in the output is an artifact from wrap_ansi that we must strip.
         //
-        // This is the actual post-start command from user config that exposed the bug.
+        // This is the actual post-create command from user config that exposed the bug.
         let command = r#"[ -d {{ repo_root }}/target/debug/deps ] && [ ! -e {{ worktree }}/target ] &&
 mkdir -p {{ worktree }}/target/debug/deps &&
 cp -c {{ repo_root }}/target/debug/deps/*.rlib {{ repo_root }}/target/debug/deps/*.rmeta {{ worktree

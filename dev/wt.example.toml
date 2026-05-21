@@ -8,8 +8,8 @@
 #
 # Project hooks apply to this repository only. See `wt hook` (https://worktrunk.dev/hook/) for hook types, execution order, and examples.
 #
-# pre-start = "npm ci"
-# post-start = "npm run dev"
+# pre-create = "npm ci"
+# post-create = "npm run dev"
 # pre-merge = "npm test"
 #
 # ## Dev server URL

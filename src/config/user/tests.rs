@@ -86,9 +86,6 @@ exclude = [".conductor/"]
 [post-create]
 run = "npm install"
 
-[post-start]
-run = "npm run build"
-
 [post-switch]
 rename-tab = "echo 'switched'"
 "#;
@@ -1883,24 +1880,24 @@ fn parse_hooks(toml_str: &str) -> HooksConfig {
 
 #[test]
 fn test_hooks_merge_append_semantics() {
-    // Global has post-start, per-project has post-start
+    // Global has post-create, per-project has post-create
     // Both should run (global first, then per-project)
     let mut config = UserConfig {
-        hooks: parse_hooks("post-start = \"echo global\""),
+        hooks: parse_hooks("post-create = \"echo global\""),
         ..Default::default()
     };
 
     config.projects.insert(
         "github.com/user/repo".to_string(),
         UserProjectOverrides {
-            hooks: parse_hooks("post-start = \"echo project\""),
+            hooks: parse_hooks("post-create = \"echo project\""),
             ..Default::default()
         },
     );
 
     let effective = config.hooks(Some("github.com/user/repo"));
-    let post_start = effective.post_start.unwrap();
-    let commands: Vec<_> = post_start.commands().collect();
+    let post_create = effective.post_create.unwrap();
+    let commands: Vec<_> = post_create.commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "echo global");
     assert_eq!(commands[1].template, "echo project");
@@ -1910,13 +1907,13 @@ fn test_hooks_merge_append_semantics() {
 fn test_hooks_no_project_override_uses_global() {
     // Global has hooks, project doesn't - global hooks used
     let config = UserConfig {
-        hooks: parse_hooks("post-start = \"echo global\""),
+        hooks: parse_hooks("post-create = \"echo global\""),
         ..Default::default()
     };
 
     let effective = config.hooks(Some("github.com/other/repo"));
-    let post_start = effective.post_start.unwrap();
-    let commands: Vec<_> = post_start.commands().collect();
+    let post_create = effective.post_create.unwrap();
+    let commands: Vec<_> = post_create.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo global");
 }
@@ -1929,24 +1926,24 @@ fn test_hooks_project_only_no_global() {
     config.projects.insert(
         "github.com/user/repo".to_string(),
         UserProjectOverrides {
-            hooks: parse_hooks("post-start = \"echo project\""),
+            hooks: parse_hooks("post-create = \"echo project\""),
             ..Default::default()
         },
     );
 
     let effective = config.hooks(Some("github.com/user/repo"));
-    let post_start = effective.post_start.unwrap();
-    let commands: Vec<_> = post_start.commands().collect();
+    let post_create = effective.post_create.unwrap();
+    let commands: Vec<_> = post_create.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo project");
 }
 
 #[test]
 fn test_hooks_different_hook_types_not_merged() {
-    // Global has post-start, per-project has pre-commit
+    // Global has post-create, per-project has pre-commit
     // These should remain separate (different hook types)
     let mut config = UserConfig {
-        hooks: parse_hooks("post-start = \"echo global-start\""),
+        hooks: parse_hooks("post-create = \"echo global-start\""),
         ..Default::default()
     };
 
@@ -1960,9 +1957,9 @@ fn test_hooks_different_hook_types_not_merged() {
 
     let effective = config.hooks(Some("github.com/user/repo"));
 
-    // post-start: only global
-    let post_start = effective.post_start.unwrap();
-    let start_commands: Vec<_> = post_start.commands().collect();
+    // post-create: only global
+    let post_create = effective.post_create.unwrap();
+    let start_commands: Vec<_> = post_create.commands().collect();
     assert_eq!(start_commands.len(), 1);
     assert_eq!(start_commands[0].template, "echo global-start");
 
@@ -1977,13 +1974,13 @@ fn test_hooks_different_hook_types_not_merged() {
 fn test_hooks_none_project_uses_global() {
     // When no project is provided, only global hooks are used
     let config = UserConfig {
-        hooks: parse_hooks("post-start = \"echo global\""),
+        hooks: parse_hooks("post-create = \"echo global\""),
         ..Default::default()
     };
 
     let effective = config.hooks(None);
-    let post_start = effective.post_start.unwrap();
-    let commands: Vec<_> = post_start.commands().collect();
+    let post_create = effective.post_create.unwrap();
+    let commands: Vec<_> = post_create.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo global");
 }
@@ -2067,12 +2064,12 @@ fn test_valid_user_config_keys_all_deserialize() {
 #[test]
 fn test_hooks_merge_mixed_formats_preserves_order() {
     // Global uses string format (unnamed command)
-    let global_hooks = parse_hooks(r#"post-start = "npm install""#);
+    let global_hooks = parse_hooks(r#"post-create = "npm install""#);
 
     // Per-project uses table format (named commands)
     let project_hooks = parse_hooks(
         r#"
-[post-start]
+[post-create]
 setup = "echo setup"
 "#,
     );
@@ -2092,7 +2089,7 @@ setup = "echo setup"
 
     // Verify merge preserves order: global first, then project
     let effective = config.hooks(Some("github.com/user/repo"));
-    let commands: Vec<_> = effective.post_start.as_ref().unwrap().commands().collect();
+    let commands: Vec<_> = effective.post_create.as_ref().unwrap().commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "npm install"); // Global first
     assert_eq!(commands[1].template, "echo setup"); // Project second
@@ -2104,14 +2101,14 @@ fn test_hooks_merge_same_names_both_run() {
     // Both define "test" command - both should execute
     let global_hooks = parse_hooks(
         r#"
-[post-start]
+[post-create]
 test = "cargo test"
 "#,
     );
 
     let project_hooks = parse_hooks(
         r#"
-[post-start]
+[post-create]
 test = "npm test"
 "#,
     );
@@ -2131,7 +2128,7 @@ test = "npm test"
 
     // Both commands present, global first
     let effective = config.hooks(Some("github.com/user/repo"));
-    let commands: Vec<_> = effective.post_start.as_ref().unwrap().commands().collect();
+    let commands: Vec<_> = effective.post_create.as_ref().unwrap().commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "cargo test");
     assert_eq!(commands[1].template, "npm test");
@@ -2279,55 +2276,16 @@ fn test_hooks_merge_trait_appends_for_global_project_merge() {
 }
 
 #[test]
-fn test_hooks_merge_folds_post_create_into_pre_start() {
-    // User config uses deprecated `post-create`, project uses `pre-start`.
-    // merge_with should combine them so the user's hook isn't silently dropped.
-    let user_hooks = parse_hooks("post-create = \"npm install\"");
-    let project_hooks = parse_hooks("pre-start = \"cargo test\"");
-
-    let merged = user_hooks.merge_with(&project_hooks);
-    let pre_start = merged
-        .get(HookType::PreStart)
-        .expect("should have pre-start");
-    let commands: Vec<_> = pre_start.commands().collect();
-    assert_eq!(commands.len(), 2, "Both hooks should be present");
-    assert_eq!(commands[0].template, "npm install"); // User's post-create first
-    assert_eq!(commands[1].template, "cargo test"); // Project's pre-start second
-}
-
-#[test]
-fn test_hooks_merge_same_source_both_pre_start_and_post_create() {
-    // Single config with both fields — merge_with folds post_create into pre_start.
-    // This is an unusual config (user wrote both), but if it goes through merge
-    // both commands should run rather than silently dropping one.
-    let both = parse_hooks("pre-start = \"npm install\"\npost-create = \"cargo build\"");
-    let empty = HooksConfig::default();
-
-    let merged = both.merge_with(&empty);
-    let pre_start = merged
-        .get(HookType::PreStart)
-        .expect("should have pre-start");
-    let commands: Vec<_> = pre_start.commands().collect();
-    assert_eq!(
-        commands.len(),
-        2,
-        "Both commands from same source should be present"
-    );
-    assert_eq!(commands[0].template, "npm install"); // pre-start first
-    assert_eq!(commands[1].template, "cargo build"); // post-create second
-}
-
-#[test]
 fn test_hooks_merge_post_create_both_sides() {
-    // Both configs use deprecated `post-create` — should still combine
+    // `post-create` from global and per-project config combine (global first).
     let global = parse_hooks("post-create = \"npm install\"");
     let project = parse_hooks("post-create = \"cargo build\"");
 
     let merged = global.merge_with(&project);
-    let pre_start = merged
-        .get(HookType::PreStart)
-        .expect("should have pre-start");
-    let commands: Vec<_> = pre_start.commands().collect();
+    let post_create = merged
+        .get(HookType::PostCreate)
+        .expect("should have post-create");
+    let commands: Vec<_> = post_create.commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "npm install");
     assert_eq!(commands[1].template, "cargo build");
@@ -3062,12 +3020,12 @@ fn test_save_to_existing_file_replaces_changed_inline_table() {
     // replaces it (even though this changes formatting from inline to standard).
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
-    std::fs::write(&config_path, "post-start = { build = \"cargo build\" }\n").unwrap();
+    std::fs::write(&config_path, "post-create = { build = \"cargo build\" }\n").unwrap();
 
     // Load, modify the hook, then save
     let mut config =
         UserConfig::load_from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-    config.hooks = toml::from_str("post-start = { build = \"cargo test\" }").unwrap();
+    config.hooks = toml::from_str("post-create = { build = \"cargo test\" }").unwrap();
     config.save_to(&config_path).unwrap();
 
     let saved = std::fs::read_to_string(&config_path).unwrap();
@@ -3280,12 +3238,12 @@ future-per-project = "value"
 
 #[test]
 fn test_save_to_existing_file_preserves_inline_table_formatting() {
-    // When a user writes a hook as an inline table (e.g., `post-start = { ... }`),
+    // When a user writes a hook as an inline table (e.g., `post-create = { ... }`),
     // the diff-based merge must not rewrite it to a standard table if the value
     // is semantically unchanged.
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
-    let original = "post-start = { build = \"cargo build\" }\n";
+    let original = "post-create = { build = \"cargo build\" }\n";
     std::fs::write(&config_path, original).unwrap();
 
     // Load the config (which parses hooks via flatten), then save it back
@@ -3293,13 +3251,13 @@ fn test_save_to_existing_file_preserves_inline_table_formatting() {
     config.save_to(&config_path).unwrap();
 
     let saved = std::fs::read_to_string(&config_path).unwrap();
-    // The inline table syntax should be preserved (not expanded to [post-start])
+    // The inline table syntax should be preserved (not expanded to [post-create])
     assert!(
-        saved.contains("post-start = { build = \"cargo build\" }"),
+        saved.contains("post-create = { build = \"cargo build\" }"),
         "inline table should be preserved: {saved}"
     );
     assert!(
-        !saved.contains("[post-start]"),
+        !saved.contains("[post-create]"),
         "should not be expanded to standard table: {saved}"
     );
 }

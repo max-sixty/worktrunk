@@ -25,8 +25,8 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 1. Runs [pre-switch hooks](https://worktrunk.dev/hook/#hook-types), blocking until complete
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs [pre-start hooks](https://worktrunk.dev/hook/#hook-types), blocking until complete
-5. Spawns [post-start](https://worktrunk.dev/hook/#hook-types) and [post-switch hooks](https://worktrunk.dev/hook/#hook-types) in the background
+4. Runs [pre-create hooks](https://worktrunk.dev/hook/#hook-types), blocking until complete
+5. Spawns [post-create](https://worktrunk.dev/hook/#hook-types) and [post-switch hooks](https://worktrunk.dev/hook/#hook-types) in the background
 
 ```bash
 $ wt switch feature                        # Existing branch → creates worktree
@@ -175,9 +175,6 @@ Options:
 
           Hooks still run normally. Useful when hooks handle navigation (e.g., tmux workflows) or
           for CI/automation. Use --cd to override.
-
-          In picker mode (no branch argument), prints the selected branch name and exits without
-          switching. Useful for scripting.
 
   -h, --help
           Print help (see a summary with '-h')

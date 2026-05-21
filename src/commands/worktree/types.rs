@@ -122,8 +122,9 @@ pub enum SwitchPlan {
         worktree_path: PathBuf,
         /// How to create the worktree
         method: CreationMethod,
-        /// If path exists and --clobber, this is the backup path to move it to
-        clobber_backup: Option<PathBuf>,
+        /// True when a stale path occupies `worktree_path` and `--clobber` was
+        /// given — `execute_switch` backs it up before creating the worktree.
+        needs_clobber_backup: bool,
         /// Branch to record as "previous" for `wt switch -`
         new_previous: Option<String>,
     },

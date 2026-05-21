@@ -679,7 +679,7 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
     std::fs::create_dir_all(&log_dir).unwrap();
     write_log_at(
         &log_dir,
-        &hook_log_rel_path("feature", "user", "post-start", "npm"),
+        &hook_log_rel_path("feature", "user", "post-create", "npm"),
         "npm output here",
     );
     // >= 1024 bytes to exercise the `{}K` size-formatting branch in
@@ -704,10 +704,10 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
          commands.jsonl <SIZE>  <AGE>
 
         [36mHOOK OUTPUT[39m @ <PATH>
-                      File               Size  Age   
-         ─────────────────────────────── ──── ────── 
-         bugfix/internal/remove.log      <SIZE>  <AGE>
-         feature/user/post-start/npm.log <SIZE>  <AGE>
+                       File               Size  Age   
+         ──────────────────────────────── ──── ────── 
+         bugfix/internal/remove.log       <SIZE>  <AGE>
+         feature/user/post-create/npm.log <SIZE>  <AGE>
 
         [36mDIAGNOSTIC[39m @ <PATH>
         [107m [0m (none)
@@ -818,7 +818,7 @@ fn test_state_clear_logs_with_files(repo: TestRepo) {
     std::fs::create_dir_all(&log_dir).unwrap();
     write_log_at(
         &log_dir,
-        &hook_log_rel_path("feature", "user", "post-start", "npm"),
+        &hook_log_rel_path("feature", "user", "post-create", "npm"),
         "npm output",
     );
     write_log_at(
@@ -843,7 +843,7 @@ fn test_state_clear_logs_sweeps_legacy_flat_files(repo: TestRepo) {
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
-    std::fs::write(log_dir.join("feature-post-start-npm.log"), "old layout").unwrap();
+    std::fs::write(log_dir.join("feature-post-create-npm.log"), "old layout").unwrap();
     std::fs::write(log_dir.join("bugfix-remove.log"), "old layout").unwrap();
 
     let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();
@@ -1158,7 +1158,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
     std::fs::create_dir_all(&log_dir).unwrap();
     write_log_at(
         &log_dir,
-        &hook_log_rel_path("feature", "user", "post-start", "npm"),
+        &hook_log_rel_path("feature", "user", "post-create", "npm"),
         "npm output",
     );
     write_log_at(
@@ -1331,7 +1331,7 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
     std::fs::create_dir_all(&log_dir).unwrap();
     write_log_at(
         &log_dir,
-        &hook_log_rel_path("feature", "user", "post-start", "npm"),
+        &hook_log_rel_path("feature", "user", "post-create", "npm"),
         "npm output",
     );
     write_log_at(
@@ -1387,11 +1387,11 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
             },
             {
               "branch": "feature",
-              "file": "feature/user/post-start/npm.log",
-              "hook_type": "post-start",
+              "file": "feature/user/post-create/npm.log",
+              "hook_type": "post-create",
               "modified_at": "<MTIME>",
               "name": "npm",
-              "path": "_REPO_/.git/wt/logs/feature/user/post-start/npm.log",
+              "path": "_REPO_/.git/wt/logs/feature/user/post-create/npm.log",
               "size": "<SIZE>",
               "source": "user"
             }
@@ -2103,7 +2103,7 @@ fn test_logs_get_json_with_files(repo: TestRepo) {
     std::fs::write(log_dir.join("diagnostic.md"), "# report").unwrap();
     write_log_at(
         &log_dir,
-        &hook_log_rel_path("main", "user", "post-start", "server"),
+        &hook_log_rel_path("main", "user", "post-create", "server"),
         "output",
     );
 

@@ -126,7 +126,7 @@ def prepare_with_hooks(env: DemoEnv, include_deps: bool = False):
     dev_cmd = "npm run dev -- --port {{ branch | hash_port }}"
     cleanup_cmd = "flyctl scale count 0"
 
-    post_start = ["[post-start]"]
+    post_start = ["[post-create]"]
     approved = []
     if include_deps:
         post_start.append('deps = "npm install"')
@@ -157,7 +157,7 @@ def prepare_merge_demo(
 def prepare_switch(env: DemoEnv):
     """Switch demo with Claude Code UI."""
     dev_cmd = "npm run dev -- --port {{ branch | hash_port }}"
-    hooks_config = f"""[post-start]
+    hooks_config = f"""[post-create]
 copy = "wt step copy-ignored"
 dev = "{dev_cmd}"
 """
@@ -184,7 +184,7 @@ dev = "{dev_cmd}"
 def prepare_devserver(env: DemoEnv):
     """Setup for wt-devserver demo - shows URL column in wt list."""
     dev_cmd = "npm run dev -- --port {{ branch | hash_port }}"
-    hooks_config = f'''[post-start]
+    hooks_config = f'''[post-create]
 dev = "{dev_cmd}"
 
 [list]
@@ -211,7 +211,7 @@ fi
 
 def prepare_zellij_omnibus(env: DemoEnv):
     """Setup for wt-zellij-omnibus demo - comprehensive showcase."""
-    hooks_config = """[post-start]
+    hooks_config = """[post-create]
 dev = "npm run dev -- --port {{ branch | hash_port }}"
 
 [pre-merge]
