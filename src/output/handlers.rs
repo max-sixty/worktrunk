@@ -86,9 +86,15 @@ struct BackgroundRemoval<'a> {
     changed_directory: bool,
 }
 
+/// How a background removal behaves when the rename-into-trash fast path fails.
 #[derive(Clone, Copy)]
-enum BackgroundFallbackMode {
+pub enum BackgroundFallbackMode {
+    /// Spawn the legacy detached `git worktree remove` — the default for
+    /// `wt remove`, `wt merge`, and the picker.
     Detached,
+    /// Run the fallback removal and branch deletion synchronously for a
+    /// non-current worktree. `wt step prune` uses this to keep the fallback's
+    /// `.git/config` rewrite serialized with its integration-check readers.
     SynchronousForNonCurrent,
 }
 
@@ -187,7 +193,9 @@ fn execute_instant_removal_or_fallback(
             // is that Nushell may still emit PWD errors — not a correctness issue.
             let _ = std::fs::create_dir(worktree_path);
         }
-        Ok(build_remove_command_staged(&staged_path, worktree_path, changed_directory).into())
+        Ok(BackgroundRemovalPlan::Detached(
+            build_remove_command_staged(&staged_path, worktree_path, changed_directory),
+        ))
     } else {
         if matches!(
             fallback_mode,
@@ -219,12 +227,6 @@ fn execute_instant_removal_or_fallback(
             _ => build_remove_command(worktree_path, None, force_worktree, changed_directory),
         };
         Ok(BackgroundRemovalPlan::Detached(command))
-    }
-}
-
-impl From<String> for BackgroundRemovalPlan {
-    fn from(command: String) -> Self {
-        Self::Detached(command)
     }
 }
 
@@ -837,45 +839,14 @@ pub fn execute_user_command(command: &str, display_path: Option<&Path>) -> anyho
 /// regardless of `foreground` (there's no detached `rm` to background to).
 /// `silent` has no effect on `BranchOnly` results — the picker handles that
 /// arm itself.
+///
+/// `background_fallback_mode` selects how a background removal whose
+/// rename-into-trash fast path fails behaves: every caller but `wt step prune`
+/// passes [`BackgroundFallbackMode::Detached`] (spawn the legacy `git worktree
+/// remove`); prune passes [`BackgroundFallbackMode::SynchronousForNonCurrent`]
+/// to keep the fallback's `.git/config` rewrite serialized with its parallel
+/// integration-check readers.
 pub fn handle_remove_output(
-    result: &RemoveResult,
-    foreground: bool,
-    plan: &ApprovedHookPlan,
-    quiet: bool,
-    silent: bool,
-    announcer: &mut HookAnnouncer<'_>,
-) -> anyhow::Result<()> {
-    handle_remove_output_with_fallback_mode(
-        result,
-        foreground,
-        plan,
-        quiet,
-        silent,
-        announcer,
-        BackgroundFallbackMode::Detached,
-    )
-}
-
-pub(crate) fn handle_remove_output_serialized_fallback(
-    result: &RemoveResult,
-    foreground: bool,
-    plan: &ApprovedHookPlan,
-    quiet: bool,
-    silent: bool,
-    announcer: &mut HookAnnouncer<'_>,
-) -> anyhow::Result<()> {
-    handle_remove_output_with_fallback_mode(
-        result,
-        foreground,
-        plan,
-        quiet,
-        silent,
-        announcer,
-        BackgroundFallbackMode::SynchronousForNonCurrent,
-    )
-}
-
-fn handle_remove_output_with_fallback_mode(
     result: &RemoveResult,
     foreground: bool,
     plan: &ApprovedHookPlan,

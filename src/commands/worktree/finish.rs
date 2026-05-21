@@ -35,7 +35,9 @@ use crate::commands::hook_plan::{ApprovedHookPlan, register_planned};
 use crate::commands::hooks::HookAnnouncer;
 use crate::commands::repository_ext::{check_not_default_branch, is_primary_worktree};
 use crate::commands::template_vars::TemplateVars;
-use crate::output::{handle_remove_output, post_hook_display_path, pre_hook_display_path};
+use crate::output::{
+    BackgroundFallbackMode, handle_remove_output, post_hook_display_path, pre_hook_display_path,
+};
 
 /// Inputs to [`finish_after_merge`]. Owned by the caller; this struct just
 /// bundles them so the function signature stays readable.
@@ -143,7 +145,15 @@ pub fn finish_after_merge(
             expected_path,
             removed_commit: feature_commit.clone(),
         };
-        handle_remove_output(&remove_result, false, plan, false, false, announcer)?;
+        handle_remove_output(
+            &remove_result,
+            false,
+            plan,
+            false,
+            false,
+            announcer,
+            BackgroundFallbackMode::Detached,
+        )?;
         true
     };
 

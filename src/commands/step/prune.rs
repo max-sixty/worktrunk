@@ -18,7 +18,7 @@ use worktrunk::styling::{eprintln, hint_message, info_message, println, success_
 use super::super::hook_plan::{ApprovedHookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
 use super::super::repository_ext::{RemoveTarget, RepositoryCliExt};
-use crate::output::handle_remove_output_serialized_fallback;
+use crate::output::{BackgroundFallbackMode, handle_remove_output};
 
 /// A candidate worktree or branch selected for removal.
 #[derive(Clone)]
@@ -222,17 +222,16 @@ fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result
         }
     };
     let mut announcer = HookAnnouncer::new(ctx.repo, ctx.config, true);
-    // Read the Copy fields into locals so the call stays on one line (rustfmt
-    // breaks it past `ctx.`-prefixed args), keeping it identical to its form
-    // before the context-struct refactor.
-    let (foreground, hook_plan) = (ctx.foreground, ctx.hook_plan);
-    handle_remove_output_serialized_fallback(
+    // `SynchronousForNonCurrent`: prune keeps the rename-failure fallback's
+    // `.git/config` rewrite serialized with its integration-check readers.
+    handle_remove_output(
         &plan,
-        foreground,
-        hook_plan,
+        ctx.foreground,
+        ctx.hook_plan,
         true,
         false,
         &mut announcer,
+        BackgroundFallbackMode::SynchronousForNonCurrent,
     )?;
     announcer.flush()?;
     Ok(true)

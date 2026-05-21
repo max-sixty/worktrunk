@@ -62,7 +62,7 @@ use commands::{
     handle_vars_list, handle_vars_set, resolve_worktree_arg, run_hook, run_switch, step_commit,
     step_copy_ignored, step_diff, step_eval, step_for_each, step_prune, step_relocate, step_tether,
 };
-use output::handle_remove_output;
+use output::{BackgroundFallbackMode, handle_remove_output};
 use worktrunk::git::BranchDeletionMode;
 
 use cli::{
@@ -1001,6 +1001,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     false,
                     false,
                     &mut announcer,
+                    BackgroundFallbackMode::Detached,
                 )?;
                 announcer.flush()?;
                 if json_mode {
@@ -1063,6 +1064,7 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                         false,
                         false,
                         &mut announcer,
+                        BackgroundFallbackMode::Detached,
                     )?;
                     announcer.flush()
                 };

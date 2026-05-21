@@ -47,8 +47,8 @@ pub(crate) use global::{
 };
 // Re-export output handlers
 pub(crate) use handlers::{
-    DirectivePassthrough, execute_shell_command, execute_user_command, handle_remove_output,
-    handle_remove_output_serialized_fallback, handle_switch_output,
+    BackgroundFallbackMode, DirectivePassthrough, execute_shell_command, execute_user_command,
+    handle_remove_output, handle_switch_output,
 };
 // Re-export shell integration functions
 pub(crate) use shell_integration::{

@@ -117,7 +117,7 @@ use super::list::progressive::RenderTarget;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
 use super::worktree::{RemoveResult, SwitchPipeline};
 use crate::cli::SwitchFormat;
-use crate::output::handle_remove_output;
+use crate::output::{BackgroundFallbackMode, handle_remove_output};
 use worktrunk::git::{BranchDeletionMode, delete_branch_if_safe};
 
 use items::{PreviewCache, WorktreeSkimItem};
@@ -253,6 +253,7 @@ impl PickerCollector {
                     /* quiet */ true,
                     /* silent */ true,
                     &mut announcer,
+                    BackgroundFallbackMode::Detached,
                 )?;
                 announcer.flush()?;
             }
