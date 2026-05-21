@@ -115,15 +115,9 @@ use super::hooks::HookAnnouncer;
 use super::list::collect;
 use super::list::progressive::RenderTarget;
 use super::repository_ext::{RemoveTarget, RepositoryCliExt};
-use super::template_vars::TemplateVars;
-use super::worktree::{
-    RemoveResult, SwitchBranchInfo, SwitchResult, approve_switch_hooks, emit_switch_json,
-    execute_switch, offer_bare_repo_worktree_path_fix, path_mismatch, plan_switch,
-    run_pre_switch_hooks, spawn_switch_background_hooks, switch_hook_project_config,
-    validate_switch_templates,
-};
+use super::worktree::{RemoveResult, SwitchPipeline};
 use crate::cli::SwitchFormat;
-use crate::output::{handle_remove_output, handle_switch_output};
+use crate::output::handle_remove_output;
 use worktrunk::git::{BranchDeletionMode, delete_branch_if_safe};
 
 use items::{PreviewCache, WorktreeSkimItem};
@@ -802,101 +796,42 @@ pub fn handle_picker(
         let query = out.query.trim().to_string();
         let identifier = resolve_identifier(&action, query, selected_name)?;
 
-        // Load config — reuse recovered repo if we recovered earlier
+        // Load config — reuse the recovered repo if we recovered earlier.
         let repo = if is_recovered {
             repo.clone()
         } else {
             Repository::current().context("Failed to switch worktree")?
         };
-        // Clone user out so `offer_bare_repo_worktree_path_fix` can mutate
-        // locally. Project config is loaded on demand by downstream
-        // `run_pre_switch_hooks` / `plan_switch`.
+        // Clone user config out — `SwitchPipeline` takes `&mut UserConfig` (the
+        // bare-repo path-fix offer and the shell-integration offer record onto
+        // it). Project config is loaded on demand inside the pipeline.
         let mut config = repo.user_config().clone();
-        offer_bare_repo_worktree_path_fix(&repo, &mut config)?;
 
-        // Run pre-switch hooks before branch resolution or worktree creation.
-        // {{ branch }} receives the raw user input (before resolution).
-        // Skip when recovered — the source worktree is gone, nothing to run hooks against.
-        if !is_recovered {
-            run_pre_switch_hooks(&repo, &config, &identifier, true)?;
+        // Run the switch — the same `SwitchPipeline` as `wt switch <branch>`,
+        // so hooks, approval, and output cannot drift from the argument path.
+        // The picker has no `--execute`, offers no shell integration, and does
+        // not capture pre-switch source identity (`capture_source: false` — an
+        // existing switch's `{{ base }}` / `{{ base_worktree_path }}` stay
+        // unset; result-derived `base` for creates and `target` still flow).
+        SwitchPipeline {
+            repo: &repo,
+            config: &mut config,
+            identifier: &identifier,
+            create: should_create,
+            base: None,
+            clobber: false,
+            verify: true,
+            yes: false,
+            change_dir,
+            format,
+            is_recovered,
+            suggestion_ctx: None,
+            capture_source: false,
+            execute: None,
+            execute_args: &[],
+            shell_integration_binary: None,
         }
-
-        // Switch to existing worktree or create new one
-        let plan = plan_switch(&repo, &identifier, should_create, None, false, &config)?;
-        // Resolve the config the post-switch hooks will run against (the
-        // new/destination worktree's, or for `--create` the base ref's) so the
-        // approval prompt lists the exact commands `execute_switch` will run.
-        let hook_project_config = switch_hook_project_config(&repo, &plan)?;
-        let (hooks_approved, hook_plan) = approve_switch_hooks(
-            &repo,
-            &config,
-            &plan,
-            false,
-            true,
-            hook_project_config.as_ref(),
-        )?;
-
-        // Pre-flight: validate all templates before mutation (worktree creation).
-        // Without this, picker-create would have the half-state risk that
-        // `wt switch --create` already guards against — a broken template would
-        // fail after `git worktree add`, leaving the worktree behind.
-        validate_switch_templates(
-            &repo,
-            &config,
-            &plan,
-            None,
-            &[],
-            hooks_approved,
-            hook_project_config.as_ref(),
-        )?;
-
-        let (result, branch_info) =
-            execute_switch(&repo, plan, &config, false, hooks_approved, &hook_plan)?;
-
-        // --format=json: structured result to stdout, identical to the
-        // argument path. All switch behavior above proceeds normally.
-        emit_switch_json(format, &result, &branch_info)?;
-
-        // Compute path mismatch lazily (deferred from plan_switch for existing worktrees).
-        // Skip for detached HEAD worktrees (branch is None).
-        let branch_info = match &result {
-            SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
-                let expected_path = branch_info
-                    .branch
-                    .as_deref()
-                    .and_then(|b| path_mismatch(&repo, b, path, &config));
-                SwitchBranchInfo {
-                    expected_path,
-                    ..branch_info
-                }
-            }
-            _ => branch_info,
-        };
-
-        // Show success message; emit cd directive if shell integration is active
-        // When recovered from a deleted worktree, fall back to repo_path().
-        let fallback_path = repo.repo_path()?.to_path_buf();
-        let cwd = std::env::current_dir().unwrap_or(fallback_path.clone());
-        let source_root = repo.current_worktree().root().unwrap_or(fallback_path);
-        let hooks_display_path =
-            handle_switch_output(&result, &branch_info, change_dir, Some(&source_root), &cwd)?;
-
-        // Spawn background hooks after success message. Picker doesn't capture
-        // pre-switch source identity, so existing-switch `base` vars stay
-        // unset; result-derived `base` (creates) and `target` flow as usual.
-        if hooks_approved {
-            let template_vars = TemplateVars::for_post_switch(&result, &branch_info, "", "");
-            let extra_vars = template_vars.as_extra_vars();
-            spawn_switch_background_hooks(
-                &config,
-                &result,
-                branch_info.branch.as_deref(),
-                false,
-                &extra_vars,
-                hooks_display_path.as_deref(),
-                &hook_plan,
-            )?;
-        }
+        .run()?;
     }
 
     Ok(())

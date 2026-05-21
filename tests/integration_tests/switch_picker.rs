@@ -1235,3 +1235,54 @@ fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
         cd_content
     );
 }
+
+/// A project `pre-switch` hook must pass through the approval gate when the
+/// picker switches — the picker has no `--yes`, so an unapproved project
+/// command is shown for approval, never auto-run.
+///
+/// Regression: the picker previously passed `yes = true` to
+/// `run_pre_switch_hooks`, silently executing project `pre-switch` commands
+/// without a prompt — inconsistent with every other hook the picker gates, and
+/// a hole in "Project Commands Run Only After Approval". Here the hook is
+/// declined at the prompt; it must not run, and the switch must still succeed.
+#[rstest]
+fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("target-branch");
+
+    // Project `pre-switch` hook (in `.config/wt.toml`, so it routes through the
+    // approval gate) that touches a marker outside the worktree if it runs.
+    let marker_dir = tempfile::tempdir().unwrap();
+    let marker = marker_dir.path().join("pre-switch-ran");
+    repo.write_project_config(&format!(
+        "pre-switch = {:?}\n",
+        format!("touch {}", marker.display())
+    ));
+
+    let env_vars = repo.test_env_vars();
+    // Select target-branch, press Enter, then decline the approval prompt.
+    let result = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default.
+            ("target", Some("target-branch has no uncommitted changes")),
+            ("\r", Some("needs approval")), // Enter; wait for the approval prompt
+            ("n\n", None),                  // decline
+        ],
+    );
+
+    let screen = result.screen();
+    assert_eq!(
+        result.exit_code, 0,
+        "switch should still succeed after declining the pre-switch hook.\nScreen:\n{screen}"
+    );
+    assert!(
+        screen.contains("needs approval"),
+        "picker must prompt before running a project pre-switch hook.\nScreen:\n{screen}"
+    );
+    assert!(!marker.exists(), "a declined pre-switch hook must not run");
+}
