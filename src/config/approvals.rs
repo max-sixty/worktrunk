@@ -693,11 +693,7 @@ mod tests {
 
         let mut approvals = Approvals::default();
         approvals
-            .approve_command(
-                "project".to_string(),
-                "echo repo_root".to_string(),
-                Some(&path),
-            )
+            .approve_command("project".to_string(), "echo repo_root".to_string(), &path)
             .unwrap();
 
         assert!(!approvals.is_command_approved("project", "echo repo_path"));
