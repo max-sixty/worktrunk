@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    ProjectConfig, UserConfig, default_system_config_path, system_config_path,
+    ProjectConfig, UserConfig, default_system_config_path, require_config_path, system_config_path,
 };
 use worktrunk::git::{CiPlatform, ErrorExt, Repository};
 use worktrunk::path::format_path_for_display;
@@ -21,7 +21,6 @@ use worktrunk::styling::{
     hint_message, info_message, success_message, warning_message,
 };
 
-use super::state::require_user_config_path;
 use crate::cli::{SwitchFormat, version_str};
 use crate::commands::configure_shell::{ConfigAction, ConfigureResult, scan_shell_configs};
 use crate::commands::list::ci_status::CiToolsStatus;
@@ -96,7 +95,7 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
 
 /// JSON output for config show: paths, existence, and parsed config contents.
 fn handle_config_show_json() -> anyhow::Result<()> {
-    let user_path = require_user_config_path()?;
+    let user_path = require_config_path()?;
     let user_exists = user_path.exists();
     let user_config = if user_exists {
         Some(serde_json::to_value(&UserConfig::load()?)?)
@@ -583,7 +582,7 @@ fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
 }
 
 fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Result<()> {
-    let config_path = require_user_config_path()?;
+    let config_path = require_config_path()?;
 
     writeln!(
         out,

@@ -38,7 +38,6 @@ mod tests {
 
     use super::create::comment_out_config;
     use super::show::{render_ci_tool_status, warn_unknown_keys};
-    use super::state::require_user_config_path;
 
     // ==================== comment_out_config tests ====================
 
@@ -232,30 +231,5 @@ mod tests {
         let mut out = String::new();
         render_ci_tool_status(&mut out, "glab", "GitLab", true, true).unwrap();
         assert_snapshot!(out, @"[32m✓[39m [32m[1mglab[22m installed & authenticated[39m");
-    }
-
-    // ==================== require_user_config_path tests ====================
-
-    #[test]
-    fn test_require_user_config_path_returns_ok() {
-        // In a normal environment, require_user_config_path should succeed
-        let result = require_user_config_path();
-        assert!(result.is_ok());
-        let path = result.unwrap();
-        assert!(path.ends_with("worktrunk/config.toml"));
-    }
-
-    #[test]
-    fn test_require_user_config_path_matches_config_path() {
-        // Verify that config create/show path matches config loading path.
-        // This was the root cause of #1134: the two paths diverged on Windows
-        // when XDG_CONFIG_HOME was set because config create had its own
-        // XDG/HOME resolution that differed from config loading.
-        let create_path = require_user_config_path().unwrap();
-        let load_path = worktrunk::config::config_path().unwrap();
-        assert_eq!(
-            create_path, load_path,
-            "config create path and config loading path must be identical"
-        );
     }
 }
