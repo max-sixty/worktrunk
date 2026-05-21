@@ -2524,6 +2524,37 @@ timeout = 30
         assert_eq!(result, "{# repo_root #}{{ repo_path }}");
     }
 
+    /// Identifiers inside `{% raw %}…{% endraw %}` blocks are verbatim text,
+    /// not template references, so they must be left alone — only a genuine
+    /// reference outside the raw block is rewritten.
+    #[test]
+    fn test_normalize_skips_raw_blocks() {
+        let template = "{% raw %}{{ repo_root }}{% endraw %}{{ repo_root }}";
+        let result = normalize_template_vars(template);
+        assert_eq!(
+            result,
+            "{% raw %}{{ repo_root }}{% endraw %}{{ repo_path }}"
+        );
+    }
+
+    /// A deprecated name that appears as a quoted string literal inside a tag
+    /// is not an identifier and must not be rewritten.
+    #[test]
+    fn test_normalize_skips_string_literals_in_tags() {
+        let template = "{{ \"repo_root\" }} {{ repo_root }}";
+        let result = normalize_template_vars(template);
+        assert_eq!(result, "{{ \"repo_root\" }} {{ repo_path }}");
+    }
+
+    /// A deprecated name used as an attribute (`obj.repo_root`) is a member of
+    /// another value, not the deprecated global, so it must not be rewritten.
+    #[test]
+    fn test_normalize_skips_attribute_access() {
+        let template = "{{ obj.repo_root }} {{ repo_root }}";
+        let result = normalize_template_vars(template);
+        assert_eq!(result, "{{ obj.repo_root }} {{ repo_path }}");
+    }
+
     #[test]
     fn test_normalize_repo_root() {
         let template = "ln -sf {{ repo_root }}/node_modules";

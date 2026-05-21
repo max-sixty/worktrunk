@@ -118,8 +118,7 @@ const DIAGNOSTIC_FILES: &[&str] = &["trace.log", "output.log", "diagnostic.md"];
 /// branch-agnostic shared files, distinct from the per-branch hook-output
 /// subtrees and the `commands.jsonl` audit log.
 fn is_diagnostic_file(name: &str) -> bool {
-    DIAGNOSTIC_FILES.contains(&name)
-        || (name.starts_with("internal-") && name.ends_with(".log"))
+    DIAGNOSTIC_FILES.contains(&name) || (name.starts_with("internal-") && name.ends_with(".log"))
 }
 
 /// Truncate a string for a display cell, counting by Unicode scalars.
