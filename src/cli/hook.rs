@@ -48,15 +48,15 @@ use super::config::ApprovalsCommand;
 /// Canonical list of hook type names accepted after `wt hook`. Shared by
 /// [`parse_hook_type`], `completion::inject_hook_subcommands`, and (via
 /// `hook_show_possible_values`) the `wt hook show` value parser, so drift
-/// is caught by tests rather than at runtime. `pre-start`/`post-start` are
-/// deprecated aliases for `pre-create`/`post-create`: not listed here, so
+/// is caught by tests rather than at runtime. `pre-create`/`post-create` are
+/// silent aliases for `pre-start`/`post-start`: not listed here, so
 /// help and completion advertise only the canonical names, but accepted by
 /// [`parse_hook_type`] and by `wt hook show` as hidden aliases.
 pub const HOOK_TYPE_NAMES: &[&str] = &[
     "pre-switch",
     "post-switch",
-    "pre-create",
-    "post-create",
+    "pre-start",
+    "post-start",
     "pre-commit",
     "post-commit",
     "pre-merge",
@@ -66,16 +66,16 @@ pub const HOOK_TYPE_NAMES: &[&str] = &[
 ];
 
 /// `PossibleValue` set for the `wt hook show` type argument: the canonical
-/// names from [`HOOK_TYPE_NAMES`], with `pre-start`/`post-start` attached as
-/// hidden aliases. `wt hook show post-start` keeps working through the rename
-/// without the deprecated names showing up in help or completion.
+/// names from [`HOOK_TYPE_NAMES`], with `pre-create`/`post-create` attached as
+/// hidden aliases. `wt hook show post-create` keeps working through the
+/// transition without the alias names showing up in help or completion.
 fn hook_show_possible_values() -> Vec<clap::builder::PossibleValue> {
     use clap::builder::PossibleValue;
     HOOK_TYPE_NAMES
         .iter()
         .map(|&name| match name {
-            "pre-create" => PossibleValue::new(name).alias("pre-start"),
-            "post-create" => PossibleValue::new(name).alias("post-start"),
+            "pre-start" => PossibleValue::new(name).alias("pre-create"),
+            "post-start" => PossibleValue::new(name).alias("post-create"),
             _ => PossibleValue::new(name),
         })
         .collect()
@@ -152,9 +152,9 @@ pub struct HookOptions {
 /// Map a hook type name to its [`HookType`] variant. Emits a did-you-mean
 /// hint on typos (same `did_you_mean` helper used for unknown subcommands).
 ///
-/// `pre-start`/`post-start` are deprecated aliases for `pre-create`/`post-create`,
-/// accepted here so scripted invocations keep working through the rename. They
-/// map silently — no warning until the deprecation cycle's next phase.
+/// `pre-create`/`post-create` are silent aliases for `pre-start`/`post-start`,
+/// accepted here so scripted invocations using the future canonical names
+/// keep working. They map silently — no warning.
 pub fn parse_hook_type(name: &str) -> anyhow::Result<HookType> {
     match name {
         "pre-switch" => Ok(HookType::PreSwitch),

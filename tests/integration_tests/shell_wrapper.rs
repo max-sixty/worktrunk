@@ -952,7 +952,8 @@ mod unix_tests {
     #[case("fish")]
     #[case("nu")]
     fn test_wrapper_switch_with_execute(#[case] shell: &str, repo: TestRepo) {
-        // Use --yes to skip approval prompt in tests
+        // `echo` with `executed` as a trailing arg, run through each wrapper.
+        // `--yes` skips the approval prompt.
         let output = exec_through_wrapper(
             shell,
             &repo,
@@ -960,9 +961,11 @@ mod unix_tests {
             &[
                 "--create",
                 "test-exec",
-                "--execute",
-                "echo executed",
                 "--yes",
+                "--execute",
+                "echo",
+                "--",
+                "executed",
             ],
         );
 
@@ -976,11 +979,11 @@ mod unix_tests {
             shell
         );
 
-        // Consolidated snapshot - output should be identical across all shells
+        // Per-shell snapshot: the `Executing (--execute):` line escapes the
+        // trailing arg for the directive shell, so fish differs from the
+        // POSIX wrappers — output is no longer identical across shells.
         shell_wrapper_settings().bind(|| {
-            insta::allow_duplicates! {
-                assert_snapshot!("switch_with_execute", &output.combined);
-            }
+            assert_snapshot!(format!("switch_with_execute_{shell}"), &output.combined);
         });
     }
 
@@ -1024,7 +1027,7 @@ mod unix_tests {
         );
     }
 
-    /// Test switch --create with pre-create (blocking) and post-create (background)
+    /// Test switch --create with pre-start (blocking) and post-start (background)
     /// Note: bash and fish disabled due to flaky PTY buffering race conditions
     ///
     /// TODO: Fix timing/race condition in bash where "Building project..." output appears
@@ -1035,19 +1038,19 @@ mod unix_tests {
     #[case("zsh")]
     // #[case("fish")] // TODO: Fish shell has non-deterministic PTY output ordering
     fn test_wrapper_switch_with_hooks(#[case] shell: &str, repo: TestRepo) {
-        // Create project config with both pre-create and post-create hooks
+        // Create project config with both pre-start and post-start hooks
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(
             config_dir.join("wt.toml"),
             r#"# Blocking commands that run before worktree is ready
-pre-create = [
+pre-start = [
     {install = "echo 'Installing dependencies...'"},
     {build = "echo 'Building project...'"},
 ]
 
 # Background commands that run in parallel
-[post-create]
+[post-start]
 server = "echo 'Starting dev server on port 3000'"
 watch = "echo 'Watching for file changes'"
 "#,
@@ -1269,18 +1272,18 @@ approved-commands = [
     // ========================================================================
 
     #[rstest]
-    fn test_switch_with_post_create_command_no_directive_leak(repo: TestRepo) {
-        // Configure a post-create command in the project config (this is where the bug manifests)
-        // The println! in handle_post_create_commands causes directive leaks
+    fn test_switch_with_post_start_command_no_directive_leak(repo: TestRepo) {
+        // Configure a post-start command in the project config (this is where the bug manifests)
+        // The println! in handle_post_start_commands causes directive leaks
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(
             config_dir.join("wt.toml"),
-            r#"post-create = "echo 'test command executed'""#,
+            r#"post-start = "echo 'test command executed'""#,
         )
         .unwrap();
 
-        repo.commit("Add post-create command");
+        repo.commit("Add post-start command");
 
         // Pre-approve the command
         repo.write_test_approvals(
@@ -1411,16 +1414,16 @@ approved-commands = ["echo 'test command executed'"]
 
     #[rstest]
     fn test_wrapper_preserves_progress_messages(repo: TestRepo) {
-        // Configure a post-create background command that will trigger progress output
+        // Configure a post-start background command that will trigger progress output
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(
             config_dir.join("wt.toml"),
-            r#"post-create = "echo 'background task'""#,
+            r#"post-start = "echo 'background task'""#,
         )
         .unwrap();
 
-        repo.commit("Add post-create command");
+        repo.commit("Add post-start command");
 
         // Pre-approve the command
         repo.write_test_approvals(
@@ -1456,16 +1459,16 @@ approved-commands = ["echo 'background task'"]
 
     #[rstest]
     fn test_fish_wrapper_preserves_progress_messages(repo: TestRepo) {
-        // Configure a post-create background command that will trigger progress output
+        // Configure a post-start background command that will trigger progress output
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(
             config_dir.join("wt.toml"),
-            r#"post-create = "echo 'fish background task'""#,
+            r#"post-start = "echo 'fish background task'""#,
         )
         .unwrap();
 
-        repo.commit("Add post-create command");
+        repo.commit("Add post-start command");
 
         // Pre-approve the command
         repo.write_test_approvals(
@@ -1665,16 +1668,16 @@ approved-commands = ["echo 'fish background task'"]
     /// The NO_MONITOR option should suppress [1] 12345 and [1] + done messages
     #[rstest]
     fn test_zsh_no_job_control_notifications(repo: TestRepo) {
-        // Configure a post-create command that will trigger background job
+        // Configure a post-start command that will trigger background job
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(
             config_dir.join("wt.toml"),
-            r#"post-create = "echo 'background job'""#,
+            r#"post-start = "echo 'background job'""#,
         )
         .unwrap();
 
-        repo.commit("Add post-create command");
+        repo.commit("Add post-start command");
 
         // Pre-approve the command
         repo.write_test_approvals(
@@ -1713,16 +1716,16 @@ approved-commands = ["echo 'background job'"]
     /// - DONE notifications (`[1]+ Done`): `set +m` before backgrounding
     #[rstest]
     fn test_bash_job_control_suppression(repo: TestRepo) {
-        // Configure a post-create command that will trigger background job
+        // Configure a post-start command that will trigger background job
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(
             config_dir.join("wt.toml"),
-            r#"post-create = "echo 'bash background'""#,
+            r#"post-start = "echo 'bash background'""#,
         )
         .unwrap();
 
-        repo.commit("Add post-create command");
+        repo.commit("Add post-start command");
 
         // Pre-approve the command
         repo.write_test_approvals(
@@ -2276,16 +2279,16 @@ approved-commands = ["echo 'bash background'"]
     #[case("fish")]
     #[case("nu")]
     fn test_shell_completes_cleanly(#[case] shell: &str, repo: TestRepo) {
-        // Configure a post-create command to exercise the background job code path
+        // Configure a post-start command to exercise the background job code path
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(
             config_dir.join("wt.toml"),
-            r#"post-create = "echo 'cleanup test'""#,
+            r#"post-start = "echo 'cleanup test'""#,
         )
         .unwrap();
 
-        repo.commit("Add post-create command");
+        repo.commit("Add post-start command");
 
         // Pre-approve the command
         repo.write_test_approvals(
@@ -2540,7 +2543,7 @@ command = "{}"
         shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
-    /// README example: Creating worktree with pre-create and post-create hooks
+    /// README example: Creating worktree with pre-start and post-start hooks
     ///
     /// This test demonstrates:
     /// - Pre-start hooks (install dependencies)
@@ -2548,10 +2551,10 @@ command = "{}"
     ///
     /// Uses shell wrapper to avoid "To enable automatic cd" hint.
     ///
-    /// Source: tests/snapshots/shell_wrapper__tests__readme_example_hooks_pre_create.snap
+    /// Source: tests/snapshots/shell_wrapper__tests__readme_example_hooks_pre_start.snap
     #[rstest]
-    fn test_readme_example_hooks_pre_create(repo: TestRepo) {
-        // Create project config with pre-create and post-create hooks
+    fn test_readme_example_hooks_pre_start(repo: TestRepo) {
+        // Create project config with pre-start and post-start hooks
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
 
@@ -2587,10 +2590,10 @@ fi
         }
 
         let config_content = r#"
-[pre-create]
+[pre-start]
 "install" = "uv sync"
 
-[post-create]
+[post-start]
 "dev" = "uv run dev"
 "#;
 
@@ -2620,7 +2623,7 @@ fi
         shell_wrapper_settings().bind(|| assert_snapshot!(&output.combined));
     }
 
-    /// README example: approval prompt for pre-create commands
+    /// README example: approval prompt for pre-start commands
     /// This test captures just the prompt (before responding) to show what users see.
     ///
     /// Note: This uses direct PTY execution (not shell wrapper) because interactive prompts
@@ -2634,9 +2637,9 @@ fi
         // Remove origin so worktrunk uses directory name as project identifier
         repo.run_git(&["remote", "remove", "origin"]);
 
-        // Create project config with named pre-create commands
+        // Create project config with named pre-start commands
         repo.write_project_config(
-            r#"pre-create = [
+            r#"pre-start = [
     {install = "echo 'Installing dependencies...'"},
     {build = "echo 'Building project...'"},
     {test = "echo 'Running tests...'"},

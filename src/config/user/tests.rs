@@ -83,7 +83,7 @@ squash = true
 [step.copy-ignored]
 exclude = [".conductor/"]
 
-[post-create]
+[post-start]
 run = "npm install"
 
 [post-switch]
@@ -1880,17 +1880,17 @@ fn parse_hooks(toml_str: &str) -> HooksConfig {
 
 #[test]
 fn test_hooks_merge_append_semantics() {
-    // Global has post-create, per-project has post-create
+    // Global has post-start, per-project has post-start
     // Both should run (global first, then per-project)
     let mut config = UserConfig {
-        hooks: parse_hooks("post-create = \"echo global\""),
+        hooks: parse_hooks("post-start = \"echo global\""),
         ..Default::default()
     };
 
     config.projects.insert(
         "github.com/user/repo".to_string(),
         UserProjectOverrides {
-            hooks: parse_hooks("post-create = \"echo project\""),
+            hooks: parse_hooks("post-start = \"echo project\""),
             ..Default::default()
         },
     );
@@ -1907,7 +1907,7 @@ fn test_hooks_merge_append_semantics() {
 fn test_hooks_no_project_override_uses_global() {
     // Global has hooks, project doesn't - global hooks used
     let config = UserConfig {
-        hooks: parse_hooks("post-create = \"echo global\""),
+        hooks: parse_hooks("post-start = \"echo global\""),
         ..Default::default()
     };
 
@@ -1926,7 +1926,7 @@ fn test_hooks_project_only_no_global() {
     config.projects.insert(
         "github.com/user/repo".to_string(),
         UserProjectOverrides {
-            hooks: parse_hooks("post-create = \"echo project\""),
+            hooks: parse_hooks("post-start = \"echo project\""),
             ..Default::default()
         },
     );
@@ -1940,10 +1940,10 @@ fn test_hooks_project_only_no_global() {
 
 #[test]
 fn test_hooks_different_hook_types_not_merged() {
-    // Global has post-create, per-project has pre-commit
+    // Global has post-start, per-project has pre-commit
     // These should remain separate (different hook types)
     let mut config = UserConfig {
-        hooks: parse_hooks("post-create = \"echo global-start\""),
+        hooks: parse_hooks("post-start = \"echo global-start\""),
         ..Default::default()
     };
 
@@ -1957,7 +1957,7 @@ fn test_hooks_different_hook_types_not_merged() {
 
     let effective = config.hooks(Some("github.com/user/repo"));
 
-    // post-create: only global
+    // post-start: only global
     let post_create = effective.post_create.unwrap();
     let start_commands: Vec<_> = post_create.commands().collect();
     assert_eq!(start_commands.len(), 1);
@@ -1974,7 +1974,7 @@ fn test_hooks_different_hook_types_not_merged() {
 fn test_hooks_none_project_uses_global() {
     // When no project is provided, only global hooks are used
     let config = UserConfig {
-        hooks: parse_hooks("post-create = \"echo global\""),
+        hooks: parse_hooks("post-start = \"echo global\""),
         ..Default::default()
     };
 
@@ -1997,7 +1997,7 @@ fn test_valid_user_config_keys_includes_all_hook_types() {
     let valid_keys = valid_user_config_keys();
 
     for hook_type in HookType::iter() {
-        let key = hook_type.to_string(); // e.g., "post-create", "pre-merge"
+        let key = hook_type.to_string(); // e.g., "post-start", "pre-merge"
         assert!(
             valid_keys.contains(&key),
             "HookType::{hook_type:?} ({key}) is missing from valid_user_config_keys()"
@@ -2021,6 +2021,9 @@ fn test_valid_user_config_keys_all_deserialize() {
     for key in &valid_keys {
         match key.as_str() {
             "projects" => continue, // Skip - table type tested separately
+            // Silent aliases for canonical `pre-start`/`post-start`; including
+            // both would produce a duplicate-field error.
+            "pre-create" | "post-create" => continue,
             "skip-shell-integration-prompt" | "skip-commit-generation-prompt" => {
                 scalar_lines.push(format!("{key} = true"));
             }
@@ -2064,12 +2067,12 @@ fn test_valid_user_config_keys_all_deserialize() {
 #[test]
 fn test_hooks_merge_mixed_formats_preserves_order() {
     // Global uses string format (unnamed command)
-    let global_hooks = parse_hooks(r#"post-create = "npm install""#);
+    let global_hooks = parse_hooks(r#"post-start = "npm install""#);
 
     // Per-project uses table format (named commands)
     let project_hooks = parse_hooks(
         r#"
-[post-create]
+[post-start]
 setup = "echo setup"
 "#,
     );
@@ -2101,14 +2104,14 @@ fn test_hooks_merge_same_names_both_run() {
     // Both define "test" command - both should execute
     let global_hooks = parse_hooks(
         r#"
-[post-create]
+[post-start]
 test = "cargo test"
 "#,
     );
 
     let project_hooks = parse_hooks(
         r#"
-[post-create]
+[post-start]
 test = "npm test"
 "#,
     );
@@ -2277,14 +2280,14 @@ fn test_hooks_merge_trait_appends_for_global_project_merge() {
 
 #[test]
 fn test_hooks_merge_post_create_both_sides() {
-    // `post-create` from global and per-project config combine (global first).
-    let global = parse_hooks("post-create = \"npm install\"");
-    let project = parse_hooks("post-create = \"cargo build\"");
+    // `post-start` from global and per-project config combine (global first).
+    let global = parse_hooks("post-start = \"npm install\"");
+    let project = parse_hooks("post-start = \"cargo build\"");
 
     let merged = global.merge_with(&project);
     let post_create = merged
         .get(HookType::PostCreate)
-        .expect("should have post-create");
+        .expect("should have post-start");
     let commands: Vec<_> = post_create.commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "npm install");
@@ -3020,12 +3023,12 @@ fn test_save_to_existing_file_replaces_changed_inline_table() {
     // replaces it (even though this changes formatting from inline to standard).
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
-    std::fs::write(&config_path, "post-create = { build = \"cargo build\" }\n").unwrap();
+    std::fs::write(&config_path, "post-start = { build = \"cargo build\" }\n").unwrap();
 
     // Load, modify the hook, then save
     let mut config =
         UserConfig::load_from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-    config.hooks = toml::from_str("post-create = { build = \"cargo test\" }").unwrap();
+    config.hooks = toml::from_str("post-start = { build = \"cargo test\" }").unwrap();
     config.save_to(&config_path).unwrap();
 
     let saved = std::fs::read_to_string(&config_path).unwrap();
@@ -3238,12 +3241,12 @@ future-per-project = "value"
 
 #[test]
 fn test_save_to_existing_file_preserves_inline_table_formatting() {
-    // When a user writes a hook as an inline table (e.g., `post-create = { ... }`),
+    // When a user writes a hook as an inline table (e.g., `post-start = { ... }`),
     // the diff-based merge must not rewrite it to a standard table if the value
     // is semantically unchanged.
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
-    let original = "post-create = { build = \"cargo build\" }\n";
+    let original = "post-start = { build = \"cargo build\" }\n";
     std::fs::write(&config_path, original).unwrap();
 
     // Load the config (which parses hooks via flatten), then save it back
@@ -3251,13 +3254,13 @@ fn test_save_to_existing_file_preserves_inline_table_formatting() {
     config.save_to(&config_path).unwrap();
 
     let saved = std::fs::read_to_string(&config_path).unwrap();
-    // The inline table syntax should be preserved (not expanded to [post-create])
+    // The inline table syntax should be preserved (not expanded to [post-start])
     assert!(
-        saved.contains("post-create = { build = \"cargo build\" }"),
+        saved.contains("post-start = { build = \"cargo build\" }"),
         "inline table should be preserved: {saved}"
     );
     assert!(
-        !saved.contains("[post-create]"),
+        !saved.contains("[post-start]"),
         "should not be expanded to standard table: {saved}"
     );
 }

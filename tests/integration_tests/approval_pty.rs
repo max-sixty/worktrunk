@@ -80,7 +80,7 @@ fn test_approval_prompt_accept(repo: TestRepo) {
     // Remove origin so worktrunk uses directory name as project identifier
     repo.run_git(&["remote", "remove", "origin"]);
 
-    repo.write_project_config(r#"pre-create = "echo 'test command'""#);
+    repo.write_project_config(r#"pre-start = "echo 'test command'""#);
     repo.commit("Add config");
 
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
@@ -104,7 +104,7 @@ fn test_approval_prompt_decline(repo: TestRepo) {
     // Remove origin so worktrunk uses directory name as project identifier
     repo.run_git(&["remote", "remove", "origin"]);
 
-    repo.write_project_config(r#"pre-create = "echo 'test command'""#);
+    repo.write_project_config(r#"pre-start = "echo 'test command'""#);
     repo.commit("Add config");
 
     // Configure shell integration so we get the "Restart shell" hint instead of the prompt
@@ -129,7 +129,7 @@ fn test_approval_prompt_multiple_commands(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     repo.write_project_config(
-        r#"pre-create = [
+        r#"pre-start = [
     {first = "echo 'First command'"},
     {second = "echo 'Second command'"},
     {third = "echo 'Third command'"},
@@ -161,7 +161,7 @@ fn test_approval_prompt_permission_error(repo: TestRepo) {
     // Remove origin so worktrunk uses directory name as project identifier
     repo.run_git(&["remote", "remove", "origin"]);
 
-    repo.write_project_config(r#"pre-create = "echo 'test command'""#);
+    repo.write_project_config(r#"pre-start = "echo 'test command'""#);
     repo.commit("Add config");
 
     // Configure shell integration before making the approvals directory read-only
@@ -235,7 +235,7 @@ fn test_approval_prompt_named_commands(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     repo.write_project_config(
-        r#"pre-create = [
+        r#"pre-start = [
     {install = "echo 'Installing dependencies...'"},
     {build = "echo 'Building project...'"},
     {test = "echo 'Running tests...'"},
@@ -278,7 +278,7 @@ fn test_approval_prompt_mixed_approved_unapproved_accept(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     repo.write_project_config(
-        r#"pre-create = [
+        r#"pre-start = [
     {first = "echo 'First command'"},
     {second = "echo 'Second command'"},
     {third = "echo 'Third command'"},
@@ -335,7 +335,7 @@ fn test_approval_prompt_mixed_approved_unapproved_decline(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
 
     repo.write_project_config(
-        r#"pre-create = [
+        r#"pre-start = [
     {first = "echo 'First command'"},
     {second = "echo 'Second command'"},
     {third = "echo 'Third command'"},
@@ -377,9 +377,9 @@ approved-commands = ["echo 'Second command'"]
         "Should show 'Commands declined' message"
     );
     // Commands appear in the prompt, but should not be executed
-    // Check for "Running pre-create" which indicates execution
+    // Check for "Running pre-start" which indicates execution
     assert!(
-        !output.contains("Running pre-create"),
+        !output.contains("Running pre-start"),
         "Should NOT execute any commands when declined"
     );
     assert!(
@@ -855,7 +855,7 @@ fn test_config_approvals_add_accept(repo: TestRepo) {
     // Include a project commit append so `add_approvals` also collects the
     // `commit-template-append` entry (covers that branch in add_approvals).
     repo.write_project_config(
-        r#"pre-create = "echo 'test command'"
+        r#"pre-start = "echo 'test command'"
 
 [commit.generation]
 template-append = "Use conventional commits"
@@ -883,7 +883,7 @@ template-append = "Use conventional commits"
 #[rstest]
 fn test_config_approvals_add_decline(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
-    repo.write_project_config(r#"pre-create = "echo 'test command'""#);
+    repo.write_project_config(r#"pre-start = "echo 'test command'""#);
     repo.commit("Add config");
 
     let env_vars = repo.test_env_vars();

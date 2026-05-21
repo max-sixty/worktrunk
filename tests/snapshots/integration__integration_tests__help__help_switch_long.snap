@@ -75,7 +75,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           [0m
           Then [1mwsc feature-branch[0m creates the worktree and launches Claude Code. Arguments after [1m--[0m are passed to the command, so [1mwsc feature -- 'Fix GH #322'[0m runs [1mclaude 'Fix GH #322'[0m, starting Claude with a prompt.[0m
           
-          Template example: [1m-x 'code {{ worktree_path }}'[0m opens VS Code at the worktree, [1m-x 'tmux new -s {{ branch | sanitize }}'[0m starts a tmux session named after the branch.[0m
+          Template example: [1m-x code -- '{{ worktree_path }}'[0m opens VS Code at the worktree, [1m-x tmux -- new -s '{{ branch | sanitize }}'[0m starts a tmux session named after the branch.[0m
 
       [1m[36m--clobber[0m
           Remove stale paths at target
@@ -144,8 +144,8 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
 1. Runs pre-switch hooks, blocking until complete
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs pre-create hooks, blocking until complete
-5. Spawns post-create and post-switch hooks in the background
+4. Runs pre-start hooks, blocking until complete
+5. Spawns post-start and post-switch hooks in the background
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch feature                        # Existing branch → creates worktree[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m feature               # New branch and worktree[0m[2m[0m

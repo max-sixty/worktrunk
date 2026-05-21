@@ -35,8 +35,8 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 1. Runs [pre-switch hooks](@/hook.md#hook-types), blocking until complete
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs [pre-create hooks](@/hook.md#hook-types), blocking until complete
-5. Spawns [post-create](@/hook.md#hook-types) and [post-switch hooks](@/hook.md#hook-types) in the background
+4. Runs [pre-start hooks](@/hook.md#hook-types), blocking until complete
+5. Spawns [post-start](@/hook.md#hook-types) and [post-switch hooks](@/hook.md#hook-types) in the background
 
 {{ terminal(cmd="wt switch feature                        # Existing branch → creates worktree|||wt switch --create feature               # New branch and worktree|||wt switch --create fix --base release    # New branch from release|||wt switch --create temp --no-hooks       # Skip hooks") }}
 
@@ -172,8 +172,8 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           are passed to the command, so <b>wsc feature -- &#39;Fix GH #322&#39;</b> runs <b>claude &#39;Fix GH #322&#39;</b>,
           starting Claude with a prompt.
 
-          Template example: <b>-x &#39;code {{ worktree_path }}&#39;</b> opens VS Code at the worktree, <b>-x &#39;tmux</b>
-<b>          new -s {{ branch | sanitize }}&#39;</b> starts a tmux session named after the branch.
+          Template example: <b>-x code -- &#39;{{ worktree_path }}&#39;</b> opens VS Code at the worktree, <b>-x tmux</b>
+<b>          -- new -s &#39;{{ branch | sanitize }}&#39;</b> starts a tmux session named after the branch.
 
       <b><span class=c>--clobber</span></b>
           Remove stale paths at target

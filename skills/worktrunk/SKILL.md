@@ -1,6 +1,6 @@
 ---
 name: worktrunk
-description: Guidance for Worktrunk (the `wt` CLI) — git worktree management, hooks, and config. Load when editing .config/wt.toml or ~/.config/worktrunk/config.toml; adding, modifying, or debugging hooks (post-merge, post-create, pre-commit, pre-merge, post-switch, etc.); configuring commit message generation or command aliases; or troubleshooting wt behavior. Also answers general worktrunk/wt questions.
+description: Guidance for Worktrunk (the `wt` CLI) — git worktree management, hooks, and config. Load when editing .config/wt.toml or ~/.config/worktrunk/config.toml; adding, modifying, or debugging hooks (post-merge, post-start, pre-commit, pre-merge, post-switch, etc.); configuring commit message generation or command aliases; or troubleshooting wt behavior. Also answers general worktrunk/wt questions.
 license: MIT OR Apache-2.0
 compatibility: Requires the `wt` CLI (https://worktrunk.dev)
 ---
@@ -37,7 +37,7 @@ Worktrunk uses two separate config files with different scopes and behaviors:
 ### Project Config (`.config/wt.toml`)
 - **Scope**: Team-wide automation shared by all developers
 - **Location**: `<repo>/.config/wt.toml` (checked into git)
-- **Contains**: Hooks for worktree lifecycle (pre-create, pre-merge, etc.)
+- **Contains**: Hooks for worktree lifecycle (pre-start, pre-merge, etc.)
 - **Permission model**: Proactive (create directly, changes are reversible via git)
 - **See**: `reference/hook.md` for detailed guidance
 
@@ -105,9 +105,9 @@ Common request for workflow automation. Follow discovery process:
    - For Python: Check pyproject.toml
 
 3. **Design appropriate hooks** (7 hook types available)
-   - Dependencies (fast, must complete) → `pre-create`
+   - Dependencies (fast, must complete) → `pre-start`
    - Tests/linting (must pass) → `pre-commit` or `pre-merge`
-   - Long builds, dev servers → `post-create`
+   - Long builds, dev servers → `post-start`
    - Terminal/IDE updates → `post-switch`
    - Deployment → `post-merge`
    - Cleanup tasks → `pre-remove`
@@ -121,7 +121,7 @@ Common request for workflow automation. Follow discovery process:
 5. **Create `.config/wt.toml`**
    ```toml
    # Install dependencies when creating worktrees
-   pre-create = "npm install"
+   pre-start = "npm install"
 
    # Validate code quality before committing
    [pre-commit]
@@ -148,8 +148,8 @@ When users want to add automation to an existing project:
 1. **Read existing config**: `cat .config/wt.toml`
 
 2. **Determine hook type** - When should this run?
-   - Creating worktree (blocking) → `pre-create`
-   - Creating worktree (background) → `post-create`
+   - Creating worktree (blocking) → `pre-start`
+   - Creating worktree (background) → `post-start`
    - Every switch → `post-switch`
    - Before committing → `pre-commit`
    - Before merging → `pre-merge`
@@ -161,10 +161,10 @@ When users want to add automation to an existing project:
    Single command to named table:
    ```toml
    # Before
-   pre-create = "npm install"
+   pre-start = "npm install"
 
    # After (adding db:migrate)
-   [pre-create]
+   [pre-start]
    install = "npm install"
    migrate = "npm run db:migrate"
    ```
@@ -241,7 +241,7 @@ Load **reference files** for detailed configuration, hook specifications, and tr
 Find specific sections with grep:
 ```bash
 grep -A 20 "## Setup" reference/llm-commits.md
-grep -A 30 "### pre-create" reference/hook.md
+grep -A 30 "### pre-start" reference/hook.md
 grep -A 20 "## Warning Messages" reference/shell-integration.md
 ```
 
@@ -299,7 +299,7 @@ zellij run -- wt switch --create fix-auth-bug -x 'opencode run' -- \
 
 ### Parallel sub-Agents (single Claude Code session)
 
-To spawn multiple sub-Agents that each work in their own worktree from one Claude Code session — no terminal multiplexer, no human in the other pane — pre-create each worktree from the parent and pass the path into the sub-Agent prompt:
+To spawn multiple sub-Agents that each work in their own worktree from one Claude Code session — no terminal multiplexer, no human in the other pane — pre-start each worktree from the parent and pass the path into the sub-Agent prompt:
 
 ```bash
 wt switch --create <branch> --no-cd --no-hooks
@@ -312,6 +312,6 @@ You are working in `/abs/path/to/worktrunk.<branch>` on branch `<branch>`.
 All edits must stay in that worktree.
 ```
 
-`--no-cd` skips the shell-integration cd script the parent can't consume; `--no-hooks` is appropriate when each sub-Agent will run its own build/test step (e.g. `cargo run -- hook pre-merge --yes`) and you don't need post-create setup repeated per worktree.
+`--no-cd` skips the shell-integration cd script the parent can't consume; `--no-hooks` is appropriate when each sub-Agent will run its own build/test step (e.g. `cargo run -- hook pre-merge --yes`) and you don't need post-start setup repeated per worktree.
 
-**Do not** use `Agent { isolation: "worktree" }` for this. Claude Code passes its internal agent ID as `name` to the `WorktreeCreate` hook, so `wt` creates the worktree as `worktrunk.agent-<id>` on a throwaway branch. If the sub-Agent then creates a feature branch on top, you end up with non-canonical paths, orphan branches, and post-create hooks fired against the wrong branch. Pre-creating with `wt switch --create` keeps path, branch, and hook target aligned.
+**Do not** use `Agent { isolation: "worktree" }` for this. Claude Code passes its internal agent ID as `name` to the `WorktreeCreate` hook, so `wt` creates the worktree as `worktrunk.agent-<id>` on a throwaway branch. If the sub-Agent then creates a feature branch on top, you end up with non-canonical paths, orphan branches, and post-start hooks fired against the wrong branch. Pre-creating with `wt switch --create` keeps path, branch, and hook target aligned.

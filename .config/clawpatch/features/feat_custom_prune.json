@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_custom_prune",
+  "title": "wt step prune: worktree pruning and concurrent .git/config safety",
+  "summary": "`wt step prune` scans worktrees and orphan branches and removes stale ones. As a destructive operation it must require explicit consent for force-removal, must not discard uncommitted or untracked work, and runs pre/post-remove hooks only after the approval gate clears them. Concurrent `git worktree` mutations race on `.git/config` (the Windows prune race, issue #2801) so pruning must tolerate or serialize that. Complements feat_custom_remove, which covers `wt remove` and the picker. See CLAUDE.md > Data Safety.",
+  "kind": "library",
+  "source": "manual",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/commands/step/prune.rs",
+      "symbol": "step_prune",
+      "route": null,
+      "command": "wt step prune"
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/commands/step/prune.rs",
+      "reason": "prune entrypoint: candidate selection, age checks, removal, hook approval"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "src/git/repository/worktrees.rs",
+      "reason": "worktree listing and `git worktree remove`"
+    },
+    {
+      "path": "src/remove_dir.rs",
+      "reason": "directory removal invoked by prune"
+    },
+    {
+      "path": "src/commands/command_approval.rs",
+      "reason": "approval gate for pre/post-remove hooks"
+    },
+    {
+      "path": "src/commands/hook_plan.rs",
+      "reason": "ApprovedHookPlan: prune is a gate-then-mutate operation"
+    },
+    {
+      "path": "CLAUDE.md",
+      "reason": "Data Safety invariants"
+    }
+  ],
+  "tests": [
+    {
+      "path": "tests/integration_tests/step_prune.rs",
+      "command": "cargo test --test integration step_prune"
+    }
+  ],
+  "tags": [
+    "rust",
+    "data-safety",
+    "destructive",
+    "concurrency",
+    "approval-gate"
+  ],
+  "trustBoundaries": [
+    "filesystem",
+    "concurrency",
+    "process-exec"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-05-19T00:00:00.000Z",
+  "updatedAt": "2026-05-19T00:00:00.000Z"
+}

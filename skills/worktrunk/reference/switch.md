@@ -25,8 +25,8 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 1. Runs [pre-switch hooks](https://worktrunk.dev/hook/#hook-types), blocking until complete
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs [pre-create hooks](https://worktrunk.dev/hook/#hook-types), blocking until complete
-5. Spawns [post-create](https://worktrunk.dev/hook/#hook-types) and [post-switch hooks](https://worktrunk.dev/hook/#hook-types) in the background
+4. Runs [pre-start hooks](https://worktrunk.dev/hook/#hook-types), blocking until complete
+5. Spawns [post-start](https://worktrunk.dev/hook/#hook-types) and [post-switch hooks](https://worktrunk.dev/hook/#hook-types) in the background
 
 ```bash
 $ wt switch feature                        # Existing branch → creates worktree
@@ -164,8 +164,8 @@ Options:
           are passed to the command, so wsc feature -- 'Fix GH #322' runs claude 'Fix GH #322',
           starting Claude with a prompt.
 
-          Template example: -x 'code {{ worktree_path }}' opens VS Code at the worktree, -x 'tmux
-          new -s {{ branch | sanitize }}' starts a tmux session named after the branch.
+          Template example: -x code -- '{{ worktree_path }}' opens VS Code at the worktree, -x tmux
+          -- new -s '{{ branch | sanitize }}' starts a tmux session named after the branch.
 
       --clobber
           Remove stale paths at target

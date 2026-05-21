@@ -688,6 +688,22 @@ mod tests {
     }
 
     #[test]
+    fn test_literal_command_text_is_not_normalized_for_approval_matching() {
+        let (_temp_dir, path) = test_dir();
+
+        let mut approvals = Approvals::default();
+        approvals
+            .approve_command(
+                "project".to_string(),
+                "echo repo_root".to_string(),
+                Some(&path),
+            )
+            .unwrap();
+
+        assert!(!approvals.is_command_approved("project", "echo repo_path"));
+    }
+
+    #[test]
     fn test_concurrent_approve_preserves_all() {
         use std::sync::{Arc, Barrier};
         use std::thread;
