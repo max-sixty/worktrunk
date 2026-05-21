@@ -1700,6 +1700,19 @@ fn test_switch_no_args_requires_tty(repo: TestRepo) {
     snapshot_switch("switch_missing_argument_hints", &repo, &[]);
 }
 
+#[cfg(unix)] // `wt select` is a deprecated alias for the Unix-only picker
+#[rstest]
+fn test_select_deprecated_alias_requires_tty(repo: TestRepo) {
+    // `wt select` warns that it is deprecated, then delegates to the same
+    // interactive picker as `wt switch`; in a non-TTY it bails on the
+    // terminal requirement.
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "select", &[], None);
+        assert_cmd_snapshot!("select_deprecated_requires_tty", cmd);
+    });
+}
+
 ///
 /// This verifies the fix for non-Unix platforms where stdin was incorrectly
 /// set to Stdio::null() instead of Stdio::inherit(), breaking interactive
