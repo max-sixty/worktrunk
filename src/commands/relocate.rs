@@ -749,15 +749,16 @@ pub fn show_no_relocations_needed(template_errors: usize) {
 }
 
 /// Show message when all candidates were skipped during validation.
+///
+/// Only called when validation skipped every candidate, and at least one
+/// candidate exists by then, so `skipped >= 1` always.
 pub fn show_all_skipped(skipped: usize) {
-    if skipped > 0 {
-        eprintln!();
-        eprintln!(
-            "{}",
-            info_message(format!(
-                "Skipped {skipped} worktree{}",
-                if skipped == 1 { "" } else { "s" }
-            ))
-        );
-    }
+    eprintln!();
+    eprintln!(
+        "{}",
+        info_message(format!(
+            "Skipped {skipped} worktree{}",
+            if skipped == 1 { "" } else { "s" }
+        ))
+    );
 }
