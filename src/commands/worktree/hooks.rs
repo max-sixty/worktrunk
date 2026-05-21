@@ -18,7 +18,7 @@ impl<'a> CommandContext<'a> {
     ///
     /// Runs user hooks first, then project hooks. `anchor` is the new
     /// worktree's path — the gate selected `pre-create` under it from the
-    /// base-ref config; the executor never re-reads the (now on-disk) config.
+    /// invoking worktree's config; the executor never re-reads any config.
     /// Shows path in hook announcements when shell integration isn't active
     /// (the user's shell won't cd to the new worktree).
     pub fn execute_pre_create_commands(

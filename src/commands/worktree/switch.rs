@@ -1374,97 +1374,38 @@ fn switch_post_hook_types(is_create: bool) -> &'static [HookType] {
     }
 }
 
-/// The git ref a `wt switch --create` (or a branchless `wt switch <branch>`
-/// that has to create a worktree) checks out into the new worktree — covers
-/// [`CreationMethod::Regular`] only; [`CreationMethod::ForkRef`] needs a
-/// `git fetch` first and is handled by [`switch_hook_project_config`].
-///
-/// Used to read that ref's committed `.config/wt.toml` before the worktree
-/// exists. Mirrors how [`execute_switch`] picks the `git worktree add`
-/// argument: an explicit `--create` base if one was resolved, else the
-/// existing local branch, else its single remote's tracking ref, else `HEAD`
-/// (the current worktree's tip — git's fallback for `git worktree add -b
-/// <new>` with no base, and the only thing left for a stale default branch).
-fn base_ref_for_create(
-    repo: &Repository,
-    create_branch: bool,
-    base_branch: Option<&str>,
-    branch: &str,
-) -> String {
-    if create_branch {
-        return base_branch.unwrap_or("HEAD").to_string();
-    }
-    if repo.branch(branch).exists_locally().unwrap_or(false) {
-        return branch.to_string();
-    }
-    let remotes = repo.branch(branch).remotes().unwrap_or_default();
-    if remotes.len() == 1 {
-        return format!("{}/{}", remotes[0], branch);
-    }
-    // Multiple remotes: replicate `git worktree add <branch>`'s DWIM — when
-    // `checkout.defaultRemote` names one of these remotes, that's the ref the
-    // new worktree will check out, so the hook preview must match. Without
-    // this, a `pre-create` on `<defaultRemote>/<branch>` could run unapproved
-    // because the preview defaulted to `HEAD`.
-    if remotes.len() > 1
-        && let Ok(Some(default)) = repo.config_value("checkout.defaultRemote")
-        && remotes.iter().any(|r| r == &default)
-    {
-        return format!("{default}/{branch}");
-    }
-    "HEAD".to_string()
-}
-
 /// The `.config/wt.toml` that `wt switch`'s post-switch hooks (`pre-create` /
 /// `post-create` / `post-switch`) will resolve against, viewed from *before*
-/// the worktree is created — so the approval prompt and the pre-flight
+/// the worktree operation runs — so the approval prompt and the pre-flight
 /// template validation see the exact config `execute_switch` /
-/// [`spawn_switch_background_hooks`] (via [`hook_repo_for_worktree`]) read at
+/// [`spawn_switch_background_hooks`] (via [`hook_repo_for_worktree`]) run at
 /// run time.
 ///
 /// For an existing destination the worktree is on disk, so its config is read
-/// directly. For `--create` the new worktree is a checkout of the resolved
-/// base ref (or, for `pr:`/`mr:` fork refs, the fetched PR/MR head), so the
-/// committed `.config/wt.toml` at that ref is read via `git show`. In either
-/// case `Ok(None)` means the destination worktree has no `.config/wt.toml`
-/// at all — no project hooks run; the primary worktree's config is not
-/// consulted. A present-but-malformed config surfaces as `Err` so the user
-/// fixes it rather than silently running a different one.
+/// directly. For `--create` the new worktree does not exist yet, so the
+/// creation hooks resolve against the **invoking** worktree's `.config/wt.toml`
+/// — the worktree `wt switch` ran in, read from its working tree. (`pr:`/`mr:`
+/// switches are no exception: the PR/MR's own committed config is never
+/// consulted; the invoking worktree's hooks run for it too.)
 ///
-/// May `git fetch` a `pr:`/`mr:` fork head ref — `wt switch pr:`/`mr:` is the
-/// user explicitly invoking network work, so fetching at the approval gate is
-/// in keeping; `execute_switch` re-fetches (idempotent).
+/// `Ok(None)` means the resolved worktree has no `.config/wt.toml` — no
+/// project hooks run; no second worktree's config is consulted. A
+/// present-but-malformed config surfaces as `Err` so the user fixes it rather
+/// than silently running a different one.
 pub(crate) fn switch_hook_project_config(
     repo: &Repository,
     plan: &SwitchPlan,
 ) -> anyhow::Result<Option<ProjectConfig>> {
     match plan {
         SwitchPlan::Existing { path, .. } => Repository::at(path)?.load_project_config(),
-        SwitchPlan::Create { method, branch, .. } => {
-            let base_ref = match method {
-                CreationMethod::ForkRef {
-                    remote, ref_path, ..
-                } => {
-                    repo.run_command(&["fetch", "--", remote, ref_path])
-                        .with_context(|| format!("Failed to fetch {ref_path} from {remote}"))?;
-                    "FETCH_HEAD".to_string()
-                }
-                CreationMethod::Regular {
-                    create_branch,
-                    base_branch,
-                    ..
-                } => base_ref_for_create(repo, *create_branch, base_branch.as_deref(), branch),
-            };
-            repo.project_config_at_ref(&base_ref)
-        }
+        SwitchPlan::Create { .. } => repo.load_project_config(),
     }
 }
 
-/// The `Repository` whose `.config/wt.toml` a post-switch hook running in
-/// `worktree_path` should read: the new/destination worktree itself. No
-/// fallback — when the worktree has no `.config/wt.toml`, no project hooks
-/// run, matching what [`switch_hook_project_config`] surfaced to the approval
-/// prompt.
+/// The `Repository` rooting the *render* context for post-switch hooks running
+/// in `worktree_path` — the new/destination worktree itself. It supplies only
+/// git context for template rendering; the command set is the frozen
+/// [`ApprovedHookPlan`], never re-derived from this repo's config.
 fn hook_repo_for_worktree(worktree_path: &Path) -> anyhow::Result<Repository> {
     Repository::at(worktree_path)
 }
@@ -1472,11 +1413,10 @@ fn hook_repo_for_worktree(worktree_path: &Path) -> anyhow::Result<Repository> {
 /// Approve switch hooks upfront and show "Commands declined" if needed.
 ///
 /// `project_config` is the `.config/wt.toml` the post-switch hooks will run
-/// against — the new/destination worktree's (or, for `--create`, the base
-/// ref's), resolved by [`switch_hook_project_config`]. Passing it in (rather
-/// than letting the approval read `ctx.repo`'s config) is what keeps the
-/// prompt listing the exact commands `execute_switch` will run, including for
-/// `wt switch pr:N` against a fork's hooks.
+/// against — the destination worktree's, or for `--create` the invoking
+/// worktree's — resolved by [`switch_hook_project_config`]. Passing it in
+/// (rather than letting the approval re-read config) freezes the exact
+/// commands `execute_switch` will run into the [`ApprovedHookPlan`].
 ///
 /// Returns `(hooks_approved, plan)`. `hooks_approved` is `false` and the plan
 /// empty when `!verify` or the user declined; the covered switch hooks
@@ -1532,9 +1472,8 @@ pub(crate) fn spawn_switch_background_hooks(
 ) -> anyhow::Result<()> {
     // Background hooks run in the new/destination worktree. `hook_repo` roots
     // the *render* context there; the command set is the frozen `hook_plan`
-    // (anchored at the destination at the gate, from the base-ref config for
-    // `--create`), so the worktree's on-disk `.config/wt.toml` is never
-    // re-read.
+    // (selected at the gate from the destination worktree's config, or the
+    // invoking worktree's for `--create`), so no `.config/wt.toml` is re-read.
     let hook_repo = hook_repo_for_worktree(result.path())?;
     let ctx = CommandContext::new(&hook_repo, config, branch, result.path(), yes);
 
@@ -1652,16 +1591,11 @@ pub fn run_switch(
     })?;
 
     // Resolve the `.config/wt.toml` the post-switch hooks will run against —
-    // the new/destination worktree's (for `--create`, the base ref's, read via
-    // `git show` since the worktree doesn't exist yet). Computed once so the
-    // approval prompt and the template pre-flight below agree with what
-    // `execute_switch` / `spawn_switch_background_hooks` resolve at run time.
-    // (May `git fetch` a `pr:`/`mr:` fork head — explicit network work.)
-    //
-    // Skip entirely when `--no-hooks` / `--no-verify` is in effect: with hooks
-    // disabled, the result is never used, and resolving it could fetch from a
-    // PR ref or read a primary `.config/wt.toml` the user asked us not to
-    // touch.
+    // the destination worktree's, or for `--create` the invoking worktree's
+    // (the new worktree doesn't exist yet). Computed once so the approval
+    // prompt and the template pre-flight below agree with what `execute_switch`
+    // / `spawn_switch_background_hooks` resolve at run time. Skip entirely when
+    // `--no-hooks` / `--no-verify` is in effect: the result is never used.
     let hook_project_config = if verify {
         switch_hook_project_config(&repo, &plan)?
     } else {
@@ -1859,9 +1793,9 @@ pub fn run_switch(
 ///   blocking state. The user can fix the template and run `wt hook` manually.
 ///
 /// `project_config` is the `.config/wt.toml` the post-switch hooks will run
-/// against — the new/destination worktree's (for `--create`, the base ref's),
-/// resolved by [`switch_hook_project_config`] — so the templates checked here
-/// are the ones that will actually be expanded, not the invoking worktree's.
+/// against — the destination worktree's, or for `--create` the invoking
+/// worktree's — resolved by [`switch_hook_project_config`], so the templates
+/// checked here are the ones that will actually be expanded.
 ///
 /// Validates:
 /// - `--execute` command template (if present)
@@ -2045,77 +1979,6 @@ mod tests {
         assert_eq!(
             choose_pr_provider(&test.repo).unwrap(),
             PrProviderChoice::GitHub
-        );
-    }
-
-    /// `base_ref_for_create` names the ref the new worktree checks out, so the
-    /// pre-creation hook-config preview reads the same `.config/wt.toml` the
-    /// hooks will run against — mirroring `execute_switch`'s `git worktree add`
-    /// argument choice for `CreationMethod::Regular`.
-    #[test]
-    fn base_ref_for_create_picks_the_checkout_ref() {
-        let mut test = TestRepo::with_initial_commit();
-        test.setup_remote("main");
-        test.run_git(&["branch", "local-feature"]);
-        // A branch that lives only on the remote: push it, then drop the local ref.
-        test.run_git(&["branch", "remote-feature"]);
-        test.run_git(&["push", "origin", "remote-feature"]);
-        test.run_git(&["branch", "-D", "remote-feature"]);
-
-        // `--create` with an explicit base → that base.
-        assert_eq!(
-            base_ref_for_create(&test.repo, true, Some("dev"), "feature"),
-            "dev"
-        );
-        // `--create` with no resolvable default branch → `HEAD` (git's own
-        // fallback for `git worktree add -b <new>` with no base).
-        assert_eq!(
-            base_ref_for_create(&test.repo, true, None, "feature"),
-            "HEAD"
-        );
-        // An existing local branch (no worktree yet) → that branch.
-        assert_eq!(
-            base_ref_for_create(&test.repo, false, None, "local-feature"),
-            "local-feature"
-        );
-        // A branch that exists only on a single remote → its tracking ref.
-        assert_eq!(
-            base_ref_for_create(&test.repo, false, None, "remote-feature"),
-            "origin/remote-feature"
-        );
-        // No local ref, no remote → `HEAD`.
-        assert_eq!(
-            base_ref_for_create(&test.repo, false, None, "nowhere"),
-            "HEAD"
-        );
-
-        // A branch on multiple remotes: with `checkout.defaultRemote` set,
-        // matches what `git worktree add <branch>` would DWIM to; without it,
-        // git would refuse to pick — preview safely defaults to `HEAD`.
-        test.setup_custom_remote("upstream", "main");
-        test.run_git(&["branch", "shared-feature"]);
-        test.run_git(&["push", "origin", "shared-feature"]);
-        test.run_git(&["push", "upstream", "shared-feature"]);
-        test.run_git(&["branch", "-D", "shared-feature"]);
-        // `checkout.defaultRemote` may be set in the user's global config —
-        // override locally so the test isn't sensitive to it.
-        test.repo
-            .set_config("checkout.defaultRemote", "no-such-remote")
-            .unwrap();
-        let repo = Repository::at(test.root_path()).unwrap();
-        // Default doesn't match any remote on the branch → fall back to HEAD.
-        assert_eq!(
-            base_ref_for_create(&repo, false, None, "shared-feature"),
-            "HEAD"
-        );
-        // With `checkout.defaultRemote = upstream`, that remote's ref wins —
-        // matching what `git worktree add shared-feature` would DWIM to.
-        repo.set_config("checkout.defaultRemote", "upstream")
-            .unwrap();
-        let repo = Repository::at(test.root_path()).unwrap();
-        assert_eq!(
-            base_ref_for_create(&repo, false, None, "shared-feature"),
-            "upstream/shared-feature"
         );
     }
 }

@@ -29,9 +29,9 @@
 //! so it cannot re-select.
 //!
 //! The frozen unit is the *selected, source-tagged [`CommandConfig`] list* per
-//! `(HookType, anchor)` — the anchor being the worktree the hook is *about*
-//! (its config source). Rendering stays deferred (post-`*` hooks legitimately
-//! need post-operation context like the merge commit), but it consumes
+//! `(HookType, anchor)` — the anchor being the worktree the hook runs in.
+//! Rendering stays deferred (post-`*` hooks legitimately need post-operation
+//! context like the merge commit), but it consumes
 //! `&[(HookSource, CommandConfig)]`, so it cannot change the set. The
 //! authorization-relevant artifact is the template set, which is exactly what
 //! [`Approvals`] stores and the prompt shows.
@@ -68,10 +68,10 @@ use super::project_config::{ApprovableCommand, Phase};
 /// handle to re-resolve from.
 type Selection = Vec<(HookSource, CommandConfig)>;
 
-/// One frozen entry: the hook type, the anchor worktree (the `.config/wt.toml`
-/// the hook reads — stored as the caller provides it; the gate and executor
-/// both derive it from the same value, so equality holds without
-/// canonicalization), and that pair's source-tagged selection.
+/// One frozen entry: the hook type, the anchor worktree (the worktree the hook
+/// runs in — stored as the caller provides it; the gate and executor both
+/// derive it from the same value, so equality holds without canonicalization),
+/// and that pair's source-tagged selection.
 struct PlanEntry {
     hook_type: HookType,
     anchor: PathBuf,
@@ -100,7 +100,7 @@ impl HookPlanBuilder {
     }
 
     /// Select `hook_types` anchored at `anchor`, from the already-resolved
-    /// `project_config` (the gate snapshots / `git show`s it) plus user config.
+    /// `project_config` (the gate snapshots it) plus user config.
     ///
     /// `project_id` scopes the user-config hook lookup. Source identity is
     /// preserved so source-scoped behavior survives into execution.
@@ -316,10 +316,11 @@ fn render_planned(
 /// signature carries no config — only the plan, the render context, and the
 /// failure strategy.
 ///
-/// `anchor` is the worktree the hook's config was selected from at the gate
-/// (usually `ctx.worktree_path`, but for `post-remove` the removed worktree
-/// while `ctx` runs in the destination). It is *not* a config handle — just
-/// the lookup key into the frozen plan.
+/// `anchor` is the worktree the hook runs in (usually `ctx.worktree_path`, but
+/// for `post-remove` the removed worktree while `ctx` runs in the destination).
+/// It is *not* a config handle — just the lookup key into the frozen plan, and
+/// it need not equal the worktree the config was selected from (the creation
+/// hooks select from the invoking worktree).
 pub fn execute_planned_hook(
     plan: &ApprovedHookPlan,
     anchor: &Path,
@@ -349,7 +350,8 @@ pub fn execute_planned_hook(
 /// rendered from the frozen selection and added via the announcer's existing
 /// config-free `extend`, with no `load_project_config()` at execution.
 ///
-/// `anchor` is the gate's config-source worktree (see [`execute_planned_hook`]).
+/// `anchor` is the worktree the hook runs in — the lookup key into the frozen
+/// plan (see [`execute_planned_hook`]).
 pub fn register_planned(
     announcer: &mut HookAnnouncer<'_>,
     plan: &ApprovedHookPlan,

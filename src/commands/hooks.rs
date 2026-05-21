@@ -5,10 +5,13 @@
 //!
 //! # Which `.config/wt.toml` a hook reads
 //!
-//! Every hook is anchored to one worktree: the worktree it is *about*. It runs
-//! the commands selected from that worktree's `.config/wt.toml`. Two execution
-//! models split on whether a state mutation separates the approval gate from
-//! execution.
+//! Every hook runs in one worktree: the worktree it is *about*. Its commands
+//! come from a `.config/wt.toml` that already exists on disk when the approval
+//! gate runs — normally that worktree's own. The creation hooks are the
+//! exception: the worktree they are about does not exist yet at the gate, so
+//! they select from the **invoking** worktree's config (where `wt switch`
+//! ran). Two execution models split on whether a state mutation separates the
+//! approval gate from execution.
 //!
 //! **Plan-backed (the TOCTOU-covered set):** `pre-merge`, `post-merge`,
 //! `pre-remove`, `post-remove`, `post-switch`, `pre-create`, `post-create`. A
@@ -24,7 +27,7 @@
 //! |---|---|---|
 //! | `pre-merge`, `pre-remove`, `post-remove` | the feature/removed worktree | `merge::approve_merge_plan`, `main.rs`'s `approve_remove`, `step::prune::approve_prune_hooks` |
 //! | `post-merge`, `post-switch` (after a removal) | the merge/removal destination | the same gates |
-//! | `pre-create`, `post-create`, `post-switch` (on switch) | the new/destination worktree (the `--create` base ref's committed config, read via `git show` by `switch_hook_project_config`) | `worktree::switch::approve_switch_hooks` |
+//! | `pre-create`, `post-create`, `post-switch` (on switch) | the new/destination worktree — but for `--create` the config comes from the **invoking** worktree, since the new one doesn't exist yet (`switch_hook_project_config`) | `worktree::switch::approve_switch_hooks` |
 //!
 //! **Invocation-resolved (no gate→exec mutation):** `pre-commit`,
 //! `post-commit`, `pre-switch`, `wt hook <type>`, aliases. They resolve config
@@ -45,8 +48,8 @@
 //! worktree for `wt step commit --branch <b>`); `pre-switch`, `pre-merge`'s
 //! manual `wt hook`, and aliases the worktree `wt` was invoked in.
 //!
-//! Each worktree's `.config/wt.toml` stands alone: no fallback to the primary
-//! worktree's config when the anchor has none, and a present-but-malformed
+//! Each hook resolves exactly one `.config/wt.toml`: no fallback to a second
+//! worktree's config when the chosen one has none, and a present-but-malformed
 //! config aborts the operation rather than silently using a different one.
 //! `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path regardless of the root
 //! (test isolation); user config (`~/.config/worktrunk/config.toml`) is global

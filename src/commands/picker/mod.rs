@@ -824,8 +824,8 @@ pub fn handle_picker(
         // Switch to existing worktree or create new one
         let plan = plan_switch(&repo, &identifier, should_create, None, false, &config)?;
         // Resolve the config the post-switch hooks will run against (the
-        // new/destination worktree's, or for `--create` the base ref's) so the
-        // approval prompt lists the exact commands `execute_switch` will run.
+        // destination worktree's, or for `--create` the invoking worktree's) so
+        // the approval prompt lists the exact commands `execute_switch` will run.
         let hook_project_config = switch_hook_project_config(&repo, &plan)?;
         let (hooks_approved, hook_plan) = approve_switch_hooks(
             &repo,
