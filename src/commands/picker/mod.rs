@@ -1022,16 +1022,14 @@ pub mod tests {
         assert!(PickerRemovalTarget::from_signal("   ").is_none());
         assert!(PickerRemovalTarget::from_signal("worktree-path:").is_none());
 
-        match PickerRemovalTarget::from_signal("feature/foo") {
-            Some(PickerRemovalTarget::Branch(branch)) => assert_eq!(branch, "feature/foo"),
-            _ => panic!("expected a branch target"),
-        }
-        match PickerRemovalTarget::from_signal("worktree-path:/tmp/wt") {
-            Some(PickerRemovalTarget::WorktreePath(path)) => {
-                assert_eq!(path, std::path::PathBuf::from("/tmp/wt"));
-            }
-            _ => panic!("expected a worktree-path target"),
-        }
+        assert!(matches!(
+            PickerRemovalTarget::from_signal("feature/foo"),
+            Some(PickerRemovalTarget::Branch(branch)) if branch == "feature/foo"
+        ));
+        assert!(matches!(
+            PickerRemovalTarget::from_signal("worktree-path:/tmp/wt"),
+            Some(PickerRemovalTarget::WorktreePath(path)) if path == std::path::Path::new("/tmp/wt")
+        ));
     }
 
     /// A `SkimItem` that is not a `WorktreeSkimItem`, used to drive
@@ -1059,6 +1057,7 @@ pub mod tests {
         let worktree_row = FakeSkimItem {
             output: "worktree-path:/tmp/detached".to_string(),
         };
+        assert_eq!(worktree_row.text(), "worktree-path:/tmp/detached");
         assert_eq!(picker_item_identifier(&worktree_row), "/tmp/detached");
 
         let branch_row = FakeSkimItem {
