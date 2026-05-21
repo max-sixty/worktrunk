@@ -126,18 +126,17 @@ fn prune_summary(candidates: &[Candidate]) -> String {
     let mut detached_worktree = 0usize;
     let mut branch_only = 0usize;
     for c in candidates {
-        match (&c.kind, &c.branch) {
-            (CandidateKind::BranchOnly, _) => branch_only += 1,
-            (CandidateKind::Current | CandidateKind::Other, Some(_)) => {
-                worktree_with_branch += 1;
+        match &c.kind {
+            CandidateKind::BranchOnly => branch_only += 1,
+            // A stale detached worktree never has a branch.
+            CandidateKind::StaleDetached => detached_worktree += 1,
+            CandidateKind::Current | CandidateKind::Other => {
+                if c.branch.is_some() {
+                    worktree_with_branch += 1;
+                } else {
+                    detached_worktree += 1;
+                }
             }
-            (
-                CandidateKind::Current | CandidateKind::Other | CandidateKind::StaleDetached,
-                None,
-            ) => {
-                detached_worktree += 1;
-            }
-            (CandidateKind::StaleDetached, Some(_)) => unreachable!(),
         }
     }
     let mut parts = Vec::new();
@@ -886,6 +885,39 @@ mod tests {
         assert_eq!(
             candidate(CandidateKind::Current, "feature").removal_context(),
             "removing worktree for feature"
+        );
+        assert_eq!(
+            candidate(CandidateKind::StaleDetached, "gone").removal_context(),
+            "pruning stale worktree for gone"
+        );
+    }
+
+    #[test]
+    fn stale_detached_candidate_has_no_remove_target() {
+        // `try_remove` and `can_attempt_candidate_removal` short-circuit
+        // `StaleDetached` before calling `remove_target` — but assert the
+        // guard arm so the contract is pinned if that ordering ever changes.
+        let err = candidate(CandidateKind::StaleDetached, "gone")
+            .remove_target()
+            .unwrap_err();
+        assert!(err.to_string().contains("no remove target"));
+    }
+
+    #[test]
+    fn prune_summary_counts_each_candidate_kind() {
+        let mut detached = candidate(CandidateKind::Other, "det");
+        detached.branch = None;
+        let candidates = [
+            candidate(CandidateKind::Other, "feat-a"),
+            candidate(CandidateKind::Other, "feat-b"),
+            detached,
+            candidate(CandidateKind::StaleDetached, "gone"),
+            candidate(CandidateKind::BranchOnly, "orphan"),
+        ];
+        // 2 worktree+branch, 2 detached (one live + one stale), 1 branch-only.
+        assert_eq!(
+            prune_summary(&candidates),
+            "2 worktrees & branches, 2 worktrees, 1 branch"
         );
     }
 }

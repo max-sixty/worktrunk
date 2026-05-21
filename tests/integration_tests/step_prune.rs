@@ -239,6 +239,46 @@ fn test_prune_removes_multiple_detached(mut repo: TestRepo) {
     );
 }
 
+/// Prune removes an integrated detached-HEAD worktree through the synchronous
+/// fallback when the rename-into-trash fast path is blocked.
+///
+/// A detached worktree has no branch, so the fallback's branch deletion is a
+/// no-op — this covers that arm of `delete_branch_in_synchronous_fallback`.
+#[rstest]
+fn test_prune_detached_worktree_rename_fallback(mut repo: TestRepo) {
+    repo.commit("initial");
+    let wt_path = repo.add_worktree("detached-fallback");
+    repo.detach_head_in_worktree("detached-fallback");
+
+    // Pre-create a file at the computed staged path so `std::fs::rename`
+    // fails and prune takes the synchronous non-current fallback.
+    let trash_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
+    std::fs::create_dir_all(&trash_dir).unwrap();
+    let staged_path = trash_dir.join(format!(
+        "{}-{}",
+        wt_path.file_name().unwrap().to_string_lossy(),
+        crate::common::TEST_EPOCH
+    ));
+    std::fs::write(&staged_path, "blocking file to force fallback").unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "prune", "--yes", "--min-age=0s"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "prune should remove a detached worktree via the fallback; stderr:\n{stderr}"
+    );
+    assert!(
+        !wt_path.exists(),
+        "the detached worktree should be removed before prune exits"
+    );
+
+    let _ = std::fs::remove_file(&staged_path);
+}
+
 /// Prune skips locked worktrees
 #[rstest]
 fn test_prune_skips_locked(mut repo: TestRepo) {
@@ -375,6 +415,26 @@ fn test_prune_stale_worktree(mut repo: TestRepo) {
     ));
 }
 
+/// Extract the `worktree <path>` line for the entry whose path ends with
+/// `dir_name` from `git worktree list --porcelain` output.
+///
+/// Returns git's own path string verbatim — the exact form `wt` emits in its
+/// JSON `path` field, since `WorktreeInfo::path` is `PathBuf::from(this)`.
+/// Deriving the expected value this way avoids the Windows mismatch where
+/// `std::fs::canonicalize` yields a `\\?\` verbatim, backslash-separated path
+/// while git reports a forward-slash one.
+fn porcelain_worktree_path<'a>(porcelain: &'a str, dir_name: &str) -> &'a str {
+    porcelain
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .find(|path| {
+            std::path::Path::new(path)
+                .file_name()
+                .is_some_and(|name| name == dir_name)
+        })
+        .unwrap_or_else(|| panic!("no worktree ending in {dir_name} in:\n{porcelain}"))
+}
+
 /// Prune handles stale detached metadata without deleting any branch.
 #[rstest]
 fn test_prune_stale_detached_worktree(repo: TestRepo) {
@@ -385,10 +445,13 @@ fn test_prune_stale_detached_worktree(repo: TestRepo) {
         .parent()
         .unwrap()
         .join("repo.stale-detached");
-    let wt_path_str = wt_path.to_str().unwrap();
-    repo.run_git(&["worktree", "add", "--detach", wt_path_str, "HEAD"]);
-    let wt_path = std::fs::canonicalize(wt_path).unwrap();
-    let wt_path_str = wt_path.to_str().unwrap();
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "--detach",
+        wt_path.to_str().unwrap(),
+        "HEAD",
+    ]);
     let branches_before = repo.git_output(&["branch", "--format=%(refname:short)"]);
 
     std::fs::remove_dir_all(&wt_path).unwrap();
@@ -397,6 +460,9 @@ fn test_prune_stale_detached_worktree(repo: TestRepo) {
         list_before.contains("prunable"),
         "Git should report stale detached worktree metadata before prune"
     );
+    // Use git's own path string for the expectation — `wt`'s JSON `path` is
+    // `PathBuf::from` of exactly this, with no re-canonicalization.
+    let wt_path_str = porcelain_worktree_path(&list_before, "repo.stale-detached");
 
     let output = repo
         .wt_command()
@@ -1207,17 +1273,20 @@ fn test_prune_runs_branch_local_pre_remove_hook(mut repo: TestRepo) {
 /// pre-blocking its staged path, like
 /// `test_remove_background_fallback_on_rename_failure`) while several other
 /// integrated worktrees keep the parallel integration-check fan-out running,
-/// so the deferred config-rewriting `git branch -D` overlaps live
-/// `.git/config` readers.
+/// so the config-rewriting branch deletion overlaps live `.git/config`
+/// readers. After the fix, removal and deletion run synchronously inside
+/// `try_remove`, so `wt step prune` cannot exit before both finish — the
+/// regression assertion (`blocked` worktree and branch gone the instant prune
+/// returns) holds on every platform.
 ///
-/// On POSIX this is a deterministic fallback-path smoke test: a concurrent
-/// `.git/config` read and rename never collide, so it always passes. On
-/// Windows the same overlap can hit the documented residual gap — `git`
-/// failing with `unable to access '.git/config': Permission denied`,
-/// panicking prune. It is left in the normal suite (not a dedicated stress
-/// lane) deliberately: a Windows flake here is empirical proof the fallback
-/// path needs closing rather than the structurally-estimated "small" gap
-/// (issue #2801).
+/// On Unix a `git` shim on `PATH` additionally stalls the fallback's `git
+/// branch -d` for two seconds and records that it ran: proof prune *waits*
+/// for it rather than racing ahead. The shim is Unix-only because Rust's
+/// `Command` resolves a bare program name through `CreateProcess`, which
+/// appends only `.exe` and never finds a `git.cmd`/`git.bat` — the same
+/// reason `mock_commands` ships a real `mock-stub.exe` on Windows. Windows
+/// still exercises the fallback (the pre-blocked staged path) and the
+/// synchronous-completion assertion.
 #[rstest]
 fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
     repo.commit("initial");
@@ -1225,8 +1294,8 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
     // Several integrated worktrees → a real parallel integration-check
     // fan-out. `add_worktree` puts each branch at `main` HEAD, so all are
     // same-commit integrated and will be pruned. Each branch gets a
-    // `[branch "<name>"]` section so its `git branch -D` rewrites
-    // `.git/config` — the racing write. (No remote needed: `git branch -D`
+    // `[branch "<name>"]` section so its `git branch -d` rewrites
+    // `.git/config` — the racing write. (No remote needed: `git branch -d`
     // removes the section regardless of whether `origin` resolves, and the
     // same-commit local check yields "integrated" before upstream is
     // consulted.)
@@ -1256,21 +1325,25 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
     ));
     std::fs::write(&staged_path, "blocking file to force fallback").unwrap();
 
-    // Delay the fallback's `git branch -d <blocked>` call. Before the fix, that
-    // branch deletion ran in a detached shell, so `wt step prune` could exit
-    // while the branch still existed. The fixed path waits for it under the
-    // prune write lock.
-    let git_wrapper_dir = repo.home_path().join("git-wrapper");
-    std::fs::create_dir_all(&git_wrapper_dir).unwrap();
-    let real_git = which::which("git").unwrap();
-    let branch_delete_marker = repo.home_path().join("fallback-branch-delete-started");
-    write_delaying_git_wrapper(&git_wrapper_dir, &real_git);
-
     // Parallel fan-out is the point — do NOT pin RAYON_NUM_THREADS=1.
     let mut cmd = repo.wt_command();
-    prepend_path(&mut cmd, &git_wrapper_dir);
-    cmd.env("WT_PRUNE_DELAY_BRANCH", &blocked);
-    cmd.env("WT_PRUNE_BRANCH_DELETE_STARTED", &branch_delete_marker);
+
+    // Unix only: a `git` shim that delays the fallback's `git branch -d
+    // <blocked>` by two seconds and records that it ran. Before the fix that
+    // deletion ran in a detached shell, so prune could exit while the branch
+    // still existed; the shim proves the fixed path waits for it.
+    #[cfg(unix)]
+    let branch_delete_marker = repo.home_path().join("fallback-branch-delete-started");
+    #[cfg(unix)]
+    {
+        let git_wrapper_dir = repo.home_path().join("git-wrapper");
+        std::fs::create_dir_all(&git_wrapper_dir).unwrap();
+        write_delaying_git_wrapper(&git_wrapper_dir, &which::which("git").unwrap());
+        prepend_path(&mut cmd, &git_wrapper_dir);
+        cmd.env("WT_PRUNE_DELAY_BRANCH", &blocked);
+        cmd.env("WT_PRUNE_BRANCH_DELETE_STARTED", &branch_delete_marker);
+    }
+
     let output = cmd
         .args(["step", "prune", "--yes", "--min-age=0s"])
         .output()
@@ -1289,6 +1362,7 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
          branch deletion collided with a live integration-check \
          reader (issue #2801).\nstderr:\n{stderr}"
     );
+    #[cfg(unix)]
     assert!(
         branch_delete_marker.exists(),
         "delayed fallback branch deletion did not run"
@@ -1306,6 +1380,7 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
     let _ = std::fs::remove_file(&staged_path);
 }
 
+#[cfg(unix)]
 fn prepend_path(cmd: &mut std::process::Command, dir: &std::path::Path) {
     let (path_var_name, current_path) = std::env::vars_os()
         .find(|(key, _)| key.eq_ignore_ascii_case("PATH"))
@@ -1340,19 +1415,4 @@ exec {real_git} "$@"
     let mut permissions = std::fs::metadata(&path).unwrap().permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&path, permissions).unwrap();
-}
-
-#[cfg(windows)]
-fn write_delaying_git_wrapper(dir: &std::path::Path, real_git: &std::path::Path) {
-    let script = format!(
-        r#"@echo off
-if "%~1"=="branch" if "%~2"=="-d" if "%~3"=="%WT_PRUNE_DELAY_BRANCH%" (
-  type nul > "%WT_PRUNE_BRANCH_DELETE_STARTED%"
-  ping -n 3 127.0.0.1 > nul
-)
-"{}" %*
-"#,
-        real_git.display()
-    );
-    std::fs::write(dir.join("git.cmd"), script).unwrap();
 }

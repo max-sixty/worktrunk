@@ -195,7 +195,7 @@ fn execute_instant_removal_or_fallback(
         ) && !changed_directory
         {
             repo.remove_worktree(worktree_path, force_worktree)?;
-            delete_branch_in_synchronous_fallback(repo, branch_name, deletion_mode);
+            delete_branch_in_synchronous_fallback(repo, branch_name);
             return Ok(BackgroundRemovalPlan::CompletedSynchronously);
         }
 
@@ -228,25 +228,18 @@ impl From<String> for BackgroundRemovalPlan {
     }
 }
 
-fn delete_branch_in_synchronous_fallback(
-    repo: &Repository,
-    branch_name: Option<&str>,
-    deletion_mode: BranchDeletionMode,
-) {
+/// Delete the just-removed worktree's branch in the synchronous fallback path.
+///
+/// Only `wt step prune` reaches this (via `SynchronousForNonCurrent`), and prune
+/// always safe-deletes integrated branches — so this hardcodes `git branch -d`
+/// and lets git's own merge check refuse anything not integrated. A detached
+/// worktree has no branch to delete (`None`).
+fn delete_branch_in_synchronous_fallback(repo: &Repository, branch_name: Option<&str>) {
     let Some(branch) = branch_name else {
         return;
     };
-    if deletion_mode.should_keep() {
-        return;
-    }
-
-    let flag = if deletion_mode.is_force() { "-D" } else { "-d" };
-    if let Err(e) = repo.run_command(&["branch", flag, branch]) {
-        log::debug!(
-            "Failed to delete branch {} in synchronous fallback: {}",
-            branch,
-            e
-        );
+    if let Err(e) = repo.run_command(&["branch", "-d", branch]) {
+        log::debug!("Failed to delete branch {branch} in synchronous fallback: {e}");
     }
 }
 
