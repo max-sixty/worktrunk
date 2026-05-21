@@ -251,10 +251,10 @@ fn test_hook_show_merges_user_project_hooks(repo: TestRepo, temp_home: TempDir) 
         format!(
             r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
-[post-start]
+[post-create]
 global-hook = "echo global"
 
-[projects.'{project_id_str}'.post-start]
+[projects.'{project_id_str}'.post-create]
 project-hook = "echo per-project"
 "#
         ),
