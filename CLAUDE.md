@@ -100,6 +100,7 @@ Before adding an accessor that could reach the wire (`gh`, `glab`, `git fetch`, 
 Commands that currently reach the wire:
 
 - `wt list --full`, `wt list statusline` — CI status, LLM summaries
+- `wt step commit` — commit message via a configured LLM command
 - `wt switch pr:<n>`, `wt switch mr:<n>` — host API to resolve the PR/MR, then `git fetch` of its branch
 - `wt config show --full` — version check against GitHub
 - the first `Repository::default_branch()` per repo — `git ls-remote` (above)
