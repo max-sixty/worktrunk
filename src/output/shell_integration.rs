@@ -61,7 +61,7 @@
 use std::io::IsTerminal;
 
 use color_print::cformat;
-use worktrunk::config::UserConfig;
+use worktrunk::config::{UserConfig, require_config_path};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{Shell, current_shell, extract_filename_from_path};
@@ -470,7 +470,8 @@ pub fn prompt_shell_integration(
 
     if !confirmed {
         // Only skip future prompts after explicit decline (not Ctrl+C)
-        let _ = config.set_skip_shell_integration_prompt(None);
+        let _ =
+            require_config_path().and_then(|path| config.set_skip_shell_integration_prompt(&path));
         print_shell_integration_hint(repo);
         return Ok(false);
     }

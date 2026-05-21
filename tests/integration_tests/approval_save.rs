@@ -19,7 +19,7 @@ fn test_approval_saves_to_disk() {
         .approve_command(
             "github.com/test/repo".to_string(),
             "test command".to_string(),
-            Some(&approvals_path),
+            &approvals_path,
         )
         .unwrap();
 
@@ -55,14 +55,14 @@ fn test_duplicate_approvals_not_saved_twice() {
         .approve_command(
             "github.com/test/repo".to_string(),
             "test".to_string(),
-            Some(&approvals_path),
+            &approvals_path,
         )
         .ok();
     approvals
         .approve_command(
             "github.com/test/repo".to_string(),
             "test".to_string(),
-            Some(&approvals_path),
+            &approvals_path,
         )
         .ok();
 
@@ -88,21 +88,21 @@ fn test_multiple_project_approvals() {
         .approve_command(
             "github.com/user1/repo1".to_string(),
             "npm install".to_string(),
-            Some(&approvals_path),
+            &approvals_path,
         )
         .unwrap();
     approvals
         .approve_command(
             "github.com/user2/repo2".to_string(),
             "cargo build".to_string(),
-            Some(&approvals_path),
+            &approvals_path,
         )
         .unwrap();
     approvals
         .approve_command(
             "github.com/user1/repo1".to_string(),
             "npm test".to_string(),
-            Some(&approvals_path),
+            &approvals_path,
         )
         .unwrap();
 
@@ -159,7 +159,7 @@ fn test_isolated_config_safety() {
         .approve_command(
             "github.com/safety-test/repo".to_string(),
             "THIS SHOULD NOT APPEAR IN USER APPROVALS".to_string(),
-            Some(&approvals_path),
+            &approvals_path,
         )
         .unwrap();
 
@@ -217,7 +217,7 @@ fn test_approval_saves_to_new_approvals_file() {
         .approve_command(
             "github.com/test/nested".to_string(),
             "test command".to_string(),
-            Some(&approvals_path),
+            &approvals_path,
         )
         .unwrap();
 
@@ -263,7 +263,7 @@ command = "llm -m claude-haiku-4.5"
 
     // Change a non-approval setting and save back to the same file
     config
-        .set_commit_generation_command("llm -m claude-sonnet-4".to_string(), Some(&config_path))
+        .set_commit_generation_command("llm -m claude-sonnet-4".to_string(), &config_path)
         .unwrap();
 
     // Read back the saved config
@@ -310,7 +310,7 @@ fn test_concurrent_approve_preserves_all_approvals() {
         .approve_command(
             "github.com/user/repo".to_string(),
             "npm install".to_string(),
-            Some(&approvals_path),
+            &approvals_path,
         )
         .unwrap();
 
@@ -327,7 +327,7 @@ fn test_concurrent_approve_preserves_all_approvals() {
         .approve_command(
             "github.com/user/repo".to_string(),
             "npm test".to_string(),
-            Some(&approvals_path),
+            &approvals_path,
         )
         .unwrap();
 
@@ -362,14 +362,14 @@ fn test_concurrent_revoke_preserves_all_changes() {
         .approve_command(
             "github.com/user/repo".to_string(),
             "npm install".to_string(),
-            Some(&approvals_path),
+            &approvals_path,
         )
         .unwrap();
     setup_approvals
         .approve_command(
             "github.com/user/repo".to_string(),
             "npm test".to_string(),
-            Some(&approvals_path),
+            &approvals_path,
         )
         .unwrap();
 
@@ -381,7 +381,7 @@ fn test_concurrent_revoke_preserves_all_changes() {
     // Process A: revokes the project
     let mut approvals_a = Approvals::default();
     approvals_a
-        .revoke_project("github.com/user/repo", Some(&approvals_path))
+        .revoke_project("github.com/user/repo", &approvals_path)
         .unwrap();
 
     // Read the final state from disk
@@ -414,7 +414,7 @@ fn test_concurrent_approve_different_projects() {
         .approve_command(
             "github.com/user/project1".to_string(),
             "npm install".to_string(),
-            Some(&approvals_path),
+            &approvals_path,
         )
         .unwrap();
 
@@ -424,7 +424,7 @@ fn test_concurrent_approve_different_projects() {
         .approve_command(
             "github.com/user/project2".to_string(),
             "cargo build".to_string(),
-            Some(&approvals_path),
+            &approvals_path,
         )
         .unwrap();
 
@@ -482,7 +482,7 @@ fn test_truly_concurrent_approve_with_threads() {
                     .approve_command(
                         "github.com/user/repo".to_string(),
                         format!("command_{i}"),
-                        Some(&approvals_path),
+                        &approvals_path,
                     )
                     .unwrap();
             })
@@ -559,7 +559,7 @@ fn test_permission_error_prevents_save() {
     let result = approvals.approve_command(
         "github.com/test/readonly".to_string(),
         "test command".to_string(),
-        Some(&approvals_path),
+        &approvals_path,
     );
 
     // Restore write permissions so temp_dir can be cleaned up
@@ -592,7 +592,7 @@ fn test_skip_shell_integration_prompt_saves_to_disk() {
 
     let mut config = UserConfig::default();
     config
-        .set_skip_shell_integration_prompt(Some(&config_path))
+        .set_skip_shell_integration_prompt(&config_path)
         .unwrap();
 
     // Verify file was created
@@ -616,10 +616,10 @@ fn test_skip_shell_integration_prompt_idempotent() {
 
     // Call twice - should not error
     config
-        .set_skip_shell_integration_prompt(Some(&config_path))
+        .set_skip_shell_integration_prompt(&config_path)
         .unwrap();
     config
-        .set_skip_shell_integration_prompt(Some(&config_path))
+        .set_skip_shell_integration_prompt(&config_path)
         .unwrap();
 
     // Field should still be true
@@ -640,7 +640,7 @@ fn test_skip_commit_generation_prompt_saves_to_disk() {
 
     let mut config = UserConfig::default();
     config
-        .set_skip_commit_generation_prompt(Some(&config_path))
+        .set_skip_commit_generation_prompt(&config_path)
         .unwrap();
 
     // Verify file was created
@@ -664,10 +664,10 @@ fn test_skip_commit_generation_prompt_idempotent() {
 
     // Call twice - should not error
     config
-        .set_skip_commit_generation_prompt(Some(&config_path))
+        .set_skip_commit_generation_prompt(&config_path)
         .unwrap();
     config
-        .set_skip_commit_generation_prompt(Some(&config_path))
+        .set_skip_commit_generation_prompt(&config_path)
         .unwrap();
 
     // Field should still be true
@@ -688,7 +688,7 @@ fn test_set_commit_generation_command_saves_to_disk() {
 
     let mut config = UserConfig::default();
     config
-        .set_commit_generation_command("llm -m haiku".to_string(), Some(&config_path))
+        .set_commit_generation_command("llm -m haiku".to_string(), &config_path)
         .unwrap();
 
     // Verify file was created
@@ -716,7 +716,7 @@ fn test_set_commit_generation_command_with_special_chars() {
     let command =
         "MAX_THINKING_TOKENS=0 claude -p --model=haiku --tools='' --system-prompt=''".to_string();
     config
-        .set_commit_generation_command(command, Some(&config_path))
+        .set_commit_generation_command(command, &config_path)
         .unwrap();
 
     // Verify TOML can be parsed back
@@ -769,7 +769,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
     let mut config: UserConfig = toml::from_str(&toml_str).unwrap();
 
     config
-        .set_commit_generation_command("llm -m haiku".to_string(), Some(&symlink_path))
+        .set_commit_generation_command("llm -m haiku".to_string(), &symlink_path)
         .unwrap();
 
     // Verify symlink is preserved
@@ -829,7 +829,7 @@ approved-commands = [
     let mut config: UserConfig = toml::from_str(&toml_str).unwrap();
 
     config
-        .set_commit_generation_command("llm -m haiku".to_string(), Some(&config_path))
+        .set_commit_generation_command("llm -m haiku".to_string(), &config_path)
         .unwrap();
 
     // Read back what was saved

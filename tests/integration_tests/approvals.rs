@@ -114,7 +114,7 @@ fn test_clear_approvals_with_approvals(repo: TestRepo) {
         .approve_command(
             repo.project_id(),
             "echo 'test'".to_string(),
-            Some(repo.test_approvals_path()),
+            repo.test_approvals_path(),
         )
         .unwrap();
 
@@ -142,7 +142,7 @@ fn test_clear_approvals_global_with_approvals(repo: TestRepo) {
         .approve_command(
             repo.project_id(),
             "echo 'test'".to_string(),
-            Some(repo.test_approvals_path()),
+            repo.test_approvals_path(),
         )
         .unwrap();
 
@@ -169,7 +169,7 @@ fn test_clear_approvals_after_clear(repo: TestRepo) {
         .approve_command(
             repo.project_id(),
             "echo 'test'".to_string(),
-            Some(repo.test_approvals_path()),
+            repo.test_approvals_path(),
         )
         .unwrap();
 
@@ -243,21 +243,21 @@ lint = "echo 'third'"
         .approve_command(
             project_id.clone(),
             "echo 'first'".to_string(),
-            Some(repo.test_approvals_path()),
+            repo.test_approvals_path(),
         )
         .unwrap();
     approvals
         .approve_command(
             project_id.clone(),
             "echo 'second'".to_string(),
-            Some(repo.test_approvals_path()),
+            repo.test_approvals_path(),
         )
         .unwrap();
     approvals
         .approve_command(
             project_id,
             "echo 'third'".to_string(),
-            Some(repo.test_approvals_path()),
+            repo.test_approvals_path(),
         )
         .unwrap();
 
@@ -284,7 +284,7 @@ fn test_add_approvals_all_already_approved(repo: TestRepo) {
         .approve_command(
             repo.project_id(),
             "echo 'test'".to_string(),
-            Some(repo.test_approvals_path()),
+            repo.test_approvals_path(),
         )
         .unwrap();
 

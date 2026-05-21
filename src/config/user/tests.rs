@@ -578,7 +578,7 @@ fn test_set_project_worktree_path() {
         .set_project_worktree_path(
             "github.com/user/repo",
             "../{{ branch | sanitize }}".to_string(),
-            Some(&config_path),
+            &config_path,
         )
         .unwrap();
 
@@ -2153,7 +2153,7 @@ fn test_reload_from_invalid_toml() {
 
     // Try to reload via a mutation — should fail with parse error
     let mut config = UserConfig::default();
-    let result = config.set_skip_shell_integration_prompt(Some(&config_path));
+    let result = config.set_skip_shell_integration_prompt(&config_path);
 
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
@@ -2369,7 +2369,7 @@ fn test_reload_from_permission_error() {
 
     // Try to reload via a mutation — should fail with read error
     let mut config = UserConfig::default();
-    let result = config.set_skip_shell_integration_prompt(Some(&config_path));
+    let result = config.set_skip_shell_integration_prompt(&config_path);
 
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
@@ -3278,7 +3278,7 @@ fn test_set_project_worktree_path_noop_when_unchanged() {
 
     let mut config = UserConfig::default();
     config
-        .set_project_worktree_path("user/repo", "../custom".to_string(), Some(&config_path))
+        .set_project_worktree_path("user/repo", "../custom".to_string(), &config_path)
         .unwrap();
 
     let after_first = std::fs::read_to_string(&config_path).unwrap();
@@ -3290,7 +3290,7 @@ fn test_set_project_worktree_path_noop_when_unchanged() {
     // false, so save is skipped.
     let mut config2 = UserConfig::default();
     config2
-        .set_project_worktree_path("user/repo", "../custom".to_string(), Some(&config_path))
+        .set_project_worktree_path("user/repo", "../custom".to_string(), &config_path)
         .unwrap();
 
     let after_second = std::fs::read_to_string(&config_path).unwrap();
@@ -3312,7 +3312,7 @@ fn test_set_skip_shell_integration_prompt_noop_on_second_call() {
 
     let mut config = UserConfig::default();
     config
-        .set_skip_shell_integration_prompt(Some(&config_path))
+        .set_skip_shell_integration_prompt(&config_path)
         .unwrap();
     let after_first = std::fs::read_to_string(&config_path).unwrap();
     assert!(after_first.contains("skip-shell-integration-prompt = true"));
@@ -3320,7 +3320,7 @@ fn test_set_skip_shell_integration_prompt_noop_on_second_call() {
     // Second call with the flag already true in-memory — mutator returns
     // false, save is skipped, file is byte-identical.
     config
-        .set_skip_shell_integration_prompt(Some(&config_path))
+        .set_skip_shell_integration_prompt(&config_path)
         .unwrap();
     let after_second = std::fs::read_to_string(&config_path).unwrap();
     assert_eq!(after_first, after_second);
@@ -3336,7 +3336,7 @@ fn test_acquire_config_lock_handles_root_path() {
     // None branch executes cleanly.
     let mut config = UserConfig::default();
     let err = config
-        .set_skip_shell_integration_prompt(Some(std::path::Path::new("/")))
+        .set_skip_shell_integration_prompt(std::path::Path::new("/"))
         .unwrap_err();
     let msg = err.to_string();
     assert!(
@@ -3362,7 +3362,7 @@ fn test_acquire_config_lock_fails_when_parent_is_file() {
 
     let mut config = UserConfig::default();
     let err = config
-        .set_skip_shell_integration_prompt(Some(&config_path))
+        .set_skip_shell_integration_prompt(&config_path)
         .unwrap_err();
     let msg = err.to_string();
     assert!(
@@ -3404,7 +3404,7 @@ fn test_with_locked_mutation_propagates_save_error() {
     let cfg_path_for_closure = config_path.clone();
     let mut config = UserConfig::default();
     let err = config
-        .with_locked_mutation(Some(&config_path), move |_config| {
+        .with_locked_mutation(&config_path, move |_config| {
             // Mid-mutation: strip read permissions from the config file.
             // reload_from already ran; save_to will try to read again and fail.
             let mut perms = std::fs::metadata(&cfg_path_for_closure)

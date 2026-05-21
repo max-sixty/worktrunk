@@ -6,7 +6,7 @@
 use anyhow::Context;
 use strum::IntoEnumIterator;
 use worktrunk::HookType;
-use worktrunk::config::Approvals;
+use worktrunk::config::{Approvals, require_approvals_path};
 use worktrunk::git::{GitError, Repository};
 use worktrunk::styling::{eprintln, info_message, success_message};
 
@@ -96,7 +96,7 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
         }
 
         approvals
-            .clear_all(None)
+            .clear_all(&require_approvals_path()?)
             .context("Failed to clear approvals")?;
 
         eprintln!(
@@ -124,7 +124,7 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
         }
 
         approvals
-            .revoke_project(&project_id, None)
+            .revoke_project(&project_id, &require_approvals_path()?)
             .context("Failed to clear project approvals")?;
 
         eprintln!(

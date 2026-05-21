@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::LazyLock;
 
 use color_print::cformat;
-use worktrunk::config::UserConfig;
+use worktrunk::config::{UserConfig, require_config_path};
 use worktrunk::styling::{eprintln, format_toml, hint_message, info_message, success_message};
 
 use super::prompt::{PromptResponse, prompt_yes_no_preview};
@@ -180,7 +180,8 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
     // Detect available tool
     let Some(tool) = detect_llm_tool() else {
         // No tool found - set skip flag so we don't check every time
-        let _ = config.set_skip_commit_generation_prompt(None);
+        let _ =
+            require_config_path().and_then(|path| config.set_skip_commit_generation_prompt(&path));
         return Ok(false);
     };
 
@@ -208,7 +209,9 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
         PromptResponse::Accepted => {
             // Set the configuration
             let command = command.to_string();
-            if let Err(e) = config.set_commit_generation_command(command.clone(), None) {
+            let save_result = require_config_path()
+                .and_then(|path| config.set_commit_generation_command(command.clone(), &path));
+            if let Err(e) = save_result {
                 log::error!("Failed to save config: {}", e);
                 eprintln!(
                     "{}",
@@ -234,7 +237,8 @@ pub fn prompt_commit_generation(config: &mut UserConfig) -> anyhow::Result<bool>
         }
         PromptResponse::Declined => {
             // Set skip flag so we don't prompt again
-            let _ = config.set_skip_commit_generation_prompt(None);
+            let _ = require_config_path()
+                .and_then(|path| config.set_skip_commit_generation_prompt(&path));
             Ok(false)
         }
     }

@@ -54,12 +54,23 @@ struct ApprovedProject {
 // Path resolution
 // =========================================================================
 
-/// Get the approvals file path.
+/// Resolve the approvals file path.
 ///
 /// Priority:
 /// 1. `WORKTRUNK_APPROVALS_PATH` environment variable
-/// 2. In test builds: panic if env var not set
-/// 3. Production: sibling of config.toml (`approvals.toml` in same directory)
+/// 2. Lib-crate test builds with the variable unset: panic (see below)
+/// 3. Production: `approvals.toml` beside `config.toml`
+///
+/// Called by [`Approvals::load`] and [`require_approvals_path`]. The mutation
+/// methods take an explicit `&Path`, so they never resolve here.
+///
+/// The step-2 guard is `#[cfg(test)]`, so it fires only when the `worktrunk`
+/// lib crate is itself compiled as a test target. A unit test in the `wt` bin
+/// crate (anything under `src/commands/`) links the lib in non-test mode, so
+/// the guard is compiled out and step 3 resolves the real user config
+/// directory. In-process unit tests must not resolve here, directly or via
+/// [`Approvals::load`]; they pass tempdir-backed paths instead. See
+/// `tests/CLAUDE.md`.
 pub fn approvals_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("WORKTRUNK_APPROVALS_PATH") {
         return Some(PathBuf::from(path));
@@ -67,14 +78,25 @@ pub fn approvals_path() -> Option<PathBuf> {
 
     #[cfg(test)]
     panic!(
-        "WORKTRUNK_APPROVALS_PATH not set in test. Tests must use TestRepo which sets this \
-         automatically, or set it manually to an isolated test approvals path."
+        "WORKTRUNK_APPROVALS_PATH not set in test. Subprocess tests set it via TestRepo. \
+         An in-process unit test must pass explicit tempdir paths to the mutation \
+         methods and must not resolve the approvals path globally. See tests/CLAUDE.md."
     );
 
     #[cfg(not(test))]
     {
         super::user::config_path().map(|p| p.with_file_name("approvals.toml"))
     }
+}
+
+/// Resolve the approvals path, erroring when no location can be determined.
+///
+/// The `Result`-returning counterpart of [`approvals_path`], for the callers
+/// that save approvals and need a concrete path.
+pub fn require_approvals_path() -> Result<PathBuf, ConfigError> {
+    approvals_path().ok_or_else(|| {
+        ConfigError("Cannot determine approvals path. Set $HOME or $XDG_CONFIG_HOME".to_string())
+    })
 }
 
 // =========================================================================
@@ -253,25 +275,17 @@ impl Approvals {
     /// Acquires lock, reloads from disk, calls the mutator, and saves if mutator returns true.
     fn with_locked_mutation<F>(
         &mut self,
-        approvals_path: Option<&Path>,
+        approvals_path: &Path,
         mutate: F,
     ) -> Result<(), ConfigError>
     where
         F: FnOnce(&mut Self) -> bool,
     {
-        let path = match approvals_path {
-            Some(p) => p.to_path_buf(),
-            None => self::approvals_path().ok_or_else(|| {
-                ConfigError(
-                    "Cannot determine approvals path. Set $HOME or $XDG_CONFIG_HOME".to_string(),
-                )
-            })?,
-        };
-        let _lock = super::user::mutation::acquire_config_lock(&path)?;
-        self.reload_from(&path)?;
+        let _lock = super::user::mutation::acquire_config_lock(approvals_path)?;
+        self.reload_from(approvals_path)?;
 
         if mutate(self) {
-            self.save_to(&path)?;
+            self.save_to(approvals_path)?;
         }
         Ok(())
     }
@@ -321,7 +335,7 @@ impl Approvals {
         &mut self,
         project: String,
         command: String,
-        approvals_path: Option<&Path>,
+        approvals_path: &Path,
     ) -> Result<(), ConfigError> {
         self.with_locked_mutation(approvals_path, |approvals| {
             if approvals.is_command_approved(&project, &command) {
@@ -342,7 +356,7 @@ impl Approvals {
         &mut self,
         project: String,
         commands: Vec<String>,
-        approvals_path: Option<&Path>,
+        approvals_path: &Path,
     ) -> Result<(), ConfigError> {
         self.with_locked_mutation(approvals_path, |approvals| {
             let entry = approvals.projects.entry(project).or_default();
@@ -366,7 +380,7 @@ impl Approvals {
     pub fn revoke_project(
         &mut self,
         project: &str,
-        approvals_path: Option<&Path>,
+        approvals_path: &Path,
     ) -> Result<(), ConfigError> {
         let project = project.to_string();
         self.with_locked_mutation(approvals_path, |approvals| {
@@ -382,7 +396,7 @@ impl Approvals {
     }
 
     /// Clear all approvals for all projects and save.
-    pub fn clear_all(&mut self, approvals_path: Option<&Path>) -> Result<(), ConfigError> {
+    pub fn clear_all(&mut self, approvals_path: &Path) -> Result<(), ConfigError> {
         self.with_locked_mutation(approvals_path, |approvals| {
             if approvals.projects.is_empty() {
                 return false;
@@ -458,7 +472,7 @@ mod tests {
             .approve_command(
                 "github.com/user/repo".to_string(),
                 "npm install".to_string(),
-                Some(&path),
+                &path,
             )
             .unwrap();
 
@@ -476,14 +490,14 @@ mod tests {
             .approve_command(
                 "github.com/user/repo".to_string(),
                 "npm install".to_string(),
-                Some(&path),
+                &path,
             )
             .unwrap();
         approvals
             .approve_command(
                 "github.com/user/repo".to_string(),
                 "npm install".to_string(),
-                Some(&path),
+                &path,
             )
             .unwrap();
 
@@ -505,7 +519,7 @@ mod tests {
             .approve_commands(
                 "github.com/user/repo".to_string(),
                 vec!["npm install".to_string(), "npm test".to_string()],
-                Some(&path),
+                &path,
             )
             .unwrap();
 
@@ -522,19 +536,19 @@ mod tests {
             .approve_commands(
                 "github.com/user/repo1".to_string(),
                 vec!["npm install".to_string(), "npm test".to_string()],
-                Some(&path),
+                &path,
             )
             .unwrap();
         approvals
             .approve_command(
                 "github.com/user/repo2".to_string(),
                 "cargo build".to_string(),
-                Some(&path),
+                &path,
             )
             .unwrap();
 
         approvals
-            .revoke_project("github.com/user/repo1", Some(&path))
+            .revoke_project("github.com/user/repo1", &path)
             .unwrap();
         assert!(!approvals.projects.contains_key("github.com/user/repo1"));
         assert!(approvals.projects.contains_key("github.com/user/repo2"));
@@ -549,18 +563,18 @@ mod tests {
             .approve_command(
                 "github.com/user/repo1".to_string(),
                 "npm install".to_string(),
-                Some(&path),
+                &path,
             )
             .unwrap();
         approvals
             .approve_command(
                 "github.com/user/repo2".to_string(),
                 "cargo build".to_string(),
-                Some(&path),
+                &path,
             )
             .unwrap();
 
-        approvals.clear_all(Some(&path)).unwrap();
+        approvals.clear_all(&path).unwrap();
         assert!(approvals.projects.is_empty());
     }
 
@@ -573,7 +587,7 @@ mod tests {
             .approve_commands(
                 "github.com/user/repo".to_string(),
                 vec!["npm install".to_string(), "npm test".to_string()],
-                Some(&path),
+                &path,
             )
             .unwrap();
 
@@ -641,7 +655,7 @@ mod tests {
             .approve_commands(
                 "github.com/user/repo".to_string(),
                 vec!["npm install".to_string(), "npm test".to_string()],
-                Some(&path),
+                &path,
             )
             .unwrap();
 
@@ -665,7 +679,7 @@ mod tests {
             .approve_command(
                 "project".to_string(),
                 "echo {{ repo_root }}".to_string(),
-                Some(&path),
+                &path,
             )
             .unwrap();
 
@@ -695,7 +709,7 @@ mod tests {
                         .approve_command(
                             "github.com/user/repo".to_string(),
                             format!("command_{i}"),
-                            Some(&config_path),
+                            &config_path,
                         )
                         .unwrap();
                 })
@@ -764,7 +778,7 @@ approved-commands = ["npm install"]
             .approve_command(
                 "github.com/user/repo".to_string(),
                 "npm test".to_string(),
-                Some(&approvals_path),
+                &approvals_path,
             )
             .unwrap();
 
@@ -857,12 +871,10 @@ approved-command = ["npm test"]
         let (_temp_dir, path) = test_dir();
         let mut approvals = Approvals::default();
         approvals
-            .approve_command("project-a".to_string(), "cmd1".to_string(), Some(&path))
+            .approve_command("project-a".to_string(), "cmd1".to_string(), &path)
             .unwrap();
         // Revoke a project that doesn't exist — should be a no-op
-        approvals
-            .revoke_project("nonexistent", Some(&path))
-            .unwrap();
+        approvals.revoke_project("nonexistent", &path).unwrap();
         assert!(approvals.is_command_approved("project-a", "cmd1"));
     }
 
@@ -871,7 +883,7 @@ approved-command = ["npm test"]
         let (_temp_dir, path) = test_dir();
         let mut approvals = Approvals::default();
         // Clear when there's nothing — should be a no-op
-        approvals.clear_all(Some(&path)).unwrap();
+        approvals.clear_all(&path).unwrap();
         assert!(approvals.projects.is_empty());
     }
 
@@ -905,7 +917,7 @@ approved-command = ["npm test"]
         let (_temp_dir, path) = test_dir();
         let mut approvals = Approvals::default();
         approvals
-            .approve_command("project-a".to_string(), "cmd1".to_string(), Some(&path))
+            .approve_command("project-a".to_string(), "cmd1".to_string(), &path)
             .unwrap();
         // Manually clear the commands (without removing the project entry)
         approvals
@@ -917,7 +929,7 @@ approved-command = ["npm test"]
         // Write this state to disk
         approvals.save_to(&path).unwrap();
         // Now revoke_project should find the project but see empty commands → no-op
-        approvals.revoke_project("project-a", Some(&path)).unwrap();
+        approvals.revoke_project("project-a", &path).unwrap();
     }
 
     #[test]
@@ -926,10 +938,10 @@ approved-command = ["npm test"]
 
         let mut approvals = Approvals::default();
         approvals
-            .approve_command("project1".to_string(), "cmd1".to_string(), Some(&path))
+            .approve_command("project1".to_string(), "cmd1".to_string(), &path)
             .unwrap();
         approvals
-            .approve_command("project2".to_string(), "cmd2".to_string(), Some(&path))
+            .approve_command("project2".to_string(), "cmd2".to_string(), &path)
             .unwrap();
 
         let projects: Vec<_> = approvals.projects().collect();
