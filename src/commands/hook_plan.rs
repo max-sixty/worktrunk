@@ -453,9 +453,17 @@ mod tests {
         );
 
         // With the project command approved, it survives the read-only gate.
+        // A tempdir-backed approvals path keeps the write off the real user
+        // config dir, which the nix build sandbox makes unwritable.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let approvals_path = temp_dir.path().join("approvals.toml");
         let mut approvals = Approvals::default();
         approvals
-            .approve_command("proj".to_string(), "echo project-hook".to_string(), None)
+            .approve_command(
+                "proj".to_string(),
+                "echo project-hook".to_string(),
+                Some(&approvals_path),
+            )
             .unwrap();
         let mut builder = HookPlanBuilder::new();
         builder.add(
