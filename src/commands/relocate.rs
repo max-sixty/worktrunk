@@ -314,6 +314,31 @@ pub fn validate_candidates(
 // Phase 3 & 4: Execute relocations
 // ============================================================================
 
+/// Move a blocking path aside to `backup_path` so `--clobber` can take its place.
+///
+/// The backup name is only second-resolution (`.bak-<YYYYmmdd-HHMMSS>`), so a
+/// process could create that path between any pre-check and the move. The move
+/// uses [`renamore::rename_exclusive`] — an atomic no-overwrite rename
+/// (`renameat2(RENAME_NOREPLACE)` / `renamex_np(RENAME_EXCL)` / `MoveFileExW`) —
+/// which fails closed rather than overwriting an existing backup. `std::fs::rename`
+/// silently replaces an existing file or empty directory and cannot be used here.
+fn backup_blocking_path(expected_path: &Path, backup_path: &Path) -> anyhow::Result<()> {
+    let src = format_path_for_display(expected_path);
+    let dest = format_path_for_display(backup_path);
+    eprintln!(
+        "{}",
+        progress_message(cformat!("Backing up {src} → {dest}"))
+    );
+
+    match renamore::rename_exclusive(expected_path, backup_path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            anyhow::bail!("Backup path already exists: {dest}")
+        }
+        Err(err) => Err(anyhow::Error::new(err).context(format!("Failed to backup {src}"))),
+    }
+}
+
 impl<'a> RelocationExecutor<'a> {
     /// Create executor and classify targets (handling blockers with optional clobber).
     pub fn new(
@@ -387,27 +412,7 @@ impl<'a> RelocationExecutor<'a> {
                         .unwrap_or_default()
                         .to_string_lossy()
                 ));
-                // Fail closed if the backup destination already exists: `fs::rename`
-                // can silently replace an existing file (and some empty
-                // directories) on Unix, which would destroy a prior backup.
-                if backup_path.exists() {
-                    anyhow::bail!(
-                        "Backup path already exists: {}",
-                        format_path_for_display(&backup_path)
-                    );
-                }
-                let src = format_path_for_display(expected_path);
-                let dest = format_path_for_display(&backup_path);
-                eprintln!(
-                    "{}",
-                    progress_message(cformat!("Backing up {src} → {dest}"))
-                );
-                std::fs::rename(expected_path, &backup_path).with_context(|| {
-                    format!(
-                        "Failed to backup {}",
-                        format_path_for_display(expected_path)
-                    )
-                })?;
+                backup_blocking_path(expected_path, &backup_path)?;
             } else {
                 let blocked_path = format_path_for_display(expected_path);
                 let msg = cformat!("Skipping <bold>{branch}</> (target blocked: {blocked_path})");
@@ -753,6 +758,37 @@ pub fn show_all_skipped(skipped: usize) {
                 "Skipped {skipped} worktree{}",
                 if skipped == 1 { "" } else { "s" }
             ))
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backup_blocking_path_refuses_to_replace_existing_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("source.txt"), "source").unwrap();
+        std::fs::create_dir(&dest).unwrap();
+
+        let err = backup_blocking_path(&source, &dest).unwrap_err();
+
+        assert!(
+            err.to_string().contains("Backup path already exists"),
+            "expected fail-closed error, got: {err}"
+        );
+        assert!(
+            source.join("source.txt").exists(),
+            "source must remain intact"
+        );
+        assert!(dest.exists(), "destination must remain intact");
+        assert!(
+            !dest.join("source.txt").exists(),
+            "destination must not be replaced by source"
         );
     }
 }
