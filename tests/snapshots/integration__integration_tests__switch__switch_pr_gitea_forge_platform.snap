@@ -49,4 +49,4 @@ exit_code: 1
 [107m [0m [1mOverride test[22m (#101)
 [107m [0m by @alice · open · feature-auth · [90mhttps://git.internal.example.com/owner/test-repo/pulls/101[39m
 [31m✗[39m [31mCannot create branch for [1mpr:101[22m — PR already has branch [1mfeature-auth[22m[39m
-[2m↳[22m [2mTo switch to it: [4mwt switch pr:101[24m[22m
+[2m↳[22m [2mTo switch to the existing branch, run [4mwt switch pr:101[24m[22m

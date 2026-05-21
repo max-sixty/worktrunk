@@ -74,7 +74,7 @@ exit_code: 0
 
 [36mDIAGNOSTICS[39m
 [2m↳[22m [2mCI status requires GitHub, GitLab, Gitea, or Azure DevOps remote[22m
-[32m✓[39m [32mUp to date ([1m[VERSION][22m)[39m
+[2m○[22m Up to date ([1m[VERSION][22m)
 [31m✗[39m [31mCommit generation failed ([1mnonexistent-llm-command-12345 -m test-model[22m)[39m
 [107m [0m [31m✗[39m [31mCommit generation command failed[39m
 [107m [0m [107m [0m sh: nonexistent-llm-command-12345: command not found

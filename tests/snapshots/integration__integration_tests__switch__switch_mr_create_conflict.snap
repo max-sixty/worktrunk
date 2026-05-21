@@ -49,4 +49,4 @@ exit_code: 1
 [107m [0m [1mFix authentication bug in login flow[22m (!101)
 [107m [0m by @alice · opened · feature-auth · [90mhttps://gitlab.com/owner/test-repo/-/merge_requests/101[39m
 [31m✗[39m [31mCannot create branch for [1mmr:101[22m — MR already has branch [1mfeature-auth[22m[39m
-[2m↳[22m [2mTo switch to it: [4mwt switch mr:101[24m[22m
+[2m↳[22m [2mTo switch to the existing branch, run [4mwt switch mr:101[24m[22m

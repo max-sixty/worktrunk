@@ -1408,7 +1408,7 @@ fn render_version_check(out: &mut String) -> anyhow::Result<()> {
                 writeln!(
                     out,
                     "{}",
-                    success_message(cformat!("Up to date (<bold>{current}</>)"))
+                    info_message(cformat!("Up to date (<bold>{current}</>)"))
                 )?;
             }
         }

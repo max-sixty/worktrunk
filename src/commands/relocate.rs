@@ -710,20 +710,25 @@ pub fn show_dry_run_preview(candidates: &[RelocationCandidate]) {
 
 /// Show summary of relocations performed.
 pub fn show_summary(relocated: usize, skipped: usize) {
-    if relocated > 0 || skipped > 0 {
-        eprintln!();
-        let plural = |n: usize| if n == 1 { "worktree" } else { "worktrees" };
-        if skipped == 0 {
-            let msg = format!("Relocated {relocated} {}", plural(relocated));
-            eprintln!("{}", success_message(msg));
-        } else {
-            let msg = format!(
-                "Relocated {relocated} {}, skipped {skipped} {}",
-                plural(relocated),
-                plural(skipped)
-            );
-            eprintln!("{}", info_message(msg));
-        }
+    if relocated == 0 && skipped == 0 {
+        return;
+    }
+    eprintln!();
+    let plural = |n: usize| if n == 1 { "worktree" } else { "worktrees" };
+    let msg = if skipped == 0 {
+        format!("Relocated {relocated} {}", plural(relocated))
+    } else {
+        format!(
+            "Relocated {relocated} {}, skipped {skipped} {}",
+            plural(relocated),
+            plural(skipped)
+        )
+    };
+    // Success when worktrees moved; info when only skips (no change made).
+    if relocated > 0 {
+        eprintln!("{}", success_message(msg));
+    } else {
+        eprintln!("{}", info_message(msg));
     }
 }
 

@@ -347,7 +347,7 @@ pub fn print_shell_install_result(scan_result: &crate::commands::configure_shell
             ))
         );
     } else {
-        eprintln!("{}", success_message("All shells already configured"));
+        eprintln!("{}", info_message("All shells already configured"));
     }
 
     // Zsh compinit advisory

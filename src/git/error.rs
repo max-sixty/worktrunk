@@ -1220,7 +1220,7 @@ impl GitError {
                         "Cannot create branch for <bold>{syntax}{number}</> — {name} already has branch <bold>{branch}</>"
                     )),
                     hint_message(cformat!(
-                        "To switch to it: <underline>wt switch {syntax}{number}</>"
+                        "To switch to the existing branch, run <underline>wt switch {syntax}{number}</>"
                     ))
                 )
             }
