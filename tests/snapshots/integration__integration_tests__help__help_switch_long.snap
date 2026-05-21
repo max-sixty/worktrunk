@@ -11,19 +11,22 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
-    WORKTRUNK_APPROVALS_PATH: /nonexistent/wt/approvals.toml
-    WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml
-    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
@@ -81,8 +84,6 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           Skip directory change after switching[0m
           
           Hooks still run normally. Useful when hooks handle navigation (e.g., tmux workflows) or for CI/automation. Use --cd to override.[0m
-          
-          In picker mode (no branch argument), prints the selected branch name and exits without switching. Useful for scripting.[0m
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
@@ -143,8 +144,8 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
 1. Runs pre-switch hooks, blocking until complete
 2. Creates worktree at configured path
 3. Switches to new directory
-4. Runs pre-start hooks, blocking until complete
-5. Spawns post-start and post-switch hooks in the background
+4. Runs pre-create hooks, blocking until complete
+5. Spawns post-create and post-switch hooks in the background
 
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch feature                        # Existing branch → creates worktree[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch [0m[2m[36m--create[0m[2m feature               # New branch and worktree[0m[2m[0m

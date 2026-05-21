@@ -233,42 +233,40 @@ pub(super) fn generate_backup_path(
     }
 }
 
-/// Compute the backup path for clobber operations.
+/// Move a stale path aside so `wt switch --clobber` can take its place.
 ///
-/// Returns `Ok(None)` if path doesn't exist.
-/// Returns `Ok(Some(backup_path))` if clobber is true and path exists.
-/// Returns `Err(GitError::WorktreePathExists)` if clobber is false and path exists.
-pub(super) fn compute_clobber_backup(
-    path: &Path,
-    branch: &str,
-    clobber: bool,
-    create: bool,
-) -> anyhow::Result<Option<PathBuf>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    if clobber {
-        let timestamp = worktrunk::utils::epoch_now() as i64;
-        let datetime =
-            chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(chrono::Utc::now);
-        let suffix = datetime.format("%Y%m%d-%H%M%S").to_string();
-        let backup_path = generate_backup_path(path, &suffix)?;
-
-        if backup_path.exists() {
-            anyhow::bail!(
-                "Backup path already exists: {}",
-                worktrunk::path::format_path_for_display(&backup_path)
-            );
+/// Renames `worktree_path` to a `.bak.<base_suffix>` sibling. If that name is
+/// already taken — a same-second clobber, or a path that raced in after
+/// planning — it counts up (`…-2`, `…-3`, …) until it finds a free name.
+/// Every attempt is an atomic no-overwrite rename ([`renamore::rename_exclusive`]),
+/// so an existing backup is never overwritten; the move just lands on the next
+/// free name. Returns the path the stale directory was moved to.
+pub(super) fn back_up_clobbered_path(
+    worktree_path: &Path,
+    base_suffix: &str,
+) -> anyhow::Result<PathBuf> {
+    // Count up until a free name is found. This cannot spin forever: a
+    // directory holds finitely many entries, so some `-N` is always unused.
+    let mut n: u64 = 1;
+    loop {
+        // First attempt uses the bare suffix; later ones disambiguate with -N.
+        let suffix = if n == 1 {
+            base_suffix.to_string()
+        } else {
+            format!("{base_suffix}-{n}")
+        };
+        let candidate = generate_backup_path(worktree_path, &suffix)?;
+        match renamore::rename_exclusive(worktree_path, &candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            Err(err) => {
+                return Err(anyhow::Error::new(err).context(format!(
+                    "Failed to move {} to {}",
+                    format_path_for_display(worktree_path),
+                    format_path_for_display(&candidate),
+                )));
+            }
         }
-        Ok(Some(backup_path))
-    } else {
-        Err(GitError::WorktreePathExists {
-            branch: branch.to_string(),
-            path: path.to_path_buf(),
-            create,
-        }
-        .into())
     }
 }
 
@@ -464,6 +462,75 @@ mod tests {
         // Parent reference has no file name
         let path = PathBuf::from("..");
         assert!(generate_backup_path(&path, "20250101-000000").is_err());
+    }
+
+    #[test]
+    fn test_back_up_clobbered_path_moves_to_fresh_suffix() {
+        let temp = tempfile::tempdir().unwrap();
+        let stale = temp.path().join("feature");
+        std::fs::create_dir(&stale).unwrap();
+        std::fs::write(stale.join("file"), "content").unwrap();
+
+        let used = back_up_clobbered_path(&stale, "20250101-000000").unwrap();
+
+        assert_eq!(used, temp.path().join("feature.bak.20250101-000000"));
+        assert!(!stale.exists(), "stale path should be moved away");
+        assert_eq!(
+            std::fs::read_to_string(used.join("file")).unwrap(),
+            "content"
+        );
+    }
+
+    #[test]
+    fn test_back_up_clobbered_path_falls_back_when_suffix_taken() {
+        let temp = tempfile::tempdir().unwrap();
+        let stale = temp.path().join("feature");
+        std::fs::create_dir(&stale).unwrap();
+
+        // The preferred backup name and its first -N variant are both taken.
+        let taken = temp.path().join("feature.bak.20250101-000000");
+        std::fs::create_dir(&taken).unwrap();
+        std::fs::write(taken.join("keep"), "pre-existing").unwrap();
+        std::fs::create_dir(temp.path().join("feature.bak.20250101-000000-2")).unwrap();
+
+        let used = back_up_clobbered_path(&stale, "20250101-000000").unwrap();
+
+        // Lands on -3; neither pre-existing backup is overwritten.
+        assert_eq!(used, temp.path().join("feature.bak.20250101-000000-3"));
+        assert!(!stale.exists());
+        assert_eq!(
+            std::fs::read_to_string(taken.join("keep")).unwrap(),
+            "pre-existing"
+        );
+    }
+
+    #[test]
+    fn test_back_up_clobbered_path_errors_when_source_missing() {
+        // A missing source fails the rename with a non-AlreadyExists error,
+        // which surfaces rather than being retried.
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("does-not-exist");
+        assert!(back_up_clobbered_path(&missing, "20250101-000000").is_err());
+    }
+
+    #[test]
+    fn test_back_up_clobbered_path_keeps_incrementing_past_many_collisions() {
+        // There is no attempt cap: the move keeps counting up until a free
+        // name is found, however many backups already exist.
+        let temp = tempfile::tempdir().unwrap();
+        let stale = temp.path().join("feature");
+        std::fs::create_dir(&stale).unwrap();
+
+        // Occupy the preferred name and the first 49 -N fallbacks (suffix "S").
+        std::fs::create_dir(temp.path().join("feature.bak.S")).unwrap();
+        for n in 2..=50 {
+            std::fs::create_dir(temp.path().join(format!("feature.bak.S-{n}"))).unwrap();
+        }
+
+        let used = back_up_clobbered_path(&stale, "S").unwrap();
+
+        assert_eq!(used, temp.path().join("feature.bak.S-51"));
+        assert!(!stale.exists(), "stale path should be moved away");
     }
 
     #[test]

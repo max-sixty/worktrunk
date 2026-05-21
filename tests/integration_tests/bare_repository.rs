@@ -756,7 +756,7 @@ fn test_bare_repo_project_config_found_from_bare_root() {
     let marker_str = marker_path.to_str().unwrap().replace('\\', "/");
     fs::write(
         config_dir.join("wt.toml"),
-        format!("post-start = \"echo hook-executed > '{}'\"\n", marker_str),
+        format!("post-create = \"echo hook-executed > '{}'\"\n", marker_str),
     )
     .unwrap();
 
@@ -818,7 +818,7 @@ fn test_bare_repo_project_config_found_with_dash_c_flag() {
     let marker_str = marker_path.to_str().unwrap().replace('\\', "/");
     fs::write(
         config_dir.join("wt.toml"),
-        format!("post-start = \"echo hook-executed > '{}'\"\n", marker_str),
+        format!("post-create = \"echo hook-executed > '{}'\"\n", marker_str),
     )
     .unwrap();
 
@@ -886,7 +886,7 @@ fn test_bare_repo_ignores_config_in_bare_root() {
     let marker_str = marker_path.to_str().unwrap().replace('\\', "/");
     fs::write(
         config_dir.join("wt.toml"),
-        format!("post-start = \"echo bad > '{}'\"\n", marker_str),
+        format!("post-create = \"echo bad > '{}'\"\n", marker_str),
     )
     .unwrap();
 

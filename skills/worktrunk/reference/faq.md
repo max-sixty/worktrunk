@@ -179,11 +179,11 @@ User hooks and user aliases don't require approval (you defined them). Commands 
 
 ▲ repo needs approval to execute 3 commands:
 
-○ pre-start install:
+○ pre-create install:
   npm ci
-○ pre-start build:
+○ pre-create build:
   cargo build --release
-○ pre-start env:
+○ pre-create env:
   echo 'PORT={{ branch | hash_port }}' > .env.local
 
 ❯ Allow and remember? [y/N]

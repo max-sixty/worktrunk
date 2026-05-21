@@ -127,6 +127,10 @@ urlencoding = "2.1"
 regex = "1.12"
 ignore = "0.4"
 reflink-copy = "0.1"
+# Atomic, no-overwrite rename (renameat2 / renamex_np / MoveFileExW) for
+# `--clobber` backups — closes the check-then-rename TOCTOU. Keeps the FFI
+# (and its `unsafe`) out of this crate, which is `unsafe_code = "forbid"`.
+renamore = "0.3"
 dashmap = "6.2.1"
 fs2 = "0.4.3"
 sanitize-filename = "0.6.0"

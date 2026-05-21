@@ -801,8 +801,8 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     let subcommands = value_suggestions(&stdout);
     // Hook types and commands
     assert!(subcommands.contains(&"show"), "Missing show");
-    assert!(subcommands.contains(&"pre-start"), "Missing pre-start");
-    assert!(subcommands.contains(&"post-start"), "Missing post-start");
+    assert!(subcommands.contains(&"pre-create"), "Missing pre-create");
+    assert!(subcommands.contains(&"post-create"), "Missing post-create");
     assert!(subcommands.contains(&"post-switch"), "Missing post-switch");
     assert!(subcommands.contains(&"pre-switch"), "Missing pre-switch");
     assert!(subcommands.contains(&"pre-commit"), "Missing pre-commit");
@@ -822,7 +822,7 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let subcommands = value_suggestions(&stdout);
-    assert!(subcommands.contains(&"post-start"));
+    assert!(subcommands.contains(&"post-create"));
     assert!(subcommands.contains(&"post-switch"));
     assert!(subcommands.contains(&"post-commit"));
     assert!(subcommands.contains(&"post-merge"));

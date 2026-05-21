@@ -100,7 +100,7 @@ pub use resolve::{
 pub use switch::{SwitchOptions, run_switch};
 #[cfg(unix)]
 pub(crate) use switch::{
-    approve_switch_hooks, run_pre_switch_hooks, spawn_switch_background_hooks,
+    approve_switch_hooks, emit_switch_json, run_pre_switch_hooks, spawn_switch_background_hooks,
     switch_hook_project_config, validate_switch_templates,
 };
 #[cfg(unix)]

@@ -2,7 +2,13 @@
 
 ## Unreleased
 
+### Improved
+
+- **Worktree-creation hooks renamed to `pre-create`/`post-create`**: `pre-start` and `post-start` are renamed so the name matches when the hooks fire (worktree creation). Old configs keep working: the old keys migrate to the new names silently on load, `wt config update` rewrites them on disk, and `wt hook pre-start`/`post-start` still run. No deprecation warning yet. The semantic flip to watch: before v0.32.0 the key `post-create` named a _blocking_ creation hook, and it now names the _background_ one. A pre-0.32.0 `post-create` config has been a fatal load error since v0.44.0, so any such config was forced to migrate well before the name was reclaimed. Full plan: [#2838](https://github.com/max-sixty/worktrunk/issues/2838).
+
 ### Fixed
+
+- **Interactive picker switches with `cd = false`**: With `[switch] cd = false` (or `wt switch --no-cd`), opening the picker (`wt switch` with no branch argument) and selecting a worktree printed the branch name and exited — no switch, no hooks, and `Alt-c` created nothing. The picker now runs the same switch pipeline as `wt switch <branch>`, suppressing only the cd directive: `pre-switch`/`post-switch` hooks fire and `Alt-c` creates the worktree. `--format=json` works in the picker too, and replaces the old print-only output for scripting — it both switches and prints a structured result (`action`, `branch`, `path`) to stdout. ([#2837](https://github.com/max-sixty/worktrunk/issues/2837))
 
 - **`wt remove` reaps a wedged fsmonitor daemon**: When `core.fsmonitor=true`, git runs a per-worktree `git fsmonitor--daemon`. Removal already sent `git fsmonitor--daemon stop`, but `stop` is an IPC request to the daemon itself, so a daemon that had stopped answering its socket ignored it and then leaked forever once its worktree was gone (dozens could accumulate, and one wedged daemon hangs `wt list`). Removal now resolves the daemon's PID from its IPC socket and force-terminates it (SIGTERM, brief wait, SIGKILL) when `stop` doesn't take. The signal only ever targets the daemon whose socket resolves to the worktree being removed.
 

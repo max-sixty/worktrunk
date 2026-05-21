@@ -24,6 +24,7 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     NO_COLOR: ""
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
@@ -38,9 +39,11 @@ info:
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
@@ -59,12 +62,12 @@ exit_code: 0
 [33m▲[39m [33mUser config: template variable [1mmain_worktree[22m is deprecated in favor of [1mrepo[22m[39m
 [2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a/test-config.toml/current b/test-config.toml/migrated[m
-[107m [0m [1mindex 7cc556b..b3535c5 100644[m
+[107m [0m [1mindex 61ddfbb..0a92575 100644[m
 [107m [0m [1m--- a/test-config.toml/current[m
 [107m [0m [1m+++ b/test-config.toml/migrated[m
 [107m [0m [36m@@ -1,2 +1,2 @@[m
 [107m [0m [31m-worktree-path = "../{{ main_worktree }}.{{ branch }}"[m
-[107m [0m [31m-pre-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"[m
+[107m [0m [31m-pre-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"[m
 [107m [0m [32m+[m[32mworktree-path = "../{{ repo }}.{{ branch }}"[m
-[107m [0m [32m+[m[32mpre-start = "ln -sf {{ repo_path }}/node_modules {{ worktree_path }}/node_modules"[m
+[107m [0m [32m+[m[32mpre-create = "ln -sf {{ repo_path }}/node_modules {{ worktree_path }}/node_modules"[m
 [32m✓[39m [32mUpdated user config[39m

@@ -348,7 +348,7 @@ Add to the project config:
 
 ```toml
 # .config/wt.toml
-[post-start]
+[post-create]
 copy = "wt step copy-ignored"
 ```
 
@@ -400,7 +400,7 @@ Reflink copies share disk blocks until modified — no data is actually copied. 
 
 Uses per-file reflink (like `cp -Rc`) — copy time scales with file count.
 
-Use the `post-start` hook so the copy runs in the background. Use `pre-start` instead if subsequent hooks or `--execute` command need the copied files immediately.
+Use the `post-create` hook so the copy runs in the background. Use `pre-create` instead if subsequent hooks or `--execute` command need the copied files immediately.
 
 ### Background-hook priority (experimental)
 
@@ -419,7 +419,7 @@ The `target/` directory is huge (often 1-10GB). Copying with reflink cuts first 
 `node_modules/` is large but mostly static. If the project has no native dependencies, symlinks are even faster:
 
 ```toml
-[pre-start]
+[pre-create]
 deps = "ln -sf {{ primary_worktree_path }}/node_modules ."
 ```
 
@@ -906,7 +906,7 @@ Run a command; kill its whole process tree when its worktree is removed. Teardow
 
 ### Why
 
-A `post-start` hook to start a long-lived process and a `pre-remove` hook to
+A `post-create` hook to start a long-lived process and a `pre-remove` hook to
 stop it is usually enough. But `pre-remove` only runs when worktrunk removes
 the worktree, so a `git worktree remove`, an `rm -rf`, or a crashed hook skips
 it. Across enough worktree churn some process is bound to outlive its worktree,
@@ -931,7 +931,7 @@ Run a dev server, torn down automatically when the worktree goes away:
 
 ```toml
 # .config/wt.toml
-[post-start]
+[post-create]
 server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
 ```
 

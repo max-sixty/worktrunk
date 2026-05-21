@@ -25,7 +25,7 @@ Hooks are shell commands that run at key points in the worktree lifecycle. Ten h
 | Event | `pre-` (blocking) | `post-` (background) |
 |-------|-------------------|---------------------|
 | **switch** | `pre-switch` | `post-switch` |
-| **start** | `pre-start` | `post-start` |
+| **start** | `pre-create` | `post-create` |
 | **commit** | `pre-commit` | `post-commit` |
 | **merge** | `pre-merge` | `post-merge` |
 | **remove** | `pre-remove` | `post-remove` |
@@ -33,10 +33,10 @@ Hooks are shell commands that run at key points in the worktree lifecycle. Ten h
 `pre-*` hooks block — failure aborts the operation. `post-*` hooks run in the background.
 
 ```toml
-[pre-start]
+[pre-create]
 deps = "npm ci"
 
-[post-start]
+[post-create]
 server = "npm run dev -- --port {{ branch | hash_port }}"
 
 [pre-merge]
@@ -183,7 +183,7 @@ tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name | sani
 '''
 ```
 
-Run with `wt hook-log --kind=post-start --name=server` to tail the log for the `server` hook on the current branch. `--kind` picks the hook type; the branch is pulled from the current worktree via `{{ branch }}`. `sanitize_hash` rewrites `branch` and `name` to filesystem-safe forms with a hash suffix that keeps distinct originals unique — the same transformation Worktrunk applies on disk — so the alias resolves the right log even when either contains characters like `/`.
+Run with `wt hook-log --kind=post-create --name=server` to tail the log for the `server` hook on the current branch. `--kind` picks the hook type; the branch is pulled from the current worktree via `{{ branch }}`. `sanitize_hash` rewrites `branch` and `name` to filesystem-safe forms with a hash suffix that keeps distinct originals unique — the same transformation Worktrunk applies on disk — so the alias resolves the right log even when either contains characters like `/`.
 
 ## Custom subcommands
 

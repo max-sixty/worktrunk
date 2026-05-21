@@ -2,4 +2,4 @@
 source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
-[31m✗[39m [31mpre-start command failed: command not found[39m
+[31m✗[39m [31mpre-create command failed: command not found[39m

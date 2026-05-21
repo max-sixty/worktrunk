@@ -10,7 +10,7 @@ Sleep 1s
 Show
 Sleep 500ms
 
-# Show the config: post-start hooks + URL template
+# Show the config: post-create hooks + URL template
 Type "cat .config/wt.toml"
 Enter
 Sleep 2s

@@ -431,7 +431,7 @@ fn display_hook_command_failed_with_name() {
 #[test]
 fn display_hook_command_failed_without_name() {
     let err = WorktrunkError::HookCommandFailed {
-        hook_type: HookType::PreStart,
+        hook_type: HookType::PreCreate,
         command_name: None,
         error: "command not found".into(),
         exit_code: Some(127),

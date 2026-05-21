@@ -53,7 +53,7 @@ mod tests {
         let spec = PipelineSpec {
             worktree_path: "/tmp/test-worktree".into(),
             branch: "feature/auth".into(),
-            hook_type: HookType::PostStart,
+            hook_type: HookType::PostCreate,
             source: HookSource::User,
             context: [("branch".into(), "feature/auth".into())]
                 .into_iter()

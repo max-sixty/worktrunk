@@ -2266,7 +2266,7 @@ fn test_tips_dev_server_workflow(mut repo: TestRepo) {
 
     // Add project config with URL template for dev servers
     repo.write_project_config(
-        r#"[post-start]
+        r#"[post-create]
 server = "npm run dev -- --port {{ branch | hash_port }} &"
 
 [list]

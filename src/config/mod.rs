@@ -309,12 +309,12 @@ mod tests {
     #[test]
     fn test_command_config_named() {
         let toml = r#"
-            [post-start]
+            [post-create]
             server = "npm run dev"
             watch = "npm run watch"
         "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
-        let cmd_config = config.hooks.post_start.unwrap();
+        let cmd_config = config.hooks.post_create.unwrap();
         let commands: Vec<_> = cmd_config.commands().collect();
         assert_eq!(commands.len(), 2);
         // Preserves TOML insertion order
@@ -361,14 +361,14 @@ mod tests {
 
     #[test]
     fn test_command_config_task_order() {
-        // Test exact ordering as used in post_start tests
+        // Test exact ordering as used in post_create tests
         let toml = r#"
-[post-start]
+[post-create]
 task1 = "echo 'Task 1 running' > task1.txt"
 task2 = "echo 'Task 2 running' > task2.txt"
 "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
-        let cmd_config = config.hooks.post_start.unwrap();
+        let cmd_config = config.hooks.post_create.unwrap();
         let commands: Vec<_> = cmd_config.commands().collect();
 
         assert_eq!(commands.len(), 2);
@@ -383,19 +383,6 @@ task2 = "echo 'Task 2 running' > task2.txt"
             Some("task2"),
             "Second command should be task2"
         );
-    }
-
-    #[test]
-    fn test_project_config_both_commands() {
-        let toml = r#"
-            post-create = "npm install"
-
-            [post-start]
-            server = "npm run dev"
-        "#;
-        let config: ProjectConfig = toml::from_str(toml).unwrap();
-        assert!(config.hooks.post_create.is_some());
-        assert!(config.hooks.post_start.is_some());
     }
 
     #[test]
@@ -451,7 +438,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
     #[test]
     fn test_command_config_roundtrip_named() {
         let original = r#"
-            [post-start]
+            [post-create]
             server = "npm run dev"
             watch = "npm run watch"
         "#;
@@ -460,7 +447,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let config2: ProjectConfig = toml::from_str(&serialized).unwrap();
         assert_eq!(config, config2);
         assert_snapshot!(serialized, @r#"
-        [post-start]
+        [post-create]
         server = "npm run dev"
         watch = "npm run watch"
         "#);
