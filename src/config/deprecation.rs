@@ -2443,11 +2443,11 @@ timeout = 30
     #[test]
     fn test_compute_migrated_content_does_not_rewrite_literal_text_when_other_template_uses_deprecated_var()
      {
-        let content = "pre-start = \"echo repo_root\"\npost-start = \"echo {{ repo_root }}\"\n";
+        let content = "pre-merge = \"echo repo_root\"\npost-merge = \"echo {{ repo_root }}\"\n";
         let migrated = compute_migrated_content(content);
         assert_eq!(
             migrated,
-            "pre-start = \"echo repo_root\"\npost-start = \"echo {{ repo_path }}\"\n"
+            "pre-merge = \"echo repo_root\"\npost-merge = \"echo {{ repo_path }}\"\n"
         );
     }
 

@@ -643,36 +643,44 @@ pager = "delta --paging=never"
     );
 }
 
-/// Fatal deprecations in system config should warn and skip that config layer,
-/// rather than allowing the removed key to remain active after migration.
+/// System config is routed through the same deprecation gate as user config:
+/// a non-fatal deprecation surfaces a warning, and a deprecated hook key is
+/// migrated to its canonical name and stays active.
 #[rstest]
-fn test_post_create_in_system_config_warns_and_skips(repo: TestRepo) {
+fn test_system_config_deprecations_pass_through_gate(repo: TestRepo) {
     let system_config_dir = tempfile::tempdir().unwrap();
     let system_config_path = system_config_dir.path().join("config.toml");
-    fs::write(&system_config_path, "post-create = \"npm install\"\n").unwrap();
+    fs::write(
+        &system_config_path,
+        r#"post-start = "npm install"
+
+[select]
+pager = "delta --paging=never"
+"#,
+    )
+    .unwrap();
 
     let mut cmd = repo.wt_command();
-    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
-    cmd.args(["hook", "show", "pre-start"])
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path)
+        .env("NO_COLOR", "1");
+    cmd.args(["hook", "show", "post-create"])
         .current_dir(repo.root_path());
 
     let output = cmd.output().unwrap();
     assert!(
         output.status.success(),
-        "Command should succeed with system config skipped: {}",
+        "Command should succeed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("System config")
-            && stderr.contains("post-create")
-            && stderr.contains("pre-start"),
-        "warning should describe the rename, got: {stderr}"
+        stderr.contains("System config") && stderr.contains("[select]"),
+        "non-fatal deprecation in system config should warn, got: {stderr}"
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        !stdout.contains("npm install"),
-        "removed post-create hook should not remain active, got: {stdout}"
+        stdout.contains("npm install"),
+        "post-start in system config should migrate to post-create and stay active, got: {stdout}"
     );
 }
 
