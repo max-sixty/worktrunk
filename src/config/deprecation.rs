@@ -82,8 +82,7 @@ pub struct DeprecatedSection {
 }
 
 /// Top-level keys that are deprecated and handled by the deprecation system —
-/// renamed sections (`[commit-generation]` → `[commit.generation]`) and renamed
-/// flattened hook keys (`pre-start` → `pre-create`).
+/// renamed sections (`[commit-generation]` → `[commit.generation]`).
 ///
 /// When a deprecated key appears in the config type where its canonical replacement
 /// is valid, `warn_unknown_fields` skips it (the deprecation system provides better
@@ -104,16 +103,6 @@ pub const DEPRECATED_SECTION_KEYS: &[DeprecatedSection] = &[
         key: "ci",
         canonical_top_key: "forge",
         canonical_display: "[forge]",
-    },
-    DeprecatedSection {
-        key: "pre-start",
-        canonical_top_key: "pre-create",
-        canonical_display: "pre-create",
-    },
-    DeprecatedSection {
-        key: "post-start",
-        canonical_top_key: "post-create",
-        canonical_display: "post-create",
     },
 ];
 
@@ -486,9 +475,9 @@ pub struct Deprecations {
     pub approved_commands: bool,
     /// Has `[select]` section (moved to `[switch.picker]`)
     pub select: bool,
-    /// Has a `pre-start` hook key (renamed to `pre-create`)
+    /// Reserved for future hook-name deprecation tracking; always false.
     pub pre_start: bool,
-    /// Has a `post-start` hook key (renamed to `post-create`)
+    /// Reserved for future hook-name deprecation tracking; always false.
     pub post_start: bool,
     /// Has `[ci]` section (moved to `[forge]`)
     pub ci_section: bool,
@@ -544,8 +533,8 @@ fn detect_deprecations_from_doc(
         commit_gen: find_commit_generation_from_doc(doc),
         approved_commands: find_approved_commands_from_doc(doc),
         select: find_select_from_doc(doc),
-        pre_start: find_pre_start_from_doc(doc),
-        post_start: find_post_start_from_doc(doc),
+        pre_start: false,
+        post_start: false,
         ci_section: find_ci_section_from_doc(doc),
         no_ff: find_negated_bool_from_doc(doc, "merge", "no-ff", "ff"),
         no_cd: find_negated_bool_from_doc(doc, "switch", "no-cd", "cd"),
@@ -842,90 +831,6 @@ fn has_select_without_picker(table: &toml_edit::Table) -> bool {
     false
 }
 
-/// Find a `pre-start` hook key (renamed to `pre-create`).
-fn find_pre_start_from_doc(doc: &toml_edit::DocumentMut) -> bool {
-    find_renamed_hook_key(doc, "pre-start", "pre-create")
-}
-
-/// Find a `post-start` hook key (renamed to `post-create`).
-fn find_post_start_from_doc(doc: &toml_edit::DocumentMut) -> bool {
-    find_renamed_hook_key(doc, "post-start", "post-create")
-}
-
-/// Detect a hook key renamed from `old_key` to `new_key`.
-///
-/// Flags the deprecation when `old_key` is present (and non-empty) and `new_key`
-/// is not — that is the case the migrator rewrites. When both are present the
-/// migrator leaves `old_key` alone, so it is not flagged either.
-///
-/// Hooks are flattened into the top level of user config, project config, and
-/// each `[projects."id"]` subtree, so all three locations are checked.
-fn find_renamed_hook_key(doc: &toml_edit::DocumentMut, old_key: &str, new_key: &str) -> bool {
-    if doc.get(new_key).is_none() && doc.get(old_key).is_some_and(is_non_empty_item) {
-        return true;
-    }
-
-    if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
-        for (_key, project_value) in projects.iter() {
-            if let Some(project_table) = project_value.as_table()
-                && project_table.get(new_key).is_none()
-                && project_table.get(old_key).is_some_and(is_non_empty_item)
-            {
-                return true;
-            }
-        }
-    }
-
-    false
-}
-
-/// Check if a TOML item is non-empty (strings are always non-empty, tables must have entries).
-fn is_non_empty_item(item: &toml_edit::Item) -> bool {
-    match item {
-        toml_edit::Item::Value(toml_edit::Value::InlineTable(t)) => !t.is_empty(),
-        toml_edit::Item::Table(t) => !t.is_empty(),
-        _ => true, // strings and other values are always "non-empty"
-    }
-}
-
-/// Rename the `pre-start`/`post-start` hook keys to `pre-create`/`post-create`.
-fn migrate_start_hooks_doc(doc: &mut toml_edit::DocumentMut) -> bool {
-    let mut modified = rename_hook_key(doc, "pre-start", "pre-create");
-    modified |= rename_hook_key(doc, "post-start", "post-create");
-    modified
-}
-
-/// Rename `old_key` to `new_key` at the top level and under each `[projects."..."]`.
-///
-/// Skips any location where `new_key` already exists — the user has already
-/// consolidated there, and clobbering their canonical value would lose config.
-/// The rewrite preserves the value shape (string, `[table]`, or
-/// `[[array-of-tables]]`) since it moves the `Item` unchanged.
-fn rename_hook_key(doc: &mut toml_edit::DocumentMut, old_key: &str, new_key: &str) -> bool {
-    let mut modified = false;
-
-    if doc.get(new_key).is_none()
-        && let Some(value) = doc.remove(old_key)
-    {
-        doc.insert(new_key, value);
-        modified = true;
-    }
-
-    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
-        for (_key, project_value) in projects.iter_mut() {
-            if let Some(project_table) = project_value.as_table_mut()
-                && project_table.get(new_key).is_none()
-                && let Some(value) = project_table.remove(old_key)
-            {
-                project_table.insert(new_key, value);
-                modified = true;
-            }
-        }
-    }
-
-    modified
-}
-
 /// Migrate `[select]` sections to `[switch.picker]`.
 ///
 /// Handles both top-level and project-level `[projects."...".select]` sections.
@@ -983,7 +888,7 @@ fn migrate_select_table(table: &mut toml_edit::Table, modified: &mut bool) {
 /// The 5 canonical pre-* hook keys.
 const PRE_HOOK_KEYS: &[&str] = &[
     "pre-switch",
-    "pre-create",
+    "pre-start",
     "pre-commit",
     "pre-merge",
     "pre-remove",
@@ -1276,14 +1181,57 @@ fn migrate_content_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     let mut modified = false;
     modified |= migrate_commit_generation_doc(doc);
     modified |= migrate_select_doc(doc);
-    // Rename `-start` hooks to `-create` before the table-form pass, which
-    // keys off `PRE_HOOK_KEYS` (now `pre-create`, not `pre-start`).
-    modified |= migrate_start_hooks_doc(doc);
+    // Silently rename `-create` hooks back to canonical `-start`. The
+    // creation hook rename is paused (see #2838): both names load via
+    // serde aliases, but in-memory migration to canonical keeps round-trip
+    // analysis (`unknown_tree`) coherent for the table and array-of-tables
+    // forms, where serde aliases on the field don't cover every shape.
+    modified |= migrate_create_hooks_doc(doc);
     modified |= migrate_pre_hook_table_form_doc(doc);
     modified |= migrate_ci_doc(doc);
     modified |= migrate_negated_bool_doc(doc, "merge", "no-ff", "ff");
     modified |= migrate_negated_bool_doc(doc, "switch", "no-cd", "cd");
     modified |= migrate_switch_picker_timeout_doc(doc);
+    modified
+}
+
+/// Rename the `pre-create`/`post-create` hook keys to `pre-start`/`post-start`.
+///
+/// Silent — see [`migrate_content_doc`] and `format_deprecation_warnings`.
+fn migrate_create_hooks_doc(doc: &mut toml_edit::DocumentMut) -> bool {
+    let mut modified = rename_hook_key(doc, "pre-create", "pre-start");
+    modified |= rename_hook_key(doc, "post-create", "post-start");
+    modified
+}
+
+/// Rename `old_key` to `new_key` at the top level and under each `[projects."..."]`.
+///
+/// Skips any location where `new_key` already exists — the user has already
+/// consolidated there, and clobbering their canonical value would lose config.
+/// The rewrite preserves the value shape (string, `[table]`, or
+/// `[[array-of-tables]]`) since it moves the `Item` unchanged.
+fn rename_hook_key(doc: &mut toml_edit::DocumentMut, old_key: &str, new_key: &str) -> bool {
+    let mut modified = false;
+
+    if doc.get(new_key).is_none()
+        && let Some(value) = doc.remove(old_key)
+    {
+        doc.insert(new_key, value);
+        modified = true;
+    }
+
+    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
+        for (_key, project_value) in projects.iter_mut() {
+            if let Some(project_table) = project_value.as_table_mut()
+                && project_table.get(new_key).is_none()
+                && let Some(value) = project_table.remove(old_key)
+            {
+                project_table.insert(new_key, value);
+                modified = true;
+            }
+        }
+    }
+
     modified
 }
 
@@ -2140,31 +2088,6 @@ mod tests {
             .is_some_and(|doc| find_select_from_doc(&doc))
     }
 
-    fn find_pre_start_deprecation(content: &str) -> bool {
-        content
-            .parse::<toml_edit::DocumentMut>()
-            .ok()
-            .is_some_and(|doc| find_pre_start_from_doc(&doc))
-    }
-
-    fn find_post_start_deprecation(content: &str) -> bool {
-        content
-            .parse::<toml_edit::DocumentMut>()
-            .ok()
-            .is_some_and(|doc| find_post_start_from_doc(&doc))
-    }
-
-    fn migrate_start_hooks(content: &str) -> String {
-        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
-            return content.to_string();
-        };
-        if migrate_start_hooks_doc(&mut doc) {
-            doc.to_string()
-        } else {
-            content.to_string()
-        }
-    }
-
     fn migrate_commit_generation_sections(content: &str) -> String {
         let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
             return content.to_string();
@@ -2210,7 +2133,7 @@ worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
     #[test]
     fn test_find_deprecated_vars_repo_root() {
         let content = r#"
-post-create = "ln -sf {{ repo_root }}/node_modules node_modules"
+post-start = "ln -sf {{ repo_root }}/node_modules node_modules"
 "#;
         let found = find_deprecated_vars(content);
         assert_eq!(found, vec![("repo_root", "repo_path")]);
@@ -2219,7 +2142,7 @@ post-create = "ln -sf {{ repo_root }}/node_modules node_modules"
     #[test]
     fn test_find_deprecated_vars_worktree() {
         let content = r#"
-post-create = "cd {{ worktree }} && npm install"
+post-start = "cd {{ worktree }} && npm install"
 "#;
         let found = find_deprecated_vars(content);
         assert_eq!(found, vec![("worktree", "worktree_path")]);
@@ -2237,7 +2160,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
     #[test]
     fn test_find_deprecated_vars_main_worktree_path() {
         let content = r#"
-post-create = "ln -sf {{ main_worktree_path }}/node_modules ."
+post-start = "ln -sf {{ main_worktree_path }}/node_modules ."
 "#;
         let found = find_deprecated_vars(content);
         assert_eq!(found, vec![("main_worktree_path", "primary_worktree_path")]);
@@ -2247,7 +2170,7 @@ post-create = "ln -sf {{ main_worktree_path }}/node_modules ."
     fn test_find_deprecated_vars_multiple() {
         let content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
-post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
+post-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
 "#;
         let found = find_deprecated_vars(content);
         assert_eq!(
@@ -2263,7 +2186,7 @@ post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
     #[test]
     fn test_find_deprecated_vars_with_filter() {
         let content = r#"
-post-create = "ln -sf {{ repo_root | something }}/node_modules"
+post-start = "ln -sf {{ repo_root | something }}/node_modules"
 "#;
         let found = find_deprecated_vars(content);
         assert_eq!(found, vec![("repo_root", "repo_path")]);
@@ -2272,7 +2195,7 @@ post-create = "ln -sf {{ repo_root | something }}/node_modules"
     #[test]
     fn test_find_deprecated_vars_deduplicates() {
         let content = r#"
-post-create = "{{ repo_root }}/a {{ repo_root }}/b"
+post-start = "{{ repo_root }}/a {{ repo_root }}/b"
 "#;
         let found = find_deprecated_vars(content);
         assert_eq!(found, vec![("repo_root", "repo_path")]);
@@ -2282,7 +2205,7 @@ post-create = "{{ repo_root }}/a {{ repo_root }}/b"
     fn test_find_deprecated_vars_does_not_match_suffix() {
         // Should NOT match "worktree_path" when looking for "worktree"
         let content = r#"
-post-create = "cd {{ worktree_path }} && npm install"
+post-start = "cd {{ worktree_path }} && npm install"
 "#;
         let found = find_deprecated_vars(content);
         assert!(
@@ -2311,8 +2234,8 @@ post-create = "cd {{ worktree_path }} && npm install"
     /// while detection still warned. The toml_edit-tree rewrite handles it.
     #[test]
     fn test_replace_deprecated_vars_with_escaped_quotes() {
-        // Source TOML: pre-create = "echo \"{{ repo_root }}\""
-        let content = r#"pre-create = "echo \"{{ repo_root }}\"""#;
+        // Source TOML: pre-start = "echo \"{{ repo_root }}\""
+        let content = r#"pre-start = "echo \"{{ repo_root }}\"""#;
         let result = replace_deprecated_vars(content);
         assert!(
             !result.contains("repo_root"),
@@ -2327,7 +2250,7 @@ post-create = "cd {{ worktree_path }} && npm install"
     /// Same, exercised through the public `compute_migrated_content` entry.
     #[test]
     fn test_compute_migrated_content_escaped_quotes() {
-        let content = "pre-create = \"echo \\\"{{ repo_root }}\\\"\"\n";
+        let content = "pre-start = \"echo \\\"{{ repo_root }}\\\"\"\n";
         let migrated = compute_migrated_content(content);
         assert!(
             !migrated.contains("repo_root"),
@@ -2354,14 +2277,14 @@ post-create = "cd {{ worktree_path }} && npm install"
     fn test_replace_deprecated_vars_multiple() {
         let content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
-post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
+post-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
 "#;
         let result = replace_deprecated_vars(content);
         assert_eq!(
             result,
             r#"
 worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
-post-create = "ln -sf {{ repo_path }}/node_modules {{ worktree_path }}/node_modules"
+post-start = "ln -sf {{ repo_path }}/node_modules {{ worktree_path }}/node_modules"
 "#
         );
     }
@@ -2373,7 +2296,7 @@ post-create = "ln -sf {{ repo_path }}/node_modules {{ worktree_path }}/node_modu
 worktree-path = "../{{ repo }}.{{ branch }}"
 
 [hooks]
-post-create = "echo hello"
+post-start = "echo hello"
 "#;
         let result = replace_deprecated_vars(content);
         assert_eq!(result, content); // No changes since no deprecated vars
@@ -2427,7 +2350,7 @@ timeout = 30
     /// `compute_migrated_content` byte-for-byte (the unmodified branch).
     #[test]
     fn test_compute_migrated_content_noop_returns_input_unchanged() {
-        let content = "pre-create = \"echo {{ repo_path }}\"\n";
+        let content = "pre-start = \"echo {{ repo_path }}\"\n";
         assert_eq!(compute_migrated_content(content), content);
     }
 
@@ -3972,127 +3895,6 @@ pager = "delta --paging=never"
         );
     }
 
-    // --- pre-start/post-start → pre-create/post-create rename tests ---
-
-    #[test]
-    fn test_find_start_hook_deprecation_none() {
-        // Canonical `-create` keys: no deprecation.
-        let content = r#"
-pre-create = "npm install"
-post-create = "npm run dev"
-"#;
-        assert!(!find_pre_start_deprecation(content));
-        assert!(!find_post_start_deprecation(content));
-    }
-
-    #[test]
-    fn test_find_start_hook_deprecation_top_level() {
-        assert!(find_pre_start_deprecation("pre-start = \"npm install\"\n"));
-        assert!(find_post_start_deprecation(
-            "post-start = \"npm run dev\"\n"
-        ));
-    }
-
-    #[test]
-    fn test_find_start_hook_deprecation_project_level() {
-        // User config format: hooks flattened into [projects."..."]
-        let content = r#"
-[projects."my-project"]
-pre-start = "npm install"
-"#;
-        assert!(find_pre_start_deprecation(content));
-    }
-
-    #[test]
-    fn test_find_start_hook_deprecation_named_commands() {
-        // Named command table form
-        let content = r#"
-[pre-start]
-lint = "npm run lint"
-build = "npm run build"
-"#;
-        assert!(find_pre_start_deprecation(content));
-    }
-
-    #[test]
-    fn test_find_start_hook_deprecation_empty_table_not_flagged() {
-        // Empty [pre-start] table is a no-op — don't flag.
-        assert!(!find_pre_start_deprecation("[pre-start]\n"));
-    }
-
-    #[test]
-    fn test_find_start_hook_deprecation_skips_when_create_exists_top_level() {
-        // Both present at top level — the migrator leaves the old key alone.
-        let content = r#"
-pre-start = "old"
-pre-create = "new"
-"#;
-        assert!(!find_pre_start_deprecation(content));
-    }
-
-    #[test]
-    fn test_find_start_hook_deprecation_skips_when_create_exists_project() {
-        let content = r#"
-[projects."my-project"]
-post-start = "old"
-post-create = "new"
-"#;
-        assert!(!find_post_start_deprecation(content));
-    }
-
-    #[test]
-    fn test_migrate_start_hooks_top_level() {
-        let content = r#"
-pre-start = "npm install"
-
-[post-start]
-server = "npm run dev"
-"#;
-        let result = migrate_start_hooks(content);
-        assert!(result.contains("pre-create"), "got: {result}");
-        assert!(result.contains("[post-create]"), "got: {result}");
-        assert!(!result.contains("pre-start"), "got: {result}");
-        assert!(!result.contains("post-start"), "got: {result}");
-    }
-
-    #[test]
-    fn test_migrate_start_hooks_project_level() {
-        let content = r#"
-[projects."my-project"]
-pre-start = "npm install"
-"#;
-        let result = migrate_start_hooks(content);
-        assert!(result.contains("pre-create"), "got: {result}");
-        assert!(!result.contains("pre-start"), "got: {result}");
-    }
-
-    #[test]
-    fn test_migrate_start_hooks_skips_when_create_exists() {
-        let content = r#"
-pre-start = "old"
-pre-create = "new"
-"#;
-        let result = migrate_start_hooks(content);
-        assert_eq!(result, content, "must not clobber an existing pre-create");
-    }
-
-    #[test]
-    fn test_migrate_start_hooks_invalid_toml() {
-        let content = "this is { not valid toml";
-        assert_eq!(migrate_start_hooks(content), content);
-    }
-
-    #[test]
-    fn snapshot_migrate_start_to_create() {
-        let content = r#"pre-start = "npm install"
-
-[post-start]
-server = "npm run dev"
-"#;
-        let migrated = compute_migrated_content(content);
-        insta::assert_snapshot!(migration_diff(content, &migrated));
-    }
-
     fn migrate_switch_picker_timeout(content: &str) -> String {
         let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
             return content.to_string();
@@ -4224,17 +4026,6 @@ pager = "delta"
             output.contains("no longer used"),
             "Should explain deprecation reason: {output}"
         );
-    }
-
-    #[test]
-    fn test_detect_deprecations_includes_start_hooks() {
-        let deprecations = detect_deprecations("pre-start = \"npm install\"\n");
-        assert!(deprecations.pre_start);
-        assert!(!deprecations.is_empty());
-
-        let deprecations = detect_deprecations("post-start = \"npm run dev\"\n");
-        assert!(deprecations.post_start);
-        assert!(!deprecations.is_empty());
     }
 
     // ==================== negated bool format + migration tests ====================
@@ -4502,7 +4293,7 @@ ff = true
 a = "1"
 b = "2"
 
-[pre-create]
+[pre-start]
 a = "1"
 b = "2"
 
@@ -4523,7 +4314,7 @@ b = "2"
             found,
             vec![
                 "pre-switch",
-                "pre-create",
+                "pre-start",
                 "pre-commit",
                 "pre-merge",
                 "pre-remove"
@@ -4535,12 +4326,12 @@ b = "2"
     fn test_detect_pre_hook_table_form_per_project() {
         // Per-project overrides: hooks are flattened under [projects."id"]
         let content = r#"
-[projects."github.com/user/repo".pre-create]
+[projects."github.com/user/repo".pre-start]
 install = "npm ci"
 build = "npm run build"
 "#;
         let found = find_pre_hook_table_form(content);
-        assert_eq!(found, vec!["projects.\"github.com/user/repo\".pre-create"]);
+        assert_eq!(found, vec!["projects.\"github.com/user/repo\".pre-start"]);
     }
 
     #[test]
@@ -4610,14 +4401,14 @@ third = "3"
     #[test]
     fn test_migrate_pre_hook_table_form_per_project() {
         let content = r#"
-[projects."web".pre-create]
+[projects."web".pre-start]
 install = "npm ci"
 build = "npm run build"
 "#;
         let result = migrate_pre_hook_table_form(content);
         let doc: toml_edit::DocumentMut = result.parse().unwrap();
         let project = doc["projects"]["web"].as_table().unwrap();
-        let arr = project["pre-create"]
+        let arr = project["pre-start"]
             .as_array_of_tables()
             .expect("should be array of tables");
         assert_eq!(arr.len(), 2);
@@ -4650,11 +4441,11 @@ no-ff = true
 test = "cargo test"
 lint = "cargo clippy"
 
-[post-create]
+[post-start]
 server = "npm run dev"
 "#;
         // migrate_pre_hook_table_form only transforms pre-* pipeline hooks;
-        // post-create is a post-* hook and must pass through untouched.
+        // post-start is a post-* hook and must pass through untouched.
         let result = migrate_pre_hook_table_form(content);
         insta::assert_snapshot!(migration_diff(content, &result));
     }

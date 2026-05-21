@@ -50,7 +50,7 @@ Each worktree runs its own dev server on a deterministic port. The `hash_port` f
 
 ```toml
 # .config/wt.toml
-[post-create]
+[post-start]
 server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
 
 [list]
@@ -83,7 +83,7 @@ Ports are deterministic: `fix-auth` always gets port 16460, regardless of which 
 Each worktree can have its own isolated database. A pipeline sets up names and ports as [vars](@/config.md#wt-config-state-vars), then later steps and hooks reference them:
 
 ```toml
-[[post-create]]
+[[post-start]]
 set-vars = """
 wt config state vars set \
   container='{{ repo }}-{{ branch | sanitize }}-postgres' \
@@ -91,7 +91,7 @@ wt config state vars set \
   db_url='postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}'
 """
 
-[[post-create]]
+[[post-start]]
 db = """
 docker run -d --rm \
   --name {{ vars.container }} \
@@ -118,21 +118,21 @@ The connection string is accessible anywhere — not just in hooks:
 Use [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) to copy gitignored files (caches, dependencies, `.env`) between worktrees:
 
 ```toml
-[post-create]
+[post-start]
 copy = "wt step copy-ignored"
 ```
 
-When another hook depends on the copy — for example, copying `node_modules/` before `pnpm install` so the install reuses cached packages — sequence them with a `[[post-create]]` pipeline:
+When another hook depends on the copy — for example, copying `node_modules/` before `pnpm install` so the install reuses cached packages — sequence them with a `[[post-start]]` pipeline:
 
 ```toml
-[[post-create]]
+[[post-start]]
 copy = "wt step copy-ignored"
 
-[[post-create]]
+[[post-start]]
 install = "pnpm install"
 ```
 
-Use `pre-create` instead when an `--execute` command needs the copied files immediately.
+Use `pre-start` instead when an `--execute` command needs the copied files immediately.
 
 All gitignored files are copied by default. To limit what gets copied, create `.worktreeinclude` with patterns — files must be both gitignored and listed. See [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) for details.
 
@@ -211,7 +211,7 @@ Worktrunk maintains useful state. Default branch [detection](@/config.md#wt-conf
 Reference Taskfile/Justfile/Makefile in hooks:
 
 ```toml
-[pre-create]
+[pre-start]
 "setup" = "task install"
 
 [pre-merge]
@@ -287,7 +287,7 @@ Each worktree gets its own tmux session with a multi-pane layout.
 
 ```toml
 # .config/wt.toml
-[pre-create]
+[pre-start]
 tmux = """
 S={{ branch | sanitize }}
 W={{ worktree_path }}
@@ -330,7 +330,7 @@ Each worktree gets its own [cmux](https://cmux.com) workspace. Switching worktre
 [switch]
 cd = false
 
-[pre-create]
+[pre-start]
 cmux = "cmux new-workspace --name {{ repo | sanitize }}/{{ branch | sanitize }} --cwd {{ worktree_path }} --focus true"
 
 [pre-switch]
@@ -381,7 +381,7 @@ Clean URLs like `http://feature-auth.myproject.localhost` without port numbers. 
 
 ```toml
 # .config/wt.toml
-[post-create]
+[post-start]
 server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
 proxy = """
   curl -sf --max-time 0.5 http://localhost:2019/config/ || caddy start
@@ -402,7 +402,7 @@ url = "http://{{ branch | sanitize }}.{{ repo }}.localhost:8080"
 
 **How it works:**
 
-1. `wt switch --create feature-auth` runs the `post-create` hook, starting the dev server on a deterministic port (`{{ branch | hash_port }}` → 16460)
+1. `wt switch --create feature-auth` runs the `post-start` hook, starting the dev server on a deterministic port (`{{ branch | hash_port }}` → 16460)
 2. The hook starts Caddy if needed and registers a route using the same port: `feature-auth.myproject` → `localhost:16460`
 3. `*.localhost` resolves to `127.0.0.1` via the OS
 4. Visiting `http://feature-auth.myproject.localhost:8080`: Caddy matches the subdomain and proxies to the dev server
@@ -411,9 +411,9 @@ url = "http://{{ branch | sanitize }}.{{ repo }}.localhost:8080"
 
 Follow background hook output in real-time:
 
-{{ terminal(cmd="tail -f __WT_QUOT__$(wt config state logs get --hook=user:post-create:server)__WT_QUOT__") }}
+{{ terminal(cmd="tail -f __WT_QUOT__$(wt config state logs get --hook=user:post-start:server)__WT_QUOT__") }}
 
-The `--hook` format is `source:hook-type:name` — e.g., `project:post-create:build` for project-defined hooks. Use `wt config state logs get` to list all available logs.
+The `--hook` format is `source:hook-type:name` — e.g., `project:post-start:build` for project-defined hooks. Use `wt config state logs get` to list all available logs.
 
 Create an alias for frequent use:
 

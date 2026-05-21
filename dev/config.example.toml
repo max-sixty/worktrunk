@@ -168,26 +168,26 @@
 # list.full = true
 # merge.squash = false
 # remove.delete-branch = false
-# pre-create.env = "cp .env.example .env"
+# pre-start.env = "cp .env.example .env"
 # step.copy-ignored.exclude = [".repo-local-cache/"]
 # aliases.deploy = "make deploy BRANCH={{ branch }}"
 #
-# Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence. The dotted-key examples below are equivalent to the table forms — TOML treats `projects."github.com/user/repo".post-create.server = "..."` and a `[projects."github.com/user/repo".post-create]` table the same way:
+# Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence. The dotted-key examples below are equivalent to the table forms — TOML treats `projects."github.com/user/repo".post-start.server = "..."` and a `[projects."github.com/user/repo".post-start]` table the same way:
 #
 # # Single command
 # [projects."github.com/user/repo"]
-# post-create = "mise trust"
+# post-start = "mise trust"
 #
 # # Multiple commands, running concurrently
-# [projects."github.com/user/repo".post-create]
+# [projects."github.com/user/repo".post-start]
 # mise = "mise trust"
 # server = "npm run dev"
 #
 # # Pipeline: steps run in sequence
-# [[projects."github.com/user/repo".post-create]]
+# [[projects."github.com/user/repo".post-start]]
 # install = "npm ci"
 #
-# [[projects."github.com/user/repo".post-create]]
+# [[projects."github.com/user/repo".post-start]]
 # build = "npm run build"
 # server = "npm run dev"
 #

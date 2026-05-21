@@ -851,7 +851,7 @@ impl TestRepo {
     /// - Remote (origin) bare repository
     /// - Three feature worktrees (feature-a, feature-b, feature-c) each with one commit
     ///
-    /// Uses a pre-created fixture for fast initialization - copies the fixture
+    /// Uses a pre-started fixture for fast initialization - copies the fixture
     /// from `tests/fixtures/standard/` instead of running git commands.
     ///
     /// Also sets up mock gh/glab commands that appear authenticated to prevent

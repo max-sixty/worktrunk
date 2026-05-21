@@ -4,7 +4,7 @@ info:
   program: wt
   args:
     - hook
-    - post-create
+    - post-start
     - db
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
@@ -57,4 +57,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRunning post-create: [1mdb[22m (user)[39m
+[36m◎[39m [36mRunning post-start: [1mdb[22m (user)[39m

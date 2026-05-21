@@ -572,11 +572,11 @@ fn post_process_for_html(text: &str) -> String {
             "```\n\
              ▲ repo needs approval to execute 3 commands:\n\
              \n\
-             ○ pre-create install:\n\
+             ○ pre-start install:\n\
              \x20\x20\x20npm ci\n\
-             ○ pre-create build:\n\
+             ○ pre-start build:\n\
              \x20\x20\x20cargo build --release\n\
-             ○ pre-create env:\n\
+             ○ pre-start env:\n\
              \x20\x20\x20echo 'PORT={{ branch | hash_port }}' > .env.local\n\
              \n\
              ❯ Allow and remember? [y/N]\n\
@@ -584,11 +584,11 @@ fn post_process_for_html(text: &str) -> String {
             "{% terminal() %}\n\
              <span class=\"y\">▲ <b>repo</b> needs approval to execute <b>3</b> commands:</span>\n\
              \n\
-             <span class=\"d\">○</span> pre-create <b>install</b>:\n\
+             <span class=\"d\">○</span> pre-start <b>install</b>:\n\
              <span style='background:var(--bright-white,#fff)'> </span> <span class=\"d\"><span class=\"b\">npm</span> ci</span>\n\
-             <span class=\"d\">○</span> pre-create <b>build</b>:\n\
+             <span class=\"d\">○</span> pre-start <b>build</b>:\n\
              <span style='background:var(--bright-white,#fff)'> </span> <span class=\"d\"><span class=\"b\">cargo</span> build <span class=\"c\">--release</span></span>\n\
-             <span class=\"d\">○</span> pre-create <b>env</b>:\n\
+             <span class=\"d\">○</span> pre-start <b>env</b>:\n\
              <span style='background:var(--bright-white,#fff)'> </span> <span class=\"d\"><span class=\"b\">echo</span> <span class=\"g\">'PORT={{ branch | hash_port }}'</span> <span class=\"c\">></span> .env.local</span>\n\
              \n\
              <span class=\"c\">❯</span> Allow and remember? <b>[y/N]</b>\n\

@@ -788,7 +788,7 @@ Hook output lives in per-branch subtrees under `.git/wt/logs/{branch}/`:
 | Background hooks | `{branch}/{source}/{hook-type}/{name}.log` |
 | Background removal | `{branch}/internal/remove.log` |
 
-All `post-*` hooks (post-create, post-switch, post-commit, post-merge) run in the background and produce log files. Source is `user` or `project`. Branch and hook names are sanitized for filesystem safety (invalid characters → `-`; short collision-avoidance hash appended). Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with `wt config state logs clear`.
+All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the background and produce log files. Source is `user` or `project`. Branch and hook names are sanitized for filesystem safety (invalid characters → `-`; short collision-avoidance hash appended). Same operation on same branch overwrites the previous log. Removing a branch clears its subtree; orphans from deleted branches can be swept with `wt config state logs clear`.
 
 ### Diagnostic files
 
@@ -820,9 +820,9 @@ Query the command log:
 $ tail -5 .git/wt/logs/commands.jsonl | jq .
 ```
 
-Path to one hook log (e.g. the `post-create` `server` hook for the current branch):
+Path to one hook log (e.g. the `post-start` `server` hook for the current branch):
 ```console
-$ wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-create" and (.name | startswith("server"))) | .path'
+$ wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path'
 ```
 
 Logs for a specific branch:
@@ -1006,7 +1006,7 @@ $ wt config state vars set env=production --branch=main
 Variables are available in [hook templates](@/hook.md#template-variables) as `{{ vars.<key> }}`. Use the `default` filter for keys that may not be set:
 
 ```toml
-[post-create]
+[post-start]
 dev = "ENV={{ vars.env | default('development') }} npm start -- --port {{ vars.port | default('3000') }}"
 ```
 
@@ -1016,7 +1016,7 @@ JSON object and array values support dot access:
 $ wt config state vars set config='{"port": 3000, "debug": true}'
 ```
 ```toml
-[post-create]
+[post-start]
 dev = "npm start -- --port {{ vars.config.port }}"
 ```
 
@@ -1235,14 +1235,14 @@ List all log files:
 $ wt config state logs
 ```
 
-Get the absolute path of one post-create hook log for the current branch (use `jq` to filter):
+Get the absolute path of one post-start hook log for the current branch (use `jq` to filter):
 ```console
-$ wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-create" and (.name | startswith("server"))) | .path'
+$ wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path'
 ```
 
 Stream that log with `tail -f`:
 ```console
-$ tail -f "$(wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-create" and (.name | startswith("server"))) | .path' | head -1)"
+$ tail -f "$(wt config state logs --format=json | jq -r '.hook_output[] | select(.source == "user" and .hook_type == "post-start" and (.name | startswith("server"))) | .path' | head -1)"
 ```
 
 Logs for a background worktree removal (internal op):
