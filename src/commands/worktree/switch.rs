@@ -31,7 +31,7 @@ use worktrunk::styling::{
 };
 
 use super::resolve::{
-    compute_clobber_backup, compute_worktree_path, offer_bare_repo_worktree_path_fix, path_mismatch,
+    back_up_clobbered_path, compute_worktree_path, offer_bare_repo_worktree_path_fix, path_mismatch,
 };
 use super::types::{CreationMethod, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::cli::SwitchFormat;
@@ -652,7 +652,7 @@ fn validate_worktree_creation(
     path: &Path,
     clobber: bool,
     method: &CreationMethod,
-) -> anyhow::Result<Option<std::path::PathBuf>> {
+) -> anyhow::Result<bool> {
     // For regular switches without --create, validate branch exists
     if let CreationMethod::Regular {
         create_branch: false,
@@ -686,7 +686,17 @@ fn validate_worktree_creation(
         .into());
     }
 
-    // Handle clobber for stale directories
+    // Handle clobber for stale directories. Returns whether `execute_switch`
+    // must back up a path occupying `worktree_path` before creating the
+    // worktree; the backup itself happens at execution time so a path that
+    // races in after planning is still moved atomically (see
+    // `back_up_clobbered_path`).
+    if !path.exists() {
+        return Ok(false);
+    }
+    if clobber {
+        return Ok(true);
+    }
     let is_create = matches!(
         method,
         CreationMethod::Regular {
@@ -694,7 +704,12 @@ fn validate_worktree_creation(
             ..
         }
     );
-    compute_clobber_backup(path, branch, clobber, is_create)
+    Err(GitError::WorktreePathExists {
+        branch: branch.to_string(),
+        path: path.to_path_buf(),
+        create: is_create,
+    }
+    .into())
 }
 
 /// Set up a local branch for a fork PR or MR.
@@ -831,7 +846,7 @@ pub fn plan_switch(
     let expected_path = compute_worktree_path(repo, &target.branch, config)?;
 
     // Phase 4: Validate we can create at this path
-    let clobber_backup = validate_worktree_creation(
+    let needs_clobber_backup = validate_worktree_creation(
         repo,
         &target.branch,
         &expected_path,
@@ -844,7 +859,7 @@ pub fn plan_switch(
         branch: target.branch,
         worktree_path: expected_path,
         method: target.method,
-        clobber_backup,
+        needs_clobber_backup,
         new_previous,
     })
 }
@@ -906,23 +921,32 @@ pub fn execute_switch(
             branch,
             worktree_path,
             method,
-            clobber_backup,
+            needs_clobber_backup,
             new_previous,
         } => {
             // Handle --clobber backup if needed (shared for all creation methods)
-            if let Some(backup_path) = &clobber_backup {
+            if needs_clobber_backup {
+                // Timestamped backup name, computed here at move time so the
+                // suffix reflects when the path is actually set aside.
+                let timestamp = worktrunk::utils::epoch_now() as i64;
+                let datetime =
+                    chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(chrono::Utc::now);
+                let base_suffix = datetime.format("%Y%m%d-%H%M%S").to_string();
+
+                // Atomically move the stale path aside. A backup name that is
+                // already taken (a same-second clobber, or one that raced in
+                // after planning) is never overwritten — the move falls back
+                // to the next free `-N` name.
+                let backup_path = back_up_clobbered_path(&worktree_path, &base_suffix)?;
+
                 let path_display = worktrunk::path::format_path_for_display(&worktree_path);
-                let backup_display = worktrunk::path::format_path_for_display(backup_path);
+                let backup_display = worktrunk::path::format_path_for_display(&backup_path);
                 eprintln!(
                     "{}",
                     warning_message(cformat!(
-                        "Moving <bold>{path_display}</> to <bold>{backup_display}</> (--clobber)"
+                        "Moved <bold>{path_display}</> to <bold>{backup_display}</> (--clobber)"
                     ))
                 );
-
-                std::fs::rename(&worktree_path, backup_path).with_context(|| {
-                    format!("Failed to move {path_display} to {backup_display}")
-                })?;
             }
 
             // Execute based on creation method

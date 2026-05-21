@@ -1864,37 +1864,56 @@ fn test_switch_clobber_backs_up_stale_file(repo: TestRepo) {
     );
 }
 
+/// When the computed backup path is already taken, `wt switch --clobber` does
+/// not fail — it moves the stale path to the next free `-N` variant via an
+/// atomic no-overwrite rename, leaving the pre-existing backup untouched. This
+/// is the time-of-check/time-of-use safe path: a colliding backup name (a
+/// same-second clobber, or one that raced in after planning) is never
+/// overwritten the way `std::fs::rename` would.
 #[rstest]
-fn test_switch_clobber_error_backup_exists(repo: TestRepo) {
-    // Calculate where the worktree would be created
+fn test_switch_clobber_falls_back_when_backup_taken(repo: TestRepo) {
     let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
-    let expected_path = repo
-        .root_path()
-        .parent()
-        .unwrap()
-        .join(format!("{}.clobber-backup-exists", repo_name));
+    let parent = repo.root_path().parent().unwrap();
+    let expected_path = parent.join(format!("{}.clobber-backup-taken", repo_name));
 
-    // Create a stale directory at the target path
+    // Stale directory at the target path, with content that must survive.
     std::fs::create_dir_all(&expected_path).unwrap();
+    std::fs::write(expected_path.join("stale.txt"), "stale content").unwrap();
 
-    // Also create the backup path that would be generated
-    // TEST_EPOCH=1735776000 -> 2025-01-02 00:00:00 UTC
-    let backup_path = repo.root_path().parent().unwrap().join(format!(
-        "{}.clobber-backup-exists.bak.20250102-000000",
+    // Pre-create the backup path the timestamp would produce, so the move has
+    // to fall back. TEST_EPOCH=1735776000 -> 2025-01-02 00:00:00 UTC
+    let taken = parent.join(format!(
+        "{}.clobber-backup-taken.bak.20250102-000000",
         repo_name
     ));
-    std::fs::create_dir_all(&backup_path).unwrap();
+    std::fs::create_dir_all(&taken).unwrap();
+    std::fs::write(taken.join("pre-existing.txt"), "do not touch").unwrap();
 
-    // With --clobber, should error because backup path exists
     snapshot_switch(
-        "switch_clobber_error_backup_exists",
+        "switch_clobber_falls_back_when_backup_taken",
         &repo,
-        &["--create", "--clobber", "clobber-backup-exists"],
+        &["--create", "--clobber", "clobber-backup-taken"],
     );
 
-    // Both paths should still exist (nothing was moved)
-    assert!(expected_path.exists());
-    assert!(backup_path.exists());
+    // The worktree was created.
+    assert!(expected_path.is_dir());
+
+    // The pre-existing backup is untouched.
+    assert_eq!(
+        std::fs::read_to_string(taken.join("pre-existing.txt")).unwrap(),
+        "do not touch"
+    );
+
+    // The stale content was moved to the -2 fallback name.
+    let fallback = parent.join(format!(
+        "{}.clobber-backup-taken.bak.20250102-000000-2",
+        repo_name
+    ));
+    assert!(fallback.is_dir());
+    assert_eq!(
+        std::fs::read_to_string(fallback.join("stale.txt")).unwrap(),
+        "stale content"
+    );
 }
 
 ///
