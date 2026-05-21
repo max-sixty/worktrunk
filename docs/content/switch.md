@@ -172,8 +172,8 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           are passed to the command, so <b>wsc feature -- &#39;Fix GH #322&#39;</b> runs <b>claude &#39;Fix GH #322&#39;</b>,
           starting Claude with a prompt.
 
-          Template example: <b>-x &#39;code {{ worktree_path }}&#39;</b> opens VS Code at the worktree, <b>-x &#39;tmux</b>
-<b>          new -s {{ branch | sanitize }}&#39;</b> starts a tmux session named after the branch.
+          Template example: <b>-x code -- &#39;{{ worktree_path }}&#39;</b> opens VS Code at the worktree, <b>-x tmux</b>
+<b>          -- new -s &#39;{{ branch | sanitize }}&#39;</b> starts a tmux session named after the branch.
 
       <b><span class=c>--clobber</span></b>
           Remove stale paths at target

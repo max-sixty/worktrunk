@@ -11,19 +11,22 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     NO_COLOR: ""
     PSModulePath: ""
     RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
-    WORKTRUNK_APPROVALS_PATH: /nonexistent/wt/approvals.toml
-    WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml
-    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
@@ -72,7 +75,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           [0m
           Then [1mwsc feature-branch[0m creates the worktree and launches Claude Code. Arguments after [1m--[0m are passed to the command, so [1mwsc feature -- 'Fix GH #322'[0m runs [1mclaude 'Fix GH #322'[0m, starting Claude with a prompt.[0m
           
-          Template example: [1m-x 'code {{ worktree_path }}'[0m opens VS Code at the worktree, [1m-x 'tmux new -s {{ branch | sanitize }}'[0m starts a tmux session named after the branch.[0m
+          Template example: [1m-x code -- '{{ worktree_path }}'[0m opens VS Code at the worktree, [1m-x tmux -- new -s '{{ branch | sanitize }}'[0m starts a tmux session named after the branch.[0m
 
       [1m[36m--clobber[0m
           Remove stale paths at target
