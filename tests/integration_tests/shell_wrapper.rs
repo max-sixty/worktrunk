@@ -952,7 +952,10 @@ mod unix_tests {
     #[case("fish")]
     #[case("nu")]
     fn test_wrapper_switch_with_execute(#[case] shell: &str, repo: TestRepo) {
-        // Use --yes to skip approval prompt in tests
+        // `echo` is a single program token with `executed` as a trailing arg,
+        // so the argv-input deprecation warning stays quiet — the warning's
+        // hint is shell-specific, which would break this consolidated
+        // cross-shell snapshot. `--yes` skips the approval prompt.
         let output = exec_through_wrapper(
             shell,
             &repo,
@@ -960,9 +963,11 @@ mod unix_tests {
             &[
                 "--create",
                 "test-exec",
-                "--execute",
-                "echo executed",
                 "--yes",
+                "--execute",
+                "echo",
+                "--",
+                "executed",
             ],
         );
 

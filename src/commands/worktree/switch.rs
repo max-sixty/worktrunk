@@ -1820,14 +1820,33 @@ fn is_clean_program_token(value: &str) -> bool {
 /// A bare name that is really a shell alias/function/builtin is not detectable
 /// here without the user's shell, so it is left to fail loudly at the cutover
 /// rather than guessed at. Informational only — it never blocks the switch.
-fn warn_if_execute_form_deprecated(cmd: &str) {
+///
+/// The migration hint reconstructs the command line that runs today — the
+/// `-x` value with its trailing args appended, the way `run_switch` joins
+/// them — and wraps it for whichever shell the active wrapper evaluates the
+/// payload with (`sh` / `fish` / `pwsh`). That keeps the suggestion
+/// behavior-preserving on fish/PowerShell, not just POSIX sh, and complete
+/// when trailing args are present.
+fn warn_if_execute_form_deprecated(cmd: &str, execute_args: &[String]) {
     if is_clean_program_token(cmd) {
         return;
     }
-    // Wrap the unchanged value in `sh -c` — the universal, copy-pasteable
-    // migration. It works today and survives the cutover; POSIX-escape so an
-    // embedded quote in `cmd` survives the round trip.
-    let suggested = shell_escape::unix::escape(cmd.into());
+    let mode = directive_shell_escape_mode();
+    let (shell, flag) = match mode {
+        ShellEscapeMode::PowerShell => ("pwsh", "-Command"),
+        ShellEscapeMode::Fish => ("fish", "-c"),
+        _ => ("sh", "-c"),
+    };
+    let command_line = if execute_args.is_empty() {
+        cmd.to_string()
+    } else {
+        let escaped: Vec<String> = execute_args
+            .iter()
+            .map(|arg| shell_escape_for(mode, arg))
+            .collect();
+        format!("{} {}", cmd, escaped.join(" "))
+    };
+    let suggested = shell_escape_for(mode, &command_line);
     eprintln!(
         "{}",
         warning_message(cformat!(
@@ -1837,7 +1856,7 @@ fn warn_if_execute_form_deprecated(cmd: &str) {
     eprintln!(
         "{}",
         hint_message(cformat!(
-            "To run this command line unchanged, pass it to a shell: <underline>--execute sh -- -c {suggested}</>"
+            "To run this command line unchanged, pass it to a shell: <underline>--execute {shell} -- {flag} {suggested}</>"
         ))
     );
 }
@@ -1901,7 +1920,7 @@ pub(crate) fn validate_switch_templates(
                 "--execute argument",
             )?;
         }
-        warn_if_execute_form_deprecated(cmd);
+        warn_if_execute_form_deprecated(cmd, execute_args);
     }
 
     // Validate hook templates only when hooks will actually run

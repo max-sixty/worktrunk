@@ -650,6 +650,27 @@ fn test_switch_execute_argv_deprecation_warning(repo: TestRepo) {
         );
         configure_directive_files(&mut cmd, &cd_path, &exec_path);
         assert_cmd_snapshot!("switch_execute_deprecation_compatible", cmd);
+
+        // Trailing args are folded into the suggested command line, not dropped.
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &["--create", "dep-args", "--execute", "npm run", "--", "test"],
+            None,
+        );
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        assert_cmd_snapshot!("switch_execute_deprecation_trailing_args", cmd);
+
+        // Under a fish wrapper the suggestion wraps in `fish`, not POSIX `sh`.
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &["--create", "dep-fish", "--execute", "set -lx FOO bar; echo $FOO"],
+            None,
+        );
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        cmd.env("WORKTRUNK_SHELL", "fish");
+        assert_cmd_snapshot!("switch_execute_deprecation_fish_wrapper", cmd);
     });
 }
 // Error tests
