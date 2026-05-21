@@ -187,20 +187,20 @@ impl HookPlan {
         out
     }
 
-    /// Interactive / `--yes` gate. Reuses [`approve_command_batch`] so the
-    /// prompt, the `--yes` path, and the saved approvals are byte-identical to
-    /// before. `Ok(None)` means the user declined — the caller prints its own
+    /// Interactive / `--yes` gate. The interactive path reuses
+    /// [`approve_command_batch`] for its prompt and for the approvals it
+    /// saves. `Ok(None)` means the user declined: the caller prints its own
     /// "continuing without hooks" message and proceeds with
     /// [`ApprovedHookPlan::empty`].
     ///
-    /// When no project-source command needs the gate (no project config, or
-    /// only user hooks), this returns the frozen plan **without** loading
-    /// `Approvals` or requiring `project_id`. That keeps a malformed
-    /// `approvals.toml` or an unresolvable project identifier from aborting a
-    /// command that has nothing to authorize, matching the pre-plan behaviour
-    /// where the empty-batch fast path ran before any approval state was
-    /// touched. `project_id` is therefore `Option`: it is consulted only when
-    /// there is something to approve, where it must be present.
+    /// `Approvals` is loaded only on the interactive path. Two paths skip the
+    /// load. When nothing project-sourced needs the gate (no project config,
+    /// or only user hooks) the frozen plan returns at once. `--yes` also
+    /// approves every project command unconditionally and persists nothing, so
+    /// it has no approval state to read. A malformed `approvals.toml` therefore
+    /// never aborts a command that would not consult it. `project_id` is
+    /// `Option` only because that no-approvable fast path needs none; every
+    /// path that has something to approve requires it.
     pub fn approve(
         self,
         project_id: Option<&str>,
@@ -214,8 +214,14 @@ impl HookPlan {
         }
         let project_id =
             project_id.context("project identifier is required to approve project commands")?;
-        let approvals = Approvals::load().context("Failed to load approvals")?;
-        let approved = approve_command_batch(&approvable, project_id, &approvals, yes, false)?;
+        // `approve_command_batch` with `yes = true` is an unconditional
+        // `Ok(true)`, so loading `Approvals` here would be dead work.
+        let approved = if yes {
+            true
+        } else {
+            let approvals = Approvals::load().context("Failed to load approvals")?;
+            approve_command_batch(&approvable, project_id, &approvals, false, false)?
+        };
         if !approved {
             return Ok(None);
         }
@@ -462,7 +468,7 @@ mod tests {
             .approve_command(
                 "proj".to_string(),
                 "echo project-hook".to_string(),
-                Some(&approvals_path),
+                &approvals_path,
             )
             .unwrap();
         let mut builder = HookPlanBuilder::new();

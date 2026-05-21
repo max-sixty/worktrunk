@@ -385,7 +385,7 @@ pub fn offer_bare_repo_worktree_path_fix(
             config.set_project_worktree_path(
                 &project_id,
                 BARE_REPO_WORKTREE_PATH.to_string(),
-                None,
+                &worktrunk::config::require_config_path()?,
             )?;
             print_accepted_message(&display_path, &config_path_display);
             Ok(true)

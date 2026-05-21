@@ -96,6 +96,51 @@ call `.current_dir(...)` explicitly.
 | `wt_command()` | `Command` | Running wt without a TestRepo (free function) |
 | `repo.git_command()` | `Cmd` | Running git commands (use `.run()` not `.output()`) |
 
+## Config Isolation for In-Process Unit Tests
+
+`repo.wt_command()` / `wt_command()` isolate *subprocess* tests (above). An
+in-process unit test that calls library functions directly gets no such
+isolation: it runs in the test process, which inherits the real environment.
+
+The `Approvals` and `UserConfig` mutation methods take an explicit `&Path`, so
+a unit test passes a tempdir-backed path and the write stays isolated. The
+global resolvers do not isolate: `Approvals::load()`, `approvals_path()`,
+`config_path()`, and `system_config_path()` all fall back to the real
+`~/.config/worktrunk/`.
+
+<example>
+<bad reason="Approvals::load() reads the real ~/.config/worktrunk/approvals.toml">
+
+Bad:
+
+```rust
+let mut approvals = Approvals::load().unwrap();
+approvals.approve_command(project, command, &approvals_path).unwrap();
+```
+
+</bad>
+<good reason="Default state plus a tempdir path touches no real config">
+
+Good:
+
+```rust
+let temp_dir = tempfile::tempdir().unwrap();
+let approvals_path = temp_dir.path().join("approvals.toml");
+let mut approvals = Approvals::default();
+approvals.approve_command(project, command, &approvals_path).unwrap();
+```
+
+</good>
+</example>
+
+`approvals_path()` panics when `WORKTRUNK_APPROVALS_PATH` is unset, but
+`#[cfg(test)]` makes that guard fire only for `worktrunk` lib-crate tests. A
+bin-crate test (anything under `src/commands/`) links the lib in non-test
+mode, so the guard is compiled out and a global read hits the real config
+silently: it passes wherever `$HOME` is writable and fails only in a sandbox
+that forbids it. `config_path()` and `system_config_path()` have no guard at
+all.
+
 ## Timing Tests: Long Timeouts with Fast Polling
 
 **Core principle:** Use long timeouts (5+ seconds) for reliability on slow CI, but poll frequently (10-50ms) so tests complete quickly when things work.
