@@ -267,8 +267,8 @@ impl ValueCompleter for HookCommandCompleter {
         let hook_type = CONTEXT.with(|ctx| {
             ctx.borrow().as_ref().and_then(|ctx| {
                 for hook in &[
-                    "pre-create",
-                    "post-create",
+                    "pre-start",
+                    "post-start",
                     "pre-commit",
                     "post-commit",
                     "pre-merge",
@@ -279,12 +279,12 @@ impl ValueCompleter for HookCommandCompleter {
                         return Some(*hook);
                     }
                 }
-                // Deprecated aliases still complete, mapped to the canonical name.
-                if ctx.contains("pre-start") {
-                    return Some("pre-create");
+                // Silent aliases still complete, mapped to the canonical name.
+                if ctx.contains("pre-create") {
+                    return Some("pre-start");
                 }
-                if ctx.contains("post-start") {
-                    return Some("post-create");
+                if ctx.contains("post-create") {
+                    return Some("post-start");
                 }
                 None
             })

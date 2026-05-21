@@ -25,7 +25,6 @@ use std::sync::{LazyLock, Mutex, OnceLock};
 use anyhow::Context;
 use color_print::cformat;
 use minijinja::Environment;
-use regex::Regex;
 use shell_escape::unix::escape;
 
 use crate::config::WorktrunkConfig;
@@ -57,18 +56,6 @@ fn warnings_suppressed() -> bool {
     SUPPRESS_WARNINGS.get().is_some()
 }
 
-/// Pre-compiled regexes for deprecated variable word-boundary matching.
-/// Compiled once on first use, shared across all calls to normalize/replace.
-static DEPRECATED_VAR_REGEXES: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
-    DEPRECATED_VARS
-        .iter()
-        .map(|&(old, new)| {
-            let re = Regex::new(&format!(r"\b{}\b", regex::escape(old))).unwrap();
-            (re, new)
-        })
-        .collect()
-});
-
 /// Tracks which config paths have already shown unknown field warnings this process.
 /// Prevents repeated warnings when config is loaded multiple times.
 static WARNED_UNKNOWN_PATHS: LazyLock<Mutex<HashSet<PathBuf>>> =
@@ -95,8 +82,7 @@ pub struct DeprecatedSection {
 }
 
 /// Top-level keys that are deprecated and handled by the deprecation system —
-/// renamed sections (`[commit-generation]` → `[commit.generation]`) and renamed
-/// flattened hook keys (`pre-start` → `pre-create`).
+/// renamed sections (`[commit-generation]` → `[commit.generation]`).
 ///
 /// When a deprecated key appears in the config type where its canonical replacement
 /// is valid, `warn_unknown_fields` skips it (the deprecation system provides better
@@ -118,16 +104,6 @@ pub const DEPRECATED_SECTION_KEYS: &[DeprecatedSection] = &[
         canonical_top_key: "forge",
         canonical_display: "[forge]",
     },
-    DeprecatedSection {
-        key: "pre-start",
-        canonical_top_key: "pre-create",
-        canonical_display: "pre-create",
-    },
-    DeprecatedSection {
-        key: "post-start",
-        canonical_top_key: "post-create",
-        canonical_display: "post-create",
-    },
 ];
 
 /// Normalize a template string by replacing deprecated variables with their canonical names.
@@ -146,11 +122,197 @@ pub fn normalize_template_vars(template: &str) -> Cow<'_, str> {
         return Cow::Borrowed(template);
     }
 
-    let mut result = template.to_string();
-    for (re, new) in DEPRECATED_VAR_REGEXES.iter() {
-        result = re.replace_all(&result, *new).into_owned();
+    let env = Environment::new();
+    let Ok(parsed) = env.template_from_str(template) else {
+        return Cow::Borrowed(template);
+    };
+    let used_vars = parsed.undeclared_variables(false);
+    let replacements: Vec<_> = DEPRECATED_VARS
+        .iter()
+        .copied()
+        .filter(|(old, _)| used_vars.contains(*old))
+        .collect();
+    if replacements.is_empty() {
+        return Cow::Borrowed(template);
     }
-    Cow::Owned(result)
+
+    rewrite_template_var_identifiers(template, &replacements)
+        .map(Cow::Owned)
+        .unwrap_or(Cow::Borrowed(template))
+}
+
+fn rewrite_template_var_identifiers(
+    template: &str,
+    replacements: &[(&str, &'static str)],
+) -> Option<String> {
+    let mut out = String::with_capacity(template.len());
+    let mut cursor = 0;
+    let mut changed = false;
+    let mut in_raw = false;
+
+    while let Some((tag_start, tag_kind)) = find_next_template_tag(template, cursor) {
+        out.push_str(&template[cursor..tag_start]);
+
+        let (body_start, close_delim) = match tag_kind {
+            TemplateTagKind::Variable => (tag_start + 2, "}}"),
+            TemplateTagKind::Block => (tag_start + 2, "%}"),
+            TemplateTagKind::Comment => {
+                let end = template[tag_start + 2..].find("#}")? + tag_start + 4;
+                out.push_str(&template[tag_start..end]);
+                cursor = end;
+                continue;
+            }
+        };
+        let tag_end = template[body_start..].find(close_delim)? + body_start;
+        let full_tag_end = tag_end + close_delim.len();
+
+        if tag_kind == TemplateTagKind::Block
+            && matches!(
+                template_block_name(&template[body_start..tag_end]),
+                Some("raw")
+            )
+        {
+            in_raw = true;
+        }
+
+        if in_raw {
+            out.push_str(&template[tag_start..full_tag_end]);
+            if tag_kind == TemplateTagKind::Block
+                && matches!(
+                    template_block_name(&template[body_start..tag_end]),
+                    Some("endraw")
+                )
+            {
+                in_raw = false;
+            }
+        } else {
+            let body_start =
+                body_start + usize::from(template[body_start..tag_end].starts_with('-'));
+            let body_end = tag_end - usize::from(template[body_start..tag_end].ends_with('-'));
+            let (rewritten_body, body_changed) =
+                rewrite_template_tag_body(&template[body_start..body_end], replacements);
+            out.push_str(&template[tag_start..body_start]);
+            out.push_str(&rewritten_body);
+            out.push_str(&template[body_end..full_tag_end]);
+            changed |= body_changed;
+        }
+
+        cursor = full_tag_end;
+    }
+
+    out.push_str(&template[cursor..]);
+    changed.then_some(out)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TemplateTagKind {
+    Variable,
+    Block,
+    Comment,
+}
+
+fn find_next_template_tag(template: &str, from: usize) -> Option<(usize, TemplateTagKind)> {
+    let mut search_from = from;
+    loop {
+        let rel = template[search_from..].find('{')?;
+        let idx = search_from + rel;
+        let rest = &template[idx..];
+        let kind = if rest.starts_with("{{") {
+            TemplateTagKind::Variable
+        } else if rest.starts_with("{%") {
+            TemplateTagKind::Block
+        } else if rest.starts_with("{#") {
+            TemplateTagKind::Comment
+        } else {
+            search_from = idx + 1;
+            continue;
+        };
+        return Some((idx, kind));
+    }
+}
+
+fn template_block_name(body: &str) -> Option<&str> {
+    let body = body.strip_prefix('-').unwrap_or(body).trim_start();
+    let end = body
+        .find(|c: char| !is_template_identifier_char(c))
+        .unwrap_or(body.len());
+    (end > 0).then_some(&body[..end])
+}
+
+fn rewrite_template_tag_body(body: &str, replacements: &[(&str, &'static str)]) -> (String, bool) {
+    let mut out = String::with_capacity(body.len());
+    let mut cursor = 0;
+    let mut changed = false;
+
+    while let Some(ch) = body.get(cursor..).and_then(|s| s.chars().next()) {
+        if ch == '"' || ch == '\'' {
+            let end = quoted_template_string_end(body, cursor, ch);
+            out.push_str(&body[cursor..end]);
+            cursor = end;
+        } else if is_template_identifier_start(ch) {
+            let end = identifier_end(body, cursor);
+            let ident = &body[cursor..end];
+            if !is_template_attribute_or_assignment(body, cursor, end)
+                && let Some((_, new)) = replacements.iter().find(|(old, _)| *old == ident)
+            {
+                out.push_str(new);
+                changed = true;
+            } else {
+                out.push_str(ident);
+            }
+            cursor = end;
+        } else {
+            out.push(ch);
+            cursor += ch.len_utf8();
+        }
+    }
+
+    (out, changed)
+}
+
+fn quoted_template_string_end(body: &str, start: usize, quote: char) -> usize {
+    let mut escaped = false;
+    let mut cursor = start + quote.len_utf8();
+    while let Some(ch) = body.get(cursor..).and_then(|s| s.chars().next()) {
+        cursor += ch.len_utf8();
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == quote {
+            break;
+        }
+    }
+    cursor
+}
+
+fn identifier_end(body: &str, start: usize) -> usize {
+    let mut cursor = start;
+    while let Some(ch) = body.get(cursor..).and_then(|s| s.chars().next()) {
+        if !is_template_identifier_char(ch) {
+            break;
+        }
+        cursor += ch.len_utf8();
+    }
+    cursor
+}
+
+fn is_template_attribute_or_assignment(body: &str, start: usize, end: usize) -> bool {
+    let previous = body[..start].chars().rev().find(|c| !c.is_whitespace());
+    if previous == Some('.') {
+        return true;
+    }
+
+    let next = body[end..].trim_start();
+    next.starts_with('=') && !next.starts_with("==")
+}
+
+fn is_template_identifier_start(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphabetic()
+}
+
+fn is_template_identifier_char(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphanumeric()
 }
 
 /// Core logic for deprecated var detection, operating on pre-extracted template strings
@@ -222,11 +384,10 @@ fn collect_strings_from_edit_value(value: &toml_edit::Value, strings: &mut Vec<S
 /// Rewrite deprecated template variables inside one string, returning the
 /// new value when it changed.
 fn rewrite_deprecated_vars(original: &str) -> Option<String> {
-    let mut modified = original.to_string();
-    for (re, new) in DEPRECATED_VAR_REGEXES.iter() {
-        modified = re.replace_all(&modified, *new).into_owned();
+    match normalize_template_vars(original) {
+        Cow::Borrowed(_) => None,
+        Cow::Owned(modified) => Some(modified),
     }
-    (modified != original).then_some(modified)
 }
 
 /// Replace deprecated template vars in every string value of the document,
@@ -314,9 +475,9 @@ pub struct Deprecations {
     pub approved_commands: bool,
     /// Has `[select]` section (moved to `[switch.picker]`)
     pub select: bool,
-    /// Has a `pre-start` hook key (renamed to `pre-create`)
+    /// Reserved for future hook-name deprecation tracking; always false.
     pub pre_start: bool,
-    /// Has a `post-start` hook key (renamed to `post-create`)
+    /// Reserved for future hook-name deprecation tracking; always false.
     pub post_start: bool,
     /// Has `[ci]` section (moved to `[forge]`)
     pub ci_section: bool,
@@ -372,8 +533,8 @@ fn detect_deprecations_from_doc(
         commit_gen: find_commit_generation_from_doc(doc),
         approved_commands: find_approved_commands_from_doc(doc),
         select: find_select_from_doc(doc),
-        pre_start: find_pre_start_from_doc(doc),
-        post_start: find_post_start_from_doc(doc),
+        pre_start: false,
+        post_start: false,
         ci_section: find_ci_section_from_doc(doc),
         no_ff: find_negated_bool_from_doc(doc, "merge", "no-ff", "ff"),
         no_cd: find_negated_bool_from_doc(doc, "switch", "no-cd", "cd"),
@@ -404,11 +565,7 @@ fn find_commit_generation_from_doc(doc: &toml_edit::DocumentMut) -> CommitGenera
 
     // Check if new [commit.generation] already exists as a valid table
     // (skip deprecation warning if so)
-    let has_new_section = doc
-        .get("commit")
-        .and_then(|c| c.as_table())
-        .and_then(|t| t.get("generation"))
-        .is_some_and(|g| g.is_table() || g.is_inline_table());
+    let has_new_section = has_table_like_child(doc.get("commit"), "generation");
 
     // Check top-level [commit-generation] - only flag if non-empty and new section doesn't exist
     // Handle both regular tables and inline tables
@@ -429,11 +586,8 @@ fn find_commit_generation_from_doc(doc: &toml_edit::DocumentMut) -> CommitGenera
         for (project_key, project_value) in projects.iter() {
             if let Some(project_table) = project_value.as_table() {
                 // Check if this project has new section as a valid table
-                let has_new_project_section = project_table
-                    .get("commit")
-                    .and_then(|c| c.as_table())
-                    .and_then(|t| t.get("generation"))
-                    .is_some_and(|g| g.is_table() || g.is_inline_table());
+                let has_new_project_section =
+                    has_table_like_child(project_table.get("commit"), "generation");
 
                 // Only flag if old section exists, is non-empty, and new doesn't exist
                 // Handle both regular tables and inline tables
@@ -469,6 +623,38 @@ fn can_host_subtable(item: Option<&toml_edit::Item>) -> bool {
     item.is_none_or(is_table_like)
 }
 
+fn has_table_like_child(item: Option<&toml_edit::Item>, key: &str) -> bool {
+    match item {
+        Some(toml_edit::Item::Table(t)) => t.get(key).is_some_and(is_table_like),
+        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(t))) => t
+            .get(key)
+            .is_some_and(|v| matches!(v, toml_edit::Value::InlineTable(_))),
+        _ => false,
+    }
+}
+
+/// Ensure a table-like parent is writable as a standard table.
+///
+/// Inline tables can deserialize like tables, but TOML forbids extending them
+/// with later subtables. Convert before inserting migrated nested sections so
+/// existing inline parent fields survive alongside the new child table.
+fn ensure_standard_table_parent<'a>(
+    table: &'a mut toml_edit::Table,
+    key: &str,
+) -> Option<&'a mut toml_edit::Table> {
+    if !table.contains_key(key) {
+        let mut parent = toml_edit::Table::new();
+        parent.set_implicit(true);
+        table.insert(key, toml_edit::Item::Table(parent));
+    }
+
+    let item = table.get_mut(key)?;
+    if let Some(inline) = item.as_inline_table().cloned() {
+        *item = toml_edit::Item::Table(inline.into_table());
+    }
+    item.as_table_mut()
+}
+
 /// Convert a table-like TOML item into a `Table`. Returns `None` for other shapes.
 fn into_table(item: toml_edit::Item) -> Option<toml_edit::Table> {
     match item {
@@ -483,11 +669,7 @@ fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
 
     // Check if new [commit.generation] already exists as a valid table - if so, skip migration
     // (new format takes precedence, don't overwrite it)
-    let has_new_section = doc
-        .get("commit")
-        .and_then(|c| c.as_table())
-        .and_then(|t| t.get("generation"))
-        .is_some_and(|g| g.is_table() || g.is_inline_table());
+    let has_new_section = has_table_like_child(doc.get("commit"), "generation");
 
     // Migrate top-level [commit-generation] → [commit.generation]
     // Only if new section doesn't already exist
@@ -510,14 +692,8 @@ fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
         // Ensure [commit] section exists.
         // Mark as implicit so it doesn't render a separate [commit] header
         // (only [commit.generation] will render)
-        if !doc.contains_key("commit") {
-            let mut commit_table = toml_edit::Table::new();
-            commit_table.set_implicit(true);
-            doc.insert("commit", toml_edit::Item::Table(commit_table));
-        }
-
         // Move to [commit.generation]
-        if let Some(commit_table) = doc["commit"].as_table_mut() {
+        if let Some(commit_table) = ensure_standard_table_parent(doc.as_table_mut(), "commit") {
             commit_table.insert("generation", toml_edit::Item::Table(table));
         }
 
@@ -529,11 +705,8 @@ fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
         for (_project_key, project_value) in projects.iter_mut() {
             if let Some(project_table) = project_value.as_table_mut() {
                 // Check if new section already exists as a valid table for this project
-                let has_new_project_section = project_table
-                    .get("commit")
-                    .and_then(|c| c.as_table())
-                    .and_then(|t| t.get("generation"))
-                    .is_some_and(|g| g.is_table() || g.is_inline_table());
+                let has_new_project_section =
+                    has_table_like_child(project_table.get("commit"), "generation");
 
                 // Peek before removing so a malformed value is preserved.
                 // Same scalar-parent guard as the top-level case above.
@@ -551,14 +724,10 @@ fn migrate_commit_generation_doc(doc: &mut toml_edit::DocumentMut) -> bool {
 
                     // Ensure [projects."...".commit] section exists.
                     // Mark as implicit so it doesn't render a separate header
-                    if !project_table.contains_key("commit") {
-                        let mut commit_table = toml_edit::Table::new();
-                        commit_table.set_implicit(true);
-                        project_table.insert("commit", toml_edit::Item::Table(commit_table));
-                    }
-
                     // Move to [projects."...".commit.generation]
-                    if let Some(commit_table) = project_table["commit"].as_table_mut() {
+                    if let Some(commit_table) =
+                        ensure_standard_table_parent(project_table, "commit")
+                    {
                         commit_table.insert("generation", toml_edit::Item::Table(table));
                     }
 
@@ -644,11 +813,7 @@ fn find_select_from_doc(doc: &toml_edit::DocumentMut) -> bool {
 
 /// Check if a table has a non-empty `select` section without `switch.picker`.
 fn has_select_without_picker(table: &toml_edit::Table) -> bool {
-    let has_new_section = table
-        .get("switch")
-        .and_then(|s| s.as_table())
-        .and_then(|t| t.get("picker"))
-        .is_some_and(|p| p.is_table() || p.is_inline_table());
+    let has_new_section = has_table_like_child(table.get("switch"), "picker");
 
     if has_new_section {
         return false;
@@ -664,90 +829,6 @@ fn has_select_without_picker(table: &toml_edit::Table) -> bool {
     }
 
     false
-}
-
-/// Find a `pre-start` hook key (renamed to `pre-create`).
-fn find_pre_start_from_doc(doc: &toml_edit::DocumentMut) -> bool {
-    find_renamed_hook_key(doc, "pre-start", "pre-create")
-}
-
-/// Find a `post-start` hook key (renamed to `post-create`).
-fn find_post_start_from_doc(doc: &toml_edit::DocumentMut) -> bool {
-    find_renamed_hook_key(doc, "post-start", "post-create")
-}
-
-/// Detect a hook key renamed from `old_key` to `new_key`.
-///
-/// Flags the deprecation when `old_key` is present (and non-empty) and `new_key`
-/// is not — that is the case the migrator rewrites. When both are present the
-/// migrator leaves `old_key` alone, so it is not flagged either.
-///
-/// Hooks are flattened into the top level of user config, project config, and
-/// each `[projects."id"]` subtree, so all three locations are checked.
-fn find_renamed_hook_key(doc: &toml_edit::DocumentMut, old_key: &str, new_key: &str) -> bool {
-    if doc.get(new_key).is_none() && doc.get(old_key).is_some_and(is_non_empty_item) {
-        return true;
-    }
-
-    if let Some(projects) = doc.get("projects").and_then(|p| p.as_table()) {
-        for (_key, project_value) in projects.iter() {
-            if let Some(project_table) = project_value.as_table()
-                && project_table.get(new_key).is_none()
-                && project_table.get(old_key).is_some_and(is_non_empty_item)
-            {
-                return true;
-            }
-        }
-    }
-
-    false
-}
-
-/// Check if a TOML item is non-empty (strings are always non-empty, tables must have entries).
-fn is_non_empty_item(item: &toml_edit::Item) -> bool {
-    match item {
-        toml_edit::Item::Value(toml_edit::Value::InlineTable(t)) => !t.is_empty(),
-        toml_edit::Item::Table(t) => !t.is_empty(),
-        _ => true, // strings and other values are always "non-empty"
-    }
-}
-
-/// Rename the `pre-start`/`post-start` hook keys to `pre-create`/`post-create`.
-fn migrate_start_hooks_doc(doc: &mut toml_edit::DocumentMut) -> bool {
-    let mut modified = rename_hook_key(doc, "pre-start", "pre-create");
-    modified |= rename_hook_key(doc, "post-start", "post-create");
-    modified
-}
-
-/// Rename `old_key` to `new_key` at the top level and under each `[projects."..."]`.
-///
-/// Skips any location where `new_key` already exists — the user has already
-/// consolidated there, and clobbering their canonical value would lose config.
-/// The rewrite preserves the value shape (string, `[table]`, or
-/// `[[array-of-tables]]`) since it moves the `Item` unchanged.
-fn rename_hook_key(doc: &mut toml_edit::DocumentMut, old_key: &str, new_key: &str) -> bool {
-    let mut modified = false;
-
-    if doc.get(new_key).is_none()
-        && let Some(value) = doc.remove(old_key)
-    {
-        doc.insert(new_key, value);
-        modified = true;
-    }
-
-    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
-        for (_key, project_value) in projects.iter_mut() {
-            if let Some(project_table) = project_value.as_table_mut()
-                && project_table.get(new_key).is_none()
-                && let Some(value) = project_table.remove(old_key)
-            {
-                project_table.insert(new_key, value);
-                modified = true;
-            }
-        }
-    }
-
-    modified
 }
 
 /// Migrate `[select]` sections to `[switch.picker]`.
@@ -778,11 +859,7 @@ fn migrate_select_doc(doc: &mut toml_edit::DocumentMut) -> bool {
 /// it — silently dropping it would lose user config when a sibling migration
 /// also rewrites the document.
 fn migrate_select_table(table: &mut toml_edit::Table, modified: &mut bool) {
-    let has_new_section = table
-        .get("switch")
-        .and_then(|s| s.as_table())
-        .and_then(|t| t.get("picker"))
-        .is_some_and(|p| p.is_table() || p.is_inline_table());
+    let has_new_section = has_table_like_child(table.get("switch"), "picker");
 
     if has_new_section {
         return;
@@ -801,13 +878,7 @@ fn migrate_select_table(table: &mut toml_edit::Table, modified: &mut bool) {
     let select_table =
         into_table(table.remove("select").unwrap()).expect("checked is_table_like above");
 
-    if !table.contains_key("switch") {
-        let mut switch_table = toml_edit::Table::new();
-        switch_table.set_implicit(true);
-        table.insert("switch", toml_edit::Item::Table(switch_table));
-    }
-
-    if let Some(switch_table) = table["switch"].as_table_mut() {
+    if let Some(switch_table) = ensure_standard_table_parent(table, "switch") {
         switch_table.insert("picker", toml_edit::Item::Table(select_table));
     }
 
@@ -817,7 +888,7 @@ fn migrate_select_table(table: &mut toml_edit::Table, modified: &mut bool) {
 /// The 5 canonical pre-* hook keys.
 const PRE_HOOK_KEYS: &[&str] = &[
     "pre-switch",
-    "pre-create",
+    "pre-start",
     "pre-commit",
     "pre-merge",
     "pre-remove",
@@ -831,7 +902,7 @@ fn collect_pre_hook_table_form_keys(
 ) {
     for &key in PRE_HOOK_KEYS {
         if let Some(item) = table.get(key)
-            && item.as_table().is_some_and(|t| t.len() >= 2)
+            && table_like_len(item).is_some_and(|len| len >= 2)
         {
             if prefix.is_empty() {
                 found.push(key.to_string());
@@ -864,6 +935,14 @@ fn find_pre_hook_table_form_from_doc(doc: &toml_edit::DocumentMut) -> Vec<String
     }
 
     found
+}
+
+fn table_like_len(item: &toml_edit::Item) -> Option<usize> {
+    match item {
+        toml_edit::Item::Table(t) => Some(t.len()),
+        toml_edit::Item::Value(toml_edit::Value::InlineTable(t)) => Some(t.len()),
+        _ => None,
+    }
 }
 
 fn find_ci_section_from_doc(doc: &toml_edit::DocumentMut) -> bool {
@@ -1027,25 +1106,44 @@ fn migrate_pre_hook_table_in(table: &mut toml_edit::Table, modified: &mut bool) 
         .iter()
         .filter(|(k, v)| {
             PRE_HOOK_KEYS.contains(k)
-                && v.as_table()
-                    .is_some_and(|t| t.len() >= 2 && t.iter().all(|(_, v)| v.as_str().is_some()))
+                && pre_hook_pipeline_entries(v).is_some_and(|entries| entries.len() >= 2)
         })
         .map(|(k, _)| k.to_string())
         .collect();
 
     for key in keys_to_migrate {
         let item = table.get_mut(&key).unwrap();
-        let entries = item.as_table().unwrap();
+        let entries = pre_hook_pipeline_entries(item).unwrap();
 
         let mut arr = toml_edit::ArrayOfTables::new();
         for (name, value) in entries.iter() {
             let mut block = toml_edit::Table::new();
-            block.insert(name, toml_edit::value(value.as_str().unwrap()));
+            block.insert(name, toml_edit::value(value.as_str()));
             arr.push(block);
         }
 
         *item = toml_edit::Item::ArrayOfTables(arr);
         *modified = true;
+    }
+}
+
+fn pre_hook_pipeline_entries(item: &toml_edit::Item) -> Option<Vec<(String, String)>> {
+    match item {
+        toml_edit::Item::Table(t) => {
+            let entries = t
+                .iter()
+                .map(|(name, value)| Some((name.to_string(), value.as_str()?.to_string())))
+                .collect::<Option<Vec<_>>>()?;
+            Some(entries)
+        }
+        toml_edit::Item::Value(toml_edit::Value::InlineTable(t)) => {
+            let entries = t
+                .iter()
+                .map(|(name, value)| Some((name.to_string(), value.as_str()?.to_string())))
+                .collect::<Option<Vec<_>>>()?;
+            Some(entries)
+        }
+        _ => None,
     }
 }
 
@@ -1083,14 +1181,57 @@ fn migrate_content_doc(doc: &mut toml_edit::DocumentMut) -> bool {
     let mut modified = false;
     modified |= migrate_commit_generation_doc(doc);
     modified |= migrate_select_doc(doc);
-    // Rename `-start` hooks to `-create` before the table-form pass, which
-    // keys off `PRE_HOOK_KEYS` (now `pre-create`, not `pre-start`).
-    modified |= migrate_start_hooks_doc(doc);
+    // Silently rename `-create` hooks back to canonical `-start`. The
+    // creation hook rename is paused (see #2838): both names load via
+    // serde aliases, but in-memory migration to canonical keeps round-trip
+    // analysis (`unknown_tree`) coherent for the table and array-of-tables
+    // forms, where serde aliases on the field don't cover every shape.
+    modified |= migrate_create_hooks_doc(doc);
     modified |= migrate_pre_hook_table_form_doc(doc);
     modified |= migrate_ci_doc(doc);
     modified |= migrate_negated_bool_doc(doc, "merge", "no-ff", "ff");
     modified |= migrate_negated_bool_doc(doc, "switch", "no-cd", "cd");
     modified |= migrate_switch_picker_timeout_doc(doc);
+    modified
+}
+
+/// Rename the `pre-create`/`post-create` hook keys to `pre-start`/`post-start`.
+///
+/// Silent — see [`migrate_content_doc`] and `format_deprecation_warnings`.
+fn migrate_create_hooks_doc(doc: &mut toml_edit::DocumentMut) -> bool {
+    let mut modified = rename_hook_key(doc, "pre-create", "pre-start");
+    modified |= rename_hook_key(doc, "post-create", "post-start");
+    modified
+}
+
+/// Rename `old_key` to `new_key` at the top level and under each `[projects."..."]`.
+///
+/// Skips any location where `new_key` already exists — the user has already
+/// consolidated there, and clobbering their canonical value would lose config.
+/// The rewrite preserves the value shape (string, `[table]`, or
+/// `[[array-of-tables]]`) since it moves the `Item` unchanged.
+fn rename_hook_key(doc: &mut toml_edit::DocumentMut, old_key: &str, new_key: &str) -> bool {
+    let mut modified = false;
+
+    if doc.get(new_key).is_none()
+        && let Some(value) = doc.remove(old_key)
+    {
+        doc.insert(new_key, value);
+        modified = true;
+    }
+
+    if let Some(projects) = doc.get_mut("projects").and_then(|p| p.as_table_mut()) {
+        for (_key, project_value) in projects.iter_mut() {
+            if let Some(project_table) = project_value.as_table_mut()
+                && project_table.get(new_key).is_none()
+                && let Some(value) = project_table.remove(old_key)
+            {
+                project_table.insert(new_key, value);
+                modified = true;
+            }
+        }
+    }
+
     modified
 }
 
@@ -1947,31 +2088,6 @@ mod tests {
             .is_some_and(|doc| find_select_from_doc(&doc))
     }
 
-    fn find_pre_start_deprecation(content: &str) -> bool {
-        content
-            .parse::<toml_edit::DocumentMut>()
-            .ok()
-            .is_some_and(|doc| find_pre_start_from_doc(&doc))
-    }
-
-    fn find_post_start_deprecation(content: &str) -> bool {
-        content
-            .parse::<toml_edit::DocumentMut>()
-            .ok()
-            .is_some_and(|doc| find_post_start_from_doc(&doc))
-    }
-
-    fn migrate_start_hooks(content: &str) -> String {
-        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
-            return content.to_string();
-        };
-        if migrate_start_hooks_doc(&mut doc) {
-            doc.to_string()
-        } else {
-            content.to_string()
-        }
-    }
-
     fn migrate_commit_generation_sections(content: &str) -> String {
         let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
             return content.to_string();
@@ -2017,7 +2133,7 @@ worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
     #[test]
     fn test_find_deprecated_vars_repo_root() {
         let content = r#"
-post-create = "ln -sf {{ repo_root }}/node_modules node_modules"
+post-start = "ln -sf {{ repo_root }}/node_modules node_modules"
 "#;
         let found = find_deprecated_vars(content);
         assert_eq!(found, vec![("repo_root", "repo_path")]);
@@ -2026,7 +2142,7 @@ post-create = "ln -sf {{ repo_root }}/node_modules node_modules"
     #[test]
     fn test_find_deprecated_vars_worktree() {
         let content = r#"
-post-create = "cd {{ worktree }} && npm install"
+post-start = "cd {{ worktree }} && npm install"
 "#;
         let found = find_deprecated_vars(content);
         assert_eq!(found, vec![("worktree", "worktree_path")]);
@@ -2044,7 +2160,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
     #[test]
     fn test_find_deprecated_vars_main_worktree_path() {
         let content = r#"
-post-create = "ln -sf {{ main_worktree_path }}/node_modules ."
+post-start = "ln -sf {{ main_worktree_path }}/node_modules ."
 "#;
         let found = find_deprecated_vars(content);
         assert_eq!(found, vec![("main_worktree_path", "primary_worktree_path")]);
@@ -2054,7 +2170,7 @@ post-create = "ln -sf {{ main_worktree_path }}/node_modules ."
     fn test_find_deprecated_vars_multiple() {
         let content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
-post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
+post-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
 "#;
         let found = find_deprecated_vars(content);
         assert_eq!(
@@ -2070,7 +2186,7 @@ post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
     #[test]
     fn test_find_deprecated_vars_with_filter() {
         let content = r#"
-post-create = "ln -sf {{ repo_root | something }}/node_modules"
+post-start = "ln -sf {{ repo_root | something }}/node_modules"
 "#;
         let found = find_deprecated_vars(content);
         assert_eq!(found, vec![("repo_root", "repo_path")]);
@@ -2079,7 +2195,7 @@ post-create = "ln -sf {{ repo_root | something }}/node_modules"
     #[test]
     fn test_find_deprecated_vars_deduplicates() {
         let content = r#"
-post-create = "{{ repo_root }}/a {{ repo_root }}/b"
+post-start = "{{ repo_root }}/a {{ repo_root }}/b"
 "#;
         let found = find_deprecated_vars(content);
         assert_eq!(found, vec![("repo_root", "repo_path")]);
@@ -2089,7 +2205,7 @@ post-create = "{{ repo_root }}/a {{ repo_root }}/b"
     fn test_find_deprecated_vars_does_not_match_suffix() {
         // Should NOT match "worktree_path" when looking for "worktree"
         let content = r#"
-post-create = "cd {{ worktree_path }} && npm install"
+post-start = "cd {{ worktree_path }} && npm install"
 "#;
         let found = find_deprecated_vars(content);
         assert!(
@@ -2118,8 +2234,8 @@ post-create = "cd {{ worktree_path }} && npm install"
     /// while detection still warned. The toml_edit-tree rewrite handles it.
     #[test]
     fn test_replace_deprecated_vars_with_escaped_quotes() {
-        // Source TOML: pre-create = "echo \"{{ repo_root }}\""
-        let content = r#"pre-create = "echo \"{{ repo_root }}\"""#;
+        // Source TOML: pre-start = "echo \"{{ repo_root }}\""
+        let content = r#"pre-start = "echo \"{{ repo_root }}\"""#;
         let result = replace_deprecated_vars(content);
         assert!(
             !result.contains("repo_root"),
@@ -2134,7 +2250,7 @@ post-create = "cd {{ worktree_path }} && npm install"
     /// Same, exercised through the public `compute_migrated_content` entry.
     #[test]
     fn test_compute_migrated_content_escaped_quotes() {
-        let content = "pre-create = \"echo \\\"{{ repo_root }}\\\"\"\n";
+        let content = "pre-start = \"echo \\\"{{ repo_root }}\\\"\"\n";
         let migrated = compute_migrated_content(content);
         assert!(
             !migrated.contains("repo_root"),
@@ -2161,14 +2277,14 @@ post-create = "cd {{ worktree_path }} && npm install"
     fn test_replace_deprecated_vars_multiple() {
         let content = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
-post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
+post-start = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
 "#;
         let result = replace_deprecated_vars(content);
         assert_eq!(
             result,
             r#"
 worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
-post-create = "ln -sf {{ repo_path }}/node_modules {{ worktree_path }}/node_modules"
+post-start = "ln -sf {{ repo_path }}/node_modules {{ worktree_path }}/node_modules"
 "#
         );
     }
@@ -2180,7 +2296,7 @@ post-create = "ln -sf {{ repo_path }}/node_modules {{ worktree_path }}/node_modu
 worktree-path = "../{{ repo }}.{{ branch }}"
 
 [hooks]
-post-create = "echo hello"
+post-start = "echo hello"
 "#;
         let result = replace_deprecated_vars(content);
         assert_eq!(result, content); // No changes since no deprecated vars
@@ -2234,8 +2350,19 @@ timeout = 30
     /// `compute_migrated_content` byte-for-byte (the unmodified branch).
     #[test]
     fn test_compute_migrated_content_noop_returns_input_unchanged() {
-        let content = "pre-create = \"echo {{ repo_path }}\"\n";
+        let content = "pre-start = \"echo {{ repo_path }}\"\n";
         assert_eq!(compute_migrated_content(content), content);
+    }
+
+    #[test]
+    fn test_compute_migrated_content_does_not_rewrite_literal_text_when_other_template_uses_deprecated_var()
+     {
+        let content = "pre-merge = \"echo repo_root\"\npost-merge = \"echo {{ repo_root }}\"\n";
+        let migrated = compute_migrated_content(content);
+        assert_eq!(
+            migrated,
+            "pre-merge = \"echo repo_root\"\npost-merge = \"echo {{ repo_path }}\"\n"
+        );
     }
 
     /// The `replace_deprecated_vars` helper must return the input untouched
@@ -2259,7 +2386,6 @@ timeout = 30
 
     #[test]
     fn test_replace_in_statement_blocks() {
-        // Word boundary replacement handles {% %} blocks too
         let content = r#"cmd = "{% if repo_root %}echo {{ repo_root }}{% endif %}""#;
         let result = replace_deprecated_vars(content);
         assert_eq!(
@@ -2276,6 +2402,89 @@ timeout = 30
         let result = normalize_template_vars(template);
         assert!(matches!(result, Cow::Borrowed(_)), "Should not allocate");
         assert_eq!(result, template);
+    }
+
+    #[test]
+    fn test_normalize_does_not_rewrite_literal_text() {
+        let template = "echo repo_root";
+        let result = normalize_template_vars(template);
+        assert!(matches!(result, Cow::Borrowed(_)), "Should not allocate");
+        assert_eq!(result, template);
+    }
+
+    #[test]
+    fn test_normalize_only_rewrites_template_identifiers() {
+        let template = "echo repo_root && echo {{ repo_root }}";
+        let result = normalize_template_vars(template);
+        assert_eq!(result, "echo repo_root && echo {{ repo_path }}");
+    }
+
+    /// When `repo_root` is bound as a `{% set %}` local it is no longer the
+    /// deprecated global, so minijinja reports no undeclared `repo_root` and
+    /// the template is left untouched — the local name is not silently renamed.
+    #[test]
+    fn test_normalize_skips_set_assignment_target() {
+        let template = "{% set repo_root = \"x\" %}{{ repo_root }}";
+        let result = normalize_template_vars(template);
+        assert!(matches!(result, Cow::Borrowed(_)), "Should not allocate");
+        assert_eq!(result, template);
+    }
+
+    /// Identifiers inside `{# #}` comments must not be rewritten.
+    #[test]
+    fn test_normalize_skips_comment_tags() {
+        let template = "{# repo_root #}{{ repo_root }}";
+        let result = normalize_template_vars(template);
+        assert_eq!(result, "{# repo_root #}{{ repo_path }}");
+    }
+
+    /// Identifiers inside `{% raw %}…{% endraw %}` blocks are verbatim text,
+    /// not template references, so they must be left alone — only a genuine
+    /// reference outside the raw block is rewritten.
+    #[test]
+    fn test_normalize_skips_raw_blocks() {
+        let template = "{% raw %}{{ repo_root }}{% endraw %}{{ repo_root }}";
+        let result = normalize_template_vars(template);
+        assert_eq!(
+            result,
+            "{% raw %}{{ repo_root }}{% endraw %}{{ repo_path }}"
+        );
+    }
+
+    /// A deprecated name that appears as a quoted string literal inside a tag
+    /// is not an identifier and must not be rewritten.
+    #[test]
+    fn test_normalize_skips_string_literals_in_tags() {
+        let template = "{{ \"repo_root\" }} {{ repo_root }}";
+        let result = normalize_template_vars(template);
+        assert_eq!(result, "{{ \"repo_root\" }} {{ repo_path }}");
+    }
+
+    /// A deprecated name used as an attribute (`obj.repo_root`) is a member of
+    /// another value, not the deprecated global, so it must not be rewritten.
+    #[test]
+    fn test_normalize_skips_attribute_access() {
+        let template = "{{ obj.repo_root }} {{ repo_root }}";
+        let result = normalize_template_vars(template);
+        assert_eq!(result, "{{ obj.repo_root }} {{ repo_path }}");
+    }
+
+    /// A bare `{` that does not open a tag is literal text; the scan steps past
+    /// it and still rewrites a genuine reference later in the string.
+    #[test]
+    fn test_normalize_skips_bare_brace() {
+        let template = "{ literal {{ repo_root }}";
+        let result = normalize_template_vars(template);
+        assert_eq!(result, "{ literal {{ repo_path }}");
+    }
+
+    /// A backslash-escaped quote inside an in-tag string literal does not end
+    /// the literal early, so its contents are preserved verbatim.
+    #[test]
+    fn test_normalize_handles_escaped_quote_in_tag_string() {
+        let template = "{{ \"a\\\"repo_root\" }} {{ repo_root }}";
+        let result = normalize_template_vars(template);
+        assert_eq!(result, "{{ \"a\\\"repo_root\" }} {{ repo_path }}");
     }
 
     #[test]
@@ -2873,6 +3082,61 @@ no-ff = true
         assert!(
             result.contains("ff = false"),
             "merge.no-ff should have migrated; got:\n{result}"
+        );
+    }
+
+    #[test]
+    fn test_commit_generation_migrates_when_commit_parent_is_inline_table() {
+        let content = r#"commit = { stage = "tracked" }
+
+[commit-generation]
+command = "llm"
+"#;
+        let result = migrate_content(content);
+        let doc: toml_edit::DocumentMut = result.parse().unwrap();
+        let commit = doc["commit"].as_table().expect("commit table");
+        assert_eq!(
+            commit["stage"].as_str(),
+            Some("tracked"),
+            "inline parent fields must survive: {result}"
+        );
+        assert_eq!(
+            commit["generation"]["command"].as_str(),
+            Some("llm"),
+            "deprecated section should move under commit.generation: {result}"
+        );
+        assert!(
+            doc.get("commit-generation").is_none(),
+            "old section should be removed after migration: {result}"
+        );
+    }
+
+    #[test]
+    fn test_project_commit_generation_migrates_when_commit_parent_is_inline_table() {
+        let content = r#"
+[projects."github.com/user/repo"]
+commit = { stage = "tracked" }
+commit-generation = { command = "llm" }
+"#;
+        let result = migrate_content(content);
+        let doc: toml_edit::DocumentMut = result.parse().unwrap();
+        let project = doc["projects"]["github.com/user/repo"]
+            .as_table()
+            .expect("project table");
+        let commit = project["commit"].as_table().expect("project commit table");
+        assert_eq!(
+            commit["stage"].as_str(),
+            Some("tracked"),
+            "inline project parent fields must survive: {result}"
+        );
+        assert_eq!(
+            commit["generation"]["command"].as_str(),
+            Some("llm"),
+            "project deprecated section should move under commit.generation: {result}"
+        );
+        assert!(
+            project.get("commit-generation").is_none(),
+            "old project section should be removed after migration: {result}"
         );
     }
 
@@ -3496,6 +3760,32 @@ pager = "delta --paging=never"
     }
 
     #[test]
+    fn test_migrate_select_when_switch_parent_is_inline_table() {
+        let content = r#"switch = { cd = false }
+
+[select]
+pager = "delta"
+"#;
+        let result = migrate_select_to_switch_picker(content);
+        let doc: toml_edit::DocumentMut = result.parse().unwrap();
+        let switch = doc["switch"].as_table().expect("switch table");
+        assert_eq!(
+            switch["cd"].as_bool(),
+            Some(false),
+            "inline switch fields must survive: {result}"
+        );
+        assert_eq!(
+            switch["picker"]["pager"].as_str(),
+            Some("delta"),
+            "select should move under switch.picker: {result}"
+        );
+        assert!(
+            doc.get("select").is_none(),
+            "old select section should be removed after migration: {result}"
+        );
+    }
+
+    #[test]
     fn test_migrate_select_skips_when_new_exists() {
         let content = r#"
 [select]
@@ -3603,127 +3893,6 @@ pager = "delta --paging=never"
             !migrated.contains("[select]"),
             "Migrated content should not have [select]: {migrated}"
         );
-    }
-
-    // --- pre-start/post-start → pre-create/post-create rename tests ---
-
-    #[test]
-    fn test_find_start_hook_deprecation_none() {
-        // Canonical `-create` keys: no deprecation.
-        let content = r#"
-pre-create = "npm install"
-post-create = "npm run dev"
-"#;
-        assert!(!find_pre_start_deprecation(content));
-        assert!(!find_post_start_deprecation(content));
-    }
-
-    #[test]
-    fn test_find_start_hook_deprecation_top_level() {
-        assert!(find_pre_start_deprecation("pre-start = \"npm install\"\n"));
-        assert!(find_post_start_deprecation(
-            "post-start = \"npm run dev\"\n"
-        ));
-    }
-
-    #[test]
-    fn test_find_start_hook_deprecation_project_level() {
-        // User config format: hooks flattened into [projects."..."]
-        let content = r#"
-[projects."my-project"]
-pre-start = "npm install"
-"#;
-        assert!(find_pre_start_deprecation(content));
-    }
-
-    #[test]
-    fn test_find_start_hook_deprecation_named_commands() {
-        // Named command table form
-        let content = r#"
-[pre-start]
-lint = "npm run lint"
-build = "npm run build"
-"#;
-        assert!(find_pre_start_deprecation(content));
-    }
-
-    #[test]
-    fn test_find_start_hook_deprecation_empty_table_not_flagged() {
-        // Empty [pre-start] table is a no-op — don't flag.
-        assert!(!find_pre_start_deprecation("[pre-start]\n"));
-    }
-
-    #[test]
-    fn test_find_start_hook_deprecation_skips_when_create_exists_top_level() {
-        // Both present at top level — the migrator leaves the old key alone.
-        let content = r#"
-pre-start = "old"
-pre-create = "new"
-"#;
-        assert!(!find_pre_start_deprecation(content));
-    }
-
-    #[test]
-    fn test_find_start_hook_deprecation_skips_when_create_exists_project() {
-        let content = r#"
-[projects."my-project"]
-post-start = "old"
-post-create = "new"
-"#;
-        assert!(!find_post_start_deprecation(content));
-    }
-
-    #[test]
-    fn test_migrate_start_hooks_top_level() {
-        let content = r#"
-pre-start = "npm install"
-
-[post-start]
-server = "npm run dev"
-"#;
-        let result = migrate_start_hooks(content);
-        assert!(result.contains("pre-create"), "got: {result}");
-        assert!(result.contains("[post-create]"), "got: {result}");
-        assert!(!result.contains("pre-start"), "got: {result}");
-        assert!(!result.contains("post-start"), "got: {result}");
-    }
-
-    #[test]
-    fn test_migrate_start_hooks_project_level() {
-        let content = r#"
-[projects."my-project"]
-pre-start = "npm install"
-"#;
-        let result = migrate_start_hooks(content);
-        assert!(result.contains("pre-create"), "got: {result}");
-        assert!(!result.contains("pre-start"), "got: {result}");
-    }
-
-    #[test]
-    fn test_migrate_start_hooks_skips_when_create_exists() {
-        let content = r#"
-pre-start = "old"
-pre-create = "new"
-"#;
-        let result = migrate_start_hooks(content);
-        assert_eq!(result, content, "must not clobber an existing pre-create");
-    }
-
-    #[test]
-    fn test_migrate_start_hooks_invalid_toml() {
-        let content = "this is { not valid toml";
-        assert_eq!(migrate_start_hooks(content), content);
-    }
-
-    #[test]
-    fn snapshot_migrate_start_to_create() {
-        let content = r#"pre-start = "npm install"
-
-[post-start]
-server = "npm run dev"
-"#;
-        let migrated = compute_migrated_content(content);
-        insta::assert_snapshot!(migration_diff(content, &migrated));
     }
 
     fn migrate_switch_picker_timeout(content: &str) -> String {
@@ -3857,17 +4026,6 @@ pager = "delta"
             output.contains("no longer used"),
             "Should explain deprecation reason: {output}"
         );
-    }
-
-    #[test]
-    fn test_detect_deprecations_includes_start_hooks() {
-        let deprecations = detect_deprecations("pre-start = \"npm install\"\n");
-        assert!(deprecations.pre_start);
-        assert!(!deprecations.is_empty());
-
-        let deprecations = detect_deprecations("post-start = \"npm run dev\"\n");
-        assert!(deprecations.post_start);
-        assert!(!deprecations.is_empty());
     }
 
     // ==================== negated bool format + migration tests ====================
@@ -4117,6 +4275,10 @@ ff = true
         let found = find_pre_hook_table_form("pre-merge = \"cargo test\"\n");
         assert!(found.is_empty());
 
+        // Inline table form → detected like section table form
+        let found = find_pre_hook_table_form("pre-merge = { test = \"t\", lint = \"l\" }\n");
+        assert_eq!(found, vec!["pre-merge"]);
+
         // Array/pipeline form → not detected
         let found = find_pre_hook_table_form("pre-merge = [{test = \"t\"}, {lint = \"l\"}]\n");
         assert!(found.is_empty());
@@ -4131,7 +4293,7 @@ ff = true
 a = "1"
 b = "2"
 
-[pre-create]
+[pre-start]
 a = "1"
 b = "2"
 
@@ -4152,7 +4314,7 @@ b = "2"
             found,
             vec![
                 "pre-switch",
-                "pre-create",
+                "pre-start",
                 "pre-commit",
                 "pre-merge",
                 "pre-remove"
@@ -4164,12 +4326,12 @@ b = "2"
     fn test_detect_pre_hook_table_form_per_project() {
         // Per-project overrides: hooks are flattened under [projects."id"]
         let content = r#"
-[projects."github.com/user/repo".pre-create]
+[projects."github.com/user/repo".pre-start]
 install = "npm ci"
 build = "npm run build"
 "#;
         let found = find_pre_hook_table_form(content);
-        assert_eq!(found, vec!["projects.\"github.com/user/repo\".pre-create"]);
+        assert_eq!(found, vec!["projects.\"github.com/user/repo\".pre-start"]);
     }
 
     #[test]
@@ -4201,6 +4363,20 @@ lint = "cargo clippy"
     }
 
     #[test]
+    fn test_migrate_pre_hook_inline_table_form_converts_to_pipeline() {
+        let content = r#"pre-merge = { test = "cargo test", lint = "cargo clippy" }
+"#;
+        let result = migrate_pre_hook_table_form(content);
+        let doc: toml_edit::DocumentMut = result.parse().unwrap();
+        let arr = doc["pre-merge"]
+            .as_array_of_tables()
+            .expect("should be array of tables");
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr.get(0).unwrap()["test"].as_str(), Some("cargo test"));
+        assert_eq!(arr.get(1).unwrap()["lint"].as_str(), Some("cargo clippy"));
+    }
+
+    #[test]
     fn test_migrate_pre_hook_table_form_preserves_order() {
         let content = r#"
 [pre-merge]
@@ -4225,14 +4401,14 @@ third = "3"
     #[test]
     fn test_migrate_pre_hook_table_form_per_project() {
         let content = r#"
-[projects."web".pre-create]
+[projects."web".pre-start]
 install = "npm ci"
 build = "npm run build"
 "#;
         let result = migrate_pre_hook_table_form(content);
         let doc: toml_edit::DocumentMut = result.parse().unwrap();
         let project = doc["projects"]["web"].as_table().unwrap();
-        let arr = project["pre-create"]
+        let arr = project["pre-start"]
             .as_array_of_tables()
             .expect("should be array of tables");
         assert_eq!(arr.len(), 2);
@@ -4265,11 +4441,11 @@ no-ff = true
 test = "cargo test"
 lint = "cargo clippy"
 
-[post-create]
+[post-start]
 server = "npm run dev"
 "#;
         // migrate_pre_hook_table_form only transforms pre-* pipeline hooks;
-        // post-create is a post-* hook and must pass through untouched.
+        // post-start is a post-* hook and must pass through untouched.
         let result = migrate_pre_hook_table_form(content);
         insta::assert_snapshot!(migration_diff(content, &result));
     }

@@ -40,15 +40,15 @@ pub enum InternalOp {
 ///
 /// Hook commands produce logs at: `{branch}/{source}/{hook-type}/{name}.log`
 /// (`source` is `user` or `project`)
-/// - Example: `feature/user/post-create/server.log`
+/// - Example: `feature/user/post-start/server.log`
 ///
 /// Per-branch internal operations produce logs at: `{branch}/internal/{op}.log`
 /// - Example: `feature/internal/remove.log`
 ///
-/// Repo-wide (branch-agnostic) internal operations produce logs at
-/// `internal/{op}.log` directly under the log directory, alongside the other
-/// shared logs (`commands.jsonl`, `trace.log`).
-/// - Example: `internal/trash-sweep.log`
+/// Repo-wide (branch-agnostic) internal operations produce top-level logs at
+/// `internal-{op}.log`, alongside the other shared logs (`commands.jsonl`,
+/// `trace.log`).
+/// - Example: `internal-trash-sweep.log`
 ///
 /// Branch and hook names are sanitized for filesystem safety via
 /// `sanitize_for_filename`. Already-safe names pass through unchanged; names
@@ -64,7 +64,7 @@ pub enum HookLog {
     },
     /// Per-branch internal operation log: `{branch}/internal/{op}.log`
     Internal(InternalOp),
-    /// Repo-wide internal operation log: `internal/{op}.log` (no branch segment).
+    /// Repo-wide internal operation log: `internal-{op}.log` (no branch segment).
     Shared(InternalOp),
 }
 
@@ -92,7 +92,7 @@ impl HookLog {
     ///
     /// Builds the nested path under `{log_dir}/{sanitized-branch}/...` for
     /// per-branch variants. The `Shared` variant ignores `branch` and writes
-    /// directly under `{log_dir}/internal/`.
+    /// directly under `{log_dir}` as `internal-{op}.log`.
     /// Parent directories must be created by the caller (see `create_detach_log`).
     pub fn path(&self, log_dir: &Path, branch: &str) -> PathBuf {
         match self {
@@ -109,7 +109,7 @@ impl HookLog {
                 .join(sanitize_for_filename(branch))
                 .join("internal")
                 .join(format!("{op}.log")),
-            HookLog::Shared(op) => log_dir.join("internal").join(format!("{op}.log")),
+            HookLog::Shared(op) => log_dir.join(format!("internal-{op}.log")),
         }
     }
 }
@@ -528,10 +528,9 @@ pub fn sweep_stale_trash(repo: &Repository) {
 
     let command = build_trash_sweep_command(&stale);
 
-    // The sweep is repo-wide (not branch-scoped), so it logs under
-    // `internal/trash-sweep.log` alongside the other shared logs
-    // (`commands.jsonl`, `trace.log`). The branch argument is ignored for the
-    // `Shared` variant.
+    // The sweep is repo-wide (not branch-scoped), so it logs to a top-level
+    // shared file alongside `commands.jsonl` and `trace.log`. The branch
+    // argument is ignored for the `Shared` variant.
     if let Err(e) = spawn_detached(
         repo,
         &repo.wt_dir(),
@@ -987,20 +986,20 @@ mod tests {
         let log = HookLog::hook(HookSource::User, HookType::PostCreate, "server");
         assert_snapshot!(
             log.path(log_dir, "main").to_slash_lossy(),
-            @"/repo/.git/wt/logs/main/user/post-create/server.log"
+            @"/repo/.git/wt/logs/main/user/post-start/server.log"
         );
 
         // Slash in branch name gets sanitized (feature/auth → feature-auth-{hash})
         assert_snapshot!(
             log.path(log_dir, "feature/auth").to_slash_lossy(),
-            @"/repo/.git/wt/logs/feature-auth-j34/user/post-create/server.log"
+            @"/repo/.git/wt/logs/feature-auth-j34/user/post-start/server.log"
         );
 
         // Project source
         let log = HookLog::hook(HookSource::Project, HookType::PreCreate, "build");
         assert_snapshot!(
             log.path(log_dir, "main").to_slash_lossy(),
-            @"/repo/.git/wt/logs/main/project/pre-create/build.log"
+            @"/repo/.git/wt/logs/main/project/pre-start/build.log"
         );
 
         // Per-branch internal operation path: {log_dir}/{sanitized-branch}/internal/{op}.log
@@ -1010,14 +1009,14 @@ mod tests {
         );
 
         // Repo-wide (branch-agnostic) internal operation path:
-        // {log_dir}/internal/{op}.log — the branch argument is ignored.
+        // {log_dir}/internal-{op}.log — the branch argument is ignored.
         assert_snapshot!(
             HookLog::shared(InternalOp::TrashSweep).path(log_dir, "anything").to_slash_lossy(),
-            @"/repo/.git/wt/logs/internal/trash-sweep.log"
+            @"/repo/.git/wt/logs/internal-trash-sweep.log"
         );
         assert_snapshot!(
             HookLog::shared(InternalOp::TrashSweep).path(log_dir, "").to_slash_lossy(),
-            @"/repo/.git/wt/logs/internal/trash-sweep.log"
+            @"/repo/.git/wt/logs/internal-trash-sweep.log"
         );
     }
 

@@ -1460,7 +1460,7 @@ impl ErrorExt for anyhow::Error {
 /// user's intent:
 /// - `wt merge` — user wants to merge, hooks run as part of that
 /// - `wt commit` — user wants to commit, pre-commit hooks run
-/// - `wt switch --create` — user wants a worktree, post-create hooks run
+/// - `wt switch --create` — user wants a worktree, post-start hooks run
 ///
 /// ## When NOT to use
 ///
@@ -1905,7 +1905,7 @@ mod tests {
             error: "setup failed".into(),
             exit_code: None,
         };
-        assert_snapshot!(err.render(), @"[31m✗[39m [31mpre-create command failed: setup failed[39m");
+        assert_snapshot!(err.render(), @"[31m✗[39m [31mpre-start command failed: setup failed[39m");
 
         // Silent errors produce empty output
         assert_eq!(format!("{}", WorktrunkError::CommandNotApproved), "");

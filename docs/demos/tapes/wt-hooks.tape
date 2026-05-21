@@ -10,12 +10,12 @@ Sleep 1s
 Show
 Sleep 500ms
 
-# Show the hooks config (3 hooks: post-create deps+dev, pre-remove cleanup)
+# Show the hooks config (3 hooks: post-start deps+dev, pre-remove cleanup)
 Type "cat .config/wt.toml"
 Enter
 Sleep 3s
 
-# Create a new worktree - shows post-create hook running
+# Create a new worktree - shows post-start hook running
 Type "wt switch --create feature"
 Enter
 Sleep 3s

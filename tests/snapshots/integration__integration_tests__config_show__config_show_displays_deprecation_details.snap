@@ -60,14 +60,14 @@ exit_code: 0
 [2m↳[22m [2mTo apply: [4mwt config update[24m[22m
 [2m○[22m Proposed diff:
 [107m [0m [1mdiff --git a/config.toml/current b/config.toml/migrated[m
-[107m [0m [1mindex da40ce6..12d38d2 100644[m
+[107m [0m [1mindex dee4883..5eef8a6 100644[m
 [107m [0m [1m--- a/config.toml/current[m
 [107m [0m [1m+++ b/config.toml/migrated[m
 [107m [0m [36m@@ -1,2 +1,2 @@[m
 [107m [0m [31m-worktree-path = "../{{ main_worktree }}.{{ branch }}"[m
-[107m [0m [31m-pre-create = "ln -sf {{ repo_root }}/node_modules"[m
+[107m [0m [31m-pre-start = "ln -sf {{ repo_root }}/node_modules"[m
 [107m [0m [32m+[m[32mworktree-path = "../{{ repo }}.{{ branch }}"[m
-[107m [0m [32m+[m[32mpre-create = "ln -sf {{ repo_path }}/node_modules"[m
+[107m [0m [32m+[m[32mpre-start = "ln -sf {{ repo_path }}/node_modules"[m
 [2m↳[22m [2mOptional system config not found @ [2m/etc/xdg/worktrunk/config.toml[22m[22m
 
 [36mPROJECT CONFIG[39m @ _REPO_/.config/wt.toml
