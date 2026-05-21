@@ -711,7 +711,12 @@ fn test_switch_execute_argv_deprecation_warning(repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(
             &repo,
             "switch",
-            &["--create", "dep-fish", "--execute", "set -lx FOO bar; echo $FOO"],
+            &[
+                "--create",
+                "dep-fish",
+                "--execute",
+                "set -lx FOO bar; echo $FOO",
+            ],
             None,
         );
         configure_directive_files(&mut cmd, &cd_path, &exec_path);
