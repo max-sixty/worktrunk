@@ -709,10 +709,10 @@ pub fn show_dry_run_preview(candidates: &[RelocationCandidate]) {
 }
 
 /// Show summary of relocations performed.
+///
+/// Only called after validation produced at least one candidate, so
+/// `relocated + skipped >= 1` always — each candidate either moves or is skipped.
 pub fn show_summary(relocated: usize, skipped: usize) {
-    if relocated == 0 && skipped == 0 {
-        return;
-    }
     eprintln!();
     let plural = |n: usize| if n == 1 { "worktree" } else { "worktrees" };
     let msg = if skipped == 0 {
