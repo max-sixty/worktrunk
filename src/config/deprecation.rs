@@ -255,10 +255,7 @@ fn rewrite_template_tag_body(body: &str, replacements: &[(&str, &'static str)]) 
     let mut cursor = 0;
     let mut changed = false;
 
-    while cursor < body.len() {
-        let Some(ch) = body[cursor..].chars().next() else {
-            break;
-        };
+    while let Some(ch) = body.get(cursor..).and_then(|s| s.chars().next()) {
         if ch == '"' || ch == '\'' {
             let end = quoted_template_string_end(body, cursor, ch);
             out.push_str(&body[cursor..end]);
@@ -287,10 +284,7 @@ fn rewrite_template_tag_body(body: &str, replacements: &[(&str, &'static str)]) 
 fn quoted_template_string_end(body: &str, start: usize, quote: char) -> usize {
     let mut escaped = false;
     let mut cursor = start + quote.len_utf8();
-    while cursor < body.len() {
-        let Some(ch) = body[cursor..].chars().next() else {
-            break;
-        };
+    while let Some(ch) = body.get(cursor..).and_then(|s| s.chars().next()) {
         cursor += ch.len_utf8();
         if escaped {
             escaped = false;
@@ -305,10 +299,7 @@ fn quoted_template_string_end(body: &str, start: usize, quote: char) -> usize {
 
 fn identifier_end(body: &str, start: usize) -> usize {
     let mut cursor = start;
-    while cursor < body.len() {
-        let Some(ch) = body[cursor..].chars().next() else {
-            break;
-        };
+    while let Some(ch) = body.get(cursor..).and_then(|s| s.chars().next()) {
         if !is_template_identifier_char(ch) {
             break;
         }
@@ -2553,6 +2544,24 @@ timeout = 30
         let template = "{{ obj.repo_root }} {{ repo_root }}";
         let result = normalize_template_vars(template);
         assert_eq!(result, "{{ obj.repo_root }} {{ repo_path }}");
+    }
+
+    /// A bare `{` that does not open a tag is literal text; the scan steps past
+    /// it and still rewrites a genuine reference later in the string.
+    #[test]
+    fn test_normalize_skips_bare_brace() {
+        let template = "{ literal {{ repo_root }}";
+        let result = normalize_template_vars(template);
+        assert_eq!(result, "{ literal {{ repo_path }}");
+    }
+
+    /// A backslash-escaped quote inside an in-tag string literal does not end
+    /// the literal early, so its contents are preserved verbatim.
+    #[test]
+    fn test_normalize_handles_escaped_quote_in_tag_string() {
+        let template = "{{ \"a\\\"repo_root\" }} {{ repo_root }}";
+        let result = normalize_template_vars(template);
+        assert_eq!(result, "{{ \"a\\\"repo_root\" }} {{ repo_path }}");
     }
 
     #[test]
