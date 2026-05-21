@@ -1013,6 +1013,60 @@ pub mod tests {
         assert!(result.unwrap_err().to_string().contains("no branch name"));
     }
 
+    /// `from_signal` rejects tokens that carry no usable target: a blank or
+    /// whitespace-only signal, and a bare `worktree-path:` prefix with no path
+    /// after it. A non-empty branch token and a prefixed path both parse.
+    #[test]
+    fn test_picker_removal_target_from_signal() {
+        assert!(PickerRemovalTarget::from_signal("").is_none());
+        assert!(PickerRemovalTarget::from_signal("   ").is_none());
+        assert!(PickerRemovalTarget::from_signal("worktree-path:").is_none());
+
+        match PickerRemovalTarget::from_signal("feature/foo") {
+            Some(PickerRemovalTarget::Branch(branch)) => assert_eq!(branch, "feature/foo"),
+            _ => panic!("expected a branch target"),
+        }
+        match PickerRemovalTarget::from_signal("worktree-path:/tmp/wt") {
+            Some(PickerRemovalTarget::WorktreePath(path)) => {
+                assert_eq!(path, std::path::PathBuf::from("/tmp/wt"));
+            }
+            _ => panic!("expected a worktree-path target"),
+        }
+    }
+
+    /// A `SkimItem` that is not a `WorktreeSkimItem`, used to drive
+    /// `picker_item_identifier`'s `output()`-token fallback — the path skim's
+    /// cross-thread `downcast_ref` failure (skim 0.20) takes in production.
+    struct FakeSkimItem {
+        output: String,
+    }
+
+    impl SkimItem for FakeSkimItem {
+        fn text(&self) -> std::borrow::Cow<'_, str> {
+            std::borrow::Cow::Borrowed(&self.output)
+        }
+
+        fn output(&self) -> std::borrow::Cow<'_, str> {
+            std::borrow::Cow::Borrowed(&self.output)
+        }
+    }
+
+    /// When `downcast_ref::<WorktreeSkimItem>` fails, `picker_item_identifier`
+    /// falls back to the `output()` token: a `worktree-path:` token decodes to
+    /// the bare path, anything else is returned verbatim.
+    #[test]
+    fn test_picker_item_identifier_output_fallback() {
+        let worktree_row = FakeSkimItem {
+            output: "worktree-path:/tmp/detached".to_string(),
+        };
+        assert_eq!(picker_item_identifier(&worktree_row), "/tmp/detached");
+
+        let branch_row = FakeSkimItem {
+            output: "feature/foo".to_string(),
+        };
+        assert_eq!(picker_item_identifier(&branch_row), "feature/foo");
+    }
+
     #[test]
     fn test_do_removal_removes_worktree_and_branch() {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
