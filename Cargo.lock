@@ -3212,6 +3212,7 @@ dependencies = [
  "reflink-copy",
  "regex",
  "rstest",
+ "rustix",
  "sanitize-filename",
  "schemars",
  "serde",
@@ -3240,6 +3241,7 @@ dependencies = [
  "vt100",
  "wait-timeout",
  "which 8.0.2",
+ "windows-sys 0.61.2",
  "wrap-ansi",
  "wt-perf",
 ]

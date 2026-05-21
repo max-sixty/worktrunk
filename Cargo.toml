@@ -159,6 +159,18 @@ skim = { version = "0.20", optional = true }
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
 signal-hook = "0.4"
 
+# Atomic, no-overwrite rename (`renameat2`/`renameatx_np`) for
+# `worktrunk::fs::rename_no_replace`. Already present transitively (tempfile,
+# which, …); declared directly here only to enable the `fs` feature.
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+rustix = { version = "1", features = ["fs"] }
+
+# Atomic, no-overwrite rename (`MoveFileExW` without MOVEFILE_REPLACE_EXISTING)
+# for `worktrunk::fs::rename_no_replace`. Already present transitively;
+# declared directly for the `Win32_Storage_FileSystem` binding.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
 [build-dependencies]
 vergen-gitcl = { version = "9.1.0", features = ["build"] }
 
