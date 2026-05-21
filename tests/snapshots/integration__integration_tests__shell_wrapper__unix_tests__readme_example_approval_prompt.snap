@@ -5,11 +5,11 @@ expression: prompt_only
 n
 
 ▲ repo needs approval to execute 3 commands:
-○ pre-create install:
+○ pre-start install:
   echo 'Installing dependencies...'
-○ pre-create build:
+○ pre-start build:
   echo 'Building project...'
-○ pre-create test:
+○ pre-start test:
   echo 'Running tests...'
 
 ❯ Allow and remember? [y/N]

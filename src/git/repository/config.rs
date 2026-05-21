@@ -670,7 +670,7 @@ mod tests {
         assert!(repo.project_config_at_ref("no-such-ref").unwrap().is_none());
 
         // Commit one and read it back at that branch.
-        test.write_project_config(r#"post-create = "echo hi""#);
+        test.write_project_config(r#"post-start = "echo hi""#);
         test.run_git(&["add", ".config/wt.toml"]);
         test.run_git(&["commit", "-m", "Add config"]);
         let cfg = repo
@@ -704,7 +704,7 @@ mod tests {
         let test = TestRepo::with_initial_commit();
         let repo = Repository::at(test.root_path()).unwrap();
 
-        test.write_project_config(r#"post-create = "echo hi""#);
+        test.write_project_config(r#"post-start = "echo hi""#);
         test.run_git(&["add", ".config/wt.toml"]);
         test.run_git(&["commit", "-m", "Add config"]);
 

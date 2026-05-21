@@ -55,9 +55,9 @@ success: true
 exit_code: 0
 ----- stdout -----
 [36mUSER HOOKS[39m @ ~/.config/worktrunk/config.toml
-[2m○[22m post-create [1mglobal-hook[22m:
+[2m○[22m post-start [1mglobal-hook[22m:
 [107m [0m [2m[0m[2m[34mecho[0m[2m global
-[2m○[22m post-create [1mproject-hook[22m:
+[2m○[22m post-start [1mproject-hook[22m:
 [107m [0m [2m[0m[2m[34mecho[0m[2m per-project
 
 [36mPROJECT HOOKS[39m @ _REPO_/.config/wt.toml

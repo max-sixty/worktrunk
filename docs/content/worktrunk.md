@@ -198,7 +198,7 @@ For parallel agents, create multiple worktrees and launch an agent in each:
 
 {{ terminal(cmd="wt switch -x claude -c feature-a -- 'Add user authentication'|||wt switch -x claude -c feature-b -- 'Fix the pagination bug'|||wt switch -x claude -c feature-c -- 'Write tests for the API'") }}
 
-The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-create hooks](@/hook.md#hook-types) to automate setup (install deps, start dev servers).
+The `-x` flag runs a command after switching; arguments after `--` are passed to it. Configure [post-start hooks](@/hook.md#hook-types) to automate setup (install deps, start dev servers).
 
 ## Next steps
 

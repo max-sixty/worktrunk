@@ -12,7 +12,7 @@
 //! ```
 //!
 //! `;` is overloaded across the two outermost tiers. The reader disambiguates
-//! by lookahead — `;` followed by a `<hook-type>:` (e.g. `post-create:`) is a
+//! by lookahead — `;` followed by a `<hook-type>:` (e.g. `post-start:`) is a
 //! cross-type boundary; otherwise it's a cross-source boundary within the
 //! current hook-type clause. In practice the two often coexist on one line.
 //!
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn test_format_pipeline_summary_concurrent_then_concurrent() {
         // The canonical pipeline: two concurrent groups in sequence.
-        // post-create = [
+        // post-start = [
         //     { install = "npm install", setup = "setup-db" },
         //     { build = "npm run build", lint = "npm run lint" },
         // ]

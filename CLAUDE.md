@@ -97,9 +97,11 @@ Why: silent "lookup" paths that walk to the wire (alias dispatch, hook context b
 
 Before adding an accessor that could reach the wire (`gh`, `glab`, `git fetch`, `git ls-remote`, HTTP), confirm the command that calls it is not intended to be fast. A foreground command the user runs and waits on absorbs the latency; a command in a synchronous hot path like a shell prompt cannot, and must not reach the wire. `wt list statusline` is not a fast command despite running on every prompt: Claude Code consumes its output asynchronously.
 
-Commands that currently reach the wire:
+What currently reaches the wire:
 
-- `wt list --full`, `wt list statusline` — CI status, LLM summaries
+- `wt list --full`, `wt list statusline` — CI status
+- generating a branch summary with a `commit.generation` command
+- generating a commit message with a `commit.generation` command
 - `wt switch pr:<n>`, `wt switch mr:<n>` — host API to resolve the PR/MR, then `git fetch` of its branch
 - `wt config show --full` — version check against GitHub
 - the first `Repository::default_branch()` per repo — `git ls-remote` (above)
