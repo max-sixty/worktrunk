@@ -133,9 +133,6 @@ Options:
   -b, --branch <BRANCH>
           Branch to operate on (defaults to current worktree)
 
-      --no-hooks
-          Skip hooks
-
       --stage <STAGE>
           What to stage before committing [default: all]
 
@@ -151,6 +148,9 @@ Options:
           Print help (see a summary with '-h')
 
 Automation:
+      --no-hooks
+          Skip hooks
+
       --format <FORMAT>
           Output format
 
@@ -232,9 +232,6 @@ Arguments:
           Defaults to default branch.
 
 Options:
-      --no-hooks
-          Skip hooks
-
       --stage <STAGE>
           What to stage before committing [default: all]
 
@@ -250,6 +247,9 @@ Options:
           Print help (see a summary with '-h')
 
 Automation:
+      --no-hooks
+          Skip hooks
+
       --format <FORMAT>
           Output format
 

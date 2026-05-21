@@ -144,18 +144,16 @@ fn warn_select_deprecated() {
     );
 }
 
-/// Resolve the `--no-hooks` / `--no-verify` pair: emit a deprecation warning
-/// if the old flag was used, then return the effective verify value.
-fn resolve_verify(verify: bool, no_verify_deprecated: bool) -> bool {
-    if no_verify_deprecated {
-        eprintln!(
-            "{}",
-            warning_message("--no-verify is deprecated; use --no-hooks instead")
-        );
-        false
-    } else {
-        verify
-    }
+/// Emit the canonical `--no-verify` deprecation warning to stderr.
+///
+/// Single source of this warning text. `HookFlags::resolve` (switch, remove,
+/// step commit, step squash) and `handle_merge_command` both call here, so the
+/// message stays identical across every command that accepts `--no-verify`.
+pub(crate) fn warn_no_verify_deprecated() {
+    eprintln!(
+        "{}",
+        warning_message("--no-verify is deprecated; use --no-hooks instead")
+    );
 }
 
 fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
@@ -201,7 +199,7 @@ fn handle_hook_command(action: HookCommand, yes: bool) -> anyhow::Result<()> {
 fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
     match action {
         StepCommand::Commit(args) => {
-            let verify = resolve_verify(args.verify, args.no_verify_deprecated);
+            let verify = args.hooks.resolve();
             let format = args.format;
             // `--show-prompt` and `--dry-run` emit raw text (rendered prompt or LLM
             // preview), which would corrupt a JSON consumer's stdout. Refuse the
@@ -230,7 +228,7 @@ fn handle_step_command(action: StepCommand, yes: bool) -> anyhow::Result<()> {
             Ok(())
         }
         StepCommand::Squash(args) => {
-            let verify = resolve_verify(args.verify, args.no_verify_deprecated);
+            let verify = args.hooks.resolve();
             // `--show-prompt` and `--dry-run` emit raw text (rendered prompt or LLM
             // preview), which would corrupt a JSON consumer's stdout.
             if args.format == SwitchFormat::Json && (args.show_prompt || args.dry_run) {
@@ -665,7 +663,7 @@ fn handle_select_command(_branches: bool, _remotes: bool) -> anyhow::Result<()> 
 }
 
 fn handle_switch_command(args: SwitchArgs, yes: bool) -> anyhow::Result<()> {
-    let verify = resolve_verify(args.verify, args.no_verify_deprecated);
+    let verify = args.hooks.resolve();
 
     // With no branch argument, `wt switch` opens a TUI picker — config
     // deprecation warnings would render above the picker and push it down.
@@ -891,7 +889,7 @@ fn validate_remove_targets(
 ///    or success message. See [`commands::process::run_internal_sweep`].
 fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
     let json_mode = args.format == SwitchFormat::Json;
-    let verify = resolve_verify(args.verify, args.no_verify_deprecated);
+    let verify = args.hooks.resolve();
     UserConfig::load()
         .context("Failed to load config")
         .and_then(|config| {
@@ -1326,10 +1324,7 @@ fn init_logging(verbose_level: u8) {
 
 fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {
     if args.no_verify {
-        eprintln!(
-            "{}",
-            warning_message("--no-verify is deprecated; use --no-hooks instead")
-        );
+        warn_no_verify_deprecated();
     }
     handle_merge(MergeOptions {
         target: args.target.as_deref(),

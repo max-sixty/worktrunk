@@ -2107,6 +2107,39 @@ approved-commands = ["echo 'hook ran' > {}"]
     );
 }
 
+#[rstest]
+fn test_remove_no_verify_deprecated_still_works(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-no-verify");
+
+    // --no-verify is a deprecated alias for --no-hooks: still works, still
+    // emits the shared deprecation warning that points at --no-hooks.
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "--foreground",
+            "--yes",
+            "--no-verify",
+            "feature-no-verify",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--no-verify is deprecated"),
+        "Expected deprecation warning in stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("--no-hooks"),
+        "Expected --no-hooks suggestion in stderr: {stderr}"
+    );
+    assert!(
+        !worktree_path.exists(),
+        "Worktree should be removed with --no-verify"
+    );
+}
+
 ///
 /// Even when a worktree is in detached HEAD state (no branch), the pre-remove
 /// hook should still execute.

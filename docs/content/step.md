@@ -138,9 +138,6 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
   <b><span class=c>-b</span></b>, <b><span class=c>--branch</span></b><span class=c> &lt;BRANCH&gt;</span>
           Branch to operate on (defaults to current worktree)
 
-      <b><span class=c>--no-hooks</span></b>
-          Skip hooks
-
       <b><span class=c>--stage</span></b><span class=c> &lt;STAGE&gt;</span>
           What to stage before committing [default: all]
 
@@ -156,6 +153,9 @@ Usage: <b><span class=c>wt step commit</span></b> <span class=c>[OPTIONS]</span>
           Print help (see a summary with &#39;-h&#39;)
 
 <b><span class=g>Automation:</span></b>
+      <b><span class=c>--no-hooks</span></b>
+          Skip hooks
+
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
           Output format
 
@@ -233,9 +233,6 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
           Defaults to default branch.
 
 <b><span class=g>Options:</span></b>
-      <b><span class=c>--no-hooks</span></b>
-          Skip hooks
-
       <b><span class=c>--stage</span></b><span class=c> &lt;STAGE&gt;</span>
           What to stage before committing [default: all]
 
@@ -251,6 +248,9 @@ Usage: <b><span class=c>wt step squash</span></b> <span class=c>[OPTIONS]</span>
           Print help (see a summary with &#39;-h&#39;)
 
 <b><span class=g>Automation:</span></b>
+      <b><span class=c>--no-hooks</span></b>
+          Skip hooks
+
       <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
           Output format
 

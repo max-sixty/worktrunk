@@ -6,13 +6,8 @@ pub struct CommitArgs {
     #[arg(short, long, add = crate::completion::worktree_only_completer())]
     pub(crate) branch: Option<String>,
 
-    /// Skip hooks
-    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true)]
-    pub(crate) verify: bool,
-
-    /// Skip hooks (deprecated alias for --no-hooks)
-    #[arg(long = "no-verify", hide = true)]
-    pub(crate) no_verify_deprecated: bool,
+    #[command(flatten)]
+    pub(crate) hooks: crate::cli::HookFlags,
 
     /// What to stage before committing [default: all]
     #[arg(long)]
@@ -41,13 +36,8 @@ pub struct SquashArgs {
     #[arg(add = crate::completion::branch_value_completer())]
     pub(crate) target: Option<String>,
 
-    /// Skip hooks
-    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true)]
-    pub(crate) verify: bool,
-
-    /// Skip hooks (deprecated alias for --no-hooks)
-    #[arg(long = "no-verify", hide = true)]
-    pub(crate) no_verify_deprecated: bool,
+    #[command(flatten)]
+    pub(crate) hooks: crate::cli::HookFlags,
 
     /// What to stage before committing [default: all]
     #[arg(long)]
