@@ -1991,12 +1991,14 @@ fn is_clean_program_token(value: &str) -> bool {
 /// here without the user's shell, so it is left to fail loudly at the cutover
 /// rather than guessed at. Informational only — it never blocks the switch.
 ///
-/// The migration hint reconstructs the command line that runs today — the
-/// `-x` value with its trailing args appended, the way `run_switch` joins
-/// them — and wraps it for whichever shell the active wrapper evaluates the
-/// payload with (`sh` / `fish` / `pwsh`). That keeps the suggestion
-/// behavior-preserving on fish/PowerShell, not just POSIX sh, and complete
-/// when trailing args are present.
+/// The hint reconstructs the command line that runs today — the `-x` value
+/// with its trailing args appended, the way `run_switch` joins them — and
+/// wraps it for whichever shell the active wrapper evaluates the payload
+/// with (`sh` / `fish` / `pwsh`), so the suggestion is behavior-preserving
+/// on fish/PowerShell, not just POSIX sh, and complete when trailing args
+/// are present. It also links the tracking issue (#2860) so anyone whose
+/// workflow the argv model would regress can report the case before the
+/// cutover.
 fn warn_if_execute_form_deprecated(cmd: &str, execute_args: &[String]) {
     if is_clean_program_token(cmd) {
         return;
@@ -2026,7 +2028,7 @@ fn warn_if_execute_form_deprecated(cmd: &str, execute_args: &[String]) {
     eprintln!(
         "{}",
         hint_message(cformat!(
-            "To run this command line unchanged, pass it to a shell: <underline>--execute {shell} -- {flag} {suggested}</>"
+            "Comment at <underline>https://github.com/max-sixty/worktrunk/issues/2860</> if the new single-program form would make a workflow worse; to run this command line unchanged, pass it to a shell: <underline>--execute {shell} -- {flag} {suggested}</>"
         ))
     );
 }

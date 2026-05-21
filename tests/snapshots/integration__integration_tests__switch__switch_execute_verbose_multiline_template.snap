@@ -67,7 +67,7 @@ repo=repo
 [107m [0m [2m→[22m
 [107m [0m [2m[0m[2m[34m_REPO_/../repo.multiline-test[0m[2m
 [33m▲[39m [33m[1m--execute[22m will change in a future release: it will run a single program, with arguments after [1m--[22m, not a shell command line[39m
-[2m↳[22m [2mTo run this command line unchanged, pass it to a shell: [4m--execute sh -- -c '{% if branch %}
+[2m↳[22m [2mComment at [4mhttps://github.com/max-sixty/worktrunk/issues/2860[24m if the new single-program form would make a workflow worse; to run this command line unchanged, pass it to a shell: [4m--execute sh -- -c '{% if branch %}
 echo '\''branch={{ branch }}'\''
 echo '\''repo={{ repo }}'\''
 {% endif %}'[24m[22m
