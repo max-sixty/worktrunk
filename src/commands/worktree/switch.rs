@@ -14,8 +14,7 @@ use dunce::canonicalize;
 use serde::Serialize;
 use worktrunk::HookType;
 use worktrunk::config::{
-    ProjectConfig, UserConfig, ValidationScope, expand_template, template_references_var,
-    validate_template,
+    UserConfig, ValidationScope, expand_template, template_references_var, validate_template,
 };
 use worktrunk::git::remote_ref::{
     self, AzureDevOpsProvider, GitHubProvider, GitLabProvider, GiteaProvider, RemoteRefInfo,
@@ -1147,11 +1146,12 @@ fn execute_switch(
                 CreationMethod::Regular { .. } => (None, None),
             };
 
-            // Execute pre-start commands. The hook resolves its `.config/wt.toml`
-            // from the new worktree (created just above) — see
-            // `hook_repo_for_worktree`.
+            // Execute pre-start commands. `hook_repo` roots the render context
+            // in the new worktree (created just above); the commands come from
+            // the frozen `hook_plan`, selected at the gate from the invoking
+            // worktree's config.
             if run_hooks {
-                let hook_repo = hook_repo_for_worktree(&worktree_path)?;
+                let hook_repo = Repository::at(&worktree_path)?;
                 let ctx =
                     CommandContext::new(&hook_repo, config, Some(&branch), &worktree_path, force);
                 let mut vars = TemplateVars::new()
@@ -1373,20 +1373,12 @@ fn switch_post_hook_types(is_create: bool) -> &'static [HookType] {
     }
 }
 
-/// The `Repository` rooting the *render* context for post-switch hooks running
-/// in `worktree_path` — the new/destination worktree itself. It supplies only
-/// git context for template rendering; the command set is the frozen
-/// [`ApprovedHookPlan`], never re-derived from this repo's config.
-fn hook_repo_for_worktree(worktree_path: &Path) -> anyhow::Result<Repository> {
-    Repository::at(worktree_path)
-}
-
 /// Approve switch hooks upfront and show "Commands declined" if needed.
 ///
-/// `project_config` is the `.config/wt.toml` the switch hooks run against —
-/// the invoking worktree's, the worktree `wt switch` ran in. Passing it in
-/// (rather than letting the approval re-read config) freezes the exact
-/// commands `execute_switch` will run into the [`ApprovedHookPlan`].
+/// Switch hooks resolve their commands from the invoking worktree's
+/// `.config/wt.toml` — the worktree `wt switch` ran in. Selecting them here,
+/// at the gate, freezes the exact commands `execute_switch` will run into the
+/// [`ApprovedHookPlan`].
 ///
 /// Returns `(hooks_approved, plan)`. `hooks_approved` is `false` and the plan
 /// empty when `!verify` or the user declined; the covered switch hooks
@@ -1397,7 +1389,6 @@ fn approve_switch_hooks(
     plan: &SwitchPlan,
     yes: bool,
     verify: bool,
-    project_config: Option<&ProjectConfig>,
 ) -> anyhow::Result<(bool, ApprovedHookPlan)> {
     if !verify {
         return Ok((false, ApprovedHookPlan::empty()));
@@ -1408,11 +1399,12 @@ fn approve_switch_hooks(
     // and `approve` never needs it).
     let project_id = repo.project_identifier().ok();
     let pid = project_id.as_deref();
+    let project_config = repo.load_project_config()?;
     let mut builder = HookPlanBuilder::new();
     builder.add(
         plan.worktree_path(),
         switch_post_hook_types(plan.is_create()),
-        project_config,
+        project_config.as_ref(),
         config,
         pid,
     );
@@ -1444,7 +1436,7 @@ fn spawn_switch_background_hooks(
     // the *render* context there; the command set is the frozen `hook_plan`
     // (selected at the gate from the invoking worktree's config), so no
     // `.config/wt.toml` is re-read.
-    let hook_repo = hook_repo_for_worktree(result.path())?;
+    let hook_repo = Repository::at(result.path())?;
     let ctx = CommandContext::new(&hook_repo, config, branch, result.path(), yes);
 
     let mut announcer = HookAnnouncer::new(&hook_repo, config, false);
@@ -1614,42 +1606,17 @@ impl SwitchPipeline<'_> {
             }
         })?;
 
-        // Every switch hook resolves against the invoking worktree's
-        // `.config/wt.toml` — the worktree `wt switch` ran in. Read once so the
-        // approval prompt and the template pre-flight below agree with what
-        // `execute_switch` / `spawn_switch_background_hooks` run. Skipped under
-        // `--no-hooks` / `--no-verify`: the result is never used.
-        let hook_project_config = if verify {
-            repo.load_project_config()?
-        } else {
-            None
-        };
-
         // "Approve at the Gate": collect and approve hooks upfront. Approval
         // happens once at the command entry point. If the user declines, skip
-        // hooks but continue with the worktree operation.
-        let (hooks_approved, hook_plan) = approve_switch_hooks(
-            repo,
-            config,
-            &plan,
-            yes,
-            verify,
-            hook_project_config.as_ref(),
-        )?;
+        // hooks but continue with the worktree operation. Switch hooks resolve
+        // their config from the invoking worktree — see `approve_switch_hooks`.
+        let (hooks_approved, hook_plan) = approve_switch_hooks(repo, config, &plan, yes, verify)?;
 
         // Pre-flight: validate all templates before mutation (worktree
         // creation). Catches syntax errors and undefined variables early so a
         // broken template doesn't leave behind a half-created worktree that
         // blocks re-running.
-        validate_switch_templates(
-            repo,
-            config,
-            &plan,
-            execute,
-            execute_args,
-            hooks_approved,
-            hook_project_config.as_ref(),
-        )?;
+        validate_switch_templates(repo, config, &plan, execute, execute_args, hooks_approved)?;
 
         // Execute the validated plan.
         let (result, branch_info) =
@@ -1882,9 +1849,9 @@ pub fn run_switch(
 ///   completed successfully — template failure is a missed notification, not a
 ///   blocking state. The user can fix the template and run `wt hook` manually.
 ///
-/// `project_config` is the `.config/wt.toml` the switch hooks run against —
-/// the invoking worktree's — so the templates checked here are the ones that
-/// will actually be expanded.
+/// Hook templates checked here come from the invoking worktree's
+/// `.config/wt.toml` — the same config the switch hooks run against — so the
+/// templates validated are the ones that will actually be expanded.
 ///
 /// Validates:
 /// - `--execute` command template (if present)
@@ -1897,7 +1864,6 @@ fn validate_switch_templates(
     execute: Option<&str>,
     execute_args: &[String],
     hooks_approved: bool,
-    project_config: Option<&ProjectConfig>,
 ) -> anyhow::Result<()> {
     // Validate --execute template and trailing args
     if let Some(cmd) = execute {
@@ -1922,11 +1888,15 @@ fn validate_switch_templates(
         return Ok(());
     }
 
+    let project_config = repo.load_project_config()?;
     let user_hooks = config.hooks(repo.project_identifier().ok().as_deref());
 
     for &hook_type in switch_post_hook_types(plan.is_create()) {
-        let (user_cfg, proj_cfg) =
-            crate::commands::hooks::lookup_hook_configs(&user_hooks, project_config, hook_type);
+        let (user_cfg, proj_cfg) = crate::commands::hooks::lookup_hook_configs(
+            &user_hooks,
+            project_config.as_ref(),
+            hook_type,
+        );
         for (source, cfg) in [("user", user_cfg), ("project", proj_cfg)] {
             if let Some(cfg) = cfg {
                 for cmd in cfg.commands() {

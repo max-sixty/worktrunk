@@ -1230,9 +1230,10 @@ fn test_switch_aborts_on_malformed_invoking_config(mut repo: TestRepo) {
     );
 }
 
-/// `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path for *every* config read —
-/// including `wt switch --create`'s invoking-worktree config — so the override
-/// file's hooks run, not the base branch's committed `.config/wt.toml`.
+/// `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path for *every* config read,
+/// so `wt switch --create` resolves its hooks from the override file. The base
+/// branch's committed `.config/wt.toml`, which the new worktree checks out, is
+/// not consulted.
 #[rstest]
 fn test_switch_create_honors_project_config_path_override(mut repo: TestRepo) {
     // The base branch carries a committed hook that must be ignored.
