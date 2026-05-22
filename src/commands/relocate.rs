@@ -709,21 +709,26 @@ pub fn show_dry_run_preview(candidates: &[RelocationCandidate]) {
 }
 
 /// Show summary of relocations performed.
+///
+/// Only called after validation produced at least one candidate, so
+/// `relocated + skipped >= 1` always — each candidate either moves or is skipped.
 pub fn show_summary(relocated: usize, skipped: usize) {
-    if relocated > 0 || skipped > 0 {
-        eprintln!();
-        let plural = |n: usize| if n == 1 { "worktree" } else { "worktrees" };
-        if skipped == 0 {
-            let msg = format!("Relocated {relocated} {}", plural(relocated));
-            eprintln!("{}", success_message(msg));
-        } else {
-            let msg = format!(
-                "Relocated {relocated} {}, skipped {skipped} {}",
-                plural(relocated),
-                plural(skipped)
-            );
-            eprintln!("{}", info_message(msg));
-        }
+    eprintln!();
+    let plural = |n: usize| if n == 1 { "worktree" } else { "worktrees" };
+    let msg = if skipped == 0 {
+        format!("Relocated {relocated} {}", plural(relocated))
+    } else {
+        format!(
+            "Relocated {relocated} {}, skipped {skipped} {}",
+            plural(relocated),
+            plural(skipped)
+        )
+    };
+    // Success when worktrees moved; info when only skips (no change made).
+    if relocated > 0 {
+        eprintln!("{}", success_message(msg));
+    } else {
+        eprintln!("{}", info_message(msg));
     }
 }
 
@@ -744,15 +749,16 @@ pub fn show_no_relocations_needed(template_errors: usize) {
 }
 
 /// Show message when all candidates were skipped during validation.
+///
+/// Only called when validation skipped every candidate, and at least one
+/// candidate exists by then, so `skipped >= 1` always.
 pub fn show_all_skipped(skipped: usize) {
-    if skipped > 0 {
-        eprintln!();
-        eprintln!(
-            "{}",
-            info_message(format!(
-                "Skipped {skipped} worktree{}",
-                if skipped == 1 { "" } else { "s" }
-            ))
-        );
-    }
+    eprintln!();
+    eprintln!(
+        "{}",
+        info_message(format!(
+            "Skipped {skipped} worktree{}",
+            if skipped == 1 { "" } else { "s" }
+        ))
+    );
 }

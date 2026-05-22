@@ -87,7 +87,7 @@ pub fn approve_command_batch(
             );
             eprintln!(
                 "{}",
-                hint_message("Approval will be requested again next time.")
+                hint_message("Approval will be requested again next time")
             );
         }
     }

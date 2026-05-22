@@ -17,8 +17,8 @@ use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{FileDetectionResult, Shell, scan_for_detection_details};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
-    error_message, format_bash_with_gutter, format_heading, format_toml, format_with_gutter,
-    hint_message, info_message, success_message, warning_message,
+    FormattedMessage, error_message, format_bash_with_gutter, format_heading, format_toml,
+    format_with_gutter, hint_message, info_message, success_message, warning_message,
 };
 
 use crate::cli::{SwitchFormat, version_str};
@@ -1389,28 +1389,26 @@ pub(super) fn render_ci_tool_status(
     Ok(())
 }
 
+/// Format the version-check line given the latest release version.
+///
+/// Pure over `latest` so both arms are unit-testable without injecting a
+/// version through the environment; `render_version_check` supplies the value
+/// from `fetch_latest_version`.
+fn format_version_status(latest: &str) -> FormattedMessage {
+    let current = crate::cli::version_str();
+    if is_newer_version(latest, env!("CARGO_PKG_VERSION")) {
+        info_message(cformat!(
+            "Update available: <bold>{latest}</> (current: {current})"
+        ))
+    } else {
+        info_message(cformat!("Up to date (<bold>{current}</>)"))
+    }
+}
+
 /// Render version update check (fetches from GitHub)
 fn render_version_check(out: &mut String) -> anyhow::Result<()> {
     match fetch_latest_version() {
-        Ok(latest) => {
-            let current = crate::cli::version_str();
-            let current_semver = env!("CARGO_PKG_VERSION");
-            if is_newer_version(&latest, current_semver) {
-                writeln!(
-                    out,
-                    "{}",
-                    info_message(cformat!(
-                        "Update available: <bold>{latest}</> (current: {current})"
-                    ))
-                )?;
-            } else {
-                writeln!(
-                    out,
-                    "{}",
-                    success_message(cformat!("Up to date (<bold>{current}</>)"))
-                )?;
-            }
-        }
+        Ok(latest) => writeln!(out, "{}", format_version_status(&latest))?,
         Err(e) => {
             log::debug!("Version check failed: {e}");
             writeln!(out, "{}", hint_message("Version check unavailable"))?;
@@ -1508,5 +1506,22 @@ mod tests {
         // Invalid input
         assert!(!is_newer_version("invalid", "0.23.2"));
         assert!(!is_newer_version("0.23.2", "invalid"));
+    }
+
+    #[test]
+    fn test_format_version_status() {
+        // A version far above the current crate version is "newer".
+        let update = format_version_status("999.0.0").to_string();
+        assert!(
+            update.contains("Update available"),
+            "expected update message, got: {update}"
+        );
+
+        // The current crate version is not newer than itself.
+        let up_to_date = format_version_status(env!("CARGO_PKG_VERSION")).to_string();
+        assert!(
+            up_to_date.contains("Up to date"),
+            "expected up-to-date message, got: {up_to_date}"
+        );
     }
 }

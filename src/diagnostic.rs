@@ -51,7 +51,7 @@ use minijinja::{Environment, context};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
-use worktrunk::styling::{eprintln, hint_message, info_message, warning_message};
+use worktrunk::styling::{eprintln, hint_message, success_message, warning_message};
 
 use crate::cli::version_str;
 use crate::output;
@@ -254,7 +254,7 @@ pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Optio
             let path_display = format_path_for_display(&path);
             eprintln!(
                 "{}",
-                info_message(format!("Diagnostic saved: {path_display}"))
+                success_message(format!("Diagnostic saved @ {path_display}"))
             );
 
             // Only show gh command if gh is installed

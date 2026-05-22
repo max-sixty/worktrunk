@@ -71,7 +71,7 @@ exit_code: 0
 
 [36mDIAGNOSTICS[39m
 [33m▲[39m [33m[1mtea[22m installed but not authenticated; run [1mtea login add[22m[39m
-[32m✓[39m [32mUp to date ([1m[VERSION][22m)[39m
+[2m○[22m Up to date ([1m[VERSION][22m)
 [2m↳[22m [2mCommit generation not configured[22m
 
 [36mOTHER[39m
