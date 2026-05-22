@@ -18,7 +18,7 @@ use worktrunk::styling::println;
 /// |------|---------|
 /// | `--dry-run` | Show what would be moved without moving |
 /// | `--commit` | Auto-commit dirty worktrees with LLM-generated messages before relocating |
-/// | `--clobber` | Move non-worktree paths out of the way (`<path>.bak-<timestamp>`) |
+/// | `--clobber` | Move non-worktree paths out of the way (`<path>.bak.<timestamp>`) |
 /// | `[branches...]` | Specific branches to relocate (default: all mismatched) |
 pub fn step_relocate(
     branches: Vec<String>,

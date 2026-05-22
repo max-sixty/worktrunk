@@ -826,7 +826,9 @@ this by using a temporary location.
 ### Clobbering
 
 With `--clobber`, non-worktree paths at target locations are moved to
-`<path>.bak-<timestamp>` before relocating.
+`<path>.bak.<timestamp>` before relocating. If that name is already taken,
+the move counts up (`…-2`, `…-3`, …) until it finds a free name, so an
+existing backup is never overwritten.
 
 ### Main worktree behavior
 
@@ -866,7 +868,8 @@ Usage: <b><span class=c>wt step relocate</span></b> <span class=c>[OPTIONS]</spa
       <b><span class=c>--clobber</span></b>
           Backup non-worktree paths at target locations
 
-          Moves blocking paths to <b>&lt;path&gt;.bak-&lt;timestamp&gt;</b>.
+          Moves blocking paths to <b>&lt;path&gt;.bak.&lt;timestamp&gt;</b>. If that name is taken, counts up (<b>…-2</b>, <b>…-3</b>
+          , …) to a free name.
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)

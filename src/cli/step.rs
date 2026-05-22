@@ -631,7 +631,9 @@ this by using a temporary location.
 ## Clobbering
 
 With `--clobber`, non-worktree paths at target locations are moved to
-`<path>.bak-<timestamp>` before relocating.
+`<path>.bak.<timestamp>` before relocating. If that name is already taken,
+the move counts up (`…-2`, `…-3`, …) until it finds a free name, so an
+existing backup is never overwritten.
 
 ## Main worktree behavior
 
@@ -663,7 +665,8 @@ Note: This command is experimental and may change in future versions.
 
         /// Backup non-worktree paths at target locations
         ///
-        /// Moves blocking paths to `<path>.bak-<timestamp>`.
+        /// Moves blocking paths to `<path>.bak.<timestamp>`. If that name is
+        /// taken, counts up (`…-2`, `…-3`, …) to a free name.
         #[arg(long)]
         clobber: bool,
 

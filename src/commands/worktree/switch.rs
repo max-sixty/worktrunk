@@ -31,11 +31,10 @@ use worktrunk::styling::{
     warning_message,
 };
 
-use super::resolve::{
-    back_up_clobbered_path, compute_worktree_path, offer_bare_repo_worktree_path_fix, path_mismatch,
-};
+use super::resolve::{compute_worktree_path, offer_bare_repo_worktree_path_fix, path_mismatch};
 use super::types::{CreationMethod, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::cli::SwitchFormat;
+use crate::commands::backup::back_up_clobbered_path_now;
 use crate::commands::command_approval::approve_hooks;
 use crate::commands::command_executor::FailureStrategy;
 use crate::commands::command_executor::{CommandContext, build_hook_context};
@@ -927,18 +926,11 @@ fn execute_switch(
         } => {
             // Handle --clobber backup if needed (shared for all creation methods)
             if needs_clobber_backup {
-                // Timestamped backup name, computed here at move time so the
-                // suffix reflects when the path is actually set aside.
-                let timestamp = worktrunk::utils::epoch_now() as i64;
-                let datetime =
-                    chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(chrono::Utc::now);
-                let base_suffix = datetime.format("%Y%m%d-%H%M%S").to_string();
-
-                // Atomically move the stale path aside. A backup name that is
-                // already taken (a same-second clobber, or one that raced in
-                // after planning) is never overwritten — the move falls back
-                // to the next free `-N` name.
-                let backup_path = back_up_clobbered_path(&worktree_path, &base_suffix)?;
+                // Atomically move the stale path aside, to a timestamped backup
+                // name. A name already taken (a same-second clobber, or one
+                // that raced in after planning) is never overwritten — the move
+                // falls back to the next free `-N` name.
+                let backup_path = back_up_clobbered_path_now(&worktree_path)?;
 
                 let path_display = worktrunk::path::format_path_for_display(&worktree_path);
                 let backup_display = worktrunk::path::format_path_for_display(&backup_path);

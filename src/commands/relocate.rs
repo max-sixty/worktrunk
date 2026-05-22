@@ -33,6 +33,7 @@ use worktrunk::styling::{
     warning_message,
 };
 
+use super::backup;
 use super::commit::{CommitGenerator, StageMode};
 use super::worktree::compute_worktree_path;
 
@@ -375,39 +376,13 @@ impl<'a> RelocationExecutor<'a> {
             }
 
             if clobber {
-                // Backup the blocker
-                let timestamp_secs = worktrunk::utils::epoch_now() as i64;
-                let datetime = chrono::DateTime::from_timestamp(timestamp_secs, 0)
-                    .unwrap_or_else(chrono::Utc::now);
-                let suffix = datetime.format("%Y%m%d-%H%M%S");
-                let backup_path = expected_path.with_file_name(format!(
-                    "{}.bak-{suffix}",
-                    expected_path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                ));
-                // Fail closed if the backup destination already exists: `fs::rename`
-                // can silently replace an existing file (and some empty
-                // directories) on Unix, which would destroy a prior backup.
-                if backup_path.exists() {
-                    anyhow::bail!(
-                        "Backup path already exists: {}",
-                        format_path_for_display(&backup_path)
-                    );
-                }
+                // Atomically move the blocker aside to a timestamped backup.
+                // A backup name already taken is never overwritten — the move
+                // falls back to the next free `-N` name.
                 let src = format_path_for_display(expected_path);
+                let backup_path = backup::back_up_clobbered_path_now(expected_path)?;
                 let dest = format_path_for_display(&backup_path);
-                eprintln!(
-                    "{}",
-                    progress_message(cformat!("Backing up {src} → {dest}"))
-                );
-                std::fs::rename(expected_path, &backup_path).with_context(|| {
-                    format!(
-                        "Failed to backup {}",
-                        format_path_for_display(expected_path)
-                    )
-                })?;
+                eprintln!("{}", progress_message(cformat!("Backed up {src} → {dest}")));
             } else {
                 let blocked_path = format_path_for_display(expected_path);
                 let msg = cformat!("Skipping <bold>{branch}</> (target blocked: {blocked_path})");
