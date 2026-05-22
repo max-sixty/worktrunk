@@ -985,37 +985,32 @@ cleanup = "echo done"
     assert_cmd_snapshot!(cmd);
 }
 
-/// Commit a `pre-remove` hook on the default branch, branch a worktree off that
-/// commit (so it carries the hook in its own `.config/wt.toml`), then drop the
-/// hook from the default branch and advance past the worktree's commit. The
-/// worktree is now integrated (an ancestor of the default branch) and clean,
-/// while the cwd config no longer mentions `pre-remove` — the situation where
-/// prune would otherwise approve against the wrong config. Returns the
-/// worktree path and the marker file the hook writes.
-fn prune_branch_local_pre_remove_setup(
-    repo: &mut TestRepo,
-) -> (std::path::PathBuf, std::path::PathBuf) {
+/// Branch a worktree, advance the default branch past it (so it's integrated
+/// and prunable), and put a `pre-remove` hook in the invoking worktree (cwd) —
+/// the config `wt step prune` resolves against. Returns the worktree path and
+/// the marker file the hook writes.
+fn prune_pre_remove_setup(repo: &mut TestRepo) -> (std::path::PathBuf, std::path::PathBuf) {
     use path_slash::PathExt as _;
 
+    let wt_path = repo.add_worktree("merged");
+    // Advance the default branch so `merged` is strictly an ancestor — prune
+    // treats it as integrated and removable.
+    repo.commit("Advance default branch");
+    // The `pre-remove` hook lives in the invoking worktree (cwd), uncommitted.
     let marker = repo.root_path().join("prune-pre-remove-ran.txt");
     repo.write_project_config(&format!(
         r#"pre-remove = "echo ran > {}""#,
         marker.to_slash_lossy()
     ));
-    repo.commit("Add pre-remove hook");
-    let wt_path = repo.add_worktree("merged-with-hook");
-    repo.write_project_config("# no hooks on the default branch\n");
-    repo.commit("Drop pre-remove hook");
     (wt_path, marker)
 }
 
-/// `wt step prune`'s approval covers each pruned worktree's own `pre-remove`,
-/// not just the cwd config's. A hook that lives only in a pruned worktree's
-/// branch-local `.config/wt.toml` must be approved before it runs — with no TTY
-/// and no prior approval, prune aborts rather than running it silently.
+/// `wt step prune`'s approval covers the `pre-remove` hooks the pruned worktrees
+/// will run — resolved from the invoking worktree's config. With no TTY and no
+/// prior approval, prune aborts rather than running them silently.
 #[rstest]
-fn test_prune_branch_local_pre_remove_needs_approval(mut repo: TestRepo) {
-    let (wt_path, marker) = prune_branch_local_pre_remove_setup(&mut repo);
+fn test_prune_pre_remove_needs_approval(mut repo: TestRepo) {
+    let (wt_path, marker) = prune_pre_remove_setup(&mut repo);
 
     let output = repo
         .wt_command()
@@ -1026,11 +1021,11 @@ fn test_prune_branch_local_pre_remove_needs_approval(mut repo: TestRepo) {
 
     assert!(
         !output.status.success(),
-        "prune should abort when an un-approved branch-local pre-remove is in scope; stderr:\n{stderr}"
+        "prune should abort when an un-approved pre-remove is in scope; stderr:\n{stderr}"
     );
     assert!(
         stderr.contains("needs approval") && stderr.contains("pre-remove"),
-        "prune should surface the pruned worktree's pre-remove for approval; stderr:\n{stderr}"
+        "prune should surface the pre-remove for approval; stderr:\n{stderr}"
     );
     assert!(
         wt_path.exists(),
@@ -1042,13 +1037,13 @@ fn test_prune_branch_local_pre_remove_needs_approval(mut repo: TestRepo) {
     );
 }
 
-/// With `--yes`, `wt step prune` runs the approved `pre-remove` hook from each
-/// pruned worktree's own `.config/wt.toml`.
+/// With `--yes`, `wt step prune` runs the `pre-remove` hook from the invoking
+/// worktree's `.config/wt.toml` for each pruned worktree.
 #[rstest]
-fn test_prune_runs_branch_local_pre_remove_hook(mut repo: TestRepo) {
+fn test_prune_runs_pre_remove_hook(mut repo: TestRepo) {
     use crate::common::wait_for_file_content;
 
-    let (wt_path, marker) = prune_branch_local_pre_remove_setup(&mut repo);
+    let (wt_path, marker) = prune_pre_remove_setup(&mut repo);
 
     let output = repo
         .wt_command()

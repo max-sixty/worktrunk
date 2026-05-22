@@ -916,14 +916,12 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
             }
 
             // Helper: build and approve, once, the frozen hook plan the
-            // removal will run. `pre-remove` / `post-remove` are anchored at
-            // each removed worktree (their `.config/wt.toml`); `post-switch`
-            // at each removal's post-removal destination
-            // (`RemoveResult::destination_path()`, normally the primary
-            // worktree, cwd when the primary worktree is itself the removal
-            // target). No fallback between worktrees, same rule as the
-            // executors. `!verify` (`--no-hooks`) or a declined prompt yields
-            // an empty plan — every executor then runs no project hooks.
+            // removal will run. Every hook (`pre-remove` / `post-remove` per
+            // removed worktree, `post-switch` per post-removal destination) is
+            // selected from the invoking worktree's `.config/wt.toml` — the
+            // worktree `wt remove` ran in. `!verify` (`--no-hooks`) or a
+            // declined prompt yields an empty plan — every executor then runs
+            // no project hooks.
             let approve_remove = |removed_worktree_paths: &[&Path],
                                   destination_paths: &[&Path],
                                   yes: bool|
@@ -937,13 +935,13 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                 // behaviour where the empty-batch fast path ran first.
                 let project_id = repo.project_identifier().ok();
                 let pid = project_id.as_deref();
+                let project_config = repo.load_project_config()?;
                 let mut builder = HookPlanBuilder::new();
                 for &wt_path in removed_worktree_paths {
-                    let cfg = Repository::at(wt_path)?.load_project_config()?;
                     builder.add(
                         wt_path,
                         &[HookType::PreRemove, HookType::PostRemove],
-                        cfg.as_ref(),
+                        project_config.as_ref(),
                         &config,
                         pid,
                     );
@@ -953,8 +951,13 @@ fn handle_remove_command(args: RemoveArgs, yes: bool) -> anyhow::Result<()> {
                     if !seen_dests.insert(dest) {
                         continue;
                     }
-                    let cfg = Repository::at(dest)?.load_project_config()?;
-                    builder.add(dest, &[HookType::PostSwitch], cfg.as_ref(), &config, pid);
+                    builder.add(
+                        dest,
+                        &[HookType::PostSwitch],
+                        project_config.as_ref(),
+                        &config,
+                        pid,
+                    );
                 }
                 match builder.finish().approve(pid, yes)? {
                     Some(plan) => Ok(plan),

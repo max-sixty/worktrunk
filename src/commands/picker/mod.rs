@@ -229,9 +229,11 @@ impl PickerCollector {
     /// and the TUI stays responsive. A removal failure is logged; the item stays
     /// gone from the picker — a tradeoff until we can show in-progress state.
     ///
-    /// `repo` is only used for `BranchOnly` deletion; `RemovedWorktree` removal
-    /// is rooted at `main_path` (which may differ from the picker's startup repo
-    /// in bare-repo setups).
+    /// `repo` is the worktree the picker is operating from — the config source
+    /// for the removal hooks (see [`approved_removal_plan`]) and the target of
+    /// a `BranchOnly` deletion. `RemovedWorktree` removal itself is rooted at
+    /// `main_path` (which may differ from the picker's startup repo in bare-repo
+    /// setups).
     fn do_removal(
         repo: &Repository,
         result: &RemoveResult,
@@ -244,7 +246,7 @@ impl PickerCollector {
                 ..
             } => {
                 let main_repo = Repository::at(main_path)?;
-                let plan = approved_removal_plan(&main_repo, main_path, worktree_path, approvals)?;
+                let plan = approved_removal_plan(repo, main_path, worktree_path, approvals)?;
                 let mut announcer = HookAnnouncer::new(&main_repo, main_repo.user_config(), false);
                 handle_remove_output(
                     result,
@@ -366,16 +368,17 @@ impl CommandCollector for PickerCollector {
 /// Whether every `pre-remove` / `post-remove` / `post-switch` command this
 /// removal would run is already approved — a read-only check, no prompt.
 ///
-/// `main_path` is the post-removal destination (where `post-switch` reads its
-/// config, same as the executor); `worktree_path` is the worktree being
-/// removed (where `pre-remove` / `post-remove` read theirs). `wt remove` /
-/// `wt merge` collect the same command set and prompt for it at the gate; the
-/// picker can't prompt mid-render, so it runs the removal's hooks only when
-/// they're already approved (e.g. from a prior `wt remove` / `wt merge`) and
-/// skips them otherwise — unapproved project commands must never run. See
-/// CLAUDE.md → "Project Commands Run Only After Approval".
+/// `repo` is the worktree the picker is operating from; its `.config/wt.toml`
+/// is what every removal hook resolves against, matching `wt remove` /
+/// `wt merge`. `main_path` is the post-removal destination (the `post-switch`
+/// anchor); `worktree_path` is the worktree being removed (the `pre-remove` /
+/// `post-remove` anchor). The picker can't prompt mid-render, so it runs the
+/// removal's hooks only when they're already approved (e.g. from a prior
+/// `wt remove` / `wt merge`) and skips them otherwise — unapproved project
+/// commands must never run. See CLAUDE.md → "Project Commands Run Only After
+/// Approval".
 fn approved_removal_plan(
-    main_repo: &Repository,
+    repo: &Repository,
     main_path: &Path,
     worktree_path: &Path,
     approvals: &Approvals,
@@ -383,24 +386,23 @@ fn approved_removal_plan(
     // Non-fatal: an unresolvable project identifier just means no project
     // pipeline can be matched against approvals — `approve_readonly` then
     // drops them (fail-closed), rather than aborting the picker removal.
-    let project_id = main_repo.project_identifier().ok();
+    let project_id = repo.project_identifier().ok();
     let pid = project_id.as_deref();
-    let user = main_repo.user_config();
-    let removed_cfg = Repository::at(worktree_path)?.load_project_config()?;
-    let dest_cfg = Repository::at(main_path)?.load_project_config()?;
+    let user = repo.user_config();
+    let project_config = repo.load_project_config()?;
 
     let mut builder = HookPlanBuilder::new();
     builder.add(
         worktree_path,
         &[HookType::PreRemove, HookType::PostRemove],
-        removed_cfg.as_ref(),
+        project_config.as_ref(),
         user,
         pid,
     );
     builder.add(
         main_path,
         &[HookType::PostSwitch],
-        dest_cfg.as_ref(),
+        project_config.as_ref(),
         user,
         pid,
     );
@@ -1240,13 +1242,14 @@ pub mod tests {
         ])
         .unwrap();
 
-        // A `pre-remove` hook in the removed worktree's `.config/wt.toml` that
-        // would write a marker (outside the worktree) if it ever ran.
+        // A `pre-remove` hook in the invoking worktree's `.config/wt.toml` —
+        // the config the picker removal resolves against — that would write a
+        // marker if it ever ran.
         let marker_dir = tempfile::tempdir().unwrap();
         let marker = marker_dir.path().join("pre-remove-ran");
-        fs::create_dir_all(wt_path.join(".config")).unwrap();
+        fs::create_dir_all(test.path().join(".config")).unwrap();
         fs::write(
-            wt_path.join(".config/wt.toml"),
+            test.path().join(".config/wt.toml"),
             format!("pre-remove = {:?}\n", format!("touch {}", marker.display())),
         )
         .unwrap();

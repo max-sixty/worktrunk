@@ -734,8 +734,8 @@ pub fn execute_user_command(command: &str, display_path: Option<&Path>) -> anyho
 ///
 /// `plan` is the frozen, approved hook set; an empty plan (`--no-hooks`,
 /// declined, or no project config) runs no project hooks. `pre-remove` /
-/// `post-remove` / `post-switch` execute only from it — never a re-read of
-/// the (by-then-gone) worktree config.
+/// `post-remove` / `post-switch` execute only from it — the selection was
+/// frozen at the gate, never re-read.
 ///
 /// When `silent` is true (the TUI picker — this runs while skim owns the
 /// terminal), a `RemovedWorktree` result is removed with no progress/success
@@ -1210,9 +1210,8 @@ fn execute_pre_remove_hooks_if_needed(
 
     // `pre-remove` runs in the worktree being removed (still on disk here).
     // `pre_remove_repo` roots the *render* context there for template vars;
-    // the command set is the frozen `plan` (anchored at the removed worktree
-    // at the gate), so the removed worktree's `.config/wt.toml` is never
-    // re-read.
+    // the command set is the frozen `plan` selected at the gate, so no
+    // `.config/wt.toml` is re-read here.
     let pre_remove_repo = Repository::at(ctx.worktree_path)?;
     let command_ctx = CommandContext::new(
         &pre_remove_repo,

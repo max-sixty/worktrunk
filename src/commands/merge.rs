@@ -77,10 +77,13 @@ pub struct MergeOptions<'a> {
 /// Build the frozen [`ApprovedHookPlan`] for the merge's covered hooks, gating
 /// every project command once.
 ///
-/// Each hook is anchored to the worktree it reads `.config/wt.toml` from:
+/// Every hook selects its commands from the invoking worktree's
+/// `.config/wt.toml` — `repo`'s cwd, the feature worktree `wt merge` ran in.
+/// The *anchor* — the executor's plan lookup key — is the worktree each hook
+/// runs in:
 ///
 /// - `pre-commit` / `post-commit` / `pre-merge` / `pre-remove` / `post-remove`
-///   → the feature worktree (`repo`'s cwd).
+///   → the feature worktree.
 /// - `post-merge` / `post-switch` → the merge destination.
 ///
 /// `pre-commit`/`post-commit` execute via the unchanged commit/squash path
@@ -125,28 +128,27 @@ fn approve_merge_plan(
         feature_hooks.push(HookType::PostRemove);
     }
 
-    // Read each `.config/wt.toml` only when a hook actually needs it: with
-    // `--no-hooks` (`verify` false) nothing is selected, so a malformed or
-    // inaccessible destination/feature config must not fail the merge.
+    // Every merge hook resolves against the invoking worktree's
+    // `.config/wt.toml` — the feature worktree `wt merge` ran in. Read once,
+    // inside the `verify` gate: `--no-hooks` selects no hook, so the gate needs
+    // no config.
     let mut builder = HookPlanBuilder::new();
-    if !feature_hooks.is_empty() {
-        let feature_cfg = repo.load_project_config()?;
+    if verify {
+        let project_config = repo.load_project_config()?;
         builder.add(
             feature_root,
             &feature_hooks,
-            feature_cfg.as_ref(),
+            project_config.as_ref(),
             config,
             pid,
         );
-    }
-    if verify {
-        // `post-merge` reads the destination; `post-switch` (feature worktree
-        // removed → user lands here) reads the same destination config.
-        let dest_cfg = Repository::at(destination_path)?.load_project_config()?;
+        // `post-merge` runs in the destination, and `post-switch` lands the
+        // user there (the feature worktree is removed) — both still selected
+        // from the invoking worktree's config.
         builder.add(
             destination_path,
             &[HookType::PostMerge],
-            dest_cfg.as_ref(),
+            project_config.as_ref(),
             config,
             pid,
         );
@@ -154,7 +156,7 @@ fn approve_merge_plan(
             builder.add(
                 destination_path,
                 &[HookType::PostSwitch],
-                dest_cfg.as_ref(),
+                project_config.as_ref(),
                 config,
                 pid,
             );
@@ -224,9 +226,10 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let target_branch = repo.require_target_branch(target)?;
     // Worktree for target is optional: if present we use it for safety checks and as destination.
     let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
-    // Where `post-merge` / `post-remove` / `post-switch` run (and resolve their
-    // `.config/wt.toml`): the target branch's worktree if it exists, else the
-    // primary worktree. Mirrors `finish_after_merge`'s destination resolution.
+    // Where `post-merge` / `post-remove` / `post-switch` run: the target
+    // branch's worktree if it exists, else the primary worktree. Mirrors
+    // `finish_after_merge`'s destination resolution. (Config is resolved from
+    // the invoking worktree, not here — see `approve_merge_plan`.)
     let destination_path = match &target_worktree_path {
         Some(path) => path.clone(),
         None => repo.home_path()?,

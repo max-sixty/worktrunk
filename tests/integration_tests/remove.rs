@@ -1710,28 +1710,36 @@ approved-commands = ["echo 'hook ran' > {}"]
     );
 }
 
-/// `pre-remove` resolves `.config/wt.toml` from the worktree being removed, not
-/// the primary worktree — so a hook added on a feature branch fires even before
-/// that `.config/wt.toml` reaches the default branch. The primary worktree here
-/// has no project config at all; only the removed worktree does.
+/// `pre-remove` resolves `.config/wt.toml` from the invoking worktree — the one
+/// `wt remove` ran in — while its template context (`{{ branch }}` etc.) is the
+/// removed worktree's. The removed worktree's own config is not consulted.
 #[rstest]
-fn test_pre_remove_hook_reads_removed_worktree_config(mut repo: TestRepo) {
+fn test_pre_remove_hook_reads_invoking_worktree_config(mut repo: TestRepo) {
     use crate::common::wait_for_file_content;
 
     let worktree_path = repo.add_worktree("feature-local-hook");
     let marker_file = repo.root_path().join("pre-remove-ran.txt");
+    let wrong_marker = repo.root_path().join("wrong-marker.txt");
+
+    // A competing hook in the removed worktree, which must be ignored.
     std::fs::create_dir_all(worktree_path.join(".config")).unwrap();
     std::fs::write(
         worktree_path.join(".config/wt.toml"),
-        // `{{ branch }}` proves the hook ran with the removed worktree's context.
         format!(
-            r#"pre-remove = "echo 'removed branch {{{{ branch }}}}' > {}""#,
-            marker_file.to_slash_lossy()
+            r#"pre-remove = "echo wrong > {}""#,
+            wrong_marker.to_slash_lossy()
         ),
     )
     .unwrap();
 
-    // `--force` because `.config/wt.toml` is untracked in the removed worktree;
+    // The hook that should run lives in the invoking worktree (primary, cwd).
+    // `{{ branch }}` proves it ran with the removed worktree's template context.
+    repo.write_project_config(&format!(
+        r#"pre-remove = "echo 'removed branch {{{{ branch }}}}' > {}""#,
+        marker_file.to_slash_lossy()
+    ));
+
+    // `--force` because the removed worktree has an untracked `.config/wt.toml`;
     // `--yes` to skip the approval prompt.
     let output = repo
         .wt_command()
@@ -1754,33 +1762,44 @@ fn test_pre_remove_hook_reads_removed_worktree_config(mut repo: TestRepo) {
     assert_eq!(
         std::fs::read_to_string(&marker_file).unwrap().trim(),
         "removed branch feature-local-hook",
-        "pre-remove should run with the removed worktree's config"
+        "pre-remove runs from the invoking worktree's config, with the removed worktree's branch"
+    );
+    assert!(
+        !wrong_marker.exists(),
+        "the removed worktree's own config must not be consulted"
     );
 }
 
-/// `post-remove` reads the *removed* worktree's `.config/wt.toml`, even though
-/// the worktree is gone by the time the hook runs. The config is snapshotted
-/// before removal and threaded through `RemoveResult` to the executor —
-/// symmetric with `pre-remove`, which reads the same file from disk while it's
-/// still there. Both hooks are *about* the removed worktree.
+/// `post-remove` reads the invoking worktree's `.config/wt.toml`, snapshotted at
+/// the gate — its template context (`{{ branch }}` etc.) is the removed
+/// worktree's, gone by the time the hook runs. The removed worktree's own
+/// config is not consulted.
 #[rstest]
-fn test_post_remove_hook_reads_removed_worktree_config(mut repo: TestRepo) {
+fn test_post_remove_hook_reads_invoking_worktree_config(mut repo: TestRepo) {
     use crate::common::wait_for_file_content;
 
     let worktree_path = repo.add_worktree("feature-local-hook");
     let marker_file = repo.root_path().join("post-remove-ran.txt");
+    let wrong_marker = repo.root_path().join("wrong-marker.txt");
+
+    // A competing hook in the removed worktree, which must be ignored.
     std::fs::create_dir_all(worktree_path.join(".config")).unwrap();
     std::fs::write(
         worktree_path.join(".config/wt.toml"),
-        // `{{ branch }}` proves the hook ran with the removed worktree's
-        // template context; the marker living outside the removed worktree
-        // (in the primary) lets us assert it after the worktree is gone.
         format!(
-            r#"post-remove = "echo 'post-remove of {{{{ branch }}}}' > {}""#,
-            marker_file.to_slash_lossy()
+            r#"post-remove = "echo wrong > {}""#,
+            wrong_marker.to_slash_lossy()
         ),
     )
     .unwrap();
+
+    // The hook that should run lives in the invoking worktree (primary, cwd).
+    // `{{ branch }}` proves it ran with the removed worktree's template context;
+    // the marker outside the removed worktree survives the removal.
+    repo.write_project_config(&format!(
+        r#"post-remove = "echo 'post-remove of {{{{ branch }}}}' > {}""#,
+        marker_file.to_slash_lossy()
+    ));
 
     let output = repo
         .wt_command()
@@ -1803,42 +1822,36 @@ fn test_post_remove_hook_reads_removed_worktree_config(mut repo: TestRepo) {
     assert_eq!(
         std::fs::read_to_string(&marker_file).unwrap().trim(),
         "post-remove of feature-local-hook",
-        "post-remove should run with the removed worktree's config, snapshotted before removal"
+        "post-remove runs from the invoking worktree's config, snapshotted before removal"
     );
     assert!(
         !worktree_path.exists(),
         "feature worktree should be removed"
     );
+    assert!(
+        !wrong_marker.exists(),
+        "the removed worktree's own config must not be consulted"
+    );
 }
 
-/// A worktree with a malformed `.config/wt.toml` makes `wt remove` abort with
-/// the parse error in stderr — no silent fall-through to a different config,
-/// and the worktree stays on disk so the user can fix it.
+/// A malformed `.config/wt.toml` in the invoking worktree makes `wt remove`
+/// abort with the parse error in stderr — no silent fall-through to a different
+/// config, and the worktree stays on disk so the user can fix it.
 #[rstest]
-fn test_remove_aborts_on_malformed_worktree_config(mut repo: TestRepo) {
-    let worktree_path = repo.add_worktree("feature-bad-config");
-    std::fs::create_dir_all(worktree_path.join(".config")).unwrap();
-    std::fs::write(
-        worktree_path.join(".config/wt.toml"),
-        "this is not [ valid toml",
-    )
-    .unwrap();
+fn test_remove_aborts_on_malformed_invoking_config(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-x");
+    // Malformed config in the invoking worktree (primary, cwd).
+    repo.write_project_config("this is not [ valid toml");
 
     let output = repo
         .wt_command()
-        .args([
-            "remove",
-            "--foreground",
-            "--force",
-            "--yes",
-            "feature-bad-config",
-        ])
+        .args(["remove", "--foreground", "--force", "--yes", "feature-x"])
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !output.status.success(),
-        "wt remove should abort on a malformed worktree config; stderr:\n{stderr}"
+        "wt remove should abort on a malformed invoking-worktree config; stderr:\n{stderr}"
     );
     assert!(
         stderr.contains("wt.toml"),
@@ -1847,52 +1860,6 @@ fn test_remove_aborts_on_malformed_worktree_config(mut repo: TestRepo) {
     assert!(
         worktree_path.exists(),
         "worktree should stay on disk so the user can fix the broken config"
-    );
-}
-
-/// Removing a worktree that has no `.config/wt.toml` does NOT fall back to the
-/// primary worktree's config: neither for execution (per #2714) nor for
-/// approval (`HookPlanBuilder::add` selects per removed-worktree anchor with no
-/// primary fallback). Without `--yes` and without prior approval, the command
-/// must succeed (the approval prompt has no commands to surface) rather than
-/// block on the primary's `pre-remove`.
-#[rstest]
-fn test_remove_no_fallback_to_primary_pre_remove(mut repo: TestRepo) {
-    // Add the feature worktree first, off HEAD, so it doesn't carry the
-    // uncommitted config below.
-    let worktree_path = repo.add_worktree("feature-no-config");
-    let marker_file = repo.root_path().join("pre-remove-ran.txt");
-
-    // Primary worktree only — uncommitted, so `feature-no-config` doesn't
-    // inherit it.
-    repo.write_project_config(&format!(
-        r#"pre-remove = "echo ran > {}""#,
-        marker_file.to_slash_lossy()
-    ));
-
-    // No `--yes`: with the bug, the approval helper would surface the primary's
-    // `pre-remove` and `wt remove` would abort with "needs approval" because
-    // tests don't have a TTY. With the fix, the prompt is empty and removal
-    // proceeds. `--force` because the feature branch is unmerged.
-    let output = repo
-        .wt_command()
-        .args(["remove", "--foreground", "--force", "feature-no-config"])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "wt remove should succeed when the removed worktree has no \
-         .config/wt.toml — no fallback to the primary's; stderr:\n{stderr}"
-    );
-    assert!(
-        !worktree_path.exists(),
-        "feature worktree should be removed"
-    );
-    assert!(
-        !marker_file.exists(),
-        "primary's pre-remove must not fire when the removed worktree has \
-         no .config/wt.toml"
     );
 }
 
