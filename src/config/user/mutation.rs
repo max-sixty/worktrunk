@@ -10,10 +10,7 @@ use crate::config::ConfigError;
 use crate::path::format_path_for_display;
 
 use super::UserConfig;
-use super::path;
 use super::sections::CommitGenerationConfig;
-
-const NO_CONFIG_DIR_MSG: &str = "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME";
 
 /// Acquire an exclusive lock on the config file for read-modify-write operations.
 ///
@@ -50,21 +47,17 @@ impl UserConfig {
     /// Acquires lock, reloads from disk, calls the mutator, and saves if mutator returns true.
     pub(super) fn with_locked_mutation<F>(
         &mut self,
-        config_path: Option<&std::path::Path>,
+        config_path: &std::path::Path,
         mutate: F,
     ) -> Result<(), ConfigError>
     where
         F: FnOnce(&mut Self) -> bool,
     {
-        let path = match config_path {
-            Some(p) => p.to_path_buf(),
-            None => path::config_path().ok_or_else(|| ConfigError(NO_CONFIG_DIR_MSG.into()))?,
-        };
-        let _lock = acquire_config_lock(&path)?;
-        self.reload_from(&path)?;
+        let _lock = acquire_config_lock(config_path)?;
+        self.reload_from(config_path)?;
 
         if mutate(self) {
-            self.save_to(&path)?;
+            self.save_to(config_path)?;
         }
         Ok(())
     }
@@ -106,10 +99,9 @@ impl UserConfig {
     /// Set `skip-shell-integration-prompt = true` and save.
     ///
     /// Acquires lock, reloads from disk, sets flag if not already set, and saves.
-    /// Pass `None` for default config path, or `Some(path)` for testing.
     pub fn set_skip_shell_integration_prompt(
         &mut self,
-        config_path: Option<&std::path::Path>,
+        config_path: &std::path::Path,
     ) -> Result<(), ConfigError> {
         self.with_locked_mutation(config_path, |config| {
             if config.skip_shell_integration_prompt {
@@ -123,10 +115,9 @@ impl UserConfig {
     /// Set `skip-commit-generation-prompt = true` and save.
     ///
     /// Acquires lock, reloads from disk, sets flag if not already set, and saves.
-    /// Pass `None` for default config path, or `Some(path)` for testing.
     pub fn set_skip_commit_generation_prompt(
         &mut self,
-        config_path: Option<&std::path::Path>,
+        config_path: &std::path::Path,
     ) -> Result<(), ConfigError> {
         self.with_locked_mutation(config_path, |config| {
             if config.skip_commit_generation_prompt {
@@ -140,12 +131,11 @@ impl UserConfig {
     /// Set worktree-path for a specific project and save.
     ///
     /// Creates the project entry if it doesn't exist.
-    /// Pass `None` for default config path, or `Some(path)` for testing.
     pub fn set_project_worktree_path(
         &mut self,
         project: &str,
         worktree_path: String,
-        config_path: Option<&std::path::Path>,
+        config_path: &std::path::Path,
     ) -> Result<(), ConfigError> {
         self.with_locked_mutation(config_path, |config| {
             let entry = config.projects.entry(project.to_string()).or_default();
@@ -161,11 +151,10 @@ impl UserConfig {
     ///
     /// Sets `[commit.generation] command = ...` in the user config.
     /// Acquires lock, reloads from disk, sets the command, and saves.
-    /// Pass `None` for default config path, or `Some(path)` for testing.
     pub fn set_commit_generation_command(
         &mut self,
         command: String,
-        config_path: Option<&std::path::Path>,
+        config_path: &std::path::Path,
     ) -> Result<(), ConfigError> {
         self.with_locked_mutation(config_path, |config| {
             let gen_config = config

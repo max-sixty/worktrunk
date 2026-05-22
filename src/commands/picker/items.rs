@@ -28,6 +28,11 @@ pub(super) type PreviewCacheKey = (String, PreviewMode);
 /// Shared across all WorktreeSkimItems for background pre-computation.
 pub(super) type PreviewCache = Arc<DashMap<PreviewCacheKey, String>>;
 
+/// Prefix on a worktree-backed item's `output()` token. Detached worktrees
+/// all share the `(detached)` branch label, so `output()` returns the
+/// worktree path (which is unique) behind this prefix instead.
+pub(super) const WORKTREE_OUTPUT_PREFIX: &str = "worktree-path:";
+
 /// Header item for column names (non-selectable)
 pub(super) struct HeaderSkimItem {
     pub display_text: String,
@@ -101,8 +106,7 @@ pub(super) struct WorktreeSkimItem {
     /// Current ANSI-colored display line. Starts as the skeleton render;
     /// replaced in place as data arrives.
     pub rendered: Arc<Mutex<String>>,
-    /// Branch name — also what `output()` returns when this item is
-    /// selected.
+    /// Branch name used by switch selection and preview cache keys.
     pub branch_name: String,
     /// Skeleton-snapshot of the underlying ListItem. Preview computation
     /// reads only skeleton-time fields (`branch_name`, `head`,
@@ -130,7 +134,13 @@ impl SkimItem for WorktreeSkimItem {
     }
 
     fn output(&self) -> Cow<'_, str> {
-        Cow::Borrowed(&self.branch_name)
+        match self.item.worktree_path() {
+            Some(path) => Cow::Owned(format!(
+                "{WORKTREE_OUTPUT_PREFIX}{}",
+                path.to_string_lossy()
+            )),
+            None => Cow::Borrowed(&self.branch_name),
+        }
     }
 
     fn preview(&self, context: PreviewContext<'_>) -> ItemPreview {

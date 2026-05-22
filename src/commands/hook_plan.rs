@@ -29,9 +29,9 @@
 //! so it cannot re-select.
 //!
 //! The frozen unit is the *selected, source-tagged [`CommandConfig`] list* per
-//! `(HookType, anchor)` — the anchor being the worktree the hook is *about*
-//! (its config source). Rendering stays deferred (post-`*` hooks legitimately
-//! need post-operation context like the merge commit), but it consumes
+//! `(HookType, anchor)` — the anchor being the worktree the hook runs in.
+//! Rendering stays deferred (post-`*` hooks legitimately need post-operation
+//! context like the merge commit), but it consumes
 //! `&[(HookSource, CommandConfig)]`, so it cannot change the set. The
 //! authorization-relevant artifact is the template set, which is exactly what
 //! [`Approvals`] stores and the prompt shows.
@@ -68,10 +68,10 @@ use super::project_config::{ApprovableCommand, Phase};
 /// handle to re-resolve from.
 type Selection = Vec<(HookSource, CommandConfig)>;
 
-/// One frozen entry: the hook type, the anchor worktree (the `.config/wt.toml`
-/// the hook reads — stored as the caller provides it; the gate and executor
-/// both derive it from the same value, so equality holds without
-/// canonicalization), and that pair's source-tagged selection.
+/// One frozen entry: the hook type, the anchor worktree (the worktree the hook
+/// runs in — stored as the caller provides it; the gate and executor both
+/// derive it from the same value, so equality holds without canonicalization),
+/// and that pair's source-tagged selection.
 struct PlanEntry {
     hook_type: HookType,
     anchor: PathBuf,
@@ -83,7 +83,8 @@ pub struct HookPlan {
     entries: Vec<PlanEntry>,
 }
 
-/// Accumulates per-anchor selections from each worktree's resolved config.
+/// Accumulates per-anchor selections from the invoking worktree's resolved
+/// config.
 ///
 /// `add` is the only place `load_project_config()`'s result feeds command
 /// selection for the covered hook types — `pub(crate)` and called only from
@@ -100,7 +101,7 @@ impl HookPlanBuilder {
     }
 
     /// Select `hook_types` anchored at `anchor`, from the already-resolved
-    /// `project_config` (the gate snapshots / `git show`s it) plus user config.
+    /// `project_config` (the gate snapshots it) plus user config.
     ///
     /// `project_id` scopes the user-config hook lookup. Source identity is
     /// preserved so source-scoped behavior survives into execution.
@@ -187,20 +188,20 @@ impl HookPlan {
         out
     }
 
-    /// Interactive / `--yes` gate. Reuses [`approve_command_batch`] so the
-    /// prompt, the `--yes` path, and the saved approvals are byte-identical to
-    /// before. `Ok(None)` means the user declined — the caller prints its own
+    /// Interactive / `--yes` gate. The interactive path reuses
+    /// [`approve_command_batch`] for its prompt and for the approvals it
+    /// saves. `Ok(None)` means the user declined: the caller prints its own
     /// "continuing without hooks" message and proceeds with
     /// [`ApprovedHookPlan::empty`].
     ///
-    /// When no project-source command needs the gate (no project config, or
-    /// only user hooks), this returns the frozen plan **without** loading
-    /// `Approvals` or requiring `project_id`. That keeps a malformed
-    /// `approvals.toml` or an unresolvable project identifier from aborting a
-    /// command that has nothing to authorize, matching the pre-plan behaviour
-    /// where the empty-batch fast path ran before any approval state was
-    /// touched. `project_id` is therefore `Option`: it is consulted only when
-    /// there is something to approve, where it must be present.
+    /// `Approvals` is loaded only on the interactive path. Two paths skip the
+    /// load. When nothing project-sourced needs the gate (no project config,
+    /// or only user hooks) the frozen plan returns at once. `--yes` also
+    /// approves every project command unconditionally and persists nothing, so
+    /// it has no approval state to read. A malformed `approvals.toml` therefore
+    /// never aborts a command that would not consult it. `project_id` is
+    /// `Option` only because that no-approvable fast path needs none; every
+    /// path that has something to approve requires it.
     pub fn approve(
         self,
         project_id: Option<&str>,
@@ -214,8 +215,14 @@ impl HookPlan {
         }
         let project_id =
             project_id.context("project identifier is required to approve project commands")?;
-        let approvals = Approvals::load().context("Failed to load approvals")?;
-        let approved = approve_command_batch(&approvable, project_id, &approvals, yes, false)?;
+        // `approve_command_batch` with `yes = true` is an unconditional
+        // `Ok(true)`, so loading `Approvals` here would be dead work.
+        let approved = if yes {
+            true
+        } else {
+            let approvals = Approvals::load().context("Failed to load approvals")?;
+            approve_command_batch(&approvable, project_id, &approvals, false, false)?
+        };
         if !approved {
             return Ok(None);
         }
@@ -316,10 +323,11 @@ fn render_planned(
 /// signature carries no config — only the plan, the render context, and the
 /// failure strategy.
 ///
-/// `anchor` is the worktree the hook's config was selected from at the gate
-/// (usually `ctx.worktree_path`, but for `post-remove` the removed worktree
-/// while `ctx` runs in the destination). It is *not* a config handle — just
-/// the lookup key into the frozen plan.
+/// `anchor` is the worktree the hook runs in (usually `ctx.worktree_path`, but
+/// for `post-remove` the removed worktree while `ctx` runs in the destination).
+/// It is *not* a config handle — just the lookup key into the frozen plan. The
+/// gate always selects from the invoking worktree's config, which need not be
+/// the anchor.
 pub fn execute_planned_hook(
     plan: &ApprovedHookPlan,
     anchor: &Path,
@@ -349,7 +357,8 @@ pub fn execute_planned_hook(
 /// rendered from the frozen selection and added via the announcer's existing
 /// config-free `extend`, with no `load_project_config()` at execution.
 ///
-/// `anchor` is the gate's config-source worktree (see [`execute_planned_hook`]).
+/// `anchor` is the worktree the hook runs in — the lookup key into the frozen
+/// plan (see [`execute_planned_hook`]).
 pub fn register_planned(
     announcer: &mut HookAnnouncer<'_>,
     plan: &ApprovedHookPlan,
@@ -462,7 +471,7 @@ mod tests {
             .approve_command(
                 "proj".to_string(),
                 "echo project-hook".to_string(),
-                Some(&approvals_path),
+                &approvals_path,
             )
             .unwrap();
         let mut builder = HookPlanBuilder::new();

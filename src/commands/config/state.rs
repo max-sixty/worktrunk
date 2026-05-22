@@ -42,12 +42,11 @@
 //! under a single reserved subdirectory rather than adding sibling top-level dirs.
 
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Context;
 use color_print::cformat;
 use path_slash::PathExt as _;
-use worktrunk::config::config_path;
 use worktrunk::git::{BranchRef, Repository, sha_cache};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
@@ -93,17 +92,6 @@ fn picker_preview_clear(repo: &Repository) -> anyhow::Result<usize> {
         let _ = repo;
         Ok(0)
     }
-}
-
-// ==================== Path Helpers ====================
-
-/// Get the user config path, or error if it cannot be determined.
-///
-/// Delegates to `config_path()` so that `config create` and `config show`
-/// resolve the same path that config loading uses — including any CLI
-/// (`--config`) or environment variable (`WORKTRUNK_CONFIG_PATH`) overrides.
-pub fn require_user_config_path() -> anyhow::Result<PathBuf> {
-    config_path().context("Cannot determine config directory")
 }
 
 // ==================== Log Management ====================

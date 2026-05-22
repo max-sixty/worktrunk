@@ -308,16 +308,17 @@ fn test_relocate_clobber_backs_up(repo: TestRepo) {
         .filter_map(|e| e.ok())
         .any(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            name.starts_with("repo.feature.bak-")
+            name.starts_with("repo.feature.bak.")
         });
     assert!(backup_exists, "Backup directory should exist");
 }
 
 /// Regression: when the computed backup path already exists, relocate
-/// --clobber must fail rather than silently overwriting it. (Matches the
-/// `wt switch --clobber` contract — see test_switch_clobber_error_backup_exists.)
+/// --clobber falls back to the next free `-N` name rather than overwriting it.
+/// (Matches the `wt switch --clobber` contract — see
+/// test_switch_clobber_falls_back_when_backup_taken.)
 #[rstest]
-fn test_relocate_clobber_error_backup_exists(repo: TestRepo) {
+fn test_relocate_clobber_falls_back_when_backup_taken(repo: TestRepo) {
     let parent = worktree_parent(&repo);
 
     // Create a worktree at a non-standard location.
@@ -334,31 +335,39 @@ fn test_relocate_clobber_error_backup_exists(repo: TestRepo) {
     let expected_path = parent.join("repo.feature");
     fs::write(&expected_path, "blocker contents").unwrap();
 
-    // Pre-create the backup path that relocate would compute. TEST_EPOCH
-    // pins the timestamp suffix so this name is deterministic.
+    // Pre-create the backup path relocate would compute. TEST_EPOCH pins the
+    // timestamp suffix so this name is deterministic.
     // TEST_EPOCH=1735776000 -> 2025-01-02 00:00:00 UTC
-    let backup_path = parent.join("repo.feature.bak-20250102-000000");
-    fs::write(&backup_path, "existing backup").unwrap();
+    let taken = parent.join("repo.feature.bak.20250102-000000");
+    fs::write(&taken, "existing backup").unwrap();
 
     let output = make_snapshot_cmd(&repo, "step", &["relocate", "--clobber"], None)
         .output()
         .expect("relocate should run");
     assert!(
-        !output.status.success(),
-        "relocate must fail when backup path already exists; stderr:\n{}",
+        output.status.success(),
+        "relocate must fall back to a free backup name; stderr:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Both the blocker and the existing backup must be intact.
-    assert_eq!(
-        fs::read_to_string(&expected_path).unwrap(),
-        "blocker contents",
-        "blocker file must not be moved"
+    // The worktree was moved to the expected location.
+    assert!(
+        expected_path.is_dir(),
+        "Worktree should be at expected location: {}",
+        expected_path.display()
     );
+
+    // The pre-existing backup is untouched; the blocker moved to the -2 name.
     assert_eq!(
-        fs::read_to_string(&backup_path).unwrap(),
+        fs::read_to_string(&taken).unwrap(),
         "existing backup",
         "existing backup must not be overwritten"
+    );
+    let fallback = parent.join("repo.feature.bak.20250102-000000-2");
+    assert_eq!(
+        fs::read_to_string(&fallback).unwrap(),
+        "blocker contents",
+        "blocker file must move to the -2 fallback name"
     );
 }
 

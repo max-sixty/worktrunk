@@ -468,8 +468,9 @@ fn render_dry_run(
 /// `pre-remove`/`post-remove`/`post-switch`). Approval is built after
 /// integration, age, and removability checks have selected the exact live
 /// worktrees prune will attempt to remove. `post-switch` is anchored at the
-/// primary worktree only when the current worktree is in that removal set. No
-/// fallback between worktrees — each `.config/wt.toml` stands alone.
+/// primary worktree only when the current worktree is in that removal set.
+/// Every hook is selected from the invoking worktree's `.config/wt.toml`,
+/// whatever its anchor.
 ///
 /// A declined prompt yields an empty plan — every executor runs no hooks.
 fn approve_prune_hooks(
@@ -483,6 +484,9 @@ fn approve_prune_hooks(
     // and `approve` never needs it).
     let project_id = repo.project_identifier().ok();
     let pid = project_id.as_deref();
+    // Every prune hook is selected from the invoking worktree's
+    // `.config/wt.toml` — the worktree `wt step prune` ran in.
+    let project_config = repo.load_project_config()?;
 
     let removed_worktree_paths: Vec<&Path> = candidates
         .iter()
@@ -494,11 +498,10 @@ fn approve_prune_hooks(
 
     let mut builder = HookPlanBuilder::new();
     for &wt_path in &removed_worktree_paths {
-        let cfg = Repository::at(wt_path)?.load_project_config()?;
         builder.add(
             wt_path,
             &[HookType::PreRemove, HookType::PostRemove],
-            cfg.as_ref(),
+            project_config.as_ref(),
             config,
             pid,
         );
@@ -508,11 +511,10 @@ fn approve_prune_hooks(
         .any(|candidate| matches!(candidate.kind, CandidateKind::Current))
     {
         let primary_path = repo.home_path()?;
-        let primary_cfg = Repository::at(&primary_path)?.load_project_config()?;
         builder.add(
             &primary_path,
             &[HookType::PostSwitch],
-            primary_cfg.as_ref(),
+            project_config.as_ref(),
             config,
             pid,
         );

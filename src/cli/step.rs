@@ -6,13 +6,8 @@ pub struct CommitArgs {
     #[arg(short, long, add = crate::completion::worktree_only_completer())]
     pub(crate) branch: Option<String>,
 
-    /// Skip hooks
-    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true)]
-    pub(crate) verify: bool,
-
-    /// Skip hooks (deprecated alias for --no-hooks)
-    #[arg(long = "no-verify", hide = true)]
-    pub(crate) no_verify_deprecated: bool,
+    #[command(flatten)]
+    pub(crate) hooks: crate::cli::HookFlags,
 
     /// What to stage before committing [default: all]
     #[arg(long)]
@@ -41,13 +36,8 @@ pub struct SquashArgs {
     #[arg(add = crate::completion::branch_value_completer())]
     pub(crate) target: Option<String>,
 
-    /// Skip hooks
-    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true)]
-    pub(crate) verify: bool,
-
-    /// Skip hooks (deprecated alias for --no-hooks)
-    #[arg(long = "no-verify", hide = true)]
-    pub(crate) no_verify_deprecated: bool,
+    #[command(flatten)]
+    pub(crate) hooks: crate::cli::HookFlags,
 
     /// What to stage before committing [default: all]
     #[arg(long)]
@@ -641,7 +631,9 @@ this by using a temporary location.
 ## Clobbering
 
 With `--clobber`, non-worktree paths at target locations are moved to
-`<path>.bak-<timestamp>` before relocating.
+`<path>.bak.<timestamp>` before relocating. If that name is already taken,
+the move counts up (`…-2`, `…-3`, …) until it finds a free name, so an
+existing backup is never overwritten.
 
 ## Main worktree behavior
 
@@ -673,7 +665,8 @@ Note: This command is experimental and may change in future versions.
 
         /// Backup non-worktree paths at target locations
         ///
-        /// Moves blocking paths to `<path>.bak-<timestamp>`.
+        /// Moves blocking paths to `<path>.bak.<timestamp>`. If that name is
+        /// taken, counts up (`…-2`, `…-3`, …) to a free name.
         #[arg(long)]
         clobber: bool,
 

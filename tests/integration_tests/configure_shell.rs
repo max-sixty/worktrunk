@@ -118,7 +118,7 @@ fn test_configure_shell_already_exists(repo: TestRepo, temp_home: TempDir) {
 
         ----- stderr -----
         [2m○[22m Already configured shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m
-        [32m✓[39m [32mAll shells already configured[39m
+        [2m○[22m All shells already configured
         ");
     });
 
@@ -1356,7 +1356,7 @@ fn test_configure_shell_no_warning_when_already_configured(repo: TestRepo, temp_
 
         ----- stderr -----
         [2m○[22m Already configured shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m
-        [32m✓[39m [32mAll shells already configured[39m
+        [2m○[22m All shells already configured
         ");
     });
 }

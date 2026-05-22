@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 // Re-export public types
 pub use merge::Merge;
 pub use path::{
-    config_path, default_config_path, default_system_config_path, set_config_path,
-    system_config_path,
+    config_path, default_config_path, default_system_config_path, require_config_path,
+    set_config_path, system_config_path,
 };
 pub use resolved::ResolvedConfig;
 pub use schema::valid_user_config_keys;

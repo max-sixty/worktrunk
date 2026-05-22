@@ -120,7 +120,7 @@ use crate::cli::SwitchFormat;
 use crate::output::{BackgroundFallbackMode, handle_remove_output};
 use worktrunk::git::{BranchDeletionMode, delete_branch_if_safe};
 
-use items::{PreviewCache, WorktreeSkimItem};
+use items::{PreviewCache, WORKTREE_OUTPUT_PREFIX};
 use preview::{PreviewLayout, PreviewMode, PreviewState};
 use preview_orchestrator::PreviewOrchestrator;
 
@@ -140,6 +140,52 @@ enum PickerAction {
     Switch,
     /// Create a new worktree from the search query (alt-c).
     Create,
+}
+
+/// The alt-r removal target parsed back out of a row's `output()` token.
+///
+/// A worktree-backed row's token is `worktree-path:<path>` (paths are
+/// unique — detached worktrees would otherwise collide on the shared
+/// `(detached)` label); a branch-only row's token is the bare branch name.
+enum PickerRemovalTarget {
+    WorktreePath(PathBuf),
+    Branch(String),
+}
+
+impl PickerRemovalTarget {
+    fn from_signal(signal: &str) -> Option<Self> {
+        let signal = signal.trim();
+        if signal.is_empty() {
+            return None;
+        }
+        if let Some(path) = signal.strip_prefix(WORKTREE_OUTPUT_PREFIX) {
+            if path.is_empty() {
+                return None;
+            }
+            return Some(Self::WorktreePath(PathBuf::from(path)));
+        }
+        Some(Self::Branch(signal.to_string()))
+    }
+}
+
+/// Resolve the switch identifier for a selected picker row, decoded from its
+/// `output()` token: the worktree path for any worktree-backed row, the branch
+/// name for a branch-only row.
+///
+/// `wt switch` accepts a worktree path for any existing worktree (`plan_switch`
+/// phase 2b), so a worktree-backed row always switches by its unique path —
+/// detached *and* branched alike. A branch-only row has no worktree, so its
+/// branch name is the only handle.
+///
+/// Decoding `output()` rather than `downcast_ref::<WorktreeSkimItem>()` also
+/// sidesteps skim 0.20's cross-thread `TypeId` mismatch, which makes the
+/// downcast fail when the item originates on the reader thread.
+fn picker_item_identifier(item: &dyn SkimItem) -> String {
+    let output = item.output().to_string();
+    match PickerRemovalTarget::from_signal(&output) {
+        Some(PickerRemovalTarget::WorktreePath(path)) => path.to_string_lossy().into_owned(),
+        _ => output,
+    }
 }
 
 /// Custom command collector for skim's `reload` action.
@@ -170,7 +216,14 @@ struct PickerCollector {
 impl PickerCollector {
     /// Build removal state from a fresh `Repository` so picker reloads after a
     /// background removal do not reuse the startup worktree inventory cache.
-    fn prepare_removal(&self, selected_output: &str) -> anyhow::Result<(Repository, RemoveResult)> {
+    ///
+    /// `target` carries the exact worktree path or branch name decoded from
+    /// the row's `output()` token — no `git worktree list` lookup, so a
+    /// detached row can't be confused with another detached row.
+    fn prepare_removal(
+        &self,
+        target: &PickerRemovalTarget,
+    ) -> anyhow::Result<(Repository, RemoveResult)> {
         let repo = Repository::at(self.repo.discovery_path())?;
 
         // Validate removal before touching the list. prepare_worktree_removal
@@ -178,26 +231,14 @@ impl PickerCollector {
         // Only remove the item and spawn background deletion if this succeeds.
         let caller_path = repo.current_worktree().root().ok();
 
-        // Resolve removal target by path when possible (handles both
-        // branched and detached worktrees). Branch-only items won't match any
-        // worktree path, so they fall through to Branch.
-        let worktree_path = repo.list_worktrees().ok().and_then(|wts| {
-            // Match by branch first, then fall back to detached (branch: None).
-            let by_branch = wts
-                .iter()
-                .find(|wt| wt.branch.as_deref() == Some(selected_output));
-            let matched = by_branch.or_else(|| wts.iter().find(|wt| wt.branch.is_none()));
-            matched.map(|wt| wt.path.clone())
-        });
-
         let result = {
             let config = repo.user_config();
-            let target = match &worktree_path {
-                Some(path) => RemoveTarget::Path(path),
-                None => RemoveTarget::Branch(selected_output),
+            let remove_target = match target {
+                PickerRemovalTarget::WorktreePath(path) => RemoveTarget::Path(path),
+                PickerRemovalTarget::Branch(branch) => RemoveTarget::Branch(branch),
             };
             repo.prepare_worktree_removal(
-                target,
+                remove_target,
                 BranchDeletionMode::SafeDelete,
                 false,
                 config,
@@ -229,9 +270,11 @@ impl PickerCollector {
     /// and the TUI stays responsive. A removal failure is logged; the item stays
     /// gone from the picker — a tradeoff until we can show in-progress state.
     ///
-    /// `repo` is only used for `BranchOnly` deletion; `RemovedWorktree` removal
-    /// is rooted at `main_path` (which may differ from the picker's startup repo
-    /// in bare-repo setups).
+    /// `repo` is the worktree the picker is operating from — the config source
+    /// for the removal hooks (see [`approved_removal_plan`]) and the target of
+    /// a `BranchOnly` deletion. `RemovedWorktree` removal itself is rooted at
+    /// `main_path` (which may differ from the picker's startup repo in bare-repo
+    /// setups).
     fn do_removal(
         repo: &Repository,
         result: &RemoveResult,
@@ -244,7 +287,7 @@ impl PickerCollector {
                 ..
             } => {
                 let main_repo = Repository::at(main_path)?;
-                let plan = approved_removal_plan(&main_repo, main_path, worktree_path, approvals)?;
+                let plan = approved_removal_plan(repo, main_path, worktree_path, approvals)?;
                 let mut announcer = HookAnnouncer::new(&main_repo, main_repo.user_config(), false);
                 handle_remove_output(
                     result,
@@ -287,15 +330,19 @@ impl CommandCollector for PickerCollector {
         _cmd: &str,
         components_to_stop: Arc<AtomicUsize>,
     ) -> (SkimItemReceiver, Sender<i32>) {
-        // Read the removal signal (item output text written by execute-silent)
+        // Read the removal signal (item output token written by execute-silent)
         if let Ok(signal) = std::fs::read_to_string(&self.signal_path) {
             let selected_output = signal.trim().to_string();
-            if !selected_output.is_empty() {
-                let preparation = self.prepare_removal(&selected_output);
+            if let Some(removal_target) = PickerRemovalTarget::from_signal(&selected_output) {
+                let preparation = self.prepare_removal(&removal_target);
 
                 match preparation {
                     Ok((planning_repo, result)) => {
-                        // Removal validated — remove item from the picker list.
+                        // Removal validated — remove the selected item from the
+                        // picker list. The `output()` token is unique per row
+                        // (a `worktree-path:` path for worktrees), so this
+                        // drops exactly the selected row even when several
+                        // detached rows share the `(detached)` branch label.
                         //
                         // Note: skim's `as_any().downcast_ref::<WorktreeSkimItem>()` fails
                         // at runtime (TypeId mismatch between reader thread and main thread
@@ -367,16 +414,17 @@ impl CommandCollector for PickerCollector {
 /// Whether every `pre-remove` / `post-remove` / `post-switch` command this
 /// removal would run is already approved — a read-only check, no prompt.
 ///
-/// `main_path` is the post-removal destination (where `post-switch` reads its
-/// config, same as the executor); `worktree_path` is the worktree being
-/// removed (where `pre-remove` / `post-remove` read theirs). `wt remove` /
-/// `wt merge` collect the same command set and prompt for it at the gate; the
-/// picker can't prompt mid-render, so it runs the removal's hooks only when
-/// they're already approved (e.g. from a prior `wt remove` / `wt merge`) and
-/// skips them otherwise — unapproved project commands must never run. See
-/// CLAUDE.md → "Project Commands Run Only After Approval".
+/// `repo` is the worktree the picker is operating from; its `.config/wt.toml`
+/// is what every removal hook resolves against, matching `wt remove` /
+/// `wt merge`. `main_path` is the post-removal destination (the `post-switch`
+/// anchor); `worktree_path` is the worktree being removed (the `pre-remove` /
+/// `post-remove` anchor). The picker can't prompt mid-render, so it runs the
+/// removal's hooks only when they're already approved (e.g. from a prior
+/// `wt remove` / `wt merge`) and skips them otherwise — unapproved project
+/// commands must never run. See CLAUDE.md → "Project Commands Run Only After
+/// Approval".
 fn approved_removal_plan(
-    main_repo: &Repository,
+    repo: &Repository,
     main_path: &Path,
     worktree_path: &Path,
     approvals: &Approvals,
@@ -384,24 +432,23 @@ fn approved_removal_plan(
     // Non-fatal: an unresolvable project identifier just means no project
     // pipeline can be matched against approvals — `approve_readonly` then
     // drops them (fail-closed), rather than aborting the picker removal.
-    let project_id = main_repo.project_identifier().ok();
+    let project_id = repo.project_identifier().ok();
     let pid = project_id.as_deref();
-    let user = main_repo.user_config();
-    let removed_cfg = Repository::at(worktree_path)?.load_project_config()?;
-    let dest_cfg = Repository::at(main_path)?.load_project_config()?;
+    let user = repo.user_config();
+    let project_config = repo.load_project_config()?;
 
     let mut builder = HookPlanBuilder::new();
     builder.add(
         worktree_path,
         &[HookType::PreRemove, HookType::PostRemove],
-        removed_cfg.as_ref(),
+        project_config.as_ref(),
         user,
         pid,
     );
     builder.add(
         main_path,
         &[HookType::PostSwitch],
-        dest_cfg.as_ref(),
+        project_config.as_ref(),
         user,
         pid,
     );
@@ -779,21 +826,12 @@ pub fn handle_picker(
 
         let should_create = matches!(action, PickerAction::Create);
 
-        // Get branch name: from query if creating new, from selected item if switching.
-        // For detached worktrees, use the path (same as `wt switch /path` from CLI).
+        // Get the switch identifier: the query if creating new, otherwise the
+        // selected item. `picker_item_identifier` yields a worktree path for
+        // any worktree-backed row and the branch name for a branch-only row
+        // (same as `wt switch` from CLI) — never the raw `worktree-path:` token.
         let selected = out.selected_items.first();
-        let selected_name = selected.map(|item| {
-            if !should_create
-                && let Some(data) = item
-                    .as_any()
-                    .downcast_ref::<WorktreeSkimItem>()
-                    .and_then(|s| s.item.worktree_data())
-                    .filter(|d| d.detached)
-            {
-                return data.path.to_string_lossy().into_owned();
-            }
-            item.output().to_string()
-        });
+        let selected_name = selected.map(|item| picker_item_identifier(item.as_ref()));
         let query = out.query.trim().to_string();
         let identifier = resolve_identifier(&action, query, selected_name)?;
 
@@ -870,11 +908,21 @@ fn resolve_identifier(
 
 #[cfg(test)]
 pub mod tests {
+    use super::items::WorktreeSkimItem;
     use super::preview::{PreviewLayout, PreviewMode, PreviewStateData};
-    use super::{PickerAction, PickerCollector, drain_stashed_warnings, resolve_identifier};
+    use super::{
+        PickerAction, PickerCollector, PickerRemovalTarget, drain_stashed_warnings,
+        picker_item_identifier, resolve_identifier,
+    };
+    use crate::commands::list::model::{ItemKind, ListItem, WorktreeData};
     use crate::commands::worktree::RemoveResult;
+    use skim::prelude::SkimItem;
+    use skim::reader::CommandCollector;
     use std::fs;
+    use std::path::Path;
+    use std::sync::atomic::AtomicUsize;
     use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
     use worktrunk::config::Approvals;
     use worktrunk::git::BranchDeletionMode;
 
@@ -963,6 +1011,46 @@ pub mod tests {
         // Create with empty query is an error
         let result = resolve_identifier(&PickerAction::Create, String::new(), None);
         assert!(result.unwrap_err().to_string().contains("no branch name"));
+    }
+
+    /// `from_signal` rejects tokens that carry no usable target: a blank or
+    /// whitespace-only signal, and a bare `worktree-path:` prefix with no path
+    /// after it. A non-empty branch token and a prefixed path both parse.
+    #[test]
+    fn test_picker_removal_target_from_signal() {
+        assert!(PickerRemovalTarget::from_signal("").is_none());
+        assert!(PickerRemovalTarget::from_signal("   ").is_none());
+        assert!(PickerRemovalTarget::from_signal("worktree-path:").is_none());
+
+        assert!(matches!(
+            PickerRemovalTarget::from_signal("feature/foo"),
+            Some(PickerRemovalTarget::Branch(branch)) if branch == "feature/foo"
+        ));
+        assert!(matches!(
+            PickerRemovalTarget::from_signal("worktree-path:/tmp/wt"),
+            Some(PickerRemovalTarget::WorktreePath(path)) if path == std::path::Path::new("/tmp/wt")
+        ));
+    }
+
+    /// `picker_item_identifier` yields the worktree path for every
+    /// worktree-backed row — branched as well as detached — and the branch name
+    /// for a branch-only row, matching what each row's `output()` token carries.
+    #[test]
+    fn test_picker_item_identifier() {
+        let branched = branched_picker_item("feature/foo", Path::new("/tmp/wt-branched"));
+        assert_eq!(
+            picker_item_identifier(branched.as_ref()),
+            "/tmp/wt-branched"
+        );
+
+        let detached = detached_picker_item(Path::new("/tmp/wt-detached"));
+        assert_eq!(
+            picker_item_identifier(detached.as_ref()),
+            "/tmp/wt-detached"
+        );
+
+        let branch_only = branch_only_picker_item("feature/bar");
+        assert_eq!(picker_item_identifier(branch_only.as_ref()), "feature/bar");
     }
 
     #[test]
@@ -1093,87 +1181,15 @@ pub mod tests {
         assert!(!wt_path.exists(), "detached worktree should be removed");
     }
 
-    #[test]
-    fn test_prepare_removal_refreshes_stale_detached_worktree_cache() {
-        let test = worktrunk::testing::TestRepo::with_initial_commit();
-        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
-        let wt_dir = tempfile::tempdir().unwrap();
-        let first_path = wt_dir.path().join("detached-one");
-        let second_path = wt_dir.path().join("detached-two");
-
-        for (branch, path) in [
-            ("to-detach-one", first_path.as_path()),
-            ("to-detach-two", second_path.as_path()),
-        ] {
-            repo.run_command(&["worktree", "add", "-b", branch, path.to_str().unwrap()])
-                .unwrap();
-            worktrunk::shell_exec::Cmd::new("git")
-                .args(["checkout", "--detach", "HEAD"])
-                .current_dir(path)
-                .run()
-                .unwrap();
-        }
-
-        let stale_repo = worktrunk::git::Repository::at(test.path()).unwrap();
-        let detached_count = stale_repo
-            .list_worktrees()
-            .unwrap()
-            .iter()
-            .filter(|wt| wt.branch.is_none())
-            .count();
-        assert_eq!(detached_count, 2);
-
-        let first_result = RemoveResult::RemovedWorktree {
-            main_path: test.path().to_path_buf(),
-            worktree_path: first_path.clone(),
-            changed_directory: false,
-            branch_name: None,
-            deletion_mode: BranchDeletionMode::SafeDelete,
-            target_branch: Some("main".to_string()),
-            force_worktree: false,
-            expected_path: None,
-            removed_commit: None,
-        };
-        PickerCollector::do_removal(&stale_repo, &first_result, &Approvals::default()).unwrap();
-        assert!(
-            !first_path.exists(),
-            "first detached worktree should be removed"
-        );
-        assert!(
-            second_path.exists(),
-            "second detached worktree should remain"
-        );
-
-        let state_dir = tempfile::tempdir().unwrap();
-        let collector = PickerCollector {
-            items: Arc::new(Mutex::new(Vec::new())),
-            signal_path: state_dir.path().join("remove"),
-            repo: stale_repo,
-            approvals: Arc::new(Approvals::default()),
-        };
-
-        let (_planning_repo, result) = collector.prepare_removal("(detached)").unwrap();
-        let canonical_second = dunce::canonicalize(&second_path).unwrap();
-        assert!(
-            matches!(
-                &result,
-                RemoveResult::RemovedWorktree { worktree_path, branch_name: None, .. }
-                    if dunce::canonicalize(worktree_path).unwrap() == canonical_second
-            ),
-            "detached picker removal should resolve to the surviving detached worktree"
-        );
-    }
-
-    /// A branch with no worktree resolves to `RemoveTarget::Branch` — it
-    /// matches no worktree path, so `prepare_removal` falls through to the
-    /// branch-only disposition rather than a worktree removal.
+    /// A branch-only row's signal carries the bare branch name, which
+    /// `PickerRemovalTarget::from_signal` decodes to `Branch`; `prepare_removal`
+    /// then resolves it to the branch-only disposition.
     #[test]
     fn test_prepare_removal_resolves_branch_only_item() {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         let repo = worktrunk::git::Repository::at(test.path()).unwrap();
 
-        // A branch at the same commit as main, with no worktree. There are no
-        // detached worktrees, so the detached fallback can't capture it.
+        // A branch at the same commit as main, with no worktree.
         repo.run_command(&["branch", "branch-only-feature"])
             .unwrap();
 
@@ -1185,7 +1201,8 @@ pub mod tests {
             approvals: Arc::new(Approvals::default()),
         };
 
-        let (_planning_repo, result) = collector.prepare_removal("branch-only-feature").unwrap();
+        let target = PickerRemovalTarget::from_signal("branch-only-feature").unwrap();
+        let (_planning_repo, result) = collector.prepare_removal(&target).unwrap();
         assert!(
             matches!(&result, RemoveResult::BranchOnly { branch_name, .. } if branch_name == "branch-only-feature"),
             "a branch with no worktree should resolve to BranchOnly"
@@ -1210,8 +1227,9 @@ pub mod tests {
 
         // `RemoveResult` isn't `Debug`; drop the Ok payload so `unwrap_err`
         // (which needs `T: Debug`) can report a failure cleanly.
+        let target = PickerRemovalTarget::from_signal("no-such-branch").unwrap();
         let err = collector
-            .prepare_removal("no-such-branch")
+            .prepare_removal(&target)
             .map(|_| ())
             .expect_err("unknown removal target should fail validation");
         assert!(
@@ -1238,29 +1256,17 @@ pub mod tests {
         ])
         .unwrap();
 
-        // A `pre-remove` hook in the removed worktree's `.config/wt.toml` that
-        // would write a marker (outside the worktree) if it ever ran. Commit it
-        // so the worktree stays clean: the real picker only reaches `do_removal`
-        // after `prepare_worktree_removal` has verified cleanliness, and
-        // `do_removal` re-checks before removal.
+        // A `pre-remove` hook in the invoking worktree's `.config/wt.toml` —
+        // the config the picker removal resolves against — that would write a
+        // marker if it ever ran.
         let marker_dir = tempfile::tempdir().unwrap();
         let marker = marker_dir.path().join("pre-remove-ran");
-        fs::create_dir_all(wt_path.join(".config")).unwrap();
+        fs::create_dir_all(test.path().join(".config")).unwrap();
         fs::write(
-            wt_path.join(".config/wt.toml"),
+            test.path().join(".config/wt.toml"),
             format!("pre-remove = {:?}\n", format!("touch {}", marker.display())),
         )
         .unwrap();
-        worktrunk::shell_exec::Cmd::new("git")
-            .args(["add", ".config/wt.toml"])
-            .current_dir(&wt_path)
-            .run()
-            .unwrap();
-        worktrunk::shell_exec::Cmd::new("git")
-            .args(["commit", "-m", "Add pre-remove hook"])
-            .current_dir(&wt_path)
-            .run()
-            .unwrap();
 
         let result = RemoveResult::RemovedWorktree {
             main_path: test.path().to_path_buf(),
@@ -1281,4 +1287,138 @@ pub mod tests {
         assert!(!wt_path.exists(), "worktree should be removed");
         assert!(!marker.exists(), "unapproved pre-remove hook must not run");
     }
+
+    /// Build a `WorktreeSkimItem` from a snapshot `ListItem`.
+    fn picker_item(branch_name: &str, item: ListItem) -> Arc<dyn SkimItem> {
+        Arc::new(WorktreeSkimItem {
+            search_text: branch_name.to_string(),
+            rendered: Arc::new(Mutex::new(String::new())),
+            branch_name: branch_name.to_string(),
+            item: Arc::new(item),
+            preview_cache: Arc::new(dashmap::DashMap::new()),
+        }) as Arc<dyn SkimItem>
+    }
+
+    /// Build a `WorktreeSkimItem` standing in for a detached-worktree row.
+    fn detached_picker_item(path: &Path) -> Arc<dyn SkimItem> {
+        let mut item = ListItem::new_branch("abc123".to_string(), "(detached)".to_string());
+        item.branch = None;
+        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+            path: path.to_path_buf(),
+            detached: true,
+            ..Default::default()
+        }));
+        picker_item("(detached)", item)
+    }
+
+    /// Build a `WorktreeSkimItem` standing in for a branched-worktree row.
+    fn branched_picker_item(branch: &str, path: &Path) -> Arc<dyn SkimItem> {
+        let mut item = ListItem::new_branch("abc123".to_string(), branch.to_string());
+        item.kind = ItemKind::Worktree(Box::new(WorktreeData {
+            path: path.to_path_buf(),
+            ..Default::default()
+        }));
+        picker_item(branch, item)
+    }
+
+    /// Build a `WorktreeSkimItem` standing in for a branch-only row (no worktree).
+    fn branch_only_picker_item(branch: &str) -> Arc<dyn SkimItem> {
+        picker_item(
+            branch,
+            ListItem::new_branch("abc123".to_string(), branch.to_string()),
+        )
+    }
+
+    /// Two detached worktrees both render the branch label `(detached)`, but
+    /// each row's `output()` token carries its unique path. alt-r on the
+    /// second row must remove exactly that worktree — not the first detached
+    /// one a branch-name match would resolve to — and drop only its row.
+    #[test]
+    fn test_invoke_removes_selected_detached_worktree_by_path_token() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let wt_dir = tempfile::tempdir().unwrap();
+        let first_path = wt_dir.path().join("detached-one");
+        let second_path = wt_dir.path().join("detached-two");
+
+        for (branch, path) in [
+            ("to-detach-one", first_path.as_path()),
+            ("to-detach-two", second_path.as_path()),
+        ] {
+            repo.run_command(&["worktree", "add", "-b", branch, path.to_str().unwrap()])
+                .unwrap();
+            worktrunk::shell_exec::Cmd::new("git")
+                .args(["checkout", "--detach", "HEAD"])
+                .current_dir(path)
+                .run()
+                .unwrap();
+        }
+
+        let reported_paths: Vec<_> = repo
+            .list_worktrees()
+            .unwrap()
+            .iter()
+            .filter(|wt| wt.branch.is_none())
+            .map(|wt| wt.path.clone())
+            .collect();
+        let first_reported = reported_paths
+            .iter()
+            .find(|path| path.file_name().is_some_and(|name| name == "detached-one"))
+            .unwrap();
+        let second_reported = reported_paths
+            .iter()
+            .find(|path| path.file_name().is_some_and(|name| name == "detached-two"))
+            .unwrap();
+
+        let first_item = detached_picker_item(first_reported);
+        let second_item = detached_picker_item(second_reported);
+        let first_output = first_item.output().to_string();
+        let second_output = second_item.output().to_string();
+        assert_ne!(first_output, second_output);
+        assert_eq!(
+            picker_item_identifier(second_item.as_ref()),
+            second_reported.to_string_lossy()
+        );
+
+        let signal_dir = tempfile::tempdir().unwrap();
+        let signal_path = signal_dir.path().join("remove-signal");
+        fs::write(&signal_path, &second_output).unwrap();
+
+        let items = Arc::new(Mutex::new(vec![
+            Arc::clone(&first_item),
+            Arc::clone(&second_item),
+        ]));
+        let mut collector = PickerCollector {
+            items: Arc::clone(&items),
+            signal_path,
+            repo: repo.clone(),
+            approvals: Arc::new(Approvals::default()),
+        };
+
+        let (_rx, _interrupt) = collector.invoke("remove", Arc::new(AtomicUsize::new(0)));
+
+        let remaining: Vec<_> = items
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|item| item.output().to_string())
+            .collect();
+        assert_eq!(remaining, vec![first_output]);
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while second_path.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(first_path.exists(), "first detached worktree should remain");
+        assert!(
+            !second_path.exists(),
+            "selected detached worktree should be removed"
+        );
+    }
+
+    // Note: skim's `as_any().downcast_ref::<WorktreeSkimItem>()` fails at
+    // runtime due to TypeId mismatch between skim's reader thread and the main
+    // compilation unit (skim 0.20 bug). The invoke() code path uses output()
+    // matching instead. Full TUI tests require interactive skim — verified
+    // via tmux-cli during development.
 }

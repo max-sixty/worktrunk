@@ -952,7 +952,8 @@ mod unix_tests {
     #[case("fish")]
     #[case("nu")]
     fn test_wrapper_switch_with_execute(#[case] shell: &str, repo: TestRepo) {
-        // Use --yes to skip approval prompt in tests
+        // `echo` with `executed` as a trailing arg, run through each wrapper.
+        // `--yes` skips the approval prompt.
         let output = exec_through_wrapper(
             shell,
             &repo,
@@ -960,9 +961,11 @@ mod unix_tests {
             &[
                 "--create",
                 "test-exec",
-                "--execute",
-                "echo executed",
                 "--yes",
+                "--execute",
+                "echo",
+                "--",
+                "executed",
             ],
         );
 
@@ -976,11 +979,11 @@ mod unix_tests {
             shell
         );
 
-        // Consolidated snapshot - output should be identical across all shells
+        // Per-shell snapshot: the `Executing (--execute):` line escapes the
+        // trailing arg for the directive shell, so fish differs from the
+        // POSIX wrappers — output is no longer identical across shells.
         shell_wrapper_settings().bind(|| {
-            insta::allow_duplicates! {
-                assert_snapshot!("switch_with_execute", &output.combined);
-            }
+            assert_snapshot!(format!("switch_with_execute_{shell}"), &output.combined);
         });
     }
 

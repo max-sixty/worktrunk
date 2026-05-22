@@ -668,6 +668,62 @@ fn test_switch_with_execute_trailing_args_metachars_fish(repo: TestRepo) {
         );
     });
 }
+
+/// A `--execute` value that is a shell command line rather than a single
+/// program name gets a deprecation warning for the upcoming argv input model;
+/// a single program name stays silent.
+#[rstest]
+fn test_switch_execute_argv_deprecation_warning(repo: TestRepo) {
+    let (cd_path, exec_path, _guard) = directive_files();
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        // Shell syntax / multiple words — not a single program name.
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &["--create", "dep-shell", "--execute", "echo hi && ls"],
+            None,
+        );
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        assert_cmd_snapshot!("switch_execute_deprecation_shell_syntax", cmd);
+
+        // A single program name — unaffected, no warning.
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &["--create", "dep-ok", "--execute", "git"],
+            None,
+        );
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        assert_cmd_snapshot!("switch_execute_deprecation_compatible", cmd);
+
+        // Trailing args are folded into the suggested command line, not dropped.
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &["--create", "dep-args", "--execute", "npm run", "--", "test"],
+            None,
+        );
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        assert_cmd_snapshot!("switch_execute_deprecation_trailing_args", cmd);
+
+        // Under a fish wrapper the suggestion wraps in `fish`, not POSIX `sh`.
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &[
+                "--create",
+                "dep-fish",
+                "--execute",
+                "set -lx FOO bar; echo $FOO",
+            ],
+            None,
+        );
+        configure_directive_files(&mut cmd, &cd_path, &exec_path);
+        cmd.env("WORKTRUNK_SHELL", "fish");
+        assert_cmd_snapshot!("switch_execute_deprecation_fish_wrapper", cmd);
+    });
+}
 // Error tests
 #[rstest]
 fn test_switch_error_missing_worktree_directory(mut repo: TestRepo) {
@@ -1092,27 +1148,32 @@ fn test_switch_no_config_commands_with_yes(repo: TestRepo) {
     );
 }
 
-/// `wt switch --create <new> --base <other>` resolves `pre-start` / `post-start`
-/// from the base branch's committed `.config/wt.toml` — the worktree these hooks
-/// run in is a checkout of that branch. The primary worktree (cwd) has no
-/// project config at all; only `other-base` does, so a regression that read the
-/// invoking worktree's config would run nothing.
+/// `wt switch --create` resolves `pre-start` / `post-start` from the
+/// **invoking** worktree's `.config/wt.toml`, read from its working tree — so
+/// an *uncommitted* config fires the hooks (the regression behind #2856 and
+/// #2818). The base branch's committed `.config/wt.toml` is not consulted, even
+/// though the new worktree is a checkout of it.
 #[rstest]
-fn test_switch_create_reads_base_branch_config(mut repo: TestRepo) {
-    // Commit a `.config/wt.toml` on `other-base` only (not on `main`).
+fn test_switch_create_reads_invoking_worktree_config(mut repo: TestRepo) {
+    // The base branch carries a *committed* hook that must be ignored.
     let other_wt = repo.add_worktree("other-base");
     fs::create_dir_all(other_wt.join(".config")).unwrap();
     fs::write(
         other_wt.join(".config/wt.toml"),
-        // `{{ repo_path }}` is the main worktree root regardless of which
-        // worktree the hook runs in, so the markers land where the test reads.
-        r#"pre-start = "echo pre-start-from-base > {{ repo_path }}/pre-start-marker.txt"
-post-start = "echo post-start-from-base > {{ repo_path }}/post-start-marker.txt"
-"#,
+        r#"post-start = "echo from-base-branch > {{ repo_path }}/base-branch-marker.txt""#,
     )
     .unwrap();
     repo.run_git_in(&other_wt, &["add", ".config/wt.toml"]);
-    repo.run_git_in(&other_wt, &["commit", "-m", "Add hooks on other-base"]);
+    repo.run_git_in(&other_wt, &["commit", "-m", "Committed hook on other-base"]);
+
+    // The invoking worktree (`main`, cwd) has an *uncommitted* `.config/wt.toml`.
+    // `{{ repo_path }}` is the main worktree root regardless of which worktree
+    // the hook runs in, so the markers land where the test reads.
+    repo.write_project_config(
+        r#"pre-start = "echo pre-start-from-invoking > {{ repo_path }}/pre-start-marker.txt"
+post-start = "echo post-start-from-invoking > {{ repo_path }}/post-start-marker.txt"
+"#,
+    );
 
     let output = repo
         .wt_command()
@@ -1136,30 +1197,42 @@ post-start = "echo post-start-from-base > {{ repo_path }}/post-start-marker.txt"
     wait_for_file_content(&pre_marker);
     assert_eq!(
         fs::read_to_string(&pre_marker).unwrap().trim(),
-        "pre-start-from-base",
-        "pre-start should run with the base branch's config"
+        "pre-start-from-invoking",
+        "pre-start should run from the invoking worktree's uncommitted config"
     );
     let post_marker = repo.root_path().join("post-start-marker.txt");
     wait_for_file_content(&post_marker);
     assert_eq!(
         fs::read_to_string(&post_marker).unwrap().trim(),
-        "post-start-from-base",
-        "post-start should run with the base branch's config"
+        "post-start-from-invoking",
+        "post-start should run from the invoking worktree's uncommitted config"
+    );
+
+    // The base branch's committed hook must never run.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert!(
+        !repo.root_path().join("base-branch-marker.txt").exists(),
+        "the base branch's committed config must not be consulted for `--create`"
     );
 }
 
-/// `wt switch <existing>` resolves `post-switch` from the destination worktree's
-/// `.config/wt.toml`, not the worktree `wt switch` ran in. Only the destination
-/// has a project config here.
+/// `wt switch <existing>` resolves `post-switch` from the **invoking** worktree's
+/// `.config/wt.toml` — the worktree `wt switch` ran in — not the destination's.
 #[rstest]
-fn test_switch_existing_reads_destination_worktree_config(mut repo: TestRepo) {
+fn test_switch_existing_reads_invoking_worktree_config(mut repo: TestRepo) {
+    // The destination worktree carries its own hook, which must be ignored.
     let dest = repo.add_worktree("dest");
     fs::create_dir_all(dest.join(".config")).unwrap();
     fs::write(
         dest.join(".config/wt.toml"),
-        r#"post-switch = "echo post-switch-from-dest > {{ repo_path }}/post-switch-marker.txt""#,
+        r#"post-switch = "echo from-dest > {{ repo_path }}/dest-marker.txt""#,
     )
     .unwrap();
+
+    // The invoking worktree (`main`, cwd) carries the hook that should run.
+    repo.write_project_config(
+        r#"post-switch = "echo from-invoking > {{ repo_path }}/post-switch-marker.txt""#,
+    );
 
     let output = repo
         .wt_command()
@@ -1176,20 +1249,26 @@ fn test_switch_existing_reads_destination_worktree_config(mut repo: TestRepo) {
     wait_for_file_content(&marker);
     assert_eq!(
         fs::read_to_string(&marker).unwrap().trim(),
-        "post-switch-from-dest",
-        "post-switch should run with the destination worktree's config"
+        "from-invoking",
+        "post-switch should run with the invoking worktree's config"
+    );
+
+    // The destination worktree's own hook must never run.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert!(
+        !repo.root_path().join("dest-marker.txt").exists(),
+        "the destination worktree's config must not be consulted"
     );
 }
 
-/// A destination worktree with a malformed `.config/wt.toml` makes `wt switch
-/// <existing>` abort with the parse error in stderr — no silent fall-through
-/// to a different config. The path is surfaced so the user can find and fix
-/// the offending file.
+/// A malformed `.config/wt.toml` in the invoking worktree makes `wt switch`
+/// abort with the parse error in stderr — no silent fall-through to a different
+/// config. The path is surfaced so the user can find and fix the offending file.
 #[rstest]
-fn test_switch_existing_aborts_on_malformed_destination_config(mut repo: TestRepo) {
-    let dest = repo.add_worktree("dest");
-    fs::create_dir_all(dest.join(".config")).unwrap();
-    fs::write(dest.join(".config/wt.toml"), "this is not [ valid toml").unwrap();
+fn test_switch_aborts_on_malformed_invoking_config(mut repo: TestRepo) {
+    repo.add_worktree("dest");
+    // Malformed config in the invoking worktree (`main`, cwd).
+    repo.write_project_config("this is not [ valid toml");
 
     let output = repo
         .wt_command()
@@ -1199,7 +1278,7 @@ fn test_switch_existing_aborts_on_malformed_destination_config(mut repo: TestRep
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !output.status.success(),
-        "wt switch should abort on a malformed destination config; stderr:\n{stderr}"
+        "wt switch should abort on a malformed invoking-worktree config; stderr:\n{stderr}"
     );
     assert!(
         stderr.contains("wt.toml"),
@@ -1207,9 +1286,10 @@ fn test_switch_existing_aborts_on_malformed_destination_config(mut repo: TestRep
     );
 }
 
-/// `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path for *every* config read —
-/// including `wt switch --create`'s base-ref preview — so the override file's
-/// hooks run, not the base branch's committed `.config/wt.toml`.
+/// `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path for *every* config read,
+/// so `wt switch --create` resolves its hooks from the override file. The base
+/// branch's committed `.config/wt.toml`, which the new worktree checks out, is
+/// not consulted.
 #[rstest]
 fn test_switch_create_honors_project_config_path_override(mut repo: TestRepo) {
     // The base branch carries a committed hook that must be ignored.
@@ -2560,24 +2640,10 @@ fn test_switch_pr_fork(#[from(repo_with_remote)] repo: TestRepo) {
 fn test_switch_pr_hooks_see_pr_vars(#[from(repo_with_remote)] repo: TestRepo) {
     // Set up the same fork-PR scenario as test_switch_pr_fork: a refs/pull/42/head on the
     // bare remote, origin redirected to GitHub-style URL, and `gh api` mocked.
-    // The PR commit carries the project config so the post-switch hooks read it
-    // from the new worktree (a checkout of refs/pull/42/head) directly.
     repo.run_git(&["checkout", "-b", "pr-source"]);
     fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
-    // Each hook writes its own marker in the primary worktree so we can verify
-    // post-switch + post-start (background) populate pr_number/pr_url too.
-    // {{ repo_path }} is always the main repo's working tree.
-    fs::create_dir_all(repo.root_path().join(".config")).unwrap();
-    fs::write(
-        repo.root_path().join(".config/wt.toml"),
-        r#"pre-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_start.txt"
-post-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_start.txt"
-post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_switch.txt"
-"#,
-    )
-    .unwrap();
-    repo.run_git(&["add", "pr-file.txt", ".config/wt.toml"]);
-    repo.run_git(&["commit", "-m", "PR commit with hook config"]);
+    repo.run_git(&["add", "pr-file.txt"]);
+    repo.run_git(&["commit", "-m", "PR commit"]);
 
     let commit_sha = repo
         .git_command()
@@ -2589,6 +2655,21 @@ post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_pa
         .to_string();
     repo.run_git(&["push", "origin", &format!("{}:refs/pull/42/head", sha)]);
     repo.run_git(&["checkout", "main"]);
+
+    // The hooks live in the invoking worktree (`main`), where `wt switch pr:42`
+    // runs — the `pr_*` template vars come from PR resolution, independent of
+    // where the config lives. Each hook writes its own marker in the primary
+    // worktree so we can verify post-switch + post-start (background) populate
+    // pr_number/pr_url too. {{ repo_path }} is always the main repo's working tree.
+    fs::create_dir_all(repo.root_path().join(".config")).unwrap();
+    fs::write(
+        repo.root_path().join(".config/wt.toml"),
+        r#"pre-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/pre_start.txt"
+post-start = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_start.txt"
+post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_path }}/post_switch.txt"
+"#,
+    )
+    .unwrap();
 
     let bare_url = String::from_utf8_lossy(
         &repo
@@ -2655,17 +2736,16 @@ post-switch = "echo 'pr_number={{ pr_number }} pr_url={{ pr_url }}' > {{ repo_pa
     }
 }
 
-/// `wt switch pr:N` resolves `post-start` etc. from the PR's tree — the fetched
-/// head ref, potentially from a fork — and the approval prompt reads that same
-/// PR config, so what the prompt lists can't diverge from what runs. The local
-/// repo has no project config; only the PR commit does. Without `--yes` the
-/// prompt lists the PR's hook and bails (non-interactive); with `--yes` the
-/// hook executes against the new worktree (a checkout of the PR head).
+/// `wt switch pr:N` resolves `post-start` etc. from the **invoking** worktree's
+/// `.config/wt.toml` — not the PR's own committed config, even though the new
+/// worktree is a checkout of the PR head. The approval prompt lists those same
+/// invoking-worktree hooks, so the prompt can't diverge from what runs. The PR
+/// commit here carries a *different* hook that must never run.
 #[rstest]
-fn test_switch_pr_reads_pr_ref_config(#[from(repo_with_remote)] repo: TestRepo) {
+fn test_switch_pr_reads_invoking_worktree_config(#[from(repo_with_remote)] repo: TestRepo) {
     // Fork-PR scenario (mirrors `test_switch_pr_hooks_see_pr_vars`): a
     // refs/pull/42/head on the bare remote, origin redirected to a GitHub URL,
-    // `gh api` mocked — but the PR commit carries a `.config/wt.toml`.
+    // `gh api` mocked. The PR commit carries its own `.config/wt.toml`.
     repo.run_git(&["checkout", "-b", "pr-source"]);
     fs::write(repo.root_path().join("pr-file.txt"), "PR content").unwrap();
     fs::create_dir_all(repo.root_path().join(".config")).unwrap();
@@ -2688,10 +2768,16 @@ fn test_switch_pr_reads_pr_ref_config(#[from(repo_with_remote)] repo: TestRepo) 
     .trim()
     .to_string();
     repo.run_git(&["push", "origin", &format!("{sha}:refs/pull/42/head")]);
-    // Back on `main`, which never had `.config/wt.toml` committed — `pr-source`
-    // branched off before that commit, so `git checkout main` drops it from the
-    // working tree, leaving the local repo with no project config.
+    // Back on `main`: `pr-source` branched off before the PR commit, so
+    // `git checkout main` drops the PR's `.config/wt.toml` from the working tree.
     repo.run_git(&["checkout", "main"]);
+
+    // The invoking worktree (`main`) carries its own — uncommitted — hook. This
+    // is the only `.config/wt.toml` on disk here, and the one `wt switch pr:42`
+    // must resolve against.
+    repo.write_project_config(
+        r#"post-start = "echo INVOKING-HOOK-RAN > {{ repo_path }}/invoking-hook-marker.txt""#,
+    );
 
     let bare_url = String::from_utf8_lossy(
         &repo
@@ -2732,27 +2818,32 @@ fn test_switch_pr_reads_pr_ref_config(#[from(repo_with_remote)] repo: TestRepo) 
     }"#;
     let mock_bin = setup_mock_gh_for_pr(&repo, Some(gh_response));
 
-    // (a) Without `--yes`: the approval prompt prints the PR's command template
-    // to stderr, then bails (stdin is not a TTY in tests). No worktree, no hook.
+    // (a) Without `--yes`: the approval prompt lists the *invoking* worktree's
+    // hook (never the PR's), then bails (stdin is not a TTY in tests).
     let mut cmd = repo.wt_command();
     cmd.args(["switch", "pr:42"]);
     configure_mock_cli_env(&mut cmd, &mock_bin);
     let output = cmd.output().expect("wt switch pr:42 should run");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("PR-CONFIG-HOOK-RAN"),
-        "approval prompt should list the PR ref's post-start hook; stderr:\n{stderr}"
+        stderr.contains("INVOKING-HOOK-RAN"),
+        "approval prompt should list the invoking worktree's post-start hook; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("PR-CONFIG-HOOK-RAN"),
+        "the PR ref's committed hook must not appear in the prompt; stderr:\n{stderr}"
     );
     assert!(
         !output.status.success(),
         "non-interactive approval should bail without running the hook"
     );
     assert!(
-        !repo.root_path().join("pr-hook-marker.txt").exists(),
+        !repo.root_path().join("invoking-hook-marker.txt").exists(),
         "a declined approval must not run the hook"
     );
 
-    // (b) With `--yes`: the PR's `post-start` runs against the new worktree.
+    // (b) With `--yes`: the invoking worktree's `post-start` runs; the PR's
+    // committed hook never does.
     let mut cmd = repo.wt_command();
     cmd.args(["switch", "pr:42", "--yes"]);
     configure_mock_cli_env(&mut cmd, &mock_bin);
@@ -2763,12 +2854,17 @@ fn test_switch_pr_reads_pr_ref_config(#[from(repo_with_remote)] repo: TestRepo) 
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
-    let marker = repo.root_path().join("pr-hook-marker.txt");
+    let marker = repo.root_path().join("invoking-hook-marker.txt");
     wait_for_file_content(&marker);
     assert_eq!(
         fs::read_to_string(&marker).unwrap().trim(),
-        "PR-CONFIG-HOOK-RAN",
-        "post-start should run with the PR ref's config"
+        "INVOKING-HOOK-RAN",
+        "post-start should run from the invoking worktree's config"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert!(
+        !repo.root_path().join("pr-hook-marker.txt").exists(),
+        "the PR ref's committed config must not be consulted"
     );
 }
 

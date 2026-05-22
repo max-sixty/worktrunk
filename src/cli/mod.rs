@@ -266,6 +266,39 @@ pub(crate) struct Cli {
     pub command: Option<Commands>,
 }
 
+/// Shared `--no-hooks` / `--no-verify` flags for commands that resolve hook
+/// skipping to a plain `bool` (`switch`, `remove`, `step commit`,
+/// `step squash`).
+///
+/// `wt merge` does not flatten this struct: its hooks flag is tri-state
+/// (`Option<bool>`, so config `[merge] verify` can still apply) and it carries
+/// a positive `--verify` override. It declares its own flags but routes the
+/// `--no-verify` deprecation through `crate::warn_no_verify_deprecated`, so the
+/// warning text lives in exactly one place.
+#[derive(Args)]
+pub(crate) struct HookFlags {
+    /// Skip hooks
+    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+    pub(crate) verify: bool,
+
+    /// Skip hooks (deprecated alias for --no-hooks)
+    #[arg(long = "no-verify", hide = true)]
+    pub(crate) no_verify_deprecated: bool,
+}
+
+impl HookFlags {
+    /// Resolve to the effective verify value, emitting the deprecation warning
+    /// once if `--no-verify` was used.
+    pub(crate) fn resolve(&self) -> bool {
+        if self.no_verify_deprecated {
+            crate::warn_no_verify_deprecated();
+            false
+        } else {
+            self.verify
+        }
+    }
+}
+
 #[derive(Args)]
 pub(crate) struct SwitchArgs {
     /// Branch name or shortcut
@@ -316,8 +349,8 @@ pub(crate) struct SwitchArgs {
     /// `wsc feature -- 'Fix GH #322'` runs `claude 'Fix GH #322'`,
     /// starting Claude with a prompt.
     ///
-    /// Template example: `-x 'code {{ worktree_path }}'` opens VS Code
-    /// at the worktree, `-x 'tmux new -s {{ branch | sanitize }}'` starts
+    /// Template example: `-x code -- '{{ worktree_path }}'` opens VS Code
+    /// at the worktree, `-x tmux -- new -s '{{ branch | sanitize }}'` starts
     /// a tmux session named after the branch.
     #[arg(short = 'x', long, requires = "branch")]
     pub(crate) execute: Option<String>,
@@ -344,13 +377,8 @@ pub(crate) struct SwitchArgs {
     #[arg(long, overrides_with = "no_cd", hide = true)]
     pub(crate) cd: bool,
 
-    /// Skip hooks
-    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
-    pub(crate) verify: bool,
-
-    /// Skip hooks (deprecated alias for --no-hooks)
-    #[arg(long = "no-verify", hide = true)]
-    pub(crate) no_verify_deprecated: bool,
+    #[command(flatten)]
+    pub(crate) hooks: HookFlags,
 
     /// Output format
     ///
@@ -420,18 +448,14 @@ pub(crate) struct RemoveArgs {
     #[arg(long)]
     pub(crate) foreground: bool,
 
-    /// Skip hooks
-    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
-    pub(crate) verify: bool,
-
-    /// Skip hooks (deprecated alias for --no-hooks)
-    #[arg(long = "no-verify", hide = true)]
-    pub(crate) no_verify_deprecated: bool,
+    #[command(flatten)]
+    pub(crate) hooks: HookFlags,
 
     /// Force worktree removal
     ///
-    /// Remove worktrees even if they contain untracked files (like build
-    /// artifacts). Without this flag, removal fails if untracked files exist.
+    /// Remove a dirty worktree, including staged, modified, and untracked
+    /// files. Without this flag, removal fails if the worktree has any
+    /// uncommitted changes.
     #[arg(short, long)]
     pub(crate) force: bool,
 
@@ -992,16 +1016,16 @@ Worktrunk has two force flags for different situations:
 
 | Flag | Scope | When to use |
 |------|-------|-------------|
-| `--force` (`-f`) | Worktree | Worktree has untracked files |
+| `--force` (`-f`) | Worktree | Worktree has uncommitted changes |
 | `--force-delete` (`-D`) | Branch | Branch has unmerged commits |
 
 ```console
-$ wt remove feature --force       # Remove worktree with untracked files
+$ wt remove feature --force       # Remove dirty worktree
 $ wt remove feature -D            # Delete unmerged branch
 $ wt remove feature --force -D    # Both
 ```
 
-Without `--force`, removal fails if the worktree contains untracked files. Without `--force-delete`, removal keeps branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of merge status.
+Without `--force`, removal fails if the worktree has staged, modified, or untracked files. Without `--force-delete`, removal keeps branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of merge status.
 
 ## Background removal
 
@@ -1257,7 +1281,7 @@ Manage approvals with `wt config approvals add` and `wt config approvals clear`.
 
 # Configuration
 
-Hooks can be defined in project config (`.config/wt.toml`) or user config (`~/.config/worktrunk/config.toml`). Both use the same format.
+Hooks can be defined in project config (`.config/wt.toml`) or user config (`~/.config/worktrunk/config.toml`). Both use the same format. The project config is read from the worktree the command ran in.
 
 ## Hook forms
 

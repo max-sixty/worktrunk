@@ -5,9 +5,9 @@ info:
   args:
     - switch
     - "--create"
-    - feat;id
+    - dep-ok
     - "--execute"
-    - "echo {{ branch }}"
+    - git
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -38,6 +38,8 @@ info:
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_DIRECTIVE_CD_FILE: "[DIRECTIVE_CD_FILE]"
+    WORKTRUNK_DIRECTIVE_EXEC_FILE: "[DIRECTIVE_EXEC_FILE]"
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
@@ -57,14 +59,8 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-feat;id
 
 ----- stderr -----
-[33m▲[39m [33m[1m--execute[22m will change in a future release: it will run a single program, with arguments after [1m--[22m, not a shell command line[39m
-[2m↳[22m [2mComment at [4mhttps://github.com/max-sixty/worktrunk/issues/2860[24m if the new single-program form would make a workflow worse; to run this command line unchanged, pass it to a shell: [4m--execute sh -- -c 'echo {{ branch }}'[24m[22m
-[32m✓[39m [32mCreated branch [1mfeat;id[22m from [1mmain[22m and worktree @ [1m'_REPO_.feat;id'[22m[39m
-[2m↳[22m [2mTo customize worktree locations, run [4mwt config create[24m[22m
-[33m▲[39m [33mCannot change directory — shell integration not installed[39m
-[2m↳[22m [2mTo enable automatic cd, run [4mwt config shell install[24m[22m
-[36m◎[39m [36mExecuting (--execute) @ [1m'_REPO_.feat;id'[22m:[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'feat;id'[0m[2m
+[32m✓[39m [32mCreated branch [1mdep-ok[22m from [1mmain[22m and worktree @ [1m_REPO_.dep-ok[22m[39m
+[36m◎[39m [36mExecuting (--execute):[39m
+[107m [0m [2m[0m[2m[34mgit[0m[2m

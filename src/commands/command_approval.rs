@@ -22,7 +22,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use color_print::cformat;
-use worktrunk::config::Approvals;
+use worktrunk::config::{Approvals, require_approvals_path};
 use worktrunk::git::{GitError, HookType};
 use worktrunk::styling::{
     INFO_SYMBOL, WARNING_SYMBOL, eprint, eprintln, format_bash_with_gutter, format_with_gutter,
@@ -77,14 +77,17 @@ pub fn approve_command_batch(
             .iter()
             .map(|cmd| cmd.command.template.clone())
             .collect();
-        if let Err(e) = fresh_approvals.approve_commands(project_id.to_string(), commands, None) {
+        let save_result = require_approvals_path().and_then(|path| {
+            fresh_approvals.approve_commands(project_id.to_string(), commands, &path)
+        });
+        if let Err(e) = save_result {
             eprintln!(
                 "{}",
                 warning_message(format!("Failed to save command approval: {e}"))
             );
             eprintln!(
                 "{}",
-                hint_message("Approval will be requested again next time.")
+                hint_message("Approval will be requested again next time")
             );
         }
     }

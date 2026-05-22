@@ -133,9 +133,6 @@ Options:
   -b, --branch <BRANCH>
           Branch to operate on (defaults to current worktree)
 
-      --no-hooks
-          Skip hooks
-
       --stage <STAGE>
           What to stage before committing [default: all]
 
@@ -151,6 +148,9 @@ Options:
           Print help (see a summary with '-h')
 
 Automation:
+      --no-hooks
+          Skip hooks
+
       --format <FORMAT>
           Output format
 
@@ -232,9 +232,6 @@ Arguments:
           Defaults to default branch.
 
 Options:
-      --no-hooks
-          Skip hooks
-
       --stage <STAGE>
           What to stage before committing [default: all]
 
@@ -250,6 +247,9 @@ Options:
           Print help (see a summary with '-h')
 
 Automation:
+      --no-hooks
+          Skip hooks
+
       --format <FORMAT>
           Output format
 
@@ -869,7 +869,9 @@ this by using a temporary location.
 ### Clobbering
 
 With `--clobber`, non-worktree paths at target locations are moved to
-`<path>.bak-<timestamp>` before relocating.
+`<path>.bak.<timestamp>` before relocating. If that name is already taken,
+the move counts up (`…-2`, `…-3`, …) until it finds a free name, so an
+existing backup is never overwritten.
 
 ### Main worktree behavior
 
@@ -909,7 +911,8 @@ Options:
       --clobber
           Backup non-worktree paths at target locations
 
-          Moves blocking paths to <path>.bak-<timestamp>.
+          Moves blocking paths to <path>.bak.<timestamp>. If that name is taken, counts up (…-2, …-3
+          , …) to a free name.
 
   -h, --help
           Print help (see a summary with '-h')
