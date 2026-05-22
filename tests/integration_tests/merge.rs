@@ -1745,23 +1745,23 @@ fn test_merge_primary_on_different_branch_dirty(mut repo: TestRepo) {
     ));
 }
 
-/// `wt merge` resolves each hook from the worktree it acts on: `post-merge`
-/// runs in the destination (target's worktree) and reads its config there;
-/// `pre-remove` runs in the feature worktree (still on disk before removal)
-/// and reads its config there. No fallback between worktrees — each
-/// `.config/wt.toml` stands alone.
+/// `wt merge` resolves both teardown hooks from the invoking worktree — the
+/// feature worktree `wt merge` ran in. `post-merge` runs in the merge
+/// destination and `pre-remove` in the feature worktree, but both select their
+/// commands from the feature worktree's `.config/wt.toml`. `main` — the
+/// destination — has no project config, so a destination-sourced `post-merge`
+/// would select nothing and its marker would never appear.
 #[rstest]
-fn test_merge_teardown_hooks_read_acting_worktree_config(mut repo: TestRepo) {
+fn test_merge_teardown_hooks_read_invoking_worktree_config(mut repo: TestRepo) {
     use crate::common::wait_for_file_content;
 
     let pre_remove_marker = repo.root_path().join("pre-remove-ran.txt");
     let post_merge_marker = repo.root_path().join("post-merge-ran.txt");
 
-    // Commit both hooks on `main` so the feature branch inherits them. The
-    // feature worktree then defines them in its own `.config/wt.toml` — same
-    // text as main's. After the merge lands, main still has these definitions
-    // (it fast-forwards to the feature tip), so the `post-merge` hook on the
-    // destination (main) fires from main's post-merge config.
+    // Both hooks live only in the feature worktree's `.config/wt.toml`. `main`
+    // — the merge destination — has no project config, so `post-merge` fires
+    // only by resolving against the invoking feature worktree's config.
+    let feature_wt = repo.add_worktree_with_commit("feature-pm", "feature.txt", "x", "feat: x");
     let config_body = format!(
         r#"pre-remove = "echo 'removing {{{{ branch }}}}' > {}"
 [post-merge]
@@ -1770,13 +1770,10 @@ sync = "echo 'merged {{{{ branch }}}}' > {}"
         pre_remove_marker.to_slash_lossy(),
         post_merge_marker.to_slash_lossy(),
     );
-    repo.write_project_config(&config_body);
-    repo.commit("Add merge hooks on main");
-
-    // The feature worktree inherits the same `.config/wt.toml` because it was
-    // branched off main after the commit above — the feature worktree owns its
-    // own `pre-remove` config locally, no fallback to main needed.
-    let feature_wt = repo.add_worktree_with_commit("feature-pm", "feature.txt", "x", "feat: x");
+    std::fs::create_dir_all(feature_wt.join(".config")).unwrap();
+    std::fs::write(feature_wt.join(".config/wt.toml"), &config_body).unwrap();
+    repo.run_git_in(&feature_wt, &["add", ".config/wt.toml"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add merge hooks"]);
 
     let output = repo
         .wt_command()
@@ -1794,14 +1791,14 @@ sync = "echo 'merged {{{{ branch }}}}' > {}"
     assert_eq!(
         std::fs::read_to_string(&post_merge_marker).unwrap().trim(),
         "merged feature-pm",
-        "post-merge should run with the destination worktree's config"
+        "post-merge runs in the destination but selects its config from the \
+         invoking feature worktree"
     );
-    // pre-remove runs synchronously before removal; the feature worktree's
-    // own `.config/wt.toml` defines it.
+    // pre-remove runs synchronously in the feature worktree before removal.
     assert_eq!(
         std::fs::read_to_string(&pre_remove_marker).unwrap().trim(),
         "removing feature-pm",
-        "pre-remove should run with the feature worktree's own config"
+        "pre-remove should run from the invoking feature worktree's config"
     );
 }
 
