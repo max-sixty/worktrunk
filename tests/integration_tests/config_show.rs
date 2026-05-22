@@ -362,33 +362,34 @@ my-lint = "my-lint-tool"
     );
 }
 
-/// A current-worktree `.config/wt.toml` that still uses the deprecated
-/// `pre-start`/`post-start` hook keys keeps working through `wt hook show`:
-/// `ProjectConfig::load` migrates the keys to `pre-start`/`post-start`
-/// before deserializing, the value parser accepts both the canonical type
-/// argument and the deprecated alias, and Phase 1 of the rename (issue #2838)
-/// migrates silently — no deprecation warning.
+/// A current-worktree `.config/wt.toml` that uses the deprecated
+/// `pre-create`/`post-create` hook keys keeps working through `wt hook show`:
+/// `ProjectConfig::load` migrates the keys to canonical `pre-start`/`post-start`
+/// before deserializing, and the type-argument value parser accepts both the
+/// canonical name and the deprecated alias. The rename is paused at Phase 1
+/// (issue #2838), so the migration is silent — no deprecation warning.
 #[rstest]
-fn test_hook_show_accepts_deprecated_start_hooks(repo: TestRepo) {
+fn test_hook_show_accepts_deprecated_create_hooks(repo: TestRepo) {
     // Single-token commands so the bash highlighter doesn't split them with
     // ANSI codes (same shape as the deep-merge `hook show` tests above).
     repo.write_project_config(
-        r#"[pre-start]
-deps = "pre-start-tool"
+        r#"[pre-create]
+deps = "pre-create-tool"
 
-[post-start]
-deps = "post-start-tool"
+[post-create]
+deps = "post-create-tool"
 "#,
     );
 
-    // The `-create` arg exercises the load-time migration (the `[*-start]` key
-    // must deserialize into the `*_create` field); the `-start` arg additionally
-    // exercises the value parser accepting the deprecated alias.
+    // The `-start` arg passes the canonical type name; the `-create` arg
+    // exercises the value parser accepting the deprecated alias. Both resolve
+    // to the same hook because `ProjectConfig::load` migrates the `[*-create]`
+    // config keys to canonical `[*-start]` before deserializing.
     let cases = [
-        ("pre-start", "pre-start-tool"),
-        ("pre-start", "pre-start-tool"),
-        ("post-start", "post-start-tool"),
-        ("post-start", "post-start-tool"),
+        ("pre-start", "pre-create-tool"),
+        ("pre-create", "pre-create-tool"),
+        ("post-start", "post-create-tool"),
+        ("post-create", "post-create-tool"),
     ];
     for (type_arg, expected) in cases {
         let mut cmd = repo.wt_command();
@@ -652,7 +653,7 @@ fn test_system_config_deprecations_pass_through_gate(repo: TestRepo) {
     let system_config_path = system_config_dir.path().join("config.toml");
     fs::write(
         &system_config_path,
-        r#"post-start = "npm install"
+        r#"post-create = "npm install"
 
 [select]
 pager = "delta --paging=never"
@@ -680,7 +681,7 @@ pager = "delta --paging=never"
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("npm install"),
-        "post-start in system config should migrate to post-start and stay active, got: {stdout}"
+        "deprecated post-create key should migrate to post-start and stay active, got: {stdout}"
     );
 }
 
@@ -3434,31 +3435,6 @@ pager = "delta --paging=never"
 "#,
     )
     .unwrap();
-
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
-        repo.configure_mock_commands(&mut cmd);
-        cmd.arg("config").arg("show").current_dir(repo.root_path());
-        set_temp_home_env(&mut cmd, temp_home.path());
-        set_xdg_config_path(&mut cmd, temp_home.path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-/// `wt config show` reveals the silent `-start` → `-create` hook migration as a
-/// diff. Phase 1 stays warning-free (see issue #2838), so the output carries no
-/// "is deprecated" line — only the proposed diff and the apply hint.
-#[rstest]
-fn test_config_show_displays_start_hook_migration(mut repo: TestRepo, temp_home: TempDir) {
-    repo.setup_mock_ci_tools_unauthenticated();
-
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    let config_path = global_config_dir.join("config.toml");
-    fs::write(&config_path, "pre-start = \"npm install\"\n").unwrap();
 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {

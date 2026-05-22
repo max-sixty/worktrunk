@@ -459,12 +459,22 @@ mod tests {
 
     #[test]
     fn test_parse_hook_type_aliases() {
-        // `pre-start`/`post-start` are deprecated aliases for
-        // `pre-create`/`post-create`.
-        let opts = parse(&["pre-start"]).unwrap();
-        assert_eq!(opts.hook_type, HookType::PreCreate);
-        let opts = parse(&["post-start"]).unwrap();
-        assert_eq!(opts.hook_type, HookType::PostCreate);
+        // `pre-create`/`post-create` are deprecated aliases for the canonical
+        // `pre-start`/`post-start`; both forms parse to the same `HookType`.
+        for name in ["pre-start", "pre-create"] {
+            assert_eq!(
+                parse(&[name]).unwrap().hook_type,
+                HookType::PreCreate,
+                "{name}"
+            );
+        }
+        for name in ["post-start", "post-create"] {
+            assert_eq!(
+                parse(&[name]).unwrap().hook_type,
+                HookType::PostCreate,
+                "{name}"
+            );
+        }
     }
 
     #[test]

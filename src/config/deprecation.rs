@@ -475,10 +475,6 @@ pub struct Deprecations {
     pub approved_commands: bool,
     /// Has `[select]` section (moved to `[switch.picker]`)
     pub select: bool,
-    /// Reserved for future hook-name deprecation tracking; always false.
-    pub pre_start: bool,
-    /// Reserved for future hook-name deprecation tracking; always false.
-    pub post_start: bool,
     /// Has `[ci]` section (moved to `[forge]`)
     pub ci_section: bool,
     /// Has `no-ff` in `[merge]` section (use `ff` instead)
@@ -498,8 +494,6 @@ impl Deprecations {
             && self.commit_gen.is_empty()
             && !self.approved_commands
             && !self.select
-            && !self.pre_start
-            && !self.post_start
             && !self.ci_section
             && !self.no_ff
             && !self.no_cd
@@ -533,8 +527,6 @@ fn detect_deprecations_from_doc(
         commit_gen: find_commit_generation_from_doc(doc),
         approved_commands: find_approved_commands_from_doc(doc),
         select: find_select_from_doc(doc),
-        pre_start: false,
-        post_start: false,
         ci_section: find_ci_section_from_doc(doc),
         no_ff: find_negated_bool_from_doc(doc, "merge", "no-ff", "ff"),
         no_cd: find_negated_bool_from_doc(doc, "switch", "no-cd", "cd"),
@@ -1569,7 +1561,7 @@ pub fn check_and_migrate(
     // For non-config-show commands, emit per-kind warnings but skip the diff.
     // The diff is reserved for `wt config show`, where the user has opted into details.
     //
-    // Some deprecations migrate silently (e.g. the `-start` → `-create` hook
+    // Some deprecations migrate silently (e.g. the `-create` → `-start` hook
     // rename): `format_deprecation_warnings` emits nothing for them. The hint is
     // gated on the warning text being non-empty so a silently-migrated config
     // produces no stray "run wt config show" line with nothing above it.
@@ -3453,8 +3445,6 @@ approved-commands = ["npm install"]
                 commit_gen: CommitGenerationDeprecations::default(),
                 approved_commands: true,
                 select: false,
-                pre_start: false,
-                post_start: false,
                 ci_section: false,
                 no_ff: false,
                 no_cd: false,
@@ -3855,8 +3845,6 @@ pager = "delta --paging=never"
                 commit_gen: CommitGenerationDeprecations::default(),
                 approved_commands: false,
                 select: true,
-                pre_start: false,
-                post_start: false,
                 ci_section: false,
                 no_ff: false,
                 no_cd: false,
@@ -3893,6 +3881,92 @@ pager = "delta --paging=never"
             !migrated.contains("[select]"),
             "Migrated content should not have [select]: {migrated}"
         );
+    }
+
+    fn migrate_create_hooks(content: &str) -> String {
+        let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
+            return content.to_string();
+        };
+        if migrate_create_hooks_doc(&mut doc) {
+            doc.to_string()
+        } else {
+            content.to_string()
+        }
+    }
+
+    /// `migrate_create_hooks_doc` renames the deprecated `pre-create`/`post-create`
+    /// keys to canonical `pre-start`/`post-start`, preserving the value shape
+    /// (string, `[table]`, `[[array-of-tables]]`) at both the top level and
+    /// inside `[projects."..."]`.
+    #[test]
+    fn test_migrate_create_hooks_renames_every_shape() {
+        let content = r#"pre-create = "npm install"
+
+[[post-create]]
+lint = "cargo clippy"
+
+[projects."my-project"]
+pre-create = "cargo build"
+
+[projects."my-project".post-create]
+server = "npm run dev"
+"#;
+        let result = migrate_create_hooks(content);
+        assert!(
+            !result.contains("pre-create") && !result.contains("post-create"),
+            "no deprecated key may remain; got:\n{result}"
+        );
+        assert!(
+            result.contains(r#"pre-start = "npm install""#),
+            "top-level string renamed; got:\n{result}"
+        );
+        assert!(
+            result.contains("[[post-start]]"),
+            "top-level array-of-tables renamed; got:\n{result}"
+        );
+        assert!(
+            result.contains(r#"pre-start = "cargo build""#),
+            "per-project string renamed; got:\n{result}"
+        );
+        assert!(
+            result.contains(r#"[projects."my-project".post-start]"#),
+            "per-project table renamed; got:\n{result}"
+        );
+    }
+
+    /// When the canonical `-start` key already exists, the migrator leaves the
+    /// deprecated `-create` key alone rather than clobbering the user's value.
+    #[test]
+    fn test_migrate_create_hooks_skips_when_start_exists() {
+        let content = r#"pre-create = "old"
+pre-start = "new"
+
+[projects."my-project"]
+post-create = "old"
+post-start = "new"
+"#;
+        assert_eq!(
+            migrate_create_hooks(content),
+            content,
+            "must not clobber an existing canonical key"
+        );
+    }
+
+    #[test]
+    fn test_migrate_create_hooks_invalid_toml() {
+        let content = "this is { not valid toml";
+        assert_eq!(migrate_create_hooks(content), content);
+    }
+
+    #[test]
+    fn snapshot_migrate_create_to_start() {
+        let content = r#"pre-create = "npm install"
+
+[post-create]
+server = "npm run dev"
+"#;
+        let migrated = compute_migrated_content(content);
+        insta::assert_snapshot!(migration_diff(content, &migrated));
     }
 
     fn migrate_switch_picker_timeout(content: &str) -> String {
@@ -4039,8 +4113,6 @@ pager = "delta"
                 commit_gen: CommitGenerationDeprecations::default(),
                 approved_commands: false,
                 select: false,
-                pre_start: false,
-                post_start: false,
                 ci_section: false,
                 no_ff: true,
                 no_cd: true,

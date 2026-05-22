@@ -60,13 +60,13 @@ approved-commands = ["echo 'Setup complete'"]
     snapshot_switch("post_start_single_command", &repo, &["--create", "feature"]);
 }
 
-/// A config that still uses the deprecated `pre-start` hook key loads and runs:
-/// the key is silently migrated to `pre-start`. Phase 1 of the rename emits no
-/// warning (see https://github.com/max-sixty/worktrunk/issues/2838).
+/// A config that uses the deprecated `pre-create` hook key loads and runs: the
+/// key is silently migrated to canonical `pre-start`. Phase 1 of the rename
+/// emits no warning (see https://github.com/max-sixty/worktrunk/issues/2838).
 #[rstest]
-fn test_deprecated_start_hook_key_runs_silently(repo: TestRepo) {
-    repo.write_project_config(r#"pre-start = "echo ran > marker.txt""#);
-    repo.commit("Add deprecated pre-start hook");
+fn test_deprecated_create_hook_key_runs_silently(repo: TestRepo) {
+    repo.write_project_config(r#"pre-create = "echo ran > marker.txt""#);
+    repo.commit("Add deprecated pre-create hook");
     repo.write_test_approvals(
         r#"[projects."../origin"]
 approved-commands = ["echo ran > marker.txt"]
@@ -82,15 +82,15 @@ approved-commands = ["echo ran > marker.txt"]
 
     assert!(
         output.status.success(),
-        "switch with a deprecated pre-start hook should succeed, stderr: {}",
+        "switch with a deprecated pre-create hook should succeed, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // The hook ran — the `pre-start` key was migrated to `pre-start`.
+    // The hook ran — the `pre-create` key was migrated to canonical `pre-start`.
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     assert!(
         worktree_path.join("marker.txt").exists(),
-        "deprecated pre-start hook should have run"
+        "deprecated pre-create hook should have run"
     );
 
     // Phase 1 migrates silently: no deprecation warning, and no stray
@@ -142,7 +142,7 @@ approved-commands = ["exit 1"]
 "#,
     );
 
-    // Failing pre-start hook (via deprecated pre-start name) aborts with FailFast
+    // A failing pre-start hook aborts with FailFast
     snapshot_switch(
         "post_start_failing_command",
         &repo,
