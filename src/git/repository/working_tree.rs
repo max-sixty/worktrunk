@@ -460,21 +460,22 @@ impl<'a> WorkingTree<'a> {
     /// Working-tree diff stats vs HEAD that also count untracked files,
     /// matching the diff `wt step diff` shows.
     ///
-    /// Registers untracked files in a [`TempIndex`] via
-    /// `git add --intent-to-add .`, then runs `git diff --shortstat HEAD`
-    /// against that temp index. The real index is untouched.
+    /// The earlier `TempIndex` + `git add --intent-to-add .` recipe
+    /// intermittently dropped a modified-but-tracked entry from the
+    /// downstream `git diff` (see CI run 26253088868 — `added` came back
+    /// 2 instead of 3 on a `1 modified + 2 untracked` repro). Computing
+    /// tracked stats against HEAD and counting untracked lines directly
+    /// avoids the stat-cache interaction entirely.
     pub fn working_tree_diff_stats_with_untracked(&self) -> anyhow::Result<LineDiff> {
-        let idx = self.temp_index()?;
-        idx.git(["add", "--intent-to-add", "."])
-            .run()
-            .context("Failed to register untracked files")?;
-        let output = idx
-            .git(["diff", "--shortstat", "HEAD"])
-            .run()
-            .context("Failed to compute working-tree diff stats")?;
-        Ok(LineDiff::from_shortstat(&String::from_utf8_lossy(
-            &output.stdout,
-        )))
+        let mut stats = self.working_tree_diff_stats()?;
+
+        let untracked = self.run_command(&["ls-files", "--others", "--exclude-standard", "-z"])?;
+        let root = self.root()?;
+        for rel in untracked.split('\0').filter(|s| !s.is_empty()) {
+            stats.added += count_untracked_added_lines(&root.join(rel));
+        }
+
+        Ok(stats)
     }
 
     /// Open a working copy of this worktree's index for staging
@@ -596,11 +597,11 @@ impl<'a> WorkingTree<'a> {
 /// index would mutate the user's staging state. The trick is to copy the
 /// real index, point `GIT_INDEX_FILE` at the copy, and run those
 /// operations there. Today the callers are
-/// [`WorkingTree::working_tree_diff_stats_with_untracked`] (HEAD± with
-/// untracked, used by `wt list --full` / `wt statusline`),
 /// `WorkingTreeConflictsTask` (write-tree of dirty + untracked, for
-/// merge-conflict probing), and `wt step diff` (diff vs target merge-base
-/// with untracked).
+/// merge-conflict probing) and `wt step diff` (diff vs target merge-base
+/// with untracked). `working_tree_diff_stats_with_untracked` used to
+/// go through here too but no longer does — see that method's docstring
+/// for the stat-cache race that forced the switch.
 pub struct TempIndex {
     temp: tempfile::NamedTempFile,
     worktree_root: PathBuf,
@@ -632,6 +633,31 @@ impl TempIndex {
             .context(self.log_ctx.clone())
             .env("GIT_INDEX_FILE", self.path())
     }
+}
+
+/// Number of "added" lines `git diff --shortstat` would report for a new
+/// (untracked) file, matching git's accounting: skip non-regular files
+/// (symlinks, gitlinks, sockets, …) and binary blobs (content with a NUL
+/// byte in the first 8 KiB, mirroring `buffer_is_binary` in
+/// `xdiff-interface.c`); for text, count one line per `\n` plus one more
+/// if the file ends without a trailing newline.
+fn count_untracked_added_lines(path: &Path) -> usize {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return 0;
+    };
+    if !meta.is_file() {
+        return 0;
+    }
+    let Ok(content) = std::fs::read(path) else {
+        return 0;
+    };
+    let probe_len = content.len().min(8000);
+    if content[..probe_len].contains(&0) {
+        return 0;
+    }
+    let newlines = content.iter().filter(|&&b| b == b'\n').count();
+    let trailing_partial = usize::from(matches!(content.last(), Some(b) if *b != b'\n'));
+    newlines + trailing_partial
 }
 
 #[cfg(test)]
@@ -830,9 +856,10 @@ mod tests {
     #[test]
     fn working_tree_diff_stats_with_untracked_counts_untracked_and_preserves_real_index() {
         // Two-line untracked file plus a one-line tracked modification:
-        // the with-untracked variant must sum both, while the real index
-        // must remain byte-identical (the temp-index trick is the
-        // mechanism — this test guards that contract).
+        // the with-untracked variant must sum both. The real-index
+        // invariant guards against a regression to a temp-index recipe;
+        // direct line counting cannot mutate the real index, so the
+        // assertion is structural rather than mechanism-coupled.
         let test = TestRepo::with_initial_commit();
         std::fs::write(test.root_path().join("tracked.txt"), "old\n").unwrap();
         test.run_git(&["add", "tracked.txt"]);
@@ -856,9 +883,29 @@ mod tests {
         assert_eq!(with_untracked.deleted, 1);
 
         let index_after = std::fs::read(&real_index).unwrap();
-        assert_eq!(
-            index_before, index_after,
-            "real index must not be mutated by the temp-index path"
-        );
+        assert_eq!(index_before, index_after, "real index must not be mutated");
+    }
+
+    #[test]
+    fn count_untracked_added_lines_matches_git_diff_shortstat() {
+        use super::count_untracked_added_lines;
+
+        let dir = tempfile::tempdir().unwrap();
+        let cases: &[(&str, &[u8], usize)] = &[
+            ("empty", b"", 0),
+            ("trailing_newline", b"a\nb\n", 2),
+            ("no_trailing_newline", b"a\nb", 2),
+            ("single_char", b"x", 1),
+            ("only_newline", b"\n", 1),
+            ("binary_with_nul", b"abc\0def\n", 0),
+        ];
+        for (name, content, expected) in cases {
+            let path = dir.path().join(name);
+            std::fs::write(&path, content).unwrap();
+            assert_eq!(count_untracked_added_lines(&path), *expected, "{name}");
+        }
+
+        // Missing path returns 0 (caller already filtered via ls-files).
+        assert_eq!(count_untracked_added_lines(&dir.path().join("nope")), 0);
     }
 }
