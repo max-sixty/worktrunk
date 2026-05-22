@@ -266,6 +266,39 @@ pub(crate) struct Cli {
     pub command: Option<Commands>,
 }
 
+/// Shared `--no-hooks` / `--no-verify` flags for commands that resolve hook
+/// skipping to a plain `bool` (`switch`, `remove`, `step commit`,
+/// `step squash`).
+///
+/// `wt merge` does not flatten this struct: its hooks flag is tri-state
+/// (`Option<bool>`, so config `[merge] verify` can still apply) and it carries
+/// a positive `--verify` override. It declares its own flags but routes the
+/// `--no-verify` deprecation through `crate::warn_no_verify_deprecated`, so the
+/// warning text lives in exactly one place.
+#[derive(Args)]
+pub(crate) struct HookFlags {
+    /// Skip hooks
+    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
+    pub(crate) verify: bool,
+
+    /// Skip hooks (deprecated alias for --no-hooks)
+    #[arg(long = "no-verify", hide = true)]
+    pub(crate) no_verify_deprecated: bool,
+}
+
+impl HookFlags {
+    /// Resolve to the effective verify value, emitting the deprecation warning
+    /// once if `--no-verify` was used.
+    pub(crate) fn resolve(&self) -> bool {
+        if self.no_verify_deprecated {
+            crate::warn_no_verify_deprecated();
+            false
+        } else {
+            self.verify
+        }
+    }
+}
+
 #[derive(Args)]
 pub(crate) struct SwitchArgs {
     /// Branch name or shortcut
@@ -344,13 +377,8 @@ pub(crate) struct SwitchArgs {
     #[arg(long, overrides_with = "no_cd", hide = true)]
     pub(crate) cd: bool,
 
-    /// Skip hooks
-    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
-    pub(crate) verify: bool,
-
-    /// Skip hooks (deprecated alias for --no-hooks)
-    #[arg(long = "no-verify", hide = true)]
-    pub(crate) no_verify_deprecated: bool,
+    #[command(flatten)]
+    pub(crate) hooks: HookFlags,
 
     /// Output format
     ///
@@ -420,13 +448,8 @@ pub(crate) struct RemoveArgs {
     #[arg(long)]
     pub(crate) foreground: bool,
 
-    /// Skip hooks
-    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true, help_heading = "Automation")]
-    pub(crate) verify: bool,
-
-    /// Skip hooks (deprecated alias for --no-hooks)
-    #[arg(long = "no-verify", hide = true)]
-    pub(crate) no_verify_deprecated: bool,
+    #[command(flatten)]
+    pub(crate) hooks: HookFlags,
 
     /// Force worktree removal
     ///
