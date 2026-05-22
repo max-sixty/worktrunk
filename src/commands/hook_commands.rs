@@ -382,7 +382,7 @@ pub fn handle_hook_show(
     let project_id = repo.project_identifier().ok();
 
     // Parse hook type filter if provided. clap's value parser already
-    // validated the string (canonical name or deprecated `-start` alias);
+    // validated the string (canonical name or deprecated `-create` alias);
     // `parse_hook_type` maps both to the canonical `HookType`.
     let filter: Option<HookType> = hook_type_filter
         .map(crate::cli::parse_hook_type)

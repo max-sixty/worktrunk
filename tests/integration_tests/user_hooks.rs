@@ -166,9 +166,8 @@ failing = "exit 1"
 "#,
     );
 
-    // Failing pre-start hook (via deprecated pre-start name) aborts with FailFast.
-    // The worktree is already created before pre-start runs (it was renamed from
-    // pre-start), so the worktree exists but the command exits non-zero.
+    // A failing pre-start hook aborts with FailFast. The worktree is created
+    // before pre-start runs, so it exists even though the command exits non-zero.
     snapshot_switch("user_post_start_failure", &repo, &["--create", "feature"]);
 
     // Worktree exists (created before pre-start ran) but the command failed
@@ -1592,20 +1591,21 @@ fn test_standalone_hook_pre_start(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_standalone_hook_start_alias_runs_silently(repo: TestRepo) {
-    // `wt hook pre-start` is a deprecated alias for `wt hook pre-start`. It
-    // still runs, and Phase 1 of the rename emits no warning (issue #2838).
-    repo.write_project_config(r#"pre-start = "echo 'START_ALIAS' > hook_ran.txt""#);
+fn test_standalone_hook_create_alias_runs_silently(repo: TestRepo) {
+    // `wt hook pre-create` is a deprecated alias for `wt hook pre-start`. It
+    // still runs the canonical `pre-start` hook, and Phase 1 of the rename
+    // emits no warning (issue #2838).
+    repo.write_project_config(r#"pre-start = "echo 'CREATE_ALIAS' > hook_ran.txt""#);
 
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "pre-start", "--yes"]);
+    cmd.args(["hook", "pre-create", "--yes"]);
 
     let output = cmd.output().unwrap();
     assert!(
         output.status.success(),
-        "wt hook pre-start should succeed (alias for pre-start)"
+        "wt hook pre-create should succeed (alias for pre-start)"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -1617,7 +1617,7 @@ fn test_standalone_hook_start_alias_runs_silently(repo: TestRepo) {
     let marker = repo.root_path().join("hook_ran.txt");
     crate::common::wait_for_file_content(&marker);
     let content = fs::read_to_string(&marker).unwrap();
-    assert!(content.contains("START_ALIAS"));
+    assert!(content.contains("CREATE_ALIAS"));
 }
 
 #[rstest]
