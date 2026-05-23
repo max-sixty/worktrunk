@@ -3432,3 +3432,61 @@ fn test_list_integrated_when_squash_merged_on_remote_with_local_diverged(
         "main_state must be \"integrated\" — instead got entry: {feature}"
     );
 }
+
+/// Regression: `wt list` against a worktree whose `<gitdir>/index` file is
+/// absent must not surface `working-tree-conflicts (Failed to copy index
+/// file)`. A missing index is semantically empty (nothing staged), so the
+/// conflict probe should compute against the working tree as if the real
+/// index were empty.
+#[rstest]
+fn test_list_tolerates_missing_index(mut repo: TestRepo) {
+    std::fs::write(repo.root_path().join("shared.txt"), "original").unwrap();
+    repo.commit("Initial commit");
+
+    let feature = repo.add_worktree("feature");
+
+    // Dirty the worktree so WorkingTreeConflictsTask exercises the temp-index path.
+    std::fs::write(feature.join("shared.txt"), "feature changes").unwrap();
+    std::fs::write(feature.join("untracked.txt"), "extra\n").unwrap();
+
+    // Delete the worktree's index file — the state the dispatching session
+    // observed across 37 of 38 user worktrees. The linked worktree's gitdir
+    // is recorded in its `.git` pointer file (`gitdir: <abs path>`).
+    let dot_git = std::fs::read_to_string(feature.join(".git")).unwrap();
+    let feature_gitdir = std::path::PathBuf::from(
+        dot_git
+            .trim()
+            .strip_prefix("gitdir: ")
+            .expect("worktree .git points at a gitdir")
+            .trim(),
+    );
+    let feature_index = feature_gitdir.join("index");
+    std::fs::remove_file(&feature_index).unwrap();
+    assert!(
+        !feature_index.exists(),
+        "precondition: feature index removed"
+    );
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--full"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+
+    assert!(
+        !combined.contains("Failed to copy index file"),
+        "missing index must not surface as a copy error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        !combined.contains("working-tree-conflicts ("),
+        "missing index must not produce a working-tree-conflicts task error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        !feature_index.exists(),
+        "wt list must not resurrect the real index"
+    );
+}

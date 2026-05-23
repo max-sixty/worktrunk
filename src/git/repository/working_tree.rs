@@ -487,7 +487,19 @@ impl<'a> WorkingTree<'a> {
         let log_ctx = path_to_logging_context(self.path());
 
         let temp = tempfile::NamedTempFile::new().context("Failed to create temporary index")?;
-        std::fs::copy(&real_index, temp.path()).context("Failed to copy index file")?;
+        // A missing `<gitdir>/index` is semantically an empty index (nothing
+        // staged), so mirror git's own behaviour: clear the freshly-created
+        // tempfile (a 0-byte file is rejected as "smaller than expected") and
+        // let the first `git` call against `GIT_INDEX_FILE` create a fresh
+        // valid index at that path.
+        match std::fs::copy(&real_index, temp.path()) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::remove_file(temp.path())
+                    .context("Failed to clear temporary index for missing real index")?;
+            }
+            Err(e) => return Err(e).context("Failed to copy index file"),
+        }
         // Validate UTF-8 once so `TempIndex::path` is infallible.
         temp.path()
             .to_str()
@@ -638,6 +650,7 @@ impl TempIndex {
 mod tests {
     use super::has_initialized_submodules_from_status;
     use crate::git::Repository;
+    use crate::shell_exec::Cmd;
     use crate::testing::TestRepo;
 
     #[test]
@@ -859,6 +872,54 @@ mod tests {
         assert_eq!(
             index_before, index_after,
             "real index must not be mutated by the temp-index path"
+        );
+    }
+
+    #[test]
+    fn temp_index_tolerates_missing_real_index() {
+        // A worktree whose `<gitdir>/index` file is absent must not error
+        // when callers ask for a temp index — git itself treats a missing
+        // index as empty, and the WorkingTreeConflictsTask used to surface
+        // this as a misleading `working-tree-conflicts (Failed to copy
+        // index file)` footer.
+        let test = TestRepo::with_initial_commit();
+        std::fs::write(test.root_path().join("tracked.txt"), "hello\n").unwrap();
+        std::fs::write(test.root_path().join("untracked.txt"), "world\n").unwrap();
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let wt = repo.worktree_at(test.root_path());
+        let real_index = wt.git_dir().unwrap().join("index");
+        std::fs::remove_file(&real_index).unwrap();
+        assert!(!real_index.exists(), "precondition: real index removed");
+
+        // (a) temp_index() succeeds without <gitdir>/index.
+        let idx = wt
+            .temp_index()
+            .expect("temp_index tolerates missing real index");
+
+        // (b) git add -A against the resulting temp index produces a tree
+        // containing the working-tree files.
+        idx.git(["add", "-A"]).run().unwrap();
+        let write_tree = idx.git(["write-tree"]).run().unwrap();
+        let tree_sha = String::from_utf8_lossy(&write_tree.stdout)
+            .trim()
+            .to_string();
+        let ls_tree = Cmd::new("git")
+            .args(["ls-tree", "-r", "--name-only", &tree_sha])
+            .current_dir(test.root_path())
+            .run()
+            .unwrap();
+        let mut names: Vec<&str> = std::str::from_utf8(&ls_tree.stdout)
+            .unwrap()
+            .lines()
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["file.txt", "tracked.txt", "untracked.txt"]);
+
+        // (c) the real index is still absent afterward.
+        assert!(
+            !real_index.exists(),
+            "temp_index must not resurrect the real index"
         );
     }
 }

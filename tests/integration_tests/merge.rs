@@ -2657,6 +2657,46 @@ fn test_step_commit_dry_run_propagates_git_add_failure(repo: TestRepo) {
     );
 }
 
+/// Regression: `--dry-run` must tolerate a missing `<gitdir>/index`. The
+/// temp-index copy used to error with ENOENT (`Failed to copy index file`)
+/// when the real index was absent; the fix mirrors git's own behaviour and
+/// treats a missing index as empty, letting `git add` populate a fresh
+/// temp index.
+#[rstest]
+fn test_step_commit_dry_run_tolerates_missing_index(repo: TestRepo) {
+    fs::write(repo.root_path().join("new.txt"), "x").expect("Failed to write file");
+
+    let index_path = repo.root_path().join(".git").join("index");
+    fs::remove_file(&index_path).expect("Failed to remove index");
+
+    let worktrunk_config = r#"
+[commit.generation]
+command = "cat >/dev/null && echo 'feat: missing-index'"
+"#;
+    fs::write(repo.test_config_path(), worktrunk_config).unwrap();
+
+    let output = make_snapshot_cmd(&repo, "step", &["commit", "--dry-run"], None)
+        .output()
+        .expect("wt step commit --dry-run failed to spawn");
+    assert!(
+        output.status.success(),
+        "missing index must not fail --dry-run; stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Failed to copy index file"),
+        "missing index must not surface as a copy error; got stderr:\n{stderr}"
+    );
+
+    // Real index must remain absent — dry-run must not resurrect it.
+    assert!(
+        !index_path.exists(),
+        "wt step commit --dry-run must not write the real index"
+    );
+}
+
 /// `wt step squash --show-prompt` propagates template errors from
 /// `build_squash_prompt`. A malformed jinja template must surface the failure
 /// rather than producing an empty prompt.
