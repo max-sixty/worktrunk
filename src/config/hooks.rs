@@ -24,7 +24,7 @@ pub struct HooksConfig {
     )]
     pub post_switch: Option<CommandConfig>,
 
-    /// Commands to execute before worktree creation (blocking)
+    /// Commands to execute after worktree creation (blocking, fail-fast)
     #[serde(
         default,
         rename = "pre-start",
