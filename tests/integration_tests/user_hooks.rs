@@ -158,7 +158,7 @@ approved-commands = ["echo 'PROJECT_HOOK' > project_marker.txt"]
 }
 
 #[rstest]
-fn test_user_post_start_hook_failure(repo: TestRepo) {
+fn test_user_pre_start_hook_failure(repo: TestRepo) {
     // Write user config with failing hook
     repo.write_test_config(
         r#"[pre-start]
@@ -168,7 +168,7 @@ failing = "exit 1"
 
     // A failing pre-start hook aborts with FailFast. The worktree is created
     // before pre-start runs, so it exists even though the command exits non-zero.
-    snapshot_switch("user_post_start_failure", &repo, &["--create", "feature"]);
+    snapshot_switch("user_pre_start_failure", &repo, &["--create", "feature"]);
 
     // Worktree exists (created before pre-start ran) but the command failed
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
