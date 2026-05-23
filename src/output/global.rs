@@ -270,21 +270,43 @@ fn compute_directive_mode() -> DirectiveMode {
             exec_file: exec,
         },
         None => match legacy {
-            // Silent fallback: bash/zsh/fish/PowerShell self-update on restart,
-            // and nushell is the only shell that needs a manual reinstall. A
-            // global "your wrapper is old" warning would hit everyone else with
-            // noise they can't avoid until their next terminal restart.
-            //
-            // TODO(2026-05): emit a deprecation warning here. By then the
-            // self-healing shells (bash/zsh/fish/PowerShell) have had a
-            // release to cycle, so anything still hitting this branch is
-            // almost certainly an outdated nushell wrapper whose user needs
-            // to rerun `wt config shell install nu` before the legacy
-            // fallback is removed in the following release.
-            Some(file) => DirectiveMode::Legacy { file },
+            // Hitting this branch means the active shell wrapper still sets
+            // only `WORKTRUNK_DIRECTIVE_FILE` (pre-split protocol). bash, zsh,
+            // fish, and PowerShell wrappers self-update on shell restart, so
+            // any wt invocation still landing here is using an outdated
+            // wrapper — most often nushell, where the wrapper is a static
+            // file the user must reinstall via `wt config shell install`.
+            // Warn once per process so the user is prompted to refresh it
+            // before the legacy fallback is removed in a future release.
+            Some(file) => {
+                warn_legacy_directive_once();
+                DirectiveMode::Legacy { file }
+            }
             None => DirectiveMode::Interactive,
         },
     }
+}
+
+/// Warn that the active shell wrapper is using the pre-split directive-file
+/// protocol. Fires at most once per process so repeated state lookups don't
+/// spam the terminal.
+fn warn_legacy_directive_once() {
+    static WARNED: OnceLock<()> = OnceLock::new();
+    if WARNED.set(()).is_err() {
+        return;
+    }
+    eprintln!(
+        "{}",
+        warning_message(cformat!(
+            "Shell wrapper uses the legacy directive-file protocol; it will be removed in a future release"
+        ))
+    );
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "To update, run <underline>wt config shell install</>"
+        ))
+    );
 }
 
 /// Warn that `--execute` was refused because we're running inside an alias or
