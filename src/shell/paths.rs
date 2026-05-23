@@ -56,9 +56,12 @@ fn resolve_nushell_config_dir(home: &std::path::Path, queried: Option<PathBuf>) 
 /// Get Nushell's default config directory (single best path for writing).
 ///
 /// Used by `completion_path()` to determine where to write completions.
-/// Queries `nu` for `$nu.default-config-dir` to handle platform-specific paths.
-/// On macOS, this is `~/Library/Application Support/nushell` rather than `~/.config/nushell`.
-/// Falls back to etcetera's config_dir if the nu command fails.
+/// Queries `nu` for `$nu.default-config-dir` to handle platform-specific paths
+/// — on macOS without `XDG_CONFIG_HOME` set, Nushell defaults to
+/// `~/Library/Application Support/nushell`, otherwise it follows
+/// `$XDG_CONFIG_HOME/nushell`.
+/// Falls back to etcetera's `config_dir` (which uses XDG on every Unix
+/// platform, so `~/.config/nushell` by default) if the nu command fails.
 fn nushell_config_dir(home: &std::path::Path) -> PathBuf {
     resolve_nushell_config_dir(home, query_nu_config_dir())
 }
@@ -90,8 +93,10 @@ fn nushell_config_candidates(home: &std::path::Path) -> Vec<PathBuf> {
     // ~/.config/nushell (XDG default)
     candidates.push(home.join(".config").join("nushell"));
 
-    // Platform config dir via etcetera (e.g. ~/Library/Application Support/nushell
-    // on macOS, AppData/Roaming/nushell on Windows)
+    // Platform config dir via etcetera. `choose_base_strategy` uses the XDG
+    // strategy on every Unix platform (including macOS), so this resolves to
+    // `$XDG_CONFIG_HOME/nushell` (default `~/.config/nushell`) on Linux and
+    // macOS, and `%APPDATA%\nushell` on Windows.
     if let Ok(strategy) = choose_base_strategy() {
         candidates.push(strategy.config_dir().join("nushell"));
     }
