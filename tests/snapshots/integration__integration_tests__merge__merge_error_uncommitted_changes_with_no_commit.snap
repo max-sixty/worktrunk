@@ -25,6 +25,7 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     MOCK_CONFIG_DIR: "[MOCK_CONFIG_DIR]"
     NO_COLOR: ""
     OPENCODE_CONFIG_DIR: "[TEST_OPENCODE_CONFIG]"
@@ -39,9 +40,11 @@ info:
     WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
@@ -56,5 +59,5 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mCannot merge with --no-commit: [1mfeature[22m has uncommitted changes[39m
-  [2m?? dirty.txt[22m
+[107m [0m ?? dirty.txt
 [2m↳[22m [2mCommit or stash changes first[22m
