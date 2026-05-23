@@ -12,8 +12,9 @@
 //!
 //! ### Forks on the Critical Path
 //!
-//! A steady-state run reaches the skeleton through six `git` subprocess
-//! forks. Fork *count* is O(1) — independent of worktree or branch
+//! A steady-state run reaches the skeleton through five `git` subprocess
+//! forks (six in repos with `extensions.worktreeConfig=true` — see #3
+//! below). Fork *count* is O(1) — independent of worktree or branch
 //! count — because each batches as much as it can. Fork *work* scales with
 //! N (refs read, SHAs resolved); on a fast Linux system N=40 lands
 //! ~30–80 ms.
@@ -22,17 +23,18 @@
 //! |---|---------|--------|------|
 //! | 1 | `git rev-parse --git-common-dir --is-inside-work-tree --show-toplevel --git-dir --symbolic-full-name HEAD` | [`Repository::prewarm`] (`prewarm_rev_parse`) | Five facts in one fork: shared `.git`, in-worktree gate, worktree root, per-worktree `.git/worktrees/<name>`, current branch. Populates process-global caches. Parallel with #2 at process startup. |
 //! | 2 | `git config --list -z` (cwd = discovery path) | [`Repository::prewarm`] (`prewarm_git_config`) | Whole merged config (system + global + local) in one shot, NUL-delimited so values containing `\n` or `=` parse unambiguously. Stashed in `GIT_CONFIG_PRELOAD` keyed by discovery path; every later `config_last("…")` reads from memory. Parallel with #1. |
-//! | 3 | `git config --list -z` (cwd = `git_common_dir`) | [`Repository::all_config`] | Per-`Repository` config map, keyed differently from #2 because a linked worktree of a *bare* repo must read from the common dir. Overlaps #2 in content for normal repos; the bare-repo edge case is why both exist. |
+//! | 3 | `git config --list -z` (cwd = `git_common_dir`) | [`Repository::all_config`] | **Conditional.** [`Repository::at`] consumes #2's preload into `cache.all_config`, so `all_config()` is a memory hit on a normal repo. This fork only fires when `prewarm_git_config` declined the preload because `extensions.worktreeConfig=true` — there `--list` from a linked worktree misses the main-worktree `config.worktree` overrides (most importantly `core.bare = true` for the `myproject/.git + sibling worktrees` layout), so `all_config` re-forks from the common dir to see the full merged set. See `prewarm_git_config` for the full reasoning. |
 //! | 4 | `git worktree list --porcelain` | [`Repository::list_worktrees`] | Path, HEAD SHA, branch, and flags per worktree — the row source for the skeleton. The picker prelude triggers this once for `num_items_estimate`; collect's rayon scope then hits the cache. |
 //! | 5 | `git for-each-ref --format=… refs/heads/` | [`Repository::local_branches`] inside collect's `rayon::scope` | Local branch tips (name, SHA, committer date, upstream) for branch-only rows (`branches=true`) and for the stale-default-branch check. `remotes=true` adds a sibling `refs/remotes/` fork. The scope joins; this fork gates the skeleton. |
 //! | 6 | `git log --no-walk --no-show-signature --format=… SHA₁ … SHA_N` | collect, after the scope | Batched commit metadata for every worktree HEAD + branch tip. See breakdown below. |
 //!
 //! Things that *look* like forks but aren't, on the steady-state path:
 //! `git config worktrunk.default-branch`, `git config --bool core.bare`,
-//! `git config remote.*.url`, [`Repository::url_template`], [`Repository::is_bare`] —
-//! each is a `config_last("…")` lookup served from #2's in-memory map. They
-//! appear in the rayon scope as logical fetches but no subprocess fires for
-//! them warm. The same is true for [`Repository::default_branch`] once
+//! `git config remote.*.url`, [`Repository::is_bare`] — each is a
+//! `config_last("…")` lookup served from #2's in-memory map (or from #3
+//! when the conditional fork above did fire). They appear in the rayon
+//! scope as logical fetches but no subprocess fires for them warm. The
+//! same is true for [`Repository::default_branch`] once
 //! `worktrunk.default-branch` is cached (the steady-state case).
 //!
 //! Things that fire **once per repo, ever**:
@@ -91,7 +93,9 @@
 //!
 //! Negligible latency, but worth naming:
 //! - Path canonicalization — detect current worktree.
-//! - Project config file read (`.config/wt.toml`) — check if URL column needed.
+//! - Project config file read (`.config/wt.toml`) via
+//!   `ProjectConfig::load`. [`Repository::url_template`] reads `list.url`
+//!   from this file — TOML I/O, not git config, and no subprocess.
 //! - Config resolution — merge project-specific settings (uses cached
 //!   project identifier).
 //!

@@ -37,7 +37,8 @@
 //!
 //! Time-to-skeleton = steps 1-6 on the main thread *plus* collect's
 //! pre-skeleton phase on the bg thread. See `commands/list/collect/mod.rs`
-//! § "Forks on the Critical Path" for the subprocess inventory.
+//! § "Forks on the Critical Path" for the subprocess inventory (five
+//! forks, plus one more in `extensions.worktreeConfig` repos).
 //!
 //! ## Phase timings
 //!
