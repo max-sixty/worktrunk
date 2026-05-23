@@ -486,20 +486,22 @@ impl<'a> WorkingTree<'a> {
         let real_index = git_dir.join("index");
         let log_ctx = path_to_logging_context(self.path());
 
-        let temp = tempfile::NamedTempFile::new().context("Failed to create temporary index")?;
         // A missing `<gitdir>/index` is semantically an empty index (nothing
-        // staged), so mirror git's own behaviour. Drop the freshly-created
-        // 0-byte tempfile (git rejects it as "smaller than expected"); if a
-        // real index exists, copy it back, otherwise leave the path empty
-        // and let the first `git` call against `GIT_INDEX_FILE` create a
-        // fresh valid index there.
-        std::fs::remove_file(temp.path()).context("Failed to clear temporary index")?;
+        // staged), so mirror git's own behaviour. Close the
+        // freshly-created 0-byte tempfile's handle (Windows leaves the name
+        // delete-pending if it's still open) and remove the file; if a real
+        // index exists, copy it back, otherwise leave the path empty and
+        // let the first `git` call against `GIT_INDEX_FILE` create a fresh
+        // valid index there.
+        let temp = tempfile::NamedTempFile::new()
+            .context("Failed to create temporary index")?
+            .into_temp_path();
+        std::fs::remove_file(&temp).context("Failed to clear temporary index")?;
         if real_index.exists() {
-            std::fs::copy(&real_index, temp.path()).context("Failed to copy index file")?;
+            std::fs::copy(&real_index, &temp).context("Failed to copy index file")?;
         }
         // Validate UTF-8 once so `TempIndex::path` is infallible.
-        temp.path()
-            .to_str()
+        temp.to_str()
             .context("Temporary index path is not valid UTF-8")?;
 
         Ok(TempIndex {
@@ -611,7 +613,7 @@ impl<'a> WorkingTree<'a> {
 /// merge-conflict probing), and `wt step diff` (diff vs target merge-base
 /// with untracked).
 pub struct TempIndex {
-    temp: tempfile::NamedTempFile,
+    temp: tempfile::TempPath,
     worktree_root: PathBuf,
     log_ctx: String,
 }
@@ -619,10 +621,7 @@ pub struct TempIndex {
 impl TempIndex {
     /// UTF-8 path to the temp index file. Validated at construction.
     pub fn path(&self) -> &str {
-        self.temp
-            .path()
-            .to_str()
-            .expect("validated in temp_index()")
+        self.temp.to_str().expect("validated in temp_index()")
     }
 
     /// Build a `git` command pointed at this temp index.
