@@ -279,7 +279,7 @@ fn compute_directive_mode() -> DirectiveMode {
             // Warn once per process so the user is prompted to refresh it
             // before the legacy fallback is removed in a future release.
             Some(file) => {
-                warn_legacy_directive_once();
+                warn_legacy_directive();
                 DirectiveMode::Legacy { file }
             }
             None => DirectiveMode::Interactive,
@@ -288,13 +288,9 @@ fn compute_directive_mode() -> DirectiveMode {
 }
 
 /// Warn that the active shell wrapper is using the pre-split directive-file
-/// protocol. Fires at most once per process so repeated state lookups don't
-/// spam the terminal.
-fn warn_legacy_directive_once() {
-    static WARNED: OnceLock<()> = OnceLock::new();
-    if WARNED.set(()).is_err() {
-        return;
-    }
+/// protocol. The caller (`compute_directive_mode`) runs once per process from
+/// `OUTPUT_STATE.get_or_init`, so this naturally fires at most once.
+fn warn_legacy_directive() {
     eprintln!(
         "{}",
         warning_message(cformat!(
