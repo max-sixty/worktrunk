@@ -1323,8 +1323,8 @@ fn test_prune_fallback_config_race_canary(mut repo: TestRepo) {
     // Parallel fan-out is the point — do NOT pin RAYON_NUM_THREADS=1.
     let mut cmd = repo.wt_command();
 
-    // Unix only: a `git` shim that delays the fallback's `git branch -d
-    // <blocked>` by two seconds and records that it ran. Before the fix that
+    // Unix only: a `git` shim that delays the fallback's branch deletion of
+    // `<blocked>` by two seconds and records that it ran. Before the fix that
     // deletion ran in a detached shell, so prune could exit while the branch
     // still existed; the shim proves the fixed path waits for it.
     #[cfg(unix)]
@@ -1396,9 +1396,11 @@ fn write_delaying_git_wrapper(dir: &std::path::Path, real_git: &std::path::Path)
     use std::os::unix::fs::PermissionsExt;
 
     let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
+    // Match both `branch -d` and `branch -D` — `delete_branch_if_safe` uses
+    // `-D` for branches it has classified as integrated.
     let script = format!(
         r#"#!/bin/sh
-if [ "$1" = "branch" ] && [ "$2" = "-d" ] && [ "$3" = "$WT_PRUNE_DELAY_BRANCH" ]; then
+if [ "$1" = "branch" ] && {{ [ "$2" = "-d" ] || [ "$2" = "-D" ]; }} && [ "$3" = "$WT_PRUNE_DELAY_BRANCH" ]; then
   : > "$WT_PRUNE_BRANCH_DELETE_STARTED"
   sleep 2
 fi

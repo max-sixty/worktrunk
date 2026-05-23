@@ -203,7 +203,11 @@ fn execute_instant_removal_or_fallback(
         ) && !changed_directory
         {
             repo.remove_worktree(worktree_path, force_worktree)?;
-            delete_branch_in_synchronous_fallback(repo, branch_name);
+            if let Some(branch) = branch_name
+                && !deletion_mode.should_keep()
+            {
+                delete_branch_in_synchronous_fallback(repo, branch, target_branch, deletion_mode);
+            }
             return Ok(BackgroundRemovalPlan::CompletedSynchronously);
         }
 
@@ -232,15 +236,27 @@ fn execute_instant_removal_or_fallback(
 
 /// Delete the just-removed worktree's branch in the synchronous fallback path.
 ///
-/// Only `wt step prune` reaches this (via `SynchronousForNonCurrent`), and prune
-/// always safe-deletes integrated branches — so this hardcodes `git branch -d`
-/// and lets git's own merge check refuse anything not integrated. A detached
-/// worktree has no branch to delete (`None`).
-fn delete_branch_in_synchronous_fallback(repo: &Repository, branch_name: Option<&str>) {
-    let Some(branch) = branch_name else {
-        return;
-    };
-    if let Err(e) = repo.run_command(&["branch", "-d", branch]) {
+/// Only `wt step prune` reaches this (via `SynchronousForNonCurrent`). Mirrors
+/// the fast path above by re-capturing refs and calling `delete_branch_if_safe`,
+/// so squash-merged / patch-id-matched branches that prune accepted as candidates
+/// are deleted here too — a plain `git branch -d` would refuse them on
+/// reachability from HEAD alone and leave the branch behind while the worktree
+/// was already removed. The caller filters out `None` branches and `Keep` modes.
+fn delete_branch_in_synchronous_fallback(
+    repo: &Repository,
+    branch: &str,
+    target_branch: Option<&str>,
+    deletion_mode: BranchDeletionMode,
+) {
+    if let Err(e) = repo.capture_refs().and_then(|snapshot| {
+        delete_branch_if_safe(
+            repo,
+            &snapshot,
+            branch,
+            target_branch.unwrap_or("HEAD"),
+            deletion_mode.is_force(),
+        )
+    }) {
         log::debug!("Failed to delete branch {branch} in synchronous fallback: {e}");
     }
 }
