@@ -127,16 +127,12 @@ fn stage_to_temp_index(
     let wt = repo.current_worktree();
     let real_index = wt.git_dir()?.join("index");
     let temp = tempfile::NamedTempFile::new().context("Failed to create temporary index")?;
-    // Missing `<gitdir>/index` == empty index; clear the 0-byte tempfile so
+    // Missing `<gitdir>/index` == empty index; drop the 0-byte tempfile so
     // the subsequent `git add` creates a fresh valid index. Mirrors
     // `WorkingTree::temp_index`.
-    match fs::copy(&real_index, temp.path()) {
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            fs::remove_file(temp.path())
-                .context("Failed to clear temporary index for missing real index")?;
-        }
-        Err(e) => return Err(e).context("Failed to copy index file"),
+    fs::remove_file(temp.path()).context("Failed to clear temporary index")?;
+    if real_index.exists() {
+        fs::copy(&real_index, temp.path()).context("Failed to copy index file")?;
     }
 
     let output = Cmd::new("git")

@@ -488,17 +488,14 @@ impl<'a> WorkingTree<'a> {
 
         let temp = tempfile::NamedTempFile::new().context("Failed to create temporary index")?;
         // A missing `<gitdir>/index` is semantically an empty index (nothing
-        // staged), so mirror git's own behaviour: clear the freshly-created
-        // tempfile (a 0-byte file is rejected as "smaller than expected") and
-        // let the first `git` call against `GIT_INDEX_FILE` create a fresh
-        // valid index at that path.
-        match std::fs::copy(&real_index, temp.path()) {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::remove_file(temp.path())
-                    .context("Failed to clear temporary index for missing real index")?;
-            }
-            Err(e) => return Err(e).context("Failed to copy index file"),
+        // staged), so mirror git's own behaviour. Drop the freshly-created
+        // 0-byte tempfile (git rejects it as "smaller than expected"); if a
+        // real index exists, copy it back, otherwise leave the path empty
+        // and let the first `git` call against `GIT_INDEX_FILE` create a
+        // fresh valid index there.
+        std::fs::remove_file(temp.path()).context("Failed to clear temporary index")?;
+        if real_index.exists() {
+            std::fs::copy(&real_index, temp.path()).context("Failed to copy index file")?;
         }
         // Validate UTF-8 once so `TempIndex::path` is infallible.
         temp.path()
