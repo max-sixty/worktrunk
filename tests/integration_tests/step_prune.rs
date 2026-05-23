@@ -120,7 +120,7 @@ fn test_prune_min_age_skips_young(mut repo: TestRepo) {
     // Create a worktree at same commit as main (would be pruned without age guard)
     repo.add_worktree("young-branch");
 
-    // Default min-age (1h) — worktree appears "young" due to test epoch
+    // Default min-age (1d) — worktree appears "young" due to test epoch
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "step",
@@ -286,7 +286,7 @@ fn test_prune_orphan_branches(mut repo: TestRepo) {
     // Create an unmerged branch (has a unique commit via worktree, then remove worktree)
     repo.add_worktree_with_commit("unmerged-orphan", "u.txt", "data", "unique commit");
 
-    // Far-future epoch: branches appear ~5 years old, passing the default 1h guard
+    // Far-future epoch: branches appear ~5 years old, passing the default 1d guard
     let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes"], None);
     cmd.env("WORKTRUNK_TEST_EPOCH", "1893456000"); // 2030-01-01
     cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
@@ -298,7 +298,7 @@ fn test_prune_orphan_branches(mut repo: TestRepo) {
 ///
 /// GIT_COMMITTER_DATE=2025-01-01T00:00:00Z makes the branch reflog timestamp
 /// epoch 1735689600. Setting TEST_EPOCH to 30 minutes later (1735691400) means
-/// the branch appears 30 minutes old, which is younger than the default 1h.
+/// the branch appears 30 minutes old, which is younger than the default 1d.
 #[rstest]
 fn test_prune_orphan_branch_min_age(repo: TestRepo) {
     repo.commit("initial");
@@ -306,7 +306,7 @@ fn test_prune_orphan_branch_min_age(repo: TestRepo) {
     // Create a branch at HEAD (integrated) without a worktree
     repo.create_branch("orphan-integrated");
 
-    // Epoch 30 minutes after GIT_COMMITTER_DATE → branch appears 30min old, < 1h
+    // Epoch 30 minutes after GIT_COMMITTER_DATE → branch appears 30min old, < 1d
     let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes"], None);
     cmd.env("WORKTRUNK_TEST_EPOCH", "1735691400"); // 2025-01-01T00:30:00Z
 
@@ -378,7 +378,7 @@ fn test_prune_stale_worktree(mut repo: TestRepo) {
 /// Min-age check passes when worktrees are old enough.
 ///
 /// Uses a far-future epoch (2030) so real worktrees (created Feb 2026) appear
-/// ~4 years old, passing the default 1h min-age. This exercises the age
+/// ~4 years old, passing the default 1d min-age. This exercises the age
 /// fall-through path that `--min-age=0s` bypasses entirely.
 #[rstest]
 fn test_prune_min_age_passes(mut repo: TestRepo) {
@@ -505,7 +505,7 @@ fn test_prune_stale_plus_young(mut repo: TestRepo) {
     // Orphan branch (no worktree) at HEAD: integrated but appears young
     repo.create_branch("young-orphan");
 
-    // Epoch 30 minutes after GIT_COMMITTER_DATE → orphan branch appears 30min old, < 1h
+    // Epoch 30 minutes after GIT_COMMITTER_DATE → orphan branch appears 30min old, < 1d
     let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--dry-run"], None);
     cmd.env("WORKTRUNK_TEST_EPOCH", "1735691400");
     assert_cmd_snapshot!(cmd);
@@ -524,7 +524,7 @@ fn test_prune_stale_plus_young_non_dry_run(mut repo: TestRepo) {
     // Regular merged worktree: with default epoch it appears "young"
     repo.add_worktree("young-branch");
 
-    // Default min-age (1h) — young-branch is skipped, stale-branch is removed
+    // Default min-age (1d) — young-branch is skipped, stale-branch is removed
     let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes"], None);
     cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
     assert_cmd_snapshot!(cmd);

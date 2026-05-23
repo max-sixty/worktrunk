@@ -733,7 +733,7 @@ Locked worktrees and the main worktree are always skipped. The current worktree 
 
 ### Min-age guard
 
-Worktrees younger than `--min-age` (default: 1 hour) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
+Worktrees younger than `--min-age` (default: 1 day) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
 
 {{ terminal(cmd="wt step prune --min-age=0s     # no age guard|||wt step prune --min-age=2d     # skip worktrees younger than 2 days") }}
 
@@ -761,7 +761,7 @@ Usage: <b><span class=c>wt step prune</span></b> <span class=c>[OPTIONS]</span>
       <b><span class=c>--min-age</span></b><span class=c> &lt;MIN_AGE&gt;</span>
           Skip worktrees younger than this
 
-          [default: 1h]
+          [default: 1d]
 
       <b><span class=c>--foreground</span></b>
           Run removal in foreground (block until complete)
