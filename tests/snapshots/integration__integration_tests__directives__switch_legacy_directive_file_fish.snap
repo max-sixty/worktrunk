@@ -58,4 +58,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
+[33m▲[39m [33mShell wrapper uses the legacy directive-file protocol; it will be removed in a future release[39m
+[2m↳[22m [2mTo update, run [4mwt config shell install[24m[22m
 [2m○[22m Switched to worktree for [1mfeature[22m @ [1m_REPO_.feature[22m

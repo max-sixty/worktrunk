@@ -41,7 +41,8 @@
 //! Users who upgrade wt without restarting their shell still run the previous
 //! release's shell wrapper, which only sets `WORKTRUNK_DIRECTIVE_FILE`. When
 //! only that variable is set, wt falls back to the pre-split protocol (shell
-//! commands written to the single file) silently. For bash, zsh, fish, and
+//! commands written to the single file) and emits a one-shot deprecation
+//! warning hinting at `wt config shell install`. For bash, zsh, fish, and
 //! PowerShell a shell restart picks up the new wrapper automatically; nushell
 //! is the only shell where users have to rerun `wt config shell install`
 //! because its wrapper is a static file. Remove the legacy path in the next
@@ -270,21 +271,39 @@ fn compute_directive_mode() -> DirectiveMode {
             exec_file: exec,
         },
         None => match legacy {
-            // Silent fallback: bash/zsh/fish/PowerShell self-update on restart,
-            // and nushell is the only shell that needs a manual reinstall. A
-            // global "your wrapper is old" warning would hit everyone else with
-            // noise they can't avoid until their next terminal restart.
-            //
-            // TODO(2026-05): emit a deprecation warning here. By then the
-            // self-healing shells (bash/zsh/fish/PowerShell) have had a
-            // release to cycle, so anything still hitting this branch is
-            // almost certainly an outdated nushell wrapper whose user needs
-            // to rerun `wt config shell install nu` before the legacy
-            // fallback is removed in the following release.
-            Some(file) => DirectiveMode::Legacy { file },
+            // Hitting this branch means the active shell wrapper still sets
+            // only `WORKTRUNK_DIRECTIVE_FILE` (pre-split protocol). bash, zsh,
+            // fish, and PowerShell wrappers self-update on shell restart, so
+            // any wt invocation still landing here is using an outdated
+            // wrapper — most often nushell, where the wrapper is a static
+            // file the user must reinstall via `wt config shell install`.
+            // Warn once per process so the user is prompted to refresh it
+            // before the legacy fallback is removed in a future release.
+            Some(file) => {
+                warn_legacy_directive();
+                DirectiveMode::Legacy { file }
+            }
             None => DirectiveMode::Interactive,
         },
     }
+}
+
+/// Warn that the active shell wrapper is using the pre-split directive-file
+/// protocol. The caller (`compute_directive_mode`) runs once per process from
+/// `OUTPUT_STATE.get_or_init`, so this naturally fires at most once.
+fn warn_legacy_directive() {
+    eprintln!(
+        "{}",
+        warning_message(cformat!(
+            "Shell wrapper uses the legacy directive-file protocol; it will be removed in a future release"
+        ))
+    );
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "To update, run <underline>wt config shell install</>"
+        ))
+    );
 }
 
 /// Warn that `--execute` was refused because we're running inside an alias or
