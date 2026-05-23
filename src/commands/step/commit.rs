@@ -120,10 +120,7 @@ fn preview_commit(stage: Option<StageMode>, dry_run: bool, yes: bool) -> anyhow:
 ///
 /// Returns the [`tempfile::TempPath`] so the caller controls its lifetime — when
 /// dropped, the temp file is removed without ever touching the user's real index.
-fn stage_to_temp_index(
-    repo: &Repository,
-    add_args: &[&str],
-) -> anyhow::Result<tempfile::TempPath> {
+fn stage_to_temp_index(repo: &Repository, add_args: &[&str]) -> anyhow::Result<tempfile::TempPath> {
     let wt = repo.current_worktree();
     let real_index = wt.git_dir()?.join("index");
     // Close the freshly-created 0-byte tempfile's handle (Windows leaves
