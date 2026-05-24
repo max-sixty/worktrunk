@@ -607,7 +607,9 @@ fn test_v_does_not_write_log_files(repo: TestRepo) {
     }
 }
 
-/// With -vv outside a git repo, command should still work (no crash).
+/// With -vv outside a git repo, command should still work (no crash), no
+/// log files are written, and `announce_trace_destination` takes its silent
+/// early-return path (TRACE.path() is None).
 #[test]
 fn test_vv_outside_repo_no_crash() {
     use crate::common::wt_command;
@@ -615,13 +617,18 @@ fn test_vv_outside_repo_no_crash() {
     // Create a temp directory that is NOT a git repo
     let temp_dir = tempfile::tempdir().unwrap();
 
+    // Use `list` (not `--version`) so `init_logging` actually runs — clap
+    // short-circuits `--version` before logging is set up, which would
+    // skip the announce_trace_destination path this test exists to cover.
     let output = wt_command()
-        .args(["--version", "-vv"])
+        .args(["list", "-vv"])
         .current_dir(temp_dir.path())
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "Command should succeed");
+    // `wt list` exits non-zero outside a git repo, but that's fine —
+    // init_logging still ran before the command failed.
+    assert!(!output.status.success(), "wt list outside a repo should fail");
 
     // No diagnostic file should be created (not in a git repo)
     let diagnostic_path = temp_dir
@@ -632,6 +639,14 @@ fn test_vv_outside_repo_no_crash() {
     assert!(
         !diagnostic_path.exists(),
         "Diagnostic file should NOT be created outside a git repo"
+    );
+
+    // Startup pointer should NOT appear: TRACE failed to open, so
+    // announce_trace_destination took its early-return path.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Tracing to"),
+        "no startup pointer when trace.log can't open: {stderr}"
     );
 }
 
