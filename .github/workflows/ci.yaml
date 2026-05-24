@@ -92,7 +92,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.50.0"
+        version: "=0.53.0"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -448,7 +448,7 @@ jobs:
     - name: Install nushell
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.112.2'
+        version: '0.113.0'
 
     # Ensure nothing remains from caching
     - run: cargo llvm-cov clean --workspace
