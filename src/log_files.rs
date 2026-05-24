@@ -2,13 +2,16 @@
 //!
 //! At `-vv`, two files are written in the repo's `.git/wt/logs/` directory:
 //!
-//!   - [`TRACE`] → `trace.log`: mirrors stderr. Structured records,
-//!     `$ cmd [context]` headers, and bounded subprocess previews (same
-//!     elision markers the user sees on stderr). High-signal, bounded size —
+//!   - [`TRACE`] → `trace.log`: structured records, `$ cmd [context]`
+//!     headers, and bounded subprocess previews. High-signal, bounded size —
 //!     safe to embed in `diagnostic.md` bug reports.
 //!   - [`OUTPUT`] → `output.log`: raw, uncapped subprocess stdout/stderr
 //!     bodies captured by `shell_exec::Cmd`. Potentially multi-MB (full
 //!     `git log -p` / patch-id output); opt-in for deep dives.
+//!
+//! Direct user-facing output (`info_message` / `eprintln!` from command
+//! code) is unaffected — it goes to stderr at every verbosity level. This
+//! module governs only the `log::*` macro pipeline.
 //!
 //! # Routing
 //!
@@ -17,11 +20,12 @@
 //!
 //!   - `SUBPROCESS_FULL_TARGET` records never reach stderr — raw bodies
 //!     don't flood terminals. They go to `output.log` if active, else
-//!     drop. The bounded preview (`SUBPROCESS_TERMINAL_TARGET`) still
-//!     reaches stderr, so users always see a capped view.
-//!   - `SUBPROCESS_TERMINAL_TARGET` records always reach stderr.
-//!   - All other records always reach stderr.
-//!   - Stderr records are mirrored to `trace.log` when it's active.
+//!     drop.
+//!   - All other log records go to `trace.log` when it's active (`-vv`),
+//!     and to stderr otherwise (e.g. `-v`, or `RUST_LOG=debug` without
+//!     `-vv`). At `-vv` the `log::*` pipeline is silent on stderr — the
+//!     user-facing `eprintln!` output stays, but the noisy `$ cmd`
+//!     headers and subprocess previews land in the file.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -92,7 +96,11 @@ pub(crate) fn init() {
     TRACE.init();
     OUTPUT.init();
     // Let shell_exec phrase the elision marker to match reality — points at
-    // output.log when it exists, else suggests rerunning with -vv.
+    // output.log when it exists, else suggests rerunning with -vv. The
+    // false case at -vv (open failed asymmetrically) is benign here: the
+    // user already got a "(output.log unavailable)" warning from the
+    // startup pointer, so the marker's "rerun with -vv" text is just
+    // redundant rather than misleading.
     worktrunk::shell_exec::set_output_log_available(OUTPUT.is_active());
 }
 
@@ -100,8 +108,8 @@ pub(crate) fn init() {
 pub(crate) enum Route {
     /// Append to this sink; skip stderr.
     File(&'static LogSink),
-    /// Emit to stderr with normal formatting. Callers also mirror the line
-    /// to [`TRACE`] (no-op when inactive).
+    /// Emit to stderr with normal formatting. Chosen when TRACE is
+    /// inactive — the `-vv` path takes `File(&TRACE)` instead.
     Stderr,
     /// Drop the record entirely.
     Drop,
@@ -117,8 +125,13 @@ pub(crate) fn route(target: &str) -> Route {
         } else {
             Route::Drop
         }
+    } else if TRACE.is_active() {
+        // -vv: send the noisy log pipeline to trace.log instead of stderr
+        // so the user's terminal stays readable.
+        Route::File(&TRACE)
     } else {
-        // `SUBPROCESS_TERMINAL_TARGET` and all other targets share this path.
+        // -v, or RUST_LOG=debug without -vv. `SUBPROCESS_BOUNDED_TARGET`
+        // and all other targets share this path.
         Route::Stderr
     }
 }

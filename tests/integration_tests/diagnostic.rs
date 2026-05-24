@@ -353,17 +353,20 @@ fn test_vv_splits_full_and_bounded_output(repo: TestRepo) {
     );
 }
 
-/// At `-vv`, when a single subprocess produces more than the line cap, stderr
-/// and `trace.log` must show the elision marker while `output.log` holds the
-/// full body without any elision. This guards the bounded-stderr invariant —
-/// a regression that routed full output to stderr would silently fail to
-/// elide.
+/// At `-vv`, the `log::*` pipeline is silent on stderr — the bounded
+/// preview lands in `trace.log` (not stderr), and `output.log` still holds
+/// the unbounded body. Guards against a regression that re-routes the
+/// debug stream to stderr and floods the terminal. (Direct stderr writes
+/// from command code — the "Tracing to ..." pointer, "Diagnostic saved",
+/// bug-report hint — are not part of the `log::*` pipeline and DO appear
+/// on stderr; those are asserted at the end of this test.)
 #[rstest]
-fn test_vv_bounded_on_stderr_full_in_output_log(repo: TestRepo) {
+fn test_vv_log_pipeline_silent_on_stderr(repo: TestRepo) {
     // `wt list` runs `git for-each-ref refs/heads/` (captured via `Cmd::run`),
     // so its output flows through `log_output` and exercises the split.
     // Populate packed-refs with 250 fake branches pointing at HEAD — far more
-    // than LOG_OUTPUT_MAX_LINES (200), which guarantees elision on stderr.
+    // than LOG_OUTPUT_MAX_LINES (200), which would have tripped elision on
+    // stderr under the old routing.
     let head_out = repo
         .git_command()
         .args(["rev-parse", "HEAD"])
@@ -388,25 +391,26 @@ fn test_vv_bounded_on_stderr_full_in_output_log(repo: TestRepo) {
         .expect("wt list");
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Elision marker appears on stderr (bounded preview) and in trace.log.
-    let marker = "more lines, ";
-    assert!(
-        stderr.contains(marker),
-        "stderr should contain elision marker for >200-line subprocess output: {stderr}"
-    );
-
     let logs_dir = repo.root_path().join(".git").join("wt/logs");
     let trace = fs::read_to_string(logs_dir.join("trace.log")).unwrap();
     let raw = fs::read_to_string(logs_dir.join("output.log")).unwrap();
 
+    // Elision marker belongs to the bounded preview, which now lives in
+    // trace.log only — never on stderr.
+    let marker = "more lines, ";
     assert!(
         trace.contains(marker),
-        "trace.log mirrors stderr and should include the elision marker"
+        "trace.log should hold the bounded preview's elision marker"
+    );
+    assert!(
+        !stderr.contains(marker),
+        "stderr must not receive the bounded preview at -vv: {stderr}"
     );
     assert!(
         !raw.contains(marker),
         "output.log holds full output and must not contain an elision marker"
     );
+
     // The tail refs only appear in the full log.
     let tail_ref = "many-branch-249";
     assert!(
@@ -415,17 +419,36 @@ fn test_vv_bounded_on_stderr_full_in_output_log(repo: TestRepo) {
     );
     assert!(
         !stderr.contains(tail_ref),
-        "stderr preview should be bounded before the last ref"
+        "stderr must not see the per-line subprocess output at -vv"
     );
     assert!(
         !trace.contains(tail_ref),
-        "trace.log mirrors stderr and should be bounded too"
+        "trace.log holds the bounded preview, which is capped before the last ref"
+    );
+
+    // The full subprocess stdout still lands in output.log, and trace.log
+    // still captures the `$ cmd` / `[wt-trace]` records — confirm both so a
+    // regression that disables the file sinks fails loudly here too.
+    assert!(
+        raw.lines().any(|l| l.contains("refs/heads/many-branch-")),
+        "output.log should contain the captured for-each-ref stdout"
+    );
+    assert!(
+        trace.contains("[wt-trace]"),
+        "trace.log should contain [wt-trace] records at -vv"
+    );
+
+    // Stderr at -vv should contain the new pointer line (and the existing
+    // diagnostic line), so the user knows where the trace went.
+    assert!(
+        stderr.contains("Tracing to") && stderr.contains("trace.log"),
+        "stderr should announce the trace destination at -vv: {stderr}"
     );
 }
 
 /// `RUST_LOG=debug` at `-v 0` activates Debug logging without creating the
 /// on-disk log files. Stderr receives the **bounded** preview
-/// (`SUBPROCESS_TERMINAL_TARGET`); the uncapped `SUBPROCESS_FULL_TARGET`
+/// (`SUBPROCESS_BOUNDED_TARGET`); the uncapped `SUBPROCESS_FULL_TARGET`
 /// records are dropped so raw bodies don't flood the terminal.
 #[rstest]
 fn test_rust_log_debug_fallback_without_vv(repo: TestRepo) {
@@ -529,6 +552,39 @@ fn test_vv_writes_diagnostic_on_error(mut repo: TestRepo) {
         stderr.contains("Diagnostic saved"),
         "stderr should mention diagnostic was saved. stderr: {}",
         stderr
+    );
+}
+
+/// If one of the `-vv` log files can't be opened (here: pre-existing path
+/// of the wrong type), the user still gets a "Tracing to ..." pointer for
+/// the one that opened, and the elision marker reflects the asymmetric
+/// state instead of telling a `-vv` user to "rerun with -vv".
+#[rstest]
+fn test_vv_pointer_handles_split_init(repo: TestRepo) {
+    let logs_dir = repo.root_path().join(".git").join("wt/logs");
+    std::fs::create_dir_all(&logs_dir).unwrap();
+    // Block output.log open by occupying the path with a directory.
+    std::fs::create_dir(logs_dir.join("output.log")).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["list", "-vv"])
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("Tracing to") && stderr.contains("trace.log"),
+        "stderr should point at trace.log even when output.log can't open: {stderr}"
+    );
+    assert!(
+        stderr.contains("output.log unavailable"),
+        "stderr should note output.log is unavailable: {stderr}"
+    );
+    assert!(
+        logs_dir.join("trace.log").exists(),
+        "trace.log should still be created"
     );
 }
 

@@ -1245,16 +1245,38 @@ fn thread_label() -> char {
 
 fn init_logging(verbose_level: u8) {
     // Configure logging based on --verbose flag or RUST_LOG env var.
-    // Level map: -v → Info, -vv+ → Debug (stderr, with subprocess output
-    // capped). At -vv, `.git/wt/logs/trace.log` mirrors stderr and
-    // `.git/wt/logs/output.log` receives the uncapped subprocess bodies
-    // routed via `shell_exec::SUBPROCESS_FULL_TARGET`.
+    // Level map: -v → Info on stderr (no file), -vv+ → Debug routed to
+    // `.git/wt/logs/trace.log` instead of stderr, plus uncapped subprocess
+    // bodies in `.git/wt/logs/output.log` (via `SUBPROCESS_FULL_TARGET`).
     //
-    // env_logger registers the logger via `.init()` at the bottom of this
-    // function. `log_files::init()` runs after that so the
-    // `Repository::current()` it triggers (cold cache: 4ms `git rev-parse
-    // --git-common-dir`) is visible in `[wt-trace]` output.
+    // At -vv the `log::*` pipeline is silent on stderr — user-facing
+    // `eprintln!` output (template expansions, status, hints) is
+    // unaffected. A one-line pointer below tells the user where the
+    // trace went.
     output::set_verbosity(verbose_level);
+
+    // Prime `GIT_COMMON_DIR_CACHE` BEFORE env_logger registers, so any
+    // log records emitted while building the cache go nowhere (no logger
+    // installed yet) and the later `Repository::current()` triggered by
+    // `log_files::init` is a memory-cache hit with no fresh git call.
+    // Without this, those records would fire while `TRACE.is_active()`
+    // is still false (we're inside the call that sets the file) and
+    // route to stderr — exactly the noise -vv is supposed to keep off
+    // the terminal. Running before `.init()` also keeps the priming
+    // robust if `Repository::current()` grows new log emissions later:
+    // a not-yet-installed logger drops them harmlessly.
+    //
+    // Caveat: if priming itself fails (Ctrl-C during the ~5ms rev-parse
+    // fork; transient fork error), the cache stays empty and the later
+    // `log_files::init` re-runs the git call, which logs onto the
+    // now-installed logger and leaks one `$ git rev-parse` line to
+    // stderr. Rare and minor (one line, not 15K), so we don't engineer
+    // around it; closing it cleanly requires resolving the log-dir path
+    // without going through `shell_exec::Cmd`, which violates the
+    // command-execution-through-Cmd invariant in CLAUDE.md.
+    if verbose_level >= 2 {
+        let _ = worktrunk::git::Repository::current();
+    }
 
     let mut builder = match verbose_level {
         0 => env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("off")),
@@ -1273,56 +1295,78 @@ fn init_logging(verbose_level: u8) {
     builder
         .format(|buf, record| {
             let route = log_files::route(record.target());
-            if matches!(route, log_files::Route::Drop) {
-                return Ok(());
-            }
-
             let thread_num = thread_label();
             let msg = record.args().to_string();
-            let file_line = format!("[{thread_num}] {msg}");
 
-            if let log_files::Route::File(sink) = route {
-                sink.write_line(&file_line);
-                return Ok(());
-            }
-            // Route::Stderr: mirror to trace.log (no-op when inactive), then
-            // write the ANSI-formatted version to stderr below.
-            log_files::TRACE.write_line(&file_line);
-
-            // Commands start with $, make only the command bold (not $ or [worktree])
-            if let Some(rest) = msg.strip_prefix("$ ") {
-                // Split: "git command [worktree]" -> ("git command", " [worktree]")
-                if let Some(bracket_pos) = rest.find(" [") {
-                    let command = &rest[..bracket_pos];
-                    let worktree = &rest[bracket_pos..];
-                    writeln!(
-                        buf,
-                        "{}",
-                        cformat!("<dim>[{thread_num}]</> $ <bold>{command}</>{worktree}")
-                    )
-                } else {
-                    writeln!(
-                        buf,
-                        "{}",
-                        cformat!("<dim>[{thread_num}]</> $ <bold>{rest}</>")
-                    )
+            match route {
+                log_files::Route::Drop => Ok(()),
+                log_files::Route::File(sink) => {
+                    sink.write_line(&format!("[{thread_num}] {msg}"));
+                    Ok(())
                 }
-            } else if msg.starts_with("  ! ") {
-                // Error output - show in red
-                writeln!(buf, "{}", cformat!("<dim>[{thread_num}]</> <red>{msg}</>"))
-            } else {
-                // Regular output with thread ID
-                writeln!(buf, "{}", cformat!("<dim>[{thread_num}]</> {msg}"))
+                log_files::Route::Stderr => {
+                    // Commands start with $, make only the command bold (not $ or [worktree])
+                    if let Some(rest) = msg.strip_prefix("$ ") {
+                        // Split: "git command [worktree]" -> ("git command", " [worktree]")
+                        if let Some(bracket_pos) = rest.find(" [") {
+                            let command = &rest[..bracket_pos];
+                            let worktree = &rest[bracket_pos..];
+                            writeln!(
+                                buf,
+                                "{}",
+                                cformat!("<dim>[{thread_num}]</> $ <bold>{command}</>{worktree}")
+                            )
+                        } else {
+                            writeln!(
+                                buf,
+                                "{}",
+                                cformat!("<dim>[{thread_num}]</> $ <bold>{rest}</>")
+                            )
+                        }
+                    } else if msg.starts_with("  ! ") {
+                        // Error output - show in red
+                        writeln!(buf, "{}", cformat!("<dim>[{thread_num}]</> <red>{msg}</>"))
+                    } else {
+                        // Regular output with thread ID
+                        writeln!(buf, "{}", cformat!("<dim>[{thread_num}]</> {msg}"))
+                    }
+                }
             }
         })
         .init();
 
     // Open per-file log sinks AFTER env_logger is registered so the
     // `Repository::current()` rev-parse fired by `try_create` is captured
-    // in the trace.
+    // in the trace. The startup pointer below uses the path resolved here.
     if verbose_level >= 2 {
         log_files::init();
+        announce_trace_destination();
     }
+}
+
+/// Print a one-line stderr pointer at `-vv` so users know where the noisy
+/// `log::*` output went. Silent if `trace.log` couldn't be opened (outside
+/// a git repo, permission error) — there's nothing meaningful to point at.
+fn announce_trace_destination() {
+    // TRACE and OUTPUT open independently — `LogSink::init` succeeds per
+    // file. The (Some, None) case (trace.log open, output.log failed) is
+    // rare but real (path-type mismatch, fs quota); the reverse is
+    // possible too but `output.log` alone has no `$ cmd` context, so we
+    // stay silent there.
+    let Some(trace_path) = log_files::TRACE.path() else {
+        return;
+    };
+    let trace_display = worktrunk::path::format_path_for_display(&trace_path);
+    let msg = match log_files::OUTPUT.path() {
+        Some(output_path) => {
+            let output_display = worktrunk::path::format_path_for_display(&output_path);
+            cformat!(
+                "Tracing to <underline>{trace_display}</> (raw subprocess output @ <underline>{output_display}</>)"
+            )
+        }
+        None => cformat!("Tracing to <underline>{trace_display}</> (output.log unavailable)"),
+    };
+    eprintln!("{}", info_message(msg));
 }
 
 fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {

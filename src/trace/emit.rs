@@ -25,7 +25,8 @@
 //! Records are emitted at `log::debug!`, so `-vv` or `RUST_LOG=debug` makes
 //! them visible. Subprocess stdout/stderr continuations are emitted via
 //! separate log targets: the full output goes to `output.log`, and a bounded
-//! preview goes to stderr + `trace.log` — so raw bodies don't spam `-vv`.
+//! preview shares the routing of all other log records — `trace.log` at `-vv`,
+//! stderr otherwise — so raw bodies don't spam `-vv`.
 
 use std::borrow::Cow;
 use std::fmt::Display;

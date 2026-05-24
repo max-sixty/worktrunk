@@ -1,13 +1,15 @@
 //! Diagnostic report generation for issue reporting.
 //!
-//! When unexpected warnings occur (timeouts, git errors, etc.), this module
-//! can generate a diagnostic file that users attach to GitHub issues.
+//! This module generates a markdown file users can attach to GitHub issues —
+//! command line, environment, worktree state, config, and the captured trace
+//! log.
 //!
 //! # When Diagnostics Are Generated
 //!
-//! Diagnostic files are written when `-vv` is passed. Without `-vv`, the hint
-//! simply tells users to run with `-vv`. This ensures the diagnostic file
-//! contains useful debug information.
+//! Diagnostic files are written on every `-vv` run (one file per command,
+//! overwritten each time). Without `-vv`, the hint simply tells users to
+//! rerun with `-vv`. This ensures the diagnostic file contains the trace
+//! the report inlines.
 //!
 //! # Report Format
 //!
@@ -155,7 +157,7 @@ impl DiagnosticReport {
         // Get config show output (if available)
         let config_show = config_show_output(repo);
 
-        // Inline the trace log (bounded; mirrors stderr). The raw subprocess
+        // Inline the trace log (bounded). The raw subprocess
         // output log is only *referenced* by path — it can be multi-MB and
         // would drown out the trace records that matter in a bug report.
         let trace_log = crate::log_files::TRACE

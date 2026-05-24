@@ -102,13 +102,13 @@ All [2mpost-*[0m hooks (post-start, post-switch, post-commit, post-merge) run 
 
 [32mDiagnostic files[0m
 
-     File                  Created when             
- ───────────── ──────────────────────────────────── 
- [2mtrace.log[0m     Running with [2m-vv[0m                     
- [2moutput.log[0m    Running with [2m-vv[0m                     
- [2mdiagnostic.md[0m Running with [2m-vv[0m when warnings occur 
+     File        Created when   
+ ───────────── ──────────────── 
+ [2mtrace.log[0m     Running with [2m-vv[0m 
+ [2moutput.log[0m    Running with [2m-vv[0m 
+ [2mdiagnostic.md[0m Running with [2m-vv[0m 
 
-[2mtrace.log[0m mirrors stderr (commands, [2m[wt-trace][0m records, bounded subprocess previews). [2moutput.log[0m holds the raw uncapped subprocess stdout/stderr bodies. Both are overwritten on each [2m-vv[0m run. [2mdiagnostic.md[0m is a markdown report for pasting into GitHub issues — written only when warnings occur, and inlines [2mtrace.log[0m (never [2moutput.log[0m, which can be multi-MB).
+[2mtrace.log[0m receives the noisy [2mlog::*[0m pipeline at [2m-vv[0m — commands, [2m[wt-trace][0m records, bounded subprocess previews — so stderr stays readable (user-facing status messages still print as normal). [2moutput.log[0m holds the raw uncapped subprocess stdout/stderr bodies. [2mdiagnostic.md[0m is a markdown report for pasting into GitHub issues; it inlines [2mtrace.log[0m but not [2moutput.log[0m, which can be multi-MB. All three are overwritten on each [2m-vv[0m run.
 
 [1m[32mLocation[0m
 

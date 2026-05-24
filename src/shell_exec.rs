@@ -452,38 +452,48 @@ pub fn set_command_timeout(timeout: Option<Duration>) {
     COMMAND_TIMEOUT.with(|t| t.set(timeout));
 }
 
-/// Maximum lines of captured stdout/stderr emitted to stderr per stream.
-/// Exceeded content is elided with a `… (N more lines, M bytes elided)` marker;
-/// the full output is still written to `output.log` via
+/// Maximum lines of the bounded subprocess preview per stream. Exceeded
+/// content is elided with a `… (N more lines, M bytes elided)` marker; the
+/// full output is still written to `output.log` via
 /// [`SUBPROCESS_FULL_TARGET`].
 const LOG_OUTPUT_MAX_LINES: usize = 200;
 
-/// Maximum bytes of captured stdout/stderr emitted to stderr per stream.
-/// Applied in addition to [`LOG_OUTPUT_MAX_LINES`].
+/// Maximum bytes of the bounded subprocess preview per stream. Applied in
+/// addition to [`LOG_OUTPUT_MAX_LINES`].
 const LOG_OUTPUT_MAX_BYTES: usize = 64 * 1024;
 
-/// Log target used for *full* subprocess stdout/stderr. The format closure in
-/// `main.rs` routes records on this target to `output.log` only, so raw
-/// subprocess bodies (diffs, `git log -p`, patch-id pipelines) don't spam
-/// stderr or drown out trace records in `trace.log`.
+/// Log target used for *full* subprocess stdout/stderr. The router in
+/// `log_files::route` sends records on this target to `output.log` only,
+/// so raw subprocess bodies (diffs, `git log -p`, patch-id pipelines)
+/// never reach stderr.
 pub const SUBPROCESS_FULL_TARGET: &str = "worktrunk::subprocess_full";
 
-/// Log target used for the *bounded* (stderr-safe) preview of subprocess
-/// output. The format closure in `main.rs` routes records on this target to
-/// stderr and mirrors to `trace.log` — the uncapped version is captured via
-/// [`SUBPROCESS_FULL_TARGET`].
-pub const SUBPROCESS_TERMINAL_TARGET: &str = "worktrunk::subprocess_terminal";
+/// Log target used for the *bounded* preview of subprocess output (capped
+/// at `LOG_OUTPUT_MAX_LINES` / `LOG_OUTPUT_MAX_BYTES` with an elision
+/// marker). Shares the routing of all non-full records: stderr at `-v`
+/// (or `RUST_LOG=debug` without `-vv`), `trace.log` at `-vv`. The
+/// uncapped version is captured via [`SUBPROCESS_FULL_TARGET`].
+pub const SUBPROCESS_BOUNDED_TARGET: &str = "worktrunk::subprocess_bounded";
 
-/// Whether the full subprocess output is being captured somewhere (e.g.
-/// `output.log` at `-vv`). Gates the phrasing of the elision marker so it
-/// doesn't promise a file that wasn't created.
+/// Whether the full subprocess output is being captured to `output.log` at
+/// `-vv`. Gates the phrasing of the elision marker so it doesn't promise a
+/// file that wasn't created.
+///
+/// The two-state split (available / not) intentionally collapses two
+/// situations: (a) the user didn't run with `-vv` at all, and (b) the user
+/// did but `output.log` failed to open (rare: path-type mismatch, FD
+/// exhaustion). In (b), `announce_trace_destination` already warns at
+/// startup; the elision marker text is allowed to lag — saying "rerun with
+/// -vv" is harmless because the user's startup warning is the
+/// authoritative signal.
 ///
 /// Set by the binary's log-file init; stays `false` under `RUST_LOG=debug`
 /// without `-vv`, where the full records are dropped by design.
 static OUTPUT_LOG_AVAILABLE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-/// Called from the binary once the `output.log` sink has been created.
+/// Called from the binary once `log_files::init` has attempted to open
+/// `output.log` — `yes` reflects whether that attempt succeeded.
 pub fn set_output_log_available(yes: bool) {
     OUTPUT_LOG_AVAILABLE.store(yes, std::sync::atomic::Ordering::Relaxed);
 }
@@ -491,11 +501,11 @@ pub fn set_output_log_available(yes: bool) {
 /// Log captured stdout/stderr of a finished command.
 ///
 /// At `log::debug!` (`-vv`) each stream is emitted twice via separate log
-/// targets, and the format closure in `main.rs` routes them:
+/// targets, and `log_files::route` directs them:
 ///   - [`SUBPROCESS_FULL_TARGET`]: uncapped, line-per-record, `output.log` only.
-///   - [`SUBPROCESS_TERMINAL_TARGET`]: capped at [`LOG_OUTPUT_MAX_LINES`] and
-///     [`LOG_OUTPUT_MAX_BYTES`] per stream with an elision marker, stderr +
-///     `trace.log`.
+///   - [`SUBPROCESS_BOUNDED_TARGET`]: capped at [`LOG_OUTPUT_MAX_LINES`] and
+///     [`LOG_OUTPUT_MAX_BYTES`] per stream with an elision marker, then
+///     routed to `trace.log` at `-vv` or stderr otherwise.
 ///
 /// Below `log::debug!` both targets are disabled and this is a no-op.
 fn log_output(output: &std::process::Output) {
@@ -509,10 +519,10 @@ fn log_output(output: &std::process::Output) {
         log::debug!(target: SUBPROCESS_FULL_TARGET, "{}", line);
     }
     for line in format_stream_bounded(&output.stdout, "  ") {
-        log::debug!(target: SUBPROCESS_TERMINAL_TARGET, "{}", line);
+        log::debug!(target: SUBPROCESS_BOUNDED_TARGET, "{}", line);
     }
     for line in format_stream_bounded(&output.stderr, "  ! ") {
-        log::debug!(target: SUBPROCESS_TERMINAL_TARGET, "{}", line);
+        log::debug!(target: SUBPROCESS_BOUNDED_TARGET, "{}", line);
     }
 }
 
