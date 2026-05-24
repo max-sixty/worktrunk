@@ -628,7 +628,10 @@ fn test_vv_outside_repo_no_crash() {
 
     // `wt list` exits non-zero outside a git repo, but that's fine —
     // init_logging still ran before the command failed.
-    assert!(!output.status.success(), "wt list outside a repo should fail");
+    assert!(
+        !output.status.success(),
+        "wt list outside a repo should fail"
+    );
 
     // No diagnostic file should be created (not in a git repo)
     let diagnostic_path = temp_dir
