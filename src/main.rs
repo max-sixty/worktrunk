@@ -1308,21 +1308,16 @@ fn init_logging(verbose_level: u8) {
                     // Commands start with $, make only the command bold (not $ or [worktree])
                     if let Some(rest) = msg.strip_prefix("$ ") {
                         // Split: "git command [worktree]" -> ("git command", " [worktree]")
-                        if let Some(bracket_pos) = rest.find(" [") {
-                            let command = &rest[..bracket_pos];
-                            let worktree = &rest[bracket_pos..];
-                            writeln!(
-                                buf,
-                                "{}",
-                                cformat!("<dim>[{thread_num}]</> $ <bold>{command}</>{worktree}")
-                            )
-                        } else {
-                            writeln!(
-                                buf,
-                                "{}",
-                                cformat!("<dim>[{thread_num}]</> $ <bold>{rest}</>")
-                            )
-                        }
+                        // Standalone tools (gh, glab) emit no `[ctx]` suffix.
+                        let (command, worktree) = match rest.find(" [") {
+                            Some(pos) => (&rest[..pos], &rest[pos..]),
+                            None => (rest, ""),
+                        };
+                        writeln!(
+                            buf,
+                            "{}",
+                            cformat!("<dim>[{thread_num}]</> $ <bold>{command}</>{worktree}")
+                        )
                     } else if msg.starts_with("  ! ") {
                         // Error output - show in red
                         writeln!(buf, "{}", cformat!("<dim>[{thread_num}]</> <red>{msg}</>"))
