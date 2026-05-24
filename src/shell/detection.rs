@@ -96,6 +96,32 @@ pub fn is_shell_integration_line_for_uninstall(line: &str, cmd: &str) -> bool {
     is_shell_integration_line_impl(line, cmd, false)
 }
 
+/// Cmd-agnostic line detection: matches any `<binary> config shell init` line
+/// in an execution context, regardless of binary name. Extracts binary-name
+/// candidates from the line via regex and delegates to
+/// `is_shell_integration_line_for_uninstall` for the execution-context check.
+///
+/// Used by `uninstall` when scanning to remove worktrunk-managed shell
+/// integration regardless of the binary name it was installed under.
+pub fn is_shell_integration_line_for_uninstall_any_cmd(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.starts_with('#') || trimmed.starts_with("<#") {
+        return false;
+    }
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"([\w.-]+?)(?:\.exe)?\s+config\s+shell\s+init\b")
+            .expect("static regex is valid")
+    });
+    for cap in re.captures_iter(trimmed) {
+        let candidate = &cap[1];
+        if is_shell_integration_line_for_uninstall(line, candidate) {
+            return true;
+        }
+    }
+    false
+}
+
 fn is_shell_integration_line_impl(line: &str, cmd: &str, strict: bool) -> bool {
     let trimmed = line.trim();
 

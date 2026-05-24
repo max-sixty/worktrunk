@@ -554,14 +554,9 @@ fn handle_config_shell_command(action: ConfigShellCommand, yes: bool) -> anyhow:
                     Ok(())
                 })
         }
-        ConfigShellCommand::Uninstall {
-            shell,
-            dry_run,
-            cmd,
-        } => {
+        ConfigShellCommand::Uninstall { shell, dry_run } => {
             let explicit_shell = shell.is_some();
-            let cmd = cmd.unwrap_or_else(binary_name);
-            handle_unconfigure_shell(shell, yes, dry_run, &cmd)
+            handle_unconfigure_shell(shell, yes, dry_run)
                 .map_err(|e| anyhow::anyhow!("{}", e))
                 .map(|result| {
                     if !dry_run {

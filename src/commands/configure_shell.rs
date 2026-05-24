@@ -120,6 +120,26 @@ fn is_worktrunk_managed_content(content: &str, cmd: &str) -> bool {
     content.contains(&format!("{cmd} config shell init")) && content.contains("| source")
 }
 
+/// Cmd-agnostic content check: matches a worktrunk-generated wrapper file
+/// regardless of the binary name embedded in it.
+///
+/// Used by `uninstall` to recognize wrapper files installed under any binary
+/// name (e.g. `wt.fish`, `git-wt.fish`, `git-wt.nu`) when scanning the wrapper
+/// directories. The canonical marker is the `# worktrunk shell integration for
+/// <shell>` comment at the top of every wrapper template; a regex fallback
+/// catches older installs that predate the marker.
+fn is_worktrunk_managed_content_any_cmd(content: &str) -> bool {
+    if content.contains("# worktrunk shell integration for") {
+        return true;
+    }
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"\b[\w.-]+?(?:\.exe)?\s+config\s+shell\s+init\b")
+            .expect("static regex is valid")
+    });
+    re.is_match(content) && content.contains("| source")
+}
+
 /// Clean up legacy fish conf.d file after installing to functions/
 ///
 /// Previously, fish shell integration was installed to `~/.config/fish/conf.d/{cmd}.fish`.
@@ -909,12 +929,9 @@ pub fn handle_unconfigure_shell(
     shell_filter: Option<Shell>,
     skip_confirmation: bool,
     dry_run: bool,
-    cmd: &str,
 ) -> Result<UninstallScanResult, String> {
-    shell::validate_shell_command_name(cmd)?;
-
     // First, do a dry-run to see what would be changed
-    let preview = scan_for_uninstall(shell_filter, true, cmd)?;
+    let preview = scan_for_uninstall(shell_filter, true)?;
 
     // If nothing to do, return early
     if preview.results.is_empty() && preview.completion_results.is_empty() {
@@ -935,7 +952,7 @@ pub fn handle_unconfigure_shell(
     }
 
     // User confirmed (or --yes flag was used), now actually apply the changes
-    scan_for_uninstall(shell_filter, false, cmd)
+    scan_for_uninstall(shell_filter, false)
 }
 
 /// Remove a config file with a context-rich error message.
@@ -944,13 +961,18 @@ fn remove_config_file(path: &std::path::Path) -> Result<(), String> {
         .map_err(|e| format!("Failed to remove {}: {e}", format_path_for_display(path)))
 }
 
+/// Uninstall scans the shell-owned directories and removes every worktrunk-managed
+/// file or line, regardless of the binary name it was installed under.
+///
+/// For Fish/Nushell wrapper files (one file per binary name), this lists the
+/// wrapper directories and admits any file whose content matches
+/// `is_worktrunk_managed_content_any_cmd`. For Bash/Zsh/PowerShell (line-based),
+/// it scans the rc/profile files and uses `is_shell_integration_line_for_uninstall_any_cmd`.
+/// No `--cmd` is needed because the marker is the content, not the file name.
 fn scan_for_uninstall(
     shell_filter: Option<Shell>,
     dry_run: bool,
-    cmd: &str,
 ) -> Result<UninstallScanResult, String> {
-    shell::validate_shell_command_name(cmd)?;
-
     // For uninstall, always include PowerShell to clean up any existing profiles
     let default_shells = vec![
         Shell::Bash,
@@ -962,172 +984,149 @@ fn scan_for_uninstall(
 
     let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
+    let home =
+        shell::home_dir_required().map_err(|e| format!("Cannot determine home directory: {e}"))?;
+
     let mut results = Vec::new();
     let mut not_found = Vec::new();
+    // Wrapper file names found (e.g. `wt.fish`, `git-wt.fish`); the matching
+    // completion files in `completions/` share these names.
+    let mut fish_wrapper_names: HashSet<String> = HashSet::new();
 
     for &shell in &shells {
-        let paths = shell
-            .config_paths(cmd)
-            .map_err(|e| format!("Failed to get config paths for {shell}: {e}"))?;
+        match shell {
+            Shell::Fish => {
+                let functions_dir = home.join(".config").join("fish").join("functions");
+                let confd_dir = home.join(".config").join("fish").join("conf.d");
 
-        // For Fish, delete entire {cmd}.fish file (check both canonical and legacy locations)
-        if matches!(shell, Shell::Fish) {
-            let mut found_any = false;
+                let canonical = scan_fish_wrappers(&functions_dir)?;
+                let legacy = scan_fish_wrappers(&confd_dir)?;
+                let found_any = !canonical.is_empty() || !legacy.is_empty();
 
-            // Check canonical location (functions/)
-            // Only remove if it contains worktrunk markers to avoid deleting user's custom file
-            if let Some(fish_path) = paths.first()
-                && fish_path.exists()
-            {
-                let is_worktrunk_managed = fs::read_to_string(fish_path)
-                    .map(|content| is_worktrunk_managed_content(&content, cmd))
-                    .unwrap_or(false);
-
-                if is_worktrunk_managed {
-                    found_any = true;
-                    if dry_run {
-                        results.push(UninstallResult {
-                            shell,
-                            path: fish_path.clone(),
-                            action: UninstallAction::WouldRemove,
-                            superseded_by: None,
-                        });
+                for path in &canonical {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        fish_wrapper_names.insert(name.to_string());
+                    }
+                    let action = if dry_run {
+                        UninstallAction::WouldRemove
                     } else {
-                        remove_config_file(fish_path)?;
+                        remove_config_file(path)?;
+                        UninstallAction::Removed
+                    };
+                    results.push(UninstallResult {
+                        shell,
+                        path: path.clone(),
+                        action,
+                        superseded_by: None,
+                    });
+                }
+
+                for path in &legacy {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        fish_wrapper_names.insert(name.to_string());
+                    }
+                    let superseded_by = path.file_name().map(|n| functions_dir.join(n));
+                    let action = if dry_run {
+                        UninstallAction::WouldRemove
+                    } else {
+                        remove_config_file(path)?;
+                        UninstallAction::Removed
+                    };
+                    results.push(UninstallResult {
+                        shell,
+                        path: path.clone(),
+                        action,
+                        superseded_by,
+                    });
+                }
+
+                if !found_any {
+                    not_found.push((shell, functions_dir));
+                }
+            }
+
+            Shell::Nushell => {
+                let mut found_any = false;
+                let candidates = shell::nushell_config_candidates(&home);
+                for config_dir in &candidates {
+                    let autoload_dir = config_dir.join("vendor").join("autoload");
+                    let nu_files = scan_nushell_wrappers(&autoload_dir)?;
+                    for path in &nu_files {
+                        found_any = true;
+                        let action = if dry_run {
+                            UninstallAction::WouldRemove
+                        } else {
+                            remove_config_file(path)?;
+                            UninstallAction::Removed
+                        };
                         results.push(UninstallResult {
                             shell,
-                            path: fish_path.clone(),
-                            action: UninstallAction::Removed,
+                            path: path.clone(),
+                            action,
                             superseded_by: None,
                         });
                     }
                 }
-            }
-
-            // Also check legacy location (conf.d/) - issue #566
-            // Only remove if it contains worktrunk markers to avoid deleting user's custom file
-            let canonical_path = paths.first().cloned();
-            if let Ok(legacy_path) = Shell::legacy_fish_conf_d_path(cmd)
-                && legacy_path.exists()
-            {
-                let is_worktrunk_managed = fs::read_to_string(&legacy_path)
-                    .map(|content| is_worktrunk_managed_content(&content, cmd))
-                    .unwrap_or(false);
-
-                if is_worktrunk_managed {
-                    found_any = true;
-                    if dry_run {
-                        results.push(UninstallResult {
-                            shell,
-                            path: legacy_path.clone(),
-                            action: UninstallAction::WouldRemove,
-                            superseded_by: canonical_path.clone(),
-                        });
-                    } else {
-                        remove_config_file(&legacy_path)?;
-                        results.push(UninstallResult {
-                            shell,
-                            path: legacy_path,
-                            action: UninstallAction::Removed,
-                            superseded_by: canonical_path,
-                        });
+                if !found_any {
+                    // Report the first candidate's autoload dir as the expected location
+                    if let Some(first) = candidates.first() {
+                        not_found.push((shell, first.join("vendor").join("autoload")));
                     }
                 }
             }
 
-            if !found_any && let Some(fish_path) = paths.first() {
-                not_found.push((shell, fish_path.clone()));
-            }
-            continue;
-        }
+            Shell::Bash | Shell::Zsh | Shell::PowerShell => {
+                let paths = line_based_config_paths(shell, &home);
+                let mut found = false;
 
-        // For Nushell, delete config files from all candidate locations.
-        // Installation might have written to a different path than what we'd pick now
-        // (e.g., `nu` was in PATH during install but not during uninstall).
-        if matches!(shell, Shell::Nushell) {
-            let mut found_any = false;
-            for config_path in &paths {
-                if !config_path.exists() {
-                    continue;
+                for path in &paths {
+                    if !path.exists() {
+                        continue;
+                    }
+
+                    match uninstall_from_file(shell, path, dry_run) {
+                        Ok(Some(result)) => {
+                            results.push(result);
+                            found = true;
+                            break; // Only process first matching file per shell
+                        }
+                        Ok(None) => {} // No integration found in this file
+                        Err(e) => return Err(e),
+                    }
                 }
-                found_any = true;
-                if dry_run {
-                    results.push(UninstallResult {
-                        shell,
-                        path: config_path.clone(),
-                        action: UninstallAction::WouldRemove,
-                        superseded_by: None,
-                    });
-                } else {
-                    remove_config_file(config_path)?;
-                    results.push(UninstallResult {
-                        shell,
-                        path: config_path.clone(),
-                        action: UninstallAction::Removed,
-                        superseded_by: None,
-                    });
+
+                if !found && let Some(first_path) = paths.first() {
+                    not_found.push((shell, first_path.clone()));
                 }
             }
-            if !found_any && let Some(config_path) = paths.first() {
-                not_found.push((shell, config_path.clone()));
-            }
-            continue;
-        }
-
-        // For Bash/Zsh, scan config files
-        let mut found = false;
-
-        for path in &paths {
-            if !path.exists() {
-                continue;
-            }
-
-            match uninstall_from_file(shell, path, dry_run, cmd) {
-                Ok(Some(result)) => {
-                    results.push(result);
-                    found = true;
-                    break; // Only process first matching file per shell
-                }
-                Ok(None) => {} // No integration found in this file
-                Err(e) => return Err(e),
-            }
-        }
-
-        if !found && let Some(first_path) = paths.first() {
-            not_found.push((shell, first_path.clone()));
         }
     }
 
-    // Fish has a separate completion file that needs to be removed
+    // Fish completion files share names with the wrappers; clean up the same set.
     let mut completion_results = Vec::new();
     let mut completion_not_found = Vec::new();
-
-    for &shell in &shells {
-        if shell != Shell::Fish {
-            continue;
-        }
-
-        let completion_path = shell
-            .completion_path(cmd)
-            .map_err(|e| format!("Failed to get completion path for {}: {}", shell, e))?;
-
-        if completion_path.exists() {
-            if dry_run {
+    if shells.contains(&Shell::Fish) {
+        let completions_dir = home.join(".config").join("fish").join("completions");
+        let mut completion_found_any = false;
+        for name in &fish_wrapper_names {
+            let comp_path = completions_dir.join(name);
+            if comp_path.exists() {
+                completion_found_any = true;
+                let action = if dry_run {
+                    UninstallAction::WouldRemove
+                } else {
+                    remove_config_file(&comp_path)?;
+                    UninstallAction::Removed
+                };
                 completion_results.push(CompletionUninstallResult {
-                    shell,
-                    path: completion_path,
-                    action: UninstallAction::WouldRemove,
-                });
-            } else {
-                remove_config_file(&completion_path)?;
-                completion_results.push(CompletionUninstallResult {
-                    shell,
-                    path: completion_path,
-                    action: UninstallAction::Removed,
+                    shell: Shell::Fish,
+                    path: comp_path,
+                    action,
                 });
             }
-        } else {
-            completion_not_found.push((shell, completion_path));
+        }
+        if !completion_found_any {
+            completion_not_found.push((Shell::Fish, completions_dir));
         }
     }
 
@@ -1139,11 +1138,67 @@ fn scan_for_uninstall(
     })
 }
 
+/// Compute line-based config paths (Bash/Zsh/PowerShell) inline so uninstall
+/// doesn't need a cmd to drive `Shell::config_paths` (which uses cmd only for
+/// wrapper-shell file names).
+fn line_based_config_paths(shell: Shell, home: &Path) -> Vec<PathBuf> {
+    match shell {
+        Shell::Bash => vec![home.join(".bashrc")],
+        Shell::Zsh => {
+            let zdotdir = std::env::var("ZDOTDIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| home.to_path_buf());
+            vec![zdotdir.join(".zshrc")]
+        }
+        Shell::PowerShell => shell::powershell_profile_paths(home),
+        Shell::Fish | Shell::Nushell => Vec::new(),
+    }
+}
+
+/// List `*.fish` files in `dir` whose content matches a worktrunk wrapper
+/// (regardless of binary name). Returns empty if `dir` does not exist.
+fn scan_fish_wrappers(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    scan_wrapper_directory(dir, "fish")
+}
+
+/// List `*.nu` files in `dir` whose content matches a worktrunk wrapper.
+fn scan_nushell_wrappers(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    scan_wrapper_directory(dir, "nu")
+}
+
+fn scan_wrapper_directory(dir: &Path, extension: &str) -> Result<Vec<PathBuf>, String> {
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let entries = fs::read_dir(dir)
+        .map_err(|e| format!("Failed to read {}: {e}", format_path_for_display(dir)))?;
+    let mut out = Vec::new();
+    for entry in entries {
+        let entry =
+            entry.map_err(|e| format!("Failed to read {}: {e}", format_path_for_display(dir)))?;
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some(extension) {
+            continue;
+        }
+        if !path.is_file() {
+            continue;
+        }
+        let content = match fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(_) => continue, // unreadable file: skip, don't fail the whole uninstall
+        };
+        if is_worktrunk_managed_content_any_cmd(&content) {
+            out.push(path);
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
 fn uninstall_from_file(
     shell: Shell,
     path: &Path,
     dry_run: bool,
-    cmd: &str,
 ) -> Result<Option<UninstallResult>, String> {
     let content = fs::read_to_string(path)
         .map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?;
@@ -1152,7 +1207,7 @@ fn uninstall_from_file(
     let integration_lines: Vec<(usize, &str)> = lines
         .iter()
         .enumerate()
-        .filter(|(_, line)| shell::is_shell_integration_line_for_uninstall(line, cmd))
+        .filter(|(_, line)| shell::is_shell_integration_line_for_uninstall_any_cmd(line))
         .map(|(i, line)| (i, *line))
         .collect();
 

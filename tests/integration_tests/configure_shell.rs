@@ -951,9 +951,9 @@ fn test_uninstall_shell(repo: TestRepo, temp_home: TempDir) {
         ----- stderr -----
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         [2m↳[22m [2mNo [4mbash[24m shell extension & completions in ~/.bashrc[22m
-        [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions/wt.fish[22m
-        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.config/nushell/vendor/autoload/wt.nu[22m
-        [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions/wt.fish[22m
+        [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions[22m
+        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.config/nushell/vendor/autoload[22m
+        [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions[22m
 
         [32m✓[39m [32mRemoved integration from 1 shell[39m
         [2m↳[22m [2mRestart shell to complete uninstall[22m
@@ -1008,9 +1008,9 @@ fn test_uninstall_shell_multiple(repo: TestRepo, temp_home: TempDir) {
         ----- stderr -----
         [32m✓[39m [32mRemoved shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions/wt.fish[22m
-        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.config/nushell/vendor/autoload/wt.nu[22m
-        [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions/wt.fish[22m
+        [2m↳[22m [2mNo [4mfish[24m shell extension in ~/.config/fish/functions[22m
+        [2m↳[22m [2mNo [4mnu[24m shell extension & completions in ~/.config/nushell/vendor/autoload[22m
+        [2m↳[22m [2mNo [4mfish[24m completions in ~/.config/fish/completions[22m
 
         [32m✓[39m [32mRemoved integration from 2 shells[39m
         [2m↳[22m [2mRestart shell to complete uninstall[22m
@@ -1168,7 +1168,7 @@ fn test_install_uninstall_roundtrip(repo: TestRepo, temp_home: TempDir) {
 }
 
 #[rstest]
-fn test_uninstall_shell_custom_cmd_removes_matching_zsh_line(repo: TestRepo, temp_home: TempDir) {
+fn test_uninstall_scan_removes_all_worktrunk_zsh_lines(repo: TestRepo, temp_home: TempDir) {
     let zshrc_path = temp_home.path().join(".zshrc");
     fs::write(
         &zshrc_path,
@@ -1201,15 +1201,7 @@ fn test_uninstall_shell_custom_cmd_removes_matching_zsh_line(repo: TestRepo, tem
     set_temp_home_env(&mut uninstall_cmd, temp_home.path());
     uninstall_cmd.env("SHELL", "/bin/zsh");
     uninstall_cmd
-        .args([
-            "config",
-            "shell",
-            "uninstall",
-            "zsh",
-            "--yes",
-            "--cmd",
-            "git-wt",
-        ])
+        .args(["config", "shell", "uninstall", "zsh", "--yes"])
         .current_dir(repo.root_path());
 
     let uninstall_output = uninstall_cmd.output().expect("Failed to execute uninstall");
@@ -1225,13 +1217,17 @@ fn test_uninstall_shell_custom_cmd_removes_matching_zsh_line(repo: TestRepo, tem
         "Custom command integration should be removed"
     );
     assert!(
-        content.contains("wt config shell init zsh"),
-        "Default command integration should be preserved"
+        !content.contains("wt config shell init zsh"),
+        "Default command integration should also be removed (scan-all)"
+    );
+    assert!(
+        content.contains("# Existing config"),
+        "Unrelated comment should be preserved"
     );
 }
 
 #[rstest]
-fn test_uninstall_shell_custom_cmd_removes_fish_files(repo: TestRepo, temp_home: TempDir) {
+fn test_uninstall_scan_removes_custom_cmd_fish_files(repo: TestRepo, temp_home: TempDir) {
     let fish_functions = temp_home.path().join(".config/fish/functions");
     let fish_completions = temp_home.path().join(".config/fish/completions");
     fs::create_dir_all(&fish_functions).unwrap();
@@ -1267,15 +1263,7 @@ fn test_uninstall_shell_custom_cmd_removes_fish_files(repo: TestRepo, temp_home:
     set_temp_home_env(&mut uninstall_cmd, temp_home.path());
     uninstall_cmd.env("SHELL", "/bin/fish");
     uninstall_cmd
-        .args([
-            "config",
-            "shell",
-            "uninstall",
-            "fish",
-            "--yes",
-            "--cmd",
-            "git-wt",
-        ])
+        .args(["config", "shell", "uninstall", "fish", "--yes"])
         .current_dir(repo.root_path());
 
     let uninstall_output = uninstall_cmd.output().expect("Failed to execute uninstall");
@@ -1285,6 +1273,9 @@ fn test_uninstall_shell_custom_cmd_removes_fish_files(repo: TestRepo, temp_home:
         String::from_utf8_lossy(&uninstall_output.stderr)
     );
 
+    // Scan-all removes git-wt.fish (worktrunk-managed by content) but leaves the
+    // hand-written wt.fish stub alone — it lacks the `config shell init … | source`
+    // marker so it doesn't look like a worktrunk wrapper.
     assert!(!custom_function.exists());
     assert!(!custom_completion.exists());
     assert!(default_function.exists());
@@ -1292,7 +1283,7 @@ fn test_uninstall_shell_custom_cmd_removes_fish_files(repo: TestRepo, temp_home:
 }
 
 #[rstest]
-fn test_uninstall_shell_custom_cmd_removes_nushell_file(repo: TestRepo, temp_home: TempDir) {
+fn test_uninstall_scan_removes_custom_cmd_nushell_file(repo: TestRepo, temp_home: TempDir) {
     let home = std::fs::canonicalize(temp_home.path()).unwrap();
     let nu_autoload = home
         .join(".config")
@@ -1327,15 +1318,7 @@ fn test_uninstall_shell_custom_cmd_removes_nushell_file(repo: TestRepo, temp_hom
     set_temp_home_env(&mut uninstall_cmd, temp_home.path());
     uninstall_cmd.env("SHELL", "/bin/nu");
     uninstall_cmd
-        .args([
-            "config",
-            "shell",
-            "uninstall",
-            "nu",
-            "--yes",
-            "--cmd",
-            "git-wt",
-        ])
+        .args(["config", "shell", "uninstall", "nu", "--yes"])
         .current_dir(repo.root_path());
 
     let uninstall_output = uninstall_cmd.output().expect("Failed to execute uninstall");
@@ -1345,6 +1328,8 @@ fn test_uninstall_shell_custom_cmd_removes_nushell_file(repo: TestRepo, temp_hom
         String::from_utf8_lossy(&uninstall_output.stderr)
     );
 
+    // Scan-all removes git-wt.nu (worktrunk-managed by content) but leaves the
+    // hand-written wt.nu stub alone (no `config shell init … | source` marker).
     assert!(!custom_config.exists());
     assert!(default_config.exists());
 }

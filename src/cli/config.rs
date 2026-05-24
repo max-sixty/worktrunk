@@ -108,15 +108,10 @@ Skip confirmation prompt:
 $ wt config shell uninstall --yes
 ```
 
-Uninstall an alternate command name:
-```console
-$ wt config shell uninstall zsh --cmd=git-wt
-```
-
 ## Version tolerance
 
-Detects various forms of the integration pattern regardless of:
-- Command prefix (wt, worktree, etc.)
+Uninstall removes every worktrunk-managed integration it finds, regardless of:
+- Binary name it was installed under (`wt`, `git-wt`, …)
 - Minor syntax variations between versions"#
     )]
     Uninstall {
@@ -127,12 +122,6 @@ Detects various forms of the integration pattern regardless of:
         /// Show what would be changed
         #[arg(long)]
         dry_run: bool,
-
-        /// Command name for shell integration (defaults to binary name)
-        ///
-        /// Use this to remove shell integration installed for an alternate command name.
-        #[arg(long)]
-        cmd: Option<String>,
     },
 
     /// Show output theme samples
