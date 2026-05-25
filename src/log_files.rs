@@ -176,3 +176,27 @@ fn try_create(filename: &str) -> Option<(PathBuf, File)> {
         .ok()?;
     Some((path, file))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use super::{LogSink, SinkWriter};
+
+    /// `tracing_subscriber::fmt` only ever uses `write` + drop, but
+    /// `io::Write` requires us to implement `flush`. The body is a
+    /// no-op; this test exists so codecov sees the line covered without
+    /// us having to add a `#[cfg(not(coverage))]`-style allow.
+    #[test]
+    fn sink_writer_flush_is_a_no_op() {
+        static SINK: LogSink = LogSink {
+            file: std::sync::OnceLock::new(),
+            filename: "test-flush.log",
+        };
+        let mut w = SinkWriter {
+            sink: &SINK,
+            buf: Vec::new(),
+        };
+        assert!(w.flush().is_ok());
+    }
+}

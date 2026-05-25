@@ -82,6 +82,25 @@ fn event_message(event: &Event<'_>) -> String {
     v.0
 }
 
+/// Pure helper: render a single log message for stderr with the thread
+/// label and the styling rules `StderrFormat` applies. Factored out so the
+/// branches (`$ cmd [ctx]`, `$ cmd`, `  ! err`, plain) can be unit-tested
+/// without standing up a `tracing` subscriber.
+fn style_stderr_line(thread_num: char, msg: &str) -> String {
+    if let Some(rest) = msg.strip_prefix("$ ") {
+        // Standalone tools (gh, glab) emit no `[ctx]` suffix.
+        let (command, worktree) = match rest.find(" [") {
+            Some(pos) => (&rest[..pos], &rest[pos..]),
+            None => (rest, ""),
+        };
+        cformat!("<dim>[{thread_num}]</> $ <bold>{command}</>{worktree}")
+    } else if msg.starts_with("  ! ") {
+        cformat!("<dim>[{thread_num}]</> <red>{msg}</>")
+    } else {
+        cformat!("<dim>[{thread_num}]</> {msg}")
+    }
+}
+
 /// Stderr formatter: replicates the legacy env_logger styling pre-migration.
 ///
 /// `$ cmd [worktree]` headers bold the command. `  ! …` continuation lines
@@ -100,28 +119,8 @@ where
         mut writer: Writer<'_>,
         event: &Event<'_>,
     ) -> fmt::Result {
-        let thread_num = thread_label();
-        let msg = event_message(event);
-        if let Some(rest) = msg.strip_prefix("$ ") {
-            // Standalone tools (gh, glab) emit no `[ctx]` suffix.
-            let (command, worktree) = match rest.find(" [") {
-                Some(pos) => (&rest[..pos], &rest[pos..]),
-                None => (rest, ""),
-            };
-            writeln!(
-                writer,
-                "{}",
-                cformat!("<dim>[{thread_num}]</> $ <bold>{command}</>{worktree}")
-            )
-        } else if msg.starts_with("  ! ") {
-            writeln!(
-                writer,
-                "{}",
-                cformat!("<dim>[{thread_num}]</> <red>{msg}</>")
-            )
-        } else {
-            writeln!(writer, "{}", cformat!("<dim>[{thread_num}]</> {msg}"))
-        }
+        let line = style_stderr_line(thread_label(), &event_message(event));
+        writeln!(writer, "{line}")
     }
 }
 
@@ -218,20 +217,30 @@ pub(crate) fn init(verbose_level: u8) {
         // (e.g. `now_secs - cached.checked_at` in `list/ci_status` is fine
         // under monotonic-ish clocks but panics when args are evaluated
         // against a clock-skewed fixture).
-        let baseline = match verbose_level {
-            0 => log::LevelFilter::Warn,
-            1 => log::LevelFilter::Info,
-            _ => log::LevelFilter::Debug,
-        };
-        let log_max = rust_log_level().unwrap_or(baseline);
         let _ = tracing_log::LogTracer::builder()
-            .with_max_level(log_max)
+            .with_max_level(effective_log_max_level(verbose_level, rust_log_level()))
             .init();
     }
 
     if verbose_level >= 2 {
         announce_trace_destination();
     }
+}
+
+/// Effective ceiling for `log::max_level` given the verbosity flag and the
+/// parsed `RUST_LOG` value. Env wins when set; otherwise the verbosity
+/// baseline (`0` → Warn, `1` → Info, `2+` → Debug) applies. Factored out
+/// so the merge logic can be tested without driving the process env.
+fn effective_log_max_level(
+    verbose_level: u8,
+    from_env: Option<log::LevelFilter>,
+) -> log::LevelFilter {
+    let baseline = match verbose_level {
+        0 => log::LevelFilter::Warn,
+        1 => log::LevelFilter::Info,
+        _ => log::LevelFilter::Debug,
+    };
+    from_env.unwrap_or(baseline)
 }
 
 /// Highest level mentioned in `$RUST_LOG`, or `None` if unset / unparsable.
@@ -351,7 +360,9 @@ fn announce_trace_destination() {
 
 #[cfg(test)]
 mod tests {
-    use super::{label_for_thread_index, rust_log_level};
+    use ansi_str::AnsiStr;
+
+    use super::{effective_log_max_level, label_for_thread_index, style_stderr_line};
 
     /// Branch coverage for `label_for_thread_index` — `thread_label` never
     /// hands it `n == 0` or `n > 52` in practice (Rust's `ThreadId`
@@ -370,21 +381,48 @@ mod tests {
         assert_eq!(label_for_thread_index(Some(9999)), '?');
     }
 
-    /// `rust_log_level` is tested indirectly by integration tests that set
-    /// `RUST_LOG`, but parallel test execution makes it unsafe to mutate
-    /// the env from a unit test. We exercise the absent path here (the
-    /// most common one) and leave the directive-parsing branch to the
-    /// integration suite, which spawns subprocesses with `RUST_LOG` set.
+    /// Each shape `StderrFormat` recognises — verified ANSI-stripped so
+    /// the assertions don't tangle with `cformat!`'s exact escape bytes.
     #[test]
-    fn rust_log_level_returns_none_when_unset() {
-        // SAFETY: this read of the *current* process env is safe; we
-        // never mutate it. If `RUST_LOG` is set by the runner the test
-        // adapts — the helper's contract is "Some(highest level)" or
-        // "None", and that's what we assert.
-        let observed = rust_log_level();
-        match std::env::var("RUST_LOG") {
-            Ok(_) => assert!(observed.is_some()),
-            Err(_) => assert!(observed.is_none()),
-        }
+    fn style_stderr_covers_each_shape() {
+        // `$ cmd [ctx]` — git path with worktree context.
+        let cmd_ctx = style_stderr_line('a', "$ git status [feature]")
+            .ansi_strip()
+            .into_owned();
+        assert_eq!(cmd_ctx, "[a] $ git status [feature]");
+
+        // `$ cmd` with no `[ctx]` — standalone tools (gh, glab) emit this
+        // shape; was line 109 in the codecov gap.
+        let cmd_no_ctx = style_stderr_line('b', "$ gh pr list")
+            .ansi_strip()
+            .into_owned();
+        assert_eq!(cmd_no_ctx, "[b] $ gh pr list");
+
+        // `  ! …` — subprocess stderr continuation, red-styled.
+        let err = style_stderr_line('c', "  ! fatal: bad ref")
+            .ansi_strip()
+            .into_owned();
+        assert_eq!(err, "[c]   ! fatal: bad ref");
+
+        // Plain — everything else falls through with just the thread prefix.
+        let plain = style_stderr_line('d', "hello").ansi_strip().into_owned();
+        assert_eq!(plain, "[d] hello");
+    }
+
+    /// `effective_log_max_level` mirrors the layer filters: env wins when
+    /// set, else the verbosity baseline. Driving it as a pure function
+    /// lets us cover the env-set branch without mutating the process env
+    /// (which races with parallel tests).
+    #[test]
+    fn effective_log_max_level_env_wins_when_set() {
+        use log::LevelFilter::*;
+        assert_eq!(effective_log_max_level(0, None), Warn);
+        assert_eq!(effective_log_max_level(1, None), Info);
+        assert_eq!(effective_log_max_level(2, None), Debug);
+        // Env raises:
+        assert_eq!(effective_log_max_level(0, Some(Debug)), Debug);
+        // Env lowers (the env-wins-when-set contract — env can also
+        // suppress, not just raise):
+        assert_eq!(effective_log_max_level(2, Some(Warn)), Warn);
     }
 }
