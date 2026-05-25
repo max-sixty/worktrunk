@@ -1246,15 +1246,25 @@ fn thread_label() -> char {
 }
 
 fn init_logging(verbose_level: u8) {
-    // Configure logging based on --verbose flag or RUST_LOG env var.
-    // Level map: -v → Info on stderr (no file), -vv+ → Debug routed to
-    // `.git/wt/logs/trace.log` instead of stderr, plus uncapped subprocess
-    // bodies in `.git/wt/logs/output.log` (via `SUBPROCESS_FULL_TARGET`).
+    // Configure logging based on --verbose flag, with `RUST_LOG` layered on
+    // top. The flag sets the baseline filter level (`-v 0` → Off, `-v` →
+    // Info, `-vv+` → Debug); `RUST_LOG`, when set, refines or overrides that
+    // baseline via `env_logger`'s standard directive grammar. Examples:
     //
-    // At -vv the `log::*` pipeline is silent on stderr — user-facing
+    //   - bare `wt`                        → Off (silent)
+    //   - `RUST_LOG=debug wt`              → Debug (env raises baseline)
+    //   - `wt -v`                          → Info
+    //   - `RUST_LOG=trace wt -vv`          → Trace globally
+    //   - `RUST_LOG=worktrunk=trace wt -v` → Info + Trace for `worktrunk`
+    //
+    // All three flag levels go through the same builder shape — set the
+    // baseline, then `parse_default_env()` — so `RUST_LOG` is honored
+    // uniformly and never silently dropped. The flag still controls the
+    // file-sink side effects: `-vv+` opens `.git/wt/logs/trace.log` and
+    // `output.log`, and the `log::*` pipeline becomes silent on stderr
+    // (the bounded preview lands in `trace.log` instead). User-facing
     // `eprintln!` output (template expansions, status, hints) is
-    // unaffected. A one-line pointer below tells the user where the
-    // trace went.
+    // unaffected at any level.
     output::set_verbosity(verbose_level);
 
     // Prime `GIT_COMMON_DIR_CACHE` BEFORE env_logger registers, so any
@@ -1280,19 +1290,13 @@ fn init_logging(verbose_level: u8) {
         let _ = worktrunk::git::Repository::current();
     }
 
-    let mut builder = match verbose_level {
-        0 => env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("off")),
-        1 => {
-            let mut b = env_logger::Builder::new();
-            b.filter_level(log::LevelFilter::Info);
-            b
-        }
-        _ => {
-            let mut b = env_logger::Builder::new();
-            b.filter_level(log::LevelFilter::Debug);
-            b
-        }
+    let baseline = match verbose_level {
+        0 => log::LevelFilter::Off,
+        1 => log::LevelFilter::Info,
+        _ => log::LevelFilter::Debug,
     };
+    let mut builder = env_logger::Builder::new();
+    builder.filter_level(baseline).parse_default_env();
 
     builder
         .format(|buf, record| {

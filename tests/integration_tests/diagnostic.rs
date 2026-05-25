@@ -446,6 +446,52 @@ fn test_vv_log_pipeline_silent_on_stderr(repo: TestRepo) {
     );
 }
 
+/// `RUST_LOG` is honored at every verbosity level — including `-v` — and
+/// can raise the filter above the flag's baseline. A user who runs
+/// `RUST_LOG=debug wt -v` gets Debug, not Info: the flag sets a baseline,
+/// and `RUST_LOG` refines it on top via `env_logger`'s standard directive
+/// grammar. Guards against the regression where `-v`/`-vv` hardcoded
+/// `filter_level(...)` without `parse_default_env()` and silently dropped
+/// `RUST_LOG`.
+///
+/// The probe is the `[wt-trace]` grammar — those records are emitted at
+/// `log::debug!`, so they're suppressed at the Info baseline `-v` selects
+/// and surface when `RUST_LOG=debug` raises it. (At `-v 0` the same
+/// `RUST_LOG=debug` path is already covered by
+/// `test_rust_log_debug_fallback_without_vv`; at `-vv` the baseline is
+/// already Debug so there's no flag/env conflict to assert.)
+#[rstest]
+fn test_rust_log_overrides_verbose_flag(repo: TestRepo) {
+    // Baseline: -v alone caps at Info, so debug-level [wt-trace] records
+    // are dropped from stderr.
+    let info_only = repo
+        .wt_command()
+        .args(["list", "-v"])
+        .env_remove("RUST_LOG")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("wt list -v");
+    let info_stderr = String::from_utf8_lossy(&info_only.stderr);
+    assert!(
+        !info_stderr.contains("[wt-trace]"),
+        "-v alone (Info baseline) should not surface [wt-trace] records: {info_stderr}"
+    );
+
+    // RUST_LOG=debug + -v raises the level: [wt-trace] records appear.
+    let with_env = repo
+        .wt_command()
+        .args(["list", "-v"])
+        .env("RUST_LOG", "debug")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("wt list -v");
+    let env_stderr = String::from_utf8_lossy(&with_env.stderr);
+    assert!(
+        env_stderr.contains("[wt-trace]"),
+        "RUST_LOG=debug at -v should surface [wt-trace] records on stderr: {env_stderr}"
+    );
+}
+
 /// `RUST_LOG=debug` at `-v 0` activates Debug logging without creating the
 /// on-disk log files. Stderr receives the **bounded** preview
 /// (`SUBPROCESS_BOUNDED_TARGET`); the uncapped `SUBPROCESS_FULL_TARGET`

@@ -479,6 +479,12 @@ platform = "invalid_platform"
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
         repo.configure_mock_commands(&mut cmd);
+        // The snapshot asserts on the `log::warn!` diagnostic for the
+        // invalid platform value, which is suppressed at the default
+        // baseline filter (`-v 0` → Off). Opt this test into Warn-level
+        // logging via `RUST_LOG`, which the verbose flag now merges with
+        // through `env_logger::Builder::parse_default_env` (`init_logging`).
+        cmd.env("RUST_LOG", "warn");
         // Invalid platform should fall back to URL detection (GitHub)
         assert_cmd_snapshot!(cmd);
     });
