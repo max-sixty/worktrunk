@@ -277,21 +277,24 @@ fn delete_branch_in_synchronous_fallback(
     warn_if_branch_retained(branch, &result, planner_expected_retention);
 }
 
-/// Surface the residual branch when `delete_branch_if_safe` left it in place.
+/// Surface the residual branch when `delete_branch_if_safe` returned
+/// `Ok(NotDeleted)` for a case the planner expected to delete.
 ///
 /// The worktree has already been removed by the time this runs, so silently
 /// dropping the branch-deletion outcome (the prior behavior) left the user
 /// with no signal that the branch survived. Both the fast path and the
 /// synchronous fallback route through here so the message is consistent.
 ///
-/// - `Err`: the branch-deletion command itself failed (`git branch -D`
-///   error, refs scan failure, or similar). Always warn — the prior
-///   `log::debug!` was invisible.
-/// - `Ok(NotDeleted)`: integration check declined the branch. Warn only if
-///   the planner predicted deletion (a `pre-remove` hook advanced the branch,
-///   or similar race); when the planner already predicted retention,
-///   `print_hints` has explained why and a second message would duplicate.
-/// - `Ok(ForceDeleted)` or `Ok(Integrated(_))`: succeeded; no message.
+/// Only the surprise case is surfaced: planner predicted deletion (the
+/// pre-hook integration check said integrated) but the post-hook check
+/// said otherwise — typically a `pre-remove` hook commit. When the planner
+/// already predicted retention (unmerged from the start, or
+/// `--no-delete-branch`), `print_hints` has explained the case and a
+/// second message would duplicate. `Ok(ForceDeleted)`, `Ok(Integrated(_))`,
+/// and `Err` paths are silent — Err is logged at warn level for developer
+/// diagnostics rather than as a user-actionable message (the failure mode
+/// would be a `git branch -D` exec error or a refs DB I/O failure, neither
+/// of which the user can act on differently than re-running the command).
 fn warn_if_branch_retained(
     branch: &str,
     result: &anyhow::Result<BranchDeletionResult>,
@@ -310,12 +313,7 @@ fn warn_if_branch_retained(
             );
         }
         Err(e) => {
-            eprintln!(
-                "{}",
-                warning_message(cformat!(
-                    "Removed worktree but failed to delete branch <bold>{branch}</>: {e}; to retry, run <bold>wt remove --force-delete {branch}</>"
-                ))
-            );
+            log::warn!("Failed to delete branch {branch} after removing worktree: {e}");
         }
         Ok(_) => {}
     }
