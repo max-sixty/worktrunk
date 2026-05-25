@@ -1908,6 +1908,45 @@ mod tests {
     use super::*;
     use insta::assert_snapshot;
 
+    /// Exercises each arm of [`warn_if_branch_retained`] for coverage and
+    /// to pin the suppression rule. Output goes to stderr and isn't captured
+    /// here — the assertion is that the call doesn't panic on any arm.
+    /// User-visible message shapes are exercised by the integration tests
+    /// (e.g. `test_merge_pre_remove_new_commit_keeps_branch`).
+    #[test]
+    fn warn_if_branch_retained_arms() {
+        let ok = |outcome| {
+            Ok::<_, anyhow::Error>(BranchDeletionResult {
+                outcome,
+                integration_target: "main".to_string(),
+            })
+        };
+
+        // NotDeleted + planner did NOT expect retention → warn (surprise race)
+        warn_if_branch_retained("feature", &ok(BranchDeletionOutcome::NotDeleted), false);
+
+        // NotDeleted + planner DID expect retention → silent (print_hints
+        // already explained)
+        warn_if_branch_retained("feature", &ok(BranchDeletionOutcome::NotDeleted), true);
+
+        // Success arms → silent
+        warn_if_branch_retained("feature", &ok(BranchDeletionOutcome::ForceDeleted), false);
+        warn_if_branch_retained(
+            "feature",
+            &ok(BranchDeletionOutcome::Integrated(
+                IntegrationReason::SameCommit,
+            )),
+            false,
+        );
+
+        // Err arm → log::warn! only, no stderr message
+        warn_if_branch_retained(
+            "feature",
+            &Err(anyhow::anyhow!("simulated git failure")),
+            false,
+        );
+    }
+
     #[test]
     fn test_format_switch_message() {
         let path = PathBuf::from("/tmp/test");
