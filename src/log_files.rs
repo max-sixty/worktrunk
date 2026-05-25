@@ -129,12 +129,12 @@ impl io::Write for SinkWriter {
 
 impl Drop for SinkWriter {
     fn drop(&mut self) {
-        if self.buf.is_empty() {
-            return;
-        }
+        // `tracing_subscriber::fmt` always invokes the writer for an
+        // event (the formatter writes at least the trailing `\n`), so
+        // we don't need an empty-buffer guard here.
         let text = String::from_utf8_lossy(&self.buf);
-        // `tracing_subscriber::fmt` emits a trailing `\n` per event; strip
-        // it so `write_line` doesn't double it. Intermediate newlines (from
+        // The fmt layer emits a trailing `\n` per event; strip it so
+        // `write_line` doesn't double it. Intermediate newlines (from
         // multi-line messages) become separate lines, each prefixed by
         // whatever the format wrote.
         for line in text.trim_end_matches('\n').split('\n') {

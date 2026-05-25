@@ -34,40 +34,46 @@ use crate::output;
 /// concurrent records by thread in stderr / trace.log output.
 fn thread_label() -> char {
     let thread_id = format!("{:?}", std::thread::current().id());
-    thread_id
+    let parsed = thread_id
         .strip_prefix("ThreadId(")
         .and_then(|s| s.strip_suffix(")"))
-        .and_then(|s| s.parse::<usize>().ok())
-        .map(|n| {
-            if n == 0 {
-                '0'
-            } else if n <= 26 {
-                char::from(b'a' + (n - 1) as u8)
-            } else if n <= 52 {
-                char::from(b'A' + (n - 27) as u8)
-            } else {
-                '?'
-            }
-        })
-        .unwrap_or('?')
+        .and_then(|s| s.parse::<usize>().ok());
+    label_for_thread_index(parsed)
+}
+
+/// Pure helper: map a parsed `ThreadId` number to a single-char label.
+///
+/// `n == 0` → `'0'`; `1..=26` → `'a'..='z'`; `27..=52` → `'A'..='Z'`;
+/// everything else (including a `None` from a `ThreadId` whose `Debug`
+/// shape we don't recognize) → `'?'`. Tested via the branch coverage
+/// below — `thread_label` itself never sees `n == 0` or `n > 52` in
+/// practice, so its `unwrap_or` chain stays exercised only through
+/// `label_for_thread_index`.
+fn label_for_thread_index(n: Option<usize>) -> char {
+    let Some(n) = n else { return '?' };
+    if n == 0 {
+        '0'
+    } else if n <= 26 {
+        char::from(b'a' + (n - 1) as u8)
+    } else if n <= 52 {
+        char::from(b'A' + (n - 27) as u8)
+    } else {
+        '?'
+    }
 }
 
 /// Pull the rendered message out of a `tracing` event.
 ///
 /// Native `tracing::debug!("…")` and `log::*`-bridged calls both put their
-/// rendered text in the `message` field. Other fields are ignored — every
-/// caller in worktrunk emits the message inline.
+/// rendered text in the `message` field, recorded as `&dyn Debug` (an
+/// `Arguments` instance). Other fields are ignored — every caller in
+/// worktrunk emits the message inline.
 fn event_message(event: &Event<'_>) -> String {
     struct V(String);
     impl tracing::field::Visit for V {
         fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn fmt::Debug) {
             if field.name() == "message" {
                 let _ = write!(&mut self.0, "{value:?}");
-            }
-        }
-        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-            if field.name() == "message" {
-                self.0.push_str(value);
             }
         }
     }
@@ -341,4 +347,44 @@ fn announce_trace_destination() {
         None => cformat!("Tracing to <underline>{trace_display}</> (output.log unavailable)"),
     };
     eprintln!("{}", info_message(msg));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{label_for_thread_index, rust_log_level};
+
+    /// Branch coverage for `label_for_thread_index` — `thread_label` never
+    /// hands it `n == 0` or `n > 52` in practice (Rust's `ThreadId`
+    /// numbering starts at 1 and the main process won't spawn 53+ threads
+    /// during the lifetime of the logger), but the branches are there for
+    /// the day either invariant changes.
+    #[test]
+    fn label_covers_each_branch() {
+        assert_eq!(label_for_thread_index(None), '?');
+        assert_eq!(label_for_thread_index(Some(0)), '0');
+        assert_eq!(label_for_thread_index(Some(1)), 'a');
+        assert_eq!(label_for_thread_index(Some(26)), 'z');
+        assert_eq!(label_for_thread_index(Some(27)), 'A');
+        assert_eq!(label_for_thread_index(Some(52)), 'Z');
+        assert_eq!(label_for_thread_index(Some(53)), '?');
+        assert_eq!(label_for_thread_index(Some(9999)), '?');
+    }
+
+    /// `rust_log_level` is tested indirectly by integration tests that set
+    /// `RUST_LOG`, but parallel test execution makes it unsafe to mutate
+    /// the env from a unit test. We exercise the absent path here (the
+    /// most common one) and leave the directive-parsing branch to the
+    /// integration suite, which spawns subprocesses with `RUST_LOG` set.
+    #[test]
+    fn rust_log_level_returns_none_when_unset() {
+        // SAFETY: this read of the *current* process env is safe; we
+        // never mutate it. If `RUST_LOG` is set by the runner the test
+        // adapts — the helper's contract is "Some(highest level)" or
+        // "None", and that's what we assert.
+        let observed = rust_log_level();
+        match std::env::var("RUST_LOG") {
+            Ok(_) => assert!(observed.is_some()),
+            Err(_) => assert!(observed.is_none()),
+        }
+    }
 }
