@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::io::Write;
 use std::path::Path;
 
 use anyhow::Context;
@@ -31,6 +30,7 @@ pub(crate) mod help_pager;
 mod invocation;
 mod llm;
 mod log_files;
+mod logging;
 mod md_help;
 mod output;
 mod pager;
@@ -1225,147 +1225,6 @@ fn init_command_log(command_line: &str) {
     }
 }
 
-fn thread_label() -> char {
-    let thread_id = format!("{:?}", std::thread::current().id());
-    thread_id
-        .strip_prefix("ThreadId(")
-        .and_then(|s| s.strip_suffix(")"))
-        .and_then(|s| s.parse::<usize>().ok())
-        .map(|n| {
-            if n == 0 {
-                '0'
-            } else if n <= 26 {
-                char::from(b'a' + (n - 1) as u8)
-            } else if n <= 52 {
-                char::from(b'A' + (n - 27) as u8)
-            } else {
-                '?'
-            }
-        })
-        .unwrap_or('?')
-}
-
-fn init_logging(verbose_level: u8) {
-    // Configure logging based on --verbose flag or RUST_LOG env var.
-    // Level map: -v → Info on stderr (no file), -vv+ → Debug routed to
-    // `.git/wt/logs/trace.log` instead of stderr, plus uncapped subprocess
-    // bodies in `.git/wt/logs/output.log` (via `SUBPROCESS_FULL_TARGET`).
-    //
-    // At -vv the `log::*` pipeline is silent on stderr — user-facing
-    // `eprintln!` output (template expansions, status, hints) is
-    // unaffected. A one-line pointer below tells the user where the
-    // trace went.
-    output::set_verbosity(verbose_level);
-
-    // Prime `GIT_COMMON_DIR_CACHE` BEFORE env_logger registers, so any
-    // log records emitted while building the cache go nowhere (no logger
-    // installed yet) and the later `Repository::current()` triggered by
-    // `log_files::init` is a memory-cache hit with no fresh git call.
-    // Without this, those records would fire while `TRACE.is_active()`
-    // is still false (we're inside the call that sets the file) and
-    // route to stderr — exactly the noise -vv is supposed to keep off
-    // the terminal. Running before `.init()` also keeps the priming
-    // robust if `Repository::current()` grows new log emissions later:
-    // a not-yet-installed logger drops them harmlessly.
-    //
-    // Caveat: if priming itself fails (Ctrl-C during the ~5ms rev-parse
-    // fork; transient fork error), the cache stays empty and the later
-    // `log_files::init` re-runs the git call, which logs onto the
-    // now-installed logger and leaks one `$ git rev-parse` line to
-    // stderr. Rare and minor (one line, not 15K), so we don't engineer
-    // around it; closing it cleanly requires resolving the log-dir path
-    // without going through `shell_exec::Cmd`, which violates the
-    // command-execution-through-Cmd invariant in CLAUDE.md.
-    if verbose_level >= 2 {
-        let _ = worktrunk::git::Repository::current();
-    }
-
-    let mut builder = match verbose_level {
-        0 => env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("off")),
-        1 => {
-            let mut b = env_logger::Builder::new();
-            b.filter_level(log::LevelFilter::Info);
-            b
-        }
-        _ => {
-            let mut b = env_logger::Builder::new();
-            b.filter_level(log::LevelFilter::Debug);
-            b
-        }
-    };
-
-    builder
-        .format(|buf, record| {
-            let route = log_files::route(record.target());
-            let thread_num = thread_label();
-            let msg = record.args().to_string();
-
-            match route {
-                log_files::Route::Drop => Ok(()),
-                log_files::Route::File(sink) => {
-                    sink.write_line(&format!("[{thread_num}] {msg}"));
-                    Ok(())
-                }
-                log_files::Route::Stderr => {
-                    // Commands start with $, make only the command bold (not $ or [worktree])
-                    if let Some(rest) = msg.strip_prefix("$ ") {
-                        // Split: "git command [worktree]" -> ("git command", " [worktree]")
-                        // Standalone tools (gh, glab) emit no `[ctx]` suffix.
-                        let (command, worktree) = match rest.find(" [") {
-                            Some(pos) => (&rest[..pos], &rest[pos..]),
-                            None => (rest, ""),
-                        };
-                        writeln!(
-                            buf,
-                            "{}",
-                            cformat!("<dim>[{thread_num}]</> $ <bold>{command}</>{worktree}")
-                        )
-                    } else if msg.starts_with("  ! ") {
-                        // Error output - show in red
-                        writeln!(buf, "{}", cformat!("<dim>[{thread_num}]</> <red>{msg}</>"))
-                    } else {
-                        // Regular output with thread ID
-                        writeln!(buf, "{}", cformat!("<dim>[{thread_num}]</> {msg}"))
-                    }
-                }
-            }
-        })
-        .init();
-
-    // Open per-file log sinks AFTER env_logger is registered so the
-    // `Repository::current()` rev-parse fired by `try_create` is captured
-    // in the trace. The startup pointer below uses the path resolved here.
-    if verbose_level >= 2 {
-        log_files::init();
-        announce_trace_destination();
-    }
-}
-
-/// Print a one-line stderr pointer at `-vv` so users know where the noisy
-/// `log::*` output went. Silent if `trace.log` couldn't be opened (outside
-/// a git repo, permission error) — there's nothing meaningful to point at.
-fn announce_trace_destination() {
-    // TRACE and OUTPUT open independently — `LogSink::init` succeeds per
-    // file. The (Some, None) case (trace.log open, output.log failed) is
-    // rare but real (path-type mismatch, fs quota); the reverse is
-    // possible too but `output.log` alone has no `$ cmd` context, so we
-    // stay silent there.
-    let Some(trace_path) = log_files::TRACE.path() else {
-        return;
-    };
-    let trace_display = worktrunk::path::format_path_for_display(&trace_path);
-    let msg = match log_files::OUTPUT.path() {
-        Some(output_path) => {
-            let output_display = worktrunk::path::format_path_for_display(&output_path);
-            cformat!(
-                "Tracing to <underline>{trace_display}</> (raw subprocess output @ <underline>{output_display}</>)"
-            )
-        }
-        None => cformat!("Tracing to <underline>{trace_display}</> (output.log unavailable)"),
-    };
-    eprintln!("{}", info_message(msg));
-}
-
 fn handle_merge_command(args: MergeArgs, yes: bool) -> anyhow::Result<()> {
     if args.no_verify {
         warn_no_verify_deprecated();
@@ -1626,16 +1485,18 @@ fn main() {
         worktrunk::config::suppress_warnings();
     }
 
-    // `init_logging` registers the logger. Run it before `init_command_log`
-    // so the latter's `Repository::current()` → `git rev-parse
-    // --git-common-dir` subprocess is visible in `[wt-trace]` output. With
-    // the previous order the rev-parse fired before any logger was
-    // registered, leaving a 4ms hole in the trace where the subprocess
-    // actually ran. Same reason `init_logging` itself reorders to
-    // register env_logger before opening per-file log sinks.
+    // `logging::init` registers the tracing subscriber. Run it before
+    // `init_command_log` so the latter's `Repository::current()` →
+    // `git rev-parse --git-common-dir` subprocess is visible in
+    // `[wt-trace]` output. With the previous order the rev-parse fired
+    // before any subscriber was registered, leaving a 4ms hole in the
+    // trace where the subprocess actually ran. Same reason `logging::init`
+    // itself opens the per-file log sinks before installing the layers:
+    // the open's `Repository::current()` would otherwise emit into a
+    // half-built pipeline.
     {
         let _span = worktrunk::trace::Span::new("init_logging");
-        init_logging(verbose);
+        logging::init(verbose);
     }
 
     // Fold the two cold-path rev-parses (`--git-common-dir` from

@@ -1,7 +1,7 @@
 //! Authoritative emitter for the `[wt-trace]` log grammar.
 //!
 //! `[wt-trace]` records are structured single-line `key=value` text emitted on
-//! top of the `log` crate and parsed downstream by [`super::parse`] and the
+//! top of `tracing` and parsed downstream by [`super::parse`] and the
 //! `wt-perf` binary. This module is the single source of truth for the
 //! grammar — any field or formatting change happens here and in `parse.rs`
 //! together.
@@ -22,10 +22,10 @@
 //! in code paths subprocess records can't see (config load, repo open,
 //! template render).
 //!
-//! Records are emitted at `log::debug!`, so `-vv` or `RUST_LOG=debug` makes
+//! Records are emitted at `tracing::DEBUG`, so `-vv` or `RUST_LOG=debug` makes
 //! them visible. Subprocess stdout/stderr continuations are emitted via
-//! separate log targets: the full output goes to `output.log`, and a bounded
-//! preview shares the routing of all other log records — `trace.log` at `-vv`,
+//! separate targets: the full output goes to `output.log`, and a bounded
+//! preview shares the routing of all other records — `trace.log` at `-vv`,
 //! stderr otherwise — so raw bodies don't spam `-vv`.
 
 use std::borrow::Cow;
@@ -69,7 +69,7 @@ pub fn command_completed(
     ok: bool,
 ) {
     match context {
-        Some(ctx) => log::debug!(
+        Some(ctx) => tracing::debug!(
             r#"[wt-trace] ts={} tid={} context={} cmd="{}" dur_us={} ok={}"#,
             ts,
             tid,
@@ -78,7 +78,7 @@ pub fn command_completed(
             dur_us,
             ok
         ),
-        None => log::debug!(
+        None => tracing::debug!(
             r#"[wt-trace] ts={} tid={} cmd="{}" dur_us={} ok={}"#,
             ts,
             tid,
@@ -99,7 +99,7 @@ pub fn command_errored(
     err: impl Display,
 ) {
     match context {
-        Some(ctx) => log::debug!(
+        Some(ctx) => tracing::debug!(
             r#"[wt-trace] ts={} tid={} context={} cmd="{}" dur_us={} err="{}""#,
             ts,
             tid,
@@ -108,7 +108,7 @@ pub fn command_errored(
             dur_us,
             err
         ),
-        None => log::debug!(
+        None => tracing::debug!(
             r#"[wt-trace] ts={} tid={} cmd="{}" dur_us={} err="{}""#,
             ts,
             tid,
@@ -125,7 +125,7 @@ pub fn command_errored(
 /// Instant events appear as vertical lines in Chrome Trace Format tools
 /// (chrome://tracing, Perfetto).
 pub fn instant(event: &str) {
-    log::debug!(
+    tracing::debug!(
         r#"[wt-trace] ts={} tid={} event="{}""#,
         now_us(),
         thread_id(),
@@ -139,7 +139,7 @@ pub fn instant(event: &str) {
 /// records cover work in child processes; spans cover everything between and
 /// around them (config load, repo open, template render, etc.).
 pub fn span_completed(name: &str, ts: u64, tid: u64, dur_us: u64) {
-    log::debug!(
+    tracing::debug!(
         r#"[wt-trace] ts={} tid={} span="{}" dur_us={}"#,
         ts,
         tid,
@@ -158,11 +158,11 @@ pub fn span_completed(name: &str, ts: u64, tid: u64, dur_us: u64) {
 /// useful when the span name carries dynamic context, e.g.
 /// `Span::new(format!("prepare_steps:{}", alias))`.
 ///
-/// The `log_enabled!` check happens on drop, not construction. A span
-/// constructed before `init_logging` (e.g. wrapping the logger init itself)
-/// still fires correctly as long as the logger is up by the time the span
-/// goes out of scope. Construction always pays two `Instant::now()` calls;
-/// they're vDSO-fast and the overhead is below noise.
+/// The `tracing::enabled!` check happens on drop, not construction. A span
+/// constructed before the subscriber is installed (e.g. wrapping the logger
+/// init itself) still fires correctly as long as the subscriber is up by the
+/// time the span goes out of scope. Construction always pays two
+/// `Instant::now()` calls; they're vDSO-fast and the overhead is below noise.
 pub struct Span {
     name: Cow<'static, str>,
     start_ts_us: u64,
@@ -181,7 +181,7 @@ impl Span {
 
 impl Drop for Span {
     fn drop(&mut self) {
-        if !log::log_enabled!(log::Level::Debug) {
+        if !tracing::enabled!(tracing::Level::DEBUG) {
             return;
         }
         let dur_us = self.start.elapsed().as_micros() as u64;
