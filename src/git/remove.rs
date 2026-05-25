@@ -225,6 +225,12 @@ impl BranchDeletionMode {
 pub enum BranchDeletionOutcome {
     /// Branch was not deleted — it was not integrated, and deletion was not forced.
     NotDeleted,
+    /// Branch was integrated but the atomic compare-and-swap deletion was
+    /// rejected because the ref moved between the integration check and the
+    /// delete attempt — e.g. a hook or concurrent process advanced it. The
+    /// branch is retained (fail-closed), and the caller surfaces this as a
+    /// warning so the user can decide whether to re-check and delete.
+    RetainedRaced,
     /// Branch was force-deleted without an integration check.
     ForceDeleted,
     /// Branch was deleted because it was integrated (the specific reason is attached).
@@ -412,8 +418,26 @@ pub fn delete_branch_if_safe(
 
     let outcome = match reason {
         Some(r) => {
-            repo.run_command(&["branch", "-D", branch_name])?;
-            BranchDeletionOutcome::Integrated(r)
+            // Atomic compare-and-swap against the snapshotted SHA. If the ref
+            // moved between `integration_reason` and the delete (e.g. a hook
+            // advanced the branch), `git update-ref -d <ref> <expected>` fails
+            // closed: the branch is retained and we surface a `RetainedRaced`
+            // outcome rather than dropping the unmerged commits silently.
+            match snapshot_sha(snapshot, branch_name) {
+                Some(expected_sha) => {
+                    cas_delete_branch_outcome(repo, branch_name, expected_sha, r)?
+                }
+                // Snapshot doesn't carry the branch SHA — extremely unusual
+                // (the caller just captured refs, the branch is present in the
+                // integration check). Fall through to a non-CAS delete rather
+                // than failing the whole operation: this preserves the
+                // pre-CAS behavior in a corner case rather than introducing a
+                // new error class.
+                None => {
+                    repo.run_command(&["branch", "-D", branch_name])?;
+                    BranchDeletionOutcome::Integrated(r)
+                }
+            }
         }
         None => BranchDeletionOutcome::NotDeleted,
     };
@@ -422,6 +446,54 @@ pub fn delete_branch_if_safe(
         outcome,
         integration_target: effective_target,
     })
+}
+
+/// Look up a local branch's tip SHA in the snapshot.
+///
+/// Pulls from the inventory rather than `resolve()` so the result reflects the
+/// scanned `refs/heads/` walk, the same source `integration_reason` consulted.
+fn snapshot_sha<'a>(snapshot: &'a crate::git::RefSnapshot, branch: &str) -> Option<&'a str> {
+    snapshot.local_branch(branch).map(|b| b.commit_sha.as_str())
+}
+
+/// Atomically delete `refs/heads/<branch>` iff it currently points at
+/// `expected_sha`, and translate the result into a [`BranchDeletionOutcome`].
+///
+/// `git update-ref -d <ref> <oid>` is git's compare-and-swap delete primitive:
+/// the ref is removed only if its current value matches `<oid>`. If it has
+/// moved (a hook or concurrent process advanced the branch), the command
+/// exits non-zero with a `cannot lock ref` message and the ref is left alone —
+/// fail-closed semantics that protect unmerged commits.
+///
+/// When `update-ref` fails, distinguishes "ref moved" (the ref still exists
+/// → `RetainedRaced`) from "real error" (the ref is gone or git itself
+/// failed → propagate the original error) by re-checking with `rev-parse
+/// --verify --quiet`, which has a structured exit code (0 = present, 1 =
+/// absent) rather than relying on locale-sensitive error-message text.
+fn cas_delete_branch_outcome(
+    repo: &Repository,
+    branch_name: &str,
+    expected_sha: &str,
+    reason: IntegrationReason,
+) -> anyhow::Result<BranchDeletionOutcome> {
+    let ref_name = format!("refs/heads/{branch_name}");
+    let update_err = match repo.run_command(&["update-ref", "-d", &ref_name, expected_sha]) {
+        Ok(_) => return Ok(BranchDeletionOutcome::Integrated(reason)),
+        Err(e) => e,
+    };
+
+    // CAS failed. Re-check the ref to distinguish a race rejection (ref
+    // moved → still present) from a true error (refs DB I/O, permissions,
+    // git missing → propagate). `rev-parse --verify --quiet` returns exit
+    // 0 when the ref exists, exit 1 when it does not — no message parsing.
+    if repo
+        .run_command(&["rev-parse", "--verify", "--quiet", &ref_name])
+        .is_ok()
+    {
+        Ok(BranchDeletionOutcome::RetainedRaced)
+    } else {
+        Err(update_err)
+    }
 }
 
 /// Generate a staging path for worktree removal.
@@ -445,12 +517,83 @@ pub(crate) fn generate_removing_path(trash_dir: &Path, worktree_path: &Path) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::TestRepo;
+
+    /// When the branch tip moves between snapshot capture and the deletion
+    /// attempt, the atomic compare-and-swap rejects the delete and surfaces
+    /// `RetainedRaced` rather than dropping the new commits silently.
+    ///
+    /// The setup mimics a hook (or any concurrent writer) that advances the
+    /// branch after the planner observed it as integrated: we capture refs
+    /// when `feature` is at the same commit as `main` (trivially integrated),
+    /// then move `feature` forward, then call `delete_branch_if_safe` with
+    /// the stale snapshot. Integration check still says "integrated" (the
+    /// snapshotted SHA is reachable from main), but CAS catches the live
+    /// tip having moved and refuses the delete.
+    #[test]
+    fn cas_rejects_delete_when_branch_advances() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["branch", "feature"]);
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        // Snapshot captures `feature` at the initial commit (same as `main`).
+        let snapshot = repo.capture_refs().unwrap();
+        let original_sha = snapshot.local_branch("feature").unwrap().commit_sha.clone();
+
+        // Race: advance `feature` after the snapshot.
+        test.run_git(&["checkout", "feature"]);
+        std::fs::write(test.root_path().join("race.txt"), "boom\n").unwrap();
+        test.run_git(&["add", "race.txt"]);
+        test.run_git(&["commit", "-m", "post-snapshot advance"]);
+        test.run_git(&["checkout", "main"]);
+
+        let advanced_sha = test.git_output(&["rev-parse", "feature"]);
+        assert_ne!(
+            original_sha, advanced_sha,
+            "test setup: tip must have moved"
+        );
+
+        let result = delete_branch_if_safe(&repo, &snapshot, "feature", "main", false).unwrap();
+        assert!(
+            matches!(result.outcome, BranchDeletionOutcome::RetainedRaced),
+            "expected RetainedRaced, got a different outcome"
+        );
+
+        // Branch survives, still at the post-race SHA.
+        let live = test.git_output(&["rev-parse", "feature"]);
+        assert_eq!(live, advanced_sha, "branch must not be deleted nor reset");
+    }
+
+    /// Plain integrated case still deletes via CAS. Sanity check that the
+    /// new code path doesn't break the common case.
+    #[test]
+    fn cas_deletes_when_branch_unchanged() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["branch", "feature"]);
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        let snapshot = repo.capture_refs().unwrap();
+        let result = delete_branch_if_safe(&repo, &snapshot, "feature", "main", false).unwrap();
+        assert!(
+            matches!(result.outcome, BranchDeletionOutcome::Integrated(_)),
+            "expected Integrated, got a different outcome"
+        );
+
+        // Ref should be gone.
+        let exit = std::process::Command::new("git")
+            .args(["rev-parse", "--verify", "--quiet", "refs/heads/feature"])
+            .current_dir(test.root_path())
+            .status()
+            .unwrap();
+        assert!(!exit.success(), "branch should have been deleted");
+    }
 
     #[test]
     fn test_branch_deletion_outcome_matching() {
         // Ensure the match patterns work correctly
         let outcomes = [
             (BranchDeletionOutcome::NotDeleted, false),
+            (BranchDeletionOutcome::RetainedRaced, false),
             (BranchDeletionOutcome::ForceDeleted, true),
             (
                 BranchDeletionOutcome::Integrated(IntegrationReason::SameCommit),

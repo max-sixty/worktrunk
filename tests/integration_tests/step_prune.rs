@@ -1396,11 +1396,19 @@ fn write_delaying_git_wrapper(dir: &std::path::Path, real_git: &std::path::Path)
     use std::os::unix::fs::PermissionsExt;
 
     let real_git = shell_escape::unix::escape(real_git.to_string_lossy());
-    // Match both `branch -d` and `branch -D` — `delete_branch_if_safe` uses
-    // `-D` for branches it has classified as integrated.
+    // Match all three deletion shapes:
+    //   - `branch -d <branch>` (force-delete via `git branch -D` from
+    //     `delete_branch_if_safe`'s force path was previously also covered
+    //     by the `-D` alternative)
+    //   - `branch -D <branch>` (force path)
+    //   - `update-ref -d refs/heads/<branch> <expected-sha>` (the CAS path
+    //     `delete_branch_if_safe` now takes when the branch is integrated)
     let script = format!(
         r#"#!/bin/sh
 if [ "$1" = "branch" ] && {{ [ "$2" = "-d" ] || [ "$2" = "-D" ]; }} && [ "$3" = "$WT_PRUNE_DELAY_BRANCH" ]; then
+  : > "$WT_PRUNE_BRANCH_DELETE_STARTED"
+  sleep 2
+elif [ "$1" = "update-ref" ] && [ "$2" = "-d" ] && [ "$3" = "refs/heads/$WT_PRUNE_DELAY_BRANCH" ]; then
   : > "$WT_PRUNE_BRANCH_DELETE_STARTED"
   sleep 2
 fi

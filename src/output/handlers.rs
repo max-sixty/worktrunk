@@ -228,9 +228,16 @@ fn execute_instant_removal_or_fallback(
         }
 
         // Fallback: cross-filesystem, permissions, Windows file locking, etc.
-        // Use legacy git worktree remove which handles these cases. Safe-delete
-        // uses Git's non-forcing branch deletion in the detached command; if
-        // the branch gained unmerged commits after the hook, Git retains it.
+        // Use legacy git worktree remove which handles these cases. For
+        // safe-delete, decide here whether to append a branch-deletion step:
+        // run worktrunk's full integration check now, and if the branch is
+        // integrated, append an atomic `git update-ref -d <ref> <sha>` keyed
+        // to the snapshotted SHA. This matches the fast path and the
+        // synchronous fallback — same `BranchDeletionMode::SafeDelete` input
+        // yields the same semantics (squash-merged, ancestor, patch-id-match
+        // all accepted), and the CAS protects against tip movement between
+        // the foreground check and the detached delete. Force-delete keeps
+        // the unconditional `git branch -D` shell tail.
         let command = match (branch_name, deletion_mode) {
             (Some(branch), BranchDeletionMode::ForceDelete) => build_remove_command(
                 worktree_path,
@@ -238,12 +245,15 @@ fn execute_instant_removal_or_fallback(
                 force_worktree,
                 changed_directory,
             ),
-            (Some(branch), BranchDeletionMode::SafeDelete) => build_remove_command_safe_delete(
-                worktree_path,
-                branch,
-                force_worktree,
-                changed_directory,
-            ),
+            (Some(branch), BranchDeletionMode::SafeDelete) => {
+                let cas_tail = build_cas_branch_delete_tail(repo, branch, target_branch);
+                build_remove_command_with_tail(
+                    worktree_path,
+                    force_worktree,
+                    changed_directory,
+                    cas_tail.as_deref(),
+                )
+            }
             _ => build_remove_command(worktree_path, None, force_worktree, changed_directory),
         };
         Ok(BackgroundRemovalPlan::Detached(command))
@@ -301,6 +311,19 @@ fn warn_if_branch_retained(
     planner_expected_retention: bool,
 ) {
     match result {
+        Ok(r) if matches!(r.outcome, BranchDeletionOutcome::RetainedRaced) => {
+            // The branch tip moved between the integration check and the
+            // atomic delete (a hook commit, a concurrent push). The
+            // compare-and-swap refused — fail-closed — so the unmerged
+            // commits are preserved. Always surface, regardless of planner
+            // prediction.
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "Removed worktree but kept branch <bold>{branch}</> (moved during deletion); inspect commits, then run <bold>wt remove --force-delete {branch}</> if safe"
+                ))
+            );
+        }
         Ok(r)
             if matches!(r.outcome, BranchDeletionOutcome::NotDeleted)
                 && !planner_expected_retention =>
@@ -319,18 +342,54 @@ fn warn_if_branch_retained(
     }
 }
 
-fn build_remove_command_safe_delete(
-    worktree_path: &Path,
-    branch_name: &str,
-    force_worktree: bool,
-    changed_directory: bool,
-) -> String {
+/// Compute the safe-delete branch-deletion shell tail for the Detached
+/// fallback path.
+///
+/// Captures a fresh snapshot, runs the same `integration_reason` check the
+/// fast path uses, and — if the branch is integrated — returns an atomic
+/// `git update-ref -d refs/heads/<branch> <expected-sha>` that will be
+/// appended to the detached `git worktree remove` command. The CAS keeps the
+/// deletion safe against tip movement between this foreground check and the
+/// detached process executing it.
+///
+/// Returns `None` when the branch is not integrated, when the snapshot
+/// doesn't carry the branch SHA, or when the snapshot/integration call
+/// errors — all "don't delete" outcomes that preserve the pre-CAS detached
+/// behavior of skipping branch deletion.
+fn build_cas_branch_delete_tail(
+    repo: &Repository,
+    branch: &str,
+    target_branch: Option<&str>,
+) -> Option<String> {
     use shell_escape::unix::escape;
 
+    let target = target_branch.unwrap_or("HEAD");
+    let snapshot = repo.capture_refs().ok()?;
+    let (_effective_target, reason) = repo.integration_reason(&snapshot, branch, target).ok()?;
+    reason?;
+    let expected_sha = snapshot.local_branch(branch)?.commit_sha.clone();
+
+    let ref_name = format!("refs/heads/{branch}");
+    let ref_escaped = escape(ref_name.as_str().into());
+    let sha_escaped = escape(expected_sha.as_str().into());
+    Some(format!("git update-ref -d {ref_escaped} {sha_escaped}"))
+}
+
+/// Build the detached worktree-removal command, optionally appending a
+/// branch-deletion tail (force-delete or CAS-delete) with `&&` so the branch
+/// step runs only when the worktree removal succeeded.
+fn build_remove_command_with_tail(
+    worktree_path: &Path,
+    force_worktree: bool,
+    changed_directory: bool,
+    tail: Option<&str>,
+) -> String {
     let remove_command =
         build_remove_command(worktree_path, None, force_worktree, changed_directory);
-    let branch_escaped = escape(branch_name.into());
-    format!("{remove_command} && git branch -d {branch_escaped}")
+    match tail {
+        Some(tail) => format!("{remove_command} && {tail}"),
+        None => remove_command,
+    }
 }
 
 /// List top-level entries remaining in a directory after a failed removal.
@@ -601,6 +660,8 @@ fn print_retained_unmerged_branch(branch_name: &str) {
 ///
 /// Converts a deletion attempt into structured display data:
 /// - `NotDeleted`: We checked and chose not to delete (not integrated)
+/// - `RetainedRaced`: Integration check passed but the atomic CAS delete was
+///   refused because the ref moved (a hook or concurrent process advanced it)
 /// - `Err(e)`: Git command failed - show warning with actual error
 fn handle_branch_deletion_result(
     result: anyhow::Result<BranchDeletionResult>,
@@ -608,7 +669,10 @@ fn handle_branch_deletion_result(
 ) -> anyhow::Result<BranchDeletionDisplay> {
     match result {
         Ok(result) => Ok(BranchDeletionDisplay {
-            show_unmerged_hint: matches!(result.outcome, BranchDeletionOutcome::NotDeleted),
+            show_unmerged_hint: matches!(
+                result.outcome,
+                BranchDeletionOutcome::NotDeleted | BranchDeletionOutcome::RetainedRaced
+            ),
             result,
         }),
         Err(e) => {
@@ -683,7 +747,9 @@ fn flag_note(
     }
 
     match outcome {
-        BranchDeletionOutcome::NotDeleted => FlagNote::empty(),
+        BranchDeletionOutcome::NotDeleted | BranchDeletionOutcome::RetainedRaced => {
+            FlagNote::empty()
+        }
         BranchDeletionOutcome::ForceDeleted => FlagNote::text_only(" (--force-delete)"),
         BranchDeletionOutcome::Integrated(reason) => {
             let Some(target) = target_branch else {
@@ -1002,19 +1068,37 @@ fn handle_branch_only_output(
 
     let check_target = target_branch.unwrap_or("HEAD");
 
-    // Decide outcome from pre-computed integration (computed in prepare_worktree_removal).
-    let outcome = if deletion_mode.is_force() {
-        Some(BranchDeletionOutcome::ForceDeleted)
-    } else {
-        integration_reason.map(BranchDeletionOutcome::Integrated)
-    };
-
-    let deletion = if let Some(outcome) = outcome {
+    // Force-delete bypasses CAS entirely — `git branch -D` is the user's
+    // explicit override. For safe-delete with a pre-computed integration
+    // reason, re-run `delete_branch_if_safe`: a fresh snapshot lets the
+    // atomic CAS in there catch any tip movement since planning, rather than
+    // trusting the planner's stale view of the ref.
+    let deletion = if let Some(integrated_reason) = integration_reason
+        && !deletion_mode.is_force()
+    {
+        let repo = worktrunk::git::Repository::current()?;
+        let result = repo
+            .capture_refs()
+            .and_then(|snapshot| {
+                delete_branch_if_safe(&repo, &snapshot, branch_name, check_target, false)
+            })
+            .map(|mut r| {
+                // Preserve the planner's recorded reason so a CAS-accepted
+                // delete still reports the original "integrated because X"
+                // explanation. The fresh integration target stays as the
+                // helper computed it.
+                if matches!(r.outcome, BranchDeletionOutcome::Integrated(_)) {
+                    r.outcome = BranchDeletionOutcome::Integrated(integrated_reason);
+                }
+                r
+            });
+        handle_branch_deletion_result(result, branch_name)?
+    } else if deletion_mode.is_force() {
         let repo = worktrunk::git::Repository::current()?;
         let result = repo.run_command(&["branch", "-D", branch_name]);
         handle_branch_deletion_result(
             result.map(|_| BranchDeletionResult {
-                outcome,
+                outcome: BranchDeletionOutcome::ForceDeleted,
                 integration_target: check_target.to_string(),
             }),
             branch_name,
@@ -1029,9 +1113,22 @@ fn handle_branch_only_output(
         }
     };
 
-    if matches!(deletion.result.outcome, BranchDeletionOutcome::NotDeleted) {
+    if matches!(
+        deletion.result.outcome,
+        BranchDeletionOutcome::NotDeleted | BranchDeletionOutcome::RetainedRaced
+    ) {
         eprintln!("{}", info_message(&branch_info));
-        if deletion.show_unmerged_hint {
+        if matches!(
+            deletion.result.outcome,
+            BranchDeletionOutcome::RetainedRaced
+        ) {
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "Kept branch <bold>{branch_name}</> (moved during deletion); inspect commits, then run <bold>wt remove --force-delete {branch_name}</> if safe"
+                ))
+            );
+        } else if deletion.show_unmerged_hint {
             print_retained_unmerged_branch(branch_name);
         }
     } else {
