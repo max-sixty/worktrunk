@@ -2028,6 +2028,10 @@ mod tests {
         // already explained)
         warn_if_branch_retained("feature", &ok(BranchDeletionOutcome::NotDeleted), true);
 
+        // RetainedRaced → always surface, regardless of planner prediction
+        warn_if_branch_retained("feature", &ok(BranchDeletionOutcome::RetainedRaced), false);
+        warn_if_branch_retained("feature", &ok(BranchDeletionOutcome::RetainedRaced), true);
+
         // Success arms → silent
         warn_if_branch_retained("feature", &ok(BranchDeletionOutcome::ForceDeleted), false);
         warn_if_branch_retained(
