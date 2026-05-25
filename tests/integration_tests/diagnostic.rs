@@ -449,9 +449,9 @@ fn test_vv_log_pipeline_silent_on_stderr(repo: TestRepo) {
 /// `RUST_LOG` is honored at every verbosity level — including `-v` — and
 /// can raise the filter above the flag's baseline. A user who runs
 /// `RUST_LOG=debug wt -v` gets Debug, not Info: the flag sets a baseline,
-/// and `RUST_LOG` refines it on top via `env_logger`'s standard directive
-/// grammar. Guards against the regression where `-v`/`-vv` hardcoded
-/// `filter_level(...)` without `parse_default_env()` and silently dropped
+/// and `RUST_LOG` refines it on top via `tracing_subscriber::EnvFilter`'s
+/// directive grammar (env wins when set). Guards against the regression
+/// where `-v`/`-vv` hardcoded `filter_level(...)` and silently dropped
 /// `RUST_LOG`.
 ///
 /// The probe is the `[wt-trace]` grammar — those records are emitted at

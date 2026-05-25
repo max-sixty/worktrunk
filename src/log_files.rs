@@ -54,15 +54,19 @@ impl LogSink {
         self.file.get().is_some()
     }
 
-    /// Append a line to the file (no-op if not initialized).
-    ///
-    /// The line should be plain text (no ANSI codes) for readability in bug
-    /// reports. Write errors are swallowed — logging must not break commands.
-    pub(crate) fn write_line(&self, line: &str) {
+    /// Append a whole formatted event (which may contain internal `\n`s) to
+    /// the file under a single lock acquisition. Trailing `\n` from the
+    /// fmt layer is stripped — `writeln!` adds its own — so multi-line
+    /// events stay grouped together rather than interleaving with another
+    /// thread's lines between intermediates. The line should be plain text
+    /// (no ANSI codes) for readability in bug reports. Write errors are
+    /// swallowed — logging must not break commands.
+    pub(crate) fn write_event(&self, text: &str) {
         if let Some(mutex) = self.file.get()
             && let Ok(mut open) = mutex.lock()
         {
-            let _ = writeln!(open.file, "{}", line);
+            let body = text.trim_end_matches('\n');
+            let _ = writeln!(open.file, "{}", body);
             let _ = open.file.flush();
         }
     }
@@ -75,8 +79,9 @@ impl LogSink {
     }
 
     /// Per-event `io::Write` adapter for use as a `tracing_subscriber`
-    /// `MakeWriter`. Buffers one event in memory, then forwards a single
-    /// line per intermediate `\n` to the sink on drop.
+    /// `MakeWriter`. Buffers one event in memory, then forwards it as a
+    /// single locked append to the sink on drop — see [`Self::write_event`]
+    /// for why a multi-line event lands together.
     fn writer(&'static self) -> SinkWriter {
         SinkWriter {
             sink: self,
@@ -108,9 +113,8 @@ pub(crate) fn init() {
     worktrunk::shell_exec::set_output_log_active(OUTPUT.is_active());
 }
 
-/// Per-event writer: collects formatted bytes, then forwards a single line
-/// to the sink on drop. Splits internal `\n` so multi-line events still
-/// produce one `write_line` per visual line.
+/// Per-event writer: collects formatted bytes, then forwards them to the
+/// sink as one locked `write_event` call on drop.
 pub(crate) struct SinkWriter {
     sink: &'static LogSink,
     buf: Vec<u8>,
@@ -132,14 +136,15 @@ impl Drop for SinkWriter {
         // `tracing_subscriber::fmt` always invokes the writer for an
         // event (the formatter writes at least the trailing `\n`), so
         // we don't need an empty-buffer guard here.
+        //
+        // Single-locked write: a multi-line event (the body has
+        // intermediate `\n`s) lands together in the file instead of
+        // interleaving with another thread's lines between
+        // intermediates. Nothing in this codebase emits multi-line
+        // tracing events today, but the contract holds if anything
+        // ever does.
         let text = String::from_utf8_lossy(&self.buf);
-        // The fmt layer emits a trailing `\n` per event; strip it so
-        // `write_line` doesn't double it. Intermediate newlines (from
-        // multi-line messages) become separate lines, each prefixed by
-        // whatever the format wrote.
-        for line in text.trim_end_matches('\n').split('\n') {
-            self.sink.write_line(line);
-        }
+        self.sink.write_event(&text);
     }
 }
 

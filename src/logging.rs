@@ -195,32 +195,33 @@ pub(crate) fn init(verbose_level: u8) {
     let trace_layer = build_trace_layer(verbose_level);
     let output_layer = build_output_layer(verbose_level);
 
-    let registered = tracing_subscriber::registry()
+    // `try_init` fails only if a subscriber is already installed (the
+    // single-call-per-process contract). `wt`'s `main` runs `logging::init`
+    // exactly once, so the error is just defensive — discard it. The
+    // `LogTracer::init` below has the same shape for the same reason.
+    let _ = tracing_subscriber::registry()
         .with(stderr_layer)
         .with(trace_layer)
         .with(output_layer)
-        .try_init()
-        .is_ok();
+        .try_init();
 
-    if registered {
-        // Forward `log::*` macros into `tracing`. Must come after subscriber
-        // init: `LogTracer::enabled` consults the tracing dispatcher.
-        //
-        // The builder's `with_max_level` caps `log::max_level()` — the static
-        // gate `log_enabled!` checks before format args are evaluated. Mirror
-        // the env-wins-when-set semantics the layer filters use (PR #2901):
-        // if `RUST_LOG` is set, its level wins; otherwise the verbosity flag
-        // baseline applies. Without an explicit cap, the default
-        // `LevelFilter::max()` would always pass the static check, forcing
-        // every `log::debug!(…)` site to evaluate its format args — exposing
-        // arithmetic that's safe today only because the macro short-circuits
-        // (e.g. `now_secs - cached.checked_at` in `list/ci_status` is fine
-        // under monotonic-ish clocks but panics when args are evaluated
-        // against a clock-skewed fixture).
-        let _ = tracing_log::LogTracer::builder()
-            .with_max_level(effective_log_max_level(verbose_level, rust_log_level()))
-            .init();
-    }
+    // Forward `log::*` macros into `tracing`. Must come after subscriber
+    // init: `LogTracer::enabled` consults the tracing dispatcher.
+    //
+    // The builder's `with_max_level` caps `log::max_level()` — the static
+    // gate `log_enabled!` checks before format args are evaluated. Mirror
+    // the env-wins-when-set semantics the layer filters use (PR #2901):
+    // if `RUST_LOG` is set, its level wins; otherwise the verbosity flag
+    // baseline applies. Without an explicit cap, the default
+    // `LevelFilter::max()` would always pass the static check, forcing
+    // every `log::debug!(…)` site to evaluate its format args — exposing
+    // arithmetic that's safe today only because the macro short-circuits
+    // (e.g. `now_secs - cached.checked_at` in `list/ci_status` is fine
+    // under monotonic-ish clocks but panics when args are evaluated
+    // against a clock-skewed fixture).
+    let _ = tracing_log::LogTracer::builder()
+        .with_max_level(effective_log_max_level(verbose_level, rust_log_level()))
+        .init();
 
     if verbose_level >= 2 {
         announce_trace_destination();
