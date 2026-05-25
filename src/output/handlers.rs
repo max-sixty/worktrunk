@@ -93,8 +93,9 @@ pub enum BackgroundFallbackMode {
     /// `wt remove`, `wt merge`, and the picker.
     Detached,
     /// Run the fallback removal and branch deletion synchronously for a
-    /// non-current worktree. `wt step prune` uses this to keep the fallback's
-    /// `.git/config` rewrite serialized with its integration-check readers.
+    /// non-current worktree. `wt step prune` uses this so each iteration's
+    /// removal completes before the next candidate is considered and before
+    /// the final summary is printed.
     SynchronousForNonCurrent,
 }
 

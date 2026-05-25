@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -177,28 +177,11 @@ struct RemovalContext<'a> {
     hook_plan: &'a ApprovedHookPlan,
     worktrees: &'a [WorktreeInfo],
     snapshot: &'a RefSnapshot,
-    /// Serializes the parallel `integration_reason` readers against the
-    /// removal writer — load-bearing for the Windows `.git/config` race fix.
-    /// `try_remove` acquires the write guard at the top of its body and holds
-    /// it over the whole body.
-    check_lock: &'a RwLock<()>,
 }
 
 /// Try to remove a candidate immediately. Returns Ok(true) if removed,
 /// Ok(false) if skipped (preparation error), Err on execution error.
 fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result<bool> {
-    // Take the same write guard used by integration-check readers. The current
-    // phase ordering drains those readers before removal so approval can be
-    // exact; keeping the guard here preserves the Windows `.git/config`
-    // serialization if this flow is refactored back to overlap checks and
-    // removals. Held over the whole body keeps the lock confined to this file.
-    //
-    // The guard protects `()` — there is no shared state to corrupt, so a
-    // poisoned lock is meaningless here. Recover the guard rather than
-    // `.expect()`-ing: a panic elsewhere should surface as itself, not as a
-    // cascade of secondary poison panics on every later removal/reader.
-    let _write = ctx.check_lock.write().unwrap_or_else(|e| e.into_inner());
-
     if matches!(candidate.kind, CandidateKind::StaleDetached) {
         ctx.repo.prune_worktrees()?;
         return Ok(true);
@@ -222,8 +205,10 @@ fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result
         }
     };
     let mut announcer = HookAnnouncer::new(ctx.repo, ctx.config, true);
-    // `SynchronousForNonCurrent`: prune keeps the rename-failure fallback's
-    // `.git/config` rewrite serialized with its integration-check readers.
+    // `SynchronousForNonCurrent`: prune iterates candidates in the foreground
+    // and reports a final summary, so each fallback removal (worktree + branch
+    // deletion) completes before the next iteration rather than racing in the
+    // background.
     handle_remove_output(
         &plan,
         ctx.foreground,
@@ -591,14 +576,12 @@ pub fn step_prune(
     // messages, and collecting removal candidates. The hook approval gate runs
     // only after this has narrowed the broad check set.
     //
-    // `check_lock` marks the Windows `.git/config` critical section. Each
-    // `integration_reason` call (which fans out git subprocesses that read
-    // `.git/config`) is held under a read guard. Later removals take the write
-    // guard around the branch-deleting paths that rewrite `.git/config` via
-    // lockfile+rename. The exact-approval phase ordering drains this thread
-    // before removals begin, but the explicit guard keeps the serialization
-    // local to prune if checks/removals are overlapped again.
-    let check_lock = Arc::new(RwLock::new(()));
+    // Phase ordering — readers run only in this par_iter; the `for (idx,
+    // result) in rx` loop below drains the channel, which only closes once
+    // the spawned thread (and thus every reader) has finished. Removals run
+    // after that loop, so there is no overlap between checks and the
+    // rename-failure fallback's `.git/config` rewrite — no separate lock is
+    // needed to serialize them.
     let (tx, rx) = chan::unbounded();
     let integration_refs: Vec<String> = check_items
         .iter()
@@ -615,19 +598,13 @@ pub fn step_prune(
     // rayon worker takes a refcount-bump clone. No deep snapshot copy.
     let snapshot_arc = Arc::new(snapshot);
     let snapshot_for_thread = Arc::clone(&snapshot_arc);
-    let lock_for_thread = Arc::clone(&check_lock);
     std::thread::spawn(move || {
         integration_refs
             .into_par_iter()
             .enumerate()
             .for_each(|(idx, ref_name)| {
-                // Hold the read guard only across `integration_reason` (all
-                // its child git readers), then drop it before `send` so a
-                // waiting writer is not blocked by channel backpressure.
-                let result = {
-                    let _read = lock_for_thread.read().unwrap_or_else(|e| e.into_inner());
-                    repo_clone.integration_reason(&snapshot_for_thread, &ref_name, &target)
-                };
+                let result =
+                    repo_clone.integration_reason(&snapshot_for_thread, &ref_name, &target);
                 let _ = tx.send((idx, result));
             });
     });
@@ -795,7 +772,6 @@ pub fn step_prune(
         hook_plan: &hook_plan,
         worktrees,
         snapshot: &snapshot_arc,
-        check_lock: &check_lock,
     };
 
     let mut removed: Vec<Candidate> = Vec::new();
