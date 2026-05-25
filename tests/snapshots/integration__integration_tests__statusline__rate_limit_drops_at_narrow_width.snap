@@ -1,0 +1,5 @@
+---
+source: tests/integration_tests/statusline.rs
+expression: out
+---
+[PATH]  main  [2m^[22m[2m|[22m  Opus  🌕42%
