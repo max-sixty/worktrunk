@@ -52,7 +52,7 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 
 {{ terminal(cmd="wt switch -                           # Back to previous|||wt switch ^                           # Default branch worktree|||wt switch --create fix --base=@       # Branch from current HEAD|||wt switch --create fix --base=pr:123  # Branch from PR #123's head|||wt switch pr:123                      # PR #123's branch|||wt switch mr:101                      # MR !101's branch") }}
 
-Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
+Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch. (Web URLs like `https://github.com/owner/repo/pull/N` or `https://gitlab.com/owner/repo/-/merge_requests/N` work in place of `pr:N` / `mr:N` anywhere a shortcut does.)
 
 ## Interactive picker
 

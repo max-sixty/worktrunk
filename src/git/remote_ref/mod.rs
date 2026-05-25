@@ -271,6 +271,54 @@ pub fn local_branch_name(info: &RemoteRefInfo) -> String {
     info.source_branch.clone()
 }
 
+/// Parse a forge PR/MR web URL into a `(ref type, number)` pair.
+///
+/// Recognises the canonical PR/MR URLs across all four supported forges
+/// (GitHub including Enterprise, GitLab, Gitea, Azure DevOps). The caller
+/// dispatches the resulting `(RefType, number)` exactly as for the literal
+/// `pr:N` / `mr:N` shortcuts.
+///
+/// Detection is shape-based, not host-based: the URL must use `http(s)://`
+/// and contain `/pull/N`, `/pulls/N`, `/-/merge_requests/N`, or
+/// `/pullrequest/N` in its path. Trailing path segments (e.g. `/files`,
+/// `/commits`), query strings, and fragments are ignored. Host is not
+/// inspected so self-hosted GitHub Enterprise / Gitea / GitLab instances
+/// work without a hostname allow-list.
+pub fn parse_ref_url(input: &str) -> Option<(RefType, u32)> {
+    let rest = input
+        .trim()
+        .strip_prefix("https://")
+        .or_else(|| input.trim().strip_prefix("http://"))?;
+
+    // Drop query/fragment so trailing `?foo=bar` / `#discussion_r...` don't
+    // break the segment match.
+    let path = rest.split(['?', '#']).next()?;
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+
+    // Minimum shape: host / owner / repo / kind / N (5 segments). This
+    // rejects "pull/123" as a literal branch name (no protocol prefix passes
+    // the strip above already, but the length check covers e.g.
+    // `https://example.com/pull/1` which is too shallow to be a real URL).
+    if segments.len() < 5 {
+        return None;
+    }
+
+    for pair in segments.windows(2) {
+        let Ok(number) = pair[1].parse::<u32>() else {
+            continue;
+        };
+        match pair[0] {
+            // GitHub `pull`, Gitea `pulls`, Azure DevOps `pullrequest`.
+            "pull" | "pulls" | "pullrequest" => return Some((RefType::Pr, number)),
+            // GitLab `merge_requests` (always preceded by `/-/`).
+            "merge_requests" => return Some((RefType::Mr, number)),
+            _ => {}
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,5 +336,88 @@ mod tests {
         let gl = GitLabProvider;
         assert_eq!(gl.ref_path(42), "merge-requests/42/head");
         assert_eq!(gl.tracking_ref(42), "refs/merge-requests/42/head");
+    }
+
+    #[test]
+    fn parse_ref_url_github() {
+        assert_eq!(
+            parse_ref_url("https://github.com/owner/repo/pull/123"),
+            Some((RefType::Pr, 123))
+        );
+        // GitHub Enterprise host.
+        assert_eq!(
+            parse_ref_url("https://github.acme.com/team/repo/pull/9"),
+            Some((RefType::Pr, 9))
+        );
+        // Trailing segments (e.g. /files, /commits) and fragments.
+        assert_eq!(
+            parse_ref_url("https://github.com/owner/repo/pull/2895/files"),
+            Some((RefType::Pr, 2895))
+        );
+        assert_eq!(
+            parse_ref_url("https://github.com/owner/repo/pull/77#discussion_r1"),
+            Some((RefType::Pr, 77))
+        );
+        // http:// is accepted too.
+        assert_eq!(
+            parse_ref_url("http://github.com/owner/repo/pull/1"),
+            Some((RefType::Pr, 1))
+        );
+    }
+
+    #[test]
+    fn parse_ref_url_gitlab() {
+        assert_eq!(
+            parse_ref_url("https://gitlab.com/group/repo/-/merge_requests/42"),
+            Some((RefType::Mr, 42))
+        );
+        // Nested subgroups.
+        assert_eq!(
+            parse_ref_url("https://gitlab.com/group/sub/repo/-/merge_requests/7"),
+            Some((RefType::Mr, 7))
+        );
+        // Self-hosted GitLab with trailing diff path.
+        assert_eq!(
+            parse_ref_url("https://gitlab.example.com/team/repo/-/merge_requests/12/diffs"),
+            Some((RefType::Mr, 12))
+        );
+    }
+
+    #[test]
+    fn parse_ref_url_gitea() {
+        // Gitea / Codeberg use /pulls/N rather than GitHub's /pull/N.
+        assert_eq!(
+            parse_ref_url("https://codeberg.org/owner/repo/pulls/55"),
+            Some((RefType::Pr, 55))
+        );
+        assert_eq!(
+            parse_ref_url("https://gitea.example.com/team/repo/pulls/3"),
+            Some((RefType::Pr, 3))
+        );
+    }
+
+    #[test]
+    fn parse_ref_url_azure_devops() {
+        assert_eq!(
+            parse_ref_url("https://dev.azure.com/org/project/_git/repo/pullrequest/9"),
+            Some((RefType::Pr, 9))
+        );
+    }
+
+    #[test]
+    fn parse_ref_url_rejects_non_urls() {
+        // Plain branch names — no protocol prefix.
+        assert_eq!(parse_ref_url("pr:123"), None);
+        assert_eq!(parse_ref_url("feature/pull/7"), None);
+        assert_eq!(parse_ref_url("pull/123"), None);
+        // Too shallow even with a protocol prefix.
+        assert_eq!(parse_ref_url("https://example.com/pull/1"), None);
+        // Wrong kind segment.
+        assert_eq!(parse_ref_url("https://github.com/o/r/issues/5"), None);
+        // Non-numeric tail (e.g. PR creation URL).
+        assert_eq!(parse_ref_url("https://github.com/o/r/pull/new"), None);
+        // Empty/whitespace.
+        assert_eq!(parse_ref_url(""), None);
+        assert_eq!(parse_ref_url("   "), None);
     }
 }
