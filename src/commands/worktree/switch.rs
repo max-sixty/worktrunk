@@ -449,12 +449,11 @@ fn resolve_base_ref(
     repo: &Repository,
     base: &str,
 ) -> anyhow::Result<(String, Option<(String, String)>)> {
-    if let Some((ref_type, number)) = parse_ref_url(base) {
-        return match ref_type {
-            RefType::Pr => resolve_pr_base(repo, number),
-            RefType::Mr => resolve_remote_ref_as_base(repo, &GitLabProvider, number),
-        };
-    }
+    // Forge PR/MR web URLs (e.g. `https://github.com/owner/repo/pull/123`)
+    // normalise into the literal `pr:N` / `mr:N` shortcut so the parsing
+    // below handles both forms identically — no duplicate dispatch.
+    let normalised = parse_ref_url(base);
+    let base = normalised.as_deref().unwrap_or(base);
 
     if let Some(suffix) = base.strip_prefix("pr:")
         && let Ok(number) = suffix.parse::<u32>()
@@ -535,15 +534,10 @@ fn resolve_switch_target(
     base: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
     // Forge PR/MR web URLs (e.g. `https://github.com/owner/repo/pull/123`)
-    // are accepted as equivalents to the `pr:N` / `mr:N` shortcuts — the
-    // provider is still selected via `choose_pr_provider`/the GitLab branch
-    // below.
-    if let Some((ref_type, number)) = parse_ref_url(branch) {
-        return match ref_type {
-            RefType::Pr => resolve_pr_target(repo, number, create, base),
-            RefType::Mr => resolve_remote_ref(repo, &GitLabProvider, number, create, base),
-        };
-    }
+    // normalise into the literal `pr:N` / `mr:N` shortcut so the parsing
+    // below handles both forms identically — no duplicate dispatch.
+    let normalised = parse_ref_url(branch);
+    let branch = normalised.as_deref().unwrap_or(branch);
 
     // Handle pr:<number> syntax — dispatches to GitHub, Gitea, or Azure DevOps based on remotes.
     if let Some(suffix) = branch.strip_prefix("pr:")

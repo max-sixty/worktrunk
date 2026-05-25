@@ -271,12 +271,14 @@ pub fn local_branch_name(info: &RemoteRefInfo) -> String {
     info.source_branch.clone()
 }
 
-/// Parse a forge PR/MR web URL into a `(ref type, number)` pair.
+/// Parse a forge PR/MR web URL into the equivalent `pr:N` / `mr:N` shortcut
+/// string.
 ///
 /// Recognises the canonical PR/MR URLs across all four supported forges
-/// (GitHub including Enterprise, GitLab, Gitea, Azure DevOps). The caller
-/// dispatches the resulting `(RefType, number)` exactly as for the literal
-/// `pr:N` / `mr:N` shortcuts.
+/// (GitHub including Enterprise, GitLab, Gitea, Azure DevOps). Callers
+/// substitute the returned shortcut for the original input, so URL handling
+/// flows through the same `pr:` / `mr:` parsing path as a literal shortcut —
+/// no duplicate dispatch.
 ///
 /// Detection is shape-based, not host-based: the URL must use `http(s)://`
 /// and contain `/pull/N`, `/pulls/N`, `/-/merge_requests/N`, or
@@ -284,11 +286,11 @@ pub fn local_branch_name(info: &RemoteRefInfo) -> String {
 /// `/commits`), query strings, and fragments are ignored. Host is not
 /// inspected so self-hosted GitHub Enterprise / Gitea / GitLab instances
 /// work without a hostname allow-list.
-pub fn parse_ref_url(input: &str) -> Option<(RefType, u32)> {
-    let rest = input
-        .trim()
+pub fn parse_ref_url(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    let rest = trimmed
         .strip_prefix("https://")
-        .or_else(|| input.trim().strip_prefix("http://"))?;
+        .or_else(|| trimmed.strip_prefix("http://"))?;
 
     // Drop query/fragment so trailing `?foo=bar` / `#discussion_r...` don't
     // break the segment match.
@@ -309,9 +311,9 @@ pub fn parse_ref_url(input: &str) -> Option<(RefType, u32)> {
         };
         match pair[0] {
             // GitHub `pull`, Gitea `pulls`, Azure DevOps `pullrequest`.
-            "pull" | "pulls" | "pullrequest" => return Some((RefType::Pr, number)),
+            "pull" | "pulls" | "pullrequest" => return Some(format!("pr:{number}")),
             // GitLab `merge_requests` (always preceded by `/-/`).
-            "merge_requests" => return Some((RefType::Mr, number)),
+            "merge_requests" => return Some(format!("mr:{number}")),
             _ => {}
         }
     }
@@ -341,45 +343,46 @@ mod tests {
     #[test]
     fn parse_ref_url_github() {
         assert_eq!(
-            parse_ref_url("https://github.com/owner/repo/pull/123"),
-            Some((RefType::Pr, 123))
+            parse_ref_url("https://github.com/owner/repo/pull/123").as_deref(),
+            Some("pr:123")
         );
         // GitHub Enterprise host.
         assert_eq!(
-            parse_ref_url("https://github.acme.com/team/repo/pull/9"),
-            Some((RefType::Pr, 9))
+            parse_ref_url("https://github.acme.com/team/repo/pull/9").as_deref(),
+            Some("pr:9")
         );
         // Trailing segments (e.g. /files, /commits) and fragments.
         assert_eq!(
-            parse_ref_url("https://github.com/owner/repo/pull/2895/files"),
-            Some((RefType::Pr, 2895))
+            parse_ref_url("https://github.com/owner/repo/pull/2895/files").as_deref(),
+            Some("pr:2895")
         );
         assert_eq!(
-            parse_ref_url("https://github.com/owner/repo/pull/77#discussion_r1"),
-            Some((RefType::Pr, 77))
+            parse_ref_url("https://github.com/owner/repo/pull/77#discussion_r1").as_deref(),
+            Some("pr:77")
         );
         // http:// is accepted too.
         assert_eq!(
-            parse_ref_url("http://github.com/owner/repo/pull/1"),
-            Some((RefType::Pr, 1))
+            parse_ref_url("http://github.com/owner/repo/pull/1").as_deref(),
+            Some("pr:1")
         );
     }
 
     #[test]
     fn parse_ref_url_gitlab() {
         assert_eq!(
-            parse_ref_url("https://gitlab.com/group/repo/-/merge_requests/42"),
-            Some((RefType::Mr, 42))
+            parse_ref_url("https://gitlab.com/group/repo/-/merge_requests/42").as_deref(),
+            Some("mr:42")
         );
         // Nested subgroups.
         assert_eq!(
-            parse_ref_url("https://gitlab.com/group/sub/repo/-/merge_requests/7"),
-            Some((RefType::Mr, 7))
+            parse_ref_url("https://gitlab.com/group/sub/repo/-/merge_requests/7").as_deref(),
+            Some("mr:7")
         );
         // Self-hosted GitLab with trailing diff path.
         assert_eq!(
-            parse_ref_url("https://gitlab.example.com/team/repo/-/merge_requests/12/diffs"),
-            Some((RefType::Mr, 12))
+            parse_ref_url("https://gitlab.example.com/team/repo/-/merge_requests/12/diffs")
+                .as_deref(),
+            Some("mr:12")
         );
     }
 
@@ -387,20 +390,20 @@ mod tests {
     fn parse_ref_url_gitea() {
         // Gitea / Codeberg use /pulls/N rather than GitHub's /pull/N.
         assert_eq!(
-            parse_ref_url("https://codeberg.org/owner/repo/pulls/55"),
-            Some((RefType::Pr, 55))
+            parse_ref_url("https://codeberg.org/owner/repo/pulls/55").as_deref(),
+            Some("pr:55")
         );
         assert_eq!(
-            parse_ref_url("https://gitea.example.com/team/repo/pulls/3"),
-            Some((RefType::Pr, 3))
+            parse_ref_url("https://gitea.example.com/team/repo/pulls/3").as_deref(),
+            Some("pr:3")
         );
     }
 
     #[test]
     fn parse_ref_url_azure_devops() {
         assert_eq!(
-            parse_ref_url("https://dev.azure.com/org/project/_git/repo/pullrequest/9"),
-            Some((RefType::Pr, 9))
+            parse_ref_url("https://dev.azure.com/org/project/_git/repo/pullrequest/9").as_deref(),
+            Some("pr:9")
         );
     }
 
