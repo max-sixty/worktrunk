@@ -19,7 +19,7 @@ use std::fmt::{self, Write as _};
 use color_print::cformat;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::Layer;
-use tracing_subscriber::filter::{EnvFilter, FilterExt, LevelFilter, Targets, filter_fn};
+use tracing_subscriber::filter::{EnvFilter, FilterExt, LevelFilter, filter_fn};
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields, format::Writer};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
@@ -202,21 +202,22 @@ pub(crate) fn init(verbose_level: u8) {
         // init: `LogTracer::enabled` consults the tracing dispatcher.
         //
         // The builder's `with_max_level` caps `log::max_level()` — the static
-        // gate `log_enabled!` checks before format args are evaluated. Match
-        // env_logger's old behavior: take the higher of the verbosity-derived
-        // level and `RUST_LOG`'s level. Without this, the default
+        // gate `log_enabled!` checks before format args are evaluated. Mirror
+        // the env-wins-when-set semantics the layer filters use (PR #2901):
+        // if `RUST_LOG` is set, its level wins; otherwise the verbosity flag
+        // baseline applies. Without an explicit cap, the default
         // `LevelFilter::max()` would always pass the static check, forcing
         // every `log::debug!(…)` site to evaluate its format args — exposing
         // arithmetic that's safe today only because the macro short-circuits
         // (e.g. `now_secs - cached.checked_at` in `list/ci_status` is fine
         // under monotonic-ish clocks but panics when args are evaluated
         // against a clock-skewed fixture).
-        let from_verbose = match verbose_level {
+        let baseline = match verbose_level {
             0 => log::LevelFilter::Warn,
             1 => log::LevelFilter::Info,
             _ => log::LevelFilter::Debug,
         };
-        let log_max = from_verbose.max(rust_log_level());
+        let log_max = rust_log_level().unwrap_or(baseline);
         let _ = tracing_log::LogTracer::builder()
             .with_max_level(log_max)
             .init();
@@ -227,32 +228,32 @@ pub(crate) fn init(verbose_level: u8) {
     }
 }
 
-/// Highest level mentioned in `$RUST_LOG`, or `Off` if absent / unparsable.
+/// Highest level mentioned in `$RUST_LOG`, or `None` if unset / unparsable.
 ///
-/// `RUST_LOG=info,worktrunk=debug` returns `Debug` (the most permissive
-/// directive wins). The `EnvFilter` on the stderr layer still does the
-/// per-target matching; this helper just lifts `log::max_level` high enough
-/// that `log::*` macros don't short-circuit before reaching the dispatcher.
-fn rust_log_level() -> log::LevelFilter {
-    let Ok(raw) = std::env::var("RUST_LOG") else {
-        return log::LevelFilter::Off;
-    };
+/// `RUST_LOG=info,worktrunk=debug` returns `Some(Debug)` (the most permissive
+/// directive wins). The `EnvFilter` on the stderr / trace layers still does
+/// the per-target matching; this helper just lifts `log::max_level` high
+/// enough that `log::*` macros don't short-circuit before reaching the
+/// dispatcher.
+fn rust_log_level() -> Option<log::LevelFilter> {
+    let raw = std::env::var("RUST_LOG").ok()?;
     raw.split(',')
         .filter_map(|directive| {
             // Each directive is either `level` or `target=level` (the level
-            // is the rightmost `=`-separated token). Unknown tokens are
-            // treated as `Off` so they don't accidentally lift the ceiling.
+            // is the rightmost `=`-separated token). Unknown tokens parse
+            // as `None` and don't contribute to the ceiling.
             let level_token = directive.rsplit('=').next().unwrap_or(directive).trim();
             level_token.parse::<log::LevelFilter>().ok()
         })
         .max()
-        .unwrap_or(log::LevelFilter::Off)
 }
 
-/// Stderr layer: off at `-vv` (the file layers take over). At `-v`, pin
-/// Info regardless of `RUST_LOG`. At `-v 0`, honor `RUST_LOG` (default
-/// `off`). Excludes `SUBPROCESS_FULL_TARGET` at all levels — raw bodies
-/// must never reach the terminal.
+/// Stderr layer: off at `-vv` (the file layers take over). For `-v 0` and
+/// `-v`, the flag sets a baseline (`Off` / `Info`) and `RUST_LOG`, when
+/// set, overrides via the standard directive grammar — matching the
+/// env-wins-when-set convention (see PR #2901). Excludes
+/// `SUBPROCESS_FULL_TARGET` at all levels — raw bodies must never reach
+/// the terminal.
 fn build_stderr_layer<S>(verbose_level: u8) -> Option<impl Layer<S>>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -260,11 +261,13 @@ where
     if verbose_level >= 2 {
         return None;
     }
-    let env_filter = if verbose_level >= 1 {
-        EnvFilter::new("info")
-    } else {
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("off"))
+    let baseline = match verbose_level {
+        0 => LevelFilter::OFF,
+        _ => LevelFilter::INFO,
     };
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(baseline.into())
+        .from_env_lossy();
     let exclude_full = filter_fn(|meta| meta.target() != SUBPROCESS_FULL_TARGET);
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
@@ -275,7 +278,9 @@ where
 }
 
 /// `trace.log` layer: only when `-vv` opened the file. Captures everything
-/// at Debug+ except `SUBPROCESS_FULL_TARGET` (raw bodies go to `output.log`).
+/// at the Debug baseline (`RUST_LOG`, when set, overrides — e.g.
+/// `RUST_LOG=trace wt -vv` lifts the file to Trace) except
+/// `SUBPROCESS_FULL_TARGET` (raw bodies go to `output.log`).
 fn build_trace_layer<S>(verbose_level: u8) -> Option<impl Layer<S>>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -283,13 +288,15 @@ where
     if verbose_level < 2 || !log_files::TRACE.is_active() {
         return None;
     }
-    let level = Targets::new().with_default(LevelFilter::DEBUG);
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::DEBUG.into())
+        .from_env_lossy();
     let exclude_full = filter_fn(|meta| meta.target() != SUBPROCESS_FULL_TARGET);
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(TraceMakeWriter)
         .with_ansi(false)
         .event_format(TraceFileFormat)
-        .with_filter(level.and(exclude_full));
+        .with_filter(env_filter.and(exclude_full));
     Some(layer)
 }
 
