@@ -84,6 +84,14 @@ struct BackgroundRemoval<'a> {
     target_branch: Option<&'a str>,
     force_worktree: bool,
     changed_directory: bool,
+    /// `true` when the planner already decided the branch would be retained
+    /// (unmerged, or `--no-delete-branch`) — `print_hints` has explained why,
+    /// so [`warn_if_branch_retained`] stays silent on the expected
+    /// `NotDeleted` outcome and only fires when the deletion command errors.
+    /// `false` means the planner predicted deletion; a `NotDeleted` here is a
+    /// race (e.g. `pre-remove` hook advanced the branch) that the user has
+    /// otherwise no signal for.
+    planner_expected_retention: bool,
 }
 
 /// How a background removal behaves when the rename-into-trash fast path fails.
@@ -158,6 +166,7 @@ fn execute_instant_removal_or_fallback(
         target_branch,
         force_worktree,
         changed_directory,
+        planner_expected_retention,
     } = *removal;
 
     if !force_worktree {
@@ -173,7 +182,8 @@ fn execute_instant_removal_or_fallback(
         // decision: hooks or concurrent processes may have advanced the branch.
         if let Some(branch) = branch_name
             && !deletion_mode.should_keep()
-            && let Err(e) = repo.capture_refs().and_then(|snapshot| {
+        {
+            let result = repo.capture_refs().and_then(|snapshot| {
                 delete_branch_if_safe(
                     repo,
                     &snapshot,
@@ -181,9 +191,8 @@ fn execute_instant_removal_or_fallback(
                     target_branch.unwrap_or("HEAD"),
                     deletion_mode.is_force(),
                 )
-            })
-        {
-            log::debug!("Failed to delete branch {} synchronously: {}", branch, e);
+            });
+            warn_if_branch_retained(branch, &result, planner_expected_retention);
         }
         if changed_directory {
             // Create an empty placeholder at the original path so the shell's working
@@ -207,7 +216,13 @@ fn execute_instant_removal_or_fallback(
             if let Some(branch) = branch_name
                 && !deletion_mode.should_keep()
             {
-                delete_branch_in_synchronous_fallback(repo, branch, target_branch, deletion_mode);
+                delete_branch_in_synchronous_fallback(
+                    repo,
+                    branch,
+                    target_branch,
+                    deletion_mode,
+                    planner_expected_retention,
+                );
             }
             return Ok(BackgroundRemovalPlan::CompletedSynchronously);
         }
@@ -248,8 +263,9 @@ fn delete_branch_in_synchronous_fallback(
     branch: &str,
     target_branch: Option<&str>,
     deletion_mode: BranchDeletionMode,
+    planner_expected_retention: bool,
 ) {
-    if let Err(e) = repo.capture_refs().and_then(|snapshot| {
+    let result = repo.capture_refs().and_then(|snapshot| {
         delete_branch_if_safe(
             repo,
             &snapshot,
@@ -257,8 +273,51 @@ fn delete_branch_in_synchronous_fallback(
             target_branch.unwrap_or("HEAD"),
             deletion_mode.is_force(),
         )
-    }) {
-        log::debug!("Failed to delete branch {branch} in synchronous fallback: {e}");
+    });
+    warn_if_branch_retained(branch, &result, planner_expected_retention);
+}
+
+/// Surface the residual branch when `delete_branch_if_safe` left it in place.
+///
+/// The worktree has already been removed by the time this runs, so silently
+/// dropping the branch-deletion outcome (the prior behavior) left the user
+/// with no signal that the branch survived. Both the fast path and the
+/// synchronous fallback route through here so the message is consistent.
+///
+/// - `Err`: the branch-deletion command itself failed (`git branch -D`
+///   error, refs scan failure, or similar). Always warn — the prior
+///   `log::debug!` was invisible.
+/// - `Ok(NotDeleted)`: integration check declined the branch. Warn only if
+///   the planner predicted deletion (a `pre-remove` hook advanced the branch,
+///   or similar race); when the planner already predicted retention,
+///   `print_hints` has explained why and a second message would duplicate.
+/// - `Ok(ForceDeleted)` or `Ok(Integrated(_))`: succeeded; no message.
+fn warn_if_branch_retained(
+    branch: &str,
+    result: &anyhow::Result<BranchDeletionResult>,
+    planner_expected_retention: bool,
+) {
+    match result {
+        Ok(r)
+            if matches!(r.outcome, BranchDeletionOutcome::NotDeleted)
+                && !planner_expected_retention =>
+        {
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "Removed worktree but kept branch <bold>{branch}</> (not integrated); to remove it, run <bold>wt remove --force-delete {branch}</>"
+                ))
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "{}",
+                warning_message(cformat!(
+                    "Removed worktree but failed to delete branch <bold>{branch}</>: {e}; to retry, run <bold>wt remove --force-delete {branch}</>"
+                ))
+            );
+        }
+        Ok(_) => {}
     }
 }
 
@@ -1493,6 +1552,9 @@ fn handle_detached_removed_worktree_output(
                 target_branch: ctx.target_branch,
                 force_worktree: ctx.force_worktree,
                 changed_directory: ctx.changed_directory,
+                // No branch → field is unused, but pick the silent-on-NotDeleted
+                // default in case the detached HEAD ever gains a branch name.
+                planner_expected_retention: true,
             },
             "detached",
             ctx.background_fallback_mode,
@@ -1590,6 +1652,13 @@ fn handle_named_removed_worktree_background(
     display_info.print_hints(branch_name, ctx.deletion_mode, safety.integration_reason)?;
     print_switch_message_if_changed(ctx.changed_directory, ctx.main_path)?;
 
+    // Planner predicted retention when the user asked to keep, or when the
+    // integration check before this returned no reason — `print_hints` has
+    // already explained either case. A `NotDeleted` outcome surprises only if
+    // the planner predicted deletion.
+    let planner_expected_retention =
+        ctx.deletion_mode.should_keep() || safety.integration_reason.is_none();
+
     spawn_background_removal(
         repo,
         ctx.main_path,
@@ -1600,6 +1669,7 @@ fn handle_named_removed_worktree_background(
             target_branch: safety.target_branch(),
             force_worktree: ctx.force_worktree,
             changed_directory: ctx.changed_directory,
+            planner_expected_retention,
         },
         branch_name,
         ctx.background_fallback_mode,
