@@ -287,24 +287,26 @@ fn delete_branch_in_synchronous_fallback(
     warn_if_branch_retained(branch, &result, planner_expected_retention);
 }
 
-/// Surface the residual branch when `delete_branch_if_safe` returned
-/// `Ok(NotDeleted)` for a case the planner expected to delete.
+/// Surface the residual branch when `delete_branch_if_safe` returned an
+/// unexpected outcome the user wouldn't otherwise see.
 ///
 /// The worktree has already been removed by the time this runs, so silently
 /// dropping the branch-deletion outcome (the prior behavior) left the user
 /// with no signal that the branch survived. Both the fast path and the
 /// synchronous fallback route through here so the message is consistent.
 ///
-/// Only the surprise case is surfaced: planner predicted deletion (the
-/// pre-hook integration check said integrated) but the post-hook check
-/// said otherwise — typically a `pre-remove` hook commit. When the planner
-/// already predicted retention (unmerged from the start, or
-/// `--no-delete-branch`), `print_hints` has explained the case and a
-/// second message would duplicate. `Ok(ForceDeleted)`, `Ok(Integrated(_))`,
-/// and `Err` paths are silent — Err is logged at warn level for developer
-/// diagnostics rather than as a user-actionable message (the failure mode
-/// would be a `git branch -D` exec error or a refs DB I/O failure, neither
-/// of which the user can act on differently than re-running the command).
+/// - `Ok(RetainedRaced)`: atomic CAS rejected the delete because the ref
+///   tip moved between integration check and delete (a hook, a concurrent
+///   push). Always surface — the unmerged commits would otherwise vanish
+///   silently from the user's view.
+/// - `Ok(NotDeleted)`: integration check declined the branch. Warn only
+///   when the planner predicted deletion (a `pre-remove` hook commit, or
+///   similar race) — otherwise `print_hints` has explained the case and a
+///   second message would duplicate.
+/// - `Ok(ForceDeleted)` / `Ok(Integrated(_))`: succeeded; no message.
+/// - `Err`: `log::warn!` for developer diagnostics; the failure modes
+///   here (`git update-ref` exec error, refs DB I/O failure) are not
+///   user-actionable beyond re-running the command.
 fn warn_if_branch_retained(
     branch: &str,
     result: &anyhow::Result<BranchDeletionResult>,
