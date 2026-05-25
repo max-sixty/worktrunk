@@ -482,8 +482,9 @@ platform = "invalid_platform"
         // The snapshot asserts on the `log::warn!` diagnostic for the
         // invalid platform value, which is suppressed at the default
         // baseline filter (`-v 0` → Off). Opt this test into Warn-level
-        // logging via `RUST_LOG`, which the verbose flag now merges with
-        // through `env_logger::Builder::parse_default_env` (`init_logging`).
+        // logging via `RUST_LOG`, which `logging::init` merges with the
+        // verbose flag via `tracing_subscriber::EnvFilter` (env wins
+        // when set).
         cmd.env("RUST_LOG", "warn");
         // Invalid platform should fall back to URL detection (GitHub)
         assert_cmd_snapshot!(cmd);

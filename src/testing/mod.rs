@@ -530,12 +530,12 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // by the env-strip above.
     isolate_subprocess_env(cmd, None);
     cmd.env("WORKTRUNK_TEST_EPOCH", TEST_EPOCH.to_string());
-    // RUST_LOG intentionally NOT set: now that the flag baseline and
-    // `RUST_LOG` merge via `env_logger::Builder::parse_default_env`
-    // (env wins when set), a blanket `RUST_LOG=warn` default would cap
-    // `-vv` tests at Warn and starve `trace.log` of debug-level
-    // `[wt-trace]` records. Tests that need warn-level output should
-    // opt in per-invocation.
+    // RUST_LOG intentionally NOT set: the flag baseline and `RUST_LOG`
+    // merge via the env-wins-when-set contract enforced by
+    // `tracing_subscriber::EnvFilter` (see `logging::init`), so a blanket
+    // `RUST_LOG=warn` default would cap `-vv` tests at Warn and starve
+    // `trace.log` of debug-level `[wt-trace]` records. Tests that need
+    // warn-level output should opt in per-invocation.
     // Treat Claude as not installed by default (tests can override with "1")
     cmd.env("WORKTRUNK_TEST_CLAUDE_INSTALLED", "0");
     // Treat Codex as not installed by default (tests can override with "1")
