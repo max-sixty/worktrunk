@@ -9,7 +9,7 @@ group = "Reference"
 
 Worktrunk has three extension mechanisms.
 
-**[Hooks](#hooks)** run shell commands at lifecycle events — creating a worktree, merging, removing. They're configured in TOML and run automatically.
+**[Hooks](#hooks)** run shell commands at lifecycle events (creating a worktree, merging, removing). They're configured in TOML and run automatically.
 
 **[Aliases](#aliases)** define reusable commands invoked as `wt <name>`.
 
@@ -23,7 +23,7 @@ Worktrunk has three extension mechanisms.
 | **Shareable via repo** | `.config/wt.toml` | `.config/wt.toml` | Distribute the binary |
 | **Language** | Shell commands | Shell commands | Any |
 
-Hooks and aliases share the TOML config file, the [template engine](@/hook.md#template-variables) (variables, filters, and functions), the [`[[block]]` pipeline syntax](@/hook.md#hook-forms) (blocks run in order, keys within a block run concurrently), and the approval model: user config is trusted; project config requires approval on first run. When both sources define the same name, both run — user first.
+Hooks and aliases share the TOML config file, the [template engine](@/hook.md#template-variables) (variables, filters, and functions), the [`[[block]]` pipeline syntax](@/hook.md#hook-forms) (blocks run in order, keys within a block run concurrently), and the approval model: user config is trusted; project config requires approval on first run. When both sources define the same name, both run (user first).
 
 ## Hooks
 
@@ -37,7 +37,7 @@ Hooks are shell commands that run at key points in the worktree lifecycle. Ten h
 | **merge** | `pre-merge` | `post-merge` |
 | **remove** | `pre-remove` | `post-remove` |
 
-`pre-*` hooks block — failure aborts the operation. `post-*` hooks run in the background.
+`pre-*` hooks block: failure aborts the operation. `post-*` hooks run in the background.
 
 ```toml
 [pre-start]
@@ -50,7 +50,7 @@ server = "npm run dev -- --port {{ branch | hash_port }}"
 test = "npm test"
 ```
 
-See [`wt hook`](@/hook.md) for the full configuration reference — TOML forms, template variables and filters, and built-in recipes (dev server per worktree, database per worktree, progressive validation). [Tips & Patterns](@/tips-patterns.md) has more.
+See [`wt hook`](@/hook.md) for the full configuration reference: TOML forms, template variables and filters, and built-in recipes (dev server per worktree, database per worktree, progressive validation). [Tips & Patterns](@/tips-patterns.md) has more.
 
 ## Aliases
 
@@ -69,13 +69,13 @@ since-main = "git log --oneline {{ default_branch }}..HEAD"
 
 ### Templates
 
-Aliases use the same [template engine as hooks](@/hook.md#template-variables) — same variables, same [filters](@/hook.md#worktrunk-filters), same [functions](@/hook.md#worktrunk-functions), and the same [`--KEY=VALUE` smart routing](@/hook.md#passing-values): bind if the template references `KEY`, else forward to `{{ args }}`. For example, `wt deploy --env=staging` sets `{{ env }}`.
+Aliases use the same [template engine as hooks](@/hook.md#template-variables): same variables, same [filters](@/hook.md#worktrunk-filters), same [functions](@/hook.md#worktrunk-functions), and the same [`--KEY=VALUE` smart routing](@/hook.md#passing-values) (bind if the template references `KEY`, else forward to `{{ args }}`). For example, `wt deploy --env=staging` sets `{{ env }}`.
 
-Alias templates add `{{ args }}` for positional CLI arguments. Operation-context variables (`target`, `base`, `pr_number`) aren't auto-populated since there's no operation in progress — but any of them can still be bound with `--KEY=VALUE`.
+Alias templates add `{{ args }}` for positional CLI arguments. Operation-context variables (`target`, `base`, `pr_number`) aren't auto-populated since there's no operation in progress, but any of them can still be bound with `--KEY=VALUE`.
 
 ### Positional arguments
 
-`{{ args }}` renders as a space-joined, shell-escaped string — ready to splice into a command:
+`{{ args }}` renders as a space-joined, shell-escaped string, ready to splice into a command:
 
 ```toml
 [aliases]
@@ -97,7 +97,7 @@ Tokens after `--` forward unconditionally, bypassing any binding. Writing `wt de
 
 ### Multi-step pipelines
 
-`[[aliases.NAME]]` defines a pipeline using the [same `[[block]]` semantics as hooks](@/hook.md#hook-forms) — blocks run in order, keys within a block run concurrently, a step failure aborts the remainder:
+`[[aliases.NAME]]` defines a pipeline using the [same `[[block]]` semantics as hooks](@/hook.md#hook-forms): blocks run in order, keys within a block run concurrently, and a step failure aborts the remainder.
 
 ```toml
 [[aliases.release]]
@@ -111,15 +111,15 @@ package = "cargo package --no-verify"
 publish = "cargo publish {{ args }}"
 ```
 
-Every step sees the same `{{ args }}` and bound variables — `wt release -- --dry-run` forwards `--dry-run` to `publish` without affecting earlier steps.
+Every step sees the same `{{ args }}` and bound variables. `wt release -- --dry-run` forwards `--dry-run` to `publish` without affecting earlier steps.
 
 ### Changing directory
 
-`wt` commands that change the parent shell's directory — `wt switch`, `wt merge` (leaving the removed source), `wt remove` of the current worktree — still do so when invoked from an alias; the Worktrunk shell integration propagates the change through. Other shell state doesn't persist: the alias runs in a subshell, so `cd`, `export`, and similar commands only affect that subshell.
+The `wt` commands that change the parent shell's directory (`wt switch`, `wt merge` when it leaves the removed source, `wt remove` of the current worktree) still do so when invoked from an alias; the Worktrunk shell integration propagates the change through. Other shell state doesn't persist: the alias runs in a subshell, so `cd`, `export`, and similar commands only affect that subshell.
 
 ### Deferring expansion to a nested `wt` command
 
-Alias templates render once at dispatch, using the alias-invocation worktree's context. A nested `wt` command in the alias body — for example `wt switch --execute '…'` — therefore receives already-rendered text, so a variable like `{{ worktree_path }}` inside the inner command's template resolves to the *outer* worktree rather than the one `wt switch` is targeting. Wrap the inner template in `{% raw %}…{% endraw %}` so it passes through unrendered and the inner `wt` command expands it in its own context:
+Alias templates render once at dispatch, using the alias-invocation worktree's context. A nested `wt` command in the alias body (for example `wt switch --execute '…'`) therefore receives already-rendered text, so a variable like `{{ worktree_path }}` inside the inner command's template resolves to the *outer* worktree rather than the one `wt switch` is targeting. Wrap the inner template in `{% raw %}…{% endraw %}` so it passes through unrendered and the inner `wt` command expands it in its own context:
 
 ```toml
 [aliases]
@@ -160,13 +160,13 @@ fi
 '''
 ```
 
-Run with `wt move-changes --to=feature-xyz`. The guard skips the stash when nothing is in flight; otherwise `git stash push` captures everything and `--execute` pops it in the new worktree with the staged/unstaged split intact. Anything after `--` runs in the new worktree after pop — `wt move-changes --to=feature-xyz -- claude` opens Claude there.
+Run with `wt move-changes --to=feature-xyz`. The guard skips the stash when nothing is in flight; otherwise `git stash push` captures everything and `--execute` pops it in the new worktree with the staged/unstaged split intact. Anything after `--` runs in the new worktree after pop. For example, `wt move-changes --to=feature-xyz -- claude` opens Claude there.
 
 To copy instead of move, add `git stash apply --index --quiet` right after the push.
 
 ### Recipe: tail a specific hook log
 
-`wt config state logs --format=json` emits structured entries — `branch`, `source`, `hook_type`, `name`, `path`. Pipe through `jq` to resolve one entry, then wrap in an alias for quick access:
+`wt config state logs --format=json` emits structured entries (`branch`, `source`, `hook_type`, `name`, `path`). Pipe through `jq` to resolve one entry, then wrap in an alias for quick access:
 
 ```toml
 [aliases]
@@ -179,13 +179,13 @@ tail -f "$(wt config state logs --format=json | jq -r --arg name "{{ name | sani
 '''
 ```
 
-Run with `wt hook-log --kind=post-start --name=server` to tail the log for the `server` hook on the current branch. `--kind` picks the hook type; the branch is pulled from the current worktree via `{{ branch }}`. `sanitize_hash` rewrites `branch` and `name` to filesystem-safe forms with a hash suffix that keeps distinct originals unique — the same transformation Worktrunk applies on disk — so the alias resolves the right log even when either contains characters like `/`.
+Run with `wt hook-log --kind=post-start --name=server` to tail the log for the `server` hook on the current branch. `--kind` picks the hook type; the branch is pulled from the current worktree via `{{ branch }}`. `sanitize_hash` rewrites `branch` and `name` to filesystem-safe forms with a hash suffix that keeps distinct originals unique (the same transformation Worktrunk applies on disk), so the alias resolves the right log even when either contains characters like `/`.
 
 ## Custom subcommands
 
 <span class="badge-experimental"></span>
 
-Any executable named `wt-<name>` on `PATH` becomes available as `wt <name>` — the same pattern git uses for `git-foo`. Built-in commands and configured [aliases](#aliases) take precedence — `wt foo` resolves to the alias if `foo` is configured, otherwise to `wt-foo`.
+Any executable named `wt-<name>` on `PATH` becomes available as `wt <name>`, the same pattern git uses for `git-foo`. Built-in commands and configured [aliases](#aliases) take precedence: `wt foo` resolves to the alias if `foo` is configured, otherwise to `wt-foo`.
 
 {{ terminal(cmd="wt sync origin              # runs: wt-sync origin|||wt -C /tmp/repo sync        # -C is forwarded as the child's working directory") }}
 
@@ -193,7 +193,7 @@ Arguments pass through verbatim, stdio is inherited, and the child's exit code p
 
 ### Examples
 
-- [`worktrunk-sync`](https://github.com/pablospe/worktrunk-sync) — rebases stacked worktree branches in dependency order, inferring the tree from git history. Install with `cargo install worktrunk-sync`, then run as `wt sync`.
+- [`worktrunk-sync`](https://github.com/pablospe/worktrunk-sync): rebases stacked worktree branches in dependency order, inferring the tree from git history. Install with `cargo install worktrunk-sync`, then run as `wt sync`.
 
 ## Reference: hooks vs. aliases
 
@@ -204,15 +204,15 @@ Hooks and aliases share a template-variable model and a smart-routing rule for `
 
 | Axis | Hooks | Aliases |
 |------|-------|---------|
-| Invocation | `wt hook <type> [args...]` — nested under the `hook` built-in | `wt <name> [args...]` — top-level |
+| Invocation | `wt hook <type> [args...]` (nested under the `hook` built-in) | `wt <name> [args...]` (top-level) |
 | Bare positionals | Filter names (`wt hook pre-merge test build` runs only `test` and `build`) | Forwarded to `{{ args }}` |
 | Reach `{{ args }}` from positionals | Must use `--` (`wt hook pre-merge -- extra`) | Any bare positional lands there |
 | Approval skip flag | Post-subcommand `--yes` / `-y` supported (`wt hook pre-merge --yes`) | Only the global form (`wt -y <alias>`); post-alias `--yes` falls through to `{{ args }}` |
 | Source discrimination | `user:` / `project:` / `user:name` / `project:name` filter syntax | Run user first, then project; no filter syntax |
-| Force-bind escape | `--var KEY=VALUE` (deprecated — prefer `--KEY=VALUE` — but still force-binds) | None — smart routing is the only path |
-| `--help` | `wt hook --help` lists hook types; `wt hook <type> --help` shows flags and arguments for that type | The template body is the documentation — `wt <alias> --help` redirects to `wt config alias show` / `dry-run`; `wt --help` and `wt step --help` list configured aliases alongside built-in commands |
+| Force-bind escape | `--var KEY=VALUE` (deprecated in favor of `--KEY=VALUE`, but still force-binds) | None; smart routing is the only path |
+| `--help` | `wt hook --help` lists hook types; `wt hook <type> --help` shows flags and arguments for that type | The template body is the documentation: `wt <alias> --help` redirects to `wt config alias show` / `dry-run`. `wt --help` and `wt step --help` list configured aliases alongside built-in commands |
 | Inspection | `wt hook show [type] [--expanded]` | `wt config alias show <name>` / `wt config alias dry-run <name>` |
-| Stdin | All template variables as JSON (parse with `json.load(sys.stdin)`) | Inherits parent stdin — pipes pass through; interactive TUIs (e.g. `wt switch`) keep the tty |
+| Stdin | All template variables as JSON (parse with `json.load(sys.stdin)`) | Inherits parent stdin (pipes pass through; interactive TUIs like `wt switch` keep the tty) |
 | Template-context extras | `hook_type`, `hook_name`, per-type operation vars (`base`, `target`, `pr_number`, …) | `args` on top of the shared base variables |
 
 </details>
