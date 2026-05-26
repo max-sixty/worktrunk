@@ -512,8 +512,8 @@ mod tests {
     use ansi_str::AnsiStr;
 
     use super::{
-        WtTraceFields, effective_log_max_level, format_wt_trace, label_for_thread_index,
-        style_stderr_line,
+        WT_TRACE_TARGET, WtTraceFields, effective_log_max_level, format_wt_trace,
+        label_for_thread_index, style_stderr_line,
     };
 
     /// Branch coverage for `label_for_thread_index` — `thread_label` never
@@ -559,6 +559,62 @@ mod tests {
         // Plain — everything else falls through with just the thread prefix.
         let plain = style_stderr_line('d', "hello").ansi_strip().into_owned();
         assert_eq!(plain, "[d] hello");
+    }
+
+    /// Drive `WtTraceFields::Visit` end-to-end via a temporary subscriber:
+    /// emit one event per field-type variant under [`WT_TRACE_TARGET`],
+    /// capture the visitor output, and assert the field landed in the
+    /// expected slot. Covers `record_debug` (`err = %display`) — the
+    /// production path nothing else exercises — plus the unknown-name `_`
+    /// arms in `record_u64` / `record_str`.
+    #[test]
+    fn wt_trace_fields_visit_records_every_type() {
+        use std::sync::{Arc, Mutex};
+
+        use tracing::Subscriber;
+        use tracing_subscriber::Registry;
+        use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+
+        struct Capture(Arc<Mutex<Vec<WtTraceFields>>>);
+        impl<S: Subscriber> Layer<S> for Capture {
+            fn on_event(&self, event: &tracing::Event<'_>, _: Context<'_, S>) {
+                if event.metadata().target() != WT_TRACE_TARGET {
+                    return;
+                }
+                let mut fields = WtTraceFields::default();
+                event.record(&mut fields);
+                self.0.lock().unwrap().push(fields);
+            }
+        }
+        let events: Arc<Mutex<Vec<WtTraceFields>>> = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Registry::default().with(Capture(events.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            // u64 (ts/tid/dur_us) + unknown_u64 → `_` arm in record_u64
+            tracing::debug!(
+                target: WT_TRACE_TARGET,
+                ts = 7u64,
+                tid = 3u64,
+                unknown_u64 = 42u64,
+            );
+            // bool (ok)
+            tracing::debug!(target: WT_TRACE_TARGET, ok = true);
+            // str (cmd) + unknown_str → `_` arm in record_string
+            tracing::debug!(
+                target: WT_TRACE_TARGET,
+                cmd = "git status",
+                unknown_str = "ignored",
+            );
+            // Display-formatted value (err = %expr) → record_debug
+            let msg = "fatal: bad ref".to_string();
+            tracing::debug!(target: WT_TRACE_TARGET, err = %msg);
+        });
+
+        let captured = events.lock().unwrap();
+        assert_eq!(captured[0].ts, Some(7));
+        assert_eq!(captured[0].tid, Some(3));
+        assert_eq!(captured[1].ok, Some(true));
+        assert_eq!(captured[2].cmd.as_deref(), Some("git status"));
+        assert_eq!(captured[3].err.as_deref(), Some("fatal: bad ref"));
     }
 
     /// Lock the `[wt-trace]` wire grammar produced by `format_wt_trace`.
@@ -613,6 +669,21 @@ mod tests {
             r#"[wt-trace] ts=100 tid=3 context=main cmd="git merge-base" dur_us=100000 err="fatal: ...""#
         );
 
+        // cmd_errored without context (standalone tools like gh)
+        let f = WtTraceFields {
+            kind: Some("cmd_errored".into()),
+            ts: Some(100),
+            tid: Some(3),
+            cmd: Some("gh pr list".into()),
+            dur_us: Some(1000),
+            err: Some("network down".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            format_wt_trace(&f),
+            r#"[wt-trace] ts=100 tid=3 cmd="gh pr list" dur_us=1000 err="network down""#
+        );
+
         // instant
         let f = WtTraceFields {
             kind: Some("instant".into()),
@@ -638,6 +709,24 @@ mod tests {
         assert_eq!(
             format_wt_trace(&f),
             r#"[wt-trace] ts=100 tid=3 span="build_hook_context" dur_us=8200"#
+        );
+
+        // Defensive fallback: a future kind not yet known to the renderer
+        // emits a parseable record rather than silently vanishing.
+        let f = WtTraceFields {
+            kind: Some("future_kind".into()),
+            ts: Some(100),
+            tid: Some(3),
+            ..Default::default()
+        };
+        assert_eq!(
+            format_wt_trace(&f),
+            r#"[wt-trace] ts=100 tid=3 kind="future_kind""#
+        );
+        let f = WtTraceFields::default();
+        assert_eq!(
+            format_wt_trace(&f),
+            r#"[wt-trace] ts=0 tid=0 kind="<unknown>""#
         );
     }
 
