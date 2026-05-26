@@ -231,13 +231,16 @@ impl HookPlan {
         }))
     }
 
-    /// The picker can't prompt mid-render, so it runs only the already-approved
-    /// project pipelines and silently drops the rest (keeping user pipelines).
-    /// Strictly the CLAUDE.md "consult the approval state read-only and run
-    /// only the already-approved commands, skipping the rest" rule. An absent
-    /// `project_id` (unresolvable identifier) drops every project pipeline —
-    /// fail-closed, never run unapproved.
-    #[cfg(unix)]
+    /// Build an approved plan without prompting: project pipelines whose
+    /// commands are already approved survive, the rest are dropped (user
+    /// pipelines always survive). Strictly the CLAUDE.md "consult the
+    /// approval state read-only and run only the already-approved commands,
+    /// skipping the rest" rule. An absent `project_id` (unresolvable
+    /// identifier) drops every project pipeline — fail-closed, never run
+    /// unapproved.
+    ///
+    /// Used by the picker (can't prompt mid-render) and by `wt step prune`
+    /// (streams removals — would deadlock against a prompt).
     pub fn approve_readonly(
         self,
         approvals: &Approvals,
