@@ -256,6 +256,38 @@ impl HookPlan {
         entries.retain(|e| !e.selection.is_empty());
         ApprovedHookPlan { entries }
     }
+
+    /// Deduped project-command templates in this plan that are not yet
+    /// approved for `project_id`. Empty when nothing project-sourced needs
+    /// approval (no project hooks selected, every template already approved,
+    /// or `project_id` unresolvable — fail-closed by returning empty so
+    /// callers don't surface "needs approval" without a project to scope it).
+    pub fn unapproved_project_commands(
+        &self,
+        approvals: &Approvals,
+        project_id: Option<&str>,
+    ) -> Vec<String> {
+        let Some(pid) = project_id else {
+            return Vec::new();
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for entry in &self.entries {
+            for (source, cfg) in &entry.selection {
+                if *source != HookSource::Project {
+                    continue;
+                }
+                for cmd in cfg.commands() {
+                    if !approvals.is_command_approved(pid, &cmd.template)
+                        && seen.insert(cmd.template.clone())
+                    {
+                        out.push(cmd.template.clone());
+                    }
+                }
+            }
+        }
+        out
+    }
 }
 
 /// The only value executors accept. Constructible solely via

@@ -1133,9 +1133,12 @@ fn prune_pre_remove_setup(repo: &mut TestRepo) -> (std::path::PathBuf, std::path
     (wt_path, marker)
 }
 
-/// `wt step prune`'s approval covers the `pre-remove` hooks the pruned worktrees
-/// will run — resolved from the invoking worktree's config. With no TTY and no
-/// prior approval, prune aborts rather than running them silently.
+/// `wt step prune` never prompts inline — streaming removals would deadlock
+/// against a prompt. Instead a candidate whose `pre-remove` (resolved from the
+/// invoking worktree's config) isn't yet approved is SKIPPED with
+/// `(approval required)`, with a hint pointing at `wt config approvals add`.
+/// Skipping is non-fatal — exit 0 — so other candidates with already-approved
+/// (or no) hooks still get pruned.
 #[rstest]
 fn test_prune_pre_remove_needs_approval(mut repo: TestRepo) {
     let (wt_path, marker) = prune_pre_remove_setup(&mut repo);
@@ -1148,16 +1151,20 @@ fn test_prune_pre_remove_needs_approval(mut repo: TestRepo) {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        !output.status.success(),
-        "prune should abort when an un-approved pre-remove is in scope; stderr:\n{stderr}"
+        output.status.success(),
+        "prune should skip the unapproved candidate, not abort; stderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("needs approval") && stderr.contains("pre-remove"),
-        "prune should surface the pre-remove for approval; stderr:\n{stderr}"
+        stderr.contains("(approval required)"),
+        "prune should report the candidate as skipped for approval; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("wt config approvals add"),
+        "prune should hint at how to pre-approve; stderr:\n{stderr}"
     );
     assert!(
         wt_path.exists(),
-        "the worktree must not be removed when approval fails"
+        "the worktree must not be removed when its hooks aren't approved"
     );
     assert!(
         !marker.exists(),

@@ -431,43 +431,6 @@ fn test_approval_prompt_remove_decline(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_approval_prompt_prune_decline(mut repo: TestRepo) {
-    // Remove origin so worktrunk uses the directory name as the project identifier
-    repo.run_git(&["remote", "remove", "origin"]);
-
-    // A merged worktree carrying a `pre-remove` hook in its `.config/wt.toml`
-    repo.write_project_config(r#"pre-remove = "echo 'pre-remove hook'""#);
-    repo.commit("Add pre-remove config");
-    let wt_path = repo.add_worktree("to-prune");
-
-    let env_vars = test_env_vars_with_shell(&repo);
-
-    // Decline the approval prompt — prune continues without running hooks
-    let (output, exit_code) = exec_wt_in_pty(
-        &repo,
-        &["step", "prune", "--foreground", "--min-age=0s"],
-        &env_vars,
-        "n\n",
-    );
-
-    assert_eq!(
-        exit_code, 0,
-        "prune should succeed even when hooks declined; output:\n{output}"
-    );
-    assert!(
-        output.contains("Commands declined"),
-        "should show 'Commands declined' message; output:\n{output}"
-    );
-    assert!(
-        !wt_path.exists(),
-        "the merged worktree should still be pruned"
-    );
-    approval_pty_settings(&repo).bind(|| {
-        assert_snapshot!("approval_prompt_prune_decline", &output);
-    });
-}
-
-#[rstest]
 fn test_approval_prompt_step_commit_decline(mut repo: TestRepo) {
     // Remove origin so worktrunk uses directory name as project identifier
     repo.run_git(&["remote", "remove", "origin"]);
