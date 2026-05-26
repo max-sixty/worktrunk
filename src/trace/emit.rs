@@ -22,7 +22,7 @@
 //! structured fields (`kind`, `ts`, `tid`, `cmd`, `dur_us`, `ok`, `err`,
 //! `event`, `span`, `context`). The text grammar is produced downstream by
 //! the `trace.log` layer's `FormatEvent` impl in
-//! `src/logging.rs::WtTraceFileFormat`, which reads the structured fields
+//! `src/logging.rs::TraceFileFormat`, which reads the structured fields
 //! and renders the exact `[wt-trace] key=value …` lines wt-perf and the
 //! integration suite parse.
 //!
