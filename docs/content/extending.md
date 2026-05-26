@@ -9,11 +9,11 @@ group = "Reference"
 
 Worktrunk has three extension mechanisms.
 
-**[Hooks](#hooks)** run shell commands at lifecycle events (creating a worktree, merging, removing). They're configured in TOML and run automatically.
+**[Hooks](#hooks)** are shell commands that run automatically at lifecycle events (switching, starting, committing, merging, removing). Defined in TOML.
 
-**[Aliases](#aliases)** define reusable commands invoked as `wt <name>`.
+**[Aliases](#aliases)** are reusable shell commands invoked as `wt <name>`. Defined in TOML.
 
-**[Custom subcommands](#custom-subcommands)** are standalone executables. Drop `wt-foo` on `PATH` and it becomes `wt foo`. No configuration needed.
+**[Custom subcommands](#custom-subcommands)** are standalone executables invoked as `wt <name>`. Drop `wt-foo` on `PATH` and it becomes `wt foo`.
 
 | | Hooks | Aliases | Custom subcommands |
 |---|---|---|---|
@@ -23,11 +23,11 @@ Worktrunk has three extension mechanisms.
 | **Shareable via repo** | `.config/wt.toml` | `.config/wt.toml` | Distribute the binary |
 | **Language** | Shell commands | Shell commands | Any |
 
-Hooks and aliases share the TOML config file, the [template engine](@/hook.md#template-variables) (variables, filters, and functions), the [`[[block]]` pipeline syntax](@/hook.md#hook-forms) (blocks run in order, keys within a block run concurrently), and the approval model: user config is trusted; project config requires approval on first run. When both sources define the same name, both run (user first).
+Hooks and aliases live in the same TOML config and share the [template engine](@/hook.md#template-variables). User config is trusted; project config requires approval on first run. When both define the same name, both run (user first).
 
 ## Hooks
 
-Hooks are shell commands that run at key points in the worktree lifecycle. Ten hooks cover five events:
+Ten hooks cover five lifecycle events:
 
 | Event | `pre-` (blocking) | `post-` (background) |
 |-------|-------------------|---------------------|
@@ -50,11 +50,11 @@ server = "npm run dev -- --port {{ branch | hash_port }}"
 test = "npm test"
 ```
 
-See [`wt hook`](@/hook.md) for the full configuration reference: TOML forms, template variables and filters, and built-in recipes (dev server per worktree, database per worktree, progressive validation). [Tips & Patterns](@/tips-patterns.md) has more.
+See [`wt hook`](@/hook.md) for the full reference and built-in recipes (dev server per worktree, database per worktree, progressive validation). [Tips & Patterns](@/tips-patterns.md) has more.
 
 ## Aliases
 
-`[aliases]` defines commands invoked as `wt <name>`.
+Aliases are configured under `[aliases]`:
 
 ```toml
 [aliases]
@@ -69,9 +69,9 @@ since-main = "git log --oneline {{ default_branch }}..HEAD"
 
 ### Templates
 
-Aliases use the same [template engine as hooks](@/hook.md#template-variables): same variables, same [filters](@/hook.md#worktrunk-filters), same [functions](@/hook.md#worktrunk-functions), and the same [`--KEY=VALUE` smart routing](@/hook.md#passing-values) (bind if the template references `KEY`, else forward to `{{ args }}`). For example, `wt deploy --env=staging` sets `{{ env }}`.
+Aliases use the same [template engine as hooks](@/hook.md#template-variables): variables, [filters](@/hook.md#worktrunk-filters), [functions](@/hook.md#worktrunk-functions), and [`--KEY=VALUE` smart routing](@/hook.md#passing-values) (bind if the template references `KEY`, else forward to `{{ args }}`). For example, `wt deploy --env=staging` sets `{{ env }}`.
 
-Alias templates add `{{ args }}` for positional CLI arguments. Operation-context variables (`target`, `base`, `pr_number`) aren't auto-populated since there's no operation in progress, but any of them can still be bound with `--KEY=VALUE`.
+Alias templates add `{{ args }}` for positional CLI arguments. Operation-context variables (`target`, `base`, `pr_number`) aren't auto-populated, but can still be bound with `--KEY=VALUE`.
 
 ### Positional arguments
 
@@ -115,7 +115,7 @@ Every step sees the same `{{ args }}` and bound variables. `wt release -- --dry-
 
 ### Changing directory
 
-The `wt` commands that change the parent shell's directory (`wt switch`, `wt merge` when it leaves the removed source, `wt remove` of the current worktree) still do so when invoked from an alias; the Worktrunk shell integration propagates the change through. Other shell state doesn't persist: the alias runs in a subshell, so `cd`, `export`, and similar commands only affect that subshell.
+`wt switch`, `wt merge` (when it leaves the removed source), and `wt remove` of the current worktree change the parent shell's directory even when invoked from an alias; the Worktrunk shell integration propagates the change through. Other shell state doesn't persist: the alias runs in a subshell, so `cd`, `export`, and similar commands only affect that subshell.
 
 ### Deferring expansion to a nested `wt` command
 
@@ -185,19 +185,19 @@ Run with `wt hook-log --kind=post-start --name=server` to tail the log for the `
 
 <span class="badge-experimental"></span>
 
-Any executable named `wt-<name>` on `PATH` becomes available as `wt <name>`, the same pattern git uses for `git-foo`. Built-in commands and configured [aliases](#aliases) take precedence: `wt foo` resolves to the alias if `foo` is configured, otherwise to `wt-foo`.
+Any executable named `wt-<name>` on `PATH` becomes available as `wt <name>`, the same pattern git uses for `git-foo`. Built-in commands and [aliases](#aliases) take precedence.
 
 {{ terminal(cmd="wt sync origin              # runs: wt-sync origin|||wt -C /tmp/repo sync        # -C is forwarded as the child's working directory") }}
 
-Arguments pass through verbatim, stdio is inherited, and the child's exit code propagates unchanged. Custom subcommands don't have access to template variables.
+Arguments pass through verbatim, stdio is inherited, and the child's exit code propagates unchanged.
 
 ### Examples
 
-- [`worktrunk-sync`](https://github.com/pablospe/worktrunk-sync): rebases stacked worktree branches in dependency order, inferring the tree from git history. Install with `cargo install worktrunk-sync`, then run as `wt sync`.
+- [`worktrunk-sync`](https://github.com/pablospe/worktrunk-sync): rebases stacked worktree branches in the dependency order inferred from git history. Install with `cargo install worktrunk-sync`, then run as `wt sync`.
 
 ## Reference: hooks vs. aliases
 
-Hooks and aliases share a template-variable model and a smart-routing rule for `--KEY=VALUE` shorthand (bind if the template references the key, else forward to `{{ args }}`), so a pattern learned on one surface mostly transfers to the other. A few things differ.
+Aside from the differences below, hooks and aliases behave the same.
 
 <details>
 <summary>Interface differences</summary>
