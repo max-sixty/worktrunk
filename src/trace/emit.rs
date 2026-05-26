@@ -16,22 +16,49 @@
 //! [wt-trace] ts=1234567 tid=3 span="build_hook_context" dur_us=8200
 //! ```
 //!
+//! # Emission model
+//!
+//! Records emit as `tracing` events under [`WT_TRACE_TARGET`] with typed
+//! structured fields (`kind`, `ts`, `tid`, `cmd`, `dur_us`, `ok`, `err`,
+//! `event`, `span`, `context`). The text grammar is produced downstream by
+//! the `trace.log` layer's `FormatEvent` impl in
+//! `src/logging.rs::WtTraceFileFormat`, which reads the structured fields
+//! and renders the exact `[wt-trace] key=value …` lines wt-perf and the
+//! integration suite parse.
+//!
+//! This split — structured fields at the emission site, grammar rendering
+//! at the layer — means the wire format lives in one place
+//! (`logging.rs`) and emit sites carry no string-formatting noise.
+//!
+//! # Timing
+//!
 //! In-process spans (everything that isn't a subprocess) use [`Span`], an
 //! RAII guard that captures `ts` at construction and emits the completed
 //! record on drop with the elapsed duration. Use it to attribute time spent
 //! in code paths subprocess records can't see (config load, repo open,
 //! template render).
 //!
-//! Records are emitted at `tracing::DEBUG`, so `-vv` or `RUST_LOG=debug` makes
-//! them visible. Subprocess stdout/stderr continuations are emitted via
-//! separate targets: the full output goes to `output.log`, and a bounded
-//! preview shares the routing of all other records — `trace.log` at `-vv`,
-//! stderr otherwise — so raw bodies don't spam `-vv`.
+//! Subprocess emission lives in `shell_exec::WtTraceLog`, which captures
+//! `Instant::now()` at `Cmd::run` entry — `tracing` spans can't carry this
+//! across the sync subprocess wait, so the timing stays manual.
+//!
+//! # Routing
+//!
+//! Events emit at `tracing::DEBUG`, so `-vv` or `RUST_LOG=debug` makes them
+//! visible. Subprocess stdout/stderr continuations route through separate
+//! targets: the full output goes to `output.log`, and a bounded preview
+//! shares the routing of all other records — `trace.log` at `-vv`, stderr
+//! otherwise — so raw bodies don't spam `-vv`.
 
 use std::borrow::Cow;
 use std::fmt::Display;
 use std::sync::OnceLock;
 use std::time::Instant;
+
+/// Tracing target the `trace.log` layer keys on to render the `[wt-trace]`
+/// grammar. Events under any other target fall through to the layer's
+/// default message-passing format.
+pub const WT_TRACE_TARGET: &str = "worktrunk::wt_trace";
 
 /// Monotonic epoch for trace timestamps. All `ts` fields are microseconds
 /// since this point. `Instant` is monotonic even if the system clock steps.
@@ -70,21 +97,23 @@ pub fn command_completed(
 ) {
     match context {
         Some(ctx) => tracing::debug!(
-            r#"[wt-trace] ts={} tid={} context={} cmd="{}" dur_us={} ok={}"#,
+            target: WT_TRACE_TARGET,
+            kind = "cmd_completed",
             ts,
             tid,
-            ctx,
+            context = ctx,
             cmd,
             dur_us,
-            ok
+            ok,
         ),
         None => tracing::debug!(
-            r#"[wt-trace] ts={} tid={} cmd="{}" dur_us={} ok={}"#,
+            target: WT_TRACE_TARGET,
+            kind = "cmd_completed",
             ts,
             tid,
             cmd,
             dur_us,
-            ok
+            ok,
         ),
     }
 }
@@ -98,23 +127,26 @@ pub fn command_errored(
     dur_us: u64,
     err: impl Display,
 ) {
+    let err = err.to_string();
     match context {
         Some(ctx) => tracing::debug!(
-            r#"[wt-trace] ts={} tid={} context={} cmd="{}" dur_us={} err="{}""#,
+            target: WT_TRACE_TARGET,
+            kind = "cmd_errored",
             ts,
             tid,
-            ctx,
+            context = ctx,
             cmd,
             dur_us,
-            err
+            err = %err,
         ),
         None => tracing::debug!(
-            r#"[wt-trace] ts={} tid={} cmd="{}" dur_us={} err="{}""#,
+            target: WT_TRACE_TARGET,
+            kind = "cmd_errored",
             ts,
             tid,
             cmd,
             dur_us,
-            err
+            err = %err,
         ),
     }
 }
@@ -126,10 +158,11 @@ pub fn command_errored(
 /// (chrome://tracing, Perfetto).
 pub fn instant(event: &str) {
     tracing::debug!(
-        r#"[wt-trace] ts={} tid={} event="{}""#,
-        now_us(),
-        thread_id(),
-        event
+        target: WT_TRACE_TARGET,
+        kind = "instant",
+        ts = now_us(),
+        tid = thread_id(),
+        event,
     );
 }
 
@@ -140,11 +173,12 @@ pub fn instant(event: &str) {
 /// around them (config load, repo open, template render, etc.).
 pub fn span_completed(name: &str, ts: u64, tid: u64, dur_us: u64) {
     tracing::debug!(
-        r#"[wt-trace] ts={} tid={} span="{}" dur_us={}"#,
+        target: WT_TRACE_TARGET,
+        kind = "span",
         ts,
         tid,
-        name,
-        dur_us
+        span = name,
+        dur_us,
     );
 }
 

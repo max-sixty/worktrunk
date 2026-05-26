@@ -26,6 +26,7 @@ use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 use worktrunk::shell_exec::SUBPROCESS_FULL_TARGET;
 use worktrunk::styling::{eprintln, info_message};
+use worktrunk::trace::WT_TRACE_TARGET;
 
 use crate::log_files::{self, OutputMakeWriter, TraceMakeWriter};
 use crate::output;
@@ -119,13 +120,35 @@ where
         mut writer: Writer<'_>,
         event: &Event<'_>,
     ) -> fmt::Result {
-        let line = style_stderr_line(thread_label(), &event_message(event));
+        let msg = render_event_message(event);
+        let line = style_stderr_line(thread_label(), &msg);
         writeln!(writer, "{line}")
+    }
+}
+
+/// Render an event to its single-line text payload — `[wt-trace]` grammar
+/// for events under [`WT_TRACE_TARGET`], the raw `message` field for
+/// everything else. Shared between the stderr and `trace.log` formatters so
+/// `[wt-trace]` records appear in both routes (`-vv` writes to the file;
+/// `RUST_LOG=debug -v` surfaces them on stderr).
+fn render_event_message(event: &Event<'_>) -> String {
+    if event.metadata().target() == WT_TRACE_TARGET {
+        let mut fields = WtTraceFields::default();
+        event.record(&mut fields);
+        format_wt_trace(&fields)
+    } else {
+        event_message(event)
     }
 }
 
 /// `trace.log` formatter: plain `[<thread>] <message>`, no ANSI, one line
 /// per event. Matches the on-disk layout pre-migration.
+///
+/// Events under [`WT_TRACE_TARGET`] are rendered via the dedicated
+/// `[wt-trace] key=value` grammar in [`format_wt_trace`]; everything else
+/// falls through to the legacy message-prefix shape. This is the only place
+/// the `[wt-trace]` text format lives — emit sites in `trace::emit` carry
+/// structured fields, not pre-formatted strings.
 struct TraceFileFormat;
 
 impl<S, N> FormatEvent<S, N> for TraceFileFormat
@@ -140,8 +163,133 @@ where
         event: &Event<'_>,
     ) -> fmt::Result {
         let thread_num = thread_label();
-        let msg = event_message(event);
+        let msg = render_event_message(event);
         writeln!(writer, "[{thread_num}] {msg}")
+    }
+}
+
+/// Captured fields from a single `WT_TRACE_TARGET` event. The visitor reads
+/// each field by name and stores its value typed — the layer renderer then
+/// composes the final `[wt-trace] …` line in the exact field order
+/// downstream parsers expect.
+///
+/// Unknown fields are dropped; the wt-trace grammar is closed (every key
+/// has a fixed meaning).
+#[derive(Default)]
+struct WtTraceFields {
+    kind: Option<String>,
+    ts: Option<u64>,
+    tid: Option<u64>,
+    dur_us: Option<u64>,
+    ok: Option<bool>,
+    context: Option<String>,
+    cmd: Option<String>,
+    err: Option<String>,
+    event: Option<String>,
+    span: Option<String>,
+}
+
+impl tracing::field::Visit for WtTraceFields {
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        match field.name() {
+            "ts" => self.ts = Some(value),
+            "tid" => self.tid = Some(value),
+            "dur_us" => self.dur_us = Some(value),
+            _ => {}
+        }
+    }
+
+    fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
+        if field.name() == "ok" {
+            self.ok = Some(value);
+        }
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        self.record_string(field.name(), value);
+    }
+
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn fmt::Debug) {
+        // `tracing::debug!(field = %expr)` routes Display-formatted values
+        // through here via a `DisplayValue` wrapper whose `Debug` impl calls
+        // `Display` (bare text, no `"…"` quoting). Capture the rendered
+        // string verbatim — the wire grammar adds its own quotes when it
+        // composes the line.
+        let mut buf = String::new();
+        let _ = write!(&mut buf, "{value:?}");
+        self.record_string(field.name(), &buf);
+    }
+}
+
+impl WtTraceFields {
+    fn record_string(&mut self, name: &str, value: &str) {
+        match name {
+            "kind" => self.kind = Some(value.to_owned()),
+            "context" => self.context = Some(value.to_owned()),
+            "cmd" => self.cmd = Some(value.to_owned()),
+            "err" => self.err = Some(value.to_owned()),
+            "event" => self.event = Some(value.to_owned()),
+            "span" => self.span = Some(value.to_owned()),
+            _ => {}
+        }
+    }
+}
+
+/// Render structured fields as the `[wt-trace] key=value …` text wt-perf
+/// and the integration tests parse. The field order per `kind` is the
+/// contract; see `src/trace/parse.rs` for the consumer.
+///
+/// A malformed event (missing required fields, unknown `kind`) renders the
+/// best-effort string `[wt-trace] kind=<…> <repr>` so a future-added kind
+/// produces a noticeable but parseable line rather than silently vanishing.
+fn format_wt_trace(f: &WtTraceFields) -> String {
+    // `ts` and `tid` are required for every kind; default to 0 to keep the
+    // line shape valid if a future emit site forgets one — the parser will
+    // still accept it, and the missing field shows up as `0` in the
+    // timeline rather than disappearing.
+    let ts = f.ts.unwrap_or(0);
+    let tid = f.tid.unwrap_or(0);
+
+    match f.kind.as_deref() {
+        Some("cmd_completed") => {
+            let cmd = f.cmd.as_deref().unwrap_or("");
+            let dur_us = f.dur_us.unwrap_or(0);
+            let ok = f.ok.unwrap_or(false);
+            match &f.context {
+                Some(ctx) => format!(
+                    r#"[wt-trace] ts={ts} tid={tid} context={ctx} cmd="{cmd}" dur_us={dur_us} ok={ok}"#
+                ),
+                None => {
+                    format!(r#"[wt-trace] ts={ts} tid={tid} cmd="{cmd}" dur_us={dur_us} ok={ok}"#)
+                }
+            }
+        }
+        Some("cmd_errored") => {
+            let cmd = f.cmd.as_deref().unwrap_or("");
+            let dur_us = f.dur_us.unwrap_or(0);
+            let err = f.err.as_deref().unwrap_or("");
+            match &f.context {
+                Some(ctx) => format!(
+                    r#"[wt-trace] ts={ts} tid={tid} context={ctx} cmd="{cmd}" dur_us={dur_us} err="{err}""#
+                ),
+                None => format!(
+                    r#"[wt-trace] ts={ts} tid={tid} cmd="{cmd}" dur_us={dur_us} err="{err}""#
+                ),
+            }
+        }
+        Some("instant") => {
+            let event = f.event.as_deref().unwrap_or("");
+            format!(r#"[wt-trace] ts={ts} tid={tid} event="{event}""#)
+        }
+        Some("span") => {
+            let name = f.span.as_deref().unwrap_or("");
+            let dur_us = f.dur_us.unwrap_or(0);
+            format!(r#"[wt-trace] ts={ts} tid={tid} span="{name}" dur_us={dur_us}"#)
+        }
+        other => format!(
+            r#"[wt-trace] ts={ts} tid={tid} kind={kind:?}"#,
+            kind = other.unwrap_or("<unknown>")
+        ),
     }
 }
 
@@ -363,7 +511,10 @@ fn announce_trace_destination() {
 mod tests {
     use ansi_str::AnsiStr;
 
-    use super::{effective_log_max_level, label_for_thread_index, style_stderr_line};
+    use super::{
+        WtTraceFields, effective_log_max_level, format_wt_trace, label_for_thread_index,
+        style_stderr_line,
+    };
 
     /// Branch coverage for `label_for_thread_index` — `thread_label` never
     /// hands it `n == 0` or `n > 52` in practice (Rust's `ThreadId`
@@ -408,6 +559,86 @@ mod tests {
         // Plain — everything else falls through with just the thread prefix.
         let plain = style_stderr_line('d', "hello").ansi_strip().into_owned();
         assert_eq!(plain, "[d] hello");
+    }
+
+    /// Lock the `[wt-trace]` wire grammar produced by `format_wt_trace`.
+    /// wt-perf and the integration suite parse these lines; any drift here
+    /// breaks downstream tooling, so each `kind` gets a fixture assertion.
+    #[test]
+    fn format_wt_trace_renders_each_kind() {
+        // cmd_completed with context
+        let f = WtTraceFields {
+            kind: Some("cmd_completed".into()),
+            ts: Some(100),
+            tid: Some(3),
+            context: Some("worktree".into()),
+            cmd: Some("git status".into()),
+            dur_us: Some(12300),
+            ok: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(
+            format_wt_trace(&f),
+            r#"[wt-trace] ts=100 tid=3 context=worktree cmd="git status" dur_us=12300 ok=true"#
+        );
+
+        // cmd_completed without context
+        let f = WtTraceFields {
+            kind: Some("cmd_completed".into()),
+            ts: Some(100),
+            tid: Some(3),
+            cmd: Some("gh pr list".into()),
+            dur_us: Some(45200),
+            ok: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(
+            format_wt_trace(&f),
+            r#"[wt-trace] ts=100 tid=3 cmd="gh pr list" dur_us=45200 ok=false"#
+        );
+
+        // cmd_errored with context
+        let f = WtTraceFields {
+            kind: Some("cmd_errored".into()),
+            ts: Some(100),
+            tid: Some(3),
+            context: Some("main".into()),
+            cmd: Some("git merge-base".into()),
+            dur_us: Some(100000),
+            err: Some("fatal: ...".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            format_wt_trace(&f),
+            r#"[wt-trace] ts=100 tid=3 context=main cmd="git merge-base" dur_us=100000 err="fatal: ...""#
+        );
+
+        // instant
+        let f = WtTraceFields {
+            kind: Some("instant".into()),
+            ts: Some(100),
+            tid: Some(3),
+            event: Some("Showed skeleton".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            format_wt_trace(&f),
+            r#"[wt-trace] ts=100 tid=3 event="Showed skeleton""#
+        );
+
+        // span
+        let f = WtTraceFields {
+            kind: Some("span".into()),
+            ts: Some(100),
+            tid: Some(3),
+            span: Some("build_hook_context".into()),
+            dur_us: Some(8200),
+            ..Default::default()
+        };
+        assert_eq!(
+            format_wt_trace(&f),
+            r#"[wt-trace] ts=100 tid=3 span="build_hook_context" dur_us=8200"#
+        );
     }
 
     /// `effective_log_max_level` mirrors the layer filters: env wins when
