@@ -454,7 +454,7 @@ pub fn set_command_timeout(timeout: Option<Duration>) {
 
 /// Maximum lines of the bounded subprocess preview per stream. Exceeded
 /// content is elided with a `… (N more lines, M bytes elided)` marker; the
-/// full output is still written to `output.log` via
+/// full output is still written to `subprocess.log` via
 /// [`SUBPROCESS_FULL_TARGET`].
 const LOG_OUTPUT_MAX_LINES: usize = 200;
 
@@ -463,7 +463,7 @@ const LOG_OUTPUT_MAX_LINES: usize = 200;
 const LOG_OUTPUT_MAX_BYTES: usize = 64 * 1024;
 
 /// Log target used for *full* subprocess stdout/stderr. The tracing-subscriber
-/// `output.log` layer filters on this target, so raw subprocess bodies (diffs,
+/// `subprocess.log` layer filters on this target, so raw subprocess bodies (diffs,
 /// `git log -p`, patch-id pipelines) never reach stderr or `trace.log`.
 pub const SUBPROCESS_FULL_TARGET: &str = "worktrunk::subprocess_full";
 
@@ -478,7 +478,7 @@ pub const SUBPROCESS_BOUNDED_TARGET: &str = "worktrunk::subprocess_bounded";
 ///
 /// At `tracing::DEBUG` (`-vv`) each stream is emitted twice via separate
 /// targets, and the tracing-subscriber layers route them:
-///   - [`SUBPROCESS_FULL_TARGET`]: uncapped, line-per-record, `output.log` only.
+///   - [`SUBPROCESS_FULL_TARGET`]: uncapped, line-per-record, `subprocess.log` only.
 ///   - [`SUBPROCESS_BOUNDED_TARGET`]: capped at [`LOG_OUTPUT_MAX_LINES`] and
 ///     [`LOG_OUTPUT_MAX_BYTES`] per stream with an elision marker, then
 ///     routed to `trace.log` at `-vv` or stderr otherwise.
@@ -516,9 +516,9 @@ fn format_stream_full(bytes: &[u8], prefix: &str) -> Vec<String> {
 /// Split captured bytes into prefixed lines with at most [`LOG_OUTPUT_MAX_LINES`]
 /// and [`LOG_OUTPUT_MAX_BYTES`] emitted; remainder replaced by a single
 /// `… (N more lines, M bytes elided — <hint>)` marker. The hint text tracks
-/// whether `output.log` is collecting the full bodies, asked through
+/// whether `subprocess.log` is collecting the full bodies, asked through
 /// `tracing::enabled!` against [`SUBPROCESS_FULL_TARGET`] — true iff the
-/// `output.log` layer is registered and accepting that target (`-vv` opened
+/// `subprocess.log` layer is registered and accepting that target (`-vv` opened
 /// the file successfully).
 fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
     if bytes.is_empty() {
@@ -535,7 +535,7 @@ fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
             let remaining_lines = 1 + lines.count();
             let remaining_bytes = total_bytes.saturating_sub(bytes_emitted);
             let hint = if tracing::enabled!(target: SUBPROCESS_FULL_TARGET, tracing::Level::DEBUG) {
-                "full output in output.log"
+                "full output in subprocess.log"
             } else {
                 "rerun with -vv for full output"
             };
