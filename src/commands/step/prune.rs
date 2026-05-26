@@ -15,7 +15,10 @@ use worktrunk::config::{Approvals, ProjectConfig, UserConfig};
 use worktrunk::git::{
     BranchDeletionMode, IntegrationReason, RefSnapshot, Repository, WorktreeInfo,
 };
-use worktrunk::styling::{eprintln, hint_message, info_message, println, success_message};
+use worktrunk::path::format_path_for_display;
+use worktrunk::styling::{
+    eprintln, format_with_gutter, hint_message, info_message, println, success_message,
+};
 
 use super::super::hook_plan::{ApprovedHookPlan, HookPlan, HookPlanBuilder};
 use super::super::hooks::HookAnnouncer;
@@ -228,6 +231,22 @@ fn try_remove(candidate: &Candidate, ctx: &RemovalContext<'_>) -> anyhow::Result
     )?;
     announcer.flush()?;
     Ok(true)
+}
+
+/// One candidate skipped because its project hooks aren't yet approved.
+/// Carries enough context for the end-of-run hint to print a per-candidate
+/// `wt -C <path> remove` line and annotate candidates whose own
+/// `.config/wt.toml` differs from the invoking worktree's (so the user knows
+/// `wt config approvals add` from current can't approve their hooks).
+struct SkippedApproval {
+    /// `Some` for `Linked` candidates (the only `(approval required)`
+    /// source — branch-only and stale-detached don't run hooks).
+    path: Option<PathBuf>,
+    /// True when the candidate's `.config/wt.toml` doesn't match the
+    /// invoking worktree's bytes — `wt config approvals add` from current
+    /// approves only invoking's templates, so this candidate needs the
+    /// per-worktree `wt -C <path> remove` form to surface its own hooks.
+    differs: bool,
 }
 
 /// Per-item parallel work output: integration verdict plus the two filters
@@ -832,7 +851,17 @@ pub fn step_prune(
         // `try_remove` already has its hooks fully approved.
         pessimistic_plan.approve_readonly(&approvals, project_id)
     };
-    let mut skipped_approval: Vec<String> = Vec::new();
+    // The invoking worktree's project-config bytes — load once so the per-
+    // candidate "(different hooks on branch)" annotation in the skip hint
+    // can compare each candidate's own `.config/wt.toml` against this
+    // baseline. Byte-equal is approximate (whitespace differences flag too)
+    // but the result drives a hint, not behavior.
+    let invoking_project_bytes = repo
+        .project_config_path()
+        .ok()
+        .flatten()
+        .and_then(|p| std::fs::read(p).ok());
+    let mut skipped_approval: Vec<SkippedApproval> = Vec::new();
 
     let check_lock = RwLock::new(());
     let removal_ctx = RemovalContext {
@@ -926,7 +955,12 @@ pub fn step_prune(
                         "{}",
                         info_message(cformat!("Skipped <bold>{label}</> (approval required)"))
                     );
-                    skipped_approval.push(label);
+                    let differs = path.as_deref().is_some_and(|wt_path| {
+                        let candidate_bytes =
+                            std::fs::read(wt_path.join(".config").join("wt.toml")).ok();
+                        candidate_bytes != invoking_project_bytes
+                    });
+                    skipped_approval.push(SkippedApproval { path, differs });
                     continue;
                 }
                 let candidate = Candidate {
@@ -979,15 +1013,81 @@ pub fn step_prune(
     }
 
     if !skipped_approval.is_empty() {
-        eprintln!(
-            "{}",
-            hint_message(
-                "Pre-approve hooks with `wt config approvals add`, or remove individually with `wt -C <worktree> remove`"
-            )
-        );
+        for block in approval_hint_blocks(
+            &pre_remove_unapproved,
+            &post_remove_unapproved,
+            &post_switch_unapproved,
+            &skipped_approval,
+        ) {
+            eprintln!("{}", hint_message(block.headline));
+            eprintln!("{}", format_with_gutter(&block.body, None));
+        }
     }
 
     Ok(())
+}
+
+/// One headline+gutter pair for the `(approval required)` end-of-run hint.
+struct ApprovalHintBlock {
+    headline: String,
+    body: String,
+}
+
+/// Build the headline+gutter pairs for `(approval required)` skips: a
+/// `wt config approvals add` block listing the unapproved templates from the
+/// invoking worktree's config, and a per-worktree `wt -C <path> remove` block
+/// for the skipped candidates. Candidates whose own `.config/wt.toml` differs
+/// from the invoking worktree get a `(different hooks on branch)` annotation —
+/// `wt config approvals add` from current approves only current's templates,
+/// so the per-worktree form is the only path for them.
+fn approval_hint_blocks(
+    pre_remove: &[String],
+    post_remove: &[String],
+    post_switch: &[String],
+    skipped: &[SkippedApproval],
+) -> Vec<ApprovalHintBlock> {
+    let mut blocks = Vec::new();
+    let templates: Vec<String> = [
+        ("pre-remove", pre_remove),
+        ("post-remove", post_remove),
+        ("post-switch", post_switch),
+    ]
+    .into_iter()
+    .flat_map(|(hook, ts)| ts.iter().map(move |t| format!("{hook}: {t}")))
+    .collect();
+    if !templates.is_empty() {
+        blocks.push(ApprovalHintBlock {
+            headline: cformat!(
+                "Pre-approve hooks for the current worktree with <underline>wt config approvals add</>:"
+            ),
+            body: templates.join("\n"),
+        });
+    }
+    let wt_lines: Vec<String> = skipped
+        .iter()
+        .filter_map(|s| {
+            let path = s.path.as_ref()?;
+            let display = format_path_for_display(path);
+            let suffix = if s.differs {
+                " (different hooks on branch)"
+            } else {
+                ""
+            };
+            Some(format!("wt -C {display} remove{suffix}"))
+        })
+        .collect();
+    if !wt_lines.is_empty() {
+        let lead = if templates.is_empty() {
+            "Remove"
+        } else {
+            "Or remove"
+        };
+        blocks.push(ApprovalHintBlock {
+            headline: format!("{lead} specific worktrees individually:"),
+            body: wt_lines.join("\n"),
+        });
+    }
+    blocks
 }
 
 #[cfg(test)]
@@ -1033,6 +1133,81 @@ mod tests {
             .remove_target()
             .unwrap_err();
         assert!(err.to_string().contains("no remove target"));
+    }
+
+    #[test]
+    fn approval_hint_blocks_list_templates_and_per_worktree_paths() {
+        let skipped = vec![
+            SkippedApproval {
+                path: Some(PathBuf::from("/wt/a")),
+                differs: false,
+            },
+            SkippedApproval {
+                path: Some(PathBuf::from("/wt/b")),
+                differs: true,
+            },
+        ];
+        let blocks = approval_hint_blocks(
+            &["echo pre".to_string()],
+            &[],
+            &["echo switch".to_string()],
+            &skipped,
+        );
+        // Strip ANSI so the snapshot stays readable; the underline-styling
+        // contract is pinned separately by
+        // `approval_hint_headline_uses_underline_for_command_suggestion`.
+        use ansi_str::AnsiStr;
+        let rendered: Vec<String> = blocks
+            .iter()
+            .map(|b| format!("[{}]\n{}", b.headline.ansi_strip(), b.body))
+            .collect();
+        insta::assert_snapshot!(rendered.join("\n---\n"), @r"
+        [Pre-approve hooks for the current worktree with wt config approvals add:]
+        pre-remove: echo pre
+        post-switch: echo switch
+        ---
+        [Or remove specific worktrees individually:]
+        wt -C /wt/a remove
+        wt -C /wt/b remove (different hooks on branch)
+        ");
+    }
+
+    #[test]
+    fn approval_hint_headline_uses_underline_for_command_suggestion() {
+        let blocks = approval_hint_blocks(
+            &["echo pre".to_string()],
+            &[],
+            &[],
+            &[SkippedApproval {
+                path: Some(PathBuf::from("/wt/a")),
+                differs: false,
+            }],
+        );
+        // The styling guide mandates `<underline>` for commands in hints.
+        // Building the expected substring through the same `cformat!` macro
+        // sidesteps hardcoded escape codes while still catching a regression
+        // to backticks or `<bold>`.
+        let expected = cformat!("<underline>wt config approvals add</>");
+        assert!(
+            blocks[0].headline.contains(&expected),
+            "command must be wrapped in underline styling; got: {:?}",
+            blocks[0].headline
+        );
+    }
+
+    #[test]
+    fn approval_hint_blocks_drop_template_block_when_no_templates() {
+        let skipped = vec![SkippedApproval {
+            path: Some(PathBuf::from("/wt/x")),
+            differs: false,
+        }];
+        let blocks = approval_hint_blocks(&[], &[], &[], &skipped);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(
+            blocks[0].headline,
+            "Remove specific worktrees individually:"
+        );
+        assert_eq!(blocks[0].body, "wt -C /wt/x remove");
     }
 
     #[test]
