@@ -336,32 +336,85 @@ fn p_over(u: f64, t: f64, p: &WindowPriors) -> f64 {
     standard_normal_cdf((mean - 1.0) / var.sqrt())
 }
 
-/// Format a `DateTime` as a clock time only: `3pm`, `5:45pm`. `:00` minutes
-/// are elided (chrono can't do that conditionally in one format string).
-fn format_clock<Tz: chrono::TimeZone>(dt: &chrono::DateTime<Tz>) -> String
+/// 12-hour vs 24-hour clock preference. Carried as a parameter so the
+/// formatters stay pure and unit-testable; the env-driven detection lives in
+/// [`detect_clock_format`] at the call-site boundary.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum ClockFormat {
+    /// `3pm`, `5:45pm` — US/Philippine convention. `:00` minutes elided.
+    H12,
+    /// `15:00`, `15:45` — ISO/European convention. Minutes always shown,
+    /// hour zero-padded.
+    H24,
+}
+
+/// Classify a `LC_*`/`LANG` value into 12h or 24h. Pure so it can be tested
+/// without env mutation; strips any `.encoding` or `@modifier` suffix.
+///
+/// 12h: the small set of locales where 12h is the everyday written form —
+/// US English (`en_US`), Philippine English (`en_PH`), Canadian English
+/// (`en_CA`). Everything else, including the POSIX `C` and `POSIX` locales
+/// and the empty string (unset), is 24h.
+fn classify_locale(locale: &str) -> ClockFormat {
+    // `en_US.UTF-8@posix` → `en_US`; `C` → `C`; `` → ``.
+    let lang = locale.split(['.', '@']).next().unwrap_or("");
+    if matches!(lang, "en_US" | "en_PH" | "en_CA") {
+        ClockFormat::H12
+    } else {
+        ClockFormat::H24
+    }
+}
+
+/// Detect the user's clock preference from environment, in POSIX precedence:
+/// `LC_ALL` overrides `LC_TIME` overrides `LANG`. Reading env directly
+/// (instead of going through `sys_locale` or `CFLocale`) honors the shell
+/// config the user actually set — for a CLI, the env IS the configuration.
+fn detect_clock_format() -> ClockFormat {
+    let locale = std::env::var("LC_ALL")
+        .or_else(|_| std::env::var("LC_TIME"))
+        .or_else(|_| std::env::var("LANG"))
+        .unwrap_or_default();
+    classify_locale(&locale)
+}
+
+/// Format a `DateTime` as a clock time only.
+///
+/// 12h: `3pm`, `5:45pm` (`:00` elided — chrono can't do that conditionally in
+/// one format string). 24h: `15:00`, `09:45` (always show minutes,
+/// zero-padded hour).
+fn format_clock<Tz: chrono::TimeZone>(dt: &chrono::DateTime<Tz>, fmt: ClockFormat) -> String
 where
     Tz::Offset: std::fmt::Display,
 {
     use chrono::Timelike as _;
-    if dt.minute() == 0 {
-        dt.format("%-I%P").to_string()
-    } else {
-        dt.format("%-I:%M%P").to_string()
+    match fmt {
+        ClockFormat::H12 if dt.minute() == 0 => dt.format("%-I%P").to_string(),
+        ClockFormat::H12 => dt.format("%-I:%M%P").to_string(),
+        ClockFormat::H24 => dt.format("%H:%M").to_string(),
     }
 }
 
 /// Format the rate-limit window's start and end as a short label that
-/// goes inside the parenthetical: `10am-3pm` for the 5-hour window,
-/// `Mon-Mon 3pm` for the 7-day window.
+/// goes inside the parenthetical: `10am-3pm` (12h) / `10:00–15:00` (24h) for
+/// the 5-hour window, `Mon-Mon 3pm` / `Mon-Mon 15:00` for the 7-day window.
 ///
 /// The 5h variant uses clock times on both endpoints. The longer window
 /// uses the weekday on both ends (they're equal for a true 7-day rolling
 /// window) and the clock time only on the end, which is the reset.
 ///
+/// Weekday is English (`%a`) regardless of locale — chrono's localized
+/// weekday names require the `unstable-locales` feature; clock format is the
+/// part of the follow-up that mattered.
+///
 /// Generic over `TimeZone` so unit tests can pass `&chrono::Utc` directly
 /// without mutating the process-global `TZ`; production passes
 /// `&chrono::Local`.
-fn format_window_bounds<Tz: chrono::TimeZone>(resets_at: i64, window_secs: i64, tz: &Tz) -> String
+fn format_window_bounds<Tz: chrono::TimeZone>(
+    resets_at: i64,
+    window_secs: i64,
+    tz: &Tz,
+    fmt: ClockFormat,
+) -> String
 where
     Tz::Offset: std::fmt::Display,
 {
@@ -376,13 +429,13 @@ where
     // numeric range and stays visually distinct from the ASCII hyphens
     // used elsewhere in the statusline (e.g. `-3` for line deletions).
     if window_secs <= 12 * 3600 {
-        format!("{}–{}", format_clock(&start), format_clock(&end))
+        format!("{}–{}", format_clock(&start, fmt), format_clock(&end, fmt))
     } else {
         format!(
             "{}–{} {}",
             start.format("%a"),
             end.format("%a"),
-            format_clock(&end)
+            format_clock(&end, fmt)
         )
     }
 }
@@ -430,7 +483,12 @@ fn format_rate_limit_segment(readings: &[RateLimitReading], now_unix: i64) -> Op
     let elapsed = (now_unix - (r.resets_at - r.window_secs)) as f64 / r.window_secs as f64;
     let t = elapsed.clamp(0.001, 1.0);
     let pace = u / t;
-    let bounds = format_window_bounds(r.resets_at, r.window_secs, &chrono::Local);
+    let bounds = format_window_bounds(
+        r.resets_at,
+        r.window_secs,
+        &chrono::Local,
+        detect_clock_format(),
+    );
     // The whole segment is wrapped in yellow because its appearance *is*
     // the warning. Unlike informational segments where color picks out one
     // sub-glyph (`@+1` green, `?` cyan), here the entire string is the
@@ -1124,7 +1182,55 @@ mod tests {
         ];
         for &(h, m, expected) in cases {
             let d = chrono::Utc.with_ymd_and_hms(2026, 5, 23, h, m, 0).unwrap();
-            assert_eq!(format_clock(&d), expected, "h={h} m={m}");
+            assert_eq!(format_clock(&d, ClockFormat::H12), expected, "h={h} m={m}");
+        }
+    }
+
+    #[test]
+    fn test_format_clock_renders_24h_always_with_minutes_and_zero_pad() {
+        use chrono::TimeZone;
+        // 24h never elides minutes (`15:00`, not `15`) and zero-pads the hour
+        // (`09:00`, not `9:00`) so the digit count stays constant — both are
+        // the everyday written form in 24h locales.
+        let cases: &[(u32, u32, &str)] = &[
+            (15, 0, "15:00"),
+            (17, 45, "17:45"),
+            (0, 0, "00:00"),
+            (9, 5, "09:05"),
+            (23, 59, "23:59"),
+        ];
+        for &(h, m, expected) in cases {
+            let d = chrono::Utc.with_ymd_and_hms(2026, 5, 23, h, m, 0).unwrap();
+            assert_eq!(format_clock(&d, ClockFormat::H24), expected, "h={h} m={m}");
+        }
+    }
+
+    #[test]
+    fn test_classify_locale_picks_12h_for_us_canada_philippines_only() {
+        // The small set where 12h is the everyday written form.
+        for loc in [
+            "en_US",
+            "en_US.UTF-8",
+            "en_PH.UTF-8",
+            "en_CA.UTF-8",
+            "en_US.UTF-8@posix",
+        ] {
+            assert_eq!(classify_locale(loc), ClockFormat::H12, "{loc}");
+        }
+        // Everything else — other English variants, other languages, POSIX
+        // C, and unset — falls through to 24h.
+        for loc in [
+            "en_GB",
+            "en_GB.UTF-8",
+            "en_AU.UTF-8",
+            "fr_FR.UTF-8",
+            "de_DE.UTF-8",
+            "ja_JP.UTF-8",
+            "C",
+            "POSIX",
+            "",
+        ] {
+            assert_eq!(classify_locale(loc), ClockFormat::H24, "{loc}");
         }
     }
 
@@ -1137,8 +1243,12 @@ mod tests {
             .unwrap()
             .timestamp();
         assert_eq!(
-            format_window_bounds(resets_at, FIVE_HOUR_SECS, &chrono::Utc),
+            format_window_bounds(resets_at, FIVE_HOUR_SECS, &chrono::Utc, ClockFormat::H12),
             "10am\u{2013}3pm"
+        );
+        assert_eq!(
+            format_window_bounds(resets_at, FIVE_HOUR_SECS, &chrono::Utc, ClockFormat::H24),
+            "10:00\u{2013}15:00"
         );
     }
 
@@ -1152,8 +1262,12 @@ mod tests {
             .unwrap()
             .timestamp();
         assert_eq!(
-            format_window_bounds(resets_at, SEVEN_DAY_SECS, &chrono::Utc),
+            format_window_bounds(resets_at, SEVEN_DAY_SECS, &chrono::Utc, ClockFormat::H12),
             "Mon\u{2013}Mon 3pm"
+        );
+        assert_eq!(
+            format_window_bounds(resets_at, SEVEN_DAY_SECS, &chrono::Utc, ClockFormat::H24),
+            "Mon\u{2013}Mon 15:00"
         );
     }
 

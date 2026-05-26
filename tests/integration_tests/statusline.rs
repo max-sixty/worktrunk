@@ -618,8 +618,11 @@ fn test_statusline_json_nested_worktree(mut repo: TestRepo) {
 // --- Rate-limit segment snapshots ---
 //
 // These tests pin the "now" used by the rate-limit predictor (via
-// `WORKTRUNK_TEST_EPOCH`) and force `TZ=UTC` so the deadline string is
-// deterministic across machines and timezones.
+// `WORKTRUNK_TEST_EPOCH`), force `TZ=UTC` so the deadline string is
+// deterministic across machines and timezones, and pin `LC_TIME=en_US.UTF-8`
+// so the clock segment renders 12h (`3pm`) — matching the docs example and
+// the US/macOS default. The 24h path has its own test that overrides
+// `LC_TIME` to a non-US locale.
 //
 // All cases use Thursday 2025-01-02 13:00 UTC as the reference "now", and
 // resets_at values relative to it.
@@ -629,11 +632,24 @@ use crate::common::TEST_EPOCH;
 const TEST_NOW_THU_1PM: u64 = TEST_EPOCH + 13 * 3600;
 
 /// Run statusline with a pinned "now" and timezone; optional COLUMNS override.
+///
+/// Defaults to `LC_TIME=en_US.UTF-8` (12h clock); pass a different locale
+/// string to exercise the 24h path.
 fn run_statusline_at_time(
     repo: &TestRepo,
     stdin_json: &str,
     now_epoch: u64,
     columns: Option<u32>,
+) -> String {
+    run_statusline_with_locale(repo, stdin_json, now_epoch, columns, "en_US.UTF-8")
+}
+
+fn run_statusline_with_locale(
+    repo: &TestRepo,
+    stdin_json: &str,
+    now_epoch: u64,
+    columns: Option<u32>,
+    lc_time: &str,
 ) -> String {
     let mut cmd = wt_command();
     cmd.current_dir(repo.root_path());
@@ -641,6 +657,11 @@ fn run_statusline_at_time(
     repo.configure_wt_cmd(&mut cmd);
     cmd.env("WORKTRUNK_TEST_EPOCH", now_epoch.to_string());
     cmd.env("TZ", "UTC");
+    // The test harness pins `LC_ALL=C` globally for determinism; clear it
+    // so `LC_TIME` actually takes effect (POSIX precedence: LC_ALL beats
+    // LC_TIME). Then set `LC_TIME` per-test.
+    cmd.env_remove("LC_ALL");
+    cmd.env("LC_TIME", lc_time);
     if let Some(c) = columns {
         cmd.env("COLUMNS", c.to_string());
     }
@@ -817,6 +838,24 @@ fn test_statusline_rate_limit_with_dirty_worktree_and_context(repo: TestRepo) {
     let out = run_statusline_at_time(&repo, &json, TEST_NOW_THU_1PM, None);
     claude_code_snapshot_settings().bind(|| {
         assert_snapshot!("rate_limit_with_dirty_worktree_and_context", out);
+    });
+}
+
+#[rstest]
+fn test_statusline_rate_limit_5h_24h_locale(repo: TestRepo) {
+    // Same input as `5h_clock_time` but `LC_TIME=en_GB.UTF-8` → 24h clock.
+    // 12h `10am–3pm` becomes 24h `10:00–15:00`. Weekday in `Mon–Mon 15:00`
+    // is still English (out of scope for the clock-format follow-up).
+    let json = build_claude_code_json(
+        repo.root_path(),
+        Some("Opus"),
+        Some(42.0),
+        TEST_NOW_THU_1PM,
+        &[("five_hour", 80.0, 2 * 3600)],
+    );
+    let out = run_statusline_with_locale(&repo, &json, TEST_NOW_THU_1PM, None, "en_GB.UTF-8");
+    claude_code_snapshot_settings().bind(|| {
+        assert_snapshot!("rate_limit_5h_24h_locale", out);
     });
 }
 
