@@ -108,9 +108,6 @@ pub(crate) static OUTPUT: LogSink = LogSink {
 pub(crate) fn init() {
     TRACE.init();
     OUTPUT.init();
-    // Let shell_exec phrase the elision marker to match reality — points at
-    // output.log when it exists, else suggests rerunning with -vv.
-    worktrunk::shell_exec::set_output_log_active(OUTPUT.is_active());
 }
 
 /// Per-event writer: collects formatted bytes, then forwards them to the
