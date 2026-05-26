@@ -10,7 +10,29 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" config state marker set 🤖 || true"
+          }
+        ]
+      }
+    ],
     "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/wt.sh\" config state marker set 💬 || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
       {
         "matcher": "",
         "hooks": [

@@ -56,8 +56,12 @@ that every repo-root skill is listed); Codex and Gemini pick up the whole
 
 The Claude hooks track activity via git config (`worktrunk.status.{branch}`):
 - `UserPromptSubmit` → 🤖 (working)
+- `PostToolUse` → 🤖 (re-asserts working after each tool call)
 - `Notification` → 💬 (waiting for input)
+- `Stop` → 💬 (turn ended)
 - `SessionEnd` → clears status
+
+`PostToolUse` + `Stop` together close the gap where `Notification` set 💬 mid-turn (e.g. a permission prompt) and no event flipped the marker back when work resumed.
 
 **Problem**: If the user interrupts Claude Code (Escape/Ctrl+C), the 🤖 status persists because there's no `UserInterrupt` hook. The `Stop` hook explicitly does not fire on user interrupt.
 
