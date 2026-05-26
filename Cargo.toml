@@ -104,7 +104,7 @@ tracing-log = { version = "0.2.0", optional = true }
 # `src/logging.rs`) stabilized on top of the per-layer filtering rework.
 tracing-subscriber = { version = "0.3.17", default-features = false, features = ["ansi", "env-filter", "fmt", "registry"], optional = true }
 # Only enable needed features - saves ~200KB by excluding debug, macros, multi_template
-minijinja = { version = "2.19", default-features = false, features = ["builtins", "serde", "std_collections"] }
+minijinja = { version = "2.20", default-features = false, features = ["builtins", "serde", "std_collections"] }
 rayon = "1.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
