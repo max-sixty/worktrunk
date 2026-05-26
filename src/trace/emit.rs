@@ -46,7 +46,7 @@
 //!
 //! Events emit at `tracing::DEBUG`, so `-vv` or `RUST_LOG=debug` makes them
 //! visible. Subprocess stdout/stderr continuations route through separate
-//! targets: the full output goes to `output.log`, and a bounded preview
+//! targets: the full output goes to `subprocess.log`, and a bounded preview
 //! shares the routing of all other records — `trace.log` at `-vv`, stderr
 //! otherwise — so raw bodies don't spam `-vv`.
 

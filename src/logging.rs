@@ -4,11 +4,15 @@
 //! routing it needs. Filtering is structural (per-layer `Filter`), not done
 //! after-the-fact in a format closure:
 //!
-//! | layer       | filter                                            | format            |
-//! | ----------- | ------------------------------------------------- | ----------------- |
-//! | stderr      | off at `-vv`; else `$RUST_LOG` or `-v` baseline   | styled with ANSI  |
-//! | `trace.log` | `-vv` only, excludes `SUBPROCESS_FULL_TARGET`     | plain text        |
-//! | `output.log`| `-vv` only, includes only `SUBPROCESS_FULL_TARGET`| raw (no prefix)   |
+//! | layer            | filter                                              | format            |
+//! | ---------------- | --------------------------------------------------- | ----------------- |
+//! | stderr           | `$RUST_LOG` or flag baseline (`Off`/`Info`/`Info`)  | styled with ANSI  |
+//! | `trace.log`      | `-vv` only, excludes `SUBPROCESS_FULL_TARGET`       | plain text        |
+//! | `subprocess.log` | `-vv` only, includes only `SUBPROCESS_FULL_TARGET`  | raw (no prefix)   |
+//!
+//! At `-vv` the stderr layer keeps its Info baseline — `-vv` is a strict
+//! superset of `-v`, with Debug-level records (the noisy ones, including
+//! the bounded subprocess preview) routed to the file layers only.
 //!
 //! The `log` crate calls (used throughout the codebase) are bridged into
 //! `tracing` by [`tracing_log::LogTracer::init`] — every layer above sees
@@ -28,7 +32,7 @@ use worktrunk::shell_exec::SUBPROCESS_FULL_TARGET;
 use worktrunk::styling::{eprintln, info_message};
 use worktrunk::trace::WT_TRACE_TARGET;
 
-use crate::log_files::{self, OutputMakeWriter, TraceMakeWriter};
+use crate::log_files::{self, SubprocessMakeWriter, TraceMakeWriter};
 use crate::output;
 
 /// Single-character thread label (e.g. `a`, `b`, …, `A`, …) used to group
@@ -293,11 +297,11 @@ fn format_wt_trace(f: &WtTraceFields) -> String {
     }
 }
 
-/// `output.log` formatter: the message verbatim. Subprocess bodies are
+/// `subprocess.log` formatter: the message verbatim. Subprocess bodies are
 /// already prefixed (`  …` / `  ! …`) by `shell_exec::format_stream_full`.
-struct OutputFileFormat;
+struct SubprocessFileFormat;
 
-impl<S, N> FormatEvent<S, N> for OutputFileFormat
+impl<S, N> FormatEvent<S, N> for SubprocessFileFormat
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
     N: for<'a> FormatFields<'a> + 'static,
@@ -341,7 +345,7 @@ pub(crate) fn init(verbose_level: u8) {
     // naturally with subscriber `.with(...)` calls.
     let stderr_layer = build_stderr_layer(verbose_level);
     let trace_layer = build_trace_layer(verbose_level);
-    let output_layer = build_output_layer(verbose_level);
+    let subprocess_layer = build_subprocess_layer(verbose_level);
 
     // `try_init` fails only if a subscriber is already installed (the
     // single-call-per-process contract). `wt`'s `main` runs `logging::init`
@@ -350,7 +354,7 @@ pub(crate) fn init(verbose_level: u8) {
     let _ = tracing_subscriber::registry()
         .with(stderr_layer)
         .with(trace_layer)
-        .with(output_layer)
+        .with(subprocess_layer)
         .try_init();
 
     // Forward `log::*` macros into `tracing`. Must come after subscriber
@@ -412,19 +416,17 @@ fn rust_log_level() -> Option<log::LevelFilter> {
         .max()
 }
 
-/// Stderr layer: off at `-vv` (the file layers take over). For `-v 0` and
-/// `-v`, the flag sets a baseline (`Off` / `Info`) and `RUST_LOG`, when
-/// set, overrides via the standard directive grammar — matching the
-/// env-wins-when-set convention (see PR #2901). Excludes
-/// `SUBPROCESS_FULL_TARGET` at all levels — raw bodies must never reach
-/// the terminal.
+/// Stderr layer: the flag sets a baseline (`Off` / `Info` / `Info`) and
+/// `RUST_LOG`, when set, overrides via the standard directive grammar —
+/// matching the env-wins-when-set convention (see PR #2901). At `-vv`
+/// stderr keeps the Info baseline so `-vv` is a strict superset of `-v`;
+/// Debug-level records (the noisy ones) route to the file layers only.
+/// Excludes `SUBPROCESS_FULL_TARGET` at all levels — raw bodies must
+/// never reach the terminal.
 fn build_stderr_layer<S>(verbose_level: u8) -> Option<impl Layer<S>>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    if verbose_level >= 2 {
-        return None;
-    }
     let baseline = match verbose_level {
         0 => LevelFilter::OFF,
         _ => LevelFilter::INFO,
@@ -444,7 +446,7 @@ where
 /// `trace.log` layer: only when `-vv` opened the file. Captures everything
 /// at the Debug baseline (`RUST_LOG`, when set, overrides — e.g.
 /// `RUST_LOG=trace wt -vv` lifts the file to Trace) except
-/// `SUBPROCESS_FULL_TARGET` (raw bodies go to `output.log`).
+/// `SUBPROCESS_FULL_TARGET` (raw bodies go to `subprocess.log`).
 fn build_trace_layer<S>(verbose_level: u8) -> Option<impl Layer<S>>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -464,19 +466,19 @@ where
     Some(layer)
 }
 
-/// `output.log` layer: only `SUBPROCESS_FULL_TARGET` records, raw passthrough.
-fn build_output_layer<S>(verbose_level: u8) -> Option<impl Layer<S>>
+/// `subprocess.log` layer: only `SUBPROCESS_FULL_TARGET` records, raw passthrough.
+fn build_subprocess_layer<S>(verbose_level: u8) -> Option<impl Layer<S>>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    if verbose_level < 2 || !log_files::OUTPUT.is_active() {
+    if verbose_level < 2 || !log_files::SUBPROCESS.is_active() {
         return None;
     }
     let only_full = filter_fn(|meta| meta.target() == SUBPROCESS_FULL_TARGET);
     let layer = tracing_subscriber::fmt::layer()
-        .with_writer(OutputMakeWriter)
+        .with_writer(SubprocessMakeWriter)
         .with_ansi(false)
-        .event_format(OutputFileFormat)
+        .event_format(SubprocessFileFormat)
         .with_filter(only_full);
     Some(layer)
 }
@@ -486,23 +488,23 @@ where
 /// (outside a git repo, permission error) — there's nothing meaningful to
 /// point at.
 fn announce_trace_destination() {
-    // TRACE and OUTPUT open independently — `LogSink::init` succeeds per
-    // file. The (Some, None) case (trace.log open, output.log failed) is
+    // TRACE and SUBPROCESS open independently — `LogSink::init` succeeds per
+    // file. The (Some, None) case (trace.log open, subprocess.log failed) is
     // rare but real (path-type mismatch, fs quota); the reverse is
-    // possible too but `output.log` alone has no `$ cmd` context, so we
+    // possible too but `subprocess.log` alone has no `$ cmd` context, so we
     // stay silent there.
     let Some(trace_path) = log_files::TRACE.path() else {
         return;
     };
     let trace_display = worktrunk::path::format_path_for_display(&trace_path);
-    let msg = match log_files::OUTPUT.path() {
+    let msg = match log_files::SUBPROCESS.path() {
         Some(output_path) => {
             let output_display = worktrunk::path::format_path_for_display(&output_path);
             cformat!(
                 "Tracing to <underline>{trace_display}</> (raw subprocess output @ <underline>{output_display}</>)"
             )
         }
-        None => cformat!("Tracing to <underline>{trace_display}</> (output.log unavailable)"),
+        None => cformat!("Tracing to <underline>{trace_display}</> (subprocess.log unavailable)"),
     };
     eprintln!("{}", info_message(msg));
 }

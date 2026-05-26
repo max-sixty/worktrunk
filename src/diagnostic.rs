@@ -33,7 +33,7 @@
 //! # File Location
 //!
 //! Reports are written to `<git-common-dir>/wt/logs/diagnostic.md` (typically
-//! `.git/wt/logs/diagnostic.md`). Companion log files (`trace.log`, `output.log`) live in the same directory.
+//! `.git/wt/logs/diagnostic.md`). Companion log files (`trace.log`, `subprocess.log`) live in the same directory.
 //!
 //! # Usage
 //!
@@ -167,7 +167,7 @@ impl DiagnosticReport {
             .filter(|s| !s.is_empty());
         // Forward slashes on both platforms so the rendered markdown reads the
         // same in bug reports regardless of where it was produced.
-        let output_log_path = crate::log_files::OUTPUT
+        let output_log_path = crate::log_files::SUBPROCESS
             .path()
             .map(|p| path_slash::PathExt::to_slash_lossy(p.as_path()).into_owned());
 

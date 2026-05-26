@@ -588,8 +588,8 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -649,8 +649,8 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -700,8 +700,8 @@ Usage: <b><span class=c>wt config approvals</span></b> <span class=c>[OPTIONS]</
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -747,8 +747,8 @@ Usage: <b><span class=c>wt config alias</span></b> <span class=c>[OPTIONS]</span
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -822,8 +822,8 @@ Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -880,8 +880,8 @@ Usage: <b><span class=c>wt config state default-branch</span></b> <span class=c>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -928,10 +928,10 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 | File | Created when |
 |------|-------------|
 | `trace.log` | Running with `-vv` |
-| `output.log` | Running with `-vv` |
+| `subprocess.log` | Running with `-vv` |
 | `diagnostic.md` | Running with `-vv` |
 
-`trace.log` receives the noisy `log::*` pipeline at `-vv` — commands, `[wt-trace]` records, bounded subprocess previews — so stderr stays readable (user-facing status messages still print as normal). `output.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown report for pasting into GitHub issues; it inlines `trace.log` but not `output.log`, which can be multi-MB. All three are overwritten on each `-vv` run.
+`trace.log` captures debug-level records at `-vv` — commands, `[wt-trace]` records, bounded subprocess previews. `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that inlines `trace.log`; `wt` prints a `gh gist create` command pointing at it. All three are overwritten on each `-vv` run.
 
 ### Location
 
@@ -985,8 +985,8 @@ Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]<
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -1046,8 +1046,8 @@ Usage: <b><span class=c>wt config state ci-status</span></b> <span class=c>[OPTI
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -1115,8 +1115,8 @@ Usage: <b><span class=c>wt config state marker</span></b> <span class=c>[OPTIONS
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
@@ -1190,8 +1190,8 @@ Usage: <b><span class=c>wt config state vars</span></b> <span class=c>[OPTIONS]<
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts

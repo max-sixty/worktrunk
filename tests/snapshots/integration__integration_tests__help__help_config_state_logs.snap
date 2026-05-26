@@ -16,7 +16,6 @@ info:
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     NO_COLOR: ""
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
@@ -63,7 +62,7 @@ Usage: [1m[36mwt config state logs[0m [36m[OPTIONS][0m [36m[COMMAND][0m
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
@@ -102,13 +101,13 @@ All [2mpost-*[0m hooks (post-start, post-switch, post-commit, post-merge) run 
 
 [32mDiagnostic files[0m
 
-     File        Created when   
- ───────────── ──────────────── 
- [2mtrace.log[0m     Running with [2m-vv[0m 
- [2moutput.log[0m    Running with [2m-vv[0m 
- [2mdiagnostic.md[0m Running with [2m-vv[0m 
+      File        Created when   
+ ────────────── ──────────────── 
+ [2mtrace.log[0m      Running with [2m-vv[0m 
+ [2msubprocess.log[0m Running with [2m-vv[0m 
+ [2mdiagnostic.md[0m  Running with [2m-vv[0m 
 
-[2mtrace.log[0m receives the noisy [2mlog::*[0m pipeline at [2m-vv[0m — commands, [2m[wt-trace][0m records, bounded subprocess previews — so stderr stays readable (user-facing status messages still print as normal). [2moutput.log[0m holds the raw uncapped subprocess stdout/stderr bodies. [2mdiagnostic.md[0m is a markdown report for pasting into GitHub issues; it inlines [2mtrace.log[0m but not [2moutput.log[0m, which can be multi-MB. All three are overwritten on each [2m-vv[0m run.
+[2mtrace.log[0m captures debug-level records at [2m-vv[0m — commands, [2m[wt-trace][0m records, bounded subprocess previews. [2msubprocess.log[0m holds the raw uncapped subprocess stdout/stderr bodies. [2mdiagnostic.md[0m is a markdown bug-report bundle that inlines [2mtrace.log[0m; [2mwt[0m prints a [2mgh gist create[0m command pointing at it. All three are overwritten on each [2m-vv[0m run.
 
 [1m[32mLocation[0m
 

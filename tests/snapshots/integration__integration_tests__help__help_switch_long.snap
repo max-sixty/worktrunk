@@ -14,7 +14,6 @@ info:
     LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     NO_COLOR: ""
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
     WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
@@ -118,7 +117,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts

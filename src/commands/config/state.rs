@@ -33,7 +33,7 @@
 //! # Log layout invariant
 //!
 //! Inside `wt_logs_dir()`, top-level *files* are shared logs (`commands.jsonl*`,
-//! `internal-*.log`, `trace.log`, `output.log`, `diagnostic.md`) and top-level
+//! `internal-*.log`, `trace.log`, `subprocess.log`, `diagnostic.md`) and top-level
 //! *directories* are per-branch log trees
 //! (`{branch}/{source|internal}/{hook-type}/{name}.log`).
 //! Categorization
@@ -97,7 +97,7 @@ fn picker_preview_clear(repo: &Repository) -> anyhow::Result<usize> {
 // ==================== Log Management ====================
 
 /// Top-level files created by `-vv` under `wt_logs_dir()`.
-const DIAGNOSTIC_FILES: &[&str] = &["trace.log", "output.log", "diagnostic.md"];
+const DIAGNOSTIC_FILES: &[&str] = &["trace.log", "subprocess.log", "diagnostic.md"];
 
 /// Whether a top-level file is a diagnostic log.
 ///
@@ -295,7 +295,7 @@ fn count_log_files_recursive(dir: &Path) -> anyhow::Result<usize> {
 ///
 /// Walks the two layers of log storage:
 ///
-/// 1. **Top-level files**: `commands.jsonl*`, `trace.log`, `output.log`, `diagnostic.md`.
+/// 1. **Top-level files**: `commands.jsonl*`, `trace.log`, `subprocess.log`, `diagnostic.md`.
 ///    Also sweeps any legacy flat `.log` files left over from the pre-nested
 ///    layout so the transition is self-healing (no explicit migrator).
 /// 2. **Top-level directories**: per-branch log trees — counted recursively

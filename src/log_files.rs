@@ -5,9 +5,10 @@
 //!   - [`TRACE`] → `trace.log`: structured records, `$ cmd [context]`
 //!     headers, and bounded subprocess previews. High-signal, bounded size —
 //!     safe to embed in `diagnostic.md` bug reports.
-//!   - [`OUTPUT`] → `output.log`: raw, uncapped subprocess stdout/stderr
-//!     bodies captured by `shell_exec::Cmd`. Potentially multi-MB (full
-//!     `git log -p` / patch-id output); opt-in for deep dives.
+//!   - [`SUBPROCESS`] → `subprocess.log`: raw, uncapped subprocess
+//!     stdout/stderr bodies captured by `shell_exec::Cmd`. Potentially
+//!     multi-MB (full `git log -p` / patch-id output); opt-in for deep
+//!     dives.
 //!
 //! Direct user-facing output (`info_message` / `eprintln!` from command
 //! code) is unaffected — it goes to stderr at every verbosity level. This
@@ -18,12 +19,14 @@
 //! Routing is performed structurally by the `tracing-subscriber` layers
 //! registered in `init_logging`:
 //!
-//!   - The `output.log` layer filters to `SUBPROCESS_FULL_TARGET` only,
+//!   - The `subprocess.log` layer filters to `SUBPROCESS_FULL_TARGET` only,
 //!     so raw bodies never reach stderr or `trace.log`.
 //!   - The `trace.log` layer accepts every record *except*
 //!     `SUBPROCESS_FULL_TARGET` and writes to this file when `-vv` opened it.
-//!   - The stderr layer is disabled at `-vv` (the file layers replace it)
-//!     and otherwise honors `RUST_LOG` plus the `-v` baseline.
+//!   - The stderr layer honors `RUST_LOG` plus the flag baseline (`Off` at
+//!     no `-v`, `Info` at `-v` *and* `-vv`). Debug records (the noisy
+//!     ones) route to the file layers only — `-vv` is a strict superset
+//!     of `-v` on stderr.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
@@ -94,9 +97,9 @@ pub(crate) static TRACE: LogSink = LogSink {
     file: OnceLock::new(),
     filename: "trace.log",
 };
-pub(crate) static OUTPUT: LogSink = LogSink {
+pub(crate) static SUBPROCESS: LogSink = LogSink {
     file: OnceLock::new(),
-    filename: "output.log",
+    filename: "subprocess.log",
 };
 
 /// Initialize both log sinks.
@@ -107,7 +110,7 @@ pub(crate) static OUTPUT: LogSink = LogSink {
 /// here doesn't emit records to a half-built pipeline.
 pub(crate) fn init() {
     TRACE.init();
-    OUTPUT.init();
+    SUBPROCESS.init();
 }
 
 /// Per-event writer: collects formatted bytes, then forwards them to the
@@ -155,13 +158,13 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for TraceMakeWriter {
     }
 }
 
-/// `MakeWriter` for the output.log layer: always writes to `OUTPUT`.
-pub(crate) struct OutputMakeWriter;
+/// `MakeWriter` for the subprocess.log layer: always writes to `SUBPROCESS`.
+pub(crate) struct SubprocessMakeWriter;
 
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for OutputMakeWriter {
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SubprocessMakeWriter {
     type Writer = SinkWriter;
     fn make_writer(&'a self) -> SinkWriter {
-        OUTPUT.writer()
+        SUBPROCESS.writer()
     }
 }
 

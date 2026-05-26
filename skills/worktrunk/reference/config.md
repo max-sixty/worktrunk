@@ -587,8 +587,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -650,8 +650,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -707,8 +707,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -761,8 +761,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -850,8 +850,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -910,8 +910,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -958,10 +958,10 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 | File | Created when |
 |------|-------------|
 | `trace.log` | Running with `-vv` |
-| `output.log` | Running with `-vv` |
+| `subprocess.log` | Running with `-vv` |
 | `diagnostic.md` | Running with `-vv` |
 
-`trace.log` receives the noisy `log::*` pipeline at `-vv` — commands, `[wt-trace]` records, bounded subprocess previews — so stderr stays readable (user-facing status messages still print as normal). `output.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown report for pasting into GitHub issues; it inlines `trace.log` but not `output.log`, which can be multi-MB. All three are overwritten on each `-vv` run.
+`trace.log` captures debug-level records at `-vv` — commands, `[wt-trace]` records, bounded subprocess previews. `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that inlines `trace.log`; `wt` prints a `gh gist create` command pointing at it. All three are overwritten on each `-vv` run.
 
 ### Location
 
@@ -1025,8 +1025,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -1086,8 +1086,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -1158,8 +1158,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -1244,8 +1244,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
