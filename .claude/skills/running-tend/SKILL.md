@@ -160,6 +160,16 @@ Reach for narrower asks only when the diagnostic is overkill:
 - `wt config show` — when the suspicion is purely config/shell-integration
   and you already have the command + repro.
 
+### Don't ship fixes you can't verify
+
+When the bug or proposed fix turns on runtime state the bot can't observe from CI — plugin hooks firing inside an agent CLI (Claude Code, Codex, Gemini), shell-integration side effects, interactive prompt rendering, signal forwarding into a TTY — do **not** open a PR premised on the hypothesis. Signals to stop:
+
+- The proposed transition fires inside a running agent session the bot can't drive from a test (`PostToolUse`, `Stop`, `Notification`, statusline redraws).
+- The "analysis" in the issue is an LLM-written trace pasted by the reporter, not a verified observation. Treat that as a starting hypothesis, not ground truth — a Claude-written explanation of why X is broken is no more trustworthy than the bot's own first guess.
+- The repro requires an interactive shell or `claude` running in a tmux that the bot can't spin up.
+
+Comment on the issue with what's known, ask the reporter for the concrete symptom they observe ("which marker shows where, when") rather than for a fix to validate, and exit without a PR. The bar for opening a fix PR is *the failure mode is reproducible and the fix is testable*, not *the hypothesis seems plausible*. If you post a fix despite limited testability (rare — usually only when the reporter has confirmed the exact symptom and the code change is obviously correct from inspection), explicitly flag what wasn't verified in the PR body.
+
 ### Closing Duplicates
 
 When an issue is clearly a duplicate, close it after commenting. Use
