@@ -498,9 +498,9 @@ fn announce_trace_destination() {
     let Some(trace_path) = log_files::TRACE.path() else {
         return;
     };
-    let Some(dir) = trace_path.parent() else {
-        return;
-    };
+    // trace.log is always at `<git>/wt/logs/trace.log` (see `log_files::try_create`),
+    // so the parent is structurally guaranteed.
+    let dir = trace_path.parent().expect("trace.log path has a parent");
     let dir_display = worktrunk::path::format_path_for_display(dir);
     let msg = match log_files::SUBPROCESS.path() {
         Some(_) => cformat!(
