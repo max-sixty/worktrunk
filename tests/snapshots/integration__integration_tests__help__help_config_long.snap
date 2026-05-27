@@ -94,7 +94,7 @@ Show current configuration and file locations:
  User config    [2m~/.config/worktrunk/config.toml[0m Worktree path template, LLM commit configs, etc ✗                  
  Project config [2m.config/wt.toml[0m                 Project hooks, dev server URL                   ✓                  
 
-Organizations can also deploy a system-wide config file for shared defaults — run [2mwt config show[0m for the platform-specific location.
+Organizations can deploy a system-wide config file for shared defaults — run [2mwt config show[0m for the platform-specific location.
 
 [1mUser config[0m — personal preferences:
 
@@ -268,11 +268,7 @@ Aliases defined here apply to all projects. For project-specific aliases, use th
 
 [32mUser project-specific settings[0m
 
-For context:
-
-- Project config settings are shared with teammates.
-- User configs generally apply to all projects.
-- User configs _also_ has a [2m[projects][0m table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.
+User config can include a [2m[projects][0m table for project-specific settings — worktree layout, setting overrides, anything else — separate from the project config shared with teammates.
 
 Entries are keyed by project identifier — [2m<host>/<owner>/<repo>[0m derived from the primary remote URL (no [2m.git[0m suffix), or the canonical repo path when there is no remote. Run [2mwt config show[0m inside the repo to see the identifier for the current project; it appears in the [2mPROJECT CONFIG[0m section as [2mIdentifier: …[0m.
 
@@ -495,7 +491,7 @@ Without shell integration, [2mwt switch[0m prints the target directory but can
 
 [32mFirst-run prompts[0m
 
-On first run without shell integration, Worktrunk offers to install it. Similarly, on first commit without LLM configuration, it offers to configure a detected tool ([2mclaude[0m, [2mcodex[0m). Declining sets [2mskip-shell-integration-prompt[0m or [2mskip-commit-generation-prompt[0m automatically.
+On first run without shell integration, Worktrunk offers to install it. On first commit without LLM configuration, it offers to configure a detected tool ([2mclaude[0m, [2mcodex[0m). Declining sets [2mskip-shell-integration-prompt[0m or [2mskip-commit-generation-prompt[0m automatically.
 
 [32mOTHER[0m
 
@@ -514,8 +510,6 @@ For nested config sections, use double underscores to separate levels:
  [2mworktree-path[0m             [2mWORKTRUNK_WORKTREE_PATH[0m               
  [2mcommit.generation.command[0m [2mWORKTRUNK_COMMIT__GENERATION__COMMAND[0m 
  [2mcommit.stage[0m              [2mWORKTRUNK_COMMIT__STAGE[0m               
-
-Note the single underscore after [2mWORKTRUNK[0m and double underscores between nested keys.
 
 [32mExample: CI/testing override[0m
 

@@ -127,7 +127,9 @@ Worktrunk checks six conditions (in order of cost):
 3. [1mNo added changes[0m — Three-dot diff ([2mtarget...branch[0m) is empty. Shows [2m⊂[0m.
 4. [1mTrees match[0m — Branch tree SHA equals target tree SHA. Shows [2m⊂[0m.
 5. [1mMerge adds nothing[0m — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced with changes to different files. Shows [2m⊂[0m.
-6. [1mPatch-id match[0m — Branch's entire diff matches a single squash-merge commit on target. Fallback for when the simulated merge conflicts because target later modified the same files the branch touched. Shows [2m⊂[0m. The default-branch walk is capped so a single check stays fast; a squash merge with hundreds of commits landed since the merge point falls outside the cap and needs [2m-D[0m to remove.
+6. [1mPatch-id match[0m — Branch's entire diff matches a single squash-merge commit on target. Fallback for when the simulated merge conflicts because target later modified the same files the branch touched. Shows [2m⊂[0m.
+
+The default-branch walk is capped so a single check stays fast; a squash merge with hundreds of commits landed since the merge point falls outside the cap and needs [2m-D[0m to remove.
 
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., [2morigin/main[0m) when strictly ahead.
 
@@ -146,7 +148,7 @@ Worktrunk has two force flags for different situations:
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m-D[0m[2m            # Delete unmerged branch[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m remove feature [0m[2m[36m--force[0m[2m [0m[2m[36m-D[0m[2m    # Both[0m[2m[0m
 
-Without [2m--force[0m, removal fails if the worktree has staged, modified, or untracked files. Without [2m--force-delete[0m, removal keeps branches with unmerged changes. Use [2m--no-delete-branch[0m to keep the branch regardless of merge status.
+Use [2m--no-delete-branch[0m to keep the branch regardless of merge status.
 
 [1m[32mBackground removal[0m
 

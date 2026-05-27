@@ -78,7 +78,7 @@ Output as JSON for scripting:
 | Status | Compact symbols (see below) |
 | HEAD± | Uncommitted changes: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
-| main…± | Line diffs since the merge-base with the default branch; `--full` only |
+| main…± | Line diffs since the merge-base (three-dot) with the default branch; `--full` only |
 | Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](@/config.md#commit) <span class="badge-experimental"></span> |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | Pipeline status; `--full` only |
@@ -88,7 +88,7 @@ Output as JSON for scripting:
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
 
-Note: `main↕` and `main…±` refer to the default branch — the header label stays `main` for compactness. `main…±` uses a merge-base (three-dot) diff.
+The `main` header label is used regardless of the default branch's actual name.
 
 ### CI status
 
