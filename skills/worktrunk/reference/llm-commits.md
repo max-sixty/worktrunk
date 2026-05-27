@@ -37,10 +37,6 @@ command = "llm -m claude-haiku-4.5"
 command = "aichat -m claude:claude-haiku-4.5"
 ```
 
-## How it works
-
-When worktrunk needs a commit message, it builds a prompt from a template and pipes it to the configured command via shell (`sh -c`). Environment variables can be set inline in the command string.
-
 ## Usage
 
 These examples assume a feature worktree with changes to commit.
@@ -121,7 +117,7 @@ Summaries are cached and regenerated only when the diff changes.
 
 ## Prompt templates
 
-Worktrunk uses [minijinja](https://docs.rs/minijinja/) templates (Jinja2-like syntax) to build prompts. There are sensible defaults, but templates are fully customizable.
+Worktrunk uses [minijinja](https://docs.rs/minijinja/) templates (Jinja2-like syntax) to build prompts.
 
 ### Custom templates
 

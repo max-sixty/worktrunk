@@ -58,7 +58,7 @@ Gemini loads the extension natively from the repository, so there is no `wt` wra
 
 ## Configuration skill
 
-The plugin includes a skill — documentation the agent can read — covering Worktrunk's configuration system. After installation, the agent can help with:
+With the `/worktrunk` skill, the agent can help with:
 
 - Setting up LLM-generated commit messages
 - Adding project hooks (pre-start, pre-merge, pre-commit)
