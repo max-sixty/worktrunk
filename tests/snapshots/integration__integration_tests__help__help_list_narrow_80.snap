@@ -162,7 +162,8 @@ Output as JSON for scripting:
  Status  Compact symbols (see below)                                            
  HEAD±   Uncommitted changes: +added -deleted lines                             
  main↕   Commits ahead/behind default branch                                    
- main…±  Line diffs since the merge-base with the default branch; [2m--full[0m only   
+ main…±  Line diffs since the merge-base (three-dot) with the default branch;   
+         [2m--full[0m only                                                            
  Summary LLM-generated branch summary; requires [2m--full[0m, [2msummary = true[0m, and     
          [2mcommit.generation[0m [experimental]                                       
  Remote⇅ Commits ahead/behind tracking branch                                   
@@ -173,8 +174,7 @@ Output as JSON for scripting:
  Age     Time since last commit                                                 
  Message Last commit message (truncated)                                        
 
-Note: [2mmain↕[0m and [2mmain…±[0m refer to the default branch — the header label stays [2mmain[0m
- for compactness. [2mmain…±[0m uses a merge-base (three-dot) diff.
+The [2mmain[0m header label is used regardless of the default branch's actual name.
 
 [32mCI status[0m
 

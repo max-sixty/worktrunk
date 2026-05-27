@@ -745,7 +745,7 @@ $ wt list --format=json
 | Status | Compact symbols (see below) |
 | HEAD± | Uncommitted changes: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
-| main…± | Line diffs since the merge-base with the default branch; `--full` only |
+| main…± | Line diffs since the merge-base (three-dot) with the default branch; `--full` only |
 | Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](@/config.md#commit) [experimental] |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | Pipeline status; `--full` only |
@@ -755,7 +755,7 @@ $ wt list --format=json
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
 
-Note: `main↕` and `main…±` refer to the default branch — the header label stays `main` for compactness. `main…±` uses a merge-base (three-dot) diff.
+The `main` header label is used regardless of the default branch's actual name.
 
 ### CI status
 
@@ -1004,7 +1004,9 @@ Worktrunk checks six conditions (in order of cost):
 3. **No added changes** — Three-dot diff (`target...branch`) is empty. Shows `⊂`.
 4. **Trees match** — Branch tree SHA equals target tree SHA. Shows `⊂`.
 5. **Merge adds nothing** — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced with changes to different files. Shows `⊂`.
-6. **Patch-id match** — Branch's entire diff matches a single squash-merge commit on target. Fallback for when the simulated merge conflicts because target later modified the same files the branch touched. Shows `⊂`. The default-branch walk is capped so a single check stays fast; a squash merge with hundreds of commits landed since the merge point falls outside the cap and needs `-D` to remove.
+6. **Patch-id match** — Branch's entire diff matches a single squash-merge commit on target. Fallback for when the simulated merge conflicts because target later modified the same files the branch touched. Shows `⊂`.
+
+The default-branch walk is capped so a single check stays fast; a squash merge with hundreds of commits landed since the merge point falls outside the cap and needs `-D` to remove.
 
 The 'same commit' check uses the local default branch; for other checks, 'target' means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
 
@@ -1025,7 +1027,7 @@ $ wt remove feature -D            # Delete unmerged branch
 $ wt remove feature --force -D    # Both
 ```
 
-Without `--force`, removal fails if the worktree has staged, modified, or untracked files. Without `--force-delete`, removal keeps branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of merge status.
+Use `--no-delete-branch` to keep the branch regardless of merge status.
 
 ## Background removal
 
@@ -1601,7 +1603,7 @@ $ wt config show
 | **User config** | `~/.config/worktrunk/config.toml` | Worktree path template, LLM commit configs, etc | ✗ |
 | **Project config** | `.config/wt.toml` | Project hooks, dev server URL | ✓ |
 
-Organizations can also deploy a system-wide config file for shared defaults — run `wt config show` for the platform-specific location.
+Organizations can deploy a system-wide config file for shared defaults — run `wt config show` for the platform-specific location.
 
 **User config** — personal preferences:
 
@@ -1818,11 +1820,7 @@ Aliases defined here apply to all projects. For project-specific aliases, use th
 
 ### User project-specific settings
 
-For context:
-
-- [Project config](@/config.md#project-configuration) settings are shared with teammates.
-- User configs generally apply to all projects.
-- User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.
+User config can include a `[projects]` table for project-specific settings — worktree layout, setting overrides, anything else — separate from the [project config](@/config.md#project-configuration) shared with teammates.
 
 Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary remote URL (no `.git` suffix), or the canonical repo path when there is no remote. Run `wt config show` inside the repo to see the identifier for the current project; it appears in the `PROJECT CONFIG` section as `Identifier: …`.
 
@@ -2076,7 +2074,7 @@ Without shell integration, `wt switch` prints the target directory but cannot `c
 
 ### First-run prompts
 
-On first run without shell integration, Worktrunk offers to install it. Similarly, on first commit without LLM configuration, it offers to configure a detected tool (`claude`, `codex`). Declining sets `skip-shell-integration-prompt` or `skip-commit-generation-prompt` automatically.
+On first run without shell integration, Worktrunk offers to install it. On first commit without LLM configuration, it offers to configure a detected tool (`claude`, `codex`). Declining sets `skip-shell-integration-prompt` or `skip-commit-generation-prompt` automatically.
 
 # Other
 
@@ -2095,8 +2093,6 @@ For nested config sections, use double underscores to separate levels:
 | `worktree-path` | `WORKTRUNK_WORKTREE_PATH` |
 | `commit.generation.command` | `WORKTRUNK_COMMIT__GENERATION__COMMAND` |
 | `commit.stage` | `WORKTRUNK_COMMIT__STAGE` |
-
-Note the single underscore after `WORKTRUNK` and double underscores between nested keys.
 
 ### Example: CI/testing override
 

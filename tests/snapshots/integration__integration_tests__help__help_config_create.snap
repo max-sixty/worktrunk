@@ -220,11 +220,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# ### User project-specific settings[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# For context:[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# - Project config (https://worktrunk.dev/config/#project-configuration) settings are shared with teammates.[0m
-[107m [0m [2m# - User configs generally apply to all projects.[0m
-[107m [0m [2m# - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.[0m
+[107m [0m [2m# User config can include a `[projects]` table for project-specific settings — worktree layout, setting overrides, anything else — separate from the project config (https://worktrunk.dev/config/#project-configuration) shared with teammates.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary remote URL (no `.git` suffix), or the canonical repo path when there is no remote. Run `wt config show` inside the repo to see the identifier for the current project; it appears in the `PROJECT CONFIG` section as `Identifier: …`.[0m
 [107m [0m [2m#[0m

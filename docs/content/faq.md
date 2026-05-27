@@ -95,8 +95,6 @@ The three `-vv` files have distinct audiences:
 
 ## What files does Worktrunk create?
 
-Worktrunk creates files in four categories.
-
 ### 1. Worktree directories
 
 Created by `wt switch <branch>` when switching to a branch that doesn't have a worktree. Use `wt switch --create <branch>` to create a new branch. Default location is `../<repo>.<branch>` (sibling to main repo), configurable via `worktree-path` in user config.
