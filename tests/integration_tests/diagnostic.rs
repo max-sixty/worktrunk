@@ -312,10 +312,10 @@ fn test_log_files_created(mut repo: TestRepo) {
 
     let logs_dir = repo.root_path().join(".git").join("wt/logs");
     let trace_log = logs_dir.join("trace.log");
-    let output_log = logs_dir.join("subprocess.log");
+    let subprocess_log = logs_dir.join("subprocess.log");
     assert!(trace_log.exists(), "trace.log should be created with -vv");
     assert!(
-        output_log.exists(),
+        subprocess_log.exists(),
         "subprocess.log should be created with -vv"
     );
 
@@ -444,7 +444,7 @@ fn test_vv_debug_pipeline_silent_on_stderr(repo: TestRepo) {
     // Stderr at -vv should contain the new pointer line (and the existing
     // diagnostic line), so the user knows where the trace went.
     assert!(
-        stderr.contains("Tracing to") && stderr.contains("trace.log"),
+        stderr.contains("Writing to") && stderr.contains("trace.log"),
         "stderr should announce the trace destination at -vv: {stderr}"
     );
 }
@@ -605,7 +605,7 @@ fn test_vv_writes_diagnostic_on_error(mut repo: TestRepo) {
 }
 
 /// If one of the `-vv` log files can't be opened (here: pre-existing path
-/// of the wrong type), the user still gets a "Tracing to ..." pointer for
+/// of the wrong type), the user still gets a "Writing to ..." pointer for
 /// the one that opened, and the elision marker reflects the asymmetric
 /// state instead of telling a `-vv` user to "rerun with -vv".
 #[rstest]
@@ -624,7 +624,7 @@ fn test_vv_pointer_handles_split_init(repo: TestRepo) {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        stderr.contains("Tracing to") && stderr.contains("trace.log"),
+        stderr.contains("Writing to") && stderr.contains("trace.log"),
         "stderr should point at trace.log even when subprocess.log can't open: {stderr}"
     );
     assert!(
@@ -697,7 +697,7 @@ fn test_vv_outside_repo_no_crash() {
     // announce_trace_destination took its early-return path.
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("Tracing to"),
+        !stderr.contains("Writing to"),
         "no startup pointer when trace.log can't open: {stderr}"
     );
 }

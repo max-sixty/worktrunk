@@ -492,19 +492,23 @@ fn announce_trace_destination() {
     // file. The (Some, None) case (trace.log open, subprocess.log failed) is
     // rare but real (path-type mismatch, fs quota); the reverse is
     // possible too but `subprocess.log` alone has no `$ cmd` context, so we
-    // stay silent there.
+    // stay silent there. `diagnostic.md` is named even though it's written
+    // at exit (not init) — by the time the user reads the pointer and looks
+    // for files, all three will be there.
     let Some(trace_path) = log_files::TRACE.path() else {
         return;
     };
-    let trace_display = worktrunk::path::format_path_for_display(&trace_path);
+    let Some(dir) = trace_path.parent() else {
+        return;
+    };
+    let dir_display = worktrunk::path::format_path_for_display(dir);
     let msg = match log_files::SUBPROCESS.path() {
-        Some(output_path) => {
-            let output_display = worktrunk::path::format_path_for_display(&output_path);
-            cformat!(
-                "Tracing to <underline>{trace_display}</> (raw subprocess output @ <underline>{output_display}</>)"
-            )
-        }
-        None => cformat!("Tracing to <underline>{trace_display}</> (subprocess.log unavailable)"),
+        Some(_) => cformat!(
+            "Writing to <underline>{dir_display}/</> — trace.log, subprocess.log, diagnostic.md"
+        ),
+        None => cformat!(
+            "Writing to <underline>{dir_display}/</> — trace.log, diagnostic.md (subprocess.log unavailable)"
+        ),
     };
     eprintln!("{}", info_message(msg));
 }
