@@ -168,7 +168,7 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:123                      # PR #123's branch[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                      # MR !101's branch[0m[2m[0m
 
-Shortcuts also apply to [2m--base[0m. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
+Shortcuts also apply to [2m--base[0m. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch. (Web URLs like [2mhttps://github.com/owner/repo/pull/N[0m or [2mhttps://gitlab.com/owner/repo/-/merge_requests/N[0m work in place of [2mpr:N[0m / [2mmr:N[0m anywhere a shortcut does.)
 
 [1m[32mInteractive picker[0m
 
