@@ -169,7 +169,7 @@ $ wt merge main
 <span style='background:var(--bright-white,#fff)'> </span>  auth.rs | 51 <span class=g>+++++++++++++++++++++++++++++++++++++++++++++++++++</span>
 <span style='background:var(--bright-white,#fff)'> </span>  lib.rs  |  2 <span class=g>++</span>
 <span style='background:var(--bright-white,#fff)'> </span>  2 files changed, 53 insertions(+)
-<span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 2 files, +53</span></span><span style='color:var(--bright-black,#555)'>)</span>
+<span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 2 files, <span class=g>+53</span></span></span><span style='color:var(--bright-black,#555)'>)</span>
 <span class=c>◎</span> <span class=c>Removing <b>feature-auth</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
 <span class=d>○</span> Switched to worktree for <b>main</b> @ <b>~/repo</b>
 ```

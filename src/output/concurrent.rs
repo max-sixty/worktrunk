@@ -26,13 +26,8 @@
 //!
 //! The main thread drains the channel. A signal-listener thread blocks
 //! on `signal_hook::Signals::forever()` for SIGINT/SIGTERM and forwards
-//! the same signal once to every child's process group; a second press
-//! escalates to SIGKILL across all groups. Closing the signal-hook handle
-//! on shutdown unblocks the listener. The single-shot forward keeps the
-//! cause-of-death signal aligned with the user's intent — a stubborn child
-//! that ignores SIGINT requires a second Ctrl-C, matching `make` / `cargo`
-//! behavior, instead of a per-child SIGINT→SIGTERM→SIGKILL ladder whose
-//! grace windows race with CI scheduling latency.
+//! with escalation to every live child's process group; closing the
+//! signal-hook handle on shutdown unblocks the listener.
 //!
 //! All children always run to completion. Per-child exit status is returned
 //! for the caller to fold into a failure, matching alias `thread::scope` and
@@ -53,6 +48,8 @@ use worktrunk::shell_exec::{
     DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR, ShellConfig,
     scrub_directive_env_vars,
 };
+#[cfg(unix)]
+use worktrunk::signal_forwarder::ForegroundSignals;
 use worktrunk::styling::stderr;
 
 use super::handlers::DirectivePassthrough;
@@ -97,10 +94,7 @@ pub fn run_concurrent_commands(
     // wt (which would orphan already-spawned children, since each runs in
     // its own process group and wouldn't see the tty's Ctrl-C broadcast).
     #[cfg(unix)]
-    let signals = {
-        use signal_hook::consts::{SIGINT, SIGTERM};
-        signal_hook::iterator::Signals::new([SIGINT, SIGTERM])?
-    };
+    let signals = ForegroundSignals::install()?;
 
     // Spawn each child and record its start time for commands.jsonl. If any
     // spawn fails partway, kill and reap every child we already spawned —
@@ -142,8 +136,7 @@ pub fn run_concurrent_commands(
     // the spawn loop was queued and will be delivered on the thread's first
     // poll.
     #[cfg(unix)]
-    let signal_thread = spawn_signal_forwarder(
-        signals,
+    let signal_thread = signals.forward_to_pgids(
         children
             .iter()
             .map(|c| c.child.id() as i32)
@@ -170,12 +163,52 @@ pub fn run_concurrent_commands(
     }
 
     #[cfg(unix)]
-    {
-        // All children have exited — shut the signal forwarder down.
-        signal_thread.stop();
+    let originating_signal = {
+        // All children have exited — shut the signal forwarder down. Returns
+        // the first signal the forwarder observed (None if no signal arrived).
+        signal_thread.stop()
+    };
+    #[cfg(not(unix))]
+    let originating_signal: Option<i32> = None;
+
+    // If wt's forwarder escalated SIGINT → SIGTERM → SIGKILL, a child may have
+    // died from SIGTERM (or SIGKILL) even though the user only sent SIGINT.
+    // From the user's outside view, the originating signal is what they sent;
+    // wt's internal escalation is an implementation detail that shouldn't
+    // surface as a different exit code (e.g., 143 instead of 130). Override
+    // each child's reported signal with the originating signal so wt's
+    // `exit_code()` and `interrupt_exit_code()` reflect the user's intent.
+    if let Some(orig) = originating_signal {
+        for outcome in &mut outcomes {
+            override_with_originating_signal(outcome, orig);
+        }
     }
 
     Ok(outcomes)
+}
+
+/// Replace a child's signal-derived `ChildProcessExited` error with one whose
+/// `signal` / `code` / `message` reflect the originating signal wt received
+/// (rather than whichever signal the forwarder's escalation chain ultimately
+/// killed the child with). No-op if the outcome isn't a signal-derived error.
+fn override_with_originating_signal(outcome: &mut anyhow::Result<()>, originating: i32) {
+    let Err(err) = outcome else { return };
+    let Some(WorktrunkError::ChildProcessExited {
+        signal: Some(child_sig),
+        ..
+    }) = err.downcast_ref::<WorktrunkError>()
+    else {
+        return;
+    };
+    if *child_sig == originating {
+        return;
+    }
+    *outcome = Err(WorktrunkError::ChildProcessExited {
+        code: 128 + originating,
+        message: format!("terminated by signal {originating}"),
+        signal: Some(originating),
+    }
+    .into());
 }
 
 /// Serial fallback for `WORKTRUNK_TEST_SERIAL_CONCURRENT`.
@@ -409,54 +442,6 @@ fn render_prefix(index: usize, label: &str, width: usize) -> String {
     format!("{style}{label:<width$}{style:#} │ ")
 }
 
-#[cfg(unix)]
-struct SignalForwarder {
-    handle: signal_hook::iterator::Handle,
-    listener: thread::JoinHandle<()>,
-}
-
-#[cfg(unix)]
-impl SignalForwarder {
-    fn stop(self) {
-        // Closing the signal-hook handle unblocks `Signals::forever()` so
-        // the listener thread returns; join it to avoid a leak.
-        self.handle.close();
-        let _ = self.listener.join();
-    }
-}
-
-#[cfg(unix)]
-fn spawn_signal_forwarder(
-    mut signals: signal_hook::iterator::Signals,
-    pgids: Vec<i32>,
-) -> SignalForwarder {
-    let handle = signals.handle();
-    let listener = thread::spawn(move || {
-        let mut seen_once = false;
-        for sig in signals.forever() {
-            // First press: forward the same signal once. Cooperative children
-            // die from it, so `child.wait()` reports a signal that matches the
-            // user's intent. Stubborn children survive — the user presses
-            // Ctrl-C again, taking the SIGKILL branch below.
-            let signal_to_send = if seen_once {
-                nix::sys::signal::Signal::SIGKILL
-            } else {
-                seen_once = true;
-                match sig {
-                    signal_hook::consts::SIGINT => nix::sys::signal::Signal::SIGINT,
-                    signal_hook::consts::SIGTERM => nix::sys::signal::Signal::SIGTERM,
-                    _ => continue,
-                }
-            };
-            for &pgid in &pgids {
-                let _ = nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pgid), signal_to_send);
-            }
-        }
-    });
-
-    SignalForwarder { handle, listener }
-}
-
 #[cfg(test)]
 mod tests {
     //! Unit tests that exercise the executor's option-bearing code paths which
@@ -547,5 +532,86 @@ mod tests {
     fn test_empty_cmds_returns_empty() {
         let outcomes = run_concurrent_commands(&[]).expect("no spawn should happen");
         assert!(outcomes.is_empty());
+    }
+
+    /// `override_with_originating_signal` table-test: covers the four shapes
+    /// of outcome — `Ok`, non-`WorktrunkError` `Err`, exit-code `Err` (no
+    /// signal), and signal-derived `Err` matching vs differing from the
+    /// originating signal. Only the differing-signal case mutates.
+    #[test]
+    fn test_override_with_originating_signal() {
+        let originating = 2; // SIGINT
+
+        // Ok: untouched.
+        let mut ok: anyhow::Result<()> = Ok(());
+        override_with_originating_signal(&mut ok, originating);
+        assert!(ok.is_ok());
+
+        // Err but not WorktrunkError: untouched.
+        let mut other: anyhow::Result<()> = Err(anyhow::anyhow!("spawn failed"));
+        override_with_originating_signal(&mut other, originating);
+        assert_eq!(other.unwrap_err().to_string(), "spawn failed");
+
+        // ChildProcessExited with no signal (plain non-zero exit): untouched.
+        let mut exit_err: anyhow::Result<()> = Err(WorktrunkError::ChildProcessExited {
+            code: 1,
+            message: "exit status: 1".into(),
+            signal: None,
+        }
+        .into());
+        override_with_originating_signal(&mut exit_err, originating);
+        let err = exit_err.unwrap_err();
+        let we = err.downcast_ref::<WorktrunkError>().unwrap();
+        assert!(matches!(
+            we,
+            WorktrunkError::ChildProcessExited {
+                signal: None,
+                code: 1,
+                ..
+            }
+        ));
+
+        // ChildProcessExited with same signal as originating: untouched.
+        let mut same: anyhow::Result<()> = Err(WorktrunkError::ChildProcessExited {
+            code: 130,
+            message: "terminated by signal 2".into(),
+            signal: Some(2),
+        }
+        .into());
+        override_with_originating_signal(&mut same, originating);
+        let err = same.unwrap_err();
+        let we = err.downcast_ref::<WorktrunkError>().unwrap();
+        assert!(matches!(
+            we,
+            WorktrunkError::ChildProcessExited {
+                signal: Some(2),
+                code: 130,
+                ..
+            }
+        ));
+
+        // ChildProcessExited with different signal (escalation case):
+        // overridden to the originating signal's code/message/signal.
+        let mut escalated: anyhow::Result<()> = Err(WorktrunkError::ChildProcessExited {
+            code: 143,
+            message: "terminated by signal 15".into(),
+            signal: Some(15),
+        }
+        .into());
+        override_with_originating_signal(&mut escalated, originating);
+        let err = escalated.unwrap_err();
+        let we = err.downcast_ref::<WorktrunkError>().unwrap();
+        match we {
+            WorktrunkError::ChildProcessExited {
+                code,
+                message,
+                signal,
+            } => {
+                assert_eq!(*code, 130);
+                assert_eq!(*signal, Some(2));
+                assert_eq!(message, "terminated by signal 2");
+            }
+            _ => panic!("expected ChildProcessExited, got {we:?}"),
+        }
     }
 }

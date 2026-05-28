@@ -4,6 +4,7 @@
 
 mod alias;
 mod approvals;
+mod codex;
 mod create;
 mod hints;
 pub mod opencode;
@@ -15,6 +16,7 @@ mod update;
 // Re-export public functions
 pub use alias::{handle_alias_dry_run, handle_alias_show};
 pub use approvals::{add_approvals, clear_approvals};
+pub use codex::{handle_codex_install, handle_codex_uninstall};
 pub use create::handle_config_create;
 pub use hints::{handle_hints_clear, handle_hints_get};
 pub use opencode::{handle_opencode_install, handle_opencode_uninstall};
@@ -36,7 +38,6 @@ mod tests {
 
     use super::create::comment_out_config;
     use super::show::{render_ci_tool_status, warn_unknown_keys};
-    use super::state::require_user_config_path;
 
     // ==================== comment_out_config tests ====================
 
@@ -153,16 +154,37 @@ mod tests {
     }
 
     #[test]
-    fn test_warn_unknown_keys_deprecated_in_wrong_config() {
-        // commit-generation in project config should suggest user config with canonical form
-        assert_snapshot!(warn_unknown_keys::<ProjectConfig>(
-            "[commit-generation]\ncommand = \"llm\"\n"
-        ));
+    fn test_warn_unknown_keys_user_only_commit_key_redirects_to_user_config() {
+        // The LLM `command` is user-config-only. In a *project* config it must
+        // redirect the user to user config — both via the legacy flat
+        // `[commit-generation]` and the canonical `[commit.generation]`, since
+        // `[commit.generation]` is now a valid project section (for
+        // `template-append`) so the offending key surfaces nested.
+        assert_snapshot!(
+            warn_unknown_keys::<ProjectConfig>("[commit-generation]\ncommand = \"llm\"\n"),
+            @"[33m▲[39m [33mKey [1mcommit.generation.command[22m belongs in user config (will be ignored)[39m");
+        assert_snapshot!(
+            warn_unknown_keys::<ProjectConfig>("[commit.generation]\ncommand = \"llm\"\n"),
+            @"[33m▲[39m [33mKey [1mcommit.generation.command[22m belongs in user config (will be ignored)[39m");
 
-        // ci in user config should suggest project config with canonical form
-        assert_snapshot!(warn_unknown_keys::<UserConfig>(
-            "[ci]\nplatform = \"github\"\n"
-        ));
+        // The one project-valid key in the section is unaffected.
+        assert!(
+            warn_unknown_keys::<ProjectConfig>("[commit.generation]\ntemplate-append = \"x\"\n")
+                .is_empty()
+        );
+        // The same user-only key in user config is valid — no warning there.
+        assert!(
+            warn_unknown_keys::<UserConfig>("[commit.generation]\ncommand = \"llm\"\n").is_empty()
+        );
+    }
+
+    #[test]
+    fn test_warn_unknown_keys_deprecated_section_in_wrong_config() {
+        // `ci` is deprecated in favor of `[forge]`, which is project-only; in
+        // user config it redirects with the canonical form.
+        assert_snapshot!(
+            warn_unknown_keys::<UserConfig>("[ci]\nplatform = \"github\"\n"),
+            @"[33m▲[39m [33mKey [1mci[22m belongs in project config as [forge][39m");
     }
 
     #[test]
@@ -190,6 +212,16 @@ mod tests {
         render_ci_tool_status(&mut out, "gh", "GitHub", true, false).unwrap();
         assert_snapshot!(out, @"[33m▲[39m [33m[1mgh[22m installed but not authenticated; run [1mgh auth login[22m[39m");
 
+        // The auth-setup command differs by CLI: `tea` uses `tea login add`,
+        // `az` uses `az login`, the rest use `<tool> auth login`.
+        let mut out = String::new();
+        render_ci_tool_status(&mut out, "tea", "Gitea", true, false).unwrap();
+        assert_snapshot!(out, @"[33m▲[39m [33m[1mtea[22m installed but not authenticated; run [1mtea login add[22m[39m");
+
+        let mut out = String::new();
+        render_ci_tool_status(&mut out, "az", "Azure DevOps", true, false).unwrap();
+        assert_snapshot!(out, @"[33m▲[39m [33m[1maz[22m installed but not authenticated; run [1maz login[22m[39m");
+
         // Not installed
         let mut out = String::new();
         render_ci_tool_status(&mut out, "glab", "GitLab", false, false).unwrap();
@@ -199,30 +231,5 @@ mod tests {
         let mut out = String::new();
         render_ci_tool_status(&mut out, "glab", "GitLab", true, true).unwrap();
         assert_snapshot!(out, @"[32m✓[39m [32m[1mglab[22m installed & authenticated[39m");
-    }
-
-    // ==================== require_user_config_path tests ====================
-
-    #[test]
-    fn test_require_user_config_path_returns_ok() {
-        // In a normal environment, require_user_config_path should succeed
-        let result = require_user_config_path();
-        assert!(result.is_ok());
-        let path = result.unwrap();
-        assert!(path.ends_with("worktrunk/config.toml"));
-    }
-
-    #[test]
-    fn test_require_user_config_path_matches_config_path() {
-        // Verify that config create/show path matches config loading path.
-        // This was the root cause of #1134: the two paths diverged on Windows
-        // when XDG_CONFIG_HOME was set because config create had its own
-        // XDG/HOME resolution that differed from config loading.
-        let create_path = require_user_config_path().unwrap();
-        let load_path = worktrunk::config::config_path().unwrap();
-        assert_eq!(
-            create_path, load_path,
-            "config create path and config loading path must be identical"
-        );
     }
 }

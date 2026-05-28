@@ -33,20 +33,20 @@
 //! # Log layout invariant
 //!
 //! Inside `wt_logs_dir()`, top-level *files* are shared logs (`commands.jsonl*`,
-//! `trace.log`, `output.log`, `diagnostic.md`) and top-level *directories* are
-//! per-branch log trees (`{branch}/{source|internal}/{hook-type}/{name}.log`).
+//! `internal-*.log`, `trace.log`, `subprocess.log`, `diagnostic.md`) and top-level
+//! *directories* are per-branch log trees
+//! (`{branch}/{source|internal}/{hook-type}/{name}.log`).
 //! Categorization
 //! relies on this file-vs-directory distinction: new top-level shared entries
 //! must remain files. If a future category needs multiple files, it should live
 //! under a single reserved subdirectory rather than adding sibling top-level dirs.
 
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Context;
 use color_print::cformat;
 use path_slash::PathExt as _;
-use worktrunk::config::config_path;
 use worktrunk::git::{BranchRef, Repository, sha_cache};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
@@ -94,24 +94,19 @@ fn picker_preview_clear(repo: &Repository) -> anyhow::Result<usize> {
     }
 }
 
-// ==================== Path Helpers ====================
-
-/// Get the user config path, or error if it cannot be determined.
-///
-/// Delegates to `config_path()` so that `config create` and `config show`
-/// resolve the same path that config loading uses — including any CLI
-/// (`--config`) or environment variable (`WORKTRUNK_CONFIG_PATH`) overrides.
-pub fn require_user_config_path() -> anyhow::Result<PathBuf> {
-    config_path().context("Cannot determine config directory")
-}
-
 // ==================== Log Management ====================
 
 /// Top-level files created by `-vv` under `wt_logs_dir()`.
-const DIAGNOSTIC_FILES: &[&str] = &["trace.log", "output.log", "diagnostic.md"];
+const DIAGNOSTIC_FILES: &[&str] = &["trace.log", "subprocess.log", "diagnostic.md"];
 
+/// Whether a top-level file is a diagnostic log.
+///
+/// Covers the fixed `-vv` files and repo-wide internal-operation logs
+/// (`internal-{op}.log`, e.g. `internal-trash-sweep.log`) — both are
+/// branch-agnostic shared files, distinct from the per-branch hook-output
+/// subtrees and the `commands.jsonl` audit log.
 fn is_diagnostic_file(name: &str) -> bool {
-    DIAGNOSTIC_FILES.contains(&name)
+    DIAGNOSTIC_FILES.contains(&name) || (name.starts_with("internal-") && name.ends_with(".log"))
 }
 
 /// Truncate a string for a display cell, counting by Unicode scalars.
@@ -300,7 +295,7 @@ fn count_log_files_recursive(dir: &Path) -> anyhow::Result<usize> {
 ///
 /// Walks the two layers of log storage:
 ///
-/// 1. **Top-level files**: `commands.jsonl*`, `trace.log`, `output.log`, `diagnostic.md`.
+/// 1. **Top-level files**: `commands.jsonl*`, `trace.log`, `subprocess.log`, `diagnostic.md`.
 ///    Also sweeps any legacy flat `.log` files left over from the pre-nested
 ///    layout so the transition is self-healing (no explicit migrator).
 /// 2. **Top-level directories**: per-branch log trees — counted recursively

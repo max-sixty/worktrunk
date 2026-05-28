@@ -6,12 +6,14 @@
 use anyhow::Context;
 use strum::IntoEnumIterator;
 use worktrunk::HookType;
-use worktrunk::config::Approvals;
+use worktrunk::config::{Approvals, require_approvals_path};
 use worktrunk::git::{GitError, Repository};
 use worktrunk::styling::{eprintln, info_message, success_message};
 
 use crate::commands::command_approval::approve_command_batch;
-use crate::commands::project_config::{collect_commands_for_aliases, collect_commands_for_hooks};
+use crate::commands::project_config::{
+    ApprovableCommand, collect_commands_for_aliases, collect_commands_for_hooks,
+};
 
 /// Handle `wt config approvals add` command - approve all hook and alias commands in the project
 pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
@@ -28,10 +30,15 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
         .ok_or(GitError::ProjectConfigNotFound { config_path })?;
 
     // Collect all commands from the project config: hooks first (lifecycle order),
-    // then aliases (alphabetical via BTreeMap).
+    // then aliases (alphabetical via BTreeMap), then any commit-message guidance.
     let all_hooks: Vec<_> = HookType::iter().collect();
     let mut commands = collect_commands_for_hooks(&project_config, &all_hooks);
     commands.extend(collect_commands_for_aliases(&project_config));
+    if let Some(fragment) = project_config.commit_template_append() {
+        commands.push(ApprovableCommand::commit_template_append(
+            fragment.to_string(),
+        ));
+    }
 
     if commands.is_empty() {
         eprintln!("{}", info_message("No commands configured in project"));
@@ -89,7 +96,7 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
         }
 
         approvals
-            .clear_all(None)
+            .clear_all(&require_approvals_path()?)
             .context("Failed to clear approvals")?;
 
         eprintln!(
@@ -117,7 +124,7 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
         }
 
         approvals
-            .revoke_project(&project_id, None)
+            .revoke_project(&project_id, &require_approvals_path()?)
             .context("Failed to clear project approvals")?;
 
         eprintln!(

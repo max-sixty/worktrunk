@@ -33,6 +33,7 @@ use worktrunk::styling::{
     warning_message,
 };
 
+use super::backup;
 use super::commit::{CommitGenerator, StageMode};
 use super::worktree::compute_worktree_path;
 
@@ -223,13 +224,17 @@ pub struct ValidationResult {
 
 /// Check each candidate for locked/dirty state and optionally auto-commit.
 ///
-/// Returns validated candidates ready for relocation.
+/// Returns validated candidates ready for relocation. `project_append` is
+/// the approved project-level append fragment added to each auto-commit
+/// prompt. Resolved once upfront by the caller so per-worktree commits share
+/// the same approved value rather than each running its own approval gate.
 pub fn validate_candidates(
     repo: &Repository,
     config: &UserConfig,
     candidates: Vec<RelocationCandidate>,
     auto_commit: bool,
     repo_path: &Path,
+    project_append: Option<&str>,
 ) -> anyhow::Result<ValidationResult> {
     let mut validated = Vec::new();
     let mut skipped: Vec<SkippedEntry> = Vec::new();
@@ -270,7 +275,7 @@ pub fn validate_candidates(
                 // Commit using shared pipeline
                 let project_id = repo.project_identifier().ok();
                 let commit_config = config.commit_generation(project_id.as_deref());
-                CommitGenerator::new(&commit_config).commit_staged_changes(
+                CommitGenerator::new(&commit_config, project_append).commit_staged_changes(
                     &worktree,
                     false, // show_progress - already showing "Committing changes in..."
                     false, // show_no_squash_note
@@ -371,30 +376,13 @@ impl<'a> RelocationExecutor<'a> {
             }
 
             if clobber {
-                // Backup the blocker
-                let timestamp_secs = worktrunk::utils::epoch_now() as i64;
-                let datetime = chrono::DateTime::from_timestamp(timestamp_secs, 0)
-                    .unwrap_or_else(chrono::Utc::now);
-                let suffix = datetime.format("%Y%m%d-%H%M%S");
-                let backup_path = expected_path.with_file_name(format!(
-                    "{}.bak-{suffix}",
-                    expected_path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                ));
+                // Atomically move the blocker aside to a timestamped backup.
+                // A backup name already taken is never overwritten — the move
+                // falls back to the next free `-N` name.
                 let src = format_path_for_display(expected_path);
+                let backup_path = backup::back_up_clobbered_path_now(expected_path)?;
                 let dest = format_path_for_display(&backup_path);
-                eprintln!(
-                    "{}",
-                    progress_message(cformat!("Backing up {src} → {dest}"))
-                );
-                std::fs::rename(expected_path, &backup_path).with_context(|| {
-                    format!(
-                        "Failed to backup {}",
-                        format_path_for_display(expected_path)
-                    )
-                })?;
+                eprintln!("{}", progress_message(cformat!("Backed up {src} → {dest}")));
             } else {
                 let blocked_path = format_path_for_display(expected_path);
                 let msg = cformat!("Skipping <bold>{branch}</> (target blocked: {blocked_path})");
@@ -553,6 +541,13 @@ impl<'a> RelocationExecutor<'a> {
     }
 
     /// Main worktree can't use `git worktree move`; must create new + switch.
+    ///
+    /// If `worktree add` fails after the initial checkout, the main worktree
+    /// is left on `default_branch` rather than the original branch — the user
+    /// can recover with `git switch -`. Restoring it here would be best-effort
+    /// (no error surface) and the failure modes for `worktree add` (invalid
+    /// path, branch already checked out elsewhere) are clear enough that the
+    /// user knows what to do.
     fn move_main_worktree(&mut self, idx: usize, default_branch: &str) -> anyhow::Result<()> {
         let candidate = &self.pending[idx];
         let branch = candidate.branch();
@@ -560,28 +555,16 @@ impl<'a> RelocationExecutor<'a> {
         let msg = cformat!("Switching main worktree to <bold>{default_branch}</>...");
         eprintln!("{}", progress_message(msg));
 
-        // Bind the main worktree up front so the rollback path can reuse it
-        // without threading another `?` through a best-effort cleanup.
         let main_wt = self.repo.worktree_at(self.repo.repo_path()?);
 
         main_wt
-            .run_command(&["checkout", default_branch])
+            .run_command(&["checkout", "--end-of-options", default_branch])
             .with_context(|| format!("Failed to checkout default branch '{default_branch}'"))?;
 
-        // Try to create worktree; if it fails, rollback to original branch.
         let dest = candidate.expected_path.to_string_lossy();
-        let add_result = main_wt.run_command(&["worktree", "add", &dest, branch]);
-
-        if let Err(e) = add_result {
-            // Rollback: checkout the original branch to restore user context
-            let rollback_msg = cformat!("Worktree creation failed, restoring <bold>{branch}</>...");
-            eprintln!("{}", warning_message(rollback_msg));
-
-            // Best-effort rollback: log failures but don't mask the original error.
-            let _ = main_wt.run_command(&["checkout", branch]);
-
-            return Err(e).context("Failed to create worktree for main relocation");
-        }
+        main_wt
+            .run_command(&["worktree", "add", "--end-of-options", &dest, branch])
+            .context("Failed to create worktree for main relocation")?;
 
         Ok(())
     }
@@ -701,21 +684,26 @@ pub fn show_dry_run_preview(candidates: &[RelocationCandidate]) {
 }
 
 /// Show summary of relocations performed.
+///
+/// Only called after validation produced at least one candidate, so
+/// `relocated + skipped >= 1` always — each candidate either moves or is skipped.
 pub fn show_summary(relocated: usize, skipped: usize) {
-    if relocated > 0 || skipped > 0 {
-        eprintln!();
-        let plural = |n: usize| if n == 1 { "worktree" } else { "worktrees" };
-        if skipped == 0 {
-            let msg = format!("Relocated {relocated} {}", plural(relocated));
-            eprintln!("{}", success_message(msg));
-        } else {
-            let msg = format!(
-                "Relocated {relocated} {}, skipped {skipped} {}",
-                plural(relocated),
-                plural(skipped)
-            );
-            eprintln!("{}", info_message(msg));
-        }
+    eprintln!();
+    let plural = |n: usize| if n == 1 { "worktree" } else { "worktrees" };
+    let msg = if skipped == 0 {
+        format!("Relocated {relocated} {}", plural(relocated))
+    } else {
+        format!(
+            "Relocated {relocated} {}, skipped {skipped} {}",
+            plural(relocated),
+            plural(skipped)
+        )
+    };
+    // Success when worktrees moved; info when only skips (no change made).
+    if relocated > 0 {
+        eprintln!("{}", success_message(msg));
+    } else {
+        eprintln!("{}", info_message(msg));
     }
 }
 
@@ -736,15 +724,16 @@ pub fn show_no_relocations_needed(template_errors: usize) {
 }
 
 /// Show message when all candidates were skipped during validation.
+///
+/// Only called when validation skipped every candidate, and at least one
+/// candidate exists by then, so `skipped >= 1` always.
 pub fn show_all_skipped(skipped: usize) {
-    if skipped > 0 {
-        eprintln!();
-        eprintln!(
-            "{}",
-            info_message(format!(
-                "Skipped {skipped} worktree{}",
-                if skipped == 1 { "" } else { "s" }
-            ))
-        );
-    }
+    eprintln!();
+    eprintln!(
+        "{}",
+        info_message(format!(
+            "Skipped {skipped} worktree{}",
+            if skipped == 1 { "" } else { "s" }
+        ))
+    );
 }

@@ -400,14 +400,7 @@ branches = "not-a-bool"
     )
     .unwrap();
 
-    let mut settings = setup_snapshot_settings(&repo);
-    // `format_path_for_display` produces different strings depending on
-    // whether HOME contains the tempdir — macOS tempdir lives under
-    // /var/folders (absolute), Linux CI tempdir lives under HOME (tilde).
-    // The default `~/…` → `_PARENT_/…` filter only fires in the tilde case,
-    // so normalize the Linux form back to `[TEST_CONFIG]` for a stable
-    // snapshot across platforms.
-    settings.add_filter(r"_PARENT_/[^\s,]*test-config\.toml", "[TEST_CONFIG]");
+    let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
@@ -539,8 +532,7 @@ fn test_list_config_malformed_non_section_field_warns_on_stderr(repo: TestRepo) 
     )
     .unwrap();
 
-    let mut settings = setup_snapshot_settings(&repo);
-    settings.add_filter(r"_PARENT_/[^\s,]*test-config\.toml", "[TEST_CONFIG]");
+    let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
@@ -573,7 +565,11 @@ fn test_list_config_malformed_system_config_warns_on_stderr(repo: TestRepo) {
     fs::write(&system_config, "[list]\nbranches = \"not-a-bool\"\n").unwrap();
 
     let mut settings = setup_snapshot_settings(&repo);
-    settings.add_filter(r"_REPO_/system-config\.toml", "[TEST_SYSTEM_CONFIG_FILE]");
+    crate::common::add_path_placeholder_filter(
+        &mut settings,
+        r"_REPO_/system-config\.toml",
+        "[TEST_SYSTEM_CONFIG_FILE]",
+    );
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
@@ -595,7 +591,11 @@ fn test_list_config_malformed_system_config_non_section_field(repo: TestRepo) {
     .unwrap();
 
     let mut settings = setup_snapshot_settings(&repo);
-    settings.add_filter(r"_REPO_/system-config\.toml", "[TEST_SYSTEM_CONFIG_FILE]");
+    crate::common::add_path_placeholder_filter(
+        &mut settings,
+        r"_REPO_/system-config\.toml",
+        "[TEST_SYSTEM_CONFIG_FILE]",
+    );
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);

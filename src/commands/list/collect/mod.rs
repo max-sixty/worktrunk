@@ -10,50 +10,104 @@
 //! The skeleton (placeholder table with loading indicators) must render as fast as possible
 //! to give users immediate feedback. Every git command before skeleton adds latency.
 //!
-//! ### Fixed Command Count (O(1), not O(N))
+//! ### Forks on the Critical Path
 //!
-//! Pre-skeleton runs a **fixed number of git commands** regardless of worktree count.
-//! This is achieved through:
-//! - **Batching** — timestamp fetch passes all SHAs to one `git log --no-walk` command
-//! - **Parallelization** — independent commands run concurrently via `join!` macro
+//! A steady-state run reaches the skeleton through five `git` subprocess
+//! forks (six in repos with `extensions.worktreeConfig=true` — see #3
+//! below). Fork *count* is O(1) — independent of worktree or branch
+//! count — because each batches as much as it can. Fork *work* scales with
+//! N (refs read, SHAs resolved); on a fast Linux system N=40 lands
+//! ~30–80 ms.
 //!
-//! **Steady-state (6-8 commands):**
+//! | # | Command | Source | Role |
+//! |---|---------|--------|------|
+//! | 1 | `git rev-parse --git-common-dir --is-inside-work-tree --show-toplevel --git-dir --symbolic-full-name HEAD` | [`Repository::prewarm`] (`prewarm_rev_parse`) | Five facts in one fork: shared `.git`, in-worktree gate, worktree root, per-worktree `.git/worktrees/<name>`, current branch. Populates process-global caches. Parallel with #2 at process startup. |
+//! | 2 | `git config --list -z` (cwd = discovery path) | [`Repository::prewarm`] (`prewarm_git_config`) | Whole merged config (system + global + local) in one shot, NUL-delimited so values containing `\n` or `=` parse unambiguously. Stashed in `GIT_CONFIG_PRELOAD` keyed by discovery path; every later `config_last("…")` reads from memory. Parallel with #1. |
+//! | 3 | `git config --list -z` (cwd = `git_common_dir`) | [`Repository::all_config`] | **Conditional.** [`Repository::at`] consumes #2's preload into `cache.all_config`, so `all_config()` is a memory hit on a normal repo. This fork only fires when `prewarm_git_config` declined the preload because `extensions.worktreeConfig=true` — there `--list` from a linked worktree misses the main-worktree `config.worktree` overrides (most importantly `core.bare = true` for the `myproject/.git + sibling worktrees` layout), so `all_config` re-forks from the common dir to see the full merged set. See `prewarm_git_config` for the full reasoning. |
+//! | 4 | `git worktree list --porcelain` | [`Repository::list_worktrees`] | Path, HEAD SHA, branch, and flags per worktree — the row source for the skeleton. The picker prelude triggers this once for `num_items_estimate`; collect's rayon scope then hits the cache. |
+//! | 5 | `git for-each-ref --format=… refs/heads/` | [`Repository::local_branches`] inside collect's `rayon::scope` | Local branch tips (name, SHA, committer date, upstream) for branch-only rows (`branches=true`) and for the stale-default-branch check. `remotes=true` adds a sibling `refs/remotes/` fork. The scope joins; this fork gates the skeleton. |
+//! | 6 | `git log --no-walk --no-show-signature --format=… SHA₁ … SHA_N` | collect, after the scope | Batched commit metadata for every worktree HEAD + branch tip. See breakdown below. |
 //!
-//! | Command | Purpose | Parallel |
-//! |---------|---------|----------|
-//! | `git worktree list --porcelain` | Enumerate worktrees | ✓ |
-//! | `git config worktrunk.default-branch` | Cached default branch | ✓ |
-//! | `git config --bool core.bare` | Bare repo check for expected-path logic | ✓ |
-//! | `git rev-parse --show-toplevel` | Worktree root for project config | ✓ |
-//! | `git config remote.*.url` (1-3 calls) | Project identifier (for config + path check) | ✓ |
-//! | `git for-each-ref refs/heads` | Only with `--branches` flag | ✓ |
-//! | `git for-each-ref refs/remotes` | Only with `--remotes` flag | ✓ |
-//! | `git log --no-walk --format='%H\0%ct\0%s' SHA1 SHA2 ...` | **Batched** commit details (timestamp + subject) | Sequential (needs SHAs) |
+//! Things that *look* like forks but aren't, on the steady-state path:
+//! `git config worktrunk.default-branch`, `git config --bool core.bare`,
+//! `git config remote.*.url`, [`Repository::is_bare`] — each is a
+//! `config_last("…")` lookup served from #2's in-memory map (or from #3
+//! when the conditional fork above did fire). They appear in the rayon
+//! scope as logical fetches but no subprocess fires for them warm. The
+//! same is true for [`Repository::default_branch`] once
+//! `worktrunk.default-branch` is cached (the steady-state case).
 //!
-//! The batched `git log` fetches subjects too, which the skeleton itself
-//! doesn't strictly need — only timestamps are required for sort order. It
-//! rides along for free: git has to resolve each commit object anyway, and
-//! the subject bytes add no measurable latency to the round trip. The
-//! full `(timestamp, subject)` map is handed to the post-skeleton loop that
-//! populates `ListItem.commit` directly — no per-SHA `git log -1` fork path.
+//! Things that fire **once per repo, ever**:
+//!
+//! - [`Repository::default_branch`] falling through to
+//!   `git ls-remote --symref <remote> HEAD` when neither
+//!   `worktrunk.default-branch` nor `refs/remotes/<remote>/HEAD` is set.
+//!   100 ms – 2 s on the wire. The result persists to
+//!   `worktrunk.default-branch` so subsequent runs are a cache hit. This is
+//!   worktrunk's one accepted wire-path exception — see CLAUDE.md →
+//!   "Network Access".
+//!
+//! ### #6 — the batched commit-details fork
+//!
+//! ```text
+//! git log --no-walk --no-show-signature \
+//!   --format=%H%x00%h%x00%ct%x00%s \
+//!   SHA₁ SHA₂ … SHA_N
+//! ```
+//!
+//! - `--no-walk` — don't traverse history. Without it, `git log SHA₁ SHA₂`
+//!   walks the ancestry of each starting point and prints thousands of
+//!   commits. With it, one record per named SHA. Turns this from
+//!   O(history) into O(N refs).
+//! - `--no-show-signature` — skip GPG verification. If `gpg.program` is set
+//!   and any of these commits are signed, the default forks `gpg` per
+//!   commit; disabled here.
+//! - `--format=%H%x00%h%x00%ct%x00%s` — four fields per commit,
+//!   NUL-separated because subjects can contain anything except NUL:
+//!   - `%H` full SHA, `%h` abbreviated SHA, `%ct` committer date (Unix
+//!     epoch), `%s` subject (first line of message).
+//!
+//! SHAs come from #4 (worktree HEADs) ∪ #5 (branch tips), deduplicated.
+//! Argv length scales with N — Linux `ARG_MAX` (~128 KB) bounds the
+//! unchunked form at roughly 3,000 SHAs.
+//!
+//! What each field feeds:
+//! - `%ct` — sort order on the skeleton. This is the *only* reason #6 is
+//!   pre-skeleton; the skeleton can't pick row order without it.
+//! - `%ct` again, post-skeleton — Age column ("3 hours ago").
+//! - `%s` post-skeleton — Message column.
+//! - `%h` post-skeleton — abbreviated-SHA cell.
+//!
+//! Subjects and abbreviated SHAs ride along for free: git resolves each
+//! commit object to read its timestamp anyway, so the extra bytes add no
+//! measurable latency to the round trip. Without this batch you'd be
+//! forking `git log -1` per SHA later — same data, N forks instead of one.
+//! The full `(timestamp, subject)` map is handed to the post-skeleton loop
+//! that populates `ListItem.commit` directly.
+//!
 //! When the batch fails (e.g., a listed SHA was deleted mid-run), the
 //! failure is surfaced once and Age/Message cells render placeholders for
 //! that run.
 //!
-//! **Non-git operations (negligible latency):**
-//! - Path canonicalization — detect current worktree
-//! - Project config file read — check if URL column needed (no template expansion)
-//! - Config resolution — merge project-specific settings (uses cached project identifier)
+//! ### Non-git work on the path
 //!
-//! ### First-Run Behavior
+//! Negligible latency, but worth naming:
+//! - Path canonicalization — detect current worktree.
+//! - Project config file read (`.config/wt.toml`) via
+//!   `ProjectConfig::load`. [`Repository::url_template`] reads `list.url`
+//!   from this file — TOML I/O, not git config, and no subprocess.
+//! - Config resolution — merge project-specific settings (uses cached
+//!   project identifier).
 //!
-//! When `worktrunk.default-branch` is not cached, `default_branch()` runs additional
-//! commands to detect it:
-//! 1. Query primary remote (origin/HEAD or `git ls-remote`)
-//! 2. Fall back to local inference (check init.defaultBranch, common names)
-//! 3. Cache result to `git config worktrunk.default-branch`
+//! ### First-run behavior
 //!
-//! Subsequent runs use the cached value — only one `git config` call.
+//! On a fresh clone with `worktrunk.default-branch` unset,
+//! [`Repository::default_branch`] adds one extra step on the path: try
+//! `refs/remotes/<remote>/HEAD` locally, fall through to
+//! `git ls-remote --symref` (the wire-path exception above), fall further
+//! back to local inference (`init.defaultBranch`, common branch names).
+//! The result is cached to `worktrunk.default-branch` so every subsequent
+//! run is a memory hit served from #2.
 //!
 //! ### Post-Skeleton Operations
 //!
@@ -151,6 +205,7 @@
 //! | `is-ancestor/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
 //! | `has-added-changes/` | `git::repository::sha_cache` | `{branch_sha}-{target_sha}.json` | Never — content-addressed |
 //! | `diff-stats/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
+//! | `ahead-behind/` | `git::repository::sha_cache` | `{base_sha}-{head_sha}.json` | Never — content-addressed |
 //! | `ci-status/` | `commands::list::ci_status::cache` | `{branch}.json` | TTL 30–60s + HEAD SHA check |
 //! | `summary/{branch}/` | `summary` | `{diff_hash}.json` | Miss if no file exists for the current hash; siblings pruned on write |
 //!
@@ -158,7 +213,7 @@
 //!
 //! - **SHA-pair**: pure function of two commit SHAs. Never stale, no TTL, no invalidation.
 //!   Used by all `sha_cache` kinds (merge-tree conflicts, merge-add probes, ancestry
-//!   checks, file-change probes, diff stats).
+//!   checks, file-change probes, diff stats, ahead/behind counts).
 //! - **Branch + TTL + HEAD**: external mutable state (CI API, remote refs). TTL bounds
 //!   staleness; the HEAD check invalidates early when the branch moves.
 //! - **Branch + content-addressed hash in filename**: content hash (SHA-256
@@ -177,6 +232,7 @@
 //! | `IsAncestor` | `sha_cache` (is-ancestor) |
 //! | `HasFileChanges` | `sha_cache` (has-added-changes) |
 //! | `BranchDiff` | `sha_cache` (diff-stats, skipped when sparse checkout is active) |
+//! | `AheadBehind`, `Upstream` | `sha_cache` (ahead-behind); on a cold cache both columns are pre-filled from `for-each-ref %(ahead-behind:SHA)` walks — one against the default branch (`main↕`, in `RefSnapshot::capture_ahead_behind`) and one per unique upstream SHA (`Remote⇅`, in `Repository::prime_upstream_ahead_behind_cache`) |
 //! | `CiStatus` | `ci_status::cache` |
 //! | `SummaryGenerate` | `summary` |
 //!
@@ -184,11 +240,7 @@
 //!
 //! ### Already optimized (not cache candidates)
 //!
-//! - `AheadBehind` — batch-optimized via single `git for-each-ref %(ahead-behind:main)`
-//!   (~11ms for all branches); per-branch tasks read the in-memory cache
 //! - `CommittedTreesMatch` — single `git rev-parse` resolving both tree SHAs (~1ms)
-//! - `Upstream` — upstream names batch-fetched via single `git for-each-ref
-//!   %(upstream:short)`; per-branch tasks read the in-memory cache
 //!
 //! ### Cached via tree SHA
 //!
@@ -264,14 +316,32 @@ struct TableRenderPlan {
 }
 
 impl TableRenderPlan {
-    fn render(mut self) -> anyhow::Result<()> {
+    fn render(mut self) -> anyhow::Result<bool> {
+        if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
+            // `progressive_table` is always `None` here: `collect()` early-exits
+            // for `WORKTRUNK_FIRST_OUTPUT` whenever progressive rendering is on
+            // (`show_progress || progressive_handler.is_some()`), so this render
+            // path runs only in buffered mode.
+            print_first_buffered_line(&self.header)?;
+            return Ok(true);
+        }
+
         if let Some(mut table) = self.progressive_table.take() {
             table.finalize(self.rows, self.summary)?;
         } else {
             print_buffered_table(&self.header, &self.rows, &self.summary);
         }
-        Ok(())
+        Ok(false)
     }
+}
+
+fn print_first_buffered_line(header: &str) -> anyhow::Result<()> {
+    use std::io::Write as _;
+
+    let mut stdout = std::io::stdout();
+    writeln!(stdout, "{header}")?;
+    stdout.flush()?;
+    Ok(())
 }
 
 fn print_buffered_table(header: &str, rows: &[String], summary: &str) {
@@ -318,13 +388,20 @@ pub struct CollectOptions {
 
     /// Captured ref state for this list invocation.
     ///
-    /// Built once during the pre-skeleton phase by
-    /// [`Repository::capture_refs_with_ahead_behind`] and shared (cheaply,
-    /// behind `Arc`) into every task. Tasks resolve target ref names to
-    /// commit SHAs through this snapshot, then call the `_by_sha` variants
-    /// of cached methods — bypassing the ambient ref→SHA cache entirely.
-    /// `None` when capture failed (degraded mode).
+    /// Built once during the pre-skeleton phase (or during single-item
+    /// population) and shared (cheaply, behind `Arc`) into every task.
+    /// Tasks resolve target ref names to commit SHAs through this snapshot,
+    /// then call the `_by_sha` variants of cached methods — bypassing the
+    /// ambient ref→SHA cache entirely. The full list path may include
+    /// batched ahead/behind data; single-item callers intentionally use a
+    /// plain ref snapshot and let per-row tasks fall back to per-pair
+    /// queries. `None` when capture failed (degraded mode).
     pub snapshot: Option<std::sync::Arc<worktrunk::git::RefSnapshot>>,
+
+    /// Whether `WorkingTreeDiffTask` should include untracked files in
+    /// `HEAD±`. Set by `wt list --full` and `wt statusline`; consumed
+    /// in `tasks.rs` where the cost/cutover rationale lives.
+    pub include_untracked_in_working_diff: bool,
 }
 
 fn worktree_branch_set(worktrees: &[WorktreeInfo]) -> HashSet<&str> {
@@ -646,6 +723,7 @@ pub fn collect(
         collect_deadline,
         list_width,
         progressive_handler,
+        include_untracked_in_working_diff,
     ) = match show_config {
         ShowConfig::Resolved {
             show_branches,
@@ -663,6 +741,10 @@ pub fn collect(
             collect_deadline,
             list_width,
             progressive_handler,
+            // Picker is the only `Resolved` caller and runs the same fast
+            // bucket as default `wt list` (skips BranchDiff/CiStatus), so
+            // it also opts out of the untracked-inclusive working diff.
+            false,
         ),
         ShowConfig::DeferredToParallel {
             cli_branches,
@@ -700,6 +782,7 @@ pub fn collect(
                 collect_deadline,
                 None,
                 None,
+                show_full,
             )
         }
     };
@@ -988,6 +1071,7 @@ pub fn collect(
         default_branch: default_branch.clone(),
         integration_targets: None,
         snapshot: None,
+        include_untracked_in_working_diff,
     };
 
     // Track expected results per item - populated as spawns are queued
@@ -1081,9 +1165,12 @@ pub fn collect(
         .unwrap_or(PLACEHOLDER_REVEAL_DELAY);
     let placeholder_reveal_at = std::time::Instant::now() + reveal_delay;
 
-    // Early exit for benchmarking skeleton render time / time-to-first-output
+    // Early exit for benchmarking skeleton render time / progressive
+    // time-to-first-output. Buffered/piped TTFP continues to the first real
+    // table write below, because there is no skeleton output in that mode.
     if std::env::var_os("WORKTRUNK_SKELETON_ONLY").is_some()
-        || std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some()
+        || (std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some()
+            && (show_progress || progressive_handler.is_some()))
     {
         return Ok(None);
     }
@@ -1112,7 +1199,8 @@ pub fn collect(
     // See: https://gitlab.com/gitlab-org/git/-/merge_requests/148 (scalar's fsmonitor workaround)
     // See: https://github.com/jj-vcs/jj/issues/6440 (jj hit same fsmonitor issue)
     let previous_branch_cell: OnceCell<Option<String>> = OnceCell::new();
-    let snapshot_cell: OnceCell<Option<worktrunk::git::RefSnapshot>> = OnceCell::new();
+    let snapshot_cell: OnceCell<Option<std::sync::Arc<worktrunk::git::RefSnapshot>>> =
+        OnceCell::new();
 
     rayon::scope(|s| {
         // Previous branch lookup (for gutter symbol)
@@ -1120,16 +1208,90 @@ pub fn collect(
             let _ = previous_branch_cell.set(repo.switch_previous());
         });
 
-        // Capture ref state. One `for-each-ref refs/heads/ refs/remotes/`
-        // plus (when default_branch is known) one `for-each-ref
-        // %(ahead-behind:BASE)` batch. The snapshot replaces the prior
+        // Capture ref state: `for-each-ref refs/heads/ refs/remotes/`,
+        // plus — when default_branch is known and the per-base
+        // ahead-behind cache doesn't already cover the branches — one
+        // `for-each-ref %(ahead-behind:BASE)` walk (scoped to the cold
+        // subset; warm runs do neither). The snapshot replaces the prior
         // `commit_shas` priming + `batch_ahead_behind` pair: tasks consume
         // it by SHA, dodging ref→SHA cache staleness.
-        s.spawn(|_| {
+        //
+        // After the snapshot is built, an inner spawn primes the
+        // `Remote⇅` cache off its already-scanned inventories — see the
+        // nested `s.spawn` below for the rationale.
+        //
+        // TODO(ahead-behind-pool): the `%(ahead-behind)` walk that runs
+        // here on a cold cache is serial — it blocks this scope, and the
+        // big task pool can't open until it returns. Nothing downstream of
+        // work-item generation actually needs the ahead/behind *counts*
+        // (only the per-row `AheadBehindTask` reads them, and it has a
+        // per-SHA fallback) — only the cheap `for-each-ref refs/heads/
+        // refs/remotes/` ref scan gates work-item generation. So the walk
+        // could become a single work item in the pool, overlapping the
+        // other ~N workers, instead of a serial prelude. That needs an
+        // inter-task dependency (the per-row tasks would wait on it, or it
+        // would emit their results directly) — the work-item model has
+        // none today.
+        s.spawn(|s| {
             let snap = match default_branch.as_deref() {
                 Some(db) => repo.capture_refs_with_ahead_behind(db).ok(),
                 None => repo.capture_refs().ok(),
-            };
+            }
+            .map(std::sync::Arc::new);
+
+            // Prime the `ahead-behind/` SHA-cache for the `Remote⇅`
+            // column, pairing each local branch with its configured
+            // upstream. Mirrors the `main↕` priming inside
+            // `capture_refs_with_ahead_behind`, but per-upstream-group
+            // instead of single-base: one serial `for-each-ref
+            // %(ahead-behind:UPSTREAM_SHA)` walk per unique upstream
+            // that's both cold and above the same threshold.
+            //
+            // Nested inside this spawn (rather than a sibling) so it can
+            // read the snapshot's already-scanned local/remote
+            // inventories — a sibling spawn would race the snapshot's
+            // own scans and (when `--remotes` is off) fire a redundant
+            // `for-each-ref refs/remotes/`. The primer still runs in
+            // parallel with downstream scope work (fsmonitor, etc.); it
+            // just gates on its data dependency.
+            //
+            // Scope to branches that will actually render an
+            // `UpstreamTask` row: with `--branches` that's every local;
+            // without it that's just the worktree-attached subset.
+            // Otherwise plain `wt list` on a repo with many stale
+            // tracking branches would block the worker pool on a serial
+            // batch for rows nobody sees.
+            if let Some(snap_arc) = snap.as_ref() {
+                let snap_for_primer = std::sync::Arc::clone(snap_arc);
+                s.spawn(move |_| {
+                    // Honor `list.task-timeout-ms` for the primer's git
+                    // commands — these are the same `for-each-ref
+                    // %(ahead-behind)` / `rev-list` invocations that
+                    // used to run inside `UpstreamTask`, where the
+                    // worker loop sets the per-thread timeout. Without
+                    // this, `wt list` could sit at the skeleton on a
+                    // pathologically slow git until the (untimed) batch
+                    // returned.
+                    worktrunk::shell_exec::set_command_timeout(command_timeout);
+                    let all_locals = snap_for_primer.local_branches();
+                    let filtered_locals: Vec<LocalBranch>;
+                    let candidates: &[LocalBranch] = if show_branches {
+                        all_locals
+                    } else {
+                        filtered_locals = all_locals
+                            .iter()
+                            .filter(|b| worktree_branches.contains(b.name.as_str()))
+                            .cloned()
+                            .collect();
+                        &filtered_locals
+                    };
+                    repo.prime_upstream_ahead_behind_cache(
+                        candidates,
+                        snap_for_primer.remote_branches(),
+                    );
+                });
+            }
+
             let _ = snapshot_cell.set(snap);
         });
 
@@ -1143,10 +1305,7 @@ pub fn collect(
 
     // Extract results from cells
     let previous_branch = previous_branch_cell.into_inner().flatten();
-    let snapshot = snapshot_cell
-        .into_inner()
-        .flatten()
-        .map(std::sync::Arc::new);
+    let snapshot = snapshot_cell.into_inner().flatten();
 
     // Resolve integration targets from the snapshot. Same OR semantics
     // as `Repository::integration_reason` (`primary` + optional
@@ -1493,8 +1652,10 @@ pub fn collect(
         ),
     });
 
-    if let Some(table_render) = table_render {
-        table_render.render()?;
+    if let Some(table_render) = table_render
+        && table_render.render()?
+    {
+        return Ok(None);
     }
 
     // Status symbols are now computed during data collection (both modes), no fallback needed
@@ -1723,11 +1884,11 @@ pub fn populate_item(
         options.default_branch = repo.default_branch();
     }
     if options.snapshot.is_none() {
-        options.snapshot = match options.default_branch.as_deref() {
-            Some(db) => repo.capture_refs_with_ahead_behind(db).ok(),
-            None => repo.capture_refs().ok(),
-        }
-        .map(std::sync::Arc::new);
+        // Statusline needs one row. Avoid the list path's repo-wide
+        // `for-each-ref %(ahead-behind:BASE)` prelude here; the
+        // AheadBehind/Upstream tasks already have cached per-pair
+        // fallbacks that do work only for this item.
+        options.snapshot = repo.capture_refs().ok().map(std::sync::Arc::new);
     }
     if options.integration_targets.is_none() {
         options.integration_targets = options

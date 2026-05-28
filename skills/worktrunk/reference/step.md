@@ -35,6 +35,7 @@ $ wt step push
 - [`promote`](#wt-step-promote) — [experimental] Swap a branch into the main worktree
 - [`prune`](#wt-step-prune) — Remove worktrees and branches merged into the default branch
 - [`relocate`](#wt-step-relocate) — [experimental] Move worktrees to expected paths
+- [`tether`](#wt-step-tether) — [experimental] Run a command; kill its whole process tree when its worktree is removed
 - [`<alias>`](https://worktrunk.dev/extending/#aliases) — Run a configured command alias
 
 ## Command reference
@@ -58,6 +59,8 @@ Commands:
   promote       [experimental] Swap a branch into the main worktree
   prune         [experimental] Remove worktrees merged into the default branch
   relocate      [experimental] Move worktrees to expected paths
+  tether        [experimental] Run a command; kill its whole process tree when its worktree is
+                removed
 
 Options:
   -h, --help
@@ -71,8 +74,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -130,9 +133,6 @@ Options:
   -b, --branch <BRANCH>
           Branch to operate on (defaults to current worktree)
 
-      --no-hooks
-          Skip hooks
-
       --stage <STAGE>
           What to stage before committing [default: all]
 
@@ -148,6 +148,9 @@ Options:
           Print help (see a summary with '-h')
 
 Automation:
+      --no-hooks
+          Skip hooks
+
       --format <FORMAT>
           Output format
 
@@ -167,8 +170,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -229,9 +232,6 @@ Arguments:
           Defaults to default branch.
 
 Options:
-      --no-hooks
-          Skip hooks
-
       --stage <STAGE>
           What to stage before committing [default: all]
 
@@ -247,6 +247,9 @@ Options:
           Print help (see a summary with '-h')
 
 Automation:
+      --no-hooks
+          Skip hooks
+
       --format <FORMAT>
           Output format
 
@@ -266,8 +269,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -337,8 +340,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -490,8 +493,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -540,7 +543,7 @@ Show available template variables:
 $ wt step eval --dry-run '{{ branch }}'
 branch=feature/auth-oauth2
 worktree_path=/home/user/projects/myapp-feature-auth-oauth2
-...
+---
 Result: feature/auth-oauth2
 ```
 
@@ -574,8 +577,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -657,8 +660,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -737,8 +740,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -754,11 +757,11 @@ Bulk-removes worktrees and branches that are integrated into the default branch,
 
 In `wt list`, candidates show `_` (same commit) or `⊂` (content integrated). Run `--dry-run` to preview. See `wt remove --help` for the full integration criteria.
 
-Locked worktrees and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal.
+Locked worktrees and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal; a candidate whose hooks include an unapproved project command is skipped with `(approval required)` (pre-approve with `wt config approvals add`, or pass `--yes`).
 
 ### Min-age guard
 
-Worktrees younger than `--min-age` (default: 1 hour) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
+Worktrees younger than `--min-age` (default: 1 day) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
 
 ```bash
 $ wt step prune --min-age=0s     # no age guard
@@ -793,7 +796,7 @@ Options:
       --min-age <MIN_AGE>
           Skip worktrees younger than this
 
-          [default: 1h]
+          [default: 1d]
 
       --foreground
           Run removal in foreground (block until complete)
@@ -818,8 +821,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts
@@ -866,7 +869,9 @@ this by using a temporary location.
 ### Clobbering
 
 With `--clobber`, non-worktree paths at target locations are moved to
-`<path>.bak-<timestamp>` before relocating.
+`<path>.bak.<timestamp>` before relocating. If that name is already taken,
+the move counts up (`…-2`, `…-3`, …) until it finds a free name, so an
+existing backup is never overwritten.
 
 ### Main worktree behavior
 
@@ -906,7 +911,8 @@ Options:
       --clobber
           Backup non-worktree paths at target locations
 
-          Moves blocking paths to <path>.bak-<timestamp>.
+          Moves blocking paths to <path>.bak.<timestamp>. If that name is taken, counts up (…-2, …-3
+          , …) to a free name.
 
   -h, --help
           Print help (see a summary with '-h')
@@ -931,8 +937,83 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
+
+  -y, --yes
+          Skip approval prompts
+```
+
+## wt step tether
+
+[experimental]
+
+Run a command; kill its whole process tree when its worktree is removed. Teardown is automatic and needs no pre-remove hook; the group gets SIGTERM then SIGKILL.
+
+### Why
+
+A `post-start` hook to start a long-lived process and a `pre-remove` hook to
+stop it is usually enough. But `pre-remove` only runs when worktrunk removes
+the worktree, so a `git worktree remove`, an `rm -rf`, or a crashed hook skips
+it. Across enough worktree churn some process is bound to outlive its worktree,
+and with no cleanup these leaks accumulate (on macOS they eventually saturate
+`fseventsd`). `tether` removes the need for a `pre-remove`: it ties the
+command's lifetime to the worktree and kills the whole process group once the
+worktree is gone.
+
+### Arguments
+
+Arguments after `--` are the program and its arguments, run directly, no shell.
+
+```bash
+$ wt step tether -- npm run dev
+```
+
+For pipes, redirects, variables, or globs, wrap in `sh -c`:
+
+```bash
+$ wt step tether -- sh -c 'PORT=$P npm run dev | tee dev.log'
+```
+
+### Examples
+
+Run a dev server, torn down automatically when the worktree goes away:
+
+```toml
+# .config/wt.toml
+[post-start]
+server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
+```
+
+Note: This command is experimental and may change in future versions.
+
+### Command reference
+
+```
+wt step tether - [experimental] Run a command; kill its whole process tree when its worktree is removed
+
+Teardown is automatic and needs no pre-remove hook; the group gets SIGTERM then SIGKILL.
+
+Usage: wt step tether [OPTIONS] -- <COMMAND>...
+
+Arguments:
+  <COMMAND>...
+          Command to run (after --, run directly, no shell)
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Global Options:
+  -C <path>
+          Working directory for this command
+
+      --config <path>
+          User config file path
+
+  -v, --verbose...
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts

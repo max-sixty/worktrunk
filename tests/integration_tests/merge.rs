@@ -3,7 +3,7 @@ use crate::common::{
     mock_commands::{create_mock_cargo, create_mock_llm_auth},
     repo, repo_with_alternate_primary, repo_with_feature_worktree, repo_with_main_worktree,
     repo_with_multi_commit_feature, repo_with_remote, setup_snapshot_settings, wait_for_file,
-    wait_for_file_content,
+    wait_for_file_content, wait_for_worktree_removed,
 };
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
@@ -1279,7 +1279,7 @@ pub struct Hook {
 pub enum HookKind {
     PreMerge,
     PreRemove,
-    PostStart,
+    PostCreate,
 }
 
 /// Registry of hooks keyed by name.
@@ -1743,6 +1743,132 @@ fn test_merge_primary_on_different_branch_dirty(mut repo: TestRepo) {
         &["main"],
         Some(&feature_wt)
     ));
+}
+
+/// `wt merge` resolves both teardown hooks from the invoking worktree — the
+/// feature worktree `wt merge` ran in. `post-merge` runs in the merge
+/// destination and `pre-remove` in the feature worktree, but both select their
+/// commands from the feature worktree's `.config/wt.toml`. `main` — the
+/// destination — has no project config, so a destination-sourced `post-merge`
+/// would select nothing and its marker would never appear.
+#[rstest]
+fn test_merge_teardown_hooks_read_invoking_worktree_config(mut repo: TestRepo) {
+    use crate::common::wait_for_file_content;
+
+    let pre_remove_marker = repo.root_path().join("pre-remove-ran.txt");
+    let post_merge_marker = repo.root_path().join("post-merge-ran.txt");
+
+    // Both hooks live only in the feature worktree's `.config/wt.toml`. `main`
+    // — the merge destination — has no project config, so `post-merge` fires
+    // only by resolving against the invoking feature worktree's config.
+    let feature_wt = repo.add_worktree_with_commit("feature-pm", "feature.txt", "x", "feat: x");
+    let config_body = format!(
+        r#"pre-remove = "echo 'removing {{{{ branch }}}}' > {}"
+[post-merge]
+sync = "echo 'merged {{{{ branch }}}}' > {}"
+"#,
+        pre_remove_marker.to_slash_lossy(),
+        post_merge_marker.to_slash_lossy(),
+    );
+    std::fs::create_dir_all(feature_wt.join(".config")).unwrap();
+    std::fs::write(feature_wt.join(".config/wt.toml"), &config_body).unwrap();
+    repo.run_git_in(&feature_wt, &["add", ".config/wt.toml"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add merge hooks"]);
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_wt)
+        .args(["merge", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    wait_for_file_content(&post_merge_marker);
+    assert_eq!(
+        std::fs::read_to_string(&post_merge_marker).unwrap().trim(),
+        "merged feature-pm",
+        "post-merge runs in the destination but selects its config from the \
+         invoking feature worktree"
+    );
+    // pre-remove runs synchronously in the feature worktree before removal.
+    assert_eq!(
+        std::fs::read_to_string(&pre_remove_marker).unwrap().trim(),
+        "removing feature-pm",
+        "pre-remove should run from the invoking feature worktree's config"
+    );
+}
+
+#[rstest]
+fn test_merge_pre_remove_dirty_mutation_aborts_cleanup(mut repo: TestRepo) {
+    repo.write_project_config(r#"pre-remove = "echo late > late.txt""#);
+    repo.commit("Add pre-remove hook");
+
+    let branch = "feature-pre-remove-dirty";
+    let feature_wt = repo.add_worktree_with_commit(branch, "feature.txt", "x", "feat: x");
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_wt)
+        .args(["merge", "--yes"])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "wt merge should fail cleanup after pre-remove dirties the worktree"
+    );
+    assert!(
+        feature_wt.join("late.txt").exists(),
+        "dirty file from pre-remove hook should be preserved"
+    );
+    assert!(
+        feature_wt.exists(),
+        "dirty feature worktree should not be removed"
+    );
+    repo.run_git(&["rev-parse", "--verify", &format!("refs/heads/{branch}")]);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Cannot remove worktree") && stderr.contains("late.txt"),
+        "expected dirty-worktree cleanup failure, got:\n{stderr}"
+    );
+}
+
+#[rstest]
+fn test_merge_pre_remove_new_commit_keeps_branch(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"pre-remove = "sh -c 'printf late > late-commit.txt && git add late-commit.txt && git commit -m late-pre-remove'""#,
+    );
+    repo.commit("Add pre-remove hook");
+
+    let branch = "feature-pre-remove-commit";
+    let feature_wt = repo.add_worktree_with_commit(branch, "feature.txt", "x", "feat: x");
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_wt)
+        .args(["merge", "--yes"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "wt merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    wait_for_worktree_removed(&feature_wt);
+
+    let branch_ref = format!("refs/heads/{branch}");
+    repo.run_git(&["rev-parse", "--verify", &branch_ref]);
+    let late_file = repo.git_output(&["show", "--format=", "--name-only", &branch_ref]);
+    assert!(
+        late_file.lines().any(|line| line == "late-commit.txt"),
+        "branch should retain the pre-remove hook commit"
+    );
 }
 
 #[rstest]
@@ -3709,5 +3835,76 @@ fn test_merge_removes_branch_when_local_main_diverged_from_upstream(
     assert!(
         !branch_check.status.success(),
         "feature branch should be deleted after a clean merge"
+    );
+}
+
+/// Approval-boundary TOCTOU regression: a `post-merge` command that enters the
+/// invoking worktree's `.config/wt.toml` only via the rebase — after the gate
+/// froze the plan — must not run.
+///
+/// `wt merge` selects hooks from the feature worktree it runs in, at the gate,
+/// then rebases that worktree onto the target. Here the target branch carries
+/// an un-approved `post-merge`; the feature branch branched before it, so the
+/// gate sees a clean config and freezes an empty *project* selection. The
+/// rebase then brings the target's `.config/wt.toml` into the feature worktree,
+/// but the executor runs only the frozen `ApprovedHookPlan` — a re-read of the
+/// now-mutated config would be remote code execution on a fresh clone.
+///
+/// The wait is bounded *causally*, not by a fixed sleep: a user-config
+/// `post-merge` (no approval, runs via the same background pipeline as project
+/// post-merge, spawned by the same `announcer.flush()` before `wt merge`
+/// returns) writes `control`. Observing `control` proves the post-merge
+/// background runner has started and drained for this scenario on this
+/// machine/load — the dominant CI-load failure mode (cold spawn under
+/// llvm-cov) is then excluded, so the injected marker's absence is meaningful
+/// rather than a fixed-timeout false negative. Sibling detached pipelines
+/// (user vs project source) differ only by a `touch`'s sub-millisecond skew
+/// once spawned; the short grace covers it.
+#[rstest]
+fn test_post_merge_hook_from_rebased_in_config_does_not_run(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+
+    // Markers live at the repo root — they outlive the feature worktree, which
+    // `wt merge` removes.
+    let control = repo.root_path().join("post-merge-control-ran");
+    let injected = repo.root_path().join("injected-post-merge-ran");
+
+    // Positive control: a user-config `post-merge` (needs no approval, always
+    // selected). Its marker landing is the causal bound for the assertion.
+    repo.write_test_config(&format!(
+        "[post-merge]\ncontrol = \"touch {}\"\n",
+        control.to_slash_lossy()
+    ));
+
+    // The target branch (`main`) gains an un-approved `post-merge` after
+    // `feature` branched off, so the gate — reading the feature worktree —
+    // never sees it. The rebase will bring this `.config/wt.toml` into the
+    // feature worktree before the executor runs.
+    repo.write_project_config(&format!(
+        r#"post-merge = "touch {}""#,
+        injected.to_slash_lossy()
+    ));
+    repo.commit("inject post-merge on main");
+
+    let output = repo
+        .wt_command()
+        .current_dir(&feature_wt)
+        .args(["merge", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Wait for the control (post-merge ran), then a short grace for the sibling
+    // pipeline.
+    wait_for_file(&control);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert!(
+        !injected.exists(),
+        "a post-merge that entered the invoking worktree's config only via the \
+         rebase must not run — it was never in the frozen plan"
     );
 }

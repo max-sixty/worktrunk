@@ -163,8 +163,17 @@ pub enum UnknownWarning {
         other_description: &'static str,
         canonical_display: &'static str,
     },
-    /// An unknown path below a schema-valid top-level key, e.g.
-    /// `merge.squas` or `commit.generation.template`.
+    /// A nested key, valid in the *other* config type, found below a
+    /// schema-valid shared section (e.g. `commit.generation.command` in
+    /// project config — the `[commit.generation]` section is valid there for
+    /// `template-append`, but the LLM command/templates belong in user
+    /// config).
+    NestedWrongConfig {
+        path: String,
+        other_description: &'static str,
+    },
+    /// An unknown path below a schema-valid top-level key — a typo, e.g.
+    /// `merge.squas`.
     NestedUnknown { path: String },
 }
 
@@ -216,15 +225,24 @@ pub fn collect_unknown_warnings<C: WorktrunkConfig>(raw_contents: &str) -> Vec<U
         if !C::is_valid_key(key) {
             continue; // top-level unknowns were classified above against raw
         }
-        walk_nested(sub, key, &mut out);
+        walk_nested::<C>(sub, key, &mut out);
     }
     out
 }
 
-fn walk_nested(tree: &UnknownTree, prefix: &str, out: &mut Vec<UnknownWarning>) {
+fn walk_nested<C: WorktrunkConfig>(
+    tree: &UnknownTree,
+    prefix: &str,
+    out: &mut Vec<UnknownWarning>,
+) {
     for key in &tree.keys {
-        out.push(UnknownWarning::NestedUnknown {
-            path: format!("{prefix}.{key}"),
+        let path = format!("{prefix}.{key}");
+        out.push(match crate::config::nested_key_belongs_in::<C>(&path) {
+            Some(other_description) => UnknownWarning::NestedWrongConfig {
+                path,
+                other_description,
+            },
+            None => UnknownWarning::NestedUnknown { path },
         });
     }
     for (key, sub) in &tree.nested {
@@ -232,7 +250,7 @@ fn walk_nested(tree: &UnknownTree, prefix: &str, out: &mut Vec<UnknownWarning>) 
             continue;
         }
         let path = format!("{prefix}.{key}");
-        walk_nested(sub, &path, out);
+        walk_nested::<C>(sub, &path, out);
     }
 }
 

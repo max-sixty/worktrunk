@@ -123,7 +123,7 @@ fn assert_valid_abort_exit_code(exit_code: i32) {
 
 /// Check if skim is ready (shows "> " prompt indicating it's accepting input)
 fn is_skim_ready(screen_content: &str) -> bool {
-    // Skim shows "> " at the start when ready, and displays item count like "1/3"
+    // Skim shows "> " at the start of the prompt line when accepting input.
     screen_content.starts_with("> ") || screen_content.contains("\n> ")
 }
 
@@ -142,14 +142,13 @@ fn exec_in_pty_with_input(
 
 /// Execute a command in a PTY with a sequence of inputs and optional content expectations.
 ///
-/// Each input can optionally specify expected content that must appear before considering
-/// the screen stable. This is essential for async preview panels where time-based stability
-/// alone may capture intermediate placeholder content under system congestion.
+/// Each input is `(input_bytes, expected_content)`:
+/// - `expected_content`: a substring that must appear on screen before the input is considered
+///   processed. Required for async preview content that lands later than the prompt update.
 ///
-/// Example: `[("feature", None), ("3", Some("diff --git")), ("\x1b", None)]`
-/// - After typing "feature": wait for time-based stability only
-/// - After pressing "3" (switch to diff panel): wait until "diff --git" appears
-/// - After pressing Escape: wait for time-based stability only
+/// Example: `[("\x1b[B", None), ("3", Some("diff --git"))]`
+/// - After Down (move cursor to the next worktree): just wait for the screen to settle.
+/// - After pressing "3" (switch to diff panel): wait until "diff --git" appears.
 fn exec_in_pty_with_input_expectations(
     command: &str,
     args: &[&str],
@@ -392,47 +391,6 @@ fn wait_for_stable(rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser) {
     wait_for_stable_with_content(rx, parser, None);
 }
 
-/// Check whether skim's match count agrees with the number of visible list rows.
-///
-/// Under heavy macOS load, skim's matcher can update its count indicator ahead of
-/// the display repaint — so the `N/M` counter shows e.g. `1/4` while the list panel
-/// still has a stale row for a filtered-out item. If we snapshot in that window, the
-/// test captures an inconsistent state (count says 1 match, display shows 2 rows).
-///
-/// Returns `false` when we can parse a count and the visible row count disagrees;
-/// returns `true` when there's no disagreement (including when the count can't be
-/// parsed — nothing useful to compare against).
-fn display_matches_count(screen: &str) -> bool {
-    let Some(matched) = parse_match_count(screen) else {
-        return true;
-    };
-    visible_list_rows(screen) == matched
-}
-
-/// Parse skim's `N/M` match counter from the right-panel status area.
-///
-/// Skim paints the counter at the end of a line, optionally jammed against a tab
-/// label (e.g. `summary1/4` when the count is wide enough to overrun the label).
-fn parse_match_count(screen: &str) -> Option<usize> {
-    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re = RE.get_or_init(|| regex::Regex::new(r"(\d+)/\d+\s*$").unwrap());
-    screen
-        .lines()
-        .find_map(|line| re.captures(line.trim_end()))
-        .and_then(|caps| caps[1].parse().ok())
-}
-
-/// Count the number of non-empty rows in the left (list) panel, excluding the
-/// query and header rows.
-fn visible_list_rows(screen: &str) -> usize {
-    let width = SEPARATOR_COL as usize;
-    screen
-        .lines()
-        .skip(2) // query + column header
-        .filter(|line| line.chars().take(width).any(|c| !c.is_whitespace()))
-        .count()
-}
-
 /// Wait for screen content to stabilize, optionally requiring specific content.
 ///
 /// If `expected_content` is provided, waits until the screen contains that string
@@ -487,12 +445,8 @@ fn wait_for_stable_with_content(
             None => true,
         };
 
-        // Reject "stable" states where skim's matcher has advanced past the display
-        // repaint — see `display_matches_count` for background.
-        let display_ready = display_matches_count(&current_content);
-
         // Primary: screen hasn't changed for STABLE_DURATION and content is ready
-        if last_change.elapsed() >= STABLE_DURATION && content_ready && display_ready {
+        if last_change.elapsed() >= STABLE_DURATION && content_ready {
             return;
         }
 
@@ -502,7 +456,6 @@ fn wait_for_stable_with_content(
         // changes don't affect snapshot correctness.
         if let Some(found_time) = content_found_at
             && found_time.elapsed() >= STABLE_DURATION
-            && display_ready
         {
             return;
         }
@@ -542,12 +495,19 @@ fn switch_picker_settings(repo: &TestRepo) -> insta::Settings {
     // \A anchors to absolute start of string, matching only the first line.
     settings.add_filter(r"\A> [^\n]*", "> [QUERY]");
 
-    // Skim count indicators (matched/total) at end of lines.
-    // Normalize leading whitespace too — skim right-aligns the count with padding
-    // that varies based on unicode character width calculations across platforms.
-    // The tab header line may have the count jammed against "summary" (no space)
-    // or even truncate "summary" when skim's width_cjk() treats ambiguous-width
-    // unicode symbols (±, …, ⇅) as double-width, consuming extra columns.
+    // Skim's previewer overlays its vertical scroll indicator (`{vscroll_offset}/
+    // {content.len()}`) at the right edge of the preview pane's first line, in
+    // reverse video — see `skim::previewer::Previewer::draw`. We don't see the
+    // reverse-video attribute (vt100's `rows()` strips it), so it lands on screen
+    // as bare `N/M` overlapping the tab header text. content.len() varies with
+    // terminal width and preview content height, so normalize it to a fixed
+    // placeholder.
+    //
+    // The previewer right-aligns the indicator at `screen_width - len - 1` and
+    // can land flush against the truncated `summary` tab label (e.g.
+    // `summa1/28`) — width_cjk's treatment of ambiguous-width glyphs (±, …, ⇅)
+    // shifts how much of `5: summary` survives truncation. Strip leading
+    // whitespace too so the placeholder is stable across that variance.
     settings.add_filter(r"(?m)summary?\w*\s*\d+/\d+[ \t]*$", "summary [N/M]");
     settings.add_filter(r"(?m)\s+\d+/\d+[ \t]*$", " [N/M]");
 
@@ -695,7 +655,15 @@ fn test_switch_picker_preview_panel_uncommitted(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            ("feature", None),
+            // Select `feature` by cursor navigation, not a filter query. skim's
+            // matcher runs on a separate thread; under heavy parallel macOS load
+            // its row redraw can lag the keystroke-driven prompt by more than the
+            // 30s gate timeout (#2334/#2729/#2767). Arrow navigation never invokes
+            // the matcher, so the selection is deterministic regardless of load.
+            // The list now shows both worktrees with the cursor on `feature`; the
+            // panel-content gate below still fails loudly if the wrong row is
+            // selected (the snapshot would not match `feature`'s preview).
+            ("\x1b[B", None),          // Down: move cursor to `feature`
             ("1", Some("diff --git")), // Wait for diff to load
         ],
     );
@@ -753,7 +721,9 @@ fn test_switch_picker_preview_panel_log(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            ("feature", None),
+            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
+            // for the matcher-lag rationale.
+            ("\x1b[B", None),  // Down: move cursor to `feature`
             ("2", Some("* ")), // Wait for git log output
         ],
     );
@@ -844,7 +814,9 @@ fn test_new_feature() {
         repo.root_path(),
         &env_vars,
         &[
-            ("feature", None),
+            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
+            // for the matcher-lag rationale.
+            ("\x1b[B", None),          // Down: move cursor to `feature`
             ("3", Some("diff --git")), // Wait for diff to load
         ],
     );
@@ -896,7 +868,9 @@ fn test_switch_picker_preview_panel_summary(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            ("feature", None),
+            // Cursor-navigation select: see test_switch_picker_preview_panel_uncommitted
+            // for the matcher-lag rationale.
+            ("\x1b[B", None),         // Down: move cursor to `feature`
             ("5", Some("Configure")), // Wait for config hint
         ],
     );
@@ -1038,42 +1012,100 @@ fn test_switch_picker_create_with_empty_query_fails(mut repo: TestRepo) {
     );
 }
 
+/// Picker-create validates hook templates *before* `git worktree add`, mirroring
+/// the pre-flight that `wt switch --create` already performs.
+///
+/// Without this, a broken `pre-start` template would let the worktree be
+/// created, then fail at expansion time — leaving a half-state that blocks
+/// re-running (the branch already exists). The test commits a syntax-broken
+/// `pre-start` to the user config, fires picker-create, asserts that no branch
+/// or worktree was created, then fixes the template and confirms re-running
+/// succeeds — proving the pre-flight aborts cleanly rather than leaving a
+/// half-created worktree behind.
 #[rstest]
-fn test_switch_picker_switch_to_existing_worktree(mut repo: TestRepo) {
+fn test_switch_picker_create_validates_templates_before_worktree(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
-    // Remove origin so there's no interference from remote branches
     repo.run_git(&["remote", "remove", "origin"]);
 
-    // Create a worktree to switch to
-    repo.add_worktree("target-branch");
+    // Broken `pre-start` in user config: unbalanced `{{` is a minijinja parse
+    // error, so `validate_template` rejects it without needing approvals.
+    // Project config would also trigger the validation path, but it routes
+    // through the approval gate first and would prompt for a TTY response —
+    // user-config hooks are trusted and exercise validation directly.
+    repo.write_test_config(r#"pre-start = "echo {{ unclosed""#);
 
     let env_vars = repo.test_env_vars();
 
-    // Navigate to target-branch and press Enter to switch
     let result = exec_in_pty_with_input_expectations(
         wt_bin().to_str().unwrap(),
         &["switch"],
         repo.root_path(),
         &env_vars,
         &[
-            ("target", None), // Filter to "target-branch"
-            ("\r", None),     // Enter to switch
+            ("new-feature", None), // Type the branch name
+            ("\x1bc", None),       // Alt-C: create
         ],
     );
 
-    // Should exit successfully
-    assert_eq!(
-        result.exit_code, 0,
-        "Expected exit code 0 for successful switch"
+    assert_ne!(
+        result.exit_code,
+        0,
+        "Expected non-zero exit when pre-start template is broken.\nScreen:\n{}",
+        result.screen()
     );
 
-    let screen = result.screen();
-
-    // Verify the success message or cd directive
+    // Branch must not have been created — pre-flight runs before any
+    // `git worktree add` / `git branch`.
+    let branch_output = repo
+        .git_command()
+        .args(["branch", "--list", "new-feature"])
+        .run()
+        .unwrap();
     assert!(
-        screen.contains("target-branch") || screen.contains("Switched") || screen.contains("cd "),
-        "Expected switch output showing target-branch.\nScreen:\n{}",
-        screen
+        String::from_utf8_lossy(&branch_output.stdout)
+            .trim()
+            .is_empty(),
+        "Branch `new-feature` should NOT exist, got:\n{}",
+        String::from_utf8_lossy(&branch_output.stdout)
+    );
+
+    // Worktree directory must not exist either.
+    let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
+    let worktree_dir = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("{repo_name}.new-feature"));
+    assert!(
+        !worktree_dir.exists(),
+        "Worktree dir {worktree_dir:?} should NOT have been created"
+    );
+
+    // Fix the template and re-run — proves no half-state was left behind.
+    repo.write_test_config(r#"pre-start = "true""#);
+
+    let result = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[("new-feature", None), ("\x1bc", None)],
+    );
+    assert_eq!(
+        result.exit_code,
+        0,
+        "Re-running picker-create with fixed template should succeed.\nScreen:\n{}",
+        result.screen()
+    );
+
+    let branch_output = repo
+        .git_command()
+        .args(["branch", "--list", "new-feature"])
+        .run()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&branch_output.stdout).contains("new-feature"),
+        "Branch `new-feature` should exist after fix"
     );
 }
 
@@ -1089,52 +1121,6 @@ fn directive_files_for_pty() -> (PathBuf, PathBuf, (tempfile::TempPath, tempfile
         exec_path,
         (cd.into_temp_path(), exec.into_temp_path()),
     )
-}
-
-#[rstest]
-fn test_switch_picker_no_cd_suppresses_directive(mut repo: TestRepo) {
-    repo.remove_fixture_worktrees();
-    repo.run_git(&["remote", "remove", "origin"]);
-
-    // Create a worktree to switch to
-    repo.add_worktree("target-branch");
-
-    let (cd_path, exec_path, _guard) = directive_files_for_pty();
-
-    let mut env_vars = repo.test_env_vars();
-    env_vars.push((
-        "WORKTRUNK_DIRECTIVE_CD_FILE".to_string(),
-        cd_path.display().to_string(),
-    ));
-    env_vars.push((
-        "WORKTRUNK_DIRECTIVE_EXEC_FILE".to_string(),
-        exec_path.display().to_string(),
-    ));
-
-    // Run `wt switch --no-cd`, select "target-branch" via picker, press Enter
-    let result = exec_in_pty_with_input_expectations(
-        wt_bin().to_str().unwrap(),
-        &["switch", "--no-cd"],
-        repo.root_path(),
-        &env_vars,
-        &[
-            ("target", None), // Filter to "target-branch"
-            ("\r", None),     // Enter to switch
-        ],
-    );
-
-    assert_eq!(
-        result.exit_code, 0,
-        "Expected exit code 0 for successful switch"
-    );
-
-    // Verify CD file is empty (no path written with --no-cd)
-    let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
-    assert!(
-        cd_content.trim().is_empty(),
-        "CD file should be empty with --no-cd via picker, got: {}",
-        cd_content
-    );
 }
 
 #[rstest]
@@ -1164,8 +1150,15 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
         repo.root_path(),
         &env_vars,
         &[
-            ("target", None), // Filter to "target-branch"
-            ("\r", None),     // Enter to switch
+            // Gate on the preview-pane text that's emitted only once skim's
+            // selection has moved to target-branch. Under heavy macOS load
+            // skim's matcher (and the row redraw it drives) can lag the typed
+            // query, but the preview pane tracks the selection cursor — and
+            // Enter acts on the cursor, not on which rows are painted. Gating
+            // on the preview text rides that lag instead of racing it
+            // (#2334/#2729/#2767).
+            ("target", Some("target-branch has no uncommitted changes")),
+            ("\r", None), // Enter to switch
         ],
     );
 
@@ -1184,11 +1177,11 @@ fn test_switch_picker_emits_cd_directive_by_default(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_switch_picker_no_cd_prints_branch_without_switching(mut repo: TestRepo) {
+fn test_switch_picker_no_cd_switches_without_cd_directive(mut repo: TestRepo) {
     repo.remove_fixture_worktrees();
     repo.run_git(&["remote", "remove", "origin"]);
 
-    // Create a worktree to select
+    // Create a worktree to switch to
     repo.add_worktree("target-branch");
 
     let (cd_path, exec_path, _guard) = directive_files_for_pty();
@@ -1203,37 +1196,93 @@ fn test_switch_picker_no_cd_prints_branch_without_switching(mut repo: TestRepo) 
         exec_path.display().to_string(),
     ));
 
-    // Run `wt switch --no-cd`, filter to "target", press Enter to select
+    // `wt switch --no-cd` opens the picker and switches identically to
+    // `wt switch <branch> --no-cd` — it only suppresses the cd directive.
+    // `--format=json` is the observable proof the switch pipeline ran: the
+    // structured result reaches stdout only after `execute_switch`.
     let result = exec_in_pty_with_input_expectations(
         wt_bin().to_str().unwrap(),
-        &["switch", "--no-cd"],
+        &["switch", "--no-cd", "--format=json"],
         repo.root_path(),
         &env_vars,
         &[
-            ("target", None), // Filter to "target-branch"
-            ("\r", None),     // Enter to select
+            // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default
+            // for the rationale (matcher-driven row redraw can lag the cursor).
+            ("target", Some("target-branch has no uncommitted changes")),
+            ("\r", None), // Enter to switch
         ],
     );
 
     assert_eq!(
         result.exit_code, 0,
-        "Expected exit code 0 for --no-cd selection"
+        "Expected exit code 0 for --no-cd switch"
     );
 
+    // The structured result reaches stdout only after execute_switch — the
+    // old print-only path emitted a bare branch name and never reached it.
     let screen = result.screen();
-
-    // --no-cd should output the branch name
     assert!(
-        screen.contains("target-branch"),
-        "Expected branch name in output with --no-cd.\nScreen:\n{}",
+        screen.contains("\"action\""),
+        "Expected --format=json switch result on screen.\nScreen:\n{}",
         screen
     );
 
-    // --no-cd should NOT emit a cd directive (read-only operation)
+    // --no-cd suppresses only the cd directive; the switch still ran.
     let cd_content = std::fs::read_to_string(&cd_path).unwrap_or_default();
     assert!(
         cd_content.trim().is_empty(),
         "CD file should be empty with --no-cd, got: {}",
         cd_content
     );
+}
+
+/// A project `pre-switch` hook must pass through the approval gate when the
+/// picker switches — the picker has no `--yes`, so an unapproved project
+/// command is shown for approval, never auto-run.
+///
+/// Regression: the picker previously passed `yes = true` to
+/// `run_pre_switch_hooks`, silently executing project `pre-switch` commands
+/// without a prompt — inconsistent with every other hook the picker gates, and
+/// a hole in "Project Commands Run Only After Approval". Here the hook is
+/// declined at the prompt; it must not run, and the switch must still succeed.
+#[rstest]
+fn test_switch_picker_pre_switch_hook_requires_approval(mut repo: TestRepo) {
+    repo.remove_fixture_worktrees();
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.add_worktree("target-branch");
+
+    // Project `pre-switch` hook (in `.config/wt.toml`, so it routes through the
+    // approval gate) that touches a marker outside the worktree if it runs.
+    let marker_dir = tempfile::tempdir().unwrap();
+    let marker = marker_dir.path().join("pre-switch-ran");
+    repo.write_project_config(&format!(
+        "pre-switch = {:?}\n",
+        format!("touch {}", marker.display())
+    ));
+
+    let env_vars = repo.test_env_vars();
+    // Select target-branch, press Enter, then decline the approval prompt.
+    let result = exec_in_pty_with_input_expectations(
+        wt_bin().to_str().unwrap(),
+        &["switch"],
+        repo.root_path(),
+        &env_vars,
+        &[
+            // Preview-pane gate: see test_switch_picker_emits_cd_directive_by_default.
+            ("target", Some("target-branch has no uncommitted changes")),
+            ("\r", Some("needs approval")), // Enter; wait for the approval prompt
+            ("n\n", None),                  // decline
+        ],
+    );
+
+    let screen = result.screen();
+    assert_eq!(
+        result.exit_code, 0,
+        "switch should still succeed after declining the pre-switch hook.\nScreen:\n{screen}"
+    );
+    assert!(
+        screen.contains("needs approval"),
+        "picker must prompt before running a project pre-switch hook.\nScreen:\n{screen}"
+    );
+    assert!(!marker.exists(), "a declined pre-switch hook must not run");
 }

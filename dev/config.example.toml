@@ -153,13 +153,11 @@
 #
 # ### User project-specific settings
 #
-# For context:
+# User config can include a `[projects]` table for project-specific settings — worktree layout, setting overrides, anything else — separate from the project config (https://worktrunk.dev/config/#project-configuration) shared with teammates.
 #
-# - Project config (https://worktrunk.dev/config/#project-configuration) settings are shared with teammates.
-# - User configs generally apply to all projects.
-# - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.
+# Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary remote URL (no `.git` suffix), or the canonical repo path when there is no remote. Run `wt config show` inside the repo to see the identifier for the current project; it appears in the `PROJECT CONFIG` section as `Identifier: …`.
 #
-# Entries are keyed by project identifier (e.g., `github.com/user/repo`). Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
+# Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
 #
 # [projects."github.com/user/repo"]
 # worktree-path = ".worktrees/{{ branch | sanitize }}"
@@ -169,6 +167,25 @@
 # pre-start.env = "cp .env.example .env"
 # step.copy-ignored.exclude = [".repo-local-cache/"]
 # aliases.deploy = "make deploy BRANCH={{ branch }}"
+#
+# Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence. The dotted-key examples below are equivalent to the table forms — TOML treats `projects."github.com/user/repo".post-start.server = "..."` and a `[projects."github.com/user/repo".post-start]` table the same way:
+#
+# # Single command
+# [projects."github.com/user/repo"]
+# post-start = "mise trust"
+#
+# # Multiple commands, running concurrently
+# [projects."github.com/user/repo".post-start]
+# mise = "mise trust"
+# server = "npm run dev"
+#
+# # Pipeline: steps run in sequence
+# [[projects."github.com/user/repo".post-start]]
+# install = "npm ci"
+#
+# [[projects."github.com/user/repo".post-start]]
+# build = "npm run build"
+# server = "npm run dev"
 #
 # ### Custom prompt templates
 #
@@ -181,6 +198,7 @@
 # - `{{ git_diff }}`, `{{ git_diff_stat }}` — diff content
 # - `{{ branch }}`, `{{ repo }}` — context
 # - `{{ recent_commits }}` — recent commit messages
+# - `{{ user_guidance }}`, `{{ project_guidance }}` — rendered append fragments (see Appending to the prompt (https://worktrunk.dev/config/#appending-to-the-prompt))
 #
 # Default template:
 #
@@ -200,7 +218,15 @@
 # - Match recent commit style (conventional commits if used)
 # - Describe the change, not the intent or benefit
 # </style>
-#
+# {% if user_guidance %}
+# <user-guidance>
+# {{ user_guidance }}
+# </user-guidance>
+# {% endif %}{% if project_guidance %}
+# <project-guidance>
+# {{ project_guidance }}
+# </project-guidance>
+# {% endif %}
 # <diffstat>
 # {{ git_diff_stat }}
 # </diffstat>
@@ -244,7 +270,15 @@
 # - Match the style of commits being squashed (conventional commits if used)
 # - Describe the change, not the intent or benefit
 # </style>
-#
+# {% if user_guidance %}
+# <user-guidance>
+# {{ user_guidance }}
+# </user-guidance>
+# {% endif %}{% if project_guidance %}
+# <project-guidance>
+# {{ project_guidance }}
+# </project-guidance>
+# {% endif %}
 # <commits branch="{{ branch }}" target="{{ target_branch }}">
 # {% for commit in commits %}- {{ commit }}
 # {% endfor %}</commits>
@@ -259,6 +293,17 @@
 #
 # """
 # <!-- DEFAULT_SQUASH_TEMPLATE_END -->
+#
+# #### Appending to the prompt [experimental]
+#
+# `template-append` adds to the prompt instead of replacing it. The value is rendered as its own minijinja template (same variables) and injected into the default templates' `{{ user_guidance }}` slot — a `<user-guidance>` block right after `<style>`. It applies to both commit and squash. Use it for personal preferences without restating the whole template:
+#
+# [commit.generation]
+# template-append = """
+# - Explain the rationale in the body, not just the change
+# """
+#
+# The project config (https://worktrunk.dev/config/#project-configuration) has a `template-append` of its own; it renders into a separate `<project-guidance>` block right after `<user-guidance>`.
 #
 # ## Hooks
 #

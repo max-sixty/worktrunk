@@ -54,7 +54,7 @@ $ wt switch pr:123                      # PR #123's branch
 $ wt switch mr:101                      # MR !101's branch
 ```
 
-Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
+Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch. (Web URLs like `https://github.com/owner/repo/pull/N` or `https://gitlab.com/owner/repo/-/merge_requests/N` work in place of `pr:N` / `mr:N` anywhere a shortcut does.)
 
 ## Interactive picker
 
@@ -103,6 +103,10 @@ $ wt switch mr:101                 # GitLab MR !101
 Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
 
 **Forks:** The local branch uses the PR/MR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
+
+**Gitea (experimental):** `pr:` is also compatible with Gitea via the `tea` CLI. Set `[forge] platform = "gitea"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Gitea when the remote host contains `gitea` or when `tea login add` has been run for the host.
+
+**Azure DevOps (experimental):** `pr:` is also compatible with Azure DevOps via the `az` CLI (with the `azure-devops` extension). Set `[forge] platform = "azure-devops"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Azure DevOps from `dev.azure.com` and `*.visualstudio.com` remotes.
 
 ## When wt switch fails
 
@@ -160,8 +164,8 @@ Options:
           are passed to the command, so wsc feature -- 'Fix GH #322' runs claude 'Fix GH #322',
           starting Claude with a prompt.
 
-          Template example: -x 'code {{ worktree_path }}' opens VS Code at the worktree, -x 'tmux
-          new -s {{ branch | sanitize }}' starts a tmux session named after the branch.
+          Template example: -x code -- '{{ worktree_path }}' opens VS Code at the worktree, -x tmux
+          -- new -s '{{ branch | sanitize }}' starts a tmux session named after the branch.
 
       --clobber
           Remove stale paths at target
@@ -171,9 +175,6 @@ Options:
 
           Hooks still run normally. Useful when hooks handle navigation (e.g., tmux workflows) or
           for CI/automation. Use --cd to override.
-
-          In picker mode (no branch argument), prints the selected branch name and exits without
-          switching. Useful for scripting.
 
   -h, --help
           Print help (see a summary with '-h')
@@ -209,8 +210,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts

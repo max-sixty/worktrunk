@@ -1,13 +1,14 @@
 //! Worktree switch operations.
 //!
-//! Planning and executing worktree switches, plus the `wt switch` entry point
-//! that wires hooks, approvals, output, and shell integration around them.
+//! Planning and executing worktree switches, plus [`SwitchPipeline`] — the
+//! full switch sequence (bare-repo fix-up, hooks, approval, execution, output)
+//! shared by the `wt switch` argument path and the interactive picker.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::display::format_relative_time_short;
-use anyhow::Context;
+use anyhow::{Context, bail};
 use color_print::cformat;
 use dunce::canonicalize;
 use serde::Serialize;
@@ -16,24 +17,27 @@ use worktrunk::config::{
     UserConfig, ValidationScope, expand_template, template_references_var, validate_template,
 };
 use worktrunk::git::remote_ref::{
-    self, GitHubProvider, GitLabProvider, RemoteRefInfo, RemoteRefProvider,
+    self, AzureDevOpsProvider, GitHubProvider, GitLabProvider, GiteaProvider, RemoteRefInfo,
+    RemoteRefProvider, parse_ref_url,
 };
 use worktrunk::git::{
-    GitError, RefContext, RefType, Repository, SwitchSuggestionCtx, current_or_recover,
+    GitError, GitRemoteUrl, RefContext, RefType, Repository, SwitchSuggestionCtx,
+    current_or_recover,
 };
+use worktrunk::shell_exec::{ShellEscapeMode, directive_shell_escape_mode, shell_escape_for};
 use worktrunk::styling::{
     eprintln, format_with_gutter, hint_message, info_message, progress_message, suggest_command,
     warning_message,
 };
 
-use super::resolve::{
-    compute_clobber_backup, compute_worktree_path, offer_bare_repo_worktree_path_fix, path_mismatch,
-};
+use super::resolve::{compute_worktree_path, offer_bare_repo_worktree_path_fix, path_mismatch};
 use super::types::{CreationMethod, SwitchBranchInfo, SwitchPlan, SwitchResult};
 use crate::cli::SwitchFormat;
-use crate::commands::command_approval::{approve_hooks, approve_or_skip};
+use crate::commands::backup::back_up_clobbered_path_now;
+use crate::commands::command_approval::approve_hooks;
 use crate::commands::command_executor::FailureStrategy;
 use crate::commands::command_executor::{CommandContext, build_hook_context};
+use crate::commands::hook_plan::{ApprovedHookPlan, HookPlanBuilder, register_planned};
 use crate::commands::hooks::{HookAnnouncer, execute_hook};
 use crate::commands::template_vars::TemplateVars;
 use crate::output::{
@@ -71,6 +75,125 @@ fn format_ref_context(ctx: &impl RefContext) -> String {
         ctx.number(),
         ctx.url()
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PrProviderChoice {
+    GitHub,
+    Gitea,
+    AzureDevOps,
+}
+
+/// Choose which provider should handle `pr:<number>` resolution.
+///
+/// Priority:
+/// 1. `forge.platform` config (`github` / `gitea` / `azure-devops`)
+/// 2. Primary remote URL detection (host contains `github`/`gitea`/`dev.azure.com`)
+/// 3. CLI auth lookup — if `tea` has a login for this host but `gh` does
+///    not, pick Gitea; otherwise default to GitHub
+///
+/// The default-to-GitHub fall-through means a self-hosted Gitea on a branded
+/// host (e.g. `git.example.com`) without `tea login add` will see a single
+/// GitHub error (with hint to set `forge.platform = "gitea"`), instead of a
+/// wrapped two-provider error.
+fn choose_pr_provider(repo: &Repository) -> anyhow::Result<PrProviderChoice> {
+    if let Some(platform_raw) = repo
+        .load_project_config()?
+        .and_then(|c| c.forge_platform().map(str::to_string))
+    {
+        let platform = platform_raw.to_ascii_lowercase();
+        match platform.as_str() {
+            "github" => return Ok(PrProviderChoice::GitHub),
+            "gitea" => return Ok(PrProviderChoice::Gitea),
+            "azure-devops" | "azuredevops" => return Ok(PrProviderChoice::AzureDevOps),
+            "gitlab" => {
+                bail!("forge.platform is set to gitlab; use mr:<number> instead of pr:<number>")
+            }
+            _ => bail!(
+                "Invalid forge.platform value `{platform_raw}` in .config/wt.toml; \
+                 expected one of: github, gitlab, gitea, azure-devops"
+            ),
+        }
+    }
+
+    // GitHub still wins in mixed-remote setups (preserves pre-Gitea/Azure
+    // behaviour for repos that grew a mirror later). Scan every remote so a
+    // non-primary `origin` doesn't hide a GitHub mirror.
+    let all_parsed: Vec<_> = repo
+        .all_remote_urls()
+        .into_iter()
+        .filter_map(|(_, url)| GitRemoteUrl::parse(&url))
+        .collect();
+
+    if all_parsed.iter().any(|u| u.is_github()) {
+        return Ok(PrProviderChoice::GitHub);
+    }
+    if all_parsed.iter().any(|u| u.is_gitea()) {
+        return Ok(PrProviderChoice::Gitea);
+    }
+    if all_parsed.iter().any(|u| u.is_azure_devops()) {
+        return Ok(PrProviderChoice::AzureDevOps);
+    }
+    if all_parsed.iter().any(|u| u.is_gitlab()) {
+        bail!("Detected GitLab remote; use mr:<number> instead of pr:<number>")
+    }
+
+    // No recognisable forge remote. Use the primary remote (raw URL — `insteadOf`
+    // rewrites are for git transport and may not reflect the real forge host)
+    // to ask the CLIs which one is configured for this host. If only `tea` has a
+    // login, pick Gitea; otherwise default to GitHub (the common case, and the
+    // one users get useful errors from when nothing is set up).
+    let Some(host) = repo
+        .primary_remote()
+        .ok()
+        .and_then(|remote| repo.remote_url(&remote))
+        .and_then(|url| GitRemoteUrl::parse(&url))
+        .map(|u| u.host().to_string())
+    else {
+        return Ok(PrProviderChoice::GitHub);
+    };
+
+    if remote_ref::gitea::is_authed_for(&host) && !remote_ref::github::is_authed_for(&host) {
+        Ok(PrProviderChoice::Gitea)
+    } else {
+        Ok(PrProviderChoice::GitHub)
+    }
+}
+
+fn resolve_pr_target(
+    repo: &Repository,
+    number: u32,
+    create: bool,
+    base: Option<&str>,
+) -> anyhow::Result<ResolvedTarget> {
+    if base.is_some() {
+        return Err(GitError::RefBaseConflict {
+            ref_type: RefType::Pr,
+            number,
+        }
+        .into());
+    }
+
+    match choose_pr_provider(repo)? {
+        PrProviderChoice::GitHub => resolve_remote_ref(repo, &GitHubProvider, number, create, base),
+        PrProviderChoice::Gitea => resolve_remote_ref(repo, &GiteaProvider, number, create, base),
+        PrProviderChoice::AzureDevOps => {
+            resolve_remote_ref(repo, &AzureDevOpsProvider, number, create, base)
+        }
+    }
+}
+
+fn resolve_pr_base(
+    repo: &Repository,
+    number: u32,
+) -> anyhow::Result<(String, Option<(String, String)>)> {
+    match choose_pr_provider(repo)? {
+        PrProviderChoice::GitHub => resolve_remote_ref_as_base(repo, &GitHubProvider, number),
+        PrProviderChoice::Gitea => resolve_remote_ref_as_base(repo, &GiteaProvider, number),
+        PrProviderChoice::AzureDevOps => {
+            resolve_remote_ref_as_base(repo, &AzureDevOpsProvider, number)
+        }
+    }
 }
 
 /// Resolve a remote ref (PR or MR) using the unified provider interface.
@@ -162,7 +285,7 @@ fn resolve_fork_ref(
             });
         }
 
-        // Branch exists but doesn't track this ref - try prefixed name (GitHub only)
+        // Branch exists but doesn't track this ref - try prefixed name (GitHub/Gitea)
         if let Some(prefixed) = info.prefixed_local_branch_name() {
             if let Some(prefixed_tracks) = remote_ref::branch_tracks_ref(
                 repo_root,
@@ -326,10 +449,16 @@ fn resolve_base_ref(
     repo: &Repository,
     base: &str,
 ) -> anyhow::Result<(String, Option<(String, String)>)> {
+    // Forge PR/MR web URLs (e.g. `https://github.com/owner/repo/pull/123`)
+    // normalise into the literal `pr:N` / `mr:N` shortcut so the parsing
+    // below handles both forms identically — no duplicate dispatch.
+    let normalised = parse_ref_url(base);
+    let base = normalised.as_deref().unwrap_or(base);
+
     if let Some(suffix) = base.strip_prefix("pr:")
         && let Ok(number) = suffix.parse::<u32>()
     {
-        return resolve_remote_ref_as_base(repo, &GitHubProvider, number);
+        return resolve_pr_base(repo, number);
     }
 
     if let Some(suffix) = base.strip_prefix("mr:")
@@ -404,11 +533,17 @@ fn resolve_switch_target(
     create: bool,
     base: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
-    // Handle pr:<number> syntax
+    // Forge PR/MR web URLs (e.g. `https://github.com/owner/repo/pull/123`)
+    // normalise into the literal `pr:N` / `mr:N` shortcut so the parsing
+    // below handles both forms identically — no duplicate dispatch.
+    let normalised = parse_ref_url(branch);
+    let branch = normalised.as_deref().unwrap_or(branch);
+
+    // Handle pr:<number> syntax — dispatches to GitHub, Gitea, or Azure DevOps based on remotes.
     if let Some(suffix) = branch.strip_prefix("pr:")
         && let Ok(number) = suffix.parse::<u32>()
     {
-        return resolve_remote_ref(repo, &GitHubProvider, number, create, base);
+        return resolve_pr_target(repo, number, create, base);
     }
 
     // Handle mr:<number> syntax (GitLab MRs)
@@ -424,8 +559,13 @@ fn resolve_switch_target(
         .context("Failed to resolve branch name")?;
 
     // Handle remote-tracking ref names (e.g., "origin/username/feature-1" from the picker).
-    // Strip the remote prefix so DWIM can create a local tracking branch.
-    if !create && let Some(local_name) = repo.strip_remote_prefix(&resolved_branch) {
+    // Strip the remote prefix only when there is no exact local branch/worktree,
+    // so a local branch literally named `origin/foo` is not retargeted to `foo`.
+    if !create
+        && repo.worktree_for_branch(&resolved_branch)?.is_none()
+        && !repo.branch(&resolved_branch).exists_locally()?
+        && let Some(local_name) = repo.strip_remote_prefix(&resolved_branch)
+    {
         resolved_branch = local_name;
     }
 
@@ -523,7 +663,7 @@ fn validate_worktree_creation(
     path: &Path,
     clobber: bool,
     method: &CreationMethod,
-) -> anyhow::Result<Option<std::path::PathBuf>> {
+) -> anyhow::Result<bool> {
     // For regular switches without --create, validate branch exists
     if let CreationMethod::Regular {
         create_branch: false,
@@ -557,7 +697,17 @@ fn validate_worktree_creation(
         .into());
     }
 
-    // Handle clobber for stale directories
+    // Handle clobber for stale directories. Returns whether `execute_switch`
+    // must back up a path occupying `worktree_path` before creating the
+    // worktree; the backup itself happens at execution time so a path that
+    // races in after planning is still moved atomically (see
+    // `back_up_clobbered_path`).
+    if !path.exists() {
+        return Ok(false);
+    }
+    if clobber {
+        return Ok(true);
+    }
     let is_create = matches!(
         method,
         CreationMethod::Regular {
@@ -565,7 +715,12 @@ fn validate_worktree_creation(
             ..
         }
     );
-    compute_clobber_backup(path, branch, clobber, is_create)
+    Err(GitError::WorktreePathExists {
+        branch: branch.to_string(),
+        path: path.to_path_buf(),
+        create: is_create,
+    }
+    .into())
 }
 
 /// Set up a local branch for a fork PR or MR.
@@ -640,7 +795,7 @@ fn setup_fork_branch(
 ///
 /// Warnings (remote branch shadow, --base without --create, invalid default branch)
 /// are printed during planning since they're informational, not blocking.
-pub fn plan_switch(
+fn plan_switch(
     repo: &Repository,
     branch: &str,
     create: bool,
@@ -702,7 +857,7 @@ pub fn plan_switch(
     let expected_path = compute_worktree_path(repo, &target.branch, config)?;
 
     // Phase 4: Validate we can create at this path
-    let clobber_backup = validate_worktree_creation(
+    let needs_clobber_backup = validate_worktree_creation(
         repo,
         &target.branch,
         &expected_path,
@@ -715,7 +870,7 @@ pub fn plan_switch(
         branch: target.branch,
         worktree_path: expected_path,
         method: target.method,
-        clobber_backup,
+        needs_clobber_backup,
         new_previous,
     })
 }
@@ -727,12 +882,13 @@ pub fn plan_switch(
 /// `SwitchBranchInfo` has `expected_path: None` — callers fill it in after
 /// first output to avoid computing path mismatch on the hot path.
 /// For `SwitchPlan::Create`, creates the worktree and runs hooks.
-pub fn execute_switch(
+fn execute_switch(
     repo: &Repository,
     plan: SwitchPlan,
     config: &UserConfig,
     force: bool,
     run_hooks: bool,
+    hook_plan: &ApprovedHookPlan,
 ) -> anyhow::Result<(SwitchResult, SwitchBranchInfo)> {
     match plan {
         SwitchPlan::Existing {
@@ -776,23 +932,25 @@ pub fn execute_switch(
             branch,
             worktree_path,
             method,
-            clobber_backup,
+            needs_clobber_backup,
             new_previous,
         } => {
             // Handle --clobber backup if needed (shared for all creation methods)
-            if let Some(backup_path) = &clobber_backup {
+            if needs_clobber_backup {
+                // Atomically move the stale path aside, to a timestamped backup
+                // name. A name already taken (a same-second clobber, or one
+                // that raced in after planning) is never overwritten — the move
+                // falls back to the next free `-N` name.
+                let backup_path = back_up_clobbered_path_now(&worktree_path)?;
+
                 let path_display = worktrunk::path::format_path_for_display(&worktree_path);
-                let backup_display = worktrunk::path::format_path_for_display(backup_path);
+                let backup_display = worktrunk::path::format_path_for_display(&backup_path);
                 eprintln!(
                     "{}",
                     warning_message(cformat!(
-                        "Moving <bold>{path_display}</> to <bold>{backup_display}</> (--clobber)"
+                        "Moved <bold>{path_display}</> to <bold>{backup_display}</> (--clobber)"
                     ))
                 );
-
-                std::fs::rename(&worktree_path, backup_path).with_context(|| {
-                    format!("Failed to move {path_display} to {backup_display}")
-                })?;
             }
 
             // Execute based on creation method
@@ -807,9 +965,14 @@ pub fn execute_switch(
                     let local_branch_existed =
                         !create_branch && branch_handle.exists_locally().unwrap_or(false);
 
-                    // Build git worktree add command
+                    // Build git worktree add command. Options come first, then
+                    // `--` separates them from the path and any positional ref,
+                    // so branch/base names that begin with `-` cannot be
+                    // misinterpreted by git as flags. `-b <branch>` keeps the
+                    // branch as the *value* of `-b`, which is safe even when
+                    // the branch name starts with `-`.
                     let worktree_path_str = worktree_path.to_string_lossy();
-                    let mut args = vec!["worktree", "add", worktree_path_str.as_ref()];
+                    let mut args: Vec<&str> = vec!["worktree", "add"];
 
                     // For DWIM fallback: when the branch doesn't exist locally,
                     // git worktree add relies on DWIM to auto-create it from a
@@ -818,12 +981,10 @@ pub fn execute_switch(
                     // create from the tracking ref in that case.
                     let tracking_ref;
 
-                    if *create_branch {
+                    let trailing_ref: Option<&str> = if *create_branch {
                         args.push("-b");
                         args.push(&branch);
-                        if let Some(base) = base_branch {
-                            args.push(base);
-                        }
+                        base_branch.as_deref()
                     } else if !local_branch_existed {
                         // Explicit -b when there's exactly one remote tracking ref.
                         // Git's DWIM relies on the fetch refspec including this branch,
@@ -831,13 +992,20 @@ pub fn execute_switch(
                         let remotes = branch_handle.remotes().unwrap_or_default();
                         if remotes.len() == 1 {
                             tracking_ref = format!("{}/{}", remotes[0], branch);
-                            args.extend(["-b", &branch, tracking_ref.as_str()]);
+                            args.extend(["-b", &branch]);
+                            Some(tracking_ref.as_str())
                         } else {
                             // Multiple or zero remotes: let git's DWIM handle (or error)
-                            args.push(&branch);
+                            Some(branch.as_str())
                         }
                     } else {
-                        args.push(&branch);
+                        Some(branch.as_str())
+                    };
+
+                    args.push("--");
+                    args.push(worktree_path_str.as_ref());
+                    if let Some(r) = trailing_ref {
+                        args.push(r);
                     }
 
                     // Delayed streaming: silent if fast, shows progress if slow
@@ -954,10 +1122,22 @@ pub fn execute_switch(
                 }
             };
 
-            // Compute base worktree path for hooks and result
+            // Compute base worktree path for hooks and result.
+            //
+            // `git worktree add` already mutated the worktree list, but `repo`
+            // cached it pre-start (populated by `plan_switch`). Reading
+            // `worktree_for_branch` through `repo` here would observe the stale
+            // pre-start inventory — see the caching contract in
+            // `git/repository/mod.rs`. Probe through a fresh `Repository::at`
+            // so the lookup reflects the post-start state.
             let base_worktree_path = base_branch
                 .as_ref()
-                .and_then(|b| repo.worktree_for_branch(b).ok().flatten())
+                .and_then(|b| {
+                    Repository::at(repo.discovery_path())
+                        .and_then(|fresh| fresh.worktree_for_branch(b))
+                        .ok()
+                        .flatten()
+                })
                 .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
 
             // PR/MR identity travels into both the pre-start hook below and the
@@ -970,9 +1150,14 @@ pub fn execute_switch(
                 CreationMethod::Regular { .. } => (None, None),
             };
 
-            // Execute post-create commands
+            // Execute pre-start commands. `hook_repo` roots the render context
+            // in the new worktree (created just above); the commands come from
+            // the frozen `hook_plan`, selected at the gate from the invoking
+            // worktree's config.
             if run_hooks {
-                let ctx = CommandContext::new(repo, config, Some(&branch), &worktree_path, force);
+                let hook_repo = Repository::at(&worktree_path)?;
+                let ctx =
+                    CommandContext::new(&hook_repo, config, Some(&branch), &worktree_path, force);
                 let mut vars = TemplateVars::new()
                     .with_target(&branch)
                     .with_target_worktree_path(&worktree_path);
@@ -987,7 +1172,7 @@ pub fn execute_switch(
                         vars = vars.with_pr(Some(*number), Some(ref_url));
                     }
                 }
-                ctx.execute_pre_start_commands(&vars.as_extra_vars())?;
+                ctx.execute_pre_create_commands(&vars.as_extra_vars(), hook_plan, &worktree_path)?;
             }
 
             // Record successful switch in history
@@ -1092,6 +1277,23 @@ impl SwitchJsonOutput {
     }
 }
 
+/// Emit the structured `--format=json` result to stdout when requested.
+///
+/// A no-op for `SwitchFormat::Text`.
+fn emit_switch_json(
+    format: SwitchFormat,
+    result: &SwitchResult,
+    branch_info: &SwitchBranchInfo,
+) -> anyhow::Result<()> {
+    if format != SwitchFormat::Json {
+        return Ok(());
+    }
+    let json = SwitchJsonOutput::from_result(result, branch_info);
+    let json = serde_json::to_string(&json).context("Failed to serialize to JSON")?;
+    println!("{json}");
+    Ok(())
+}
+
 /// Options for the switch command
 pub struct SwitchOptions<'a> {
     pub branch: &'a str,
@@ -1118,7 +1320,7 @@ pub struct SwitchOptions<'a> {
 /// Directional vars:
 /// - `base` / `base_worktree_path`: current (source) branch and worktree
 /// - `target` / `target_worktree_path`: destination branch and worktree (if it exists)
-pub(crate) fn run_pre_switch_hooks(
+fn run_pre_switch_hooks(
     repo: &Repository,
     config: &UserConfig,
     target_branch: &str,
@@ -1166,8 +1368,8 @@ pub(crate) fn run_pre_switch_hooks(
 fn switch_post_hook_types(is_create: bool) -> &'static [HookType] {
     if is_create {
         &[
-            HookType::PreStart,
-            HookType::PostStart,
+            HookType::PreCreate,
+            HookType::PostCreate,
             HookType::PostSwitch,
         ]
     } else {
@@ -1177,44 +1379,90 @@ fn switch_post_hook_types(is_create: bool) -> &'static [HookType] {
 
 /// Approve switch hooks upfront and show "Commands declined" if needed.
 ///
-/// Returns `true` if hooks are approved to run.
-/// Returns `false` if hooks should be skipped (`!verify` or user declined).
-pub(crate) fn approve_switch_hooks(
+/// Switch hooks resolve their commands from the invoking worktree's
+/// `.config/wt.toml` — the worktree `wt switch` ran in. Selecting them here,
+/// at the gate, freezes the exact commands `execute_switch` will run into the
+/// [`ApprovedHookPlan`].
+///
+/// Returns `(hooks_approved, plan)`. `hooks_approved` is `false` and the plan
+/// empty when `!verify` or the user declined; the covered switch hooks
+/// (`pre-start` / `post-start` / `post-switch`) execute only from `plan`.
+fn approve_switch_hooks(
     repo: &Repository,
     config: &UserConfig,
     plan: &SwitchPlan,
     yes: bool,
     verify: bool,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<(bool, ApprovedHookPlan)> {
     if !verify {
-        return Ok(false);
+        return Ok((false, ApprovedHookPlan::empty()));
     }
 
-    let ctx = CommandContext::new(repo, config, plan.branch(), plan.worktree_path(), yes);
-    let on_decline = if plan.is_create() {
-        "Commands declined, continuing worktree creation"
-    } else {
-        "Commands declined"
-    };
-    approve_or_skip(&ctx, switch_post_hook_types(plan.is_create()), on_decline)
+    // Non-fatal: a destination with no project hooks must still switch even
+    // when the project identifier can't be resolved (the plan ends up empty
+    // and `approve` never needs it).
+    let project_id = repo.project_identifier().ok();
+    let pid = project_id.as_deref();
+    let project_config = repo.load_project_config()?;
+    let mut builder = HookPlanBuilder::new();
+    builder.add(
+        plan.worktree_path(),
+        switch_post_hook_types(plan.is_create()),
+        project_config.as_ref(),
+        config,
+        pid,
+    );
+    match builder.finish().approve(pid, yes)? {
+        Some(approved) => Ok((true, approved)),
+        None => {
+            let on_decline = if plan.is_create() {
+                "Commands declined, continuing worktree creation without hooks"
+            } else {
+                "Commands declined, switching without hooks"
+            };
+            eprintln!("{}", info_message(on_decline));
+            Ok((false, ApprovedHookPlan::empty()))
+        }
+    }
 }
 
 /// Spawn post-switch (and post-start for creates) background hooks.
-pub(crate) fn spawn_switch_background_hooks(
-    repo: &Repository,
+fn spawn_switch_background_hooks(
     config: &UserConfig,
     result: &SwitchResult,
     branch: Option<&str>,
     yes: bool,
     extra_vars: &[(&str, &str)],
     hooks_display_path: Option<&Path>,
+    hook_plan: &ApprovedHookPlan,
 ) -> anyhow::Result<()> {
-    let ctx = CommandContext::new(repo, config, branch, result.path(), yes);
+    // Background hooks run in the new/destination worktree. `hook_repo` roots
+    // the *render* context there; the command set is the frozen `hook_plan`
+    // (selected at the gate from the invoking worktree's config), so no
+    // `.config/wt.toml` is re-read.
+    let hook_repo = Repository::at(result.path())?;
+    let ctx = CommandContext::new(&hook_repo, config, branch, result.path(), yes);
 
-    let mut announcer = HookAnnouncer::new(repo, config, false);
-    announcer.register(&ctx, HookType::PostSwitch, extra_vars, hooks_display_path)?;
+    let mut announcer = HookAnnouncer::new(&hook_repo, config, false);
+    register_planned(
+        &mut announcer,
+        hook_plan,
+        result.path(),
+        &ctx,
+        HookType::PostSwitch,
+        extra_vars,
+        hooks_display_path,
+    )?;
     if matches!(result, SwitchResult::Created { .. }) {
-        announcer.register(&ctx, HookType::PostStart, extra_vars, hooks_display_path)?;
+        register_planned(
+            &mut announcer,
+            hook_plan,
+            result.path(),
+            &ctx,
+            HookType::PostCreate,
+            extra_vars,
+            hooks_display_path,
+        )?;
     }
     announcer.flush()
 }
@@ -1242,6 +1490,282 @@ fn capture_switch_source(repo: &Repository, is_recovered: bool) -> (String, Stri
         .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()))
         .unwrap_or_default();
     (source_branch, source_path)
+}
+
+/// The full switch sequence shared by the argument path ([`run_switch`]) and
+/// the interactive picker.
+///
+/// Each caller only resolves a branch identifier and loads config; everything
+/// else runs in [`SwitchPipeline::run`] — the bare-repo path-fix offer,
+/// pre-switch hooks, source-identity capture, `plan_switch` →
+/// `approve_switch_hooks` → `validate_switch_templates` → `execute_switch` →
+/// output → background hooks → `--execute`. One sequence, so the two entry
+/// points cannot drift. In particular the single `verify` / `yes` pair gates
+/// every hook, so the picker and the argument path cannot diverge on hook
+/// approval — the picker once auto-approved `pre-switch` hooks because it kept
+/// its own copy of that call.
+///
+/// The picker-vs-argument differences are field values, not separate code: the
+/// picker passes `verify: true`, `yes: false`, `capture_source: false`,
+/// `suggestion_ctx: None`, `execute: None`, and `shell_integration_binary:
+/// None`.
+pub(crate) struct SwitchPipeline<'a> {
+    pub repo: &'a Repository,
+    /// Mutable because the bare-repo path-fix offer
+    /// (`offer_bare_repo_worktree_path_fix`) and the shell-integration offer
+    /// (`prompt_shell_integration`) record onto it; every other step reborrows
+    /// it shared.
+    pub config: &'a mut UserConfig,
+    /// Branch identifier — a CLI argument or the picker's selection. Symbolic
+    /// forms (`-`, `@`, `pr:`/`mr:`) are resolved downstream by `plan_switch`.
+    pub identifier: &'a str,
+    pub create: bool,
+    pub base: Option<&'a str>,
+    pub clobber: bool,
+    pub verify: bool,
+    /// `--yes`: skip approval prompts and force past clobber checks.
+    pub yes: bool,
+    pub change_dir: bool,
+    pub format: SwitchFormat,
+    /// True when `current_or_recover` recovered from a deleted CWD. Suppresses
+    /// pre-switch hooks (no source worktree to run them against) and source
+    /// capture.
+    pub is_recovered: bool,
+    /// Error-enrichment context for a failed `plan_switch`, so the hint
+    /// suggests the full `wt switch … --execute=… -- …`. `None` for the
+    /// picker, which has no `--execute`.
+    pub suggestion_ctx: Option<SwitchSuggestionCtx>,
+    /// Whether to capture the source worktree's branch/root before the switch,
+    /// for post-switch `{{ base }}` / `{{ base_worktree_path }}`. The argument
+    /// path captures; the picker does not — it does not track where the user
+    /// came from, so an existing switch's base vars stay unset.
+    pub capture_source: bool,
+    /// `--execute` command and its trailing args. `None` / empty for the picker.
+    pub execute: Option<&'a str>,
+    pub execute_args: &'a [String],
+    /// Binary name for the shell-integration offer. `Some` only on the argument
+    /// path; the picker does not offer shell integration.
+    pub shell_integration_binary: Option<&'a str>,
+}
+
+impl SwitchPipeline<'_> {
+    /// Plan, approve, execute, and report the switch, then spawn its
+    /// background hooks and run any `--execute` command.
+    pub(crate) fn run(self) -> anyhow::Result<()> {
+        let Self {
+            repo,
+            config,
+            identifier,
+            create,
+            base,
+            clobber,
+            verify,
+            yes,
+            change_dir,
+            format,
+            is_recovered,
+            suggestion_ctx,
+            capture_source,
+            execute,
+            execute_args,
+            shell_integration_binary,
+        } = self;
+
+        // Offer to fix worktree-path for bare repos with hidden directory names
+        // (.git, .bare) before anything reads worktree-path config.
+        offer_bare_repo_worktree_path_fix(repo, config)?;
+
+        // Run pre-switch hooks before branch resolution or worktree creation.
+        // {{ branch }} receives the raw user input (before resolution). Skip
+        // when recovered — the source worktree is gone, nothing to run hooks
+        // against. `yes` is the single switch-wide flag, so the picker (no
+        // `--yes`) and the argument path gate `pre-switch` hooks identically.
+        if verify && !is_recovered {
+            run_pre_switch_hooks(repo, config, identifier, yes)?;
+        }
+
+        // Capture source (base) worktree identity BEFORE the switch, for
+        // post-switch {{ base }} / {{ base_worktree_path }}. Done here — after
+        // pre-switch hooks, before plan / approve / validate, none of which
+        // move the current worktree. The picker passes `capture_source: false`;
+        // it does not track where the user came from.
+        let (source_branch, source_path) = if capture_source {
+            capture_switch_source(repo, is_recovered)
+        } else {
+            (String::new(), String::new())
+        };
+
+        // Validate and resolve the target branch.
+        let plan = plan_switch(repo, identifier, create, base, clobber, config).map_err(|err| {
+            match suggestion_ctx {
+                Some(ref ctx) => match err.downcast::<GitError>() {
+                    Ok(git_err) => GitError::WithSwitchSuggestion {
+                        source: Box::new(git_err),
+                        ctx: ctx.clone(),
+                    }
+                    .into(),
+                    Err(err) => err,
+                },
+                None => err,
+            }
+        })?;
+
+        // "Approve at the Gate": collect and approve hooks upfront. Approval
+        // happens once at the command entry point. If the user declines, skip
+        // hooks but continue with the worktree operation. Switch hooks resolve
+        // their config from the invoking worktree — see `approve_switch_hooks`.
+        let (hooks_approved, hook_plan) = approve_switch_hooks(repo, config, &plan, yes, verify)?;
+
+        // Pre-flight: validate all templates before mutation (worktree
+        // creation). Catches syntax errors and undefined variables early so a
+        // broken template doesn't leave behind a half-created worktree that
+        // blocks re-running.
+        validate_switch_templates(repo, config, &plan, execute, execute_args, hooks_approved)?;
+
+        // Execute the validated plan.
+        let (result, branch_info) =
+            execute_switch(repo, plan, config, yes, hooks_approved, &hook_plan)?;
+
+        // --format=json: write structured result to stdout. All behavior
+        // (hooks, --execute, shell integration) proceeds normally — format only
+        // affects output.
+        emit_switch_json(format, &result, &branch_info)?;
+
+        // Early exit for benchmarking time-to-first-output.
+        if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
+            return Ok(());
+        }
+
+        // Compute path mismatch lazily (deferred from plan_switch for existing
+        // worktrees). Skip detached HEAD worktrees (branch is None) — no branch
+        // to compute the expected path from.
+        let branch_info = match &result {
+            SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
+                let expected_path = branch_info
+                    .branch
+                    .as_deref()
+                    .and_then(|b| path_mismatch(repo, b, path, config));
+                SwitchBranchInfo {
+                    expected_path,
+                    ..branch_info
+                }
+            }
+            _ => branch_info,
+        };
+
+        // Show success message (temporal locality: immediately after the
+        // worktree operation). Returns the path to display in hooks when the
+        // user's shell won't be in the worktree, and shows the worktree-path
+        // hint on first --create (before the shell integration warning).
+        //
+        // When the user's CWD has been deleted, `std::env::current_dir()`
+        // fails — fall back to `repo_path()` (the main worktree root).
+        // `current_worktree().root()` resolves against the Repository's
+        // discovery path, which is alive even after recovery, but we keep the
+        // same fallback for any pathological case where rev-parse fails.
+        let fallback_path = repo.repo_path()?.to_path_buf();
+        let cwd = std::env::current_dir().unwrap_or(fallback_path.clone());
+        let source_root = repo.current_worktree().root().unwrap_or(fallback_path);
+        let hooks_display_path =
+            handle_switch_output(&result, &branch_info, change_dir, Some(&source_root), &cwd)?;
+
+        // Offer shell integration if not already installed/active (only shows
+        // the prompt/hint when shell integration isn't working). With
+        // --execute, show hints only — don't interrupt with a prompt. Skip when
+        // change_dir is false (the user opted out of cd, so shell integration
+        // is irrelevant) and on the picker path (no `binary_name`).
+        // Best-effort: don't fail the switch if the offer fails.
+        if let Some(binary_name) = shell_integration_binary
+            && change_dir
+            && !is_shell_integration_active()
+        {
+            let skip_prompt = execute.is_some();
+            let _ = prompt_shell_integration(repo, config, binary_name, skip_prompt);
+        }
+
+        // Build template vars for base/target context (used by both hooks and
+        // --execute). "base" is the source worktree the user switched from (all
+        // switches), or the branch they branched from (creates). "target"
+        // matches the bare vars (the destination) — kept symmetric with
+        // pre-switch.
+        let template_vars =
+            TemplateVars::for_post_switch(&result, &branch_info, &source_branch, &source_path);
+        let extra_vars = template_vars.as_extra_vars();
+
+        // Spawn background hooks after the success message.
+        // - post-switch: runs on ALL switches (shows "@ path" when the shell
+        //   won't be there)
+        // - post-start: runs only when creating a NEW worktree
+        if hooks_approved {
+            spawn_switch_background_hooks(
+                config,
+                &result,
+                branch_info.branch.as_deref(),
+                yes,
+                &extra_vars,
+                hooks_display_path.as_deref(),
+                &hook_plan,
+            )?;
+        }
+
+        // Execute the user command after post-start hooks have been spawned.
+        // Note: execute_args requires execute via clap's `requires` attribute.
+        if let Some(cmd) = execute {
+            // Build template context for expansion (includes base vars when
+            // creating).
+            let ctx = CommandContext::new(
+                repo,
+                config,
+                branch_info.branch.as_deref(),
+                result.path(),
+                yes,
+            );
+            let template_vars = build_hook_context(&ctx, &extra_vars, None)?;
+            let vars: HashMap<&str, &str> = template_vars
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+
+            // The `--execute` payload is parsed by the active directive shell:
+            // the PowerShell wrapper `Invoke-Expression`s the EXEC directive
+            // file, every other wrapper (and the direct `sh -c` non-integration
+            // path) is POSIX. Escape interpolated values for whichever it is —
+            // the one place the escaping is shell-aware (hooks/aliases stay
+            // POSIX). See `worktrunk::shell_exec::directive_shell_escape_mode`.
+            let escape_mode = directive_shell_escape_mode();
+
+            // Expand template variables in command, escaped for the directive shell.
+            let expanded_cmd = expand_template(cmd, &vars, escape_mode, repo, "--execute command")?;
+
+            // Append any trailing args (after --) to the execute command.
+            // Each arg is template-expanded literally, then escaped for the
+            // directive shell so the wrapper parses it as one literal argument.
+            let full_cmd = if execute_args.is_empty() {
+                expanded_cmd
+            } else {
+                let expanded_args: Result<Vec<_>, _> = execute_args
+                    .iter()
+                    .map(|arg| {
+                        expand_template(
+                            arg,
+                            &vars,
+                            ShellEscapeMode::Literal,
+                            repo,
+                            "--execute argument",
+                        )
+                    })
+                    .collect();
+                let escaped_args: Vec<_> = expanded_args?
+                    .iter()
+                    .map(|arg| shell_escape_for(escape_mode, arg))
+                    .collect();
+                format!("{} {}", expanded_cmd, escaped_args.join(" "))
+            };
+            execute_user_command(&full_cmd, hooks_display_path.as_deref())?;
+        }
+
+        Ok(())
+    }
 }
 
 /// Handle the switch command.
@@ -1276,172 +1800,112 @@ pub fn run_switch(
     // Without this, errors like "branch already exists" would suggest `wt switch <branch>`
     // instead of the full `wt switch <branch> --execute=<cmd> -- <args>`.
     let suggestion_ctx = execute.map(|exec| {
-        let escaped = shell_escape::escape(exec.into());
+        let escaped = shell_escape::unix::escape(exec.into());
         SwitchSuggestionCtx {
             extra_flags: vec![format!("--execute={escaped}")],
             trailing_args: execute_args.to_vec(),
         }
     });
 
-    // Run pre-switch hooks before branch resolution or worktree creation.
-    // {{ branch }} receives the raw user input (before resolution).
-    // Skip when recovered — the source worktree is gone, nothing to run hooks against.
-    if verify && !is_recovered {
-        run_pre_switch_hooks(&repo, config, branch, yes)?;
+    SwitchPipeline {
+        repo: &repo,
+        config,
+        identifier: branch,
+        create,
+        base,
+        clobber,
+        verify,
+        yes,
+        change_dir,
+        format,
+        is_recovered,
+        suggestion_ctx,
+        capture_source: true,
+        execute,
+        execute_args,
+        shell_integration_binary: Some(binary_name),
     }
+    .run()
+}
 
-    // Offer to fix worktree-path for bare repos with hidden directory names (.git, .bare).
-    offer_bare_repo_worktree_path_fix(&repo, config)?;
-
-    // Validate and resolve the target branch.
-    let plan = plan_switch(&repo, branch, create, base, clobber, config).map_err(|err| {
-        match suggestion_ctx {
-            Some(ref ctx) => match err.downcast::<GitError>() {
-                Ok(git_err) => GitError::WithSwitchSuggestion {
-                    source: Box::new(git_err),
-                    ctx: ctx.clone(),
-                }
-                .into(),
-                Err(err) => err,
-            },
-            None => err,
-        }
-    })?;
-
-    // "Approve at the Gate": collect and approve hooks upfront
-    // This ensures approval happens once at the command entry point
-    // If user declines, skip hooks but continue with worktree operation
-    let hooks_approved = approve_switch_hooks(&repo, config, &plan, yes, verify)?;
-
-    // Pre-flight: validate all templates before mutation (worktree creation).
-    // Catches syntax errors and undefined variables early so a broken template
-    // doesn't leave behind a half-created worktree that blocks re-running.
-    validate_switch_templates(&repo, config, &plan, execute, execute_args, hooks_approved)?;
-
-    // Capture source (base) worktree identity BEFORE the switch, so post-switch
-    // hooks can reference where the user came from via {{ base }} / {{ base_worktree_path }}.
-    let (source_branch, source_path) = capture_switch_source(&repo, is_recovered);
-
-    // Execute the validated plan
-    let (result, branch_info) = execute_switch(&repo, plan, config, yes, hooks_approved)?;
-
-    // --format=json: write structured result to stdout. All behavior (hooks,
-    // --execute, shell integration) proceeds normally — format only affects output.
-    if format == SwitchFormat::Json {
-        let json = SwitchJsonOutput::from_result(&result, &branch_info);
-        let json = serde_json::to_string(&json).context("Failed to serialize to JSON")?;
-        println!("{json}");
-    }
-
-    // Early exit for benchmarking time-to-first-output
-    if std::env::var_os("WORKTRUNK_FIRST_OUTPUT").is_some() {
-        return Ok(());
-    }
-
-    // Compute path mismatch lazily (deferred from plan_switch for existing worktrees).
-    // Skip for detached HEAD worktrees (branch is None) — no branch to compute expected path from.
-    let branch_info = match &result {
-        SwitchResult::Existing { path } | SwitchResult::AlreadyAt(path) => {
-            let expected_path = branch_info
-                .branch
-                .as_deref()
-                .and_then(|b| path_mismatch(&repo, b, path, config));
-            SwitchBranchInfo {
-                expected_path,
-                ..branch_info
-            }
-        }
-        _ => branch_info,
+/// Whether `value` is a single clean program-name token — the form `--execute`
+/// keeps accepting unchanged once it switches to the argv input model.
+///
+/// First character `[A-Za-z0-9._/@]`, the rest additionally `+`/`-`. On
+/// Windows, `\` and `:` are also allowed so native paths (`C:\dir\tool`) are
+/// not flagged; on POSIX they are shell metacharacters and stay excluded.
+/// This rejects a leading `-`/`+` (an option-like `argv[0]` resolves
+/// differently), whitespace, `{{ }}` template markup, and every shell
+/// metacharacter — any of which means the value is not a bare program name.
+fn is_clean_program_token(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
     };
+    let first_ok = first.is_ascii_alphanumeric()
+        || matches!(first, '.' | '_' | '/' | '@')
+        || (cfg!(windows) && first == '\\');
+    first_ok
+        && chars.all(|c| {
+            c.is_ascii_alphanumeric()
+                || matches!(c, '.' | '_' | '/' | '@' | '+' | '-')
+                || (cfg!(windows) && matches!(c, '\\' | ':'))
+        })
+}
 
-    // Show success message (temporal locality: immediately after worktree operation)
-    // Returns path to display in hooks when user's shell won't be in the worktree
-    // Also shows worktree-path hint on first --create (before shell integration warning)
-    //
-    // When the user's CWD has been deleted, `std::env::current_dir()` fails —
-    // fall back to `repo_path()` (the main worktree root). `current_worktree()
-    // .root()` resolves against the Repository's discovery path, which is alive
-    // even after recovery, but we keep the same fallback for any pathological
-    // case where rev-parse fails.
-    let fallback_path = repo.repo_path()?.to_path_buf();
-    let cwd = std::env::current_dir().unwrap_or(fallback_path.clone());
-    let source_root = repo.current_worktree().root().unwrap_or(fallback_path);
-    let hooks_display_path =
-        handle_switch_output(&result, &branch_info, change_dir, Some(&source_root), &cwd)?;
-
-    // Offer shell integration if not already installed/active
-    // (only shows prompt/hint when shell integration isn't working)
-    // With --execute: show hints only (don't interrupt with prompt)
-    // Skip when change_dir is false — user opted out of cd, so shell integration is irrelevant
-    // Best-effort: don't fail switch if offer fails
-    if change_dir && !is_shell_integration_active() {
-        let skip_prompt = execute.is_some();
-        let _ = prompt_shell_integration(&repo, config, binary_name, skip_prompt);
+/// Warn when a `--execute` value will change behavior under the upcoming argv
+/// input model.
+///
+/// A future release runs `-x` as a single program (with arguments after `--`),
+/// not a shell command line. Warn now for any value that is not a single
+/// program token — shell syntax, multiple words, or `{{ }}` markup (flagged
+/// conservatively, even when it would expand to a clean name).
+///
+/// A single program token — including a path — is unaffected and stays silent.
+/// A bare name that is really a shell alias/function/builtin is not detectable
+/// here without the user's shell, so it is left to fail loudly at the cutover
+/// rather than guessed at. Informational only — it never blocks the switch.
+///
+/// The hint reconstructs the command line that runs today — the `-x` value
+/// with its trailing args appended, the way `run_switch` joins them — and
+/// wraps it for whichever shell the active wrapper evaluates the payload
+/// with (`sh` / `fish` / `pwsh`), so the suggestion is behavior-preserving
+/// on fish/PowerShell, not just POSIX sh, and complete when trailing args
+/// are present. It also links the tracking issue (#2860) so anyone whose
+/// workflow the argv model would regress can report the case before the
+/// cutover.
+fn warn_if_execute_form_deprecated(cmd: &str, execute_args: &[String]) {
+    if is_clean_program_token(cmd) {
+        return;
     }
-
-    // Build template vars for base/target context (used by both hooks and
-    // --execute). "base" is the source worktree the user switched from (all
-    // switches), or the branch they branched from (creates). "target" matches
-    // the bare vars (the destination) — kept symmetric with pre-switch.
-    let template_vars =
-        TemplateVars::for_post_switch(&result, &branch_info, &source_branch, &source_path);
-    let extra_vars = template_vars.as_extra_vars();
-
-    // Spawn background hooks after success message
-    // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)
-    // - post-start: runs only when creating a NEW worktree
-    // Batch hooks into a single message when both types are present
-    if hooks_approved {
-        spawn_switch_background_hooks(
-            &repo,
-            config,
-            &result,
-            branch_info.branch.as_deref(),
-            yes,
-            &extra_vars,
-            hooks_display_path.as_deref(),
-        )?;
-    }
-
-    // Execute user command after post-start hooks have been spawned
-    // Note: execute_args requires execute via clap's `requires` attribute
-    if let Some(cmd) = execute {
-        // Build template context for expansion (includes base vars when creating)
-        let ctx = CommandContext::new(
-            &repo,
-            config,
-            branch_info.branch.as_deref(),
-            result.path(),
-            yes,
-        );
-        let template_vars = build_hook_context(&ctx, &extra_vars, None)?;
-        let vars: HashMap<&str, &str> = template_vars
+    let mode = directive_shell_escape_mode();
+    let (shell, flag) = match mode {
+        ShellEscapeMode::PowerShell => ("pwsh", "-Command"),
+        ShellEscapeMode::Fish => ("fish", "-c"),
+        _ => ("sh", "-c"),
+    };
+    let command_line = if execute_args.is_empty() {
+        cmd.to_string()
+    } else {
+        let escaped: Vec<String> = execute_args
             .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .map(|arg| shell_escape_for(mode, arg))
             .collect();
-
-        // Expand template variables in command (shell_escape: true for safety)
-        let expanded_cmd = expand_template(cmd, &vars, true, &repo, "--execute command")?;
-
-        // Append any trailing args (after --) to the execute command
-        // Each arg is also expanded, then shell-escaped
-        let full_cmd = if execute_args.is_empty() {
-            expanded_cmd
-        } else {
-            let expanded_args: Result<Vec<_>, _> = execute_args
-                .iter()
-                .map(|arg| expand_template(arg, &vars, false, &repo, "--execute argument"))
-                .collect();
-            let escaped_args: Vec<_> = expanded_args?
-                .iter()
-                .map(|arg| shell_escape::escape(arg.into()).into_owned())
-                .collect();
-            format!("{} {}", expanded_cmd, escaped_args.join(" "))
-        };
-        execute_user_command(&full_cmd, hooks_display_path.as_deref())?;
-    }
-
-    Ok(())
+        format!("{} {}", cmd, escaped.join(" "))
+    };
+    let suggested = shell_escape_for(mode, &command_line);
+    eprintln!(
+        "{}",
+        warning_message(cformat!(
+            "<bold>--execute</> will change in a future release: it will run a single program, with arguments after <bold>--</>, not a shell command line"
+        ))
+    );
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "Comment at <underline>https://github.com/max-sixty/worktrunk/issues/2860</> if the new single-program form would make a workflow worse; to run this command line unchanged, pass it to a shell: <underline>--execute {shell} -- {flag} {suggested}</>"
+        ))
+    );
 }
 
 /// Validate all templates that will be expanded after worktree creation.
@@ -1469,10 +1933,14 @@ pub fn run_switch(
 ///   completed successfully — template failure is a missed notification, not a
 ///   blocking state. The user can fix the template and run `wt hook` manually.
 ///
+/// Hook templates checked here come from the invoking worktree's
+/// `.config/wt.toml` — the same config the switch hooks run against — so the
+/// templates validated are the ones that will actually be expanded.
+///
 /// Validates:
 /// - `--execute` command template (if present)
 /// - `--execute` trailing arg templates (if present)
-/// - Hook templates (post-create, post-start, post-switch) from user and project config
+/// - Hook templates (pre-start, post-start, post-switch) from user and project config
 fn validate_switch_templates(
     repo: &Repository,
     config: &UserConfig,
@@ -1497,6 +1965,7 @@ fn validate_switch_templates(
                 "--execute argument",
             )?;
         }
+        warn_if_execute_form_deprecated(cmd, execute_args);
     }
 
     // Validate hook templates only when hooks will actually run
@@ -1546,6 +2015,45 @@ mod tests {
     use worktrunk::testing::TestRepo;
 
     #[test]
+    fn is_clean_program_token_matches_only_bare_names() {
+        // Bare program names — unchanged under the argv input model.
+        for ok in [
+            "git",
+            "claude",
+            "node18",
+            "my-tool",
+            "tool.sh",
+            "/usr/bin/env",
+            "./build",
+            "_x",
+            "@scope/pkg",
+        ] {
+            assert!(is_clean_program_token(ok), "expected clean token: {ok:?}");
+        }
+        // Not bare names — empty, whitespace, shell syntax, template markup,
+        // or an option-like leading character.
+        for bad in [
+            "",
+            "npm run dev",
+            "a && b",
+            "echo $HOME",
+            "code {{ worktree_path }}",
+            "a|b",
+            "-flag",
+            "+x",
+        ] {
+            assert!(!is_clean_program_token(bad), "expected non-token: {bad:?}");
+        }
+        // A native Windows path is a clean token only when targeting Windows;
+        // on POSIX, `\` and `:` are shell metacharacters.
+        assert_eq!(
+            is_clean_program_token(r"C:\Tools\foo.exe"),
+            cfg!(windows),
+            "Windows path classification should follow the target OS"
+        );
+    }
+
+    #[test]
     fn capture_switch_source_returns_empty_when_recovered() {
         // When recovered from a deleted CWD, post-switch hooks must see empty
         // `{{ base }}` / `{{ base_worktree_path }}` rather than the recovered
@@ -1565,5 +2073,95 @@ mod tests {
         let (branch, path) = capture_switch_source(&test.repo, false);
         assert_eq!(branch, "main");
         assert!(!path.is_empty(), "source_path should be the worktree root");
+    }
+
+    #[test]
+    fn choose_pr_provider_prefers_github_over_azure() {
+        // Mixed-remote setup: a repo with both a GitHub remote and an Azure
+        // DevOps remote falls through to GitHub. Operators with an explicit
+        // preference set `forge.platform`.
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["remote", "add", "origin", "https://github.com/myorg/myrepo"]);
+        test.run_git(&[
+            "remote",
+            "add",
+            "azure",
+            "https://dev.azure.com/myorg/proj/_git/myrepo",
+        ]);
+
+        assert_eq!(
+            choose_pr_provider(&test.repo).unwrap(),
+            PrProviderChoice::GitHub
+        );
+    }
+
+    #[test]
+    fn choose_pr_provider_azure_only() {
+        // Azure-only repo (no GitHub remote) gets the Azure provider.
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://dev.azure.com/myorg/proj/_git/myrepo",
+        ]);
+
+        assert_eq!(
+            choose_pr_provider(&test.repo).unwrap(),
+            PrProviderChoice::AzureDevOps
+        );
+    }
+
+    #[test]
+    fn choose_pr_provider_no_recognised_remote() {
+        // Falls back to GitHub when no recognisable forge remote exists,
+        // preserving the existing error message from `gh`.
+        let test = TestRepo::with_initial_commit();
+        assert_eq!(
+            choose_pr_provider(&test.repo).unwrap(),
+            PrProviderChoice::GitHub
+        );
+    }
+
+    #[test]
+    fn choose_pr_provider_forge_platform_override_wins() {
+        // The bug worth covering: a mixed-remote repo where the user explicitly
+        // pinned `forge.platform = "azure-devops"`. Without the override, the
+        // GitHub remote would win — and the user has no way to redirect `pr:N`.
+        // A regression that drops the project-config read would flip this
+        // assertion to `GitHub`.
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["remote", "add", "origin", "https://github.com/myorg/myrepo"]);
+        test.run_git(&[
+            "remote",
+            "add",
+            "azure",
+            "https://dev.azure.com/myorg/proj/_git/myrepo",
+        ]);
+        test.write_project_config("[forge]\nplatform = \"azure-devops\"\n");
+
+        assert_eq!(
+            choose_pr_provider(&test.repo).unwrap(),
+            PrProviderChoice::AzureDevOps
+        );
+    }
+
+    #[test]
+    fn choose_pr_provider_forge_platform_github_in_azure_only_repo() {
+        // Inverse override: Azure-only remotes but `forge.platform = "github"`.
+        // Verifies the config arm flips the inferred-from-remotes default.
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://dev.azure.com/myorg/proj/_git/myrepo",
+        ]);
+        test.write_project_config("[forge]\nplatform = \"github\"\n");
+
+        assert_eq!(
+            choose_pr_provider(&test.repo).unwrap(),
+            PrProviderChoice::GitHub
+        );
     }
 }

@@ -11,21 +11,27 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     NO_COLOR: ""
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
-    WORKTRUNK_APPROVALS_PATH: /nonexistent/wt/approvals.toml
-    WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml
-    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
 success: true
 exit_code: 0
@@ -69,7 +75,7 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
@@ -131,7 +137,7 @@ Output as JSON for scripting:
  Status  Compact symbols (see below)                                                                         
  HEAD±   Uncommitted changes: +added -deleted lines                                                          
  main↕   Commits ahead/behind default branch                                                                 
- main…±  Line diffs since the merge-base with the default branch; [2m--full[0m only                                
+ main…±  Line diffs since the merge-base (three-dot) with the default branch; [2m--full[0m only                    
  Summary LLM-generated branch summary; requires [2m--full[0m, [2msummary = true[0m, and [2mcommit.generation[0m [experimental] 
  Remote⇅ Commits ahead/behind tracking branch                                                                
  CI      Pipeline status; [2m--full[0m only                                                                        
@@ -141,7 +147,7 @@ Output as JSON for scripting:
  Age     Time since last commit                                                                              
  Message Last commit message (truncated)                                                                     
 
-Note: [2mmain↕[0m and [2mmain…±[0m refer to the default branch — the header label stays [2mmain[0m for compactness. [2mmain…±[0m uses a merge-base (three-dot) diff.
+The [2mmain[0m header label is used regardless of the default branch's actual name.
 
 [32mCI status[0m
 

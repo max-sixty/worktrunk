@@ -64,7 +64,7 @@ jobs:
     outputs:
       run: ${{ steps.decide.outputs.run }}
     steps:
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         if: github.event_name == 'pull_request'
         id: changes
         with:
@@ -100,7 +100,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2.77.1
+      uses: taiki-e/install-action@v2.79.8
       with:
         tool: cargo-hack
 
@@ -179,7 +179,7 @@ jobs:
     - name: Install nushell
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.112.2'
+        version: '0.113.0'
 
     - name: 💰 Rust repo cache
       uses: actions/cache@v5
@@ -200,11 +200,11 @@ jobs:
     # https://gist.github.com/worktrunk-bot/19bb23cb9658722abfe69479d0a4f9bf
     #
     # Cron-only: PR/push runs aren't appended (would pollute the time
-    # series). Skipped on forks: `WORKTRUNK_BOT_TOKEN` is not exposed there.
+    # series). Skipped on forks: `TEND_BOT_TOKEN` is not exposed there.
     - name: 💾 Append results to gist
       if: github.repository_owner == 'max-sixty' && github.event_name == 'schedule'
       env:
-        GITHUB_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.TEND_BOT_TOKEN }}
         GIST_ID: 19bb23cb9658722abfe69479d0a4f9bf
       run: |
         set -euo pipefail
@@ -237,9 +237,9 @@ jobs:
     - uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-udeps
-        version: "=0.1.60"
+        version: "=0.1.61"
 
-    - uses: clechasseur/rs-cargo@v5.0.4
+    - uses: clechasseur/rs-cargo@v5.0.5
       with:
         command: udeps
         args: --all-targets
@@ -265,7 +265,15 @@ jobs:
         key: minimal-versions
 
     - name: Resolve to minimum versions
-      run: cargo update -Z minimal-versions
+      run: |
+        cargo update -Z minimal-versions
+        # filedescriptor 0.8.3 declares `thiserror = "^1.0"` but uses `#[from]`,
+        # which is unsupported in thiserror 1.0.0/1.0.1 (it was added in 1.0.2).
+        # Under -Z minimal-versions the resolver picks 1.0.0, which fails to
+        # compile. Bump the floor to a known-good version that has `#[from]`.
+        # (Upstream filedescriptor hasn't been touched since 2025-02-11; we
+        # can't fix this at the source.)
+        cargo update -p thiserror@1 --precise 1.0.7
 
     - name: cargo check
       run: cargo check --workspace --all-targets
@@ -318,11 +326,11 @@ jobs:
 
     - uses: JasonEtco/create-an-issue@v2
       env:
-        # Use WORKTRUNK_BOT_TOKEN for a consistent bot identity (per
+        # Use TEND_BOT_TOKEN for a consistent bot identity (per
         # .github/CLAUDE.md) and so any future issue-triage automation can
         # cascade off issue creation — events from the default GITHUB_TOKEN
         # don't trigger other workflows.
-        GITHUB_TOKEN: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.TEND_BOT_TOKEN }}
         LINK: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       with:
         filename: .github/nightly-failure.md

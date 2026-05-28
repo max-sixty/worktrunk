@@ -1397,6 +1397,57 @@ two = "sh -c 'echo start-two >> slow_two.log; sleep 30; echo done-two >> slow_tw
     }
 }
 
+/// When children trap SIGINT, wt's forwarder escalates SIGINT → SIGTERM,
+/// and the children actually die from SIGTERM. But the user only sent SIGINT
+/// — wt's exit code must reflect that (130), not the escalated signal (143).
+/// Otherwise users who Ctrl-C a `wt step <concurrent-alias>` whose children
+/// happen to swallow SIGINT (or are slow under load) see "terminated by
+/// SIGTERM" / exit 143 even though they pressed Ctrl-C.
+#[rstest]
+#[cfg(unix)]
+fn test_alias_concurrent_sigint_reports_origin_after_escalation(repo: TestRepo) {
+    use crate::common::wait_for_file_content;
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    // Children trap SIGINT (ignore it) but NOT SIGTERM — so wt's
+    // SIGINT → SIGTERM escalation is what actually kills them.
+    repo.write_test_config(
+        r#"
+[aliases.intignored]
+one = "sh -c 'trap \"\" INT; echo start-one >> ignored_one.log; sleep 30'"
+two = "sh -c 'trap \"\" INT; echo start-two >> ignored_two.log; sleep 30'"
+"#,
+    );
+    repo.commit("initial");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "intignored"]);
+    cmd.current_dir(repo.root_path());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    cmd.process_group(0);
+    let mut child = cmd.spawn().expect("failed to spawn wt step intignored");
+
+    wait_for_file_content(&repo.root_path().join("ignored_one.log"));
+    wait_for_file_content(&repo.root_path().join("ignored_two.log"));
+
+    let wt_pgid = Pid::from_raw(child.id() as i32);
+    kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGINT)
+        .expect("failed to send SIGINT to wt's process group");
+
+    let status = child.wait().expect("failed to wait for wt");
+
+    use std::os::unix::process::ExitStatusExt;
+    assert!(
+        status.signal() == Some(2) || status.code() == Some(130),
+        "wt should report the originating SIGINT (signal 2 / code 130) even \
+         when escalation killed children with SIGTERM, got: {status:?}"
+    );
+}
+
 /// A second SIGINT (user mashing Ctrl-C) must escalate to SIGKILL on every
 /// child immediately — otherwise a child that traps SIGINT keeps the group
 /// alive for up to N × 400ms of per-pgid escalation, with subsequent
@@ -1775,6 +1826,60 @@ deploy = "make deploy BRANCH={{ branch }}"
         &repo,
         "config",
         &["alias", "show", "deploy"],
+        Some(&feature_path),
+    ));
+}
+
+/// `wt config alias show` with no name prints every configured alias's full
+/// definition — the same per-alias header + gutter block as `wt config alias
+/// show <name>`, emitted for each alias in name order. Names defined in both
+/// user and project config show twice (user first), and a name shadowed by a
+/// top-level built-in gets the stderr warning.
+#[rstest]
+fn test_config_alias_show_lists_all(mut repo: TestRepo) {
+    repo.write_project_config(
+        r#"
+[aliases]
+deploy = "echo from project"
+"only-project" = "echo p"
+list = "echo custom list"
+"#,
+    );
+    repo.commit("Add alias config");
+    let feature_path = repo.add_worktree("feature");
+    repo.write_test_config(
+        r#"
+[aliases]
+deploy = "echo from user"
+greet = "echo hi {{ branch }}"
+"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "config",
+        &["alias", "show"],
+        Some(&feature_path),
+    ));
+}
+
+/// `wt config alias show` with no name and no aliases configured prints a note
+/// rather than empty output.
+#[rstest]
+fn test_config_alias_show_lists_none(mut repo: TestRepo) {
+    repo.commit("Initial commit");
+    let feature_path = repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    let _guard = settings.bind_to_scope();
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "config",
+        &["alias", "show"],
         Some(&feature_path),
     ));
 }

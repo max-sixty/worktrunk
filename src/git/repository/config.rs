@@ -544,6 +544,12 @@ impl Repository {
     /// bare repos). For bare repos at the bare root (outside any worktree),
     /// falls back to the primary worktree. Returns `None` when no worktree can
     /// be determined (bare repo with no linked worktrees).
+    ///
+    /// "The current worktree" is whatever this `Repository` was rooted at, so
+    /// the answer to "which `.config/wt.toml` does a hook read" is decided by
+    /// the caller's choice of root. That policy — which worktree each hook type
+    /// is resolved against — is the spec in the `commands::hooks` module docs
+    /// (`src/commands/hooks.rs`).
     pub fn project_config_path(&self) -> anyhow::Result<Option<PathBuf>> {
         if let Ok(path) = std::env::var("WORKTRUNK_PROJECT_CONFIG_PATH") {
             return Ok(Some(PathBuf::from(path)));

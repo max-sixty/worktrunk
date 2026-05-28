@@ -1,0 +1,11 @@
+bot_name: worktrunk-bot
+setup:
+- uses: ./.github/actions/claude-setup
+secrets:
+  allowed:
+  - CODECOV_TOKEN
+workflows:
+  ci-fix:
+    watched_workflows:
+    - ci
+    - publish-docs

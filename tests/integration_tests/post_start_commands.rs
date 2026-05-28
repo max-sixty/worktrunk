@@ -37,13 +37,13 @@ fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
 // ============================================================================
 
 #[rstest]
-fn test_post_create_no_config(repo: TestRepo) {
+fn test_post_start_no_config(repo: TestRepo) {
     // Switch without project config should work normally
-    snapshot_switch("post_create_no_config", &repo, &["--create", "feature"]);
+    snapshot_switch("post_start_no_config", &repo, &["--create", "feature"]);
 }
 
 #[rstest]
-fn test_post_create_single_command(repo: TestRepo) {
+fn test_post_start_single_command(repo: TestRepo) {
     // Create project config with a single command (string format)
     repo.write_project_config(r#"pre-start = "echo 'Setup complete'""#);
 
@@ -57,15 +57,53 @@ approved-commands = ["echo 'Setup complete'"]
     );
 
     // Command should execute without prompting
-    snapshot_switch(
-        "post_create_single_command",
-        &repo,
-        &["--create", "feature"],
+    snapshot_switch("post_start_single_command", &repo, &["--create", "feature"]);
+}
+
+/// A config that uses the deprecated `pre-create` hook key loads and runs: the
+/// key is silently migrated to canonical `pre-start`. Phase 1 of the rename
+/// emits no warning (see https://github.com/max-sixty/worktrunk/issues/2838).
+#[rstest]
+fn test_deprecated_create_hook_key_runs_silently(repo: TestRepo) {
+    repo.write_project_config(r#"pre-create = "echo ran > marker.txt""#);
+    repo.commit("Add deprecated pre-create hook");
+    repo.write_test_approvals(
+        r#"[projects."../origin"]
+approved-commands = ["echo ran > marker.txt"]
+"#,
+    );
+
+    let temp_home = TempDir::new().unwrap();
+    let mut cmd = repo.wt_command();
+    cmd.args(["switch", "--create", "feature"])
+        .current_dir(repo.root_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "switch with a deprecated pre-create hook should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The hook ran — the `pre-create` key was migrated to canonical `pre-start`.
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    assert!(
+        worktree_path.join("marker.txt").exists(),
+        "deprecated pre-create hook should have run"
+    );
+
+    // Phase 1 migrates silently: no deprecation warning, and no stray
+    // "run wt config show" hint (the check_and_migrate empty-warnings guard).
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.to_lowercase().contains("deprecated") && !stderr.contains("config show"),
+        "no deprecation warning or hint expected in phase 1, got: {stderr}"
     );
 }
 
 #[rstest]
-fn test_post_create_named_commands(repo: TestRepo) {
+fn test_post_start_named_commands(repo: TestRepo) {
     // Create project config with named commands (table format)
     repo.write_project_config(
         r#"[pre-start]
@@ -87,15 +125,11 @@ approved-commands = [
     );
 
     // Commands should execute sequentially
-    snapshot_switch(
-        "post_create_named_commands",
-        &repo,
-        &["--create", "feature"],
-    );
+    snapshot_switch("post_start_named_commands", &repo, &["--create", "feature"]);
 }
 
 #[rstest]
-fn test_post_create_failing_command(repo: TestRepo) {
+fn test_post_start_failing_command(repo: TestRepo) {
     // Create project config with a command that will fail
     repo.write_project_config(r#"pre-start = "exit 1""#);
 
@@ -108,16 +142,16 @@ approved-commands = ["exit 1"]
 "#,
     );
 
-    // Failing pre-start hook (via deprecated pre-start name) aborts with FailFast
+    // A failing pre-start hook aborts with FailFast
     snapshot_switch(
-        "post_create_failing_command",
+        "post_start_failing_command",
         &repo,
         &["--create", "feature"],
     );
 }
 
 #[rstest]
-fn test_post_create_template_expansion(repo: TestRepo) {
+fn test_post_start_template_expansion(repo: TestRepo) {
     // Create project config with template variables
     repo.write_project_config(
         r#"[pre-start]
@@ -148,7 +182,7 @@ approved-commands = [
 
     // Commands should execute with expanded templates
     snapshot_switch(
-        "post_create_template_expansion",
+        "post_start_template_expansion",
         &repo,
         &["--create", "feature/test"],
     );
@@ -198,7 +232,7 @@ approved-commands = [
 }
 
 #[rstest]
-fn test_post_create_verbose_template_expansion(repo: TestRepo) {
+fn test_post_start_verbose_template_expansion(repo: TestRepo) {
     // Test that -v shows template expansion for pre-start hooks
     repo.write_project_config(
         r#"[pre-start]
@@ -231,12 +265,12 @@ approved-commands = [
             &["-v"],
         );
         set_temp_home_env(&mut cmd, temp_home.path());
-        assert_cmd_snapshot!("post_create_verbose_template_expansion", cmd);
+        assert_cmd_snapshot!("post_start_verbose_template_expansion", cmd);
     });
 }
 
 #[rstest]
-fn test_post_create_default_branch_template(repo: TestRepo) {
+fn test_post_start_default_branch_template(repo: TestRepo) {
     // Create project config with default_branch template variable
     repo.write_project_config(
         r#"pre-start = "echo 'Default: {{ default_branch }}' > default.txt""#,
@@ -253,7 +287,7 @@ approved-commands = ["echo 'Default: {{ default_branch }}' > default.txt"]
 
     // Create a feature branch worktree (--yes skips approval prompt)
     snapshot_switch(
-        "post_create_default_branch_template",
+        "post_start_default_branch_template",
         &repo,
         &["--create", "feature", "--yes"],
     );
@@ -276,7 +310,7 @@ approved-commands = ["echo 'Default: {{ default_branch }}' > default.txt"]
 }
 
 #[rstest]
-fn test_post_create_git_variables_template(#[from(repo_with_remote)] repo: TestRepo) {
+fn test_post_start_git_variables_template(#[from(repo_with_remote)] repo: TestRepo) {
     // Set up an upstream tracking branch
     repo.git_command()
         .args(["push", "-u", "origin", "main"])
@@ -297,7 +331,7 @@ worktree_name = "echo 'Worktree Name: {{ worktree_name }}' >> git_vars.txt"
 
     // Create a feature branch worktree (--yes skips approval prompt)
     snapshot_switch(
-        "post_create_git_variables_template",
+        "post_start_git_variables_template",
         &repo,
         &["--create", "feature", "--yes"],
     );
@@ -349,7 +383,7 @@ worktree_name = "echo 'Worktree Name: {{ worktree_name }}' >> git_vars.txt"
 }
 
 #[rstest]
-fn test_post_create_upstream_template(#[from(repo_with_remote)] repo: TestRepo) {
+fn test_post_start_upstream_template(#[from(repo_with_remote)] repo: TestRepo) {
     // Push main to set up tracking
     repo.git_command()
         .args(["push", "-u", "origin", "main"])
@@ -359,14 +393,14 @@ fn test_post_create_upstream_template(#[from(repo_with_remote)] repo: TestRepo) 
     // Create project config with upstream template variable
     // Note: {{ upstream }} errors when the new branch has no upstream tracking.
     // The new feature branch won't have an upstream until it's pushed with -u.
-    // This test verifies the error case - see test_post_create_upstream_conditional for the fix.
+    // This test verifies the error case - see test_post_start_upstream_conditional for the fix.
     repo.write_project_config(r#"pre-start = "echo 'Upstream: {{ upstream }}' > upstream.txt""#);
 
     repo.commit("Add config with upstream template");
 
     // Create a feature branch - it won't have upstream tracking configured yet
     snapshot_switch(
-        "post_create_upstream_template",
+        "post_start_upstream_template",
         &repo,
         &["--create", "feature", "--yes"],
     );
@@ -383,7 +417,7 @@ fn test_post_create_upstream_template(#[from(repo_with_remote)] repo: TestRepo) 
 }
 
 #[rstest]
-fn test_post_create_upstream_conditional(#[from(repo_with_remote)] repo: TestRepo) {
+fn test_post_start_upstream_conditional(#[from(repo_with_remote)] repo: TestRepo) {
     // Push main to set up tracking
     repo.git_command()
         .args(["push", "-u", "origin", "main"])
@@ -407,7 +441,7 @@ approved-commands = ["{% if not upstream %}echo 'no-upstream' > upstream.txt{% e
 
     // Create a feature branch - it won't have upstream tracking configured yet
     snapshot_switch(
-        "post_create_upstream_conditional",
+        "post_start_upstream_conditional",
         &repo,
         &["--create", "feature", "--yes"],
     );
@@ -430,7 +464,7 @@ approved-commands = ["{% if not upstream %}echo 'no-upstream' > upstream.txt{% e
 }
 
 #[rstest]
-fn test_post_create_base_variables(repo: TestRepo) {
+fn test_post_start_base_variables(repo: TestRepo) {
     // Create project config with base template variables
     repo.write_project_config(
         r#"[pre-start]
@@ -453,7 +487,7 @@ approved-commands = [
 
     // Create a feature branch worktree from main
     snapshot_switch(
-        "post_create_base_variables",
+        "post_start_base_variables",
         &repo,
         &["--create", "feature", "--base", "main"],
     );
@@ -500,7 +534,7 @@ approved-commands = [
 }
 
 #[rstest]
-fn test_post_create_json_stdin(repo: TestRepo) {
+fn test_pre_start_json_stdin(repo: TestRepo) {
     use crate::common::wt_command;
 
     // Create project config with a command that reads JSON from stdin
@@ -577,7 +611,7 @@ approved-commands = ["cat > context.json"]
 
 #[rstest]
 #[cfg(unix)]
-fn test_post_create_script_reads_json(repo: TestRepo) {
+fn test_post_start_script_reads_json(repo: TestRepo) {
     use crate::common::wt_command;
     use std::os::unix::fs::PermissionsExt;
 
@@ -828,8 +862,8 @@ approved-commands = [
 }
 
 #[rstest]
-fn test_both_post_create_and_post_start(repo: TestRepo) {
-    // Create project config with both command types
+fn test_both_pre_start_and_post_start(repo: TestRepo) {
+    // Create project config with both a blocking and a background creation hook
     repo.write_project_config(
         r#"pre-start = "echo 'Setup done' > setup.txt"
 
@@ -850,8 +884,8 @@ approved-commands = [
 "#,
     );
 
-    // Post-create should run first (blocking), then post-start (background)
-    snapshot_switch("both_create_and_start", &repo, &["--create", "feature"]);
+    // pre-start runs first (blocking), then post-start (background)
+    snapshot_switch("both_pre_and_post_start", &repo, &["--create", "feature"]);
 
     // Setup file should exist immediately (pre-start is blocking)
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
@@ -1138,7 +1172,7 @@ approved-commands = ["""
 }
 
 #[rstest]
-fn test_post_create_multiline_with_control_structures(repo: TestRepo) {
+fn test_post_start_multiline_with_control_structures(repo: TestRepo) {
     // Test multiline command with if-else control structure
     repo.write_project_config(
         r#"pre-start = """
@@ -1170,7 +1204,7 @@ approved-commands = ["""
     ));
 
     snapshot_switch(
-        "post_create_multiline_control_structure",
+        "post_start_multiline_control_structure",
         &repo,
         &["--create", "feature"],
     );
@@ -1367,7 +1401,7 @@ approved-commands = ["echo '{{ target }}' > target_marker.txt"]
     repo.wt_command()
         .args(["switch", "--create", "feature", "--no-hooks", "--yes"])
         .output()
-        .expect("failed to pre-create feature worktree");
+        .expect("failed to pre-start feature worktree");
     repo.wt_command()
         .args(["switch", "main", "--no-hooks", "--yes"])
         .output()

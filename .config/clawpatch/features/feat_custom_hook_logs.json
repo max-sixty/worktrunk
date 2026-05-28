@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_custom_hook_logs",
+  "title": "Hook output logs: filename sanitization and log-path layout",
+  "summary": "Hook stdout/stderr is persisted under `.git/wt/logs/` with per-branch and repo-wide paths. Branch names and hook names flow into filesystem paths through `sanitize_for_filename`; a sanitization gap (path separators, `..`, absolute prefixes, reserved Windows device names) means a crafted branch name could write or truncate files outside the logs tree. The top-level file-vs-directory split must stay consistent or `wt config state` mis-walks it. See CLAUDE.md > Hook Output Logs.",
+  "kind": "library",
+  "source": "manual",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/commands/process.rs",
+      "symbol": "HookLog",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/commands/process.rs",
+      "reason": "HookLog spec: log path construction and sanitize_for_filename call sites"
+    },
+    {
+      "path": "src/path.rs",
+      "reason": "sanitize_for_filename definition: the sanitization boundary"
+    },
+    {
+      "path": "src/commands/config/state.rs",
+      "reason": "log-layout invariant: the file-vs-directory split walked by `wt config state`"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "CLAUDE.md",
+      "reason": "Hook Output Logs section: log layout and sanitize_for_filename rule"
+    },
+    {
+      "path": "src/commands/hook_commands.rs",
+      "reason": "hook command resolution that produces the names written to log paths"
+    }
+  ],
+  "tests": [
+    {
+      "path": "tests/integration_tests/user_hooks.rs",
+      "command": "cargo test --test integration user_hooks"
+    },
+    {
+      "path": "tests/integration_tests/hook_show.rs",
+      "command": "cargo test --test integration hook_show"
+    }
+  ],
+  "tags": [
+    "rust",
+    "filesystem",
+    "path-traversal",
+    "logging"
+  ],
+  "trustBoundaries": [
+    "filesystem",
+    "user-input"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-05-19T00:00:00.000Z",
+  "updatedAt": "2026-05-19T00:00:00.000Z"
+}

@@ -1,0 +1,22 @@
+{
+  "name": "worktrunk",
+  "description": "Worktrunk is a CLI for Git worktree management, designed for parallel AI agent workflows. This plugin provides configuration guidance (LLM commit messages, project hooks, worktree paths) for Codex sessions.",
+  "author": {
+    "name": "Worktrunk",
+    "url": "https://github.com/max-sixty/worktrunk"
+  },
+  "homepage": "https://worktrunk.dev",
+  "repository": "https://github.com/max-sixty/worktrunk",
+  "license": "MIT OR Apache-2.0",
+  "keywords": ["git", "worktree", "codex", "agent"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Worktrunk",
+    "shortDescription": "Git worktree workflows for parallel Codex sessions.",
+    "longDescription": "Use Worktrunk from Codex to manage linked worktrees, set up LLM commit workflows, and configure project hooks.",
+    "developerName": "Worktrunk",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://worktrunk.dev"
+  }
+}

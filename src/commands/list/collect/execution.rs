@@ -328,8 +328,14 @@ pub fn work_items_for_worktree(
             wt.branch.as_ref().and_then(|branch| {
                 let mut vars = std::collections::HashMap::new();
                 vars.insert("branch", branch.as_str());
-                worktrunk::config::expand_template(template, &vars, false, repo, "url-template")
-                    .ok()
+                worktrunk::config::expand_template(
+                    template,
+                    &vars,
+                    worktrunk::shell_exec::ShellEscapeMode::Literal,
+                    repo,
+                    "url-template",
+                )
+                .ok()
             })
         })
     } else {
@@ -358,6 +364,7 @@ pub fn work_items_for_worktree(
         default_branch: options.default_branch.clone(),
         integration_targets: options.integration_targets.clone(),
         snapshot: options.snapshot.clone(),
+        include_untracked_in_working_diff: options.include_untracked_in_working_diff,
     };
 
     let has_commits = wt.has_commits();
@@ -469,6 +476,9 @@ pub fn work_items_for_branch(
         default_branch: options.default_branch.clone(),
         integration_targets: options.integration_targets.clone(),
         snapshot: options.snapshot.clone(),
+        // Branches have no working tree; the flag is only consumed by
+        // WorkingTreeDiffTask, which doesn't run for branch items.
+        include_untracked_in_working_diff: false,
     };
 
     let mut items = Vec::with_capacity(11);
@@ -543,10 +553,7 @@ mod tests {
         let options = CollectOptions {
             skip_tasks,
             url_template: Some("http://localhost/{{ branch }}".to_string()),
-            llm_command: None,
-            default_branch: None,
-            integration_targets: None,
-            snapshot: None,
+            ..Default::default()
         };
 
         let expected_results = Arc::new(ExpectedResults::default());
@@ -585,14 +592,7 @@ mod tests {
         };
 
         // No llm_command, no skip_tasks — SummaryGenerate should still be skipped
-        let options = CollectOptions {
-            skip_tasks: HashSet::new(),
-            llm_command: None,
-            url_template: None,
-            default_branch: None,
-            integration_targets: None,
-            snapshot: None,
-        };
+        let options = CollectOptions::default();
 
         let expected_results = Arc::new(ExpectedResults::default());
         let (tx, _rx) = chan::unbounded::<Result<TaskResult, TaskError>>();

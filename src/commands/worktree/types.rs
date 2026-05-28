@@ -122,8 +122,9 @@ pub enum SwitchPlan {
         worktree_path: PathBuf,
         /// How to create the worktree
         method: CreationMethod,
-        /// If path exists and --clobber, this is the backup path to move it to
-        clobber_backup: Option<PathBuf>,
+        /// True when a stale path occupies `worktree_path` and `--clobber` was
+        /// given — `execute_switch` backs it up before creating the worktree.
+        needs_clobber_backup: bool,
         /// Branch to record as "previous" for `wt switch -`
         new_previous: Option<String>,
     },
@@ -135,14 +136,6 @@ impl SwitchPlan {
         match self {
             SwitchPlan::Existing { path, .. } => path,
             SwitchPlan::Create { worktree_path, .. } => worktree_path,
-        }
-    }
-
-    /// Get the branch name for this plan. `None` for detached HEAD worktrees.
-    pub fn branch(&self) -> Option<&str> {
-        match self {
-            SwitchPlan::Existing { branch, .. } => branch.as_deref(),
-            SwitchPlan::Create { branch, .. } => Some(branch),
         }
     }
 
@@ -168,11 +161,6 @@ pub enum RemoveResult {
         branch_name: Option<String>,
         deletion_mode: BranchDeletionMode,
         target_branch: Option<String>,
-        /// Pre-computed integration reason (if branch is integrated with target).
-        /// Computed upfront to avoid race conditions when removing multiple worktrees
-        /// in background mode (background git operations can hold locks that cause
-        /// subsequent integration checks to fail).
-        integration_reason: Option<worktrunk::git::IntegrationReason>,
         /// Force git worktree removal even with untracked files.
         force_worktree: bool,
         /// Expected path based on config template. `Some` when actual path differs
@@ -196,14 +184,37 @@ pub enum RemoveResult {
         /// `origin/main` when upstream is ahead) or the local default branch.
         /// `None` when no default branch is configured.
         target_branch: Option<String>,
-        /// Pre-computed integration reason, same as `RemovedWorktree`.
-        /// Computed in `prepare_worktree_removal` so the output handler
-        /// doesn't need to re-derive a `Repository` for the check.
+        /// Pre-computed integration reason. Branch-only removal has no
+        /// worktree-local `pre-remove` hook, so the integration decision can
+        /// be made during preparation.
         integration_reason: Option<worktrunk::git::IntegrationReason>,
     },
 }
 
 impl RemoveResult {
+    /// Path of the removed worktree, if this result removed one.
+    ///
+    /// `None` for branch-only deletions — they have no worktree, so no
+    /// `pre-remove` hook runs and there's no worktree-local `.config/wt.toml`
+    /// to consult.
+    pub fn removed_worktree_path(&self) -> Option<&Path> {
+        match self {
+            RemoveResult::RemovedWorktree { worktree_path, .. } => Some(worktree_path),
+            RemoveResult::BranchOnly { .. } => None,
+        }
+    }
+
+    /// Post-removal working directory — where the user lands, and the worktree
+    /// whose `.config/wt.toml` `post-switch` reads. `None` for branch-only
+    /// deletions (no worktree was removed, so nothing was switched away from).
+    /// See the `main_path` field docs on [`RemoveResult::RemovedWorktree`].
+    pub fn destination_path(&self) -> Option<&Path> {
+        match self {
+            RemoveResult::RemovedWorktree { main_path, .. } => Some(main_path),
+            RemoveResult::BranchOnly { .. } => None,
+        }
+    }
+
     /// Convert to a JSON value for structured output.
     pub fn to_json(&self) -> serde_json::Value {
         match self {
@@ -341,7 +352,6 @@ mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
-            integration_reason: Some(worktrunk::git::IntegrationReason::SameCommit),
             force_worktree: false,
             expected_path: None,
             removed_commit: Some("abc1234567890".to_string()),
@@ -354,7 +364,6 @@ mod tests {
                 branch_name,
                 deletion_mode,
                 target_branch,
-                integration_reason,
                 force_worktree,
                 expected_path,
                 removed_commit,
@@ -366,7 +375,6 @@ mod tests {
                 assert!(!deletion_mode.should_keep());
                 assert!(!deletion_mode.is_force());
                 assert_eq!(target_branch.as_deref(), Some("main"));
-                assert!(integration_reason.is_some());
                 assert!(!force_worktree);
                 assert!(expected_path.is_none());
                 assert_eq!(removed_commit.as_deref(), Some("abc1234567890"));
@@ -439,7 +447,6 @@ mod tests {
             branch_name: None, // Detached HEAD
             deletion_mode: BranchDeletionMode::ForceDelete,
             target_branch: None,
-            integration_reason: None, // Force delete skips integration check
             force_worktree: true,
             expected_path: None,
             removed_commit: None, // Detached HEAD may not have meaningful commit

@@ -41,6 +41,9 @@
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
         # Filter source to include Cargo files plus templates (needed by askama)
+        # and the Gemini extension manifest (embedded via include_str! in
+        # src/testing/mod.rs; lives at the repo root because Gemini's loader
+        # reads it only from the clone root — see #2807).
         src = pkgs.lib.cleanSourceWith {
           src = ./.;
           filter =
@@ -49,7 +52,8 @@
             || (pkgs.lib.hasInfix "/templates/" p)
             || (baseNameOf (dirOf p) == "templates")
             || (pkgs.lib.hasInfix "/dev/" p)
-            || (baseNameOf (dirOf p) == "dev");
+            || (baseNameOf (dirOf p) == "dev")
+            || (baseNameOf p == "gemini-extension.json");
         };
 
         # Vendored path dependencies (vendor/skim-tuikit) need their real

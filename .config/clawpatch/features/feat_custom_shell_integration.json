@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_custom_shell_integration",
+  "title": "Shell integration: generated wrapper code and rc-file edits",
+  "summary": "`wt config shell init` emits a shell function that the user `eval`s into an interactive shell, and `wt config shell install` edits rc files in place. The emitted wrapper embeds `argv[0]`-derived data (`binary_name`) and the configured command name; anything unescaped that reaches the eval'd output is code injection into the user's shell. rc-file edits must be idempotent and must not corrupt or duplicate an existing managed block. Trust boundary: process-exec (code the shell will run) and filesystem (user rc files).",
+  "kind": "library",
+  "source": "manual",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/commands/configure_shell.rs",
+      "symbol": "handle_configure_shell",
+      "route": null,
+      "command": "wt config shell"
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/commands/configure_shell.rs",
+      "reason": "rc-file scan/edit and managed-block detection"
+    },
+    {
+      "path": "src/output/shell_integration.rs",
+      "reason": "shell-integration prompts and install/uninstall result rendering"
+    },
+    {
+      "path": "src/invocation.rs",
+      "reason": "binary_name/invocation_path: argv[0]-derived values embedded in the emitted wrapper"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "src/cli/config.rs",
+      "reason": "`wt config shell` subcommand wiring"
+    },
+    {
+      "path": "src/commands/init.rs",
+      "reason": "init-time shell-integration setup"
+    }
+  ],
+  "tests": [
+    {
+      "path": "tests/integration_tests/configure_shell.rs",
+      "command": "cargo test --test integration configure_shell"
+    },
+    {
+      "path": "tests/integration_tests/shell_wrapper.rs",
+      "command": "cargo test --test integration shell_wrapper"
+    }
+  ],
+  "tags": [
+    "rust",
+    "security",
+    "shell-integration",
+    "code-injection"
+  ],
+  "trustBoundaries": [
+    "process-exec",
+    "filesystem",
+    "user-input"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-05-19T00:00:00.000Z",
+  "updatedAt": "2026-05-19T00:00:00.000Z"
+}

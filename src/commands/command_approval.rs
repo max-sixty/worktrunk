@@ -22,11 +22,11 @@ use std::path::Path;
 
 use anyhow::Context;
 use color_print::cformat;
-use worktrunk::config::Approvals;
+use worktrunk::config::{Approvals, require_approvals_path};
 use worktrunk::git::{GitError, HookType};
 use worktrunk::styling::{
-    INFO_SYMBOL, WARNING_SYMBOL, eprint, eprintln, format_bash_with_gutter, hint_message,
-    prompt_message, stderr, warning_message,
+    INFO_SYMBOL, WARNING_SYMBOL, eprint, eprintln, format_bash_with_gutter, format_with_gutter,
+    hint_message, prompt_message, stderr, warning_message,
 };
 
 use super::hook_filter::{HookSource, ParsedFilter};
@@ -77,14 +77,17 @@ pub fn approve_command_batch(
             .iter()
             .map(|cmd| cmd.command.template.clone())
             .collect();
-        if let Err(e) = fresh_approvals.approve_commands(project_id.to_string(), commands, None) {
+        let save_result = require_approvals_path().and_then(|path| {
+            fresh_approvals.approve_commands(project_id.to_string(), commands, &path)
+        });
+        if let Err(e) = save_result {
             eprintln!(
                 "{}",
                 warning_message(format!("Failed to save command approval: {e}"))
             );
             eprintln!(
                 "{}",
-                hint_message("Approval will be requested again next time.")
+                hint_message("Approval will be requested again next time")
             );
         }
     }
@@ -120,7 +123,14 @@ fn prompt_for_batch_approval(
             None => format!("{INFO_SYMBOL} {phase}:"),
         };
         eprintln!("{}", label);
-        eprintln!("{}", format_bash_with_gutter(&cmd.command.template));
+        // Shell commands get bash syntax highlighting; the commit template
+        // fragment is plain text (markdown-ish) and shouldn't be tokenized as
+        // bash.
+        let body = match cmd.phase {
+            Phase::CommitTemplateAppend => format_with_gutter(&cmd.command.template, None),
+            _ => format_bash_with_gutter(&cmd.command.template),
+        };
+        eprintln!("{}", body);
     }
 
     // Check if stdin is a TTY before attempting to prompt
@@ -186,7 +196,7 @@ pub fn approve_alias_commands(
 ///
 /// ```ignore
 /// let ctx = CommandContext::new(&repo, &config, &branch, &worktree_path, yes);
-/// let approved = approve_hooks(&ctx, &[HookType::PreStart, HookType::PostStart])?;
+/// let approved = approve_hooks(&ctx, &[HookType::PreCreate, HookType::PostCreate])?;
 /// ```
 pub fn approve_hooks(
     ctx: &super::command_executor::CommandContext<'_>,
@@ -234,20 +244,13 @@ pub fn approve_hooks_filtered(
 
     let mut commands = collect_commands_for_hooks(&project_config, hook_types);
 
-    // Apply name filters before approval to only prompt for targeted commands
-    // Collect non-empty name parts from filters
-    // Empty names (e.g., "project:") mean match all project commands - no filtering
-    let filter_names: Vec<&str> = parsed_filters
-        .iter()
-        .map(|f| f.name)
-        .filter(|n| !n.is_empty())
-        .collect();
-    if !filter_names.is_empty() {
+    // Apply source-aware filters before approval to only prompt for targeted
+    // project commands. User-scoped filters never match project commands.
+    if !parsed_filters.is_empty() {
         commands.retain(|cmd| {
-            cmd.command
-                .name
-                .as_deref()
-                .is_some_and(|n| filter_names.contains(&n))
+            parsed_filters
+                .iter()
+                .any(|f| f.matches_command(HookSource::Project, cmd.command.name.as_deref()))
         });
     }
 
@@ -275,4 +278,69 @@ pub fn approve_or_skip(
         worktrunk::styling::eprintln!("{}", worktrunk::styling::info_message(on_decline));
     }
     Ok(approved)
+}
+
+/// Resolve the project commit template for a preview path (`--show-prompt` /
+/// `--dry-run`).
+///
+/// `--show-prompt` doesn't invoke the LLM, so it always returns the configured
+/// fragment verbatim. `--dry-run` does invoke the LLM, so when an LLM is
+/// configured it goes through the same approval gate as a real commit.
+pub fn resolve_template_for_preview(
+    ctx: &super::command_executor::CommandContext<'_>,
+    commit_config: &worktrunk::config::CommitGenerationConfig,
+    dry_run: bool,
+) -> anyhow::Result<Option<String>> {
+    if dry_run && commit_config.is_configured() {
+        approve_commit_template_append(ctx)
+    } else {
+        Ok(ctx
+            .repo
+            .load_project_config()?
+            .as_ref()
+            .and_then(|cfg| cfg.commit_template_append().map(str::to_string)))
+    }
+}
+
+/// Approve the project-level commit append fragment before sending it to the LLM.
+///
+/// Returns `Ok(Some(fragment))` when approved (or already approved), `Ok(None)`
+/// when no fragment is configured or the user declined. Declining is non-fatal:
+/// the LLM still runs, just without the project append, mirroring the
+/// "commands declined, continuing without hooks" pattern. The user-level
+/// `template-append` is not gated here — it's the developer's own config.
+///
+/// Callers should invoke this on every LLM-bearing path (`wt commit`, `wt step
+/// commit`, `wt step squash`, `wt merge`, `wt step commit --dry-run`, etc.).
+/// `--show-prompt` paths skip the gate — they don't execute the LLM, so showing
+/// the fragment is a preview, not a send.
+pub fn approve_commit_template_append(
+    ctx: &super::command_executor::CommandContext<'_>,
+) -> anyhow::Result<Option<String>> {
+    let Some(project_config) = ctx.repo.load_project_config()? else {
+        return Ok(None);
+    };
+    let Some(fragment) = project_config.commit_template_append() else {
+        return Ok(None);
+    };
+
+    let project_id = ctx.repo.project_identifier()?;
+    let approvals = Approvals::load().context("Failed to load approvals")?;
+    let owned = fragment.to_string();
+    if approvals.is_command_approved(&project_id, &owned) {
+        return Ok(Some(owned));
+    }
+
+    let batch = vec![ApprovableCommand::commit_template_append(owned.clone())];
+    let approved = approve_command_batch(&batch, &project_id, &approvals, ctx.yes, true)?;
+    if !approved {
+        worktrunk::styling::eprintln!(
+            "{}",
+            worktrunk::styling::info_message(
+                "Project commit guidance declined; generating without it",
+            )
+        );
+        return Ok(None);
+    }
+    Ok(Some(owned))
 }

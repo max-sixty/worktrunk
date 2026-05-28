@@ -7,7 +7,7 @@ weight = 10
 group = "Commands"
 +++
 
-<!-- ⚠️ AUTO-GENERATED from `wt switch --help-page` — edit cli.rs to update -->
+<!-- ⚠️ AUTO-GENERATED from `wt switch --help-page` — edit src/cli/mod.rs to update -->
 
 Switch to a worktree; create if needed.
 
@@ -52,7 +52,7 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 
 {{ terminal(cmd="wt switch -                           # Back to previous|||wt switch ^                           # Default branch worktree|||wt switch --create fix --base=@       # Branch from current HEAD|||wt switch --create fix --base=pr:123  # Branch from PR #123's head|||wt switch pr:123                      # PR #123's branch|||wt switch mr:101                      # MR !101's branch") }}
 
-Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
+Shortcuts also apply to `--base`. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch. (Web URLs like `https://github.com/owner/repo/pull/N` or `https://gitlab.com/owner/repo/-/merge_requests/N` work in place of `pr:N` / `mr:N` anywhere a shortcut does.)
 
 ## Interactive picker
 
@@ -105,6 +105,10 @@ The `pr:<number>` and `mr:<number>` shortcuts resolve a GitHub PR or GitLab MR t
 Requires `gh` (GitHub) or `glab` (GitLab) CLI to be installed and authenticated. The `--create` flag cannot be used with `pr:`/`mr:` syntax since the branch already exists.
 
 **Forks:** The local branch uses the PR/MR's branch name directly (e.g., `feature-fix`), so `git push` works normally. If a local branch with that name already exists tracking something else, rename it first.
+
+**Gitea (experimental):** `pr:` is also compatible with Gitea via the `tea` CLI. Set `[forge] platform = "gitea"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Gitea when the remote host contains `gitea` or when `tea login add` has been run for the host.
+
+**Azure DevOps (experimental):** `pr:` is also compatible with Azure DevOps via the `az` CLI (with the `azure-devops` extension). Set `[forge] platform = "azure-devops"` in `.config/wt.toml` to opt in; worktrunk also auto-detects Azure DevOps from `dev.azure.com` and `*.visualstudio.com` remotes.
 
 ## When wt switch fails
 
@@ -161,15 +165,15 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
 
           Especially useful with shell aliases:
 
-            <b>alias wsc=&#39;wt switch --create -x claude&#39;</b>
+            <b><b>alias wsc=&#39;wt switch --create -x claude&#39;</b></b>
             <b>wsc feature-branch -- &#39;Fix GH #322&#39;</b>
 
           Then <b>wsc feature-branch</b> creates the worktree and launches Claude Code. Arguments after <b>--</b>
           are passed to the command, so <b>wsc feature -- &#39;Fix GH #322&#39;</b> runs <b>claude &#39;Fix GH #322&#39;</b>,
           starting Claude with a prompt.
 
-          Template example: <b>-x &#39;code {{ worktree_path }}&#39;</b> opens VS Code at the worktree, <b>-x &#39;tmux</b>
-<b>          new -s {{ branch | sanitize }}&#39;</b> starts a tmux session named after the branch.
+          Template example: <b>-x code -- &#39;{{ worktree_path }}&#39;</b> opens VS Code at the worktree, <b>-x tmux</b>
+<b>          -- new -s &#39;{{ branch | sanitize }}&#39;</b> starts a tmux session named after the branch.
 
       <b><span class=c>--clobber</span></b>
           Remove stale paths at target
@@ -179,9 +183,6 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
 
           Hooks still run normally. Useful when hooks handle navigation (e.g., tmux workflows) or
           for CI/automation. Use --cd to override.
-
-          In picker mode (no branch argument), prints the selected branch name and exits without
-          switching. Useful for scripting.
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
@@ -217,8 +218,8 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts

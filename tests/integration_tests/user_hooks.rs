@@ -36,15 +36,15 @@ fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
 }
 
 #[rstest]
-fn test_user_post_create_hook_executes(repo: TestRepo) {
+fn test_user_pre_start_hook_executes(repo: TestRepo) {
     // Write user config with pre-start hook (no project config)
     repo.write_test_config(
         r#"[pre-start]
-log = "echo 'USER_POST_CREATE_RAN' > user_hook_marker.txt"
+log = "echo 'USER_PRE_CREATE_RAN' > user_hook_marker.txt"
 "#,
     );
 
-    snapshot_switch("user_post_create_executes", &repo, &["--create", "feature"]);
+    snapshot_switch("user_pre_start_executes", &repo, &["--create", "feature"]);
 
     // Verify user hook actually ran
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
@@ -56,7 +56,7 @@ log = "echo 'USER_POST_CREATE_RAN' > user_hook_marker.txt"
 
     let contents = fs::read_to_string(&marker_file).unwrap();
     assert!(
-        contents.contains("USER_POST_CREATE_RAN"),
+        contents.contains("USER_PRE_CREATE_RAN"),
         "Marker file should contain expected content"
     );
 }
@@ -158,7 +158,7 @@ approved-commands = ["echo 'PROJECT_HOOK' > project_marker.txt"]
 }
 
 #[rstest]
-fn test_user_post_create_hook_failure(repo: TestRepo) {
+fn test_user_pre_start_hook_failure(repo: TestRepo) {
     // Write user config with failing hook
     repo.write_test_config(
         r#"[pre-start]
@@ -166,10 +166,9 @@ failing = "exit 1"
 "#,
     );
 
-    // Failing pre-start hook (via deprecated pre-start name) aborts with FailFast.
-    // The worktree is already created before pre-start runs (it was renamed from
-    // pre-start), so the worktree exists but the command exits non-zero.
-    snapshot_switch("user_post_create_failure", &repo, &["--create", "feature"]);
+    // A failing pre-start hook aborts with FailFast. The worktree is created
+    // before pre-start runs, so it exists even though the command exits non-zero.
+    snapshot_switch("user_pre_start_failure", &repo, &["--create", "feature"]);
 
     // Worktree exists (created before pre-start ran) but the command failed
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
@@ -188,7 +187,7 @@ fn test_user_post_start_hook_executes(repo: TestRepo) {
     // Write user config with post-start hook (background)
     repo.write_test_config(
         r#"[post-start]
-bg = "echo 'USER_POST_START_RAN' > user_bg_marker.txt"
+bg = "echo 'USER_POST_CREATE_RAN' > user_bg_marker.txt"
 "#,
     );
 
@@ -201,7 +200,7 @@ bg = "echo 'USER_POST_START_RAN' > user_bg_marker.txt"
 
     let contents = fs::read_to_string(&marker_file).unwrap();
     assert!(
-        contents.contains("USER_POST_START_RAN"),
+        contents.contains("USER_POST_CREATE_RAN"),
         "User post-start hook should have run in background"
     );
 }
@@ -1573,9 +1572,9 @@ fn test_standalone_hook_failure_omits_skip_hint(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_standalone_hook_post_create(repo: TestRepo) {
+fn test_standalone_hook_pre_start(repo: TestRepo) {
     // Write project config with pre-start hook
-    repo.write_project_config(r#"pre-start = "echo 'STANDALONE_POST_CREATE' > hook_ran.txt""#);
+    repo.write_project_config(r#"pre-start = "echo 'STANDALONE_PRE_CREATE' > hook_ran.txt""#);
 
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
@@ -1585,44 +1584,40 @@ fn test_standalone_hook_post_create(repo: TestRepo) {
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "wt hook pre-start should succeed");
 
-    // Hook runs in background — wait for it to write the marker file
     let marker = repo.root_path().join("hook_ran.txt");
     crate::common::wait_for_file_content(&marker);
     let content = fs::read_to_string(&marker).unwrap();
-    assert!(content.contains("STANDALONE_POST_CREATE"));
+    assert!(content.contains("STANDALONE_PRE_CREATE"));
 }
 
 #[rstest]
-fn test_standalone_hook_post_create_alias_deprecated(repo: TestRepo) {
-    // `wt hook post-create` still maps to `pre-start` for scripted callers,
-    // but emits a deprecation warning per invocation.
-    repo.write_project_config(r#"pre-start = "echo 'POST_CREATE_ALIAS' > hook_ran.txt""#);
+fn test_standalone_hook_create_alias_runs_silently(repo: TestRepo) {
+    // `wt hook pre-create` is a deprecated alias for `wt hook pre-start`. It
+    // still runs the canonical `pre-start` hook, and Phase 1 of the rename
+    // emits no warning (issue #2838).
+    repo.write_project_config(r#"pre-start = "echo 'CREATE_ALIAS' > hook_ran.txt""#);
 
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "post-create", "--yes"]);
+    cmd.args(["hook", "pre-create", "--yes"]);
 
     let output = cmd.output().unwrap();
     assert!(
         output.status.success(),
-        "wt hook post-create should still succeed (alias for pre-start)"
+        "wt hook pre-create should succeed (alias for pre-start)"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("wt hook post-create is deprecated"),
-        "expected deprecation warning in stderr, got: {stderr}"
-    );
-    assert!(
-        stderr.contains("wt hook pre-start"),
-        "expected migration hint in stderr, got: {stderr}"
+        !stderr.to_lowercase().contains("deprecated"),
+        "phase 1 emits no deprecation warning, got: {stderr}"
     );
 
     // Verify the aliased hook actually ran.
     let marker = repo.root_path().join("hook_ran.txt");
     crate::common::wait_for_file_content(&marker);
     let content = fs::read_to_string(&marker).unwrap();
-    assert!(content.contains("POST_CREATE_ALIAS"));
+    assert!(content.contains("CREATE_ALIAS"));
 }
 
 #[rstest]

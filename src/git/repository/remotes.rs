@@ -39,7 +39,7 @@
 //!
 //! | Need | `wt switch pr:N` | `wt list` CI status |
 //! |------|------------------|---------------------|
-//! | Platform | Implicit (`pr:` = GitHub, `mr:` = GitLab) | `platform_for_repo` |
+//! | Platform | Implicit (`pr:` = GitHub, `mr:` = GitLab) | `Repository::ci_platform` |
 //! | Owner/repo | `fetch_pr_info` builds API path | `github_owner_repo` for check-runs API |
 //! | API hostname | `forge.hostname` config, else omit | `forge.hostname` config, else omit |
 //! | Fetch remote | `Repository::find_remote_for_repo` by owner/repo | Not needed |
@@ -51,7 +51,7 @@
 //!
 //! ```toml
 //! [forge]
-//! platform = "github"              # override platform detection
+//! platform = "github"              # forge platform; else detected from URL
 //! hostname = "github.example.com"  # API hostname (GHE / self-hosted GitLab)
 //! ```
 //!
@@ -210,6 +210,48 @@ impl Repository {
         None
     }
 
+    /// Find a remote that points to the given Azure DevOps project + repo.
+    ///
+    /// Azure DevOps URLs do not fit the standard `host/owner/repo` shape that
+    /// [`find_remote_for_repo`](Self::find_remote_for_repo) assumes — for
+    /// `https://dev.azure.com/{org}/{project}/_git/{repo}` the parser stores
+    /// `{org}/{project}/_git` in `owner`, and the SSH variant stores `v3/{org}/{project}`.
+    /// Match by `azure_organization()` + `azure_project()` + `repo()` instead, so
+    /// two projects in the same org with the same repo name don't collide.
+    pub fn find_remote_for_azure(
+        &self,
+        organization: &str,
+        project: &str,
+        repo_name: &str,
+    ) -> Option<String> {
+        let matches = |url: &str| -> bool {
+            let Some(parsed) = GitRemoteUrl::parse(url) else {
+                return false;
+            };
+            parsed
+                .azure_organization()
+                .is_some_and(|o| o.eq_ignore_ascii_case(organization))
+                && parsed
+                    .azure_project()
+                    .is_some_and(|p| p.eq_ignore_ascii_case(project))
+                && parsed.repo().eq_ignore_ascii_case(repo_name)
+        };
+
+        for (remote_name, raw_url) in self.all_remote_urls() {
+            if matches(&raw_url) {
+                return Some(remote_name);
+            }
+            if let Some(effective_url) = self.effective_remote_url(&remote_name)
+                && effective_url != raw_url
+                && matches(&effective_url)
+            {
+                return Some(remote_name);
+            }
+        }
+
+        None
+    }
+
     /// Find a remote that points to the same project as the given URL.
     ///
     /// Parses the URL to extract host/owner/repo, then searches configured remotes.
@@ -266,6 +308,31 @@ impl Repository {
             .and_then(GitRemoteUrl::parse)
     }
 
+    /// Parsed URL of the remote that belongs to a particular forge.
+    ///
+    /// Prefers the primary remote when it matches `is_forge`, then the first
+    /// other remote whose URL matches, and finally falls back to the primary
+    /// remote's parsed URL even if it doesn't match (so callers preserve their
+    /// existing "no forge remote" error path). PR/MR lookup uses this so a
+    /// GitHub/Gitea mirror configured as a *non-primary* remote is queried
+    /// against its own owner/repo rather than the primary (e.g. GitLab/Azure)
+    /// remote's path.
+    pub fn forge_remote_parsed_url(
+        &self,
+        is_forge: impl Fn(&GitRemoteUrl) -> bool,
+    ) -> Option<GitRemoteUrl> {
+        if let Some(primary) = self.primary_remote_parsed_url()
+            && is_forge(&primary)
+        {
+            return Some(primary);
+        }
+        self.all_remote_urls()
+            .into_iter()
+            .filter_map(|(_, url)| GitRemoteUrl::parse(&url))
+            .find(&is_forge)
+            .or_else(|| self.primary_remote_parsed_url())
+    }
+
     /// Detect the platform's reference type (PR for GitHub, MR for GitLab).
     ///
     /// Hostname-matches the primary remote's effective URL (so `url.insteadOf`
@@ -274,8 +341,8 @@ impl Repository {
     ///
     /// Drives the numeric-branch hint in `BranchNotFound` only — `forge.platform`
     /// is intentionally not consulted here. Honoring it would duplicate
-    /// `platform_for_repo`'s precedence rules; users with that override and an
-    /// opaque remote host fall through to the both-platforms hint.
+    /// `Repository::ci_platform`'s precedence rules; users who set it but have
+    /// an opaque remote host fall through to the both-platforms hint.
     pub fn detect_ref_type(&self) -> Option<RefType> {
         let url = self
             .primary_remote()
@@ -367,5 +434,120 @@ impl Repository {
             .iter()
             .find(|r| r.short_name == ref_name)
             .map(|r| r.local_name.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::testing::TestRepo;
+
+    #[test]
+    fn test_find_remote_for_azure_dev_azure() {
+        let t = TestRepo::new();
+        t.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://dev.azure.com/myorg/myproject/_git/myrepo",
+        ]);
+
+        // Matching org/project/repo finds the remote.
+        assert_eq!(
+            t.repo.find_remote_for_azure("myorg", "myproject", "myrepo"),
+            Some("origin".to_string())
+        );
+
+        // Wrong project — Azure orgs can hold many projects with the same repo name.
+        assert_eq!(
+            t.repo
+                .find_remote_for_azure("myorg", "wrong-project", "myrepo"),
+            None
+        );
+
+        // Wrong repo.
+        assert_eq!(
+            t.repo
+                .find_remote_for_azure("myorg", "myproject", "wrong-repo"),
+            None
+        );
+
+        // Wrong org.
+        assert_eq!(
+            t.repo
+                .find_remote_for_azure("other-org", "myproject", "myrepo"),
+            None
+        );
+
+        // Case-insensitive across all three components.
+        assert_eq!(
+            t.repo.find_remote_for_azure("MYORG", "MyProject", "MyRepo"),
+            Some("origin".to_string())
+        );
+    }
+
+    #[test]
+    fn test_find_remote_for_azure_ssh_form() {
+        // SSH form: git@ssh.dev.azure.com:v3/{org}/{project}/{repo}
+        let t = TestRepo::new();
+        t.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "git@ssh.dev.azure.com:v3/myorg/myproject/myrepo",
+        ]);
+
+        assert_eq!(
+            t.repo.find_remote_for_azure("myorg", "myproject", "myrepo"),
+            Some("origin".to_string())
+        );
+    }
+
+    #[test]
+    fn test_find_remote_for_azure_visualstudio() {
+        // Legacy *.visualstudio.com form: org is in the hostname.
+        let t = TestRepo::new();
+        t.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://myorg.visualstudio.com/myproject/_git/myrepo",
+        ]);
+
+        assert_eq!(
+            t.repo.find_remote_for_azure("myorg", "myproject", "myrepo"),
+            Some("origin".to_string())
+        );
+    }
+
+    #[test]
+    fn test_find_remote_for_azure_multiple_remotes() {
+        // A repo with both an Azure DevOps fork and a GitHub mirror — the Azure
+        // matcher must skip the GitHub remote without false-positive matching.
+        let t = TestRepo::new();
+        t.run_git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://dev.azure.com/myorg/myproject/_git/myrepo",
+        ]);
+        t.run_git(&["remote", "add", "github", "https://github.com/myorg/myrepo"]);
+
+        assert_eq!(
+            t.repo.find_remote_for_azure("myorg", "myproject", "myrepo"),
+            Some("origin".to_string())
+        );
+    }
+
+    #[test]
+    fn test_find_remote_for_azure_no_azure_remote() {
+        // GitHub-only repo: Azure matcher should find nothing.
+        let t = TestRepo::new();
+        t.run_git(&["remote", "add", "origin", "https://github.com/myorg/myrepo"]);
+
+        assert_eq!(
+            t.repo
+                .find_remote_for_azure("myorg", "anyproject", "myrepo"),
+            None
+        );
     }
 }

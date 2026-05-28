@@ -10,21 +10,20 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{
-    ProjectConfig, UserConfig, default_system_config_path, system_config_path,
+    ProjectConfig, UserConfig, default_system_config_path, require_config_path, system_config_path,
 };
-use worktrunk::git::{ErrorExt, Repository};
+use worktrunk::git::{CiPlatform, ErrorExt, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{FileDetectionResult, Shell, scan_for_detection_details};
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{
-    error_message, format_bash_with_gutter, format_heading, format_toml, format_with_gutter,
-    hint_message, info_message, success_message, warning_message,
+    FormattedMessage, error_message, format_bash_with_gutter, format_heading, format_toml,
+    format_with_gutter, hint_message, info_message, success_message, warning_message,
 };
 
-use super::state::require_user_config_path;
 use crate::cli::{SwitchFormat, version_str};
 use crate::commands::configure_shell::{ConfigAction, ConfigureResult, scan_shell_configs};
-use crate::commands::list::ci_status::{CiPlatform, CiToolsStatus, platform_for_repo};
+use crate::commands::list::ci_status::CiToolsStatus;
 use crate::help_pager::show_help_in_pager;
 use crate::llm::test_commit_generation;
 use crate::output;
@@ -60,10 +59,22 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
         render_claude_code_status(&mut show_output)?;
     }
 
+    // Render Codex status (only when codex CLI is available)
+    if is_codex_available() {
+        show_output.push('\n');
+        render_codex_status(&mut show_output)?;
+    }
+
     // Render OpenCode status (only when opencode CLI is available)
     if is_opencode_available() {
         show_output.push('\n');
         render_opencode_status(&mut show_output)?;
+    }
+
+    // Render Gemini status (only when gemini CLI is available)
+    if is_gemini_available() {
+        show_output.push('\n');
+        render_gemini_status(&mut show_output)?;
     }
 
     // Run full diagnostic checks if requested (includes slow network calls)
@@ -84,7 +95,7 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
 
 /// JSON output for config show: paths, existence, and parsed config contents.
 fn handle_config_show_json() -> anyhow::Result<()> {
-    let user_path = require_user_config_path()?;
+    let user_path = require_config_path()?;
     let user_exists = user_path.exists();
     let user_config = if user_exists {
         Some(serde_json::to_value(&UserConfig::load()?)?)
@@ -92,12 +103,18 @@ fn handle_config_show_json() -> anyhow::Result<()> {
         None
     };
 
-    let (project_path, project_config) = if let Ok(repo) = Repository::current() {
+    let (project_path, project_config, project_identifier) = if let Ok(repo) = Repository::current()
+    {
         let path = repo.project_config_path()?;
         let config = repo.load_project_config()?;
-        (path, config.map(|c| serde_json::to_value(&c)).transpose()?)
+        let identifier = repo.project_identifier().ok();
+        (
+            path,
+            config.map(|c| serde_json::to_value(&c)).transpose()?,
+            identifier,
+        )
     } else {
-        (None, None)
+        (None, None, None)
     };
 
     let system_path = system_config_path().or_else(default_system_config_path);
@@ -112,6 +129,7 @@ fn handle_config_show_json() -> anyhow::Result<()> {
         "project": {
             "path": project_path,
             "exists": project_path.as_ref().is_some_and(|p| p.exists()),
+            "identifier": project_identifier,
             "config": project_config,
         },
         "system": {
@@ -132,6 +150,15 @@ pub(super) fn is_claude_available() -> bool {
         return val == "1";
     }
     which::which("claude").is_ok()
+}
+
+/// Check if Codex CLI is available
+pub(super) fn is_codex_available() -> bool {
+    // Allow tests to override detection
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_CODEX_INSTALLED") {
+        return val == "1";
+    }
+    which::which("codex").is_ok()
 }
 
 /// Get the home directory for Claude Code config detection
@@ -272,6 +299,22 @@ fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Render CODEX section (marketplace install hint).
+/// Caller must check `is_codex_available()` first.
+fn render_codex_status(out: &mut String) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("CODEX", None))?;
+    writeln!(out, "{}", success_message("Codex CLI available"))?;
+    writeln!(
+        out,
+        "{}",
+        hint_message(cformat!(
+            "If Worktrunk is not installed in /plugins yet, run <underline>wt config plugins codex install</>"
+        ))
+    )?;
+
+    Ok(())
+}
+
 /// Check if OpenCode CLI is available
 fn is_opencode_available() -> bool {
     // Allow tests to override detection
@@ -305,6 +348,57 @@ fn render_opencode_status(out: &mut String) -> anyhow::Result<()> {
             "{}",
             hint_message(cformat!(
                 "Plugin not installed. To install, run <underline>wt config plugins opencode install</>"
+            ))
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Check if Gemini CLI is available
+fn is_gemini_available() -> bool {
+    // Allow tests to override detection
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_GEMINI_INSTALLED") {
+        return val == "1";
+    }
+    which::which("gemini").is_ok()
+}
+
+/// Check if the worktrunk extension is installed in Gemini CLI.
+///
+/// `gemini extensions install` clones the extension into
+/// `~/.gemini/extensions/<name>/`, so a worktrunk install leaves a
+/// `gemini-extension.json` whose `name` is `worktrunk` at that path.
+fn is_gemini_extension_installed() -> bool {
+    let Some(home) = home_dir() else {
+        return false;
+    };
+
+    let manifest = home.join(".gemini/extensions/worktrunk/gemini-extension.json");
+    let Ok(content) = std::fs::read_to_string(&manifest) else {
+        return false;
+    };
+
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+
+    json.get("name").and_then(|n| n.as_str()) == Some("worktrunk")
+}
+
+/// Render GEMINI CLI section (extension status).
+/// Caller must check `is_gemini_available()` first.
+fn render_gemini_status(out: &mut String) -> anyhow::Result<()> {
+    writeln!(out, "{}", format_heading("GEMINI CLI", None))?;
+
+    if is_gemini_extension_installed() {
+        writeln!(out, "{}", success_message("Extension installed"))?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "Extension not installed. To install, run <underline>gemini extensions install https://github.com/max-sixty/worktrunk</>"
             ))
         )?;
     }
@@ -354,11 +448,9 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
 fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("DIAGNOSTICS", None))?;
 
-    // Check CI tool based on detected platform (with config override support)
+    // Check the CI tool for this repo's platform (project config, else remote URL).
     let repo = Repository::current()?;
-    let platform = platform_for_repo(&repo, None);
-
-    match platform {
+    match repo.ci_platform(None) {
         Some(CiPlatform::GitHub) => {
             let ci_tools = CiToolsStatus::detect(None);
             render_ci_tool_status(
@@ -379,11 +471,31 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
                 ci_tools.glab_authenticated,
             )?;
         }
+        Some(CiPlatform::Gitea) => {
+            let ci_tools = CiToolsStatus::detect(None);
+            render_ci_tool_status(
+                out,
+                "tea",
+                "Gitea",
+                ci_tools.tea_installed,
+                ci_tools.tea_authenticated,
+            )?;
+        }
+        Some(CiPlatform::AzureDevOps) => {
+            let ci_tools = CiToolsStatus::detect(None);
+            render_ci_tool_status(
+                out,
+                "az",
+                "Azure DevOps",
+                ci_tools.az_installed,
+                ci_tools.az_authenticated,
+            )?;
+        }
         None => {
             writeln!(
                 out,
                 "{}",
-                hint_message("CI status requires GitHub or GitLab remote")
+                hint_message("CI status requires GitHub, GitLab, Gitea, or Azure DevOps remote")
             )?;
         }
     }
@@ -470,7 +582,7 @@ fn render_system_config(out: &mut String) -> anyhow::Result<bool> {
 }
 
 fn render_user_config(out: &mut String, has_system_config: bool) -> anyhow::Result<()> {
-    let config_path = require_user_config_path()?;
+    let config_path = require_config_path()?;
 
     writeln!(
         out,
@@ -594,6 +706,10 @@ fn format_show_warning(warning: &worktrunk::config::UnknownWarning) -> String {
             other_description,
             canonical_display,
         } => cformat!("Key <bold>{key}</> belongs in {other_description} as {canonical_display}"),
+        UnknownWarning::NestedWrongConfig {
+            path,
+            other_description,
+        } => cformat!("Key <bold>{path}</> belongs in {other_description} (will be ignored)"),
         UnknownWarning::NestedUnknown { path } => {
             cformat!("Unknown key <bold>{path}</> will be ignored")
         }
@@ -639,6 +755,14 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             Some(&format!("@ {}", format_path_for_display(&config_path)))
         )
     )?;
+
+    // Project identifier — used as the key for [projects."..."] sections in
+    // user config. Surface it here so users can find the right key without
+    // hand-deriving it from the remote URL.
+    if let Ok(project_id) = repo.project_identifier() {
+        let line = info_message(cformat!("Identifier: <bold>{project_id}</>"));
+        writeln!(out, "{line}")?;
+    }
 
     // Check if file exists
     if !config_path.exists() {
@@ -733,16 +857,6 @@ fn render_fish_legacy_migration(
     Ok(())
 }
 
-/// Per-shell label distinguishing fish (separate completion file) from
-/// bash/zsh (inline completions).
-fn what_label(shell: Shell) -> &'static str {
-    if matches!(shell, Shell::Fish) {
-        "shell extension"
-    } else {
-        "shell extension & completions"
-    }
-}
-
 /// Zsh-only: warn when compinit isn't enabled, since the integration
 /// installs completions but they won't load without compinit.
 fn render_zsh_compinit_warning(out: &mut String) -> anyhow::Result<()> {
@@ -782,7 +896,7 @@ fn render_fish_completion_status(out: &mut String, cmd: &str) -> anyhow::Result<
         )?;
     } else {
         let warning = warning_message(cformat!(
-            "<bold>{shell}</>: Completions not configured @ {completion_display}"
+            "<bold>{shell}</>: Completions not configured @ <bold>{completion_display}</>"
         ));
         let hint = hint_message(cformat!(
             "To configure completions, run <underline>{cmd} config shell install {shell}</>"
@@ -827,7 +941,7 @@ fn render_already_configured(
 ) -> anyhow::Result<()> {
     let shell = result.shell;
     let path = format_path_for_display(&result.path);
-    let what = what_label(shell);
+    let what = crate::output::shell_integration::shell_extension_label(shell);
 
     let detection = detection_results
         .iter()
@@ -887,7 +1001,7 @@ fn render_would_add_or_create(
 ) -> anyhow::Result<bool> {
     let shell = result.shell;
     let path = format_path_for_display(&result.path);
-    let what = what_label(shell);
+    let what = crate::output::shell_integration::shell_extension_label(shell);
 
     // Fish: prefer migration hint when the legacy conf.d location has
     // working integration — silencing the "Not configured" row.
@@ -901,7 +1015,7 @@ fn render_would_add_or_create(
     // so the generic "To configure" summary stays silent.
     if shell.is_wrapper_based() && matches!(result.action, ConfigAction::WouldAdd) {
         let warning = warning_message(cformat!(
-            "<bold>{shell}</>: Outdated shell extension @ {path}"
+            "<bold>{shell}</>: Outdated shell extension @ <bold>{path}</>"
         ));
         let hint = hint_message(cformat!(
             "To update, run <underline>{cmd} config shell install {shell}</>"
@@ -1038,8 +1152,8 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     let mut has_any_unmatched = false;
 
     // Show configured and not-configured shells (matching `config shell install` format exactly)
-    // Bash/Zsh: inline completions, show "shell extension & completions"
-    // Fish: separate completion file, show "shell extension" for functions/ and "completions" for completions/
+    // Fish ships completions as a separate file: "shell extension" for functions/ and "completions" for completions/
+    // Every other supported shell wires completions inline with the extension, so they show "shell extension & completions"
     for result in &scan_result.configured {
         match result.action {
             ConfigAction::AlreadyExists => {
@@ -1248,11 +1362,18 @@ pub(super) fn render_ci_tool_status(
                 success_message(cformat!("<bold>{tool}</> installed & authenticated"))
             )?;
         } else {
+            // The auth-setup command differs by CLI: `gh`/`glab` use
+            // `<tool> auth login`, `az` uses `az login`, `tea` uses `tea login add`.
+            let auth_command = match tool {
+                "az" => format!("{tool} login"),
+                "tea" => format!("{tool} login add"),
+                _ => format!("{tool} auth login"),
+            };
             writeln!(
                 out,
                 "{}",
                 warning_message(cformat!(
-                    "<bold>{tool}</> installed but not authenticated; run <bold>{tool} auth login</>"
+                    "<bold>{tool}</> installed but not authenticated; run <bold>{auth_command}</>"
                 ))
             )?;
         }
@@ -1268,28 +1389,26 @@ pub(super) fn render_ci_tool_status(
     Ok(())
 }
 
+/// Format the version-check line given the latest release version.
+///
+/// Pure over `latest` so both arms are unit-testable without injecting a
+/// version through the environment; `render_version_check` supplies the value
+/// from `fetch_latest_version`.
+fn format_version_status(latest: &str) -> FormattedMessage {
+    let current = crate::cli::version_str();
+    if is_newer_version(latest, env!("CARGO_PKG_VERSION")) {
+        info_message(cformat!(
+            "Update available: <bold>{latest}</> (current: {current})"
+        ))
+    } else {
+        info_message(cformat!("Up to date (<bold>{current}</>)"))
+    }
+}
+
 /// Render version update check (fetches from GitHub)
 fn render_version_check(out: &mut String) -> anyhow::Result<()> {
     match fetch_latest_version() {
-        Ok(latest) => {
-            let current = crate::cli::version_str();
-            let current_semver = env!("CARGO_PKG_VERSION");
-            if is_newer_version(&latest, current_semver) {
-                writeln!(
-                    out,
-                    "{}",
-                    info_message(cformat!(
-                        "Update available: <bold>{latest}</> (current: {current})"
-                    ))
-                )?;
-            } else {
-                writeln!(
-                    out,
-                    "{}",
-                    success_message(cformat!("Up to date (<bold>{current}</>)"))
-                )?;
-            }
-        }
+        Ok(latest) => writeln!(out, "{}", format_version_status(&latest))?,
         Err(e) => {
             log::debug!("Version check failed: {e}");
             writeln!(out, "{}", hint_message("Version check unavailable"))?;
@@ -1387,5 +1506,22 @@ mod tests {
         // Invalid input
         assert!(!is_newer_version("invalid", "0.23.2"));
         assert!(!is_newer_version("0.23.2", "invalid"));
+    }
+
+    #[test]
+    fn test_format_version_status() {
+        // A version far above the current crate version is "newer".
+        let update = format_version_status("999.0.0").to_string();
+        assert!(
+            update.contains("Update available"),
+            "expected update message, got: {update}"
+        );
+
+        // The current crate version is not newer than itself.
+        let up_to_date = format_version_status(env!("CARGO_PKG_VERSION")).to_string();
+        assert!(
+            up_to_date.contains("Up to date"),
+            "expected up-to-date message, got: {up_to_date}"
+        );
     }
 }

@@ -135,15 +135,14 @@ impl Repository {
     ///
     /// # TOCTOU note
     ///
-    /// Git checks for submodules *before* checking for dirty files. If a
-    /// file is modified between our `ensure_clean()` and the git command,
-    /// git reports the submodule error (not the dirty error), so our
-    /// submodule pre-check still leads to `--force` and bypasses git's
-    /// dirty check. This is the same TOCTOU window that exists for all
-    /// removal (between
-    /// `ensure_clean()` and the actual delete), but for non-submodule
-    /// worktrees git's own dirty check acts as an accidental backstop
-    /// that we lose here. The window is milliseconds.
+    /// Git checks for submodules *before* checking for dirty files, so when
+    /// we synthesize `--force` for a submodule worktree, git's own dirty
+    /// check is bypassed. To keep failing closed on a file modified after the
+    /// caller's `ensure_clean()`, this method re-runs `ensure_clean()` itself
+    /// immediately before the synthesized-force removal — restoring the
+    /// backstop git would otherwise have provided. (For an explicit
+    /// user-requested `force`, the user opted into destructive removal, so no
+    /// re-check.)
     pub fn remove_worktree(&self, path: &std::path::Path, force: bool) -> anyhow::Result<()> {
         let path_str = path.to_str().ok_or_else(|| {
             anyhow::Error::from(GitError::Other {
@@ -159,6 +158,16 @@ impl Repository {
             self.worktree_at(path).has_initialized_submodules()?
         };
         if use_force && !force {
+            // Synthesized force (submodule worktree, not user-requested).
+            // `--force` will suppress git's dirty check, so re-validate
+            // cleanliness ourselves right before the destructive command —
+            // a file modified since the caller's check must still fail
+            // closed rather than be silently destroyed.
+            self.worktree_at(path).ensure_clean(
+                "remove worktree with submodules",
+                None,
+                /* force_hint */ true,
+            )?;
             log::debug!("Using --force for worktree removal due to initialized submodules");
         }
         let mut args = vec!["worktree", "remove"];

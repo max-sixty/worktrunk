@@ -104,18 +104,11 @@ for pid in $(pgrep -f 'git fsmonitor--daemon'); do
 done
 ```
 
-Sockets listed as bare `fsmonitor--daemon.ipc` (no resolved path) belong to deleted worktrees — safe to kill:
+Sockets listed as bare `fsmonitor--daemon.ipc` (no resolved path) belong to deleted worktrees. `wt remove` reaps these as part of its internal sweep: after the primary removal output, it sends `SIGTERM` (then `SIGKILL` after a short bounded wait) to every `git fsmonitor--daemon` whose socket no longer resolves to a live worktree. That covers daemons orphaned by `wt remove` itself and by paths that bypass it (plain `git worktree remove`, manual `rm -rf`, or a crashed `wt`).
 
-```bash
-for pid in $(pgrep -f 'git fsmonitor--daemon'); do
-  sock=$(lsof -p $pid 2>/dev/null | grep 'fsmonitor--daemon.ipc' | awk '{print $NF}' | head -1)
-  [ "$sock" = "fsmonitor--daemon.ipc" ] && kill -9 $pid
-done
-```
+`wt remove` also force-terminates the removed worktree's own daemon as part of the synchronous teardown — it sends `git fsmonitor--daemon stop`, then resolves the daemon's PID from its IPC socket and SIGTERM/SIGKILLs it if it didn't exit. So removing a worktree never leaves a daemon behind, even one that has stopped answering its IPC.
 
-For a specific hung worktree, kill the daemon whose socket path matches it, or just `pkill -9 -f 'git fsmonitor--daemon'` and let the next `wt list` respawn the live ones. Disabling fsmonitor globally (`git config --global core.fsmonitor false`) avoids the class of problem entirely at the cost of some `git status` speed on large repos.
-
-Daemons leak when a worktree is removed while its daemon is already unresponsive — `wt remove` calls `git fsmonitor--daemon stop`, but a daemon that can't answer its IPC can't be stopped through it.
+The residual case both paths deliberately leave is a wedged daemon on a *live* worktree that is never removed: `git status` in that worktree blocks on the unresponsive IPC, but the daemon still serves a real worktree, so reaping it implicitly is out of scope. Terminate it manually: kill the daemon whose socket path matches the worktree, or `pkill -9 -f 'git fsmonitor--daemon'` and let the next `wt list` respawn the live ones. Disabling fsmonitor globally (`git config --global core.fsmonitor false`) avoids the class of problem entirely at the cost of some `git status` speed on large repos.
 
 ## PowerShell on Windows
 

@@ -25,7 +25,7 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 
 use color_print::cformat;
-use shell_escape::escape;
+use shell_escape::unix::escape;
 
 use super::HookType;
 use crate::path::format_path_for_display;
@@ -366,13 +366,16 @@ impl SwitchSuggestionCtx {
 ///
 /// # Usage
 ///
-/// ```ignore
-/// // Return a typed error
-/// return Err(GitError::DetachedHead { action: Some("merge".into()) }.into());
+/// ```
+/// use worktrunk::git::GitError;
 ///
-/// // Pattern match on errors
-/// if let Some(GitError::BranchAlreadyExists { branch }) = err.downcast_ref() {
-///     println!("Branch {} exists", branch);
+/// // A typed error converts into a type-erased one (in real code, into `anyhow::Error`).
+/// let err: Box<dyn std::error::Error> =
+///     GitError::DetachedHead { action: Some("merge".into()) }.into();
+///
+/// // Recover the typed error to branch on the variant.
+/// if let Some(GitError::BranchAlreadyExists { branch }) = err.downcast_ref::<GitError>() {
+///     println!("branch {branch} already exists");
 /// }
 /// ```
 #[derive(Debug, Clone)]
@@ -811,8 +814,9 @@ impl GitError {
                     "Commit or stash changes first".to_string()
                 };
                 write!(f, "{}", error_message(&title))?;
-                for line in dirty_files {
-                    write!(f, "\n  {}", cformat!("<dim>{}</>", line))?;
+                if !dirty_files.is_empty() {
+                    let joined = dirty_files.join("\n");
+                    write!(f, "\n{}", format_with_gutter(&joined, None))?;
                 }
                 write!(f, "\n{}", hint_message(hint))
             }
@@ -1217,7 +1221,7 @@ impl GitError {
                         "Cannot create branch for <bold>{syntax}{number}</> — {name} already has branch <bold>{branch}</>"
                     )),
                     hint_message(cformat!(
-                        "To switch to it: <underline>wt switch {syntax}{number}</>"
+                        "To switch to the existing branch, run <underline>wt switch {syntax}{number}</>"
                     ))
                 )
             }
@@ -1457,7 +1461,7 @@ impl ErrorExt for anyhow::Error {
 /// user's intent:
 /// - `wt merge` — user wants to merge, hooks run as part of that
 /// - `wt commit` — user wants to commit, pre-commit hooks run
-/// - `wt switch --create` — user wants a worktree, post-create hooks run
+/// - `wt switch --create` — user wants a worktree, post-start hooks run
 ///
 /// ## When NOT to use
 ///
@@ -1897,7 +1901,7 @@ mod tests {
         assert_snapshot!(err.render(), @"[31m✗[39m [31mpre-merge command failed: [1mlint[22m: lint failed[39m");
 
         let err = WorktrunkError::HookCommandFailed {
-            hook_type: HookType::PreStart,
+            hook_type: HookType::PreCreate,
             command_name: None,
             error: "setup failed".into(),
             exit_code: None,
@@ -2154,8 +2158,8 @@ mod tests {
         };
         assert_snapshot!(err.render(), @"
         [31m✗[39m [31mCannot remove worktree after merge: [1mfeature-auth[22m has uncommitted changes[39m
-          [2m M auth.rs[22m
-          [2m?? .DS_Store[22m
+        [107m [0m  M auth.rs
+        [107m [0m ?? .DS_Store
         [2m↳[22m [2mCommit or stash changes first[22m
         ");
     }

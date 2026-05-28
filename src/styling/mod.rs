@@ -31,8 +31,6 @@ pub use anstyle::Style as AnstyleStyle;
 
 // Re-export our public types
 pub use constants::*;
-#[cfg(all(test, feature = "syntax-highlighting"))]
-pub(crate) use format::format_bash_with_gutter_at_width;
 pub use format::{GUTTER_OVERHEAD, format_bash_with_gutter, format_with_gutter, wrap_styled_text};
 pub use highlighting::format_toml;
 pub use hyperlink::{Stream, hyperlink_stdout, strip_osc8_hyperlinks, supports_hyperlinks};
@@ -106,8 +104,8 @@ pub fn terminal_width() -> usize {
 /// stdout, and stderr — so [`terminal_width`] always falls through to its
 /// `usize::MAX` sentinel, and the statusline output would overflow the bar.
 /// As a last resort, this walks up to 10 parent processes looking for a TTY
-/// and asks `stty size` for its dimensions, reserving 20% for Claude Code's
-/// own UI messages.
+/// and asks `stty size` for its dimensions, reserving 5 columns for Claude
+/// Code's own UI messages.
 ///
 /// Every other caller should use [`terminal_width`] — the parent-TTY walk is
 /// a statusline-specific workaround, not a general fallback.
@@ -133,10 +131,7 @@ fn statusline_width_fallback(base: usize) -> usize {
 ///
 /// This is a fallback for subprocesses (like Claude Code hooks) that don't have
 /// direct TTY access. Walks up to 10 parent processes looking for one with a TTY,
-/// then queries that TTY's size.
-///
-/// Returns 80% of the detected width to reserve space for Claude Code's UI messages
-/// (like "Approaching context limit").
+/// then queries that TTY's size via `stty` and [`statusline_width_from_stty_size`].
 #[cfg(unix)]
 fn detect_parent_tty_width() -> Option<usize> {
     use crate::shell_exec::Cmd;
@@ -162,14 +157,7 @@ fn detect_parent_tty_width() -> Option<usize> {
                 .run()
                 .ok()?;
 
-            let cols = String::from_utf8_lossy(&size.stdout)
-                .split_whitespace()
-                .nth(1)?
-                .parse::<usize>()
-                .ok()?;
-
-            // Reserve 20% for Claude Code UI messages
-            return Some(cols * 80 / 100);
+            return statusline_width_from_stty_size(&String::from_utf8_lossy(&size.stdout));
         }
 
         if ppid == "1" || ppid == "0" {
@@ -179,6 +167,17 @@ fn detect_parent_tty_width() -> Option<usize> {
     }
 
     None
+}
+
+/// Convert `stty size` output (`"<rows> <cols>"`) into a statusline width.
+///
+/// Reserves 5 columns for Claude Code's UI messages (like "Approaching
+/// context limit"). Returns `None` when the output has no parseable column
+/// count.
+#[cfg(unix)]
+fn statusline_width_from_stty_size(stty_size: &str) -> Option<usize> {
+    let cols = stty_size.split_whitespace().nth(1)?.parse::<usize>().ok()?;
+    Some(cols.saturating_sub(5))
 }
 
 /// Calculate visual width of a string, ignoring ANSI escape codes
@@ -205,6 +204,8 @@ pub fn fix_dim_after_color_reset(s: &str) -> String {
 mod tests {
     use insta::assert_snapshot;
 
+    #[cfg(feature = "syntax-highlighting")]
+    use super::format::format_bash_with_gutter_at_width;
     use super::*;
     use anstyle::Style;
     use unicode_width::UnicodeWidthStr;
@@ -230,6 +231,21 @@ mod tests {
         // `.cargo/config.toml`, so the fast path returns 80.
         let width = terminal_width_for_statusline();
         assert!(width > 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn statusline_width_from_stty_size_reserves_five_columns() {
+        // `stty size` prints "<rows> <cols>"; the column count loses 5 to
+        // Claude Code's UI chrome.
+        assert_eq!(statusline_width_from_stty_size("24 200"), Some(195));
+        assert_eq!(statusline_width_from_stty_size("24 80"), Some(75));
+        // Saturates rather than underflowing on a terminal narrower than 5.
+        assert_eq!(statusline_width_from_stty_size("24 3"), Some(0));
+        // No parseable column count.
+        assert_eq!(statusline_width_from_stty_size(""), None);
+        assert_eq!(statusline_width_from_stty_size("24"), None);
+        assert_eq!(statusline_width_from_stty_size("24 wide"), None);
     }
 
     #[test]

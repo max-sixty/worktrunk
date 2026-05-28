@@ -11,21 +11,27 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     NO_COLOR: ""
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
-    WORKTRUNK_APPROVALS_PATH: /nonexistent/wt/approvals.toml
-    WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml
-    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
+    WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
+    WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
+    WORKTRUNK_TEST_POWERSHELL_INSTALLED: "0"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    WORKTRUNK_TEST_ZSH_INSTALLED: "0"
 ---
 success: true
 exit_code: 0
@@ -68,7 +74,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           [0m
           Then [1mwsc feature-branch[0m creates the worktree and launches Claude Code. Arguments after [1m--[0m are passed to the command, so [1mwsc feature -- 'Fix GH #322'[0m runs [1mclaude 'Fix GH #322'[0m, starting Claude with a prompt.[0m
           
-          Template example: [1m-x 'code {{ worktree_path }}'[0m opens VS Code at the worktree, [1m-x 'tmux new -s {{ branch | sanitize }}'[0m starts a tmux session named after the branch.[0m
+          Template example: [1m-x code -- '{{ worktree_path }}'[0m opens VS Code at the worktree, [1m-x tmux -- new -s '{{ branch | sanitize }}'[0m starts a tmux session named after the branch.[0m
 
       [1m[36m--clobber[0m
           Remove stale paths at target
@@ -77,8 +83,6 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           Skip directory change after switching[0m
           
           Hooks still run normally. Useful when hooks handle navigation (e.g., tmux workflows) or for CI/automation. Use --cd to override.[0m
-          
-          In picker mode (no branch argument), prints the selected branch name and exits without switching. Useful for scripting.[0m
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
@@ -113,7 +117,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m[BRANCH][0m [1m[36m[--
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
@@ -164,7 +168,7 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch pr:123                      # PR #123's branch[0m[2m[0m
 [107m [0m [2m[0m[2m[34mwt[0m[2m switch mr:101                      # MR !101's branch[0m[2m[0m
 
-Shortcuts also apply to [2m--base[0m. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch.
+Shortcuts also apply to [2m--base[0m. For a fork PR/MR, the head commit is fetched and used as the base SHA without creating a tracking branch. (Web URLs like [2mhttps://github.com/owner/repo/pull/N[0m or [2mhttps://gitlab.com/owner/repo/-/merge_requests/N[0m work in place of [2mpr:N[0m / [2mmr:N[0m anywhere a shortcut does.)
 
 [1m[32mInteractive picker[0m
 
@@ -208,6 +212,10 @@ The [2mpr:<number>[0m and [2mmr:<number>[0m shortcuts resolve a GitHub PR or
 Requires [2mgh[0m (GitHub) or [2mglab[0m (GitLab) CLI to be installed and authenticated. The [2m--create[0m flag cannot be used with [2mpr:[0m/[2mmr:[0m syntax since the branch already exists.
 
 [1mForks:[0m The local branch uses the PR/MR's branch name directly (e.g., [2mfeature-fix[0m), so [2mgit push[0m works normally. If a local branch with that name already exists tracking something else, rename it first.
+
+[1mGitea (experimental):[0m [2mpr:[0m is also compatible with Gitea via the [2mtea[0m CLI. Set [2m[forge] platform = "gitea"[0m in [2m.config/wt.toml[0m to opt in; worktrunk also auto-detects Gitea when the remote host contains [2mgitea[0m or when [2mtea login add[0m has been run for the host.
+
+[1mAzure DevOps (experimental):[0m [2mpr:[0m is also compatible with Azure DevOps via the [2maz[0m CLI (with the [2mazure-devops[0m extension). Set [2m[forge] platform = "azure-devops"[0m in [2m.config/wt.toml[0m to opt in; worktrunk also auto-detects Azure DevOps from [2mdev.azure.com[0m and [2m*.visualstudio.com[0m remotes.
 
 [1m[32mWhen wt switch fails[0m
 

@@ -11,19 +11,21 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     NO_COLOR: ""
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
-    WORKTRUNK_APPROVALS_PATH: /nonexistent/wt/approvals.toml
-    WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml
-    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
@@ -62,7 +64,7 @@ Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
@@ -92,7 +94,7 @@ Show current configuration and file locations:
  User config    [2m~/.config/worktrunk/config.toml[0m Worktree path template, LLM commit configs, etc ✗                  
  Project config [2m.config/wt.toml[0m                 Project hooks, dev server URL                   ✓                  
 
-Organizations can also deploy a system-wide config file for shared defaults — run [2mwt config show[0m for the platform-specific location.
+Organizations can deploy a system-wide config file for shared defaults — run [2mwt config show[0m for the platform-specific location.
 
 [1mUser config[0m — personal preferences:
 
@@ -266,13 +268,11 @@ Aliases defined here apply to all projects. For project-specific aliases, use th
 
 [32mUser project-specific settings[0m
 
-For context:
+User config can include a [2m[projects][0m table for project-specific settings — worktree layout, setting overrides, anything else — separate from the project config shared with teammates.
 
-- Project config settings are shared with teammates.
-- User configs generally apply to all projects.
-- User configs _also_ has a [2m[projects][0m table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.
+Entries are keyed by project identifier — [2m<host>/<owner>/<repo>[0m derived from the primary remote URL (no [2m.git[0m suffix), or the canonical repo path when there is no remote. Run [2mwt config show[0m inside the repo to see the identifier for the current project; it appears in the [2mPROJECT CONFIG[0m section as [2mIdentifier: …[0m.
 
-Entries are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m). Scalar values (like [2mworktree-path[0m) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
+Scalar values (like [2mworktree-path[0m) replace the global value; everything else (hooks, aliases, etc.) appends, global first.
 
 [107m [0m [2m[36m[projects."github.com/user/repo"][0m
 [107m [0m [2mworktree-path = [0m[2m[32m".worktrees/{{ branch | sanitize }}"[0m
@@ -282,6 +282,25 @@ Entries are keyed by project identifier (e.g., [2mgithub.com/user/repo[0m). Sc
 [107m [0m [2mpre-start.env = [0m[2m[32m"cp .env.example .env"[0m
 [107m [0m [2mstep.copy-ignored.exclude = [[0m[2m[32m".repo-local-cache/"[0m[2m][0m
 [107m [0m [2maliases.deploy = [0m[2m[32m"make deploy BRANCH={{ branch }}"[0m
+
+Hooks support all three hook forms. A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence. The dotted-key examples below are equivalent to the table forms — TOML treats [2mprojects."github.com/user/repo".post-start.server = "..."[0m and a [2m[projects."github.com/user/repo".post-start][0m table the same way:
+
+[107m [0m [2m# Single command[0m
+[107m [0m [2m[36m[projects."github.com/user/repo"][0m
+[107m [0m [2mpost-start = [0m[2m[32m"mise trust"[0m
+[107m [0m 
+[107m [0m [2m# Multiple commands, running concurrently[0m
+[107m [0m [2m[36m[projects."github.com/user/repo".post-start][0m
+[107m [0m [2mmise = [0m[2m[32m"mise trust"[0m
+[107m [0m [2mserver = [0m[2m[32m"npm run dev"[0m
+[107m [0m 
+[107m [0m [2m# Pipeline: steps run in sequence[0m
+[107m [0m [2m[36m[[projects."github.com/user/repo".post-start]][0m
+[107m [0m [2minstall = [0m[2m[32m"npm ci"[0m
+[107m [0m 
+[107m [0m [2m[36m[[projects."github.com/user/repo".post-start]][0m
+[107m [0m [2mbuild = [0m[2m[32m"npm run build"[0m
+[107m [0m [2mserver = [0m[2m[32m"npm run dev"[0m
 
 [32mCustom prompt templates[0m
 
@@ -294,6 +313,7 @@ Available variables:
 - [2m{{ git_diff }}[0m, [2m{{ git_diff_stat }}[0m — diff content
 - [2m{{ branch }}[0m, [2m{{ repo }}[0m — context
 - [2m{{ recent_commits }}[0m — recent commit messages
+- [2m{{ user_guidance }}[0m, [2m{{ project_guidance }}[0m — rendered append fragments (see Appending to the prompt)
 
 Default template:
 
@@ -312,7 +332,15 @@ Default template:
 [107m [0m [2m[32m- Match recent commit style (conventional commits if used)[0m
 [107m [0m [2m[32m- Describe the change, not the intent or benefit[0m
 [107m [0m [2m[32m</style>[0m
-[107m [0m 
+[107m [0m [2m[32m{% if user_guidance %}[0m
+[107m [0m [2m[32m<user-guidance>[0m
+[107m [0m [2m[32m{{ user_guidance }}[0m
+[107m [0m [2m[32m</user-guidance>[0m
+[107m [0m [2m[32m{% endif %}{% if project_guidance %}[0m
+[107m [0m [2m[32m<project-guidance>[0m
+[107m [0m [2m[32m{{ project_guidance }}[0m
+[107m [0m [2m[32m</project-guidance>[0m
+[107m [0m [2m[32m{% endif %}[0m
 [107m [0m [2m[32m<diffstat>[0m
 [107m [0m [2m[32m{{ git_diff_stat }}[0m
 [107m [0m [2m[32m</diffstat>[0m
@@ -354,7 +382,15 @@ Default template:
 [107m [0m [2m[32m- Match the style of commits being squashed (conventional commits if used)[0m
 [107m [0m [2m[32m- Describe the change, not the intent or benefit[0m
 [107m [0m [2m[32m</style>[0m
-[107m [0m 
+[107m [0m [2m[32m{% if user_guidance %}[0m
+[107m [0m [2m[32m<user-guidance>[0m
+[107m [0m [2m[32m{{ user_guidance }}[0m
+[107m [0m [2m[32m</user-guidance>[0m
+[107m [0m [2m[32m{% endif %}{% if project_guidance %}[0m
+[107m [0m [2m[32m<project-guidance>[0m
+[107m [0m [2m[32m{{ project_guidance }}[0m
+[107m [0m [2m[32m</project-guidance>[0m
+[107m [0m [2m[32m{% endif %}[0m
 [107m [0m [2m[32m<commits branch="[0m[2m{{ branch }}[0m[2m[32m" target="[0m[2m{{ target_branch }}[0m[2m[32m">[0m
 [107m [0m [2m[32m{% for commit in commits %}- {{ commit }}[0m
 [107m [0m [2m[32m{% endfor %}</commits>[0m
@@ -368,6 +404,17 @@ Default template:
 [107m [0m [2m[32m</diff>[0m
 [107m [0m 
 [107m [0m [2m[32m"[0m[2m[32m""[0m
+
+[1mAppending to the prompt [experimental][0m
+
+[2mtemplate-append[0m adds to the prompt instead of replacing it. The value is rendered as its own minijinja template (same variables) and injected into the default templates' [2m{{ user_guidance }}[0m slot — a [2m<user-guidance>[0m block right after [2m<style>[0m. It applies to both commit and squash. Use it for personal preferences without restating the whole template:
+
+[107m [0m [2m[36m[commit.generation][0m
+[107m [0m [2mtemplate-append = [0m[2m[32m""[0m[2m[32m"[0m
+[107m [0m [2m[32m- Explain the rationale in the body, not just the change[0m
+[107m [0m [2m[32m"[0m[2m[32m""[0m
+
+The project config has a [2mtemplate-append[0m of its own; it renders into a separate [2m<project-guidance>[0m block right after [2m<user-guidance>[0m.
 
 [1m[32mHooks[0m
 
@@ -393,13 +440,25 @@ URL column in [2mwt list[0m (dimmed when port not listening):
 [107m [0m [2m[36m[list][0m
 [107m [0m [2murl = [0m[2m[32m"http://localhost:{{ branch | hash_port }}"[0m
 
-[1m[32mForge platform override[0m
+[1m[32mForge platform[0m
 
-Override platform detection for SSH aliases or self-hosted instances:
+Name the forge explicitly for SSH aliases or self-hosted instances, where it can't be detected from the remote URL:
 
 [107m [0m [2m[36m[forge][0m
-[107m [0m [2mplatform = [0m[2m[32m"github"[0m[2m  [0m[2m# or "gitlab"[0m
+[107m [0m [2mplatform = [0m[2m[32m"github"[0m[2m  [0m[2m# or "gitlab", "gitea" (experimental), "azure-devops" (experimental)[0m
 [107m [0m [2mhostname = [0m[2m[32m"github.example.com"[0m[2m  [0m[2m# Example: API host (GHE / self-hosted GitLab)[0m
+
+[1m[32mCommit-message append [experimental][0m
+
+Project-wide commit-message conventions appended to the LLM commit and squash prompts inside a [2m<project-guidance>[0m block, after the main template's [2m<style>[0m section (and after any user [2m<user-guidance>[0m). Rendered as a minijinja template with the same variables as the main commit template ([2m{{ branch }}[0m, [2m{{ git_diff }}[0m, etc.), so it can reference them directly. The first time the fragment changes, [2mwt[0m prompts the user to approve it — the same one-shot gate as project-defined hooks.
+
+[107m [0m [2m[36m[commit.generation][0m
+[107m [0m [2mtemplate-append = [0m[2m[32m""[0m[2m[32m"[0m
+[107m [0m [2m[32m- Use conventional commits (feat:, fix:, docs:, …)[0m
+[107m [0m [2m[32m- Reference the relevant issue ID in the body[0m
+[107m [0m [2m[32m"[0m[2m[32m""[0m
+
+Only [2mtemplate-append[0m is honored from the project file. The LLM command and the main prompt template stay in user config — they describe per-developer environment (which CLI is installed, which agent the developer prefers). User config has a [2m[commit.generation] template-append[0m of its own; it renders into a separate [2m<user-guidance>[0m block immediately before this one.
 
 [1m[32mCopy-ignored excludes[0m
 
@@ -432,7 +491,7 @@ Without shell integration, [2mwt switch[0m prints the target directory but can
 
 [32mFirst-run prompts[0m
 
-On first run without shell integration, Worktrunk offers to install it. Similarly, on first commit without LLM configuration, it offers to configure a detected tool ([2mclaude[0m, [2mcodex[0m). Declining sets [2mskip-shell-integration-prompt[0m or [2mskip-commit-generation-prompt[0m automatically.
+On first run without shell integration, Worktrunk offers to install it. On first commit without LLM configuration, it offers to configure a detected tool ([2mclaude[0m, [2mcodex[0m). Declining sets [2mskip-shell-integration-prompt[0m or [2mskip-commit-generation-prompt[0m automatically.
 
 [32mOTHER[0m
 
@@ -451,8 +510,6 @@ For nested config sections, use double underscores to separate levels:
  [2mworktree-path[0m             [2mWORKTRUNK_WORKTREE_PATH[0m               
  [2mcommit.generation.command[0m [2mWORKTRUNK_COMMIT__GENERATION__COMMAND[0m 
  [2mcommit.stage[0m              [2mWORKTRUNK_COMMIT__STAGE[0m               
-
-Note the single underscore after [2mWORKTRUNK[0m and double underscores between nested keys.
 
 [32mExample: CI/testing override[0m
 

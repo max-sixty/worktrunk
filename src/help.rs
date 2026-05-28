@@ -45,6 +45,7 @@
 //! which strips Zola syntax (terminal shortcodes, badge `<span>` → `[experimental]`)
 //! for plain-markdown consumption.
 
+use std::ffi::OsString;
 use std::process;
 
 use ansi_str::AnsiStr;
@@ -122,7 +123,7 @@ impl PageMode {
     fn emit_header(self, subcommand: &str) {
         match self {
             Self::Web => std::println!(
-                "{MARKER_OPEN_PREFIX}`wt {subcommand} --help-page` — edit cli.rs to update -->"
+                "{MARKER_OPEN_PREFIX}`wt {subcommand} --help-page` — edit src/cli/mod.rs to update -->"
             ),
             Self::Plain => std::println!("# wt {subcommand}"),
         }
@@ -159,7 +160,11 @@ impl PageMode {
 /// spliced into the rendered output — at the top level for `wt --help`, or
 /// under the Aliases section for `wt step --help`.
 pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::HelpContext>) {
-    let args: Vec<String> = std::env::args().collect();
+    let args_os: Vec<OsString> = std::env::args_os().collect();
+    let args: Vec<String> = args_os
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
 
     // --help uses pager, -h prints directly (git convention)
     let use_pager = args.iter().any(|a| a == "--help");
@@ -216,7 +221,7 @@ pub fn maybe_handle_help_with_pager(alias_help_context: Option<crate::commands::
     cmd = crate::completion::inject_hook_subcommands(cmd);
     cmd = cmd.color(clap::ColorChoice::Always); // Force clap to emit ANSI codes
 
-    if let Err(err) = cmd.try_get_matches_from_mut(&args) {
+    if let Err(err) = cmd.try_get_matches_from_mut(args_os) {
         match err.kind() {
             ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
                 // err.render() returns a StyledStr containing ANSI codes.

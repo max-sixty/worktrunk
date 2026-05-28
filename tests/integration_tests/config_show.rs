@@ -362,6 +362,58 @@ my-lint = "my-lint-tool"
     );
 }
 
+/// A current-worktree `.config/wt.toml` that uses the deprecated
+/// `pre-create`/`post-create` hook keys keeps working through `wt hook show`:
+/// `ProjectConfig::load` migrates the keys to canonical `pre-start`/`post-start`
+/// before deserializing, and the type-argument value parser accepts both the
+/// canonical name and the deprecated alias. The rename is paused at Phase 1
+/// (issue #2838), so the migration is silent — no deprecation warning.
+#[rstest]
+fn test_hook_show_accepts_deprecated_create_hooks(repo: TestRepo) {
+    // Single-token commands so the bash highlighter doesn't split them with
+    // ANSI codes (same shape as the deep-merge `hook show` tests above).
+    repo.write_project_config(
+        r#"[pre-create]
+deps = "pre-create-tool"
+
+[post-create]
+deps = "post-create-tool"
+"#,
+    );
+
+    // The `-start` arg passes the canonical type name; the `-create` arg
+    // exercises the value parser accepting the deprecated alias. Both resolve
+    // to the same hook because `ProjectConfig::load` migrates the `[*-create]`
+    // config keys to canonical `[*-start]` before deserializing.
+    let cases = [
+        ("pre-start", "pre-create-tool"),
+        ("pre-create", "pre-create-tool"),
+        ("post-start", "post-create-tool"),
+        ("post-create", "post-create-tool"),
+    ];
+    for (type_arg, expected) in cases {
+        let mut cmd = repo.wt_command();
+        cmd.args(["hook", "show", type_arg])
+            .current_dir(repo.root_path());
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "`wt hook show {type_arg}` should succeed, stderr: {stderr}"
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains(expected),
+            "`wt hook show {type_arg}` should list the migrated hook, got:\n{stdout}"
+        );
+        // Phase 1 migrates silently — no deprecation warning, no config-show hint.
+        assert!(
+            !stderr.to_lowercase().contains("deprecated") && !stderr.contains("config show"),
+            "`wt hook show {type_arg}` should migrate silently, stderr:\n{stderr}"
+        );
+    }
+}
+
 #[rstest]
 fn test_config_show_system_config_hint_under_user_config(repo: TestRepo, temp_home: TempDir) {
     // When no system config exists but user config does, config show should
@@ -555,6 +607,81 @@ fn test_system_config_unknown_keys_warning_during_load(repo: TestRepo) {
     assert!(
         stderr.contains("has unknown field"),
         "Expected unknown field warning from system config load, got: {stderr}"
+    );
+}
+
+/// System config should use the same deprecation warning gate as user config.
+#[rstest]
+fn test_system_config_deprecation_warning_during_load(repo: TestRepo) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(
+        &system_config_path,
+        r#"[select]
+pager = "delta --paging=never"
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path);
+    cmd.arg("list").current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "Command should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("System config") && stderr.contains("[select]"),
+        "Expected deprecation warning from system config load, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("[switch.picker]"),
+        "Expected replacement section in warning, got: {stderr}"
+    );
+}
+
+/// System config is routed through the same deprecation gate as user config:
+/// a non-fatal deprecation surfaces a warning, and a deprecated hook key is
+/// migrated to its canonical name and stays active.
+#[rstest]
+fn test_system_config_deprecations_pass_through_gate(repo: TestRepo) {
+    let system_config_dir = tempfile::tempdir().unwrap();
+    let system_config_path = system_config_dir.path().join("config.toml");
+    fs::write(
+        &system_config_path,
+        r#"post-create = "npm install"
+
+[select]
+pager = "delta --paging=never"
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.env("WORKTRUNK_SYSTEM_CONFIG_PATH", &system_config_path)
+        .env("NO_COLOR", "1");
+    cmd.args(["hook", "show", "post-start"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "Command should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("System config") && stderr.contains("[select]"),
+        "non-fatal deprecation in system config should warn, got: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("npm install"),
+        "deprecated post-create key should migrate to post-start and stay active, got: {stdout}"
     );
 }
 
@@ -1388,21 +1515,59 @@ fn test_config_show_full_version_check_unavailable(mut repo: TestRepo, temp_home
     });
 }
 
+/// `wt config show --full` against a Gitea remote reports the `tea` CLI row.
+#[rstest]
+fn test_config_show_full_gitea_remote(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    // The Gitea diagnostics row only depends on `tea`'s state; mock it as
+    // installed (no login configured in the temp home).
+    repo.setup_mock_tea_installed();
+
+    // The fixture already has an `origin`; point it at a Gitea host.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/example/repo.git",
+    ]);
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"",
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.env("WORKTRUNK_TEST_LATEST_VERSION", env!("CARGO_PKG_VERSION"));
+        cmd.arg("config")
+            .arg("show")
+            .arg("--full")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 #[rstest]
 fn test_config_show_github_remote(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 
-    // Add GitHub remote
-    repo.git_command()
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/example/repo.git",
-        ])
-        .run()
-        .unwrap();
+    // The fixture already has an `origin`; point it at a GitHub host.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/example/repo.git",
+    ]);
 
     // Create fake global config
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -1432,16 +1597,13 @@ fn test_config_show_gitlab_remote(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 
-    // Add GitLab remote
-    repo.git_command()
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "https://gitlab.com/example/repo.git",
-        ])
-        .run()
-        .unwrap();
+    // The fixture already has an `origin`; point it at a GitLab host.
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitlab.com/example/repo.git",
+    ]);
 
     // Create fake global config
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -2134,6 +2296,36 @@ fn test_config_show_statusline_configured(mut repo: TestRepo, temp_home: TempDir
 }
 
 #[rstest]
+fn test_config_show_codex_available(mut repo: TestRepo, temp_home: TempDir) {
+    // Setup mock gh/glab for deterministic output
+    repo.setup_mock_ci_tools_unauthenticated();
+    // Setup mock codex as available
+    repo.setup_mock_codex_installed();
+
+    // Create global config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
 fn test_config_show_opencode_available_plugin_not_installed(
     mut repo: TestRepo,
     temp_home: TempDir,
@@ -2214,6 +2406,135 @@ fn test_config_show_opencode_plugin_outdated(mut repo: TestRepo, temp_home: Temp
     .unwrap();
 
     // Create global config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_config_show_gemini_available_extension_not_installed(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Setup mock gh/glab for deterministic output
+    repo.setup_mock_ci_tools_unauthenticated();
+    // Setup mock gemini as available (but extension not installed)
+    repo.setup_mock_gemini_installed();
+
+    // Create global config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_config_show_gemini_extension_invalid_manifest(mut repo: TestRepo, temp_home: TempDir) {
+    // A malformed gemini-extension.json should fall through the JSON-parse
+    // branch and report the extension as not installed (the install hint).
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_gemini_installed();
+
+    let extension_dir = temp_home.path().join(".gemini/extensions/worktrunk");
+    fs::create_dir_all(&extension_dir).unwrap();
+    fs::write(extension_dir.join("gemini-extension.json"), "not json\n").unwrap();
+
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_config_show_gemini_extension_installed(mut repo: TestRepo, temp_home: TempDir) {
+    // Setup mock gh/glab for deterministic output
+    repo.setup_mock_ci_tools_unauthenticated();
+    // Setup mock gemini CLI and extension as installed
+    repo.setup_mock_gemini_installed();
+    TestRepo::setup_gemini_extension_installed(temp_home.path());
+
+    // Create global config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        set_xdg_config_path(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Each `is_*_available()` short-circuits on the `WORKTRUNK_TEST_*_INSTALLED`
+/// override the harness sets, so the production `which::which` PATH lookup is
+/// otherwise never exercised. `setup_mock_clis_on_path()` drops the overrides
+/// and prepends real mock executables, so this single run covers the
+/// PATH-detection path for all four AI CLIs at once.
+#[rstest]
+fn test_config_show_clis_detected_via_path(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_clis_on_path();
+
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
@@ -3395,6 +3716,295 @@ fn test_plugins_claude_uninstall_not_installed(mut repo: TestRepo, temp_home: Te
     });
 }
 
+// ==================== Codex Plugin Install/Uninstall Tests ====================
+
+#[rstest]
+fn test_plugins_codex_install(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_plugins();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.args(["config", "plugins", "codex", "install", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_plugins_codex_install_codex_not_found(repo: TestRepo) {
+    // Don't call setup_mock_codex_installed — codex CLI not available
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.args(["config", "plugins", "codex", "install", "--yes"])
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_plugins_codex_uninstall(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_plugins();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.args(["config", "plugins", "codex", "uninstall", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_plugins_codex_install_command_fails(mut repo: TestRepo, temp_home: TempDir) {
+    repo.setup_mock_ci_tools_unauthenticated();
+    repo.setup_mock_codex_with_plugins_failing();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.args(["config", "plugins", "codex", "install", "--yes"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[test]
+fn test_codex_plugin_metadata_is_valid_json() {
+    let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let plugin: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(project_root.join("plugins/worktrunk/.codex-plugin/plugin.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    // Codex discovers a marketplace's plugin list strictly from
+    // <repo-root>/.agents/plugins/marketplace.json (no fallback to the Claude
+    // .claude-plugin/marketplace.json). Each plugin's `source` must be an
+    // object pointing at a non-empty subdirectory — codex rejects a bare or
+    // root-relative source ("local plugin source path must not be empty"), so
+    // the plugin lives in plugins/worktrunk/ rather than at the repo root.
+    // Verified end-to-end against codex-cli 0.130.0: with this layout the
+    // worktrunk marketplace surfaces in /plugins and the plugin installs;
+    // without it the marketplace registers but enumerates zero plugins.
+    let marketplace: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(project_root.join(".agents/plugins/marketplace.json")).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(plugin["name"], "worktrunk");
+    assert_eq!(plugin["skills"], "./skills/");
+    // Metadata must not drift back toward the Claude plugin: the Codex plugin
+    // ships only the configuration skill, and its URLs are the canonical site
+    // (not the `/claude-code/` doc slug).
+    for key in ["description", "homepage"] {
+        let val = plugin[key].as_str().unwrap();
+        assert!(
+            !val.contains("activity") && !val.contains("claude-code"),
+            "plugin.json `{key}` regressed toward Claude/activity wording: {val}"
+        );
+    }
+    let iface = &plugin["interface"];
+    assert!(
+        !iface["longDescription"]
+            .as_str()
+            .unwrap()
+            .contains("activity"),
+        "plugin.json interface.longDescription must not claim activity tracking"
+    );
+    assert!(
+        !iface["websiteURL"]
+            .as_str()
+            .unwrap()
+            .contains("claude-code"),
+        "plugin.json interface.websiteURL must point at the canonical site"
+    );
+    // The Codex plugin ships no activity-marker hooks: Codex's
+    // HookEventNameWire vocabulary (codex-cli 0.130.0) has no `Stop`/turn-end
+    // event, so a 🤖 set on UserPromptSubmit could never return to 💬 within a
+    // session. Keep the Codex manifest free of a `hooks` key, and its wrapper
+    // dir manifest-only, until Codex adds a turn-end hook event — see CLAUDE.md
+    // → "Plugin Layout". (plugins/worktrunk/hooks/ exists post-consolidation,
+    // but it is the *Claude* plugin's — Codex's manifest never references it.)
+    assert_eq!(plugin.get("hooks"), None);
+    assert!(
+        !project_root
+            .join("plugins/worktrunk/.codex-plugin/hooks")
+            .exists(),
+        "the Codex wrapper dir must hold only plugin.json"
+    );
+    assert_eq!(marketplace["plugins"][0]["name"], "worktrunk");
+    // Source is a non-empty subdir object; a bare "./" is rejected by codex.
+    assert_eq!(marketplace["plugins"][0]["source"]["source"], "local");
+    assert_eq!(
+        marketplace["plugins"][0]["source"]["path"],
+        "./plugins/worktrunk"
+    );
+    assert_eq!(
+        marketplace["plugins"][0]["policy"]["installation"],
+        "AVAILABLE"
+    );
+    // Codex validates `interface` is an object and requires `displayName`;
+    // omitting it is what made the plugin undiscoverable in /plugins.
+    assert_eq!(marketplace["interface"]["displayName"], "Worktrunk");
+}
+
+/// Claude Code + Codex share `plugins/worktrunk/`; Gemini's manifest is a
+/// third loader-mandated repo-root pointer (`gemini-extension.json` +
+/// `hooks/hooks.json` — Gemini hard-probes `${extensionPath}/{hooks,skills}/`
+/// at the extension root with no path indirection). Verified end-to-end
+/// against the real CLIs: Claude (claude-cli 2.1.x) wants its manifest at the
+/// plugin root with NO `.claude-plugin/` wrapper (`source:
+/// "./plugins/worktrunk"` + `<subdir>/.claude-plugin/` fails "Plugin not
+/// found"); Gemini (gemini-cli 0.42) resolves the extension at the repo root,
+/// so `${extensionPath}/skills/` is the real single-sourced repo-root
+/// `skills/` and its hooks call the canonical
+/// `${extensionPath}/plugins/worktrunk/hooks/wt.sh` — no symlink, no bundled
+/// copy, and `gemini extensions install owner/repo` works natively.
+///
+/// Duplicated strings can't be `include!`d into JSON, so this test is the
+/// drift guard: the Claude marketplace/manifest descriptions stay
+/// byte-identical, every product description shares the canonical opening
+/// sentence, and every repo-root skill is listed in the Claude manifest
+/// (Claude has no skill auto-discovery — an unlisted skill is silently
+/// dropped).
+#[test]
+fn test_plugin_layout_is_consolidated() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let read = |p: &str| fs::read_to_string(root.join(p)).unwrap();
+    let json = |p: &str| serde_json::from_str::<serde_json::Value>(&read(p)).unwrap();
+
+    // Repo root keeps ONLY the two loader-mandated marketplace pointers.
+    assert!(
+        !root.join(".claude-plugin/plugin.json").exists()
+            && !root.join(".claude-plugin/hooks").exists(),
+        ".claude-plugin/ at the repo root must hold only marketplace.json"
+    );
+    let claude_mkt = json(".claude-plugin/marketplace.json");
+    assert_eq!(claude_mkt["plugins"][0]["source"], "./plugins/worktrunk");
+
+    // Claude manifest at the plugin root (no wrapper); hooks relative to it.
+    let claude = json("plugins/worktrunk/plugin.json");
+    assert_eq!(claude["hooks"], "./hooks/hooks.json");
+    assert!(
+        root.join("plugins/worktrunk/hooks/hooks.json").exists()
+            && root.join("plugins/worktrunk/hooks/wt.sh").exists(),
+        "Claude hooks must live at the plugin root's hooks/"
+    );
+    assert!(
+        !read("plugins/worktrunk/hooks/hooks.json").contains(".claude-plugin/hooks/"),
+        "hooks.json must reference ${{CLAUDE_PLUGIN_ROOT}}/hooks/wt.sh, not the old wrapper path"
+    );
+
+    // The description is duplicated across the Claude marketplace pointer and
+    // the Claude manifest — they must stay byte-identical.
+    assert_eq!(
+        claude_mkt["plugins"][0]["description"], claude["description"],
+        ".claude-plugin/marketplace.json and plugins/worktrunk/plugin.json descriptions drifted"
+    );
+
+    // Gemini extension: manifest + hooks are loader-mandated repo-root
+    // pointers (Gemini hard-probes ${extensionPath}/{hooks,skills}/ at the
+    // extension root). Relocating to the root — instead of a plugins/gemini/
+    // sibling — is what makes `gemini extensions install owner/repo` work and
+    // lets the extension reuse the real repo-root skills/ + the canonical
+    // worktrunk shim instead of a symlink and a bundled copy.
+    assert!(
+        !root.join("plugins/gemini").exists(),
+        "Gemini extension was relocated to the repo root; plugins/gemini/ must not exist"
+    );
+    let gemini = json("gemini-extension.json");
+    assert_eq!(gemini["name"], "worktrunk");
+    assert!(
+        gemini["description"]
+            .as_str()
+            .is_some_and(|d| !d.is_empty()),
+        "gemini-extension.json needs a description (shown in `gemini extensions list`)"
+    );
+    // Gemini reuses the single-sourced repo-root skills/ (a real dir that
+    // survives `gemini extensions install`'s copy) — not a symlink or bundle.
+    assert!(
+        root.join("skills").is_dir() && !root.join("skills").is_symlink(),
+        "repo-root skills/ must be a real directory Gemini resolves via ${{extensionPath}}/skills"
+    );
+    // Gemini hooks call the canonical worktrunk shim by its real path — no
+    // bundled ${extensionPath}/hooks/wt.sh, no cross-dir `../`, no old wrapper.
+    let gemini_hooks = read("hooks/hooks.json");
+    assert!(
+        gemini_hooks.contains("${extensionPath}/plugins/worktrunk/hooks/wt.sh")
+            && !gemini_hooks.contains("${extensionPath}/hooks/wt.sh")
+            && !gemini_hooks.contains("../")
+            && !gemini_hooks.contains(".claude-plugin/"),
+        "Gemini hooks must call the canonical ${{extensionPath}}/plugins/worktrunk/hooks/wt.sh"
+    );
+    assert!(
+        !root.join("hooks/wt.sh").exists(),
+        "no bundled Gemini wt.sh — hooks reference the canonical worktrunk shim"
+    );
+
+    // Claude has no skill auto-discovery, so every repo-root skill dir MUST be
+    // listed explicitly in plugin.json — otherwise a new skill is silently
+    // invisible to Claude while Codex/Gemini (whole-dir) pick it up.
+    let listed: std::collections::BTreeSet<&str> = claude["skills"]
+        .as_array()
+        .expect("plugin.json `skills` must be an array")
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    for entry in fs::read_dir(root.join("skills")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_dir() {
+            let listed_form = format!("./skills/{}", entry.file_name().to_string_lossy());
+            assert!(
+                listed.contains(listed_form.as_str()),
+                "repo-root skill {listed_form} is not in plugins/worktrunk/plugin.json \
+                 `skills` (Claude has no auto-discovery — add it or it is silently dropped)"
+            );
+        }
+    }
+
+    // The product description must not drift across tools. Byte-identical is
+    // schema-impossible (Codex omits the activity clause, Gemini says
+    // "extension"), but every manifest shares the canonical opening sentence.
+    const STEM: &str =
+        "Worktrunk is a CLI for Git worktree management, designed for parallel AI agent workflows.";
+    let codex = json("plugins/worktrunk/.codex-plugin/plugin.json");
+    for (label, val) in [
+        ("plugins/worktrunk/plugin.json", &claude["description"]),
+        (
+            ".claude-plugin/marketplace.json",
+            &claude_mkt["plugins"][0]["description"],
+        ),
+        (
+            "plugins/worktrunk/.codex-plugin/plugin.json",
+            &codex["description"],
+        ),
+        ("gemini-extension.json", &gemini["description"]),
+    ] {
+        let val = val.as_str().unwrap();
+        assert!(
+            val.starts_with(STEM),
+            "{label} description must start with the canonical product sentence; got: {val}"
+        );
+    }
+}
+
 // ==================== Plugin Install-Statusline Tests ====================
 
 #[rstest]
@@ -3999,126 +4609,5 @@ fn test_project_config_path_env_var_override(repo: TestRepo, temp_home: TempDir)
         json["project"]["config"].is_null(),
         "missing override path should resolve to no project config, got: {}",
         json["project"]["config"]
-    );
-}
-
-/// `post-create` was renamed to `pre-start` in v0.32.0. Project configs that
-/// still carry the removed key fail to load with a fatal error naming the
-/// replacement. Verify via `wt switch --create`, which propagates project
-/// config load failures as a non-zero exit.
-#[rstest]
-fn test_post_create_in_project_config_is_fatal(repo: TestRepo, temp_home: TempDir) {
-    let project_config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&project_config_dir).unwrap();
-    fs::write(
-        project_config_dir.join("wt.toml"),
-        "post-create = \"npm install\"\n",
-    )
-    .unwrap();
-
-    let mut cmd = repo.wt_command();
-    cmd.args(["switch", "--create", "new-branch"])
-        .current_dir(repo.root_path());
-    set_temp_home_env(&mut cmd, temp_home.path());
-
-    let output = cmd.output().unwrap();
-    assert!(
-        !output.status.success(),
-        "project config with post-create must fail to load, stdout: {}, stderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("post-create"),
-        "error should name the offending key, got: {stderr}"
-    );
-    assert!(
-        stderr.contains("pre-start"),
-        "error should point at the replacement key, got: {stderr}"
-    );
-}
-
-/// User config is loaded on a best-effort basis: a fatal deprecation surfaces
-/// as a `LoadError::Validation` warning, wt continues without it, and the user
-/// still gets the fatal message telling them to rename the key.
-#[rstest]
-fn test_post_create_in_user_config_warns_and_skips(repo: TestRepo, temp_home: TempDir) {
-    let config_path = repo.test_config_path();
-    fs::write(config_path, "post-create = \"npm install\"\n").unwrap();
-
-    let mut cmd = repo.wt_command();
-    cmd.arg("list").current_dir(repo.root_path());
-    set_temp_home_env(&mut cmd, temp_home.path());
-    cmd.env("WORKTRUNK_CONFIG_PATH", config_path);
-
-    let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "wt list should still succeed when user config fails validation, stderr: {}",
-        String::from_utf8_lossy(&output.stderr),
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("post-create") && stderr.contains("pre-start"),
-        "warning should describe the rename, got: {stderr}"
-    );
-}
-
-/// `wt config show` renders the fatal post-create error inline for both user
-/// and project configs, continuing the show flow so the user can still see
-/// their file and other sections.
-#[rstest]
-fn test_config_show_renders_post_create_error(mut repo: TestRepo, temp_home: TempDir) {
-    repo.setup_mock_ci_tools_unauthenticated();
-
-    // User config at XDG path.
-    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
-    fs::create_dir_all(&global_config_dir).unwrap();
-    fs::write(
-        global_config_dir.join("config.toml"),
-        "post-create = \"npm install\"\n",
-    )
-    .unwrap();
-
-    // Project config in the repo.
-    let project_config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&project_config_dir).unwrap();
-    fs::write(
-        project_config_dir.join("wt.toml"),
-        "post-create = \"bundle install\"\n",
-    )
-    .unwrap();
-
-    let mut cmd = wt_command();
-    repo.configure_wt_cmd(&mut cmd);
-    repo.configure_mock_commands(&mut cmd);
-    cmd.args(["config", "show"]).current_dir(repo.root_path());
-    set_temp_home_env(&mut cmd, temp_home.path());
-    set_xdg_config_path(&mut cmd, temp_home.path());
-
-    let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "wt config show should succeed, stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    // Both sections should render the rename guidance.
-    assert!(
-        combined.matches("post-create").count() >= 2,
-        "expected post-create message in both user and project sections, got: {combined}"
-    );
-    assert!(
-        combined.contains("User config: `post-create`"),
-        "user section should name the removed key, got: {combined}"
-    );
-    assert!(
-        combined.contains("Project config: `post-create`"),
-        "project section should name the removed key, got: {combined}"
     );
 }

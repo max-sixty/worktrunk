@@ -83,12 +83,19 @@ fn run_benchmark(
     };
 
     if config.cold_cache {
+        // `BatchSize::PerIteration` (not `SmallInput`): under `SmallInput`,
+        // criterion calls `setup` for an entire batch up front and then runs
+        // the timed routines back-to-back — so only the first `wt` per batch
+        // is cold and the rest hit a freshly populated `.git/wt/cache/`,
+        // biasing "cold" warm. `PerIteration` invalidates immediately before
+        // every measured iteration; the setup is far cheaper than a `wt`
+        // subprocess, so per-iter `Instant::now` overhead doesn't dominate.
         b.iter_batched(
             || invalidate_caches_auto(repo_path),
             |_| {
                 cmd_factory().output().unwrap();
             },
-            criterion::BatchSize::SmallInput,
+            criterion::BatchSize::PerIteration,
         );
     } else {
         b.iter(|| {
@@ -104,14 +111,14 @@ fn bench_skeleton(c: &mut Criterion) {
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
             let config = BenchConfig::typical(worktrees, cold);
-            let temp = create_repo(&config.repo);
-            let repo_path = temp.path().join("repo");
-            setup_fake_remote(&repo_path);
 
             group.bench_with_input(
                 BenchmarkId::new(config.label(), worktrees),
                 &config,
                 |b, config| {
+                    let temp = create_repo(&config.repo);
+                    let repo_path = temp.path().join("repo");
+                    setup_fake_remote(&repo_path);
                     run_benchmark(
                         b,
                         binary,
@@ -135,14 +142,14 @@ fn bench_full(c: &mut Criterion) {
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
             let config = BenchConfig::typical(worktrees, cold);
-            let temp = create_repo(&config.repo);
-            let repo_path = temp.path().join("repo");
-            setup_fake_remote(&repo_path);
 
             group.bench_with_input(
                 BenchmarkId::new(config.label(), worktrees),
                 &config,
                 |b, config| {
+                    let temp = create_repo(&config.repo);
+                    let repo_path = temp.path().join("repo");
+                    setup_fake_remote(&repo_path);
                     run_benchmark(b, binary, &repo_path, config, &["list"], None);
                 },
             );
@@ -159,14 +166,14 @@ fn bench_worktree_scaling(c: &mut Criterion) {
     for worktrees in [1, 4, 8] {
         for cold in [false, true] {
             let config = BenchConfig::typical(worktrees, cold);
-            let temp = create_repo(&config.repo);
-            let repo_path = temp.path().join("repo");
-            run_git(&repo_path, &["status"]);
 
             group.bench_with_input(
                 BenchmarkId::new(config.label(), worktrees),
                 &config,
                 |b, config| {
+                    let temp = create_repo(&config.repo);
+                    let repo_path = temp.path().join("repo");
+                    run_git(&repo_path, &["status"]);
                     run_benchmark(b, binary, &repo_path, config, &["list"], None);
                 },
             );
@@ -178,6 +185,20 @@ fn bench_worktree_scaling(c: &mut Criterion) {
 
 fn bench_real_repo(c: &mut Criterion) {
     let mut group = c.benchmark_group("real_repo");
+    // `wt list` on rust-lang/rust runs ~2s warm — dominated by one deep
+    // `git for-each-ref %(ahead-behind:main)` walk — and several times
+    // that for cold/8, where each iteration also rebuilds eight 59k-entry
+    // indexes via `git status`. Warm-path variance is that slowest single
+    // subprocess, not measurement noise, so the inherited 30-sample / 15s
+    // default just burns time: at >1s/iter Criterion can't fit 30 samples
+    // in 15s, so it runs 30 single-iteration samples regardless. 10 is
+    // Criterion's minimum (`sample_size` < 10 panics); the 20s budget
+    // caps the cheap warm variants at ≤2 iterations per sample. Cuts the
+    // group's measured time ~3× — the expensive cold variants drop from
+    // 30 iterations to 10.
+    group.measurement_time(std::time::Duration::from_secs(20));
+    group.sample_size(10);
+
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));
 
     for worktrees in [1, 4, 8] {
@@ -202,12 +223,14 @@ fn bench_real_repo(c: &mut Criterion) {
                     };
 
                     if cold {
+                        // `PerIteration` so every measured run is actually
+                        // cold — see `run_benchmark` above for the rationale.
                         b.iter_batched(
                             || invalidate_caches_auto(&workspace_main),
                             |_| {
                                 make_cmd().output().unwrap();
                             },
-                            criterion::BatchSize::SmallInput,
+                            criterion::BatchSize::PerIteration,
                         );
                     } else {
                         b.iter(|| {
@@ -228,11 +251,11 @@ fn bench_many_branches(c: &mut Criterion) {
 
     for cold in [false, true] {
         let config = BenchConfig::branches(100, 2, cold);
-        let temp = create_repo(&config.repo);
-        let repo_path = temp.path().join("repo");
-        run_git(&repo_path, &["status"]);
 
         group.bench_function(config.label(), |b| {
+            let temp = create_repo(&config.repo);
+            let repo_path = temp.path().join("repo");
+            run_git(&repo_path, &["status"]);
             run_benchmark(
                 b,
                 binary,
@@ -256,11 +279,11 @@ fn bench_divergent_branches(c: &mut Criterion) {
 
     for cold in [false, true] {
         let config = BenchConfig::many_divergent_branches(cold);
-        let temp = create_repo(&config.repo);
-        let repo_path = temp.path().join("repo");
-        run_git(&repo_path, &["status"]);
 
         group.bench_function(config.label(), |b| {
+            let temp = create_repo(&config.repo);
+            let repo_path = temp.path().join("repo");
+            run_git(&repo_path, &["status"]);
             run_benchmark(
                 b,
                 binary,
@@ -299,7 +322,13 @@ fn setup_rust_workspace_with_branches(temp: &tempfile::TempDir, num_branches: us
 /// regardless of how many refs are queried. Skipping branch enumeration entirely avoids this.
 fn bench_real_repo_many_branches(c: &mut Criterion) {
     let mut group = c.benchmark_group("real_repo_many_branches");
-    group.measurement_time(std::time::Duration::from_secs(60));
+    // rust-lang/rust runs ~3.7s per `wt list --branches` iteration; warm-path
+    // variance is dominated by the slowest single subprocess (a deep
+    // `git merge-base` walking history), not measurement noise, so 10 samples
+    // (criterion's minimum — `sample_size` < 10 panics) suffices. A 20s budget
+    // is ≈ one iteration per sample (~37s/function), down from the
+    // ~74s/function criterion spent filling the old 60s budget.
+    group.measurement_time(std::time::Duration::from_secs(20));
     group.sample_size(10);
 
     let binary = Path::new(env!("CARGO_BIN_EXE_wt"));

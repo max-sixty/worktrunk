@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_custom_merge_safety",
+  "title": "wt merge: data safety, rebase, and worktree cleanup",
+  "summary": "The `wt merge` command lands a feature branch onto the target, runs the rebase, performs cleanup of the merged worktree, and runs pre-/post-merge hooks. Critical data-safety surface: a failed merge must not silently discard uncommitted work, and cleanup must not run before approval. See CLAUDE.md > Data Safety and Project Commands Run Only After Approval.",
+  "kind": "library",
+  "source": "manual",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/commands/merge.rs",
+      "symbol": "handle_merge",
+      "route": null,
+      "command": "wt merge"
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/commands/merge.rs",
+      "reason": "entrypoint - merge command top-level"
+    },
+    {
+      "path": "src/commands/worktree/finish.rs",
+      "reason": "post-merge worktree finish/cleanup"
+    },
+    {
+      "path": "src/commands/worktree/hooks.rs",
+      "reason": "pre/post-merge hook invocation"
+    },
+    {
+      "path": "src/commands/worktree/push.rs",
+      "reason": "merge-time push handling"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "src/commands/command_approval.rs",
+      "reason": "approval gate for pre/post-merge hooks"
+    },
+    {
+      "path": "src/commands/command_executor.rs",
+      "reason": "hook execution"
+    },
+    {
+      "path": "src/git/repository/mod.rs",
+      "reason": "git repository operations"
+    },
+    {
+      "path": "src/git/repository/working_tree.rs",
+      "reason": "dirty/clean detection"
+    },
+    {
+      "path": "CLAUDE.md",
+      "reason": "data safety + approval gate invariants"
+    }
+  ],
+  "tests": [
+    {
+      "path": "tests/integration_tests/merge.rs",
+      "command": "cargo test --test integration merge"
+    }
+  ],
+  "tags": [
+    "rust",
+    "merge",
+    "data-safety",
+    "approval-gate"
+  ],
+  "trustBoundaries": [
+    "filesystem",
+    "process-exec"
+  ],
+  "status": "needs-fix",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-custom-merge-safety-77c_e1b74c5a3b",
+    "fnd_sig-feat-custom-merge-safety-95c_56f1f1e6f0",
+    "fnd_sig-feat-custom-merge-safety-b33_40d5e5a595"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260516T210804-353f93",
+      "kind": "review",
+      "summary": "2 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-16T21:13:35.385Z"
+    },
+    {
+      "runId": "20260517T050139-b247d5",
+      "kind": "review",
+      "summary": "1 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T05:07:50.805Z"
+    }
+  ],
+  "createdAt": "2026-05-16T21:00:00.000Z",
+  "updatedAt": "2026-05-17T05:07:50.805Z"
+}

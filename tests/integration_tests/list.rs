@@ -409,7 +409,7 @@ fn test_list_with_remotes_and_full(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&["branch", "-D", "feature-remote"]);
 
     // Set a GitHub-style URL AFTER pushing so platform detection works
-    // This exercises the remote_hint path in platform_for_repo
+    // This exercises the remote_hint path in Repository::ci_platform
     repo.run_git(&[
         "remote",
         "set-url",
@@ -2323,6 +2323,31 @@ fn test_list_progressive_with_branches(mut repo: TestRepo) {
         cmd.args(["--progressive", "--branches"]);
         cmd
     });
+}
+
+#[rstest]
+fn test_list_first_output_writes_buffered_stdout(mut repo: TestRepo) {
+    repo.add_worktree("feature-bench");
+
+    let output = list_snapshots::command(&repo, repo.root_path())
+        .env("WORKTRUNK_FIRST_OUTPUT", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "WORKTRUNK_FIRST_OUTPUT should exit 0: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.as_bytes().iter().filter(|&&b| b == b'\n').count(),
+        1,
+        "WORKTRUNK_FIRST_OUTPUT should emit exactly the first stdout line; stdout:\n{stdout}"
+    );
+    assert!(!stdout.trim().is_empty());
+    assert!(output.stderr.is_empty());
 }
 
 // ============================================================================

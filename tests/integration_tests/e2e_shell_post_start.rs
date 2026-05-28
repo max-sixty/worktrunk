@@ -157,7 +157,7 @@ approved-commands = [
 }
 
 #[rstest]
-fn test_bash_shell_integration_post_create_blocks(repo: TestRepo) {
+fn test_bash_shell_integration_post_start_blocks(repo: TestRepo) {
     // Create project config with blocking command
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();

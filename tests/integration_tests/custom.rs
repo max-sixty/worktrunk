@@ -4,6 +4,7 @@ use crate::common::{
     mock_commands::{MockConfig, MockResponse},
     wt_command,
 };
+use ansi_str::AnsiStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
@@ -53,6 +54,34 @@ fn custom_subcommand_runs_wt_prefixed_binary_on_path() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "custom ran");
 }
 
+#[cfg(unix)]
+#[test]
+fn custom_subcommand_accepts_non_utf8_forwarded_arg() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempDir::new().unwrap();
+    let script = dir.path().join("wt-wt-test-extcmd-raw");
+    std::fs::write(&script, "#!/bin/sh\nprintf 'custom ran\\n'\n").unwrap();
+    let mut perms = std::fs::metadata(&script).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&script, perms).unwrap();
+
+    let mut cmd = wt_command();
+    prepend_path(&mut cmd, dir.path());
+    cmd.arg("wt-test-extcmd-raw")
+        .arg(OsString::from_vec(vec![0xff]));
+
+    let output = cmd.output().expect("failed to run wt");
+    assert!(
+        output.status.success(),
+        "expected success, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "custom ran");
+}
+
 #[test]
 fn custom_subcommand_not_found_prints_clap_error() {
     let mut cmd = wt_command();
@@ -66,7 +95,9 @@ fn custom_subcommand_not_found_prints_clap_error() {
     assert!(!output.status.success(), "expected failure");
     // clap's standard InvalidSubcommand exit code.
     assert_eq!(output.status.code(), Some(2));
-    let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
     assert!(
         stderr.contains("unrecognized subcommand 'definitely-not-a-wt-subcommand'"),
         "stderr should use clap's native error format: {stderr}"
@@ -86,7 +117,9 @@ fn custom_subcommand_typo_suggests_closest_builtin() {
 
     let output = cmd.output().expect("failed to run wt");
     assert!(!output.status.success());
-    let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
     assert!(
         stderr.contains("tip:") && stderr.contains("similar subcommand"),
         "stderr missing clap's similar-subcommand tip: {stderr}"
@@ -110,32 +143,13 @@ fn custom_subcommand_nested_suggestion_wins_over_path_lookup() {
     let output = cmd.output().expect("failed to run wt");
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(2));
-    let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .ansi_strip()
+        .into_owned();
     assert!(
         stderr.contains("wt step squash"),
         "stderr should suggest 'wt step squash': {stderr}"
     );
-}
-
-/// Strip ANSI escape sequences so test assertions can match rendered text
-/// without worrying about colour codes clap inserts.
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c == '\u{1b}' {
-            // CSI: ESC [ ... letter. Drop everything up to (and including)
-            // the terminator (any ASCII letter).
-            for next in chars.by_ref() {
-                if next.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 #[test]

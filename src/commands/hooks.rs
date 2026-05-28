@@ -2,6 +2,65 @@
 //!
 //! See [`super::hook_announcement`] for the announcement format / grammar that
 //! the background path emits before spawning pipelines.
+//!
+//! # Which `.config/wt.toml` a hook reads
+//!
+//! Every hook resolves its commands from the **invoking** worktree's
+//! `.config/wt.toml` — the worktree `wt` ran in, read from its working tree.
+//! That holds regardless of which worktree the hook is *about*: `post-merge`
+//! runs in the merge target and `post-start` in the newly created worktree,
+//! but both select their commands from the invoking worktree's config — the
+//! same file `wt config show` reads.
+//!
+//! Two execution models split on whether a state mutation separates the
+//! approval gate from execution.
+//!
+//! **Plan-backed (the TOCTOU-covered set):** `pre-merge`, `post-merge`,
+//! `pre-remove`, `post-remove`, `post-switch`, `pre-start`, `post-start`. A
+//! merge, rebase, removal, or `git worktree add` runs between the gate and
+//! these hooks; a rebase can even rewrite the invoking worktree's own
+//! `.config/wt.toml`, so a second config read could select a command the user
+//! never approved. Each command gate calls `load_project_config()` on the
+//! invoking worktree once, selects the commands, and freezes them into a
+//! [`super::hook_plan::ApprovedHookPlan`]; the executor renders and runs only
+//! that frozen value via [`super::hook_plan::execute_planned_hook`] /
+//! [`super::hook_plan::register_planned`], holding no `ProjectConfig` to
+//! re-derive from. See the [`super::hook_plan`] module spec.
+//!
+//! | Plan-backed hook | Runs in (the anchor) | Gate |
+//! |---|---|---|
+//! | `pre-merge`, `pre-remove`, `post-remove` | the feature/removed worktree | `merge::approve_merge_plan`, `main.rs`'s `approve_remove`, `step::prune::approve_prune_hooks` |
+//! | `post-merge`, `post-switch` (after a removal) | the merge/removal destination | the same gates |
+//! | `pre-start`, `post-start`, `post-switch` (on switch) | the new/destination worktree | `worktree::switch::approve_switch_hooks` |
+//!
+//! "Runs in" is the *anchor* — the executor's plan lookup key and render root,
+//! not a config source. A `pre-start`'s new worktree need not exist when the
+//! gate runs; the config came from the invoking worktree regardless.
+//!
+//! **Invocation-resolved (no gate→exec mutation):** `pre-commit`,
+//! `post-commit`, `pre-switch`, `wt hook <type>`, aliases. They resolve config
+//! from `ctx.repo.load_project_config()` at invocation via [`execute_hook`] /
+//! [`HookAnnouncer::register`]. Two facts make that re-read safe, and a new
+//! call site must preserve **both**: (1) nothing between the gate and the
+//! executor mutates the worktree `.config/wt.toml`; (2) the executor reads
+//! through the **same `Repository` instance** the gate used —
+//! `load_project_config` reads the working-tree file and memoizes it in a
+//! never-invalidated `OnceCell` (`RepoCache::project_config`), so the
+//! executor's call is a cache hit returning the gate's exact bytes. A
+//! refactor that runs an uncovered executor through a fresh `Repository::at()`
+//! (empty cache) breaks (2) and silently reintroduces the TOCTOU even if (1)
+//! still holds — there is no compile-time guard here, unlike the plan-backed
+//! set. (Aliases get the property structurally instead: the body is frozen
+//! into `AliasEntry` before the gate, like `ApprovedHookPlan`.)
+//!
+//! `ctx.repo` is the invoking worktree — except `wt step commit --branch <b>`
+//! and `wt -C <path>` re-root the whole command (the commit, its hooks, and
+//! `ctx.repo` are all `<b>`), so "the invoking worktree" follows them.
+//!
+//! A present-but-malformed config aborts the operation rather than silently
+//! running something else. `WORKTRUNK_PROJECT_CONFIG_PATH` overrides the path
+//! (test isolation); user config (`~/.config/worktrunk/config.toml`) is global
+//! and unaffected.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -82,7 +141,7 @@ fn prepare_sourced_steps(
         let is_pipeline = config.is_pipeline();
         let steps = prepare_steps(config, ctx, extra_vars, hook_type, source)?;
         for step in steps {
-            if let Some(filtered) = filter_step_by_name(step, &parsed_filters) {
+            if let Some(filtered) = filter_step_by_name(step, source, &parsed_filters) {
                 result.push(SourcedStep {
                     step: filtered,
                     source,
@@ -99,24 +158,17 @@ fn prepare_sourced_steps(
 /// filtered out. A `Concurrent` group reduced to one command collapses to `Single`.
 fn filter_step_by_name(
     step: PreparedStep,
+    source: HookSource,
     parsed_filters: &[ParsedFilter<'_>],
 ) -> Option<PreparedStep> {
     if parsed_filters.is_empty() {
         return Some(step);
     }
-    let filter_names: Vec<&str> = parsed_filters
-        .iter()
-        .map(|f| f.name)
-        .filter(|n| !n.is_empty())
-        .collect();
-    if filter_names.is_empty() {
-        return Some(step);
-    }
 
     let matches = |cmd: &PreparedCommand| {
-        cmd.name
-            .as_deref()
-            .is_some_and(|n| filter_names.contains(&n))
+        parsed_filters
+            .iter()
+            .any(|f| f.matches_command(source, cmd.name.as_deref()))
     };
 
     match step {
@@ -222,7 +274,12 @@ impl<'a> HookAnnouncer<'a> {
         }
     }
 
-    /// Prepare and add user+project pipelines for a single hook type.
+    /// Prepare and add user+project pipelines for a single hook type, reading
+    /// the project config from `ctx.repo.load_project_config()` — the worktree
+    /// this hook acts on. Used by the invocation-resolved hooks
+    /// (`pre-commit` / `post-commit` and `wt hook <type>`'s filter path), where
+    /// nothing mutates config between approval and execution. The plan-backed
+    /// hooks use [`super::hook_plan::register_planned`] instead.
     pub fn register(
         &mut self,
         ctx: &CommandContext<'_>,
@@ -230,7 +287,14 @@ impl<'a> HookAnnouncer<'a> {
         extra_vars: &[(&str, &str)],
         display_path: Option<&Path>,
     ) -> anyhow::Result<()> {
-        let pipelines = prepare_background_pipelines(ctx, hook_type, extra_vars, display_path)?;
+        let project_config = ctx.repo.load_project_config()?;
+        let pipelines = prepare_background_pipelines(
+            ctx,
+            project_config.as_ref(),
+            hook_type,
+            extra_vars,
+            display_path,
+        )?;
         self.extend(pipelines);
         Ok(())
     }
@@ -395,16 +459,21 @@ pub(crate) fn into_source_groups(flat: Vec<SourcedStep>) -> Vec<Vec<SourcedStep>
 /// Looks up user/project configs, prepares + name-checks steps, and groups
 /// them by source so each source spawns as an independent pipeline. Each
 /// group is returned with its `(hook_type, display_path)` metadata.
+///
+/// `project_config` is the resolved `.config/wt.toml` for this hook's anchor
+/// worktree, passed by [`HookAnnouncer::register`] from
+/// `ctx.repo.load_project_config()`. Only the invocation-resolved hooks reach
+/// here; plan-backed hooks render from the frozen plan instead (see the
+/// module-level "Which `.config/wt.toml` a hook reads" docs).
 pub(crate) fn prepare_background_pipelines<'c>(
     ctx: &CommandContext<'c>,
+    project_config: Option<&worktrunk::config::ProjectConfig>,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
     display_path: Option<&Path>,
 ) -> anyhow::Result<Vec<BackgroundPipeline<'c>>> {
-    let project_config = ctx.repo.load_project_config()?;
     let user_hooks = ctx.config.hooks(ctx.project_id().as_deref());
-    let (user_config, proj_config) =
-        lookup_hook_configs(&user_hooks, project_config.as_ref(), hook_type);
+    let (user_config, proj_config) = lookup_hook_configs(&user_hooks, project_config, hook_type);
     let flat = prepare_and_check(
         ctx,
         HookCommandSpec {
@@ -729,6 +798,10 @@ pub(crate) fn lookup_hook_configs<'a>(
 /// `--no-hooks` reminder. This is the canonical operation-driven entry point;
 /// the only path that should bypass it is `wt hook <type>` (which calls
 /// [`run_hooks_foreground`] directly so failures don't carry the hint).
+///
+/// Project config comes from `ctx.repo.load_project_config()` — see the
+/// module-level "Which `.config/wt.toml` a hook reads" docs for which worktree
+/// `ctx.repo` is rooted at per hook type.
 pub(crate) fn execute_hook(
     ctx: &CommandContext,
     hook_type: HookType,

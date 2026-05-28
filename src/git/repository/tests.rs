@@ -536,6 +536,50 @@ fn parse_git_bool_variants() {
 }
 
 #[test]
+fn worktree_config_enabled_detects_extension() {
+    // The detector keys on the lowercased canonical form that git emits in
+    // `--list -z` output. Both git-bool truthy spellings and the absent/
+    // explicitly-false cases must classify correctly — getting either wrong
+    // breaks the prewarm-skip in `prewarm_git_config` (see issue #2779).
+    use indexmap::IndexMap;
+
+    let mut empty: IndexMap<String, Vec<String>> = IndexMap::new();
+    assert!(!super::worktree_config_enabled(&empty));
+
+    empty.insert(
+        "extensions.worktreeconfig".to_string(),
+        vec!["false".to_string()],
+    );
+    assert!(!super::worktree_config_enabled(&empty));
+
+    for truthy in ["true", "1", "yes", "on"] {
+        let mut map: IndexMap<String, Vec<String>> = IndexMap::new();
+        map.insert(
+            "extensions.worktreeconfig".to_string(),
+            vec![truthy.to_string()],
+        );
+        assert!(
+            super::worktree_config_enabled(&map),
+            "{truthy} should be truthy"
+        );
+    }
+
+    // Multivar: the *last* value wins, matching git's own semantics.
+    let mut map: IndexMap<String, Vec<String>> = IndexMap::new();
+    map.insert(
+        "extensions.worktreeconfig".to_string(),
+        vec!["true".to_string(), "false".to_string()],
+    );
+    assert!(!super::worktree_config_enabled(&map));
+    let mut map: IndexMap<String, Vec<String>> = IndexMap::new();
+    map.insert(
+        "extensions.worktreeconfig".to_string(),
+        vec!["false".to_string(), "true".to_string()],
+    );
+    assert!(super::worktree_config_enabled(&map));
+}
+
+#[test]
 fn extract_failed_command_from_stream_error() {
     use super::StreamCommandError;
 
@@ -792,5 +836,223 @@ fn current_worktree_anchors_to_repository_discovery_path() {
     assert_ne!(
         wt_path, process_cwd,
         "current_worktree() must not resolve to the process CWD when Repository::at(p) was given a different path",
+    );
+}
+
+/// Build the bare-style `myproject/.git` layout with
+/// `extensions.worktreeConfig = true` that triggers issue #2779.
+///
+/// Returns `(temp_dir, project_root, main_worktree_path, linked_worktree_path)`.
+/// The bare git data lives in `<project>/.git` (no separate `.bare/` subdir);
+/// `extensions.worktreeConfig` is set on shared config, and `core.bare = true`
+/// is set on the main worktree's per-worktree config. The main and linked
+/// worktrees sit beside `.git/` as sibling subdirectories.
+#[cfg(test)]
+fn build_worktree_config_bare_layout() -> (tempfile::TempDir, std::path::PathBuf, PathBuf, PathBuf)
+{
+    use super::canonicalize;
+    use crate::shell_exec::Cmd;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let project_root = canonicalize(tmp.path()).unwrap().join("myproject");
+    std::fs::create_dir_all(&project_root).unwrap();
+    let git_dir = project_root.join(".git");
+
+    let gitconfig = tmp.path().join("test-gitconfig");
+    std::fs::write(
+        &gitconfig,
+        "[init]\n\tdefaultBranch = main\n[user]\n\tname = test\n\temail = test@test\n",
+    )
+    .unwrap();
+    let git = || {
+        Cmd::new("git")
+            .env("GIT_CONFIG_GLOBAL", &gitconfig)
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("LC_ALL", "C")
+            .env("LANG", "C")
+            .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
+            .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z")
+    };
+
+    let path_str = |p: &std::path::Path| p.to_str().unwrap().to_owned();
+
+    // Bare repo at `myproject/.git` (no sibling `.bare/` — minimal layout
+    // from issue #2779).
+    let out = git()
+        .args(["init", "--bare", "-b", "main", &path_str(&git_dir)])
+        .run()
+        .unwrap();
+    assert!(out.status.success(), "git init --bare failed");
+
+    // Flip the trio: bare = false in shared config, worktreeConfig enabled,
+    // bare = true in the *main worktree's* per-worktree config (which lives
+    // at `.git/config.worktree`).
+    let shared_config = path_str(&git_dir.join("config"));
+    git()
+        .args(["config", "--file", &shared_config, "core.bare", "false"])
+        .run()
+        .unwrap();
+    git()
+        .args([
+            "config",
+            "--file",
+            &shared_config,
+            "extensions.worktreeConfig",
+            "true",
+        ])
+        .run()
+        .unwrap();
+    std::fs::write(git_dir.join("config.worktree"), "[core]\n\tbare = true\n").unwrap();
+
+    // Make HEAD resolvable and add a commit so worktree add can check out.
+    let commit_sha = git()
+        .current_dir(&git_dir)
+        .args([
+            "commit-tree",
+            "-m",
+            "init",
+            // Empty tree SHA.
+            "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+        ])
+        .run()
+        .unwrap();
+    assert!(commit_sha.status.success(), "commit-tree failed");
+    let sha = String::from_utf8(commit_sha.stdout)
+        .unwrap()
+        .trim()
+        .to_string();
+    git()
+        .current_dir(&git_dir)
+        .args(["update-ref", "refs/heads/main", &sha])
+        .run()
+        .unwrap();
+
+    let main_worktree = project_root.join("main");
+    let out = git()
+        .current_dir(&git_dir)
+        .args(["worktree", "add", &path_str(&main_worktree), "main"])
+        .run()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "worktree add main: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let linked = project_root.join("feature");
+    let out = git()
+        .current_dir(&git_dir)
+        .args(["worktree", "add", "-b", "feature", &path_str(&linked)])
+        .run()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "worktree add feature: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    (
+        tmp,
+        project_root,
+        canonicalize(&main_worktree).unwrap(),
+        canonicalize(&linked).unwrap(),
+    )
+}
+
+#[test]
+fn prewarm_from_linked_worktree_under_worktree_config_preserves_is_bare() {
+    // Regression for issue #2779. The bare-style `myproject/.git + sibling
+    // worktrees` layout with `extensions.worktreeConfig = true` parks
+    // `core.bare = true` in the *main worktree's* `config.worktree`. Git's
+    // `config --list` run from a linked worktree merges only the linked
+    // worktree's own per-worktree config, so it sees `core.bare = false`
+    // and misses the `true`. Before the fix, `prewarm_git_config` cached
+    // that incomplete map; `Repository::at` then short-circuited
+    // `all_config()` with the stale value, and `is_bare()` returned
+    // `false` from the linked worktree.
+    //
+    // After the fix, the prewarm detects `extensions.worktreeconfig=true`
+    // and skips the preload — `all_config()` re-forks from
+    // `git_common_dir`, which sees the merged set.
+    use super::Repository;
+
+    let (_tmp, _project, _main, linked) = build_worktree_config_bare_layout();
+
+    Repository::prewarm_at(&linked);
+    let repo = Repository::at(&linked).unwrap();
+
+    assert!(
+        repo.is_bare().unwrap(),
+        "is_bare must read core.bare=true from the main worktree's config.worktree, \
+         even when prewarm ran from a linked worktree"
+    );
+}
+
+#[test]
+fn repo_path_from_linked_worktree_under_worktree_config_is_git_common_dir() {
+    // Companion to the is_bare regression above: once `is_bare()` reads
+    // correctly, `repo_path()` returns `git_common_dir` (the bare branch
+    // of the match). Before the fix it fell through to
+    // `parent(git_common_dir)`, walking one level too high and producing
+    // the "wt switch creates worktree in the parent dir" symptom from
+    // issue #2779. Pin both paths.
+    use super::Repository;
+    use super::canonicalize;
+
+    let (_tmp, _project, _main, linked) = build_worktree_config_bare_layout();
+
+    Repository::prewarm_at(&linked);
+    let repo = Repository::at(&linked).unwrap();
+    let expected = canonicalize(repo.git_common_dir()).unwrap();
+    let actual = canonicalize(repo.repo_path().unwrap()).unwrap();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn prewarm_skips_preload_when_worktree_config_enabled() {
+    // Direct test of the prewarm skip: with the extension on, the preload
+    // map for the linked worktree must stay empty so `all_config()`
+    // re-forks from `git_common_dir` instead of consuming a stale map.
+    let (_tmp, _project, _main, linked) = build_worktree_config_bare_layout();
+
+    super::Repository::prewarm_at(&linked);
+    assert!(
+        super::GIT_CONFIG_PRELOAD.get(&linked).is_none(),
+        "prewarm must skip GIT_CONFIG_PRELOAD when extensions.worktreeConfig=true"
+    );
+}
+
+#[test]
+fn prewarm_still_caches_preload_when_worktree_config_disabled() {
+    // The skip is targeted: normal repos (no worktreeConfig extension)
+    // still benefit from the prewarm preload. This guards against
+    // regressing the optimization for the common case while fixing #2779.
+    //
+    // Build a fresh repo directly (bypass `TestRepo`, whose constructor
+    // calls `Repository::at` and populates `GIT_COMMON_DIR_CACHE` — that
+    // short-circuits `prewarm_at` before it can run the config preload).
+    use super::canonicalize;
+    use crate::shell_exec::Cmd;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = canonicalize(tmp.path()).unwrap().join("normal");
+    std::fs::create_dir_all(&root).unwrap();
+    let gitconfig = tmp.path().join("test-gitconfig");
+    std::fs::write(&gitconfig, "[init]\n\tdefaultBranch = main\n").unwrap();
+
+    let out = Cmd::new("git")
+        .env("GIT_CONFIG_GLOBAL", &gitconfig)
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("LC_ALL", "C")
+        .args(["init", "-b", "main", root.to_str().unwrap()])
+        .run()
+        .unwrap();
+    assert!(out.status.success(), "git init failed");
+
+    super::Repository::prewarm_at(&root);
+    assert!(
+        super::GIT_CONFIG_PRELOAD.get(&root).is_some(),
+        "prewarm should preload normal repos (no extensions.worktreeConfig)"
     );
 }

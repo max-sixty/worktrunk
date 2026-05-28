@@ -334,6 +334,98 @@ pub fn scrub_directive_env_vars(cmd: &mut std::process::Command) {
 }
 
 // ============================================================================
+// Directive-Payload Shell Escaping
+// ============================================================================
+
+/// Environment variable a shell wrapper sets to identify itself.
+///
+/// The PowerShell wrapper sets `WORKTRUNK_SHELL=powershell` and the fish
+/// wrapper sets `WORKTRUNK_SHELL=fish`; bash, zsh, and nushell leave it unset.
+/// Absence therefore means "POSIX", which is correct for those three wrappers
+/// *and* for the non-integration path where wt runs the `--execute` payload
+/// itself through `sh -c`.
+pub const WORKTRUNK_SHELL_ENV_VAR: &str = "WORKTRUNK_SHELL";
+
+/// How to single-quote a value spliced into a directive payload.
+///
+/// `wt switch --execute` builds one command string and hands it to the active
+/// shell — directly (`sh -c`) or, under shell integration, by writing it to the
+/// EXEC directive file the wrapper evaluates. POSIX shells, PowerShell, and
+/// fish all single-quote, but escape the string body differently — POSIX takes
+/// `\` literally inside `'…'` while fish treats it as an escape — so the
+/// escaper must be keyed on which shell will parse the payload.
+///
+/// `Literal` is the no-escaping mode for filesystem-path templates that are
+/// never spliced into a shell command line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellEscapeMode {
+    /// Substitute values verbatim — used for filesystem paths.
+    Literal,
+    /// POSIX single-quoting (`'it'\''s'`). The wrapper-independent default for
+    /// bash, zsh, and nushell, plus `Cmd::shell` (hooks, aliases).
+    Posix,
+    /// PowerShell single-quoting (`'it''s'`), for the PowerShell wrapper's
+    /// `Invoke-Expression` of the EXEC directive file.
+    PowerShell,
+    /// fish single-quoting (`'it\'s'`), for the fish wrapper's `eval` of the
+    /// EXEC directive file. fish — unlike POSIX — treats `\` as an escape
+    /// inside `'…'`, so the POSIX escaper corrupts backslashes there.
+    Fish,
+}
+
+/// Escape mode for a payload the *active directive shell* will parse.
+///
+/// Reads [`WORKTRUNK_SHELL_ENV_VAR`] — the single source of truth for the
+/// per-shell escaping decision shared by `escape_legacy_cd`, the `--execute`
+/// command template, and its trailing args. `powershell` ⇒
+/// [`ShellEscapeMode::PowerShell`], `fish` ⇒ [`ShellEscapeMode::Fish`], any
+/// other value or absent ⇒ [`ShellEscapeMode::Posix`].
+pub fn directive_shell_escape_mode() -> ShellEscapeMode {
+    match std::env::var(WORKTRUNK_SHELL_ENV_VAR) {
+        Ok(v) if v.eq_ignore_ascii_case("powershell") => ShellEscapeMode::PowerShell,
+        Ok(v) if v.eq_ignore_ascii_case("fish") => ShellEscapeMode::Fish,
+        _ => ShellEscapeMode::Posix,
+    }
+}
+
+/// Single-quote `s` for PowerShell: wrap in `'…'`, doubling every embedded `'`.
+///
+/// PowerShell's literal string is `'…'` with `''` as the escape for one quote
+/// (`'can''t'` is `can't`). The POSIX `'\''` idiom is invalid here — that is
+/// the bug B1 fixes for the PowerShell wrapper's `Invoke-Expression` path.
+/// Empty input yields `''`.
+pub fn powershell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+/// Single-quote `s` for fish: wrap in `'…'`, backslash-escaping `\` and `'`.
+///
+/// fish's single-quoted string — unlike POSIX — treats `\` as an escape
+/// character, with only `\\` and `\'` recognized inside `'…'`. So `\` must be
+/// doubled and `'` backslash-escaped; backslash *before* quote, since escaping
+/// the quote introduces a backslash that must not be doubled again. The POSIX
+/// `'\''` idiom would corrupt backslashes (and leave a trailing-`\` argument
+/// as an unterminated string) under the fish wrapper's `eval`. Empty input
+/// yields `''`.
+pub fn fish_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\\', r"\\").replace('\'', r"\'"))
+}
+
+/// Shell-escape `s` for the given [`ShellEscapeMode`].
+///
+/// The single dispatcher every directive-payload escaper routes through.
+pub fn shell_escape_for(mode: ShellEscapeMode, s: &str) -> String {
+    match mode {
+        ShellEscapeMode::Literal => s.to_string(),
+        ShellEscapeMode::Posix => {
+            shell_escape::unix::escape(std::borrow::Cow::Borrowed(s)).into_owned()
+        }
+        ShellEscapeMode::PowerShell => powershell_escape(s),
+        ShellEscapeMode::Fish => fish_escape(s),
+    }
+}
+
+// ============================================================================
 // Thread-Local Command Timeout
 // ============================================================================
 
@@ -360,52 +452,38 @@ pub fn set_command_timeout(timeout: Option<Duration>) {
     COMMAND_TIMEOUT.with(|t| t.set(timeout));
 }
 
-/// Maximum lines of captured stdout/stderr emitted to stderr per stream.
-/// Exceeded content is elided with a `… (N more lines, M bytes elided)` marker;
-/// the full output is still written to `output.log` via
+/// Maximum lines of the bounded subprocess preview per stream. Exceeded
+/// content is elided with a `… (N more lines, M bytes elided)` marker; the
+/// full output is still written to `subprocess.log` via
 /// [`SUBPROCESS_FULL_TARGET`].
 const LOG_OUTPUT_MAX_LINES: usize = 200;
 
-/// Maximum bytes of captured stdout/stderr emitted to stderr per stream.
-/// Applied in addition to [`LOG_OUTPUT_MAX_LINES`].
+/// Maximum bytes of the bounded subprocess preview per stream. Applied in
+/// addition to [`LOG_OUTPUT_MAX_LINES`].
 const LOG_OUTPUT_MAX_BYTES: usize = 64 * 1024;
 
-/// Log target used for *full* subprocess stdout/stderr. The format closure in
-/// `main.rs` routes records on this target to `output.log` only, so raw
-/// subprocess bodies (diffs, `git log -p`, patch-id pipelines) don't spam
-/// stderr or drown out trace records in `trace.log`.
+/// Log target used for *full* subprocess stdout/stderr. The tracing-subscriber
+/// `subprocess.log` layer filters on this target, so raw subprocess bodies (diffs,
+/// `git log -p`, patch-id pipelines) never reach stderr or `trace.log`.
 pub const SUBPROCESS_FULL_TARGET: &str = "worktrunk::subprocess_full";
 
-/// Log target used for the *bounded* (stderr-safe) preview of subprocess
-/// output. The format closure in `main.rs` routes records on this target to
-/// stderr and mirrors to `trace.log` — the uncapped version is captured via
-/// [`SUBPROCESS_FULL_TARGET`].
-pub const SUBPROCESS_TERMINAL_TARGET: &str = "worktrunk::subprocess_terminal";
-
-/// Whether the full subprocess output is being captured somewhere (e.g.
-/// `output.log` at `-vv`). Gates the phrasing of the elision marker so it
-/// doesn't promise a file that wasn't created.
-///
-/// Set by the binary's log-file init; stays `false` under `RUST_LOG=debug`
-/// without `-vv`, where the full records are dropped by design.
-static OUTPUT_LOG_AVAILABLE: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// Called from the binary once the `output.log` sink has been created.
-pub fn set_output_log_available(yes: bool) {
-    OUTPUT_LOG_AVAILABLE.store(yes, std::sync::atomic::Ordering::Relaxed);
-}
+/// Log target used for the *bounded* preview of subprocess output (capped
+/// at `LOG_OUTPUT_MAX_LINES` / `LOG_OUTPUT_MAX_BYTES` with an elision
+/// marker). Shares the routing of all non-full records: stderr at `-v`
+/// (or `RUST_LOG=debug` without `-vv`), `trace.log` at `-vv`. The
+/// uncapped version is captured via [`SUBPROCESS_FULL_TARGET`].
+pub const SUBPROCESS_BOUNDED_TARGET: &str = "worktrunk::subprocess_bounded";
 
 /// Log captured stdout/stderr of a finished command.
 ///
-/// At `log::debug!` (`-vv`) each stream is emitted twice via separate log
-/// targets, and the format closure in `main.rs` routes them:
-///   - [`SUBPROCESS_FULL_TARGET`]: uncapped, line-per-record, `output.log` only.
-///   - [`SUBPROCESS_TERMINAL_TARGET`]: capped at [`LOG_OUTPUT_MAX_LINES`] and
-///     [`LOG_OUTPUT_MAX_BYTES`] per stream with an elision marker, stderr +
-///     `trace.log`.
+/// At `tracing::DEBUG` (`-vv`) each stream is emitted twice via separate
+/// targets, and the tracing-subscriber layers route them:
+///   - [`SUBPROCESS_FULL_TARGET`]: uncapped, line-per-record, `subprocess.log` only.
+///   - [`SUBPROCESS_BOUNDED_TARGET`]: capped at [`LOG_OUTPUT_MAX_LINES`] and
+///     [`LOG_OUTPUT_MAX_BYTES`] per stream with an elision marker, then
+///     routed to `trace.log` at `-vv` or stderr otherwise.
 ///
-/// Below `log::debug!` both targets are disabled and this is a no-op.
+/// Below Debug both targets are disabled and this is a no-op.
 fn log_output(output: &std::process::Output) {
     if !log::log_enabled!(log::Level::Debug) {
         return;
@@ -417,10 +495,10 @@ fn log_output(output: &std::process::Output) {
         log::debug!(target: SUBPROCESS_FULL_TARGET, "{}", line);
     }
     for line in format_stream_bounded(&output.stdout, "  ") {
-        log::debug!(target: SUBPROCESS_TERMINAL_TARGET, "{}", line);
+        log::debug!(target: SUBPROCESS_BOUNDED_TARGET, "{}", line);
     }
     for line in format_stream_bounded(&output.stderr, "  ! ") {
-        log::debug!(target: SUBPROCESS_TERMINAL_TARGET, "{}", line);
+        log::debug!(target: SUBPROCESS_BOUNDED_TARGET, "{}", line);
     }
 }
 
@@ -438,7 +516,10 @@ fn format_stream_full(bytes: &[u8], prefix: &str) -> Vec<String> {
 /// Split captured bytes into prefixed lines with at most [`LOG_OUTPUT_MAX_LINES`]
 /// and [`LOG_OUTPUT_MAX_BYTES`] emitted; remainder replaced by a single
 /// `… (N more lines, M bytes elided — <hint>)` marker. The hint text tracks
-/// whether `output.log` was opened (see [`set_output_log_available`]).
+/// whether `subprocess.log` is collecting the full bodies, asked through
+/// `tracing::enabled!` against [`SUBPROCESS_FULL_TARGET`] — true iff the
+/// `subprocess.log` layer is registered and accepting that target (`-vv` opened
+/// the file successfully).
 fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
     if bytes.is_empty() {
         return Vec::new();
@@ -453,8 +534,8 @@ fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
         if lines_emitted >= LOG_OUTPUT_MAX_LINES || bytes_emitted >= LOG_OUTPUT_MAX_BYTES {
             let remaining_lines = 1 + lines.count();
             let remaining_bytes = total_bytes.saturating_sub(bytes_emitted);
-            let hint = if OUTPUT_LOG_AVAILABLE.load(std::sync::atomic::Ordering::Relaxed) {
-                "full output in output.log"
+            let hint = if tracing::enabled!(target: SUBPROCESS_FULL_TARGET, tracing::Level::DEBUG) {
+                "full output in subprocess.log"
             } else {
                 "rerun with -vv for full output"
             };
@@ -541,23 +622,31 @@ fn run_with_timeout_impl(
 /// # Examples
 ///
 /// Capture output:
-/// ```ignore
+/// ```no_run
+/// use worktrunk::shell_exec::Cmd;
+/// # fn example(repo_path: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 /// let output = Cmd::new("git")
 ///     .args(["status", "--porcelain"])
 ///     .current_dir(&repo_path)
 ///     .context("my-worktree")
 ///     .run()?;
+/// # let _ = output;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// Stream output (hooks, interactive):
-/// ```ignore
+/// ```no_run
 /// use std::process::Stdio;
-///
+/// use worktrunk::shell_exec::Cmd;
+/// # fn example(repo_path: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 /// Cmd::shell("npm run build")
 ///     .current_dir(&repo_path)
 ///     .stdout(Stdio::from(std::io::stderr()))
 ///     .forward_signals()
 ///     .stream()?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct Cmd {
     /// Program name or shell command string (if shell_wrap is true)
@@ -1056,21 +1145,18 @@ impl Cmd {
     /// inspect either child's exit status and stderr. `source_output.stdout`
     /// is empty (it was routed to the sink via OS pipe).
     ///
-    /// Timeouts, `stdin_bytes`, and `external()` logging are not supported on
-    /// either side. The pipeline consumes one semaphore permit even though it
-    /// runs two processes concurrently — acquiring two would deadlock under
-    /// `concurrency = 1`.
+    /// `stdin_bytes` on the source feeds the pipeline's input (the sink's
+    /// stdin always comes from the source). Timeouts and `external()` logging
+    /// are not supported on either side. The pipeline consumes one semaphore
+    /// permit even though it runs two processes concurrently — acquiring two
+    /// would deadlock under `concurrency = 1`.
     pub fn pipe_into(
-        self,
+        mut self,
         next: Cmd,
     ) -> std::io::Result<(std::process::Output, std::process::Output)> {
         assert!(
             !self.shell_wrap && !next.shell_wrap,
             "Cmd::shell() commands cannot be used with pipe_into"
-        );
-        assert!(
-            self.stdin_data.is_none(),
-            "pipe_into source cannot also use stdin_bytes"
         );
         assert!(
             next.stdin_data.is_none(),
@@ -1104,10 +1190,16 @@ impl Cmd {
         let first_log = WtTraceLog::new(self.context.as_deref(), &first_cmd_str);
         let second_log = WtTraceLog::new(next.context.as_deref(), &second_cmd_str);
 
+        let source_stdin = self.stdin_data.take();
+
         let mut first = self.direct_command();
         self.apply_common_settings(&mut first);
         first
-            .stdin(Stdio::null())
+            .stdin(if source_stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -1116,6 +1208,17 @@ impl Cmd {
             .stdout
             .take()
             .expect("stdout was configured as piped");
+        // Pair the source's stdin pipe with the data to write; a writer
+        // thread (below) drains it concurrently with the rest of the pipeline.
+        let first_stdin = source_stdin.map(|data| {
+            (
+                first_child
+                    .stdin
+                    .take()
+                    .expect("stdin was configured as piped"),
+                data,
+            )
+        });
 
         let mut second = next.direct_command();
         next.apply_common_settings(&mut second);
@@ -1150,6 +1253,19 @@ impl Cmd {
                 let mut buf = Vec::new();
                 first_stderr_pipe.read_to_end(&mut buf).map(|_| buf)
             });
+
+            // Feed the source's stdin (e.g. a `git rev-list` commit list
+            // piped into `git diff-tree --stdin`) on a thread, concurrent
+            // with the drain below — writing it all up front would deadlock
+            // once the source's stdout pipe fills. A short write (the source
+            // exited early) surfaces as its non-zero exit status, which
+            // callers already inspect.
+            if let Some((mut stdin, data)) = first_stdin {
+                s.spawn(move || {
+                    let _ = stdin.write_all(&data);
+                    // `stdin` drops here, closing the pipe so the source sees EOF.
+                });
+            }
 
             // Drain `next` first (its `wait_with_output` reads its own
             // stdout/stderr), so `first`'s writes can complete.
@@ -1192,11 +1308,7 @@ impl Cmd {
     /// Returns error if command exits with non-zero status.
     pub fn stream(mut self) -> anyhow::Result<()> {
         #[cfg(unix)]
-        use {
-            signal_hook::consts::{SIGINT, SIGPIPE, SIGTERM},
-            signal_hook::iterator::Signals,
-            std::os::unix::process::CommandExt,
-        };
+        use {signal_hook::consts::SIGPIPE, std::os::unix::process::CommandExt};
 
         // Shell-wrapped commands don't use args (the command string is the full command)
         assert!(
@@ -1246,9 +1358,11 @@ impl Cmd {
             self.stdin_cfg.unwrap_or_else(std::process::Stdio::null)
         };
 
+        // Install the SIGINT/SIGTERM handler BEFORE spawn so a signal arriving
+        // mid-spawn is queued, not default-killed.
         #[cfg(unix)]
         let signals = if self.forward_signals {
-            Some(Signals::new([SIGINT, SIGTERM])?)
+            Some(crate::signal_forwarder::ForegroundSignals::install()?)
         } else {
             None
         };
@@ -1297,68 +1411,19 @@ impl Cmd {
         }
         // stdin handle is dropped here, closing the pipe
 
-        // Wait for child. With signal forwarding, a listener thread blocks
-        // on `Signals::forever()` and forwards SIGINT/SIGTERM to the child;
-        // the main thread blocks on `child.wait()`. After wait returns we
-        // close the signal handle (which unblocks `forever()`) and join
-        // the listener.
+        // Start the listener now that the child PID is known. The handler
+        // installed pre-spawn has been queueing signals; the listener
+        // processes any queued signal on its first poll.
         #[cfg(unix)]
-        let listener_state = signals.map(|mut signals| {
-            let child_pid = child.id() as i32;
-            let share_parent_pgroup = self.share_parent_pgroup;
-            let handle = signals.handle();
-            // Sentinel 0 = no signal yet (POSIX signals are >= 1). First
-            // signal wins via compare_exchange; subsequent signals are
-            // dropped, matching the prior loop's first-signal-only semantics.
-            // Re-press escalation lives inside `forward_signal_with_escalation`
-            // (SIGINT → SIGTERM → SIGKILL with grace windows).
-            let seen = std::sync::Arc::new(std::sync::atomic::AtomicI32::new(0));
-            let listener = {
-                let seen = std::sync::Arc::clone(&seen);
-                std::thread::spawn(move || {
-                    for sig in signals.forever() {
-                        if seen
-                            .compare_exchange(
-                                0,
-                                sig,
-                                std::sync::atomic::Ordering::Relaxed,
-                                std::sync::atomic::Ordering::Relaxed,
-                            )
-                            .is_ok()
-                        {
-                            if share_parent_pgroup {
-                                // Shared-pgroup mode: tty-initiated signals
-                                // (Ctrl-C, hangup) already hit the child via
-                                // kernel fg-pgroup delivery. Forward by PID
-                                // anyway so externally-delivered signals
-                                // (e.g. `kill -TERM <wt-pid>`) also reach the
-                                // child — they otherwise stop at wt. Single
-                                // shot, no escalation: if the user chose
-                                // SIGTERM, an unsolicited SIGKILL would skip
-                                // the child's tty restore (raw-mode reset,
-                                // cursor-show) and leave the terminal wedged.
-                                forward_signal_to_pid(child_pid, sig);
-                            } else {
-                                forward_signal_with_escalation(child_pid, sig);
-                            }
-                        }
-                    }
-                })
-            };
-            (handle, listener, seen)
-        });
+        let forwarder =
+            signals.map(|s| s.forward_to_pid(child.id() as i32, self.share_parent_pgroup));
 
         let wait_result = child.wait();
 
         // Always tear down the listener, even on wait error, so the
         // signal-hook handle is released and the thread doesn't leak.
         #[cfg(unix)]
-        let seen_signal = listener_state.and_then(|(handle, listener, seen)| {
-            handle.close();
-            let _ = listener.join();
-            let sig = seen.load(std::sync::atomic::Ordering::Relaxed);
-            (sig != 0).then_some(sig)
-        });
+        let seen_signal = forwarder.and_then(|f| f.stop());
 
         let status = match wait_result {
             Ok(status) => status,
@@ -1458,7 +1523,7 @@ fn wait_for_exit(pgid: i32, grace: std::time::Duration) -> bool {
 /// externally-delivered signals (e.g. `kill -TERM <wt-pid>`). No escalation:
 /// see the call site in `Cmd::stream` for the rationale.
 #[cfg(unix)]
-fn forward_signal_to_pid(pid: i32, sig: i32) {
+pub fn forward_signal_to_pid(pid: i32, sig: i32) {
     let nix_sig = match sig {
         signal_hook::consts::SIGINT => nix::sys::signal::Signal::SIGINT,
         signal_hook::consts::SIGTERM => nix::sys::signal::Signal::SIGTERM,
@@ -1498,6 +1563,66 @@ pub fn forward_signal_with_escalation(pgid: i32, sig: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_powershell_escape() {
+        // Plain word: wrapped but unchanged inside the quotes.
+        assert_eq!(powershell_escape("rg"), "'rg'");
+        // Embedded single quote: doubled (PowerShell's only escape).
+        assert_eq!(powershell_escape("can't"), "'can''t'");
+        // `$(...)` is inert inside a PowerShell single-quoted string — no
+        // expansion, no doubling needed.
+        assert_eq!(powershell_escape("$(whoami)"), "'$(whoami)'");
+        // Spaces are covered by the surrounding quotes.
+        assert_eq!(powershell_escape("with space"), "'with space'");
+        // Empty string still produces a valid empty literal.
+        assert_eq!(powershell_escape(""), "''");
+        // Multiple quotes each double independently.
+        assert_eq!(powershell_escape("a'b'c"), "'a''b''c'");
+    }
+
+    #[test]
+    fn test_fish_escape() {
+        // Plain word: wrapped but unchanged inside the quotes.
+        assert_eq!(fish_escape("rg"), "'rg'");
+        // Two consecutive backslashes: each doubled, so fish's `eval`
+        // collapses `\\\\` back to `\\` — POSIX `'…'` would corrupt this.
+        assert_eq!(fish_escape(r"a\\b"), r"'a\\\\b'");
+        // Trailing backslash: doubled, so the closing `'` is not swallowed
+        // (the POSIX form `'end\'` is an unterminated string for fish).
+        assert_eq!(fish_escape(r"end\"), r"'end\\'");
+        // Embedded single quote: backslash-escaped (fish's escape inside `'…'`).
+        assert_eq!(fish_escape("can't"), r"'can\'t'");
+        // `$(...)` and backticks are inert inside a fish single-quoted string.
+        assert_eq!(fish_escape("$(whoami)"), "'$(whoami)'");
+        assert_eq!(fish_escape("`whoami`"), "'`whoami`'");
+        // Empty string still produces a valid empty literal.
+        assert_eq!(fish_escape(""), "''");
+        // Backslash then quote: `\` doubled first, then `'` escaped, so the
+        // escaping backslash of `\'` is not itself doubled.
+        assert_eq!(fish_escape(r"\'"), r"'\\\''");
+    }
+
+    #[test]
+    fn test_shell_escape_for_dispatch() {
+        // Literal passes the value through untouched.
+        assert_eq!(shell_escape_for(ShellEscapeMode::Literal, "can't"), "can't");
+        // Posix uses the `'\''` idiom for an embedded quote.
+        assert_eq!(
+            shell_escape_for(ShellEscapeMode::Posix, "can't"),
+            r"'can'\''t'"
+        );
+        // PowerShell doubles the embedded quote.
+        assert_eq!(
+            shell_escape_for(ShellEscapeMode::PowerShell, "can't"),
+            "'can''t'"
+        );
+        // Fish backslash-escapes the embedded quote.
+        assert_eq!(
+            shell_escape_for(ShellEscapeMode::Fish, "can't"),
+            r"'can\'t'"
+        );
+    }
 
     #[test]
     fn test_compute_git_env_overrides() {
@@ -1980,8 +2105,9 @@ mod tests {
             marker.starts_with("  … (5 more lines, "),
             "marker should count the 5 lines past the cap: {marker}"
         );
-        // OUTPUT_LOG_AVAILABLE defaults to false (only the binary's
-        // log_files::init sets it true), so the marker here suggests `-vv`.
+        // No tracing subscriber is installed in unit tests, so
+        // `tracing::enabled!(SUBPROCESS_FULL_TARGET, DEBUG)` is false and the
+        // marker suggests `-vv`.
         assert!(marker.contains("rerun with -vv"));
     }
 

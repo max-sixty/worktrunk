@@ -39,8 +39,9 @@ pub struct ProjectListConfig {
 
 /// Project-level CI configuration.
 ///
-/// Override CI platform detection when URL-based detection fails (e.g., GitHub
-/// Enterprise or self-hosted GitLab with custom domains).
+/// Names the CI platform explicitly, for repos where URL-based detection can't
+/// determine it (e.g., GitHub Enterprise or self-hosted GitLab with custom
+/// domains).
 ///
 /// # Example
 ///
@@ -50,30 +51,68 @@ pub struct ProjectListConfig {
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct ProjectCiConfig {
-    /// CI platform override. When set, skips URL-based platform detection.
+    /// CI platform. When unset, the platform is detected from the remote URL.
     ///
-    /// Values: "github" or "gitlab"
+    /// Deprecated alias for `[forge].platform`; same accepted values
+    /// ("github", "gitlab", "gitea", "azure-devops").
     #[serde(default)]
     pub platform: Option<String>,
 }
 
+/// Project-level commit message configuration. *(Experimental — fields may
+/// change in future releases.)*
+///
+/// Only fields appropriate as shared, checked-in settings live here. The LLM
+/// command and full prompt template stay in user/system config — they
+/// describe per-developer environment (which CLI is installed, which agent
+/// they prefer).
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
+pub struct ProjectCommitConfig {
+    /// Commit message generation settings shared across the team.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<ProjectCommitGenerationConfig>,
+}
+
+/// Project-level commit message generation settings.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
+pub struct ProjectCommitGenerationConfig {
+    /// Text appended to the commit and squash prompts inside a
+    /// `<project-guidance>` block.
+    ///
+    /// Rendered with the same minijinja context as the main commit/squash
+    /// template (`{{ branch }}`, `{{ git_diff }}`, etc.), so it can
+    /// reference template variables directly. Use this for project-wide
+    /// commit conventions (e.g. "use conventional commits", "reference
+    /// issue numbers"). The user config has a `[commit.generation]
+    /// template-append` of its own; it renders into a separate
+    /// `<user-guidance>` block immediately before this one. The first time
+    /// the rendered text would reach the LLM, worktrunk prompts the user to
+    /// approve the raw fragment — the same gate as project-defined commands.
+    #[serde(default, rename = "template-append")]
+    pub template_append: Option<String>,
+}
+
 /// Project-level forge configuration.
 ///
-/// Override forge detection when URL-based detection fails (e.g., SSH host
-/// aliases, GitHub Enterprise, or self-hosted GitLab with custom domains).
+/// Names the forge explicitly, for repos where URL-based detection can't
+/// determine it (e.g., SSH host aliases, GitHub Enterprise, or self-hosted
+/// GitLab with custom domains).
 ///
 /// # Example
 ///
 /// ```toml
 /// [forge]
-/// platform = "github"              # or "gitlab"
+/// platform = "github"              # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)
 /// hostname = "github.example.com"  # API hostname for GHE / self-hosted GitLab
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, JsonSchema)]
 pub struct ProjectForgeConfig {
-    /// Forge platform override. When set, skips URL-based platform detection.
+    /// Forge platform. When unset, the platform is detected from the remote URL.
     ///
-    /// Values: "github" or "gitlab"
+    /// Values: "github", "gitlab", "gitea" (experimental), or "azure-devops"
+    /// (experimental). Both the `wt switch pr:` shortcut and `wt list --full`
+    /// CI status detection use `forge.platform` to pick the forge CLI (`gh`,
+    /// `glab`, `tea`, or `az`).
     #[serde(default)]
     pub platform: Option<String>,
 
@@ -94,14 +133,14 @@ impl ProjectListConfig {
 }
 
 impl ProjectConfig {
-    /// Get the CI platform override if configured.
+    /// The CI platform set in `[ci]`, if any.
     ///
     /// Deprecated: use [`forge_platform()`](Self::forge_platform) instead.
     pub fn ci_platform(&self) -> Option<&str> {
         self.ci.platform.as_deref()
     }
 
-    /// Get the forge platform override, checking `[forge]` first then `[ci]`.
+    /// The configured forge platform, checking `[forge]` first then `[ci]`.
     pub fn forge_platform(&self) -> Option<&str> {
         self.forge
             .platform
@@ -117,6 +156,22 @@ impl ProjectConfig {
     /// Get `wt step copy-ignored` configuration if configured.
     pub fn copy_ignored(&self) -> Option<&CopyIgnoredConfig> {
         self.step.copy_ignored.as_ref()
+    }
+
+    /// Project-level commit-message append fragment (trimmed, empty
+    /// treated as unset).
+    ///
+    /// Rendered with the main commit/squash template's variable context and
+    /// appended to the LLM prompt inside a `<project-guidance>` block.
+    /// Callers must gate the first use through the approval system before
+    /// sending the rendered output to the LLM.
+    pub fn commit_template_append(&self) -> Option<&str> {
+        self.commit
+            .generation
+            .as_ref()
+            .and_then(|g| g.template_append.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
     }
 }
 
@@ -158,13 +213,17 @@ pub struct ProjectConfig {
     #[serde(default, skip_serializing_if = "is_default")]
     pub list: ProjectListConfig,
 
-    /// CI configuration (platform override). Deprecated: use `[forge]` instead.
+    /// CI configuration (platform). Deprecated: use `[forge]` instead.
     #[serde(default, skip_serializing_if = "is_default")]
     pub ci: ProjectCiConfig,
 
-    /// Forge configuration (platform detection override, API hostname)
+    /// Forge configuration (platform, API hostname)
     #[serde(default, skip_serializing_if = "is_default")]
     pub forge: ProjectForgeConfig,
+
+    /// Project-wide commit message settings (shared across teammates)
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub commit: ProjectCommitConfig,
 
     /// Configuration for `wt step` subcommands.
     #[serde(default, skip_serializing_if = "is_default")]
@@ -213,7 +272,7 @@ impl ProjectConfig {
         // emit_inline_warnings=true: print per-kind warnings inline during config load
         let is_main_worktree = !repo.current_worktree().is_linked().unwrap_or(true);
         let repo_for_hints = if write_hints { Some(repo) } else { None };
-        super::deprecation::check_and_migrate(
+        let migrated = super::deprecation::check_and_migrate(
             &config_path,
             &contents,
             is_main_worktree,
@@ -221,9 +280,12 @@ impl ProjectConfig {
             repo_for_hints,
             true, // emit_inline_warnings
         )
-        .map_err(|e| ConfigError(e.to_string()))?;
+        .map_err(|e| ConfigError(e.to_string()))?
+        .migrated_content;
 
         // Warn about unknown fields (only in main worktree where it's actionable).
+        // Runs on the raw contents so deprecated keys are detected as written;
+        // `DEPRECATED_SECTION_KEYS` defers them to the deprecation messaging.
         if is_main_worktree {
             super::deprecation::warn_unknown_fields::<ProjectConfig>(
                 &contents,
@@ -232,7 +294,9 @@ impl ProjectConfig {
             );
         }
 
-        let config: ProjectConfig = toml::from_str(&contents).map_err(|e| {
+        // Deserialize the structurally migrated content so deprecated keys
+        // (e.g. `pre-start`/`post-start`) still load into their canonical fields.
+        let config: ProjectConfig = toml::from_str(&migrated).map_err(|e| {
             ConfigError(format!(
                 "Project config at {} failed to parse:\n{e}",
                 crate::path::format_path_for_display(&config_path),
@@ -247,17 +311,26 @@ impl ProjectConfig {
 ///
 /// This includes keys from ProjectConfig and HooksConfig (flattened).
 /// Public for use by the `WorktrunkConfig` trait implementation.
+///
+/// `pre-create`/`post-create` are appended as silent serde aliases for the
+/// canonical `pre-start`/`post-start` hook keys (see `HooksConfig` in
+/// `src/config/hooks.rs`). The schema only knows canonical names from
+/// `#[serde(rename = ...)]`; adding the aliases here keeps the unknown-key
+/// round-trip from flagging an accepted name as unknown.
 pub fn valid_project_config_keys() -> Vec<String> {
     use schemars::SchemaGenerator;
 
     let schema = SchemaGenerator::default().into_root_schema_for::<ProjectConfig>();
 
-    schema
+    let mut keys: Vec<String> = schema
         .as_object()
         .and_then(|obj| obj.get("properties"))
         .and_then(|p| p.as_object())
         .map(|props| props.keys().cloned().collect())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    keys.push("pre-create".to_string());
+    keys.push("post-create".to_string());
+    keys
 }
 
 #[cfg(test)]
@@ -267,22 +340,28 @@ mod tests {
     #[test]
     fn test_deserialize_all_hooks() {
         let contents = r#"
-post-create = "npm install"
-post-start = "npm run watch"
+pre-switch = "echo switching"
 post-switch = "rename-tab"
+pre-start = "npm install"
+post-start = "npm run watch"
 pre-commit = "cargo fmt --check"
+post-commit = "echo committed"
 pre-merge = "cargo test"
 post-merge = "git push"
 pre-remove = "echo bye"
+post-remove = "echo removed"
 "#;
         let config: ProjectConfig = toml::from_str(contents).unwrap();
-        assert!(config.hooks.post_create.is_some());
-        assert!(config.hooks.post_start.is_some());
+        assert!(config.hooks.pre_switch.is_some());
         assert!(config.hooks.post_switch.is_some());
+        assert!(config.hooks.pre_create.is_some());
+        assert!(config.hooks.post_create.is_some());
         assert!(config.hooks.pre_commit.is_some());
+        assert!(config.hooks.post_commit.is_some());
         assert!(config.hooks.pre_merge.is_some());
         assert!(config.hooks.post_merge.is_some());
         assert!(config.hooks.pre_remove.is_some());
+        assert!(config.hooks.post_remove.is_some());
     }
 
     // ============================================================================
@@ -451,5 +530,56 @@ platform = "github"
         let config: ProjectConfig = toml::from_str(contents).unwrap();
         let cloned = config.clone();
         assert_eq!(config, cloned);
+    }
+
+    // ============================================================================
+    // ProjectCommitConfig Tests
+    // ============================================================================
+
+    #[test]
+    fn test_commit_template_append_parses() {
+        let toml = r#"
+[commit.generation]
+template-append = "Use conventional commits"
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.commit_template_append(),
+            Some("Use conventional commits")
+        );
+    }
+
+    /// `commit_template_append()` trims whitespace and treats a blank value
+    /// as unset. Otherwise an empty `<project-guidance>` block would still
+    /// render (confusing the LLM) and an empty approval would prompt.
+    #[test]
+    fn test_commit_template_append_blank_treated_as_unset() {
+        let toml = r#"
+[commit.generation]
+template-append = "   \n\t  "
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.commit_template_append(), None);
+
+        // Whitespace inside the body is preserved — only leading/trailing trimmed.
+        let toml = r#"
+[commit.generation]
+template-append = "  - a\n  - b  "
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.commit_template_append(), Some("- a\n  - b"));
+    }
+
+    #[test]
+    fn test_commit_template_append_missing_returns_none() {
+        let config = ProjectConfig::default();
+        assert_eq!(config.commit_template_append(), None);
+
+        // `[commit.generation]` present but no `template-append` field also returns None.
+        let toml = r#"
+[commit.generation]
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.commit_template_append(), None);
     }
 }

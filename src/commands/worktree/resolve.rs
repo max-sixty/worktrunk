@@ -202,76 +202,6 @@ pub fn worktree_display_name(
     }
 }
 
-/// Generate a backup path for the given path with a timestamp suffix.
-///
-/// For paths with extensions: `file.txt` → `file.txt.bak.TIMESTAMP`
-/// For paths without extensions: `foo` → `foo.bak.TIMESTAMP`
-///
-/// Returns an error for unusual paths without a file name (e.g., `/` or `..`).
-pub(super) fn generate_backup_path(
-    path: &std::path::Path,
-    suffix: &str,
-) -> anyhow::Result<PathBuf> {
-    let file_name = path.file_name().ok_or_else(|| {
-        anyhow::anyhow!(
-            "Cannot generate backup path for {}",
-            format_path_for_display(path)
-        )
-    })?;
-
-    if path.extension().is_none() {
-        // Path has no extension (e.g., /repo/feature)
-        Ok(path.with_file_name(format!("{}.bak.{suffix}", file_name.to_string_lossy())))
-    } else {
-        // Path has an extension (e.g., /repo.feature or /file.txt)
-        Ok(path.with_extension(format!(
-            "{}.bak.{suffix}",
-            path.extension()
-                .map(|e| e.to_string_lossy().to_string())
-                .unwrap_or_default()
-        )))
-    }
-}
-
-/// Compute the backup path for clobber operations.
-///
-/// Returns `Ok(None)` if path doesn't exist.
-/// Returns `Ok(Some(backup_path))` if clobber is true and path exists.
-/// Returns `Err(GitError::WorktreePathExists)` if clobber is false and path exists.
-pub(super) fn compute_clobber_backup(
-    path: &Path,
-    branch: &str,
-    clobber: bool,
-    create: bool,
-) -> anyhow::Result<Option<PathBuf>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    if clobber {
-        let timestamp = worktrunk::utils::epoch_now() as i64;
-        let datetime =
-            chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(chrono::Utc::now);
-        let suffix = datetime.format("%Y%m%d-%H%M%S").to_string();
-        let backup_path = generate_backup_path(path, &suffix)?;
-
-        if backup_path.exists() {
-            anyhow::bail!(
-                "Backup path already exists: {}",
-                worktrunk::path::format_path_for_display(&backup_path)
-            );
-        }
-        Ok(Some(backup_path))
-    } else {
-        Err(GitError::WorktreePathExists {
-            branch: branch.to_string(),
-            path: path.to_path_buf(),
-            create,
-        }
-        .into())
-    }
-}
-
 /// Suggested worktree-path template for bare repos with hidden directory names.
 ///
 /// Places worktrees as siblings of the bare repo directory inside the parent,
@@ -387,7 +317,7 @@ pub fn offer_bare_repo_worktree_path_fix(
             config.set_project_worktree_path(
                 &project_id,
                 BARE_REPO_WORKTREE_PATH.to_string(),
-                None,
+                &worktrunk::config::require_config_path()?,
             )?;
             print_accepted_message(&display_path, &config_path_display);
             Ok(true)
@@ -424,47 +354,6 @@ fn print_accepted_message(display_path: &str, config_path: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_generate_backup_path_with_extension() {
-        // Paths with extensions: file.txt -> file.txt.bak.TIMESTAMP
-        let path = PathBuf::from("/tmp/repo.feature");
-        let backup = generate_backup_path(&path, "20250101-000000").unwrap();
-        assert_eq!(
-            backup,
-            PathBuf::from("/tmp/repo.feature.bak.20250101-000000")
-        );
-
-        let path = PathBuf::from("/tmp/file.txt");
-        let backup = generate_backup_path(&path, "20250101-000000").unwrap();
-        assert_eq!(backup, PathBuf::from("/tmp/file.txt.bak.20250101-000000"));
-    }
-
-    #[test]
-    fn test_generate_backup_path_without_extension() {
-        // Paths without extensions: foo -> foo.bak.TIMESTAMP
-        let path = PathBuf::from("/tmp/repo/feature");
-        let backup = generate_backup_path(&path, "20250101-000000").unwrap();
-        assert_eq!(
-            backup,
-            PathBuf::from("/tmp/repo/feature.bak.20250101-000000")
-        );
-
-        let path = PathBuf::from("/tmp/mydir");
-        let backup = generate_backup_path(&path, "20250101-000000").unwrap();
-        assert_eq!(backup, PathBuf::from("/tmp/mydir.bak.20250101-000000"));
-    }
-
-    #[test]
-    fn test_generate_backup_path_unusual_paths() {
-        // Root path has no file name
-        let path = PathBuf::from("/");
-        assert!(generate_backup_path(&path, "20250101-000000").is_err());
-
-        // Parent reference has no file name
-        let path = PathBuf::from("..");
-        assert!(generate_backup_path(&path, "20250101-000000").is_err());
-    }
 
     #[test]
     fn test_template_references_repo_name_default() {

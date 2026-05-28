@@ -308,9 +308,67 @@ fn test_relocate_clobber_backs_up(repo: TestRepo) {
         .filter_map(|e| e.ok())
         .any(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            name.starts_with("repo.feature.bak-")
+            name.starts_with("repo.feature.bak.")
         });
     assert!(backup_exists, "Backup directory should exist");
+}
+
+/// Regression: when the computed backup path already exists, relocate
+/// --clobber falls back to the next free `-N` name rather than overwriting it.
+/// (Matches the `wt switch --clobber` contract — see
+/// test_switch_clobber_falls_back_when_backup_taken.)
+#[rstest]
+fn test_relocate_clobber_falls_back_when_backup_taken(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+
+    // Create a worktree at a non-standard location.
+    let wrong_path = parent.join("wrong-location");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        wrong_path.to_str().unwrap(),
+    ]);
+
+    // Blocker file at the expected destination.
+    let expected_path = parent.join("repo.feature");
+    fs::write(&expected_path, "blocker contents").unwrap();
+
+    // Pre-create the backup path relocate would compute. TEST_EPOCH pins the
+    // timestamp suffix so this name is deterministic.
+    // TEST_EPOCH=1735776000 -> 2025-01-02 00:00:00 UTC
+    let taken = parent.join("repo.feature.bak.20250102-000000");
+    fs::write(&taken, "existing backup").unwrap();
+
+    let output = make_snapshot_cmd(&repo, "step", &["relocate", "--clobber"], None)
+        .output()
+        .expect("relocate should run");
+    assert!(
+        output.status.success(),
+        "relocate must fall back to a free backup name; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The worktree was moved to the expected location.
+    assert!(
+        expected_path.is_dir(),
+        "Worktree should be at expected location: {}",
+        expected_path.display()
+    );
+
+    // The pre-existing backup is untouched; the blocker moved to the -2 name.
+    assert_eq!(
+        fs::read_to_string(&taken).unwrap(),
+        "existing backup",
+        "existing backup must not be overwritten"
+    );
+    let fallback = parent.join("repo.feature.bak.20250102-000000-2");
+    assert_eq!(
+        fs::read_to_string(&fallback).unwrap(),
+        "blocker contents",
+        "blocker file must move to the -2 fallback name"
+    );
 }
 
 /// Test that --clobber refuses to clobber an existing worktree
@@ -429,6 +487,41 @@ fn test_relocate_main_worktree(repo: TestRepo) {
         current_branch.trim(),
         "main",
         "Main worktree should be on default branch"
+    );
+}
+
+/// Regression: a branch literally named `-foo` (creatable via `git
+/// update-ref refs/heads/-foo HEAD`) must round-trip through main worktree
+/// relocation without `git worktree add` parsing the ref as a flag.
+/// Without `--end-of-options`, the `worktree add` call would fail with
+/// `unknown switch 'o'`.
+#[rstest]
+fn test_relocate_main_worktree_hyphen_prefixed_branch(repo: TestRepo) {
+    let parent = worktree_parent(&repo);
+
+    // `git checkout -b -- -foo` is rejected by modern git, but `update-ref`
+    // happily writes the ref, then `symbolic-ref` moves HEAD onto it.
+    repo.run_git(&["update-ref", "refs/heads/-foo", "HEAD"]);
+    repo.run_git(&["symbolic-ref", "HEAD", "refs/heads/-foo"]);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "relocate"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "relocate must succeed with a hyphen-prefixed branch; \
+         stdout: {stdout}\nstderr: {stderr}"
+    );
+
+    let expected_path = parent.join("repo.-foo");
+    assert!(
+        expected_path.exists(),
+        "worktree for `-foo` should be created at: {}",
+        expected_path.display()
     );
 }
 

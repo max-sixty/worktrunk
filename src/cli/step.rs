@@ -6,13 +6,8 @@ pub struct CommitArgs {
     #[arg(short, long, add = crate::completion::worktree_only_completer())]
     pub(crate) branch: Option<String>,
 
-    /// Skip hooks
-    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true)]
-    pub(crate) verify: bool,
-
-    /// Skip hooks (deprecated alias for --no-hooks)
-    #[arg(long = "no-verify", hide = true)]
-    pub(crate) no_verify_deprecated: bool,
+    #[command(flatten)]
+    pub(crate) hooks: crate::cli::HookFlags,
 
     /// What to stage before committing [default: all]
     #[arg(long)]
@@ -41,13 +36,8 @@ pub struct SquashArgs {
     #[arg(add = crate::completion::branch_value_completer())]
     pub(crate) target: Option<String>,
 
-    /// Skip hooks
-    #[arg(long = "no-hooks", action = clap::ArgAction::SetFalse, default_value_t = true)]
-    pub(crate) verify: bool,
-
-    /// Skip hooks (deprecated alias for --no-hooks)
-    #[arg(long = "no-verify", hide = true)]
-    pub(crate) no_verify_deprecated: bool,
+    #[command(flatten)]
+    pub(crate) hooks: crate::cli::HookFlags,
 
     /// What to stage before committing [default: all]
     #[arg(long)]
@@ -70,8 +60,8 @@ pub struct SquashArgs {
 
 // Ordering: `wt merge` pipeline steps first (commit → squash → rebase → push),
 // then standalone utilities (diff, copy-ignored), then experimentals
-// (alphabetical: eval, for-each, promote, prune, relocate). Keep this enum,
-// the `## Operations` bullet list in `src/cli/mod.rs`, and the
+// (alphabetical: eval, for-each, promote, prune, relocate, tether). Keep this
+// enum, the `## Operations` bullet list in `src/cli/mod.rs`, and the
 // `<!-- subdoc: -->` markers in the same relative order.
 /// Run individual operations
 #[derive(Subcommand)]
@@ -433,7 +423,7 @@ Show available template variables:
 $ wt step eval --dry-run '{{ branch }}'
 branch=feature/auth-oauth2
 worktree_path=/home/user/projects/myapp-feature-auth-oauth2
-...
+---
 Result: feature/auth-oauth2
 ```
 
@@ -559,11 +549,11 @@ The swap uses `rename()` for each entry — fast regardless of entry size, since
 
 In `wt list`, candidates show `_` (same commit) or `⊂` (content integrated). Run `--dry-run` to preview. See `wt remove --help` for the full integration criteria.
 
-Locked worktrees and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal.
+Locked worktrees and the main worktree are always skipped. The current worktree is removed last, triggering cd to the primary worktree. Pre-remove and post-remove hooks run for each removal; a candidate whose hooks include an unapproved project command is skipped with `(approval required)` (pre-approve with `wt config approvals add`, or pass `--yes`).
 
 ## Min-age guard
 
-Worktrees younger than `--min-age` (default: 1 hour) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
+Worktrees younger than `--min-age` (default: 1 day) are skipped. This prevents removing a worktree just created from the default branch — it looks "merged" because its branch points at the same commit.
 
 ```console
 $ wt step prune --min-age=0s     # no age guard
@@ -591,7 +581,7 @@ $ wt step prune
         dry_run: bool,
 
         /// Skip worktrees younger than this
-        #[arg(long, default_value = "1h")]
+        #[arg(long, default_value = "1d")]
         min_age: String,
 
         /// Run removal in foreground (block until complete)
@@ -641,7 +631,9 @@ this by using a temporary location.
 ## Clobbering
 
 With `--clobber`, non-worktree paths at target locations are moved to
-`<path>.bak-<timestamp>` before relocating.
+`<path>.bak.<timestamp>` before relocating. If that name is already taken,
+the move counts up (`…-2`, `…-3`, …) until it finds a free name, so an
+existing backup is never overwritten.
 
 ## Main worktree behavior
 
@@ -673,7 +665,8 @@ Note: This command is experimental and may change in future versions.
 
         /// Backup non-worktree paths at target locations
         ///
-        /// Moves blocking paths to `<path>.bak-<timestamp>`.
+        /// Moves blocking paths to `<path>.bak.<timestamp>`. If that name is
+        /// taken, counts up (`…-2`, `…-3`, …) to a free name.
         #[arg(long)]
         clobber: bool,
 
@@ -682,6 +675,52 @@ Note: This command is experimental and may change in future versions.
         /// JSON prints structured result to stdout after the relocate completes.
         #[arg(long, default_value = "text", help_heading = "Automation")]
         format: crate::cli::SwitchFormat,
+    },
+
+    /// \[experimental\] Run a command; kill its whole process tree when its worktree is removed
+    ///
+    /// Teardown is automatic and needs no `pre-remove` hook; the group gets `SIGTERM` then `SIGKILL`.
+    #[command(after_long_help = r#"## Why
+
+A `post-start` hook to start a long-lived process and a `pre-remove` hook to
+stop it is usually enough. But `pre-remove` only runs when worktrunk removes
+the worktree, so a `git worktree remove`, an `rm -rf`, or a crashed hook skips
+it. Across enough worktree churn some process is bound to outlive its worktree,
+and with no cleanup these leaks accumulate (on macOS they eventually saturate
+`fseventsd`). `tether` removes the need for a `pre-remove`: it ties the
+command's lifetime to the worktree and kills the whole process group once the
+worktree is gone.
+
+## Arguments
+
+Arguments after `--` are the program and its arguments, run directly, no shell.
+
+```console
+$ wt step tether -- npm run dev
+```
+
+For pipes, redirects, variables, or globs, wrap in `sh -c`:
+
+```console
+$ wt step tether -- sh -c 'PORT=$P npm run dev | tee dev.log'
+```
+
+## Examples
+
+Run a dev server, torn down automatically when the worktree goes away:
+
+```toml
+# .config/wt.toml
+[post-start]
+server = "wt step tether -- npm run dev -- --port {{ branch | hash_port }}"
+```
+
+Note: This command is experimental and may change in future versions.
+"#)]
+    Tether {
+        /// Command to run (after `--`, run directly, no shell)
+        #[arg(required = true, last = true, num_args = 1..)]
+        command: Vec<String>,
     },
 
     /// Catch-all for alias lookup

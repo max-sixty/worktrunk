@@ -1711,6 +1711,273 @@ approved-commands = ["echo 'hook ran' > {}"]
 }
 
 #[rstest]
+fn test_pre_remove_hook_dirtying_worktree_blocks_foreground_remove(mut repo: TestRepo) {
+    let hook = "echo dirty > hook-created.txt";
+    repo.write_project_config(&format!(r#"pre-remove = "{hook}""#));
+    repo.commit("Add config");
+    repo.write_test_approvals(&format!(
+        r#"[projects."../origin"]
+approved-commands = ["{hook}"]
+"#
+    ));
+
+    let worktree_path = repo.add_worktree("feature-hook-dirties");
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "feature-hook-dirties"])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "remove should fail after pre-remove dirties the worktree; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        worktree_path.exists(),
+        "worktree must be preserved when the post-hook clean check fails"
+    );
+    assert!(
+        worktree_path.join("hook-created.txt").exists(),
+        "hook-created file should remain recoverable in the worktree"
+    );
+}
+
+#[rstest]
+fn test_pre_remove_hook_new_commit_retains_branch_in_background_remove(mut repo: TestRepo) {
+    use crate::common::wait_for_worktree_removed;
+
+    let hook = "echo hook > late-commit.txt && git add late-commit.txt && git commit -m late-hook";
+    repo.write_project_config(&format!(r#"pre-remove = "{hook}""#));
+    repo.commit("Add config");
+    repo.write_test_approvals(&format!(
+        r#"[projects."../origin"]
+approved-commands = ["{hook}"]
+"#
+    ));
+
+    let worktree_path = repo.add_worktree("feature-hook-commit");
+    let output = repo
+        .wt_command()
+        .args(["remove", "feature-hook-commit"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "remove should keep the worktree cleanup path successful; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    wait_for_worktree_removed(&worktree_path);
+
+    let branch = repo
+        .git_command()
+        .args([
+            "show-ref",
+            "--verify",
+            "--quiet",
+            "refs/heads/feature-hook-commit",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        branch.status.success(),
+        "branch must be retained after a pre-remove hook adds an unintegrated commit"
+    );
+}
+
+/// `pre-remove` resolves `.config/wt.toml` from the invoking worktree — the one
+/// `wt remove` ran in — while its template context (`{{ branch }}` etc.) is the
+/// removed worktree's. The removed worktree's own config is not consulted.
+#[rstest]
+fn test_pre_remove_hook_reads_invoking_worktree_config(mut repo: TestRepo) {
+    use crate::common::wait_for_file_content;
+
+    let worktree_path = repo.add_worktree("feature-local-hook");
+    let marker_file = repo.root_path().join("pre-remove-ran.txt");
+    let wrong_marker = repo.root_path().join("wrong-marker.txt");
+
+    // A competing hook in the removed worktree, which must be ignored.
+    std::fs::create_dir_all(worktree_path.join(".config")).unwrap();
+    std::fs::write(
+        worktree_path.join(".config/wt.toml"),
+        format!(
+            r#"pre-remove = "echo wrong > {}""#,
+            wrong_marker.to_slash_lossy()
+        ),
+    )
+    .unwrap();
+
+    // The hook that should run lives in the invoking worktree (primary, cwd).
+    // `{{ branch }}` proves it ran with the removed worktree's template context.
+    repo.write_project_config(&format!(
+        r#"pre-remove = "echo 'removed branch {{{{ branch }}}}' > {}""#,
+        marker_file.to_slash_lossy()
+    ));
+
+    // `--force` because the removed worktree has an untracked `.config/wt.toml`;
+    // `--yes` to skip the approval prompt.
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "--foreground",
+            "--force",
+            "--yes",
+            "feature-local-hook",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt remove failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    wait_for_file_content(&marker_file);
+    assert_eq!(
+        std::fs::read_to_string(&marker_file).unwrap().trim(),
+        "removed branch feature-local-hook",
+        "pre-remove runs from the invoking worktree's config, with the removed worktree's branch"
+    );
+    assert!(
+        !wrong_marker.exists(),
+        "the removed worktree's own config must not be consulted"
+    );
+}
+
+/// `post-remove` reads the invoking worktree's `.config/wt.toml`, snapshotted at
+/// the gate — its template context (`{{ branch }}` etc.) is the removed
+/// worktree's, gone by the time the hook runs. The removed worktree's own
+/// config is not consulted.
+#[rstest]
+fn test_post_remove_hook_reads_invoking_worktree_config(mut repo: TestRepo) {
+    use crate::common::wait_for_file_content;
+
+    let worktree_path = repo.add_worktree("feature-local-hook");
+    let marker_file = repo.root_path().join("post-remove-ran.txt");
+    let wrong_marker = repo.root_path().join("wrong-marker.txt");
+
+    // A competing hook in the removed worktree, which must be ignored.
+    std::fs::create_dir_all(worktree_path.join(".config")).unwrap();
+    std::fs::write(
+        worktree_path.join(".config/wt.toml"),
+        format!(
+            r#"post-remove = "echo wrong > {}""#,
+            wrong_marker.to_slash_lossy()
+        ),
+    )
+    .unwrap();
+
+    // The hook that should run lives in the invoking worktree (primary, cwd).
+    // `{{ branch }}` proves it ran with the removed worktree's template context;
+    // the marker outside the removed worktree survives the removal.
+    repo.write_project_config(&format!(
+        r#"post-remove = "echo 'post-remove of {{{{ branch }}}}' > {}""#,
+        marker_file.to_slash_lossy()
+    ));
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "--foreground",
+            "--force",
+            "--yes",
+            "feature-local-hook",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt remove failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    wait_for_file_content(&marker_file);
+    assert_eq!(
+        std::fs::read_to_string(&marker_file).unwrap().trim(),
+        "post-remove of feature-local-hook",
+        "post-remove runs from the invoking worktree's config, snapshotted before removal"
+    );
+    assert!(
+        !worktree_path.exists(),
+        "feature worktree should be removed"
+    );
+    assert!(
+        !wrong_marker.exists(),
+        "the removed worktree's own config must not be consulted"
+    );
+}
+
+/// A malformed `.config/wt.toml` in the invoking worktree makes `wt remove`
+/// abort with the parse error in stderr — no silent fall-through to a different
+/// config, and the worktree stays on disk so the user can fix it.
+#[rstest]
+fn test_remove_aborts_on_malformed_invoking_config(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-x");
+    // Malformed config in the invoking worktree (primary, cwd).
+    repo.write_project_config("this is not [ valid toml");
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--foreground", "--force", "--yes", "feature-x"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "wt remove should abort on a malformed invoking-worktree config; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("wt.toml"),
+        "error should name the offending config file; stderr:\n{stderr}"
+    );
+    assert!(
+        worktree_path.exists(),
+        "worktree should stay on disk so the user can fix the broken config"
+    );
+}
+
+/// Removing a worktree with no project hooks must not touch approval state.
+/// A malformed `approvals.toml` aborts only when there is a project command to
+/// authorize; with an empty plan the gate never loads approvals (regression:
+/// the plan rewrite briefly loaded `Approvals` unconditionally).
+#[rstest]
+fn test_remove_no_project_hooks_ignores_malformed_approvals(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-no-hooks");
+
+    // No `.config/wt.toml` anywhere ⇒ the hook plan is empty. A broken
+    // approvals file would only matter if there were a command to check.
+    repo.write_test_approvals("this is not = = valid toml");
+
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "--foreground",
+            "--force",
+            "--yes",
+            "feature-no-hooks",
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "remove with no project hooks must not parse approvals.toml; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("Failed to parse approvals"),
+        "approvals must not be loaded for an empty plan; stderr:\n{stderr}"
+    );
+    assert!(
+        !worktree_path.exists(),
+        "feature worktree should be removed"
+    );
+}
+
+#[rstest]
 fn test_pre_remove_hook_failure_aborts(mut repo: TestRepo) {
     // Create project config with failing hook
     repo.write_project_config(r#"pre-remove = "exit 1""#);
@@ -1880,6 +2147,39 @@ approved-commands = ["echo 'hook ran' > {}"]
     assert!(
         !worktree_path.exists(),
         "Worktree should be removed even with --no-hooks"
+    );
+}
+
+#[rstest]
+fn test_remove_no_verify_deprecated_still_works(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-no-verify");
+
+    // --no-verify is a deprecated alias for --no-hooks: still works, still
+    // emits the shared deprecation warning that points at --no-hooks.
+    let output = repo
+        .wt_command()
+        .args([
+            "remove",
+            "--foreground",
+            "--yes",
+            "--no-verify",
+            "feature-no-verify",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--no-verify is deprecated"),
+        "Expected deprecation warning in stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("--no-hooks"),
+        "Expected --no-hooks suggestion in stderr: {stderr}"
+    );
+    assert!(
+        !worktree_path.exists(),
+        "Worktree should be removed with --no-verify"
     );
 }
 
@@ -2585,6 +2885,87 @@ fn test_remove_background_fallback_on_rename_failure(mut repo: TestRepo) {
     let _ = std::fs::remove_file(&staged_path);
 }
 
+/// Block the rename-into-trash fast path for `worktree_path` by pre-creating a
+/// regular file at its deterministic staged path. Returns that path so the
+/// caller can clean it up. (On POSIX a directory cannot be renamed onto an
+/// existing file, so `stage_worktree_removal` falls back to legacy removal.)
+fn block_staged_rename(repo: &TestRepo, worktree_path: &std::path::Path) -> std::path::PathBuf {
+    let trash_dir = crate::common::resolve_git_common_dir(repo.root_path()).join("wt/trash");
+    std::fs::create_dir_all(&trash_dir).unwrap();
+    let staged_path = trash_dir.join(format!(
+        "{}-{}",
+        worktree_path.file_name().unwrap().to_string_lossy(),
+        crate::common::TEST_EPOCH
+    ));
+    std::fs::write(&staged_path, "blocking file").unwrap();
+    staged_path
+}
+
+/// The rename-failure fallback honors `-D`: an unmerged branch is force-deleted
+/// in the legacy `git worktree remove && git branch -D` command.
+#[rstest]
+fn test_remove_background_fallback_force_delete_branch(mut repo: TestRepo) {
+    repo.commit("initial");
+    // Unmerged branch: a plain `-d` would refuse it, so this exercises the
+    // `BranchDeletionMode::ForceDelete` arm of the fallback command builder.
+    let worktree_path =
+        repo.add_worktree_with_commit("feature-force", "f.txt", "content", "unmerged commit");
+    let staged_path = block_staged_rename(&repo, &worktree_path);
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--force", "-D", "feature-force"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt remove --force -D should succeed via the legacy fallback: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    crate::common::wait_for("worktree removed by legacy fallback", || {
+        !worktree_path.exists()
+    });
+    crate::common::wait_for("unmerged branch force-deleted by legacy fallback", || {
+        let branches = repo
+            .git_command()
+            .args(["branch", "--list", "feature-force"])
+            .run()
+            .unwrap();
+        String::from_utf8_lossy(&branches.stdout).trim().is_empty()
+    });
+
+    let _ = std::fs::remove_file(&staged_path);
+}
+
+/// The rename-failure fallback removes a detached-HEAD worktree with no branch
+/// to delete — the `_` arm of the fallback command builder. `wt remove` resolves
+/// the detached worktree by path.
+#[rstest]
+fn test_remove_background_fallback_detached_worktree(mut repo: TestRepo) {
+    repo.commit("initial");
+    let worktree_path = repo.add_worktree("feature-detached");
+    repo.detach_head_in_worktree("feature-detached");
+    let staged_path = block_staged_rename(&repo, &worktree_path);
+
+    let output = repo
+        .wt_command()
+        .args(["remove", worktree_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt remove of a detached worktree should succeed via the legacy fallback: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    crate::common::wait_for("detached worktree removed by legacy fallback", || {
+        !worktree_path.exists()
+    });
+
+    let _ = std::fs::remove_file(&staged_path);
+}
+
 /// Stale staging directories from crashed removals are contained in `.git/wt/trash/`.
 ///
 /// If `wt remove` is killed after `fs::rename()` succeeds but before the background
@@ -2864,6 +3245,88 @@ fn test_remove_foreground_with_submodules(mut repo: TestRepo) {
     assert!(
         !worktree_path.exists(),
         "Worktree directory should be removed"
+    );
+}
+
+/// Regression: `Repository::remove_worktree(path, force=false)` synthesizes
+/// `git worktree remove --force` for submodule worktrees, which suppresses
+/// git's own dirty-file check. The method must re-validate cleanliness
+/// itself right before the synthesized-force command so a file dirtied after
+/// the caller's planning-time check is not silently destroyed.
+#[rstest]
+fn test_remove_worktree_submodule_dirty_fails_closed(mut repo: TestRepo) {
+    use worktrunk::git::Repository;
+
+    // Submodule source.
+    let sub_source = repo.root_path().parent().unwrap().join("sub-source-dirty");
+    std::fs::create_dir_all(&sub_source).unwrap();
+    repo.run_git_in(&sub_source, &["init"]);
+    std::fs::write(sub_source.join("sub.txt"), "submodule content").unwrap();
+    repo.run_git_in(&sub_source, &["add", "sub.txt"]);
+    repo.run_git_in(&sub_source, &["commit", "-m", "sub init"]);
+
+    std::fs::write(repo.root_path().join("tracked.txt"), "original\n").unwrap();
+    repo.run_git(&["add", "tracked.txt"]);
+    repo.run_git(&["commit", "-m", "add tracked file"]);
+
+    let output = repo
+        .git_command()
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_source.to_str().unwrap(),
+            "submod",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Failed to add submodule: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    repo.run_git(&["commit", "-m", "add submodule"]);
+
+    let worktree_path = repo.add_worktree("feature-submod-dirty");
+    let output = repo
+        .git_command()
+        .current_dir(&worktree_path)
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Failed to init submodule: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Simulate the TOCTOU window: a tracked file is modified after the
+    // caller's clean check but before remove_worktree's destructive step.
+    std::fs::write(worktree_path.join("tracked.txt"), "DIRTIED\n").unwrap();
+
+    let repo_api = Repository::at(repo.root_path()).unwrap();
+    let result = repo_api.remove_worktree(&worktree_path, /* force */ false);
+
+    assert!(
+        result.is_err(),
+        "remove_worktree must fail closed when a submodule worktree is dirty \
+         (synthesized --force would otherwise destroy the change)"
+    );
+    assert!(
+        worktree_path.exists(),
+        "submodule worktree must be preserved, not force-removed"
+    );
+    assert_eq!(
+        std::fs::read_to_string(worktree_path.join("tracked.txt")).unwrap(),
+        "DIRTIED\n",
+        "the post-check modification must be intact (not destroyed)"
     );
 }
 

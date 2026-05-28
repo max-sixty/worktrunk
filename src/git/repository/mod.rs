@@ -76,7 +76,7 @@
 //! external state that could go stale:
 //! - Resource limiters: `CMD_SEMAPHORE` (shell_exec), `HEAVY_OPS_SEMAPHORE` (git),
 //!   `LLM_SEMAPHORE` (summary), `COPY_POOL` (copy)
-//! - Global state: `OUTPUT_STATE` (output), `TRACE` and `OUTPUT` (log_files), `COMMAND_LOG`
+//! - Global state: `OUTPUT_STATE` (output), `TRACE` and `SUBPROCESS` (log_files), `COMMAND_LOG`
 //! - Config: `CONFIG_PATH` (config/user/path), `SHELL_CONFIG`, `GIT_ENV_OVERRIDES` (shell_exec)
 //!
 //! The picker also maintains a `PreviewCache` (`Arc<DashMap>` in `commands/picker/items.rs`)
@@ -92,6 +92,7 @@ use std::time::{Duration, Instant};
 
 use crate::shell_exec::Cmd;
 
+use color_print::cformat;
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 use wait_timeout::ChildExt;
@@ -102,7 +103,7 @@ use dunce::canonicalize;
 use crate::config::{LoadError, ProjectConfig, ResolvedConfig, UserConfig};
 
 // Import types from parent module
-use super::{CommandError, DefaultBranchName, GitError, LineDiff, WorktreeInfo};
+use super::{CiPlatform, CommandError, DefaultBranchName, GitError, LineDiff, WorktreeInfo};
 
 // Re-export types needed by submodules
 pub(super) use super::{
@@ -125,8 +126,8 @@ mod worktrees;
 pub use branch::Branch;
 pub use integration::IntegrationTargets;
 pub use ref_snapshot::RefSnapshot;
-pub use working_tree::WorkingTree;
 pub(super) use working_tree::path_to_logging_context;
+pub use working_tree::{TempIndex, WorkingTree};
 
 /// Structured error from [`Repository::run_command_delayed_stream`].
 ///
@@ -249,6 +250,11 @@ pub(super) struct RepoCache {
     pub(super) project_identifier: OnceCell<String>,
     /// Project config (loaded from .config/wt.toml in main worktree)
     pub(super) project_config: OnceCell<Option<ProjectConfig>>,
+    /// CI platform from project config (`forge.platform` / `ci.platform`).
+    /// `None` when unset or unrecognized; an unrecognized value warns once,
+    /// deduplicating the warning across the many branches `wt list` probes.
+    /// Resolved via [`Repository::ci_platform`].
+    pub(super) configured_ci_platform: OnceCell<Option<CiPlatform>>,
     /// User config (raw, as loaded from disk).
     /// Populated by [`Repository::at`] from the
     /// [`WORKTRUNK_USER_CONFIG_PRELOAD`] preload when prewarm ran; otherwise
@@ -268,6 +274,14 @@ pub(super) struct RepoCache {
     /// Separate from `all_config` because `git remote get-url` applies
     /// `url.insteadOf` rewrites that aren't visible in raw config.
     pub(super) effective_remote_urls: DashMap<String, Option<String>>,
+    /// Per-branch effective push URL: branch_name -> push URL (or None if
+    /// no push remote is configured). One `for-each-ref %(push:remotename)`
+    /// per branch, then `effective_remote_url` for the resolved remote name.
+    /// `wt list`'s CI-status detection calls `push_remote_url` from both the
+    /// PR-based path and the branch fallback (via `branch_remote_url`), so
+    /// the same branch is queried twice on the no-PR path — this cache
+    /// collapses that to one subprocess.
+    pub(super) push_remote_urls: DashMap<String, Option<String>>,
 
     /// Local branch inventory: one `git for-each-ref refs/heads/` scan, cached
     /// for the lifetime of the repository. Entries are sorted by most recent
@@ -741,15 +755,33 @@ impl Repository {
     ///
     /// Runs from `discovery_path` rather than `git_common_dir` (which we
     /// don't know yet — the rev-parse thread is racing in parallel). Git's
-    /// `config --list` emits the same merged system + global + local config
-    /// from any path inside the repo, including linked worktrees of bare
-    /// repos: linked worktrees and the common dir share one config file, so
-    /// the merged output is identical to the existing `git_common_dir`
+    /// `config --list` normally emits the same merged system + global + local
+    /// config from any path inside the repo, including linked worktrees of
+    /// bare repos: linked worktrees and the common dir share one config file,
+    /// so the merged output is identical to the existing `git_common_dir`
     /// invocation in [`Repository::all_config`].
+    ///
+    /// **`extensions.worktreeConfig` exception** ([#2779]): when the
+    /// extension is enabled, each worktree gets its own `config.worktree`
+    /// file (the main worktree at `.git/config.worktree`, linked worktrees
+    /// at `.git/worktrees/<name>/config.worktree`). From a linked worktree
+    /// `git config --list` merges only that linked worktree's
+    /// `config.worktree`, missing values set on the main worktree's
+    /// `config.worktree` — most importantly `core.bare = true` for the
+    /// bare-style `myproject/.git + sibling worktrees` layout. Caching that
+    /// incomplete map would cause `is_bare()` to read `false`, and the
+    /// `repo_path()` fallback would walk one level too high. So when the
+    /// parsed map contains `extensions.worktreeconfig=true`, we skip the
+    /// preload entirely — [`Repository::all_config`] re-forks from
+    /// `git_common_dir`, which sees the full merged set (one extra
+    /// subprocess in this layout; the prewarm benefit is preserved for all
+    /// other repos).
     ///
     /// Failures (non-repo directory, corrupted config) are swallowed; the
     /// on-demand path inside `all_config` re-forks the same subprocess and
     /// surfaces the error there.
+    ///
+    /// [#2779]: https://github.com/max-sixty/worktrunk/issues/2779
     fn prewarm_git_config(discovery_path: &Path) {
         let Ok(output) = Cmd::new("git")
             .args(["config", "--list", "-z"])
@@ -763,6 +795,9 @@ impl Repository {
             return;
         }
         let parsed = parse_config_list_z(&output.stdout);
+        if worktree_config_enabled(&parsed) {
+            return;
+        }
         GIT_CONFIG_PRELOAD.insert(discovery_path.to_path_buf(), parsed);
     }
 
@@ -1276,6 +1311,19 @@ impl Repository {
     /// Executes the git command with this repository's discovery path as the working directory.
     /// For repo-wide operations, any path within the repo works.
     ///
+    /// # Passing refs
+    ///
+    /// A ref that starts with `-` (e.g. a branch literally named `-foo`,
+    /// which `git update-ref refs/heads/-foo HEAD` will write) is parsed as a
+    /// flag. When the ref's value isn't provably safe — a SHA, a
+    /// `refs/heads/{}` wrap, a hardcoded `HEAD` — put `--end-of-options`
+    /// before it, *after* every other flag (everything following becomes
+    /// positional, so `git log` rejects later flags). For `git rev-parse`,
+    /// use `--verify --end-of-options`: plain `--end-of-options` makes
+    /// rev-parse echo the literal marker to stdout ahead of the SHA, and
+    /// `--verify` forces single-revision strict mode — so it can't cover the
+    /// two-ref `rev-parse <a> <b>` form, which stays unguarded.
+    ///
     /// # Examples
     /// ```no_run
     /// use worktrunk::git::Repository;
@@ -1541,6 +1589,29 @@ pub(super) fn canonical_config_key(key: &str) -> String {
     }
 }
 
+/// True when `extensions.worktreeConfig = true` appears in a parsed config map.
+///
+/// When this extension is enabled, per-worktree config lives in separate
+/// `config.worktree` files — the main worktree's at `.git/config.worktree`,
+/// linked worktrees' at `.git/worktrees/<name>/config.worktree`. From a
+/// linked worktree, `git config --list` does not merge the main worktree's
+/// `config.worktree`, so a config read taken there is missing any value the
+/// main worktree set per-worktree (e.g., `core.bare`). [`prewarm_git_config`]
+/// uses this to detect and skip the preload in that layout. See [#2779].
+///
+/// Git emits config keys in lowercased canonical form, so the lookup matches
+/// directly without going through [`canonical_config_key`].
+///
+/// [`prewarm_git_config`]: Repository::prewarm_git_config
+/// [#2779]: https://github.com/max-sixty/worktrunk/issues/2779
+fn worktree_config_enabled(parsed: &indexmap::IndexMap<String, Vec<String>>) -> bool {
+    parsed
+        .get("extensions.worktreeconfig")
+        .and_then(|v| v.last())
+        .map(|v| parse_git_bool(v))
+        .unwrap_or(false)
+}
+
 /// Parse the output of `git config --list -z`.
 ///
 /// Format: each entry is `key\nvalue\0`. Values may be empty (no `\n`) for
@@ -1582,8 +1653,8 @@ fn emit_user_config_warnings(warnings: &[LoadError]) {
                 let path_display = crate::path::format_path_for_display(path);
                 crate::styling::eprintln!(
                     "{}",
-                    crate::styling::warning_message(format!(
-                        "{label} @ {path_display} failed to parse, skipping"
+                    crate::styling::warning_message(cformat!(
+                        "{label} @ <bold>{path_display}</> failed to parse, skipping"
                     ))
                 );
                 crate::styling::eprintln!(

@@ -28,6 +28,11 @@ fn internal_log_rel_path(branch: &str, op: &str) -> PathBuf {
         .join(format!("{op}.log"))
 }
 
+/// Relative path of a repo-wide internal-operation log under the wt logs directory.
+fn shared_internal_log_rel_path(op: &str) -> PathBuf {
+    PathBuf::from(format!("internal-{op}.log"))
+}
+
 /// Write a log file at `log_dir / relative`, creating parent directories.
 fn write_log_at(log_dir: &Path, relative: &Path, contents: &str) {
     let full = log_dir.join(relative);
@@ -747,7 +752,7 @@ fn test_state_get_logs_diagnostic_files(repo: TestRepo) {
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("trace.log"), "debug output").unwrap();
-    std::fs::write(log_dir.join("output.log"), "raw subprocess output").unwrap();
+    std::fs::write(log_dir.join("subprocess.log"), "raw subprocess output").unwrap();
     std::fs::write(log_dir.join("diagnostic.md"), "# Diagnostic Report").unwrap();
     // Also add a hook output file to verify separation
     let remove_rel = internal_log_rel_path("feature", "remove");
@@ -759,7 +764,7 @@ fn test_state_get_logs_diagnostic_files(repo: TestRepo) {
 
     // Diagnostic files appear under DIAGNOSTIC, not HOOK OUTPUT
     assert!(stdout.contains("DIAGNOSTIC"), "Expected DIAGNOSTIC heading");
-    for name in ["trace.log", "output.log", "diagnostic.md"] {
+    for name in ["trace.log", "subprocess.log", "diagnostic.md"] {
         assert!(stdout.contains(name), "Expected {name} in output");
     }
 
@@ -776,7 +781,7 @@ fn test_state_get_logs_diagnostic_files(repo: TestRepo) {
         hook_section.contains(&remove_display),
         "Expected {remove_display} in HOOK OUTPUT: {hook_section}"
     );
-    for name in ["trace.log", "output.log"] {
+    for name in ["trace.log", "subprocess.log"] {
         assert!(
             !hook_section.contains(name),
             "{name} should not be in HOOK OUTPUT: {hook_section}"
@@ -791,7 +796,7 @@ fn test_state_clear_logs_includes_diagnostic_files(repo: TestRepo) {
     let log_dir = git_dir.join("wt/logs");
     std::fs::create_dir_all(&log_dir).unwrap();
     std::fs::write(log_dir.join("trace.log"), "debug output").unwrap();
-    std::fs::write(log_dir.join("output.log"), "raw output").unwrap();
+    std::fs::write(log_dir.join("subprocess.log"), "raw output").unwrap();
     std::fs::write(log_dir.join("diagnostic.md"), "# Report").unwrap();
 
     let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();
@@ -2150,6 +2155,38 @@ fn test_logs_get_json_internal_op_structure(repo: TestRepo) {
     assert!(hook["branch"].as_str().unwrap().starts_with("feature"));
 }
 
+/// Repo-wide internal logs are top-level shared files, not branch subtrees.
+/// They must surface under `diagnostic` rather than being silently dropped.
+#[rstest]
+fn test_logs_get_json_shared_internal_log_is_not_hook_output(repo: TestRepo) {
+    let log_dir = repo.root_path().join(".git/wt/logs");
+    let relative = shared_internal_log_rel_path("trash-sweep");
+    write_log_at(&log_dir, &relative, "sweep output");
+
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(
+        parsed["hook_output"].as_array().unwrap().is_empty(),
+        "shared internal log must not be reported as branch hook output: {stdout}"
+    );
+    assert!(
+        !log_dir.join("internal").exists(),
+        "shared internal log must not create a branch-like internal directory"
+    );
+    let diagnostic = parsed["diagnostic"].as_array().unwrap();
+    assert_eq!(
+        diagnostic.len(),
+        1,
+        "shared internal log must surface as a diagnostic: {stdout}"
+    );
+    assert_eq!(diagnostic[0]["file"], "internal-trash-sweep.log");
+}
+
 /// Log files that don't match the expected branch subtree layout (`{branch}/{source}/{hook_type}/{name}.log`
 /// or `{branch}/internal/{op}.log`) still appear in the JSON listing — just
 /// without structured filter fields. Guards the defensive `_ => None` arm in
@@ -2340,4 +2377,38 @@ fn test_format_rejected_on_write_actions(
             "stderr missing {needle:?}: {stderr}"
         );
     }
+}
+
+#[rstest]
+fn test_format_rejected_on_write_action_writes_verbose_diagnostic(repo: TestRepo) {
+    let output = repo
+        .wt_command()
+        .args([
+            "-vv",
+            "config",
+            "state",
+            "marker",
+            "set",
+            "foo",
+            "--format=json",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--format <FORMAT>"),
+        "stderr should include the clap conflict: {stderr}"
+    );
+    assert!(
+        stderr.contains("Diagnostic saved"),
+        "stderr should mention the verbose diagnostic: {stderr}"
+    );
+
+    let diagnostic_path = repo.root_path().join(".git/wt/logs/diagnostic.md");
+    assert!(
+        diagnostic_path.exists(),
+        "diagnostic should be written for post-dispatch clap errors"
+    );
 }

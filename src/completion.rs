@@ -279,9 +279,12 @@ impl ValueCompleter for HookCommandCompleter {
                         return Some(*hook);
                     }
                 }
-                // Deprecated alias: post-create → pre-start
-                if ctx.contains("post-create") {
+                // Silent aliases still complete, mapped to the canonical name.
+                if ctx.contains("pre-create") {
                     return Some("pre-start");
+                }
+                if ctx.contains("post-create") {
+                    return Some("post-start");
                 }
                 None
             })

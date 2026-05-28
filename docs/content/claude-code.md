@@ -1,21 +1,26 @@
 +++
-title = "Claude Code Integration"
-description = "Worktrunk plugin for Claude Code: configuration skill, worktree isolation for agents, and activity tracking for wt list."
+title = "Agent Integration"
+description = "Worktrunk plugins for Claude Code, Codex, OpenCode, and Gemini CLI: a configuration skill, wt list activity tracking, and Claude-only worktree isolation."
 weight = 23
 
 [extra]
 group = "Reference"
 +++
 
-The worktrunk Claude Code plugin provides three features:
+Worktrunk ships a plugin for each supported agent CLI. What a plugin provides depends on the hooks that CLI exposes:
 
-1. **Configuration skill** — Documentation Claude Code can read, so it can help set up LLM commits, hooks, and troubleshoot issues
-2. **Worktree isolation** — When Claude Code agents create isolated worktrees, the plugin routes creation and removal through `wt` instead of raw `git`
-3. **Activity tracking** — Status markers in `wt list` showing which worktrees have active Claude sessions (🤖 working, 💬 waiting)
+| Capability | Claude Code | Codex | OpenCode | Gemini CLI |
+|---|:-:|:-:|:-:|:-:|
+| Configuration skill | ✓ | ✓ |  | ✓ |
+| Activity tracking (🤖/💬 in `wt list`) | ✓ |  | ✓ | ✓ |
+| Worktree isolation | ✓ |  |  |  |
+| `/wt-switch-create` command | ✓ |  |  |  |
+
+The configuration skill is documentation the agent reads to help set up LLM commits, hooks, and troubleshooting. Activity tracking shows which worktrees have running sessions. Worktree isolation and `/wt-switch-create` need worktree-lifecycle hooks that only Claude Code exposes, so Codex, OpenCode, and Gemini users invoke `wt switch --create` and `wt remove` directly. Codex omits activity tracking because its hooks have no turn-end event, so a 🤖 marker could never clear back to 💬.
 
 ## Installation
 
-Recommended:
+### Claude Code
 
 {{ terminal(cmd="wt config plugins claude install") }}
 
@@ -23,9 +28,31 @@ Manual equivalent:
 
 {{ terminal(cmd="claude plugin marketplace add max-sixty/worktrunk|||claude plugin install worktrunk@worktrunk") }}
 
+### Codex
+
+{{ terminal(cmd="wt config plugins codex install") }}
+
+This configures the Worktrunk marketplace in Codex. Then run `/plugins` in Codex and install Worktrunk from the marketplace. Manual equivalent:
+
+{{ terminal(cmd="codex plugin marketplace add max-sixty/worktrunk") }}
+
+To remove the marketplace entry, run `wt config plugins codex uninstall`. Already-installed plugins are left unchanged.
+
+### OpenCode
+
+{{ terminal(cmd="wt config plugins opencode install") }}
+
+This writes the activity-tracking plugin to OpenCode's global plugins directory, `~/.config/opencode/plugins/worktrunk.ts` (honoring `$OPENCODE_CONFIG_DIR` and `$XDG_CONFIG_HOME`). `wt config plugins opencode uninstall` removes it.
+
+### Gemini CLI
+
+{{ terminal(cmd="gemini extensions install https://github.com/max-sixty/worktrunk") }}
+
+Gemini loads the extension natively from the repository, so there is no `wt` wrapper. `gemini extensions uninstall worktrunk` removes it.
+
 ## Configuration skill
 
-The plugin includes a skill — documentation that Claude Code can read — covering worktrunk's configuration system. After installation, Claude Code can help with:
+With the `/worktrunk` skill, the agent can help with:
 
 - Setting up LLM-generated commit messages
 - Adding project hooks (pre-start, pre-merge, pre-commit)
@@ -36,7 +63,7 @@ Claude Code is designed to load the skill automatically when it detects worktrun
 
 ## Activity tracking
 
-The plugin tracks Claude sessions with status markers in `wt list`:
+The Claude Code, OpenCode, and Gemini plugins track agent sessions with status markers in `wt list`:
 
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__list_with_user_marker.snap — edit source to update -->
 
@@ -53,8 +80,10 @@ The plugin tracks Claude sessions with status markers in `wt list`:
 
 <!-- END AUTO-GENERATED -->
 
-- 🤖 — Claude is working
-- 💬 — Claude is waiting for input
+- 🤖 — agent is working
+- 💬 — agent is waiting or idle
+
+The plugin clears the marker when a session ends. A stale marker can remain if the agent process is killed before its session-end hook runs; `wt config state marker clear` removes a marker manually.
 
 ### Manual status markers
 
@@ -66,17 +95,23 @@ Set status markers manually for any workflow:
 <span class="cmd">git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Direct</span>
 {% end %}
 
-## Worktree isolation
+## Worktree isolation (Claude Code only)
 
 Claude Code agents can run in isolated worktrees (`isolation: "worktree"`). By default, Claude Code creates these with `git worktree add`. The plugin's `WorktreeCreate` and `WorktreeRemove` hooks route this through `wt switch --create` and `wt remove` instead, so worktrees created by agents get worktrunk's naming conventions, hooks, and lifecycle management.
 
-## Statusline
+## `/wt-switch-create` command (Claude Code only)
+
+`/wt-switch-create <branch> [<repo>] [-- <task>]` starts work in a fresh worktree without leaving the session. It creates (or re-enters) the named worktrunk worktree — sibling layout `<repo>.<branch>/`, not `.claude/worktrees/` — switches the session's working directory into it, then runs the task there. An optional second token names a different repository to create the worktree in; the task is whatever follows `--` (or, with no `--`, whatever follows the branch). The command rides the same `WorktreeCreate` hook as agent isolation, so the worktree gets worktrunk's naming, hooks, and lifecycle.
+
+On session exit the worktree is offered for removal via the `WorktreeRemove` hook; one with uncommitted changes is kept rather than removed.
+
+## Statusline (Claude Code only)
 
 `wt list statusline --format=claude-code` outputs a single-line status for the Claude Code statusline. When the CI status cache is stale, this fetches from the network — typically 1–2 seconds — making it suitable for async statuslines but too slow for synchronous shell prompts. If a faster version would be helpful, please [open an issue](https://github.com/max-sixty/worktrunk/issues).
 
-<code>~/w/myproject.feature-auth  !🤖  @<span style='color:#0a0'>+42</span> <span style='color:#a00'>-8</span>  <span style='color:#0a0'>↑3</span>  <span style='color:#0a0'>⇡1</span>  <span style='color:#0a0'>●</span>  | Opus 🌔 65%</code>
+<code>~/w/myproject.feature-auth  !🤖  @<span style='color:#0a0'>+42</span> <span style='color:#a00'>-8</span>  <span style='color:#0a0'>↑3</span>  <span style='color:#0a0'>⇡1</span>  <span style='color:#0a0'>●</span>  Opus  🌔65%  <span style='color:#a70'>1.4×pace(10am–3pm)</span></code>
 
-When Claude Code provides context window usage via stdin JSON, a moon phase gauge appears (🌕→🌑 as context fills).
+When Claude Code provides context window usage via stdin JSON, a moon phase gauge appears (🌕→🌑 as context fills). A yellow `<n>×pace(<window>)` segment appears when Claude's 5-hour or weekly rate limit is on track to be hit before reset — `1.4×pace(10am–3pm)` reads as 1.4× the pace that would exactly fill that window.
 
 <figure class="demo">
 <picture>

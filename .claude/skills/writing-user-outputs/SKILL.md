@@ -221,7 +221,7 @@ Use the appropriate helper function:
 run_hook_with_filter(..., crate::output::pre_hook_display_path(ctx.worktree_path))?;
 
 // Post-hooks: user will cd to destination if shell integration active
-ctx.spawn_post_start_commands(crate::output::post_hook_display_path(&destination))?;
+ctx.spawn_post_create_commands(crate::output::post_hook_display_path(&destination))?;
 ```
 
 **Avoid pronouns with cross-message referents:** Hints appear as separate

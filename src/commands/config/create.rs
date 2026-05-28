@@ -5,11 +5,10 @@
 use anyhow::Context;
 use color_print::cformat;
 use std::path::PathBuf;
+use worktrunk::config::require_config_path;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{eprintln, hint_message, info_message, success_message};
-
-use super::state::require_user_config_path;
 
 /// Example user configuration file content (displayed in help with values uncommented)
 const USER_CONFIG_EXAMPLE: &str = include_str!("../../../dev/config.example.toml");
@@ -47,9 +46,7 @@ pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
         let config_path = repo
             .project_config_path()?
             .context("Cannot determine project config location — no worktree found")?;
-        let user_config_exists = require_user_config_path()
-            .map(|p| p.exists())
-            .unwrap_or(false);
+        let user_config_exists = require_config_path().map(|p| p.exists()).unwrap_or(false);
         create_config_file(
             config_path,
             PROJECT_CONFIG_EXAMPLE,
@@ -69,7 +66,7 @@ pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
             .map(|path| path.exists())
             .unwrap_or(false);
         create_config_file(
-            require_user_config_path()?,
+            require_config_path()?,
             USER_CONFIG_EXAMPLE,
             "User config",
             &["Edit this file to customize worktree paths and LLM settings"],

@@ -12,19 +12,21 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
+    LLVM_PROFILE_FILE: "[LLVM_PROFILE_FILE]"
     NO_COLOR: ""
     PSModulePath: ""
-    RUST_LOG: warn
     SHELL: ""
     TERM: alacritty
-    WORKTRUNK_APPROVALS_PATH: /nonexistent/wt/approvals.toml
-    WORKTRUNK_CONFIG_PATH: /nonexistent/wt/config.toml
-    WORKTRUNK_SYSTEM_CONFIG_PATH: /etc/xdg/worktrunk/config.toml
+    WORKTRUNK_APPROVALS_PATH: "[TEST_APPROVALS]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_SYSTEM_CONFIG_PATH: "[TEST_SYSTEM_CONFIG]"
     WORKTRUNK_TEST_BASH_INSTALLED: "0"
     WORKTRUNK_TEST_CLAUDE_INSTALLED: "0"
+    WORKTRUNK_TEST_CODEX_INSTALLED: "0"
     WORKTRUNK_TEST_DELAYED_STREAM_MS: "-1"
     WORKTRUNK_TEST_EPOCH: "1735776000"
     WORKTRUNK_TEST_FISH_INSTALLED: "0"
+    WORKTRUNK_TEST_GEMINI_INSTALLED: "0"
     WORKTRUNK_TEST_NUSHELL_ENV: "0"
     WORKTRUNK_TEST_OPENCODE_INSTALLED: "0"
     WORKTRUNK_TEST_POWERSHELL_ENV: "0"
@@ -54,7 +56,7 @@ Usage: [1m[36mwt config create[0m [36m[OPTIONS][0m
           User config file path
 
   [1m[36m-v[0m, [1m[36m--verbose[0m[36m...[0m
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs + diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug logs and raw subprocess output written to .git/wt/logs/)
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts
@@ -218,13 +220,11 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# ### User project-specific settings[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# For context:[0m
+[107m [0m [2m# User config can include a `[projects]` table for project-specific settings — worktree layout, setting overrides, anything else — separate from the project config (https://worktrunk.dev/config/#project-configuration) shared with teammates.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# - Project config (https://worktrunk.dev/config/#project-configuration) settings are shared with teammates.[0m
-[107m [0m [2m# - User configs generally apply to all projects.[0m
-[107m [0m [2m# - User configs _also_ has a `[projects]` table which holds project-specific settings for the user, such as worktree layout and setting overrides. That's what this section covers.[0m
+[107m [0m [2m# Entries are keyed by project identifier — `<host>/<owner>/<repo>` derived from the primary remote URL (no `.git` suffix), or the canonical repo path when there is no remote. Run `wt config show` inside the repo to see the identifier for the current project; it appears in the `PROJECT CONFIG` section as `Identifier: …`.[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Entries are keyed by project identifier (e.g., `github.com/user/repo`). Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.[0m
+[107m [0m [2m# Scalar values (like `worktree-path`) replace the global value; everything else (hooks, aliases, etc.) appends, global first.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [projects."github.com/user/repo"][0m
 [107m [0m [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"[0m
@@ -234,6 +234,25 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# pre-start.env = "cp .env.example .env"[0m
 [107m [0m [2m# step.copy-ignored.exclude = [".repo-local-cache/"][0m
 [107m [0m [2m# aliases.deploy = "make deploy BRANCH={{ branch }}"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Hooks support all three hook forms (https://worktrunk.dev/hook/#hook-forms). A table runs multiple commands concurrently; an array-of-tables pipeline runs steps in sequence. The dotted-key examples below are equivalent to the table forms — TOML treats `projects."github.com/user/repo".post-start.server = "..."` and a `[projects."github.com/user/repo".post-start]` table the same way:[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# # Single command[0m
+[107m [0m [2m# [projects."github.com/user/repo"][0m
+[107m [0m [2m# post-start = "mise trust"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# # Multiple commands, running concurrently[0m
+[107m [0m [2m# [projects."github.com/user/repo".post-start][0m
+[107m [0m [2m# mise = "mise trust"[0m
+[107m [0m [2m# server = "npm run dev"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# # Pipeline: steps run in sequence[0m
+[107m [0m [2m# [[projects."github.com/user/repo".post-start]][0m
+[107m [0m [2m# install = "npm ci"[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [[projects."github.com/user/repo".post-start]][0m
+[107m [0m [2m# build = "npm run build"[0m
+[107m [0m [2m# server = "npm run dev"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Custom prompt templates[0m
 [107m [0m [2m#[0m
@@ -246,6 +265,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# - `{{ git_diff }}`, `{{ git_diff_stat }}` — diff content[0m
 [107m [0m [2m# - `{{ branch }}`, `{{ repo }}` — context[0m
 [107m [0m [2m# - `{{ recent_commits }}` — recent commit messages[0m
+[107m [0m [2m# - `{{ user_guidance }}`, `{{ project_guidance }}` — rendered append fragments (see Appending to the prompt (https://worktrunk.dev/config/#appending-to-the-prompt))[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# Default template:[0m
 [107m [0m [2m#[0m
@@ -265,7 +285,15 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# - Match recent commit style (conventional commits if used)[0m
 [107m [0m [2m# - Describe the change, not the intent or benefit[0m
 [107m [0m [2m# </style>[0m
-[107m [0m [2m#[0m
+[107m [0m [2m# {% if user_guidance %}[0m
+[107m [0m [2m# <user-guidance>[0m
+[107m [0m [2m# {{ user_guidance }}[0m
+[107m [0m [2m# </user-guidance>[0m
+[107m [0m [2m# {% endif %}{% if project_guidance %}[0m
+[107m [0m [2m# <project-guidance>[0m
+[107m [0m [2m# {{ project_guidance }}[0m
+[107m [0m [2m# </project-guidance>[0m
+[107m [0m [2m# {% endif %}[0m
 [107m [0m [2m# <diffstat>[0m
 [107m [0m [2m# {{ git_diff_stat }}[0m
 [107m [0m [2m# </diffstat>[0m
@@ -309,7 +337,15 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# - Match the style of commits being squashed (conventional commits if used)[0m
 [107m [0m [2m# - Describe the change, not the intent or benefit[0m
 [107m [0m [2m# </style>[0m
-[107m [0m [2m#[0m
+[107m [0m [2m# {% if user_guidance %}[0m
+[107m [0m [2m# <user-guidance>[0m
+[107m [0m [2m# {{ user_guidance }}[0m
+[107m [0m [2m# </user-guidance>[0m
+[107m [0m [2m# {% endif %}{% if project_guidance %}[0m
+[107m [0m [2m# <project-guidance>[0m
+[107m [0m [2m# {{ project_guidance }}[0m
+[107m [0m [2m# </project-guidance>[0m
+[107m [0m [2m# {% endif %}[0m
 [107m [0m [2m# <commits branch="{{ branch }}" target="{{ target_branch }}">[0m
 [107m [0m [2m# {% for commit in commits %}- {{ commit }}[0m
 [107m [0m [2m# {% endfor %}</commits>[0m
@@ -324,6 +360,17 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m#[0m
 [107m [0m [2m# """[0m
 [107m [0m [2m# <!-- DEFAULT_SQUASH_TEMPLATE_END -->[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# #### Appending to the prompt [experimental][0m
+[107m [0m [2m#[0m
+[107m [0m [2m# `template-append` adds to the prompt instead of replacing it. The value is rendered as its own minijinja template (same variables) and injected into the default templates' `{{ user_guidance }}` slot — a `<user-guidance>` block right after `<style>`. It applies to both commit and squash. Use it for personal preferences without restating the whole template:[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# template-append = """[0m
+[107m [0m [2m# - Explain the rationale in the body, not just the change[0m
+[107m [0m [2m# """[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# The project config (https://worktrunk.dev/config/#project-configuration) has a `template-append` of its own; it renders into a separate `<project-guidance>` block right after `<user-guidance>`.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Hooks[0m
 [107m [0m [2m#[0m
@@ -354,13 +401,26 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
 [107m [0m [2m# [list][0m
 [107m [0m [2m# url = "http://localhost:{{ branch | hash_port }}"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# ## Forge platform override[0m
+[107m [0m [2m# ## Forge platform[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# Override platform detection for SSH aliases or self-hosted instances:[0m
+[107m [0m [2m# Name the forge explicitly for SSH aliases or self-hosted instances, where it can't be detected from the remote URL:[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [forge][0m
-[107m [0m [2m# platform = "github"  # or "gitlab"[0m
+[107m [0m [2m# platform = "github"  # or "gitlab", "gitea" (experimental), "azure-devops" (experimental)[0m
 [107m [0m [2m# hostname = "github.example.com"  # Example: API host (GHE / self-hosted GitLab)[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# ## Commit-message append [experimental][0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Project-wide commit-message conventions appended to the LLM commit and squash prompts inside a `<project-guidance>` block, after the main template's `<style>` section (and after any user `<user-guidance>`). Rendered as a minijinja (https://docs.rs/minijinja/) template with the same variables as the main commit template (`{{ branch }}`, `{{ git_diff }}`, etc.), so it can reference them directly. The first time the fragment changes, `wt` prompts the user to approve it — the same one-shot gate
+[107m [0m as project-defined hooks.[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# [commit.generation][0m
+[107m [0m [2m# template-append = """[0m
+[107m [0m [2m# - Use conventional commits (feat:, fix:, docs:, …)[0m
+[107m [0m [2m# - Reference the relevant issue ID in the body[0m
+[107m [0m [2m# """[0m
+[107m [0m [2m#[0m
+[107m [0m [2m# Only `template-append` is honored from the project file. The LLM command and the main prompt template stay in user config (https://worktrunk.dev/config/) — they describe per-developer environment (which CLI is installed, which agent the developer prefers). User config has a `[commit.generation] template-append` of its own; it renders into a separate `<user-guidance>` block immediately before this one.[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ## Copy-ignored excludes[0m
 [107m [0m [2m#[0m

@@ -3,8 +3,10 @@
 use std::path::PathBuf;
 
 // Submodules
+mod ci_platform;
 mod diff;
 mod error;
+pub mod fsmonitor;
 mod parse;
 pub mod recover;
 pub mod remote_ref;
@@ -35,6 +37,7 @@ static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::ne
 pub const NULL_OID: &str = "0000000000000000000000000000000000000000";
 
 // Re-exports from submodules
+pub use ci_platform::CiPlatform;
 pub(crate) use diff::DiffStats;
 pub use diff::{LineDiff, parse_numstat_line};
 pub use error::{
@@ -69,10 +72,11 @@ pub use recover::{current_or_recover, cwd_removed_hint};
 pub use remove::{
     BranchDeletionMode, BranchDeletionOutcome, BranchDeletionResult, RemovalOutput, RemoveOptions,
     delete_branch_if_safe, remove_worktree_with_cleanup, stage_worktree_removal,
+    stop_fsmonitor_daemon,
 };
 pub use repository::sha_cache;
 pub use repository::{
-    Branch, IntegrationTargets, RefSnapshot, Repository, ResolvedWorktree, WorkingTree,
+    Branch, IntegrationTargets, RefSnapshot, Repository, ResolvedWorktree, TempIndex, WorkingTree,
     set_base_path,
 };
 pub use url::GitRemoteUrl;
@@ -303,7 +307,10 @@ fn resolve_via_snapshot(
     if let Some(sha) = snapshot.resolve(name) {
         return Ok(sha.to_string());
     }
-    Ok(repo.run_command(&["rev-parse", name])?.trim().to_string())
+    Ok(repo
+        .run_command(&["rev-parse", "--verify", "--end-of-options", name])?
+        .trim()
+        .to_string())
 }
 
 /// Category of branch for completion display
@@ -462,8 +469,18 @@ pub fn branch_tracks_ref(
 pub enum HookType {
     PreSwitch,
     PostSwitch,
-    PreStart,
-    PostStart,
+    // Canonical display is `pre-start`/`post-start`; `pre-create`/`post-create`
+    // are accepted as silent aliases via `FromStr`. The Rust variant name uses
+    // the future canonical (`-create`) so the eventual flip is a Display-only
+    // change.
+    #[strum(to_string = "pre-start", serialize = "pre-create")]
+    #[serde(rename = "pre-start", alias = "pre-create")]
+    #[cfg_attr(feature = "cli", value(name = "pre-start", alias = "pre-create"))]
+    PreCreate,
+    #[strum(to_string = "post-start", serialize = "post-create")]
+    #[serde(rename = "post-start", alias = "post-create")]
+    #[cfg_attr(feature = "cli", value(name = "post-start", alias = "post-create"))]
+    PostCreate,
     PreCommit,
     PostCommit,
     PreMerge,
@@ -482,12 +499,12 @@ impl HookType {
     pub fn is_pre(self) -> bool {
         match self {
             HookType::PreSwitch
-            | HookType::PreStart
+            | HookType::PreCreate
             | HookType::PreCommit
             | HookType::PreMerge
             | HookType::PreRemove => true,
             HookType::PostSwitch
-            | HookType::PostStart
+            | HookType::PostCreate
             | HookType::PostCommit
             | HookType::PostMerge
             | HookType::PostRemove => false,

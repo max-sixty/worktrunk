@@ -41,7 +41,8 @@
 //! Users who upgrade wt without restarting their shell still run the previous
 //! release's shell wrapper, which only sets `WORKTRUNK_DIRECTIVE_FILE`. When
 //! only that variable is set, wt falls back to the pre-split protocol (shell
-//! commands written to the single file) silently. For bash, zsh, fish, and
+//! commands written to the single file) and emits a one-shot deprecation
+//! warning hinting at `wt config shell install`. For bash, zsh, fish, and
 //! PowerShell a shell restart picks up the new wrapper automatically; nushell
 //! is the only shell where users have to rerun `wt config shell install`
 //! because its wrapper is a static file. Remove the legacy path in the next
@@ -65,6 +66,7 @@ use worktrunk::shell_exec::Cmd;
 use worktrunk::shell_exec::ShellConfig;
 use worktrunk::shell_exec::{
     DIRECTIVE_CD_FILE_ENV_VAR, DIRECTIVE_EXEC_FILE_ENV_VAR, DIRECTIVE_FILE_ENV_VAR,
+    ShellEscapeMode, directive_shell_escape_mode,
 };
 use worktrunk::styling::{hint_message, warning_message};
 
@@ -269,21 +271,39 @@ fn compute_directive_mode() -> DirectiveMode {
             exec_file: exec,
         },
         None => match legacy {
-            // Silent fallback: bash/zsh/fish/PowerShell self-update on restart,
-            // and nushell is the only shell that needs a manual reinstall. A
-            // global "your wrapper is old" warning would hit everyone else with
-            // noise they can't avoid until their next terminal restart.
-            //
-            // TODO(2026-05): emit a deprecation warning here. By then the
-            // self-healing shells (bash/zsh/fish/PowerShell) have had a
-            // release to cycle, so anything still hitting this branch is
-            // almost certainly an outdated nushell wrapper whose user needs
-            // to rerun `wt config shell install nu` before the legacy
-            // fallback is removed in the following release.
-            Some(file) => DirectiveMode::Legacy { file },
+            // Hitting this branch means the active shell wrapper still sets
+            // only `WORKTRUNK_DIRECTIVE_FILE` (pre-split protocol). bash, zsh,
+            // fish, and PowerShell wrappers self-update on shell restart, so
+            // any wt invocation still landing here is using an outdated
+            // wrapper — most often nushell, where the wrapper is a static
+            // file the user must reinstall via `wt config shell install`.
+            // Warn once per process so the user is prompted to refresh it
+            // before the legacy fallback is removed in a future release.
+            Some(file) => {
+                warn_legacy_directive();
+                DirectiveMode::Legacy { file }
+            }
             None => DirectiveMode::Interactive,
         },
     }
+}
+
+/// Warn that the active shell wrapper is using the pre-split directive-file
+/// protocol. The caller (`compute_directive_mode`) runs once per process from
+/// `OUTPUT_STATE.get_or_init`, so this naturally fires at most once.
+fn warn_legacy_directive() {
+    eprintln!(
+        "{}",
+        warning_message(cformat!(
+            "Shell wrapper uses the legacy directive-file protocol; it will be removed in a future release"
+        ))
+    );
+    eprintln!(
+        "{}",
+        hint_message(cformat!(
+            "To update, run <underline>wt config shell install</>"
+        ))
+    );
 }
 
 /// Warn that `--execute` was refused because we're running inside an alias or
@@ -333,21 +353,25 @@ fn write_cd_path(file: &Path, path: &Path) -> io::Result<()> {
     f.flush()
 }
 
-/// Escape a path as a POSIX-shell (or PowerShell) single-quoted string. Only
-/// used in legacy mode where we still emit shell commands.
+/// Escape a path as a single-quoted `cd` command for the active directive
+/// shell. Only used in legacy mode where we still emit shell commands.
+///
+/// Always wraps the path in `'…'` (even when the path has no metacharacters),
+/// unlike the POSIX `--execute` payload escaper which omits quotes around safe
+/// values — a constant `cd '…'` shape keeps the legacy directive predictable.
+/// The per-shell decision comes from the shared [`directive_shell_escape_mode`],
+/// so the path body is escaped for POSIX (`'\''`), PowerShell (`''`), or fish
+/// (`\\` and `\'`) consistently with the rest of the directive payload.
 fn escape_legacy_cd(path: &Path) -> String {
     let path_str = path.to_string_lossy();
-    // POSIX and PowerShell both single-quote, but escape embedded quotes
-    // differently:
-    //   POSIX: 'it'\''s'
-    //   PSH:   'it''s'
-    let is_powershell = std::env::var("WORKTRUNK_SHELL")
-        .map(|v| v.eq_ignore_ascii_case("powershell"))
-        .unwrap_or(false);
-    let escaped = if is_powershell {
-        path_str.replace('\'', "''")
-    } else {
-        path_str.replace('\'', r"'\''")
+    let escaped = match directive_shell_escape_mode() {
+        ShellEscapeMode::PowerShell => path_str.replace('\'', "''"),
+        // fish treats `\` as an escape inside `'…'`, so the path body must
+        // double `\` (before escaping `'`) — POSIX `'\''` would corrupt it.
+        ShellEscapeMode::Fish => path_str.replace('\\', r"\\").replace('\'', r"\'"),
+        // Literal is unreachable here (directive_shell_escape_mode yields only
+        // Posix/PowerShell/Fish); grouped with Posix as the safe default.
+        ShellEscapeMode::Literal | ShellEscapeMode::Posix => path_str.replace('\'', r"'\''"),
     };
     format!("cd '{}'", escaped)
 }
@@ -607,7 +631,7 @@ pub fn pre_hook_display_path(hooks_run_at: &std::path::Path) -> Option<&std::pat
 ///
 /// ```ignore
 /// // Register hooks with display path:
-/// announcer.register(&ctx, HookType::PostStart, &extra_vars, post_hook_display_path(&destination))?;
+/// announcer.register(&ctx, HookType::PostCreate, &extra_vars, post_hook_display_path(&destination))?;
 /// ```
 pub fn post_hook_display_path(destination: &std::path::Path) -> Option<&std::path::Path> {
     post_hook_display_path_with(destination, is_shell_integration_active())

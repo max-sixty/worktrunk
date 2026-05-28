@@ -1,5 +1,40 @@
 # Testing Guidelines
 
+## Running the Suite
+
+```bash
+cargo run -- hook pre-merge --yes                                  # all tests + lints
+pre-commit run --all-files                                         # lints only
+cargo test --lib --bins                                            # unit tests
+cargo test --test integration                                      # integration (no shell tests)
+cargo test --test integration --features shell-integration-tests   # + shell tests
+```
+
+A filtered `--test integration` run on a fresh `target/` panics with "mock-stub binary not found" (a target filter skips the helper-bin build). Fix: `cargo build -p mock-stub`, or use `cargo nextest run` / `cargo llvm-cov nextest`.
+
+**Claude Code web:** `task setup-web` installs zsh/fish/nushell, `gh`, and dev tools. Install `task` first if needed: `sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/bin` then `export PATH="$HOME/bin:$PATH"`. The permission tests (`test_permission_error_prevents_save`, `test_approval_prompt_permission_error`) skip automatically when running as root.
+
+**Shell/PTY tests** (`shell-integration-tests` feature: approval prompts, picker, progressive rendering, shell wrappers): tests that spawn interactive shells (`zsh -ic`, `bash -ic`) make nextest's InputHandler take SIGTTOU when restoring terminal settings, suspending the run mid-test (`zsh: suspended (tty output)`; see [nextest#2878](https://github.com/nextest-rs/nextest/issues/2878)). Use `cargo test` instead of `cargo nextest run`, or set `NEXTEST_NO_INPUT_HANDLER=1`. The pre-merge hook sets it automatically.
+
+## Coverage Investigation
+
+`task coverage` runs the suite and writes an HTML report to `target/llvm-cov/html/index.html`. Both CI (`code-coverage` job) and local `task coverage` pass `--features shell-integration-tests`, so code behind that flag is compiled and measured.
+
+When `codecov/patch` fails, investigate before declaring ready (the merge gate itself is in the root `CLAUDE.md` → Coverage):
+
+```bash
+task coverage
+cargo llvm-cov report --show-missing-lines | grep <file>   # authoritative miss list; matches codecov line-for-line
+```
+
+For each uncovered function, either write a test (integration tests via `assert_cmd_snapshot!` do capture subprocess coverage) or document why it's intentionally untested. If codecov's compare API must be queried directly, `coverage.head` is a `LineType` enum: `0=hit`, `1=miss`, `2=partial`.
+
+**Renames and moves:** `git mv` can trigger codecov/patch failures on pre-existing uncovered lines — codecov treats changed lines in renamed files as part of the patch. If the lines are unchanged and predate the rename it's a false positive; verify against `main` under the old path.
+
+**"N functions have mismatched data" warning:** `cargo llvm-cov` merges profiles from multiple compilation targets with minor codegen differences (typically 5–20 functions). Expected, harmless, no suppression flag exists ([LLVM #97574](https://github.com/llvm/llvm-project/issues/97574)).
+
+PTY tests need extra setup to be measured at all — they `env_clear()` the subprocess, so LLVM env vars must be passed through explicitly. See "Coverage in PTY Tests" below.
+
 ## Running `wt` Commands in Tests
 
 **Use the correct helper to ensure test isolation.** Tests that spawn `wt` must
@@ -60,6 +95,51 @@ call `.current_dir(...)` explicitly.
 | `repo.wt_command()` | `Command` | Running wt commands with a TestRepo |
 | `wt_command()` | `Command` | Running wt without a TestRepo (free function) |
 | `repo.git_command()` | `Cmd` | Running git commands (use `.run()` not `.output()`) |
+
+## Config Isolation for In-Process Unit Tests
+
+`repo.wt_command()` / `wt_command()` isolate *subprocess* tests (above). An
+in-process unit test that calls library functions directly gets no such
+isolation: it runs in the test process, which inherits the real environment.
+
+The `Approvals` and `UserConfig` mutation methods take an explicit `&Path`, so
+a unit test passes a tempdir-backed path and the write stays isolated. The
+global resolvers do not isolate: `Approvals::load()`, `approvals_path()`,
+`config_path()`, and `system_config_path()` all fall back to the real
+`~/.config/worktrunk/`.
+
+<example>
+<bad reason="Approvals::load() reads the real ~/.config/worktrunk/approvals.toml">
+
+Bad:
+
+```rust
+let mut approvals = Approvals::load().unwrap();
+approvals.approve_command(project, command, &approvals_path).unwrap();
+```
+
+</bad>
+<good reason="Default state plus a tempdir path touches no real config">
+
+Good:
+
+```rust
+let temp_dir = tempfile::tempdir().unwrap();
+let approvals_path = temp_dir.path().join("approvals.toml");
+let mut approvals = Approvals::default();
+approvals.approve_command(project, command, &approvals_path).unwrap();
+```
+
+</good>
+</example>
+
+`approvals_path()` panics when `WORKTRUNK_APPROVALS_PATH` is unset, but
+`#[cfg(test)]` makes that guard fire only for `worktrunk` lib-crate tests. A
+bin-crate test (anything under `src/commands/`) links the lib in non-test
+mode, so the guard is compiled out and a global read hits the real config
+silently: it passes wherever `$HOME` is writable and fails only in a sandbox
+that forbids it. `config_path()` and `system_config_path()` have no guard at
+all.
 
 ## Timing Tests: Long Timeouts with Fast Polling
 
@@ -267,7 +347,7 @@ assert_snapshot!("readme_example_name", combined_output);
 **README examples using standard snapshots (working, but require manual editing):**
 - `test_readme_example_simple()` - Quick start merge example
 - `test_readme_example_complex()` - LLM commit example
-- `test_readme_example_hooks_pre_start()` - Pre-start hooks
+- `test_readme_example_hooks_pre_create()` - Pre-create hooks
 - `test_readme_example_hooks_pre_merge()` - Pre-merge hooks
 
 **Current workflow:** These tests work correctly and generate accurate snapshots. However, the snapshots separate stdout and stderr into different sections, which means they cannot be directly copied into README.md. Instead, the README examples are manually edited versions that merge stdout/stderr in the correct temporal order and remove ANSI codes.
@@ -334,15 +414,52 @@ fn test_config_loading() {
 
 For environment-dependent tests, use `Command::new()` with `.env()` to set variables in a subprocess, or use the test isolation helpers (`repo.wt_command()`, `wt_command()`).
 
+## Snapshot Filters
+
+### Bold codes around redacted paths
+
+Source code may wrap a path in `<bold>` for terminal styling (e.g., `cformat!("{label} @ <bold>{path}</> failed")`). Setup-side path filters in `tests/common/mod.rs` substitute the path to a placeholder like `[TEST_CONFIG]` or `[PROJECT_ID]`, and a follow-up filter strips ANSI codes immediately wrapping those placeholders so the snapshot reads as a clean `[PLACEHOLDER]`.
+
+The strip filter only fires on placeholders established **before** it. It runs at the end of `setup_snapshot_settings*`, so any path-redaction filter the test adds *after* setup escapes it.
+
+If a test introduces its own placeholder for a path (e.g., `_REPO_/system-config.toml` → `[TEST_SYSTEM_CONFIG_FILE]`), use `add_path_placeholder_filter` so the filter consumes any styling wrappers around the path:
+
+```rust
+// ✅ GOOD: helper wraps the pattern with optional ANSI consumption
+common::add_path_placeholder_filter(
+    &mut settings,
+    r"_REPO_/system-config\.toml",
+    "[TEST_SYSTEM_CONFIG_FILE]",
+);
+
+// ❌ BAD: bare add_filter substitutes only the path, so a `<bold>{path}</>`
+// source leaves `\x1b[1m[TEST_SYSTEM_CONFIG_FILE]\x1b[22m` in the snapshot.
+settings.add_filter(r"_REPO_/system-config\.toml", "[TEST_SYSTEM_CONFIG_FILE]");
+```
+
+The helper wraps the pattern in `(?:\x1b\[\d+m)*` brackets, which eat only the bold open/close immediately adjacent to the path — surrounding color spans (yellow warning, etc.) are preserved.
+
+Setup-side path-redaction placeholders in the strip list (`add_placeholder_ansi_strip_filter` in `tests/common/mod.rs`): `[TEST_CONFIG]`, `[TEST_CONFIG_NEW]`, `[TEST_APPROVALS]`, `[TEST_GIT_CONFIG]`, `[PROJECT_ID]`, `[TEMP_HOME]`, `[TEMP]`. Placeholders that hold a real value (`[VERSION]`, `[HASH]`, `[BUILD_MODE]`, `[BINARY_PATH]`) keep their bold codes so the snapshot still asserts the user-visible styling. The strip pass is invoked at the end of every `setup_*_snapshot_settings` helper, so the contract holds uniformly across `setup_snapshot_settings*`, `setup_home_snapshot_settings`, and `setup_temp_snapshot_settings`.
+
 ## Test Style
 
-### Snapshot env drift is cosmetic
+### Snapshot env drift: cosmetic vs. a leak
 
-`insta_cmd` snapshots record the test's environment variables in an `env:` block.
-When test infrastructure changes add or reorder env vars (e.g., `NO_COLOR: ""`
-appearing in a snapshot that didn't have it before), the snapshot diff includes
-those lines even though the test output is unchanged. This is cosmetic drift —
-accept it without comment during review.
+`insta_cmd` snapshots record the test's environment variables in an `env:`
+block. New or reordered env lines split into two cases — check the *value*
+before dismissing:
+
+- **Cosmetic (accept silently):** value is identical on every machine — `""`,
+  a deterministic literal (`"0"`, `C`), or an already-redacted placeholder
+  (`[TEST_HOME]`). A `NO_COLOR: ""` line appearing where it didn't before is
+  drift, not a bug.
+- **A leak (must fix):** value is host/platform/run-specific — a temp path
+  (`/var/folders/…`, `/tmp/…`), `$HOME`/`$USER`, a PID, a timestamp. It will
+  diff spuriously when the snapshot is regenerated elsewhere. Redact it with
+  `add_redaction(".env.VAR_NAME", "[VAR_NAME]")` in
+  `add_standard_env_redactions` (bound by the `repo` rstest fixture). Note
+  `add_filter` does **not** work on the `env:` block — it only substitutes on
+  captured snapshot content; use a redaction.
 
 ### Inline snapshots over multi-assert
 

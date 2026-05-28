@@ -329,7 +329,7 @@ fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_list_full_with_platform_override_github(mut repo: TestRepo) {
+fn test_list_full_with_configured_platform_github(mut repo: TestRepo) {
     // Set a non-GitHub remote (bitbucket) as origin - platform won't be auto-detected
     repo.run_git(&[
         "remote",
@@ -338,8 +338,8 @@ fn test_list_full_with_platform_override_github(mut repo: TestRepo) {
         "https://bitbucket.org/test-owner/test-repo.git",
     ]);
 
-    // Add a GitHub remote for PR detection (platform override needs a GitHub remote
-    // to determine which repo's PRs to check)
+    // Add a GitHub remote for PR detection (the configured platform still needs a
+    // GitHub remote to determine which repo's PRs to check)
     repo.run_git(&[
         "remote",
         "add",
@@ -347,7 +347,7 @@ fn test_list_full_with_platform_override_github(mut repo: TestRepo) {
         "https://github.com/test-owner/test-repo.git",
     ]);
 
-    // Set platform override in project config
+    // Set the platform explicitly in project config
     repo.write_project_config(
         r#"
 [ci]
@@ -362,7 +362,7 @@ platform = "github"
     // Get actual commit SHA
     let head_sha = branch_sha(&repo, "feature");
 
-    // Setup mock gh with PR data - this should work because platform is overridden to github
+    // Setup mock gh with PR data - this should work because the platform is set to github
     let pr_json = format!(
         r#"[{{
         "headRefOid": "{}",
@@ -382,7 +382,7 @@ platform = "github"
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
         repo.configure_mock_commands(&mut cmd);
-        // Platform override should force GitHub detection even with bitbucket remote
+        // The configured platform should force GitHub detection even with a bitbucket remote
         assert_cmd_snapshot!(cmd);
     });
 }
@@ -413,7 +413,30 @@ fn test_list_full_with_gitlab_remote(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_list_full_with_invalid_platform_override(mut repo: TestRepo) {
+fn test_list_full_with_gitea_forge_platform(mut repo: TestRepo) {
+    // `forge.platform = "gitea"` resolves to the (experimental) Gitea CI
+    // backend, but without `tea` installed there's nothing to show — CI stays
+    // blank, and `wt list` must not warn that the value is "invalid". (Gitea CI
+    // detection with a mocked `tea` is covered by the `gitea_*` tests below.)
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/test-owner/test-repo.git",
+    ]);
+    repo.write_project_config("[forge]\nplatform = \"gitea\"\n");
+
+    repo.add_worktree("feature");
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+#[rstest]
+fn test_list_full_with_invalid_configured_platform(mut repo: TestRepo) {
     // Set GitHub remote URL
     repo.run_git(&[
         "remote",
@@ -422,7 +445,7 @@ fn test_list_full_with_invalid_platform_override(mut repo: TestRepo) {
         "https://github.com/test-owner/test-repo.git",
     ]);
 
-    // Set INVALID platform override - should warn and fall back to URL detection
+    // Set an invalid platform value - should warn and fall back to URL detection
     repo.write_project_config(
         r#"
 [ci]
@@ -456,6 +479,13 @@ platform = "invalid_platform"
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
         repo.configure_mock_commands(&mut cmd);
+        // The snapshot asserts on the `log::warn!` diagnostic for the
+        // invalid platform value, which is suppressed at the default
+        // baseline filter (`-v 0` → Off). Opt this test into Warn-level
+        // logging via `RUST_LOG`, which `logging::init` merges with the
+        // verbose flag via `tracing_subscriber::EnvFilter` (env wins
+        // when set).
+        cmd.env("RUST_LOG", "warn");
         // Invalid platform should fall back to URL detection (GitHub)
         assert_cmd_snapshot!(cmd);
     });
@@ -861,5 +891,448 @@ fn test_list_full_with_gitlab_ci_rate_limit(mut repo: TestRepo) {
         let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
         repo.configure_mock_commands(&mut cmd);
         assert_cmd_snapshot!("gitlab_ci_rate_limit", cmd);
+    });
+}
+
+// =============================================================================
+// Azure DevOps CI status tests
+// =============================================================================
+
+/// Set up a repo with an Azure DevOps remote and a `feature` worktree.
+/// Returns the `feature` branch HEAD SHA.
+fn setup_azure_repo_with_feature(repo: &mut TestRepo) -> String {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://dev.azure.com/myorg/myproject/_git/test-repo",
+    ]);
+    repo.add_worktree("feature");
+    setup_tracking_for_all_branches(repo, "origin");
+    branch_sha(repo, "feature")
+}
+
+/// Run an Azure DevOps CI status test with the given `az repos pr list` and
+/// `az pipelines runs list` mock responses.
+fn run_azure_ci_status_test(
+    repo: &mut TestRepo,
+    snapshot_name: &str,
+    pr_list_json: &str,
+    runs_json: &str,
+) {
+    repo.setup_mock_az_with_ci_data(pr_list_json, runs_json);
+
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!(snapshot_name, cmd);
+    });
+}
+
+/// An active PR with `mergeStatus: "conflicts"` surfaces as a Conflicts
+/// indicator (exercises `detect_azure_pr`).
+#[rstest]
+fn test_list_full_with_azure_pr_conflicts(mut repo: TestRepo) {
+    let head_sha = setup_azure_repo_with_feature(&mut repo);
+
+    let pr_list_json = format!(
+        r#"[{{
+        "pullRequestId": 7,
+        "mergeStatus": "conflicts",
+        "lastMergeSourceCommit": {{"commitId": "{}"}},
+        "repository": {{"name": "test-repo", "project": {{"name": "myproject"}}}}
+    }}]"#,
+        head_sha
+    );
+
+    run_azure_ci_status_test(&mut repo, "azure_pr_conflicts", &pr_list_json, "[]");
+}
+
+/// An active PR with `mergeStatus: "queued"` surfaces as a Running indicator.
+#[rstest]
+fn test_list_full_with_azure_pr_queued(mut repo: TestRepo) {
+    let head_sha = setup_azure_repo_with_feature(&mut repo);
+
+    let pr_list_json = format!(
+        r#"[{{
+        "pullRequestId": 7,
+        "mergeStatus": "queued",
+        "lastMergeSourceCommit": {{"commitId": "{}"}},
+        "repository": {{"name": "test-repo", "project": {{"name": "myproject"}}}}
+    }}]"#,
+        head_sha
+    );
+
+    run_azure_ci_status_test(&mut repo, "azure_pr_queued", &pr_list_json, "[]");
+}
+
+/// No PR for the branch falls back to the latest pipeline run
+/// (exercises `detect_azure_pipeline` via `parse_azure_pipeline_status`).
+#[rstest]
+#[case::passed("completed", "succeeded", "azure_pipeline_passed")]
+#[case::failed("completed", "failed", "azure_pipeline_failed")]
+#[case::running("inProgress", "null", "azure_pipeline_running")]
+fn test_list_full_with_azure_pipeline_status(
+    mut repo: TestRepo,
+    #[case] status: &str,
+    #[case] result: &str,
+    #[case] snapshot_name: &str,
+) {
+    let head_sha = setup_azure_repo_with_feature(&mut repo);
+
+    let runs_json = format!(
+        r#"[{{
+        "id": 4242,
+        "status": "{}",
+        "result": {},
+        "sourceVersion": "{}"
+    }}]"#,
+        status,
+        if result == "null" {
+            "null".to_string()
+        } else {
+            format!(r#""{}""#, result)
+        },
+        head_sha
+    );
+
+    run_azure_ci_status_test(&mut repo, snapshot_name, "[]", &runs_json);
+}
+
+/// A pipeline run from a different SHA than local HEAD is marked stale (dimmed).
+#[rstest]
+fn test_list_full_with_azure_stale_pipeline(mut repo: TestRepo) {
+    setup_azure_repo_with_feature(&mut repo);
+
+    let runs_json = r#"[{
+        "id": 4242,
+        "status": "completed",
+        "result": "succeeded",
+        "sourceVersion": "0000000000000000000000000000000000000000"
+    }]"#;
+
+    run_azure_ci_status_test(&mut repo, "azure_stale_pipeline", "[]", runs_json);
+}
+
+/// No PR and no pipeline runs → no CI indicator.
+#[rstest]
+fn test_list_full_with_azure_no_ci(mut repo: TestRepo) {
+    setup_azure_repo_with_feature(&mut repo);
+    run_azure_ci_status_test(&mut repo, "azure_no_ci", "[]", "[]");
+}
+
+/// A retriable error from `az repos pr list` (e.g., HTTP 429) surfaces as an
+/// error indicator rather than NoCI (exercises the `is_retriable_error` branch
+/// in `detect_azure_pr`).
+#[rstest]
+fn test_list_full_with_azure_pr_list_retriable_error(mut repo: TestRepo) {
+    setup_azure_repo_with_feature(&mut repo);
+    repo.setup_mock_az_with_detection_errors(
+        Some("ERROR: HTTP error 429: Too Many Requests"),
+        None,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("azure_pr_list_retriable_error", cmd);
+    });
+}
+
+/// A retriable error from `az pipelines runs list` surfaces as an error
+/// indicator (exercises the `is_retriable_error` branch in
+/// `detect_azure_pipeline`, reached when no PR exists for the branch).
+#[rstest]
+fn test_list_full_with_azure_pipeline_retriable_error(mut repo: TestRepo) {
+    setup_azure_repo_with_feature(&mut repo);
+    repo.setup_mock_az_with_detection_errors(
+        None,
+        Some("ERROR: HTTP error 429: Too Many Requests"),
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("azure_pipeline_retriable_error", cmd);
+    });
+}
+
+// =============================================================================
+// Gitea CI status tests
+// =============================================================================
+
+/// Set up a repo with a Gitea remote and a `feature` worktree carrying its own
+/// commit (so its HEAD SHA differs from `main`'s, keeping the per-branch
+/// commit-status lookups distinct). Returns the `feature` HEAD SHA.
+fn setup_gitea_repo_with_feature(repo: &mut TestRepo) -> String {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(
+        &feature_wt,
+        "gitea-ci.txt",
+        "gitea ci test",
+        "feat: gitea feature",
+    );
+    setup_tracking_for_all_branches(repo, "origin");
+    branch_sha(repo, "feature")
+}
+
+/// Run a Gitea CI status test with the given `tea api .../pulls` and
+/// `tea api .../commits/{sha}/status` mock responses.
+fn run_gitea_ci_status_test(
+    repo: &mut TestRepo,
+    snapshot_name: &str,
+    head_sha: &str,
+    pulls_json: &str,
+    status_json: &str,
+) {
+    repo.setup_mock_tea_with_ci_data("owner", "test-repo", head_sha, pulls_json, status_json);
+
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!(snapshot_name, cmd);
+    });
+}
+
+/// Build a one-PR `tea api .../pulls` response for the `feature` branch.
+fn gitea_feature_pr_json(head_sha: &str, mergeable: bool) -> String {
+    format!(
+        r#"[{{
+        "mergeable": {mergeable},
+        "html_url": "https://gitea.example.com/owner/test-repo/pulls/7",
+        "head": {{
+            "ref": "feature",
+            "sha": "{head_sha}",
+            "repo": {{"owner": {{"login": "owner"}}}}
+        }}
+    }}]"#
+    )
+}
+
+/// An open PR with `mergeable: false` surfaces as a Conflicts indicator
+/// (exercises `detect_gitea_pr`).
+#[rstest]
+fn test_list_full_with_gitea_pr_conflicts(mut repo: TestRepo) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    run_gitea_ci_status_test(
+        &mut repo,
+        "gitea_pr_conflicts",
+        &head_sha,
+        &gitea_feature_pr_json(&head_sha, false),
+        r#"{"state":"","total_count":0}"#,
+    );
+}
+
+/// An open PR's CI state comes from the PR head commit's combined status, and
+/// the indicator links to the PR.
+#[rstest]
+#[case::passed("success", "gitea_pr_passed")]
+#[case::failed("failure", "gitea_pr_failed")]
+#[case::running("pending", "gitea_pr_running")]
+fn test_list_full_with_gitea_pr_status(
+    mut repo: TestRepo,
+    #[case] state: &str,
+    #[case] snapshot_name: &str,
+) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    let status_json = format!(r#"{{"state":"{state}","total_count":2}}"#);
+    run_gitea_ci_status_test(
+        &mut repo,
+        snapshot_name,
+        &head_sha,
+        &gitea_feature_pr_json(&head_sha, true),
+        &status_json,
+    );
+}
+
+/// No PR for the branch falls back to the HEAD commit's combined status
+/// (exercises `detect_gitea_commit_status` and the `failure` state mapping).
+#[rstest]
+fn test_list_full_with_gitea_commit_status(mut repo: TestRepo) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    run_gitea_ci_status_test(
+        &mut repo,
+        "gitea_commit_status",
+        &head_sha,
+        "[]",
+        r#"{"state":"failure","total_count":1}"#,
+    );
+}
+
+/// No PR and no commit statuses → no CI indicator.
+#[rstest]
+fn test_list_full_with_gitea_no_ci(mut repo: TestRepo) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    run_gitea_ci_status_test(
+        &mut repo,
+        "gitea_no_ci",
+        &head_sha,
+        "[]",
+        r#"{"state":"","total_count":0}"#,
+    );
+}
+
+/// A retriable error from `tea api .../pulls` surfaces as an error indicator
+/// rather than NoCI (exercises the `is_retriable_error` branch in
+/// `detect_gitea_pr`).
+#[rstest]
+fn test_list_full_with_gitea_retriable_error(mut repo: TestRepo) {
+    setup_gitea_repo_with_feature(&mut repo);
+    repo.setup_mock_tea_with_detection_error(
+        "Error: GET .../api/v1/repos/owner/test-repo/pulls: 429 Too Many Requests",
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("gitea_retriable_error", cmd);
+    });
+}
+
+/// A retriable error from the commit-status lookup (when no PR exists for the
+/// branch) surfaces as an error indicator (exercises the `is_retriable_error`
+/// branch in `fetch_combined_status`, reached via `detect_gitea_commit_status`).
+#[rstest]
+fn test_list_full_with_gitea_commit_status_retriable_error(mut repo: TestRepo) {
+    let head_sha = setup_gitea_repo_with_feature(&mut repo);
+    repo.setup_mock_tea_commit_status_error(
+        &head_sha,
+        "Error: GET .../api/v1/repos/owner/test-repo/commits/.../status: 429 Too Many Requests",
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("gitea_commit_status_retriable_error", cmd);
+    });
+}
+
+/// `wt list --remotes --full` exercises the commit-status fallback for a
+/// remote-only branch and proves it queries the branch's own remote, not the
+/// primary one. Two Gitea remotes (`origin` → `owner/test-repo`, `fork` →
+/// `forkowner/test-repo`) plus a remote-only `fork/feature-remote` ref. The
+/// mock answers only `forkowner/test-repo` SHA-status requests, so a primary-
+/// remote lookup in the fallback would return no CI; the green `●` in the
+/// snapshot proves the SHA-status path honors `branch.remote`. (The PR path
+/// intentionally uses the primary remote, mirroring the `gh` backend; for this
+/// branch it returns no PR and we fall through to the SHA-status path.)
+#[rstest]
+fn test_list_remotes_full_with_gitea_remote_branch(mut repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/owner/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "remote",
+        "add",
+        "fork",
+        "https://gitea.example.com/forkowner/test-repo.git",
+    ]);
+
+    // Build the remote-only `fork/feature-remote` ref in a temporary local
+    // branch (mirroring how `test_list_with_remotes_and_full` does it for
+    // origin), then drop the local copy so the row appears as remote-only.
+    repo.run_git(&["checkout", "-b", "feature-remote"]);
+    std::fs::write(repo.root_path().join("gitea-fork.txt"), "fork content").unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "feat: fork feature"]);
+    let head_sha = branch_sha(&repo, "feature-remote");
+    repo.run_git(&["update-ref", "refs/remotes/fork/feature-remote", &head_sha]);
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["branch", "-D", "feature-remote"]);
+
+    repo.setup_mock_tea_with_ci_data(
+        "forkowner",
+        "test-repo",
+        &head_sha,
+        "[]",
+        r#"{"state":"success","total_count":1}"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--remotes", "--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("gitea_remote_branch_uses_branch_remote", cmd);
+    });
+}
+
+/// A PR opened from a fork (head owner ≠ the queried upstream owner) is
+/// matched: `wt list --full` lists the *primary* remote's open PRs and filters
+/// by the branch's push owner against `head.repo.owner.login`. Two Gitea
+/// remotes (`origin` → `upstream/test-repo`, `fork` → `forkowner/test-repo`)
+/// and the `feature` branch pushes to `fork`. The mock returns two open PRs for
+/// the `feature` ref — a decoy from `other-owner` that must be filtered out and
+/// the real one from `forkowner` — and answers the upstream's commit-status
+/// lookup with `success`. The green `●` proves the fork PR matched; a revert to
+/// querying/filtering by the branch's own remote would query `forkowner`'s
+/// (unmocked) `/pulls` and lose the indicator. Mirrors the GitHub backend's
+/// `test_list_full_filters_by_repo_owner`.
+#[rstest]
+fn test_list_full_with_gitea_fork_pr(mut repo: TestRepo) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://gitea.example.com/upstream/test-repo.git",
+    ]);
+    repo.run_git(&[
+        "remote",
+        "add",
+        "fork",
+        "https://gitea.example.com/forkowner/test-repo.git",
+    ]);
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(
+        &feature_wt,
+        "gitea-fork-ci.txt",
+        "gitea fork ci test",
+        "feat: gitea fork feature",
+    );
+    setup_tracking_for_all_branches(&repo, "fork");
+    let head_sha = branch_sha(&repo, "feature");
+
+    let pulls_json = format!(
+        r#"[
+        {{
+            "mergeable": true,
+            "html_url": "https://gitea.example.com/upstream/test-repo/pulls/98",
+            "head": {{"ref": "feature", "sha": "wrong_sha", "repo": {{"owner": {{"login": "other-owner"}}}}}}
+        }},
+        {{
+            "mergeable": true,
+            "html_url": "https://gitea.example.com/upstream/test-repo/pulls/7",
+            "head": {{"ref": "feature", "sha": "{head_sha}", "repo": {{"owner": {{"login": "forkowner"}}}}}}
+        }}
+    ]"#
+    );
+
+    repo.setup_mock_tea_with_ci_data(
+        "upstream",
+        "test-repo",
+        &head_sha,
+        &pulls_json,
+        r#"{"state":"success","total_count":1}"#,
+    );
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        assert_cmd_snapshot!("gitea_fork_pr", cmd);
     });
 }

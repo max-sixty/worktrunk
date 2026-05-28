@@ -1,9 +1,8 @@
 ---
 name: worktrunk
 description: Guidance for Worktrunk (the `wt` CLI) — git worktree management, hooks, and config. Load when editing .config/wt.toml or ~/.config/worktrunk/config.toml; adding, modifying, or debugging hooks (post-merge, post-start, pre-commit, pre-merge, post-switch, etc.); configuring commit message generation or command aliases; or troubleshooting wt behavior. Also answers general worktrunk/wt questions.
-version: 0.49.0
 license: MIT OR Apache-2.0
-compatibility: Requires worktrunk CLI (https://worktrunk.dev)
+compatibility: Requires the `wt` CLI (https://worktrunk.dev)
 ---
 
 # Worktrunk
@@ -300,7 +299,7 @@ zellij run -- wt switch --create fix-auth-bug -x 'opencode run' -- \
 
 ### Parallel sub-Agents (single Claude Code session)
 
-To spawn multiple sub-Agents that each work in their own worktree from one Claude Code session — no terminal multiplexer, no human in the other pane — pre-create each worktree from the parent and pass the path into the sub-Agent prompt:
+To spawn multiple sub-Agents that each work in their own worktree from one Claude Code session — no terminal multiplexer, no human in the other pane — pre-start each worktree from the parent and pass the path into the sub-Agent prompt:
 
 ```bash
 wt switch --create <branch> --no-cd --no-hooks

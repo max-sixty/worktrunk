@@ -51,10 +51,6 @@ command = "llm -m claude-haiku-4.5"
 command = "aichat -m claude:claude-haiku-4.5"
 ```
 
-## How it works
-
-When worktrunk needs a commit message, it builds a prompt from a template and pipes it to the configured command via shell (`sh -c`). Environment variables can be set inline in the command string.
-
 ## Usage
 
 These examples assume a feature worktree with changes to commit.
@@ -82,7 +78,7 @@ Squashes all changes (uncommitted + existing commits) into one commit with an LL
 <span style='background:var(--bright-white,#fff)'> </span>  jwt.rs              | 3 <span class=g>+++</span>
 <span style='background:var(--bright-white,#fff)'> </span>  jwt_test.rs         | 3 <span class=g>+++</span>
 <span style='background:var(--bright-white,#fff)'> </span>  5 files changed, 16 insertions(+)
-<span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 5 files, +16</span></span><span style='color:var(--bright-black,#555)'>)</span>
+<span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 5 files, <span class=g>+16</span></span></span><span style='color:var(--bright-black,#555)'>)</span>
 <span class=c>◎</span> <span class=c>Removing <b>feature</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
 <span class=d>○</span> Switched to worktree for <b>main</b> @ <b>~/repo</b>
 {% end %}
@@ -147,7 +143,7 @@ Summaries are cached and regenerated only when the diff changes.
 
 ## Prompt templates
 
-Worktrunk uses [minijinja](https://docs.rs/minijinja/) templates (Jinja2-like syntax) to build prompts. There are sensible defaults, but templates are fully customizable.
+Worktrunk uses [minijinja](https://docs.rs/minijinja/) templates (Jinja2-like syntax) to build prompts.
 
 ### Custom templates
 
@@ -187,6 +183,8 @@ Diff:
 | `{{ recent_commits }}` | Recent commit subjects (for style reference) |
 | `{{ commits }}` | Commits being squashed (squash template only) |
 | `{{ target_branch }}` | Merge target branch (squash template only) |
+| `{{ user_guidance }}` | Rendered user `template-append` fragment (see below) |
+| `{{ project_guidance }}` | Rendered project `template-append` fragment (see below) |
 
 ### Template syntax
 
@@ -200,6 +198,27 @@ Templates use [minijinja](https://docs.rs/minijinja/latest/minijinja/syntax/inde
 - **Whitespace control**: `{%- ... -%}` strips surrounding whitespace
 
 See `wt config create --help` for the full default templates.
+
+## Appending to the prompt
+
+<span class="badge-experimental"></span>
+
+`template-append` adds to the commit and squash prompts instead of replacing them. It lives in both user config (personal preferences) and project config (`.config/wt.toml`, shared so every teammate's LLM sees the same style guide). Each fragment is itself a [minijinja](https://docs.rs/minijinja/) template — Worktrunk renders it with the same variables as the main template (`{{ branch }}`, `{{ git_diff }}`, …), then appends the result after `<style>`. The user fragment renders into a `<user-guidance>` block and the project fragment into a `<project-guidance>` block, so the LLM can tell personal preference from shared convention:
+
+```toml
+# .config/wt.toml
+[commit.generation]
+template-append = """
+- Use conventional commits (feat:, fix:, docs:, …)
+- Reference the related issue ID in the body
+"""
+```
+
+When both the user and project set `template-append`, the `<user-guidance>` block comes first, then `<project-guidance>`.
+
+The user fragment needs no approval — it's the developer's own config. For the project fragment, the first time the rendered text is sent to the LLM, Worktrunk shows the raw fragment in an approval prompt — the same one-shot gate as project-defined hooks. Subsequent commits don't re-prompt unless the fragment changes. Declining is non-fatal: the LLM runs with just the user fragment (if any).
+
+Custom user templates that don't reference `{{ user_guidance }}` / `{{ project_guidance }}` opt out of the appended blocks — the rendered values are injected only where the template places them.
 
 ## Fallback behavior
 

@@ -18,7 +18,7 @@ use worktrunk::styling::println;
 /// |------|---------|
 /// | `--dry-run` | Show what would be moved without moving |
 /// | `--commit` | Auto-commit dirty worktrees with LLM-generated messages before relocating |
-/// | `--clobber` | Move non-worktree paths out of the way (`<path>.bak-<timestamp>`) |
+/// | `--clobber` | Move non-worktree paths out of the way (`<path>.bak.<timestamp>`) |
 /// | `[branches...]` | Specific branches to relocate (default: all mismatched) |
 pub fn step_relocate(
     branches: Vec<String>,
@@ -88,10 +88,35 @@ pub fn step_relocate(
     }
 
     // Phase 2: Validate candidates (check locked/dirty, optionally auto-commit)
+    // Approve the project commit append once for the whole batch so per-worktree
+    // commits share a single approval prompt rather than one per worktree.
+    // Skip approval when the LLM isn't configured for this project — the
+    // fallback message generator doesn't render the prompt template.
+    let project_append = if commit {
+        use super::super::command_approval::approve_commit_template_append;
+        use super::super::command_executor::CommandContext;
+        let project_id = repo.project_identifier().ok();
+        let commit_config = config.commit_generation(project_id.as_deref());
+        if commit_config.is_configured() {
+            let ctx = CommandContext::new(&repo, &config, None, &repo_path, false);
+            approve_commit_template_append(&ctx)?
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let ValidationResult {
         validated,
         skipped: validation_skipped,
-    } = validate_candidates(&repo, &config, candidates, commit, &repo_path)?;
+    } = validate_candidates(
+        &repo,
+        &config,
+        candidates,
+        commit,
+        &repo_path,
+        project_append.as_deref(),
+    )?;
 
     if validated.is_empty() {
         if json_mode {

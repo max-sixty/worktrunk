@@ -8,6 +8,8 @@ use std::sync::OnceLock;
 
 use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 
+use crate::config::ConfigError;
+
 /// Override for user config path, set via --config CLI flag
 static CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
@@ -44,6 +46,17 @@ pub fn config_path() -> Option<PathBuf> {
 
     // Priority 3: Platform-specific default location
     default_config_path()
+}
+
+/// Resolve the user config path, erroring when no location can be determined.
+///
+/// The `Result`-returning counterpart of [`config_path`], for callers that
+/// must produce a concrete path (config mutation) rather than tolerate its
+/// absence.
+pub fn require_config_path() -> Result<PathBuf, ConfigError> {
+    config_path().ok_or_else(|| {
+        ConfigError("Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME".to_string())
+    })
 }
 
 /// Platform-specific default config path, without CLI or env var overrides.

@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_custom_switch_resolve",
+  "title": "wt switch + branch resolution: ref-injection, PR fetching, network policy",
+  "summary": "`wt switch` resolves user-supplied references (branch names, pr:N, mr:N, gh URLs) and may create worktrees. Branch names can contain hyphens, slashes, special chars — must be passed to git without interpretation as flags. PR/MR fetch is the one place where shelling out to `gh`/`glab` is allowed and must not happen on background paths. See CLAUDE.md > Network Access policy and Worktree Model.",
+  "kind": "library",
+  "source": "manual",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/commands/worktree/switch.rs",
+      "symbol": "handle_switch",
+      "route": null,
+      "command": "wt switch"
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/commands/worktree/switch.rs",
+      "reason": "switch command top-level"
+    },
+    {
+      "path": "src/commands/worktree/resolve.rs",
+      "reason": "PR/MR/branch resolution"
+    },
+    {
+      "path": "src/commands/worktree/types.rs",
+      "reason": "switch types/options"
+    },
+    {
+      "path": "src/git/remote_ref/mod.rs",
+      "reason": "remote ref parsing (PR/MR URLs)"
+    },
+    {
+      "path": "src/git/remote_ref/github.rs",
+      "reason": "GitHub PR fetch and owner/repo URL derivation from the forge remote"
+    },
+    {
+      "path": "src/git/remote_ref/gitlab.rs",
+      "reason": "GitLab MR fetch and project URL parsing"
+    },
+    {
+      "path": "src/git/remote_ref/gitea.rs",
+      "reason": "Gitea PR fetch and URL parsing"
+    },
+    {
+      "path": "src/git/remote_ref/azure.rs",
+      "reason": "Azure DevOps PR fetch and source-branch validation"
+    },
+    {
+      "path": "src/git/repository/branch.rs",
+      "reason": "branch name handling"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "src/git/repository/mod.rs",
+      "reason": "repository operations"
+    },
+    {
+      "path": "src/commands/worktree/mod.rs",
+      "reason": "worktree module"
+    },
+    {
+      "path": "src/commands/hooks.rs",
+      "reason": "post-switch hook invocation"
+    },
+    {
+      "path": "CLAUDE.md",
+      "reason": "network policy, branch name handling"
+    }
+  ],
+  "tests": [
+    {
+      "path": "tests/integration_tests/switch.rs",
+      "command": "cargo test --test integration switch"
+    }
+  ],
+  "tags": [
+    "rust",
+    "network-policy",
+    "ref-injection",
+    "user-input"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "network",
+    "process-exec"
+  ],
+  "status": "needs-fix",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-custom-switch-resolve-d_5219fbb9db",
+    "fnd_sig-feat-custom-switch-resolve-2_faf6ce371c",
+    "fnd_sig-feat-custom-switch-resolve-d_db7a89a910",
+    "fnd_sig-feat-custom-switch-resolve-b_d9afa10eef",
+    "fnd_sig-feat-custom-switch-resolve-d_2ef4bb00aa",
+    "fnd_sig-feat-custom-switch-resolve-c_24711332c6"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260516T210804-353f93",
+      "kind": "review",
+      "summary": "3 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-16T21:14:00.797Z"
+    },
+    {
+      "runId": "20260517T050139-b247d5",
+      "kind": "review",
+      "summary": "3 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T05:12:27.656Z"
+    }
+  ],
+  "createdAt": "2026-05-16T21:00:00.000Z",
+  "updatedAt": "2026-05-19T00:00:00.000Z"
+}

@@ -40,7 +40,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: lychee
-        version: "=0.23.0"
+        version: "=0.24.2"
 
     - name: 🔍 Pre-commit hooks
       uses: pre-commit/action@v3.0.1
@@ -92,7 +92,7 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
-        version: "=0.35.2"
+        version: "=0.53.0"
 
     - name: "Use fast D: drive for temp files (Windows)"
       if: runner.os == 'Windows'
@@ -105,6 +105,19 @@ jobs:
     - name: 🧪 Pre-merge hooks
       run: wt hook pre-merge --yes insta doctest doc
 
+    # Anything tests leave behind in the working tree is a leak we want to see
+    # before it lands. `target/` is gitignored, so a normal run is clean —
+    # untracked files here mean a test wrote outside its sandbox (the
+    # `default_*.profraw` stray that prompted this guard is the canonical case).
+    - name: 🧹 Verify clean working tree
+      shell: bash
+      run: |
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "::error::tests left files behind in the working tree:"
+          git status --porcelain
+          exit 1
+        fi
+
     - name: 📊 Upload test timing
       if: always()
       uses: actions/upload-artifact@v7
@@ -114,7 +127,7 @@ jobs:
 
     - name: 📊 Upload test results to Codecov
       if: ${{ !cancelled() }}
-      uses: codecov/codecov-action@v6.0.0
+      uses: codecov/codecov-action@v6.0.1
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: target/nextest/default/junit.xml
@@ -159,7 +172,7 @@ jobs:
     - uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-msrv
-        version: "=0.19.2"
+        version: "=0.19.3"
 
     - name: Verify minimum rust version
       run: cargo msrv verify
@@ -173,7 +186,7 @@ jobs:
       uses: actions/checkout@v6
 
     - name: Setup Zola
-      uses: taiki-e/install-action@v2.77.1
+      uses: taiki-e/install-action@v2.79.8
       with:
         tool: zola@0.22.1
 
@@ -186,11 +199,26 @@ jobs:
   # full suite. The signal is the runtime delta on the exact-match path and
   # whether selection misses any failures the full suite catches.
   #
-  # TODO: once cargo-affected is trusted on this repo, gate the full test
-  # matrix to run only on pushes to main and on PRs with a `full-tests` label
-  # (or similar). PR pushes would default to affected-only. The full suite
-  # could fold into the existing `nightly` workflow, which already hosts
-  # slower integration-time checks. Periodic full runs remain essential —
+  # Both jobs run as the same linux/macos/windows matrix as `test`. The
+  # fingerprint embeds `rustc -vV` (host triple), so a DB collected on one OS
+  # cache-misses on the others — each OS's `affected-tests` leg pairs with a
+  # `collect-affected` DB from the same OS via the `runner.os` cache key.
+  #
+  # TODO(affected-only PRs): once `affected tests (linux/macos/windows)` has a
+  # track record of catching every failure the required full suite catches on
+  # all three OSes, drop the full `test` matrix from PRs and let cargo-affected
+  # be the PR test path. Confidence bar: a sustained stretch of PRs where the
+  # advisory legs and the required full matrix agree — no failure the full
+  # suite caught that affected selection missed.
+  #
+  # Until then the full `test` matrix stays required and runs on every PR,
+  # unchanged. Do NOT reach affected-only by making the required `test (*)`
+  # checks skip=pass on PRs — relaxing the merge gate is a deliberate
+  # branch-protection change owned by the repo admin (see `.github/CLAUDE.md`),
+  # not a silent workflow skip.
+  #
+  # When the gate is flipped, keep periodic full runs (push-to-main, and fold
+  # into the `nightly` workflow, which already hosts slower checks) —
   # cargo-affected misses non-Rust inputs (`include_str!`, templates, SQL),
   # build-time inputs not in its fingerprint (build.rs, rust-toolchain.toml,
   # .cargo/config.toml), and proc-macro source edits.
@@ -222,9 +250,19 @@ jobs:
   #   manual `db-v{N}` marker. Bump the marker if cargo-affected ships an
   #   on-disk schema change; the cache is otherwise version-agnostic.
   collect-affected:
-    name: collect affected coverage
+    name: collect affected coverage (${{ matrix.name }})
     if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: linux
+          - os: macos-15
+            name: macos
+          - os: windows-2022
+            name: windows
+    runs-on: ${{ matrix.os }}
     steps:
     - name: 📂 Checkout code
       uses: actions/checkout@v6
@@ -234,6 +272,14 @@ jobs:
         fetch-depth: 0
 
     - uses: ./.github/actions/test-setup
+
+    - name: "Use fast D: drive for temp files (Windows)"
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path "D:\tmp" | Out-Null
+        echo "TEMP=D:\tmp" >> $env:GITHUB_ENV
+        echo "TMP=D:\tmp" >> $env:GITHUB_ENV
 
     - name: Install cargo-affected
       uses: baptiste0928/cargo-install@v3
@@ -279,9 +325,19 @@ jobs:
         key: cargo-affected-db-v1-${{ runner.os }}-${{ github.sha }}
 
   affected-tests:
-    name: affected tests (linux, advisory)
+    name: affected tests (${{ matrix.name }}, advisory)
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: linux
+          - os: macos-15
+            name: macos
+          - os: windows-2022
+            name: windows
+    runs-on: ${{ matrix.os }}
     # Advisory while we calibrate selection accuracy against the full suite.
     # The full matrix (`test (linux/macos/windows)`) is still required for
     # merge.
@@ -296,6 +352,7 @@ jobs:
 
     - name: Compute merge-base for cache key
       id: mb
+      shell: bash
       env:
         PR_HEAD: ${{ github.event.pull_request.head.sha }}
       run: |
@@ -305,6 +362,14 @@ jobs:
         echo "merge-base with origin/main: $sha"
 
     - uses: ./.github/actions/test-setup
+
+    - name: "Use fast D: drive for temp files (Windows)"
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path "D:\tmp" | Out-Null
+        echo "TEMP=D:\tmp" >> $env:GITHUB_ENV
+        echo "TMP=D:\tmp" >> $env:GITHUB_ENV
 
     # Restore AFTER test-setup so we land on top of rust-cache's tar
     # extraction. rust-cache's restore step calls `cleanTargetDir` on a
@@ -335,6 +400,15 @@ jobs:
     - name: 🎯 Run affected tests
       env:
         NEXTEST_NO_INPUT_HANDLER: 1
+        # An empty affected selection is a valid outcome — a diff can touch
+        # nothing with recorded coverage. nextest's default exits 4 ("no
+        # tests to run"), which fails this advisory job spuriously. Windows
+        # hits this every run: the `#[cfg_attr(windows, ignore)]` tests never
+        # execute during `collect` (nextest skips ignored tests), so they get
+        # no coverage rows and cargo-affected keeps re-flagging them as `new`
+        # and selecting them — then `nextest run` skips them as ignored too,
+        # so zero run. `warn` exits 0 and leaves the breadcrumb in the log.
+        NEXTEST_NO_TESTS: warn
       run: cargo affected run --report-json target/affected/report.json -- --features shell-integration-tests
 
     # Report writes BEFORE nextest runs, so it survives test failures —
@@ -346,7 +420,7 @@ jobs:
       if: ${{ !cancelled() }}
       uses: actions/upload-artifact@v7
       with:
-        name: cargo-affected-report
+        name: cargo-affected-report-${{ matrix.name }}
         path: target/affected/report.json
 
   code-coverage:
@@ -358,7 +432,7 @@ jobs:
     - uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-llvm-cov
-        version: "=0.8.5"
+        version: "=0.8.7"
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -374,7 +448,7 @@ jobs:
     - name: Install nushell
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.112.2'
+        version: '0.113.0'
 
     # Ensure nothing remains from caching
     - run: cargo llvm-cov clean --workspace
@@ -391,7 +465,7 @@ jobs:
         path: cobertura.xml
 
     - name: Upload to codecov.io
-      uses: codecov/codecov-action@v6.0.0
+      uses: codecov/codecov-action@v6.0.1
       with:
         files: cobertura.xml
         # Soft-fail on fork PRs: secrets aren't available there, so we rely on

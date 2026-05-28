@@ -31,11 +31,13 @@ use super::resolve::path_mismatch;
 use super::types::RemoveResult;
 use crate::commands::command_executor::CommandContext;
 use crate::commands::context::CommandEnv;
+use crate::commands::hook_plan::{ApprovedHookPlan, register_planned};
 use crate::commands::hooks::HookAnnouncer;
-use crate::commands::repository_ext::{
-    check_not_default_branch, compute_integration_reason, is_primary_worktree,
-};
+use crate::commands::repository_ext::{check_not_default_branch, is_primary_worktree};
 use crate::commands::template_vars::TemplateVars;
+use crate::output::{
+    BackgroundFallbackMode, handle_remove_output, post_hook_display_path, pre_hook_display_path,
+};
 
 /// Inputs to [`finish_after_merge`]. Owned by the caller; this struct just
 /// bundles them so the function signature stays readable.
@@ -46,6 +48,9 @@ pub struct FinishAfterMergeArgs<'a> {
     pub remove: bool,
     pub verify: bool,
     pub yes: bool,
+    /// The frozen, approved hook plan. `post-merge` and the removal's
+    /// `pre-remove` / `post-remove` / `post-switch` execute only from this.
+    pub plan: &'a ApprovedHookPlan,
 }
 
 /// Run the post-merge finish sequence: capture feature identity, optionally
@@ -70,6 +75,7 @@ pub fn finish_after_merge(
         remove,
         verify,
         yes,
+        plan,
     } = args;
 
     let on_target = current_branch == target_branch;
@@ -123,22 +129,11 @@ pub fn finish_after_merge(
         current_wt.ensure_clean("remove worktree after merge", Some(current_branch), false)?;
 
         let worktree_root = current_wt.root()?;
-        // Capture a fresh snapshot AFTER the merge has updated the local
-        // target ref (`update-ref` ran inside `handle_no_ff_merge` /
-        // `handle_push`). Without this, `integration_reason` would observe
-        // pre-merge state and misclassify the just-merged branch as
-        // unmerged — the bug class PR #2507 worked around with
-        // `ref_is_ancestor`.
-        let snapshot = repo.capture_refs()?;
-        let (integration_reason, _) = compute_integration_reason(
-            repo,
-            &snapshot,
-            Some(current_branch),
-            Some(target_branch),
-            BranchDeletionMode::SafeDelete,
-        );
         let expected_path = path_mismatch(repo, current_branch, &worktree_root, config);
 
+        // No config snapshot: `pre-remove` / `post-remove` were selected and
+        // frozen into `plan` at the gate (anchored at `feature_path`), so the
+        // executor needs no config — it runs only the frozen `plan`.
         let remove_result = RemoveResult::RemovedWorktree {
             main_path: destination_path.clone(),
             worktree_path: worktree_root,
@@ -146,31 +141,50 @@ pub fn finish_after_merge(
             branch_name: Some(current_branch.to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some(target_branch.to_string()),
-            integration_reason,
             force_worktree: false,
             expected_path,
             removed_commit: feature_commit.clone(),
         };
-        crate::output::handle_remove_output(&remove_result, false, verify, false, announcer)?;
+        handle_remove_output(
+            &remove_result,
+            false,
+            plan,
+            false,
+            false,
+            announcer,
+            BackgroundFallbackMode::Detached,
+        )?;
         true
     };
 
     if verify {
-        // Post-merge hooks run in the destination worktree (target), but bare vars
-        // point to the Active (feature branch) per the template variable model.
-        // The destination worktree is the execution context (cwd).
-        let ctx = CommandContext::new(repo, config, Some(current_branch), &destination_path, yes);
+        // Post-merge hooks run in the destination worktree (target). `ctx.repo`
+        // is rooted there only for template *rendering* (the feature worktree
+        // may be gone); the command set is the frozen `plan`, anchored at
+        // `destination_path` at the gate — no re-read of the destination's
+        // (now post-merge) `.config/wt.toml`.
+        let dest_repo = Repository::at(&destination_path)?;
+        let ctx = CommandContext::new(
+            &dest_repo,
+            config,
+            Some(current_branch),
+            &destination_path,
+            yes,
+        );
         let display_path = if removed {
-            crate::output::post_hook_display_path(&destination_path)
+            post_hook_display_path(&destination_path)
         } else {
-            crate::output::pre_hook_display_path(&destination_path)
+            pre_hook_display_path(&destination_path)
         };
 
         let mut vars = feature_vars.with_target(target_branch);
         if let Some(p) = target_worktree_path {
             vars = vars.with_target_worktree_path(p);
         }
-        announcer.register(
+        register_planned(
+            announcer,
+            plan,
+            &destination_path,
             &ctx,
             HookType::PostMerge,
             &vars.as_extra_vars(),

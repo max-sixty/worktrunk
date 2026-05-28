@@ -1,7 +1,5 @@
 //! Branch - a handle for branch-specific git operations.
 
-use crate::git::GitRemoteUrl;
-
 use super::Repository;
 
 /// A handle for running git commands on a specific branch.
@@ -105,8 +103,10 @@ impl<'a> Branch<'a> {
     /// This removes the tracking relationship, preventing accidental pushes
     /// to the wrong branch (e.g., when a feature branch was created from origin/main).
     pub fn unset_upstream(&self) -> anyhow::Result<()> {
+        // `--` separates the option from the positional branch name so a
+        // hyphen-prefixed branch cannot be misread as a flag.
         self.repo
-            .run_command(&["branch", "--unset-upstream", &self.name])?;
+            .run_command(&["branch", "--unset-upstream", "--", &self.name])?;
         Ok(())
     }
 
@@ -141,40 +141,37 @@ impl<'a> Branch<'a> {
     /// (`gh pr checkout` sets pushremote to a URL rather than a remote name).
     /// For remote names, uses `effective_remote_url` to apply `url.insteadOf` rewrites.
     /// Returns `None` if no push remote is configured or the remote has no URL.
-    fn push_remote_url(&self) -> Option<String> {
-        // %(push:remotename) returns either a remote name or URL directly
-        // Unlike @{push}, this doesn't fail when pushremote is a URL
-        let push_remote = self
-            .repo
-            .run_command(&[
-                "for-each-ref",
-                "--format=%(push:remotename)",
-                &format!("refs/heads/{}", self.name),
-            ])
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())?;
-
-        // If it's already a URL, return it directly
-        if push_remote.contains("://") || push_remote.starts_with("git@") {
-            Some(push_remote)
-        } else {
-            // It's a remote name — use effective URL (handles insteadOf)
-            self.repo.effective_remote_url(&push_remote)
-        }
-    }
-
-    /// Get the GitHub URL for this branch's push remote, if it's a GitHub URL.
     ///
-    /// Returns the push remote URL if configured and pointing to GitHub,
-    /// otherwise returns `None`. Handles `url.insteadOf` aliases via
-    /// `effective_remote_url` (cached).
-    ///
-    /// Handles both remote-name and URL-based pushremotes (the latter is set by
-    /// `gh pr checkout` for fork PRs).
-    pub fn github_push_url(&self) -> Option<String> {
-        let url = self.push_remote_url()?;
-        let parsed = GitRemoteUrl::parse(&url)?;
-        parsed.is_github().then_some(url)
+    /// Result is cached on `RepoCache.push_remote_urls`. The CI-status detector
+    /// calls this from both the PR-based path and the branch fallback, so
+    /// without the cache the `for-each-ref` runs twice for the same branch
+    /// on the no-PR path.
+    pub fn push_remote_url(&self) -> Option<String> {
+        self.repo
+            .cache
+            .push_remote_urls
+            .entry(self.name.clone())
+            .or_insert_with(|| {
+                // %(push:remotename) returns either a remote name or URL
+                // directly. Unlike @{push}, this doesn't fail when pushremote
+                // is a URL.
+                let push_remote = self
+                    .repo
+                    .run_command(&[
+                        "for-each-ref",
+                        "--format=%(push:remotename)",
+                        &format!("refs/heads/{}", self.name),
+                    ])
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())?;
+
+                if push_remote.contains("://") || push_remote.starts_with("git@") {
+                    Some(push_remote)
+                } else {
+                    self.repo.effective_remote_url(&push_remote)
+                }
+            })
+            .clone()
     }
 }

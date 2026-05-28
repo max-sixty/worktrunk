@@ -186,6 +186,34 @@ $ wt config plugins opencode uninstall
     Uninstall,
 }
 
+// Ordering: action + inverse adjacent (install, uninstall).
+#[derive(Subcommand)]
+pub enum ConfigPluginsCodexCommand {
+    /// Configure the Worktrunk marketplace in Codex
+    #[command(
+        after_long_help = r#"Configures the Worktrunk plugin marketplace in Codex. Equivalent to:
+
+```console
+$ codex plugin marketplace add max-sixty/worktrunk
+```
+
+This does not install the plugin by itself. Afterward, open `/plugins` in Codex and install Worktrunk from the marketplace."#
+    )]
+    Install,
+
+    /// Remove the Worktrunk marketplace from Codex
+    #[command(
+        after_long_help = r#"Removes the Worktrunk plugin marketplace from Codex. Equivalent to:
+
+```console
+$ codex plugin marketplace remove worktrunk
+```
+
+This leaves any already-installed Worktrunk plugin unchanged."#
+    )]
+    Uninstall,
+}
+
 // Ordering: action + inverse adjacent (add, clear).
 #[derive(Subcommand)]
 pub enum ApprovalsCommand {
@@ -240,6 +268,22 @@ $ wt config plugins claude install-statusline
     Claude {
         #[command(subcommand)]
         action: ConfigPluginsClaudeCommand,
+    },
+
+    /// Codex plugin
+    #[command(
+        after_long_help = r#"Bundles a configuration skill — documentation Codex can read to help set up LLM commits, project hooks, and worktree paths. Activity markers in `wt list` are Claude Code only: Codex exposes no turn-end hook event, so the Codex plugin omits them until it does.
+
+## Examples
+
+```console
+$ wt config plugins codex install
+$ wt config plugins codex uninstall
+```"#
+    )]
+    Codex {
+        #[command(subcommand)]
+        action: ConfigPluginsCodexCommand,
     },
 
     /// OpenCode plugin
@@ -314,11 +358,18 @@ Skips gracefully if the statusline is already configured."#
 // dry-run previews the expansion for a given invocation.
 #[derive(Subcommand)]
 pub enum ConfigAliasCommand {
-    /// Show an alias's template as configured
+    /// Show an alias's template, or all aliases' templates
     #[command(
-        after_long_help = r#"Prints each pipeline step's raw template indented with a gutter, tagged by source (user / project). Duplicate names defined in both configs show as two entries, runtime order (user first, then project).
+        after_long_help = r#"With a name, prints each pipeline step's raw template indented with a gutter, tagged by source (user / project). Duplicate names defined in both configs show as two entries in runtime order (user first, then project).
+
+With no name, prints that block for every configured alias in name order — equivalent to running `wt config alias show <name>` for each. `wt --help` shows a compact names-only list and points here.
 
 ## Examples
+
+Show every alias's template:
+```console
+$ wt config alias show
+```
 
 Show the template for `deploy`:
 ```console
@@ -326,9 +377,9 @@ $ wt config alias show deploy
 ```"#
     )]
     Show {
-        /// Alias name
+        /// Alias name (omit to show all)
         #[arg(add = crate::completion::alias_name_completer())]
-        name: String,
+        name: Option<String>,
     },
 
     /// Preview an alias invocation with template expansion
@@ -494,6 +545,11 @@ Approved commands are saved to `~/.config/worktrunk/approvals.toml`. Re-approval
 
 ## Examples
 
+Show every configured alias's template:
+```console
+$ wt config alias show
+```
+
 Show the template for `deploy`:
 ```console
 $ wt config alias show deploy
@@ -517,12 +573,14 @@ $ wt config alias dry-run deploy -- --env=staging
 ## Supported tools
 
 - **claude** — Claude Code plugin (activity tracking + statusline)
+- **codex** — Codex plugin (Worktrunk configuration skill)
 - **opencode** — OpenCode plugin (activity tracking)
 
 ## Examples
 
 ```console
 $ wt config plugins claude install
+$ wt config plugins codex install
 $ wt config plugins opencode install
 ```"#
     )]
@@ -726,10 +784,10 @@ All `post-*` hooks (post-start, post-switch, post-commit, post-merge) run in the
 | File | Created when |
 |------|-------------|
 | `trace.log` | Running with `-vv` |
-| `output.log` | Running with `-vv` |
-| `diagnostic.md` | Running with `-vv` when warnings occur |
+| `subprocess.log` | Running with `-vv` |
+| `diagnostic.md` | Running with `-vv` |
 
-`trace.log` mirrors stderr (commands, `[wt-trace]` records, bounded subprocess previews). `output.log` holds the raw uncapped subprocess stdout/stderr bodies. Both are overwritten on each `-vv` run. `diagnostic.md` is a markdown report for pasting into GitHub issues — written only when warnings occur, and inlines `trace.log` (never `output.log`, which can be multi-MB).
+`trace.log` captures debug-level records at `-vv` — commands, `[wt-trace]` records, bounded subprocess previews. `subprocess.log` holds the raw uncapped subprocess stdout/stderr bodies. `diagnostic.md` is a markdown bug-report bundle that inlines `trace.log`; `wt` prints a `gh gist create` command pointing at it. All three are overwritten on each `-vv` run.
 
 ## Location
 
@@ -822,7 +880,7 @@ $ wt config state hints clear NAME   # re-show specific hint
         name = "ci-status",
         after_long_help = r#"Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
 
-Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from remote URL; override with `forge.platform = "github"` in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
+Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated. Platform auto-detects from the remote URL; set `forge.platform = "github"` (or `"gitlab"`) in `.config/wt.toml` for SSH host aliases or self-hosted instances. For GitHub Enterprise or self-hosted GitLab, also set `forge.hostname`.
 
 Checks open PRs/MRs first, then branch pipelines for branches with upstream. Local-only branches (no remote tracking) show blank.
 
@@ -1228,6 +1286,59 @@ $ wt config state hints clear worktree-path
         /// Specific hint to clear (clears all if not specified)
         name: Option<String>,
     },
+}
+
+/// Write-ness of a state action, co-located with the action enums so a new
+/// variant cannot be added without classifying it.
+///
+/// `--format` is `global = true` on the state-cache parents so the bareword and
+/// `get` read forms accept it; clap therefore also accepts it on write actions,
+/// where it has no effect. The dispatcher guards against that
+/// (`guard_format_on_write`). Deriving the verb from this trait — rather than
+/// hand-placing the guard at each write arm — means the exhaustive match below
+/// fails to compile until a newly added write variant declares itself, so a
+/// write action can't silently bypass the guard.
+pub(crate) trait StateWrite {
+    /// `Some(verb)` for write actions (verb names the action in the conflict
+    /// error); `None` for reads.
+    fn write_verb(&self) -> Option<&'static str>;
+}
+
+impl StateWrite for CiStatusAction {
+    fn write_verb(&self) -> Option<&'static str> {
+        match self {
+            Self::Get { .. } => None,
+            Self::Clear { .. } => Some("clear"),
+        }
+    }
+}
+
+impl StateWrite for MarkerAction {
+    fn write_verb(&self) -> Option<&'static str> {
+        match self {
+            Self::Get { .. } => None,
+            Self::Set { .. } => Some("set"),
+            Self::Clear { .. } => Some("clear"),
+        }
+    }
+}
+
+impl StateWrite for LogsAction {
+    fn write_verb(&self) -> Option<&'static str> {
+        match self {
+            Self::Get => None,
+            Self::Clear => Some("clear"),
+        }
+    }
+}
+
+impl StateWrite for HintsAction {
+    fn write_verb(&self) -> Option<&'static str> {
+        match self {
+            Self::Get => None,
+            Self::Clear { .. } => Some("clear"),
+        }
+    }
 }
 
 // Ordering: reads before writes — get, list, set, clear.

@@ -11,20 +11,27 @@ use worktrunk::path::to_posix_path;
 
 use crate::commands::command_executor::CommandContext;
 use crate::commands::command_executor::FailureStrategy;
-use crate::commands::hooks::execute_hook;
+use crate::commands::hook_plan::{ApprovedHookPlan, execute_planned_hook};
 
 impl<'a> CommandContext<'a> {
-    /// Execute pre-start commands sequentially (blocking)
+    /// Execute pre-start commands sequentially (blocking) from the frozen plan.
     ///
-    /// Runs user hooks first, then project hooks.
-    /// Shows path in hook announcements when shell integration isn't active (user's shell
-    /// won't cd to the new worktree, so they need to know where hooks ran).
-    ///
-    /// `extra_vars`: Additional template variables (e.g., `base`, `base_worktree_path`).
-    pub fn execute_pre_start_commands(&self, extra_vars: &[(&str, &str)]) -> anyhow::Result<()> {
-        execute_hook(
+    /// Runs user hooks first, then project hooks. `anchor` is the new
+    /// worktree's path — the gate selected `pre-start` under it from the
+    /// invoking worktree's config; the executor never re-reads any config.
+    /// Shows path in hook announcements when shell integration isn't active
+    /// (the user's shell won't cd to the new worktree).
+    pub fn execute_pre_create_commands(
+        &self,
+        extra_vars: &[(&str, &str)],
+        plan: &ApprovedHookPlan,
+        anchor: &Path,
+    ) -> anyhow::Result<()> {
+        execute_planned_hook(
+            plan,
+            anchor,
             self,
-            HookType::PreStart,
+            HookType::PreCreate,
             extra_vars,
             FailureStrategy::FailFast,
             crate::output::post_hook_display_path(self.worktree_path),

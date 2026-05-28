@@ -7,7 +7,7 @@ weight = 13
 group = "Commands"
 +++
 
-<!-- ⚠️ AUTO-GENERATED from `wt merge --help-page` — edit cli.rs to update -->
+<!-- ⚠️ AUTO-GENERATED from `wt merge --help-page` — edit src/cli/mod.rs to update -->
 
 Merge current branch into the target branch. Squash & rebase, fast-forward the target branch, remove the worktree.
 
@@ -33,7 +33,7 @@ Merge to the default branch:
 <span style='background:var(--bright-white,#fff)'> </span> * <span style='color:var(--yellow,#a60)'>a1b2c3d</span> feat: add hook registration
 <span style='background:var(--bright-white,#fff)'> </span>  hook.rs | 31 <span class=g>+++++++++++++++++++++++++++++++</span>
 <span style='background:var(--bright-white,#fff)'> </span>  1 file changed, 31 insertions(+)
-<span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 1 file, +31</span></span><span style='color:var(--bright-black,#555)'>)</span>
+<span class=g>✓</span> <span class=g>Merged to <b>main</b> <span style='color:var(--bright-black,#555)'>(1 commit, 1 file, <span class=g>+31</span></span></span><span style='color:var(--bright-black,#555)'>)</span>
 <span class=c>◎</span> <span class=c>Removing <b>hooks</b> worktree &amp; branch in background (same commit as <b>main</b>,</span> <span class=d>_</span><span class=c>)</span>
 <span class=d>○</span> Switched to worktree for <b>main</b> @ <b>~/repo</b>
 {% end %}
@@ -158,8 +158,8 @@ Usage: <b><span class=c>wt merge</span></b> <span class=c>[OPTIONS]</span> <span
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts

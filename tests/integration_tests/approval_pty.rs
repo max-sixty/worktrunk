@@ -8,7 +8,7 @@
 //! to simulate interactive terminals. The non-PTY tests in `approval_ui.rs` verify the
 //! error case (non-TTY environments).
 
-use crate::common::pty::{build_pty_command, exec_cmd_in_pty_prompted};
+use crate::common::pty::{build_pty_command, exec_cmd_in_pty, exec_cmd_in_pty_prompted};
 use crate::common::{TestRepo, add_pty_binary_path_filters, add_pty_filters, repo, wt_bin};
 use insta::assert_snapshot;
 use rstest::rstest;
@@ -396,6 +396,12 @@ fn test_approval_prompt_remove_decline(repo: TestRepo) {
     // Remove origin so worktrunk uses directory name as project identifier
     repo.run_git(&["remote", "remove", "origin"]);
 
+    // Add pre-remove hook before creating the worktree so the new worktree
+    // inherits the committed config — each worktree's `.config/wt.toml` stands
+    // alone, with no fallback to the primary worktree's.
+    repo.write_project_config(r#"pre-remove = "echo 'pre-remove hook'""#);
+    repo.commit("Add pre-remove config");
+
     // Create a worktree to remove
     let output = repo
         .wt_command()
@@ -403,10 +409,6 @@ fn test_approval_prompt_remove_decline(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success(), "Initial switch should succeed");
-
-    // Add pre-remove hook
-    repo.write_project_config(r#"pre-remove = "echo 'pre-remove hook'""#);
-    repo.commit("Add pre-remove config");
 
     // Configure shell integration
     repo.configure_shell_integration();
@@ -555,12 +557,273 @@ command = "cat >/dev/null && echo 'feat: test commit message'"
     assert_no_spurious_no_hooks(&output);
 }
 
+/// Project commit-message append must be approved before the LLM sees it.
+///
+/// Accept → the fragment is included in the prompt the LLM receives.
+#[rstest]
+fn test_commit_template_append_approval_accept(mut repo: TestRepo) {
+    // Remove origin so worktrunk uses directory name as project identifier.
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    repo.write_project_config(
+        r#"
+[commit.generation]
+template-append = "Use conventional commits"
+"#,
+    );
+    repo.commit("Add project commit append");
+
+    let feature_wt = repo.add_worktree("feature-guidance-accept");
+    std::fs::write(feature_wt.join("new-file.txt"), "new content").unwrap();
+
+    // Sink the LLM prompt to a file so we can confirm the guidance reached it.
+    let prompt_capture = repo.root_path().join("captured-prompt.txt");
+    let prompt_capture_str = prompt_capture.display().to_string();
+    repo.write_test_config(&format!(
+        r#"
+[commit.generation]
+command = "tee {prompt_capture_str} > /dev/null && echo 'feat: accept guidance'"
+"#
+    ));
+
+    let env_vars = test_env_vars_with_shell(&repo);
+
+    let (output, exit_code) =
+        exec_wt_in_pty_cwd(&feature_wt, &["step", "commit"], &env_vars, "y\n");
+
+    assert_eq!(
+        exit_code, 0,
+        "Commit should succeed when guidance approved. Output:\n{output}"
+    );
+    assert!(
+        output.contains("commit-template-append"),
+        "Approval prompt should label the append phase. Output:\n{output}"
+    );
+    assert!(
+        output.contains("Use conventional commits"),
+        "Approval prompt should display the append text. Output:\n{output}"
+    );
+
+    let captured = std::fs::read_to_string(&prompt_capture).expect("captured prompt");
+    assert!(
+        captured.contains("<project-guidance>") && captured.contains("Use conventional commits"),
+        "Append should be sent to the LLM inside <project-guidance>. Captured:\n{captured}"
+    );
+
+    // Second run: the fragment is already approved, so it must NOT re-prompt
+    // — exercises the `is_command_approved` cache-hit path in
+    // `approve_commit_template_append`.
+    std::fs::write(feature_wt.join("second.txt"), "more content").unwrap();
+    let cmd = build_pty_command(
+        wt_bin().to_str().unwrap(),
+        &["step", "commit"],
+        &feature_wt,
+        &env_vars,
+        None,
+    );
+    let (output2, exit2) = exec_cmd_in_pty(cmd, "");
+    assert_eq!(
+        exit2, 0,
+        "Second commit should succeed without re-prompting. Output:\n{output2}"
+    );
+    assert!(
+        !output2.contains("Allow and remember?"),
+        "Already-approved append must not prompt again. Output:\n{output2}"
+    );
+    let captured2 = std::fs::read_to_string(&prompt_capture).expect("captured prompt (2)");
+    assert!(
+        captured2.contains("<project-guidance>") && captured2.contains("Use conventional commits"),
+        "Approved append should still reach the LLM on re-run. Captured:\n{captured2}"
+    );
+}
+
+/// Declining the append prompt continues without it — the LLM receives the
+/// rest of the prompt as if no project append were configured.
+#[rstest]
+fn test_commit_template_append_approval_decline(mut repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    repo.write_project_config(
+        r#"
+[commit.generation]
+template-append = "Reference the issue ID"
+"#,
+    );
+    repo.commit("Add project commit append");
+
+    let feature_wt = repo.add_worktree("feature-guidance-decline");
+    std::fs::write(feature_wt.join("new-file.txt"), "new content").unwrap();
+
+    let prompt_capture = repo.root_path().join("captured-prompt.txt");
+    let prompt_capture_str = prompt_capture.display().to_string();
+    repo.write_test_config(&format!(
+        r#"
+[commit.generation]
+command = "tee {prompt_capture_str} > /dev/null && echo 'feat: decline guidance'"
+"#
+    ));
+
+    let env_vars = test_env_vars_with_shell(&repo);
+
+    let (output, exit_code) =
+        exec_wt_in_pty_cwd(&feature_wt, &["step", "commit"], &env_vars, "n\n");
+
+    assert_eq!(
+        exit_code, 0,
+        "Commit should succeed even when template declined. Output:\n{output}"
+    );
+    assert!(
+        output.contains("Project commit guidance declined"),
+        "Should announce that the append was declined. Output:\n{output}"
+    );
+
+    let captured = std::fs::read_to_string(&prompt_capture).expect("captured prompt");
+    assert!(
+        !captured.contains("Reference the issue ID"),
+        "Declined append must not reach the LLM. Captured:\n{captured}"
+    );
+    assert!(
+        !captured.contains("<project-guidance>"),
+        "No <project-guidance> block when append declined. Captured:\n{captured}"
+    );
+}
+
+/// `wt merge` gates project hooks and the commit append as two independent
+/// approvals: the hook batch first, then the append. Approving both lets the
+/// hook run and the append reach the LLM.
+#[rstest]
+fn test_merge_prompts_hooks_and_append_separately(mut repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+    repo.write_project_config(
+        r#"
+pre-commit = "echo 'pre-commit hook'"
+
+[commit.generation]
+template-append = "Reference the related issue"
+"#,
+    );
+    repo.commit("Add project config with hook + guidance");
+
+    let feature_wt = repo.add_worktree("feature-merge-bundle");
+    std::fs::write(feature_wt.join("new-file.txt"), "new content").unwrap();
+
+    let prompt_capture = repo.root_path().join("captured-prompt.txt");
+    let prompt_capture_str = prompt_capture.display().to_string();
+    repo.write_test_config(&format!(
+        r#"
+[commit.generation]
+command = "tee {prompt_capture_str} > /dev/null && echo 'feat: bundled'"
+"#
+    ));
+
+    let env_vars = test_env_vars_with_shell(&repo);
+
+    // Hook batch prompts first, append prompts second — approve both.
+    let (output, exit_code) = exec_wt_in_pty_cwd(&feature_wt, &["merge"], &env_vars, "y\ny\n");
+
+    assert_eq!(
+        exit_code, 0,
+        "Merge should succeed when both prompts approved. Output:\n{output}"
+    );
+    assert!(
+        output.contains("pre-commit hook"),
+        "Hook prompt should list (and run) the pre-commit hook. Output:\n{output}"
+    );
+    assert!(
+        output.contains("commit-template-append") && output.contains("Reference the related issue"),
+        "Append prompt should list the commit append. Output:\n{output}"
+    );
+
+    let captured = std::fs::read_to_string(&prompt_capture).expect("captured prompt");
+    assert!(
+        captured.contains("<project-guidance>") && captured.contains("Reference the related issue"),
+        "Approved append should reach the LLM. Captured:\n{captured}"
+    );
+}
+
+/// Regression: declining the project commit append must NOT skip
+/// already-approved hooks. With the hook approved up front, the only prompt is
+/// the append; declining it drops the append while the pre-commit hook still
+/// runs and the merge succeeds.
+#[rstest]
+fn test_merge_decline_append_keeps_approved_hooks(mut repo: TestRepo) {
+    repo.run_git(&["remote", "remove", "origin"]);
+
+    // Step 1: project config with only the hook; pre-approve it.
+    repo.write_project_config(r#"pre-commit = "echo 'pre-commit hook'""#);
+    repo.commit("Add pre-commit hook");
+
+    let env_vars = test_env_vars_with_shell(&repo);
+    let (add_out, add_exit) =
+        exec_wt_in_pty(&repo, &["config", "approvals", "add"], &env_vars, "y\n");
+    assert_eq!(
+        add_exit, 0,
+        "Pre-approving the hook should succeed. Output:\n{add_out}"
+    );
+
+    // Step 2: add an unapproved commit append (hook command unchanged, so it
+    // stays approved).
+    repo.write_project_config(
+        r#"pre-commit = "echo 'pre-commit hook'"
+
+[commit.generation]
+template-append = "Reference the related issue"
+"#,
+    );
+    repo.commit("Add commit append");
+
+    let feature_wt = repo.add_worktree("feature-decline-append");
+    std::fs::write(feature_wt.join("new-file.txt"), "new content").unwrap();
+
+    let prompt_capture = repo.root_path().join("captured-prompt.txt");
+    let prompt_capture_str = prompt_capture.display().to_string();
+    repo.write_test_config(&format!(
+        r#"
+[commit.generation]
+command = "tee {prompt_capture_str} > /dev/null && echo 'feat: decline append'"
+"#
+    ));
+
+    // Hook is already approved → no hook prompt. The lone prompt is the
+    // append; decline it.
+    let (output, exit_code) = exec_wt_in_pty_cwd(&feature_wt, &["merge"], &env_vars, "n\n");
+
+    assert_eq!(
+        exit_code, 0,
+        "Merge should succeed when only the append is declined. Output:\n{output}"
+    );
+    assert!(
+        output.contains("Project commit guidance declined"),
+        "Declining the append should be announced. Output:\n{output}"
+    );
+    assert!(
+        output.contains("pre-commit hook"),
+        "Already-approved pre-commit hook must still run when the append is \
+         declined. Output:\n{output}"
+    );
+
+    let captured = std::fs::read_to_string(&prompt_capture).expect("captured prompt");
+    assert!(
+        !captured.contains("<project-guidance>")
+            && !captured.contains("Reference the related issue"),
+        "Declined append must not reach the LLM. Captured:\n{captured}"
+    );
+}
+
 /// `wt config approvals add` accepts the prompt — covers the success branch of
 /// `add_approvals` after `approve_command_batch` returns Ok(true).
 #[rstest]
 fn test_config_approvals_add_accept(repo: TestRepo) {
     repo.run_git(&["remote", "remove", "origin"]);
-    repo.write_project_config(r#"pre-start = "echo 'test command'""#);
+    // Include a project commit append so `add_approvals` also collects the
+    // `commit-template-append` entry (covers that branch in add_approvals).
+    repo.write_project_config(
+        r#"pre-start = "echo 'test command'"
+
+[commit.generation]
+template-append = "Use conventional commits"
+"#,
+    );
     repo.commit("Add config");
 
     let env_vars = repo.test_env_vars();
@@ -571,6 +834,10 @@ fn test_config_approvals_add_accept(repo: TestRepo) {
     assert!(
         output.contains("Commands approved"),
         "Should show approval success. Output:\n{output}"
+    );
+    assert!(
+        output.contains("commit-template-append") && output.contains("Use conventional commits"),
+        "add should list the project commit append. Output:\n{output}"
     );
 }
 

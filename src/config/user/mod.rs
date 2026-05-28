@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 // Re-export public types
 pub use merge::Merge;
 pub use path::{
-    config_path, default_config_path, default_system_config_path, set_config_path,
-    system_config_path,
+    config_path, default_config_path, default_system_config_path, require_config_path,
+    set_config_path, system_config_path,
 };
 pub use resolved::ResolvedConfig;
 pub use schema::valid_user_config_keys;
@@ -388,15 +388,30 @@ impl UserConfig {
         if let Some(system_path) = path::system_config_path()
             && let Ok(content) = std::fs::read_to_string(&system_path)
         {
-            super::deprecation::warn_unknown_fields::<UserConfig>(
-                &content,
+            match super::deprecation::check_and_migrate(
                 &system_path,
+                &content,
+                true,
                 "System config",
-            );
-            let migrated = super::deprecation::migrate_content(&content);
-            match load_config_file(&system_path, &migrated, "System config") {
-                Ok(table) => deep_merge_table(&mut merged_table, table),
-                Err(e) => warnings.push(e),
+                None,
+                true,
+            ) {
+                Ok(result) => {
+                    super::deprecation::warn_unknown_fields::<UserConfig>(
+                        &content,
+                        &system_path,
+                        "System config",
+                    );
+
+                    match load_config_file(&system_path, &result.migrated_content, "System config")
+                    {
+                        Ok(table) => deep_merge_table(&mut merged_table, table),
+                        Err(e) => warnings.push(e),
+                    }
+                }
+                Err(err) => {
+                    warnings.push(LoadError::Validation(err.to_string()));
+                }
             }
         }
 
@@ -437,8 +452,8 @@ impl UserConfig {
         {
             crate::styling::eprintln!(
                 "{}",
-                crate::styling::warning_message(format!(
-                    "Config file not found: {}",
+                crate::styling::warning_message(color_print::cformat!(
+                    "Config file not found: <bold>{}</>",
                     crate::path::format_path_for_display(config_path)
                 ))
             );

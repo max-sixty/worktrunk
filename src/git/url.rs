@@ -158,6 +158,60 @@ impl GitRemoteUrl {
     pub fn is_gitlab(&self) -> bool {
         self.host.to_ascii_lowercase().contains("gitlab")
     }
+
+    /// Check if this URL points to a Gitea host.
+    ///
+    /// Matches gitea.com and self-hosted Gitea instances (e.g., gitea.example.com).
+    pub fn is_gitea(&self) -> bool {
+        self.host.to_ascii_lowercase().contains("gitea")
+    }
+
+    /// Check if this URL points to an Azure DevOps host.
+    ///
+    /// Matches `dev.azure.com`, `ssh.dev.azure.com`, and legacy `*.visualstudio.com` hosts.
+    pub fn is_azure_devops(&self) -> bool {
+        let host = self.host.to_ascii_lowercase();
+        host.contains("dev.azure.com") || host.contains("visualstudio.com")
+    }
+
+    /// Extract the Azure DevOps organization from the URL.
+    ///
+    /// Azure DevOps URLs do not fit the standard `host/owner/repo` shape:
+    /// - `https://dev.azure.com/{org}/{project}/_git/{repo}` — owner is `{org}/{project}/_git`
+    /// - `git@ssh.dev.azure.com:v3/{org}/{project}/{repo}` — owner is `v3/{org}/{project}`
+    /// - `https://{org}.visualstudio.com/{project}/_git/{repo}` — org is in the hostname
+    pub fn azure_organization(&self) -> Option<&str> {
+        if !self.is_azure_devops() {
+            return None;
+        }
+        let parts: Vec<&str> = self.owner.split('/').collect();
+        let host = self.host.to_ascii_lowercase();
+        if host.contains("ssh.dev.azure.com") {
+            parts.get(1).copied()
+        } else if host.contains("dev.azure.com") {
+            parts.first().copied()
+        } else {
+            self.host.split('.').next()
+        }
+    }
+
+    /// Extract the Azure DevOps project from the URL.
+    ///
+    /// See [`azure_organization`](Self::azure_organization) for URL shape details.
+    pub fn azure_project(&self) -> Option<&str> {
+        if !self.is_azure_devops() {
+            return None;
+        }
+        let parts: Vec<&str> = self.owner.split('/').collect();
+        let host = self.host.to_ascii_lowercase();
+        if host.contains("ssh.dev.azure.com") {
+            parts.get(2).copied()
+        } else if host.contains("dev.azure.com") {
+            parts.get(1).copied()
+        } else {
+            parts.first().copied()
+        }
+    }
 }
 
 /// Extract owner and repository name from a git remote URL.
@@ -979,5 +1033,53 @@ mod tests {
             "All URLs must produce unique identifiers. Got duplicates in: {:?}",
             identifiers
         );
+    }
+
+    #[test]
+    fn test_is_azure_devops() {
+        // HTTPS dev.azure.com
+        let url = GitRemoteUrl::parse("https://dev.azure.com/myorg/myproject/_git/myrepo").unwrap();
+        assert!(url.is_azure_devops());
+        assert!(!url.is_github());
+        assert!(!url.is_gitlab());
+
+        // SSH ssh.dev.azure.com
+        let url = GitRemoteUrl::parse("git@ssh.dev.azure.com:v3/myorg/myproject/myrepo").unwrap();
+        assert!(url.is_azure_devops());
+
+        // Legacy *.visualstudio.com
+        let url =
+            GitRemoteUrl::parse("https://myorg.visualstudio.com/myproject/_git/myrepo").unwrap();
+        assert!(url.is_azure_devops());
+
+        // GitHub and GitLab should not match
+        let url = GitRemoteUrl::parse("https://github.com/owner/repo").unwrap();
+        assert!(!url.is_azure_devops());
+        let url = GitRemoteUrl::parse("https://gitlab.com/owner/repo").unwrap();
+        assert!(!url.is_azure_devops());
+    }
+
+    #[test]
+    fn test_azure_organization_and_project() {
+        // HTTPS dev.azure.com — owner is "{org}/{project}/_git"
+        let url = GitRemoteUrl::parse("https://dev.azure.com/myorg/myproject/_git/myrepo").unwrap();
+        assert_eq!(url.azure_organization(), Some("myorg"));
+        assert_eq!(url.azure_project(), Some("myproject"));
+
+        // SSH ssh.dev.azure.com — owner is "v3/{org}/{project}"
+        let url = GitRemoteUrl::parse("git@ssh.dev.azure.com:v3/myorg/myproject/myrepo").unwrap();
+        assert_eq!(url.azure_organization(), Some("myorg"));
+        assert_eq!(url.azure_project(), Some("myproject"));
+
+        // Legacy *.visualstudio.com — org is in the hostname
+        let url =
+            GitRemoteUrl::parse("https://myorg.visualstudio.com/myproject/_git/myrepo").unwrap();
+        assert_eq!(url.azure_organization(), Some("myorg"));
+        assert_eq!(url.azure_project(), Some("myproject"));
+
+        // Non-Azure URL returns None
+        let url = GitRemoteUrl::parse("https://github.com/owner/repo").unwrap();
+        assert_eq!(url.azure_organization(), None);
+        assert_eq!(url.azure_project(), None);
     }
 }

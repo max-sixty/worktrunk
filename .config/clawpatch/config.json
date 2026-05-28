@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "stateDir": ".config/clawpatch",
+  "include": [
+    "**/*"
+  ],
+  "exclude": [
+    "node_modules/**",
+    "dist/**",
+    "build/**",
+    "target/**",
+    ".build/**",
+    ".git/**",
+    ".clawpatch/**",
+    ".config/clawpatch/**"
+  ],
+  "provider": {
+    "name": "codex",
+    "model": null
+  },
+  "commands": {
+    "typecheck": "cargo check --workspace --all-targets",
+    "lint": null,
+    "format": "cargo fmt --all --check",
+    "test": "cargo test --workspace"
+  },
+  "review": {
+    "maxContextFiles": 24,
+    "maxOwnedFiles": 12,
+    "maxFindingsPerFeature": 10,
+    "minConfidenceToFix": "medium"
+  },
+  "git": {
+    "requireCleanWorktreeForFix": true,
+    "commit": false,
+    "openPr": false
+  }
+}

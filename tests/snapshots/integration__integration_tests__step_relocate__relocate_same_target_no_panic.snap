@@ -49,4 +49,4 @@ exit_code: 0
 [32m✓[39m [32mRelocated [1malpha[22m: _PARENT_/wrong-location-1 → _REPO_/repo.shared[39m
 [33m▲[39m [33mSkipping [1mbeta[22m (target occupied: _REPO_/repo.shared)[39m
 
-[2m○[22m Relocated 1 worktree, skipped 1 worktree
+[32m✓[39m [32mRelocated 1 worktree, skipped 1 worktree[39m

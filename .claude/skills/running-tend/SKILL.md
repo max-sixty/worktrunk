@@ -12,6 +12,13 @@ CLI for managing git worktrees). The generic skills (`tend-running-in-ci`,
 `tend-review`, `tend-triage`, etc.) provide the workflow framework;
 this skill adds worktrunk conventions.
 
+## Filing issues in other repos
+
+Standing exception granted: file directly in agent-equipped targets (per
+**Filing Issues in Other Repos** in the bundled `running-in-ci` skill) without
+asking permission here first. The default rule (open an issue here asking
+permission first) still applies when the target shows no agent signals.
+
 ## Codecov Monitoring
 
 After required CI checks pass, poll `codecov/patch` — it is mandatory despite
@@ -46,8 +53,9 @@ curl -sL "https://api.codecov.io/api/v2/gh/${REPO%/*}/repos/${REPO#*/}/compare/?
 # Patch-level summary per file:
 jq '.files[] | {name: .name.head, patch: .totals.patch}' /tmp/codecov.json
 
-# Uncovered added lines in a specific changed file:
-jq '.files[] | select(.name.head == "<path>") | .lines[] | select(.is_diff and .added and .coverage.head == 0) | {line: .number.head, code: (.value | .[0:80])}' /tmp/codecov.json
+# Uncovered added lines in a specific changed file
+# (coverage.head is a LineType enum: 0=hit, 1=miss, 2=partial — filter on 1=miss):
+jq '.files[] | select(.name.head == "<path>") | .lines[] | select(.is_diff and .added and .coverage.head == 1) | {line: .number.head, code: .value}' /tmp/codecov.json
 ```
 
 If the Codecov API markers aren't enough, download the `code-coverage-report`
@@ -269,6 +277,39 @@ Triage each duplicate:
 
 Baseline: ~29 git subprocesses per render on a clean tree; a jump above
 ~32 warrants investigation.
+
+## Weekly Maintenance: LLM Model Names in Docs
+
+Grep for current Claude and Codex pins across every tracked file:
+
+```bash
+git grep -niE "claude|codex"
+```
+
+Check the latest IDs at <https://docs.anthropic.com/en/docs/about-claude/models> and <https://developers.openai.com/codex/models>. The recommended commit-message commands should use the most recent fastest model from each vendor (Haiku for Anthropic, the smallest current Codex variant for OpenAI).
+
+**On drift, open a PR — don't file an issue.** The source of truth is `after_long_help` in `src/cli/mod.rs`; edit it and let `cargo test --test integration test_docs_are_in_sync` regenerate the mirrors under `docs/content/` and `skills/worktrunk/reference/`. The "smallest current variant" call is a judgment — pick the one the vendor's models page currently positions as fastest/smallest, and explain the choice in the PR body. Verifying the new model name with an installed CLI (`codex -m <name>`, etc.) isn't possible in this CI sandbox; the PR is the right output anyway, and the maintainer tests on merge.
+
+## Weekly Maintenance: Agent App Integration Surfaces
+
+Worktrunk ships a plugin for each agent CLI it integrates with, and those CLIs
+change their integration surfaces without notice. Each week, scan the upstream
+changelogs and flag changes that affect what Worktrunk consumes or produces.
+
+| App | Source to check | Integration surface |
+|-----|-----------------|---------------------|
+| Claude Code | `gh api repos/anthropics/claude-code/contents/CHANGELOG.md -H 'Accept: application/vnd.github.raw'`, plus `curl -sL https://code.claude.com/docs/en/statusline.md` for the statusline JSON schema | statusline stdin JSON, `WorktreeCreate`/`WorktreeRemove` hooks, plugin marketplace, `/wt-switch-create` |
+| Codex | `gh release list -R openai/codex -L 10` | plugin marketplace |
+| Gemini CLI | `gh release list -R google-gemini/gemini-cli -L 10` | native extension loading |
+| OpenCode | `gh release list -R sst/opencode -L 10` | plugins API in `~/.config/opencode/plugins/` |
+
+What to flag:
+
+- **New statusline JSON fields** — `src/commands/statusline.rs` parses `workspace.current_dir`, `model.display_name`, and `context_window.used_percentage`. A newly added field (rate limits, session cost, PR review state) may be worth surfacing in `wt list statusline`.
+- **Renamed or removed hook events** — `WorktreeCreate`/`WorktreeRemove` route agent worktree creation through `wt`; a renamed event silently disables isolation rather than erroring.
+- **Changed plugin install mechanisms** — `wt config plugins {claude,codex,opencode} install` and the Gemini extension manifest break if the marketplace or plugins-directory contract changes.
+
+Don't open a PR speculatively. File one issue per relevant change, linking the upstream entry and noting what Worktrunk would need to do. If nothing changed, say so and move on.
 
 ## README Date Check
 

@@ -10,6 +10,7 @@ use worktrunk::config::{
 };
 use worktrunk::git::{ErrorExt, Repository, WorktrunkError};
 use worktrunk::path::{format_path_for_display, to_posix_path};
+use worktrunk::shell_exec::ShellEscapeMode;
 use worktrunk::styling::{
     eprintln, error_message, format_bash_with_gutter, format_with_gutter, info_message,
     progress_message, verbosity,
@@ -148,6 +149,13 @@ impl FailureStrategy {
 
 #[derive(Clone, Copy, Debug)]
 pub struct CommandContext<'a> {
+    /// The repository, rooted at the worktree this operation acts on.
+    ///
+    /// For hooks this field is load-bearing: `ctx.repo.load_project_config()` is
+    /// how a hook gets its `.config/wt.toml`, so whichever worktree `repo` is
+    /// rooted at decides which file is read. The per-hook mapping (and why each
+    /// construction site picks the root it does) is the spec in the
+    /// [`super::hooks`] module docs.
     pub repo: &'a Repository,
     pub config: &'a UserConfig,
     /// Current branch name, if on a branch (None in detached HEAD state).
@@ -285,7 +293,7 @@ pub fn build_hook_context(
         let commit = match ctx.branch {
             Some(branch) => ctx
                 .repo
-                .run_command(&["rev-parse", branch])
+                .run_command(&["rev-parse", "--verify", "--end-of-options", branch])
                 .ok()
                 .map(|s| s.trim().to_owned()),
             None => ctx
@@ -369,10 +377,12 @@ pub fn wait_first_error<E>(
 /// Expand a shell-command template against a context map.
 ///
 /// Builds the `&str` vars map required by `expand_template` and fixes
-/// `shell_escape=true` since every caller interpolates the result into a
-/// shell string. Used by the three execution paths — foreground hooks,
-/// background pipelines, and aliases — that defer `vars.*` expansion until
-/// just before the command runs so prior steps can set vars via git config.
+/// [`ShellEscapeMode::Posix`]: every caller (foreground hooks, background
+/// pipelines, aliases) interpolates the result into a command line run
+/// through `Cmd::shell` (`sh`/Git Bash), which is always POSIX — unlike the
+/// `--execute` payload, this never reaches a PowerShell wrapper. Used by the
+/// three execution paths that defer `vars.*` expansion until just before the
+/// command runs so prior steps can set vars via git config.
 pub fn expand_shell_template(
     template: &str,
     context: &HashMap<String, String>,
@@ -383,7 +393,13 @@ pub fn expand_shell_template(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    Ok(expand_template(template, &vars, true, repo, label)?)
+    Ok(expand_template(
+        template,
+        &vars,
+        ShellEscapeMode::Posix,
+        repo,
+        label,
+    )?)
 }
 
 /// Resolve the shell string to execute for a prepared command.
@@ -890,9 +906,28 @@ mod tests {
         }
         .into();
         let cmd = make_cmd(Some("lint"));
-        let wrapper = hook_error_wrapper(HookType::PostStart);
+        let wrapper = hook_error_wrapper(HookType::PostCreate);
         let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::Warn);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_handle_command_error_warn_signal_aborts() {
+        let err: anyhow::Error = WorktrunkError::ChildProcessExited {
+            code: 143,
+            message: "terminated".into(),
+            signal: Some(15),
+        }
+        .into();
+        let cmd = make_cmd(Some("cleanup"));
+        let wrapper = hook_error_wrapper(HookType::PostCreate);
+        let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::Warn);
+        let err = result.unwrap_err();
+        let wt_err = err.downcast_ref::<WorktrunkError>().unwrap();
+        assert!(matches!(
+            wt_err,
+            WorktrunkError::AlreadyDisplayed { exit_code: 143 }
+        ));
     }
 
     #[test]
@@ -900,7 +935,7 @@ mod tests {
         // Covers the `cmd.name = None` branch of the Warn arm.
         let err = anyhow::anyhow!("unexpected failure");
         let cmd = make_cmd(None);
-        let wrapper = hook_error_wrapper(HookType::PostStart);
+        let wrapper = hook_error_wrapper(HookType::PostCreate);
         let result = handle_command_error(err, &cmd, &wrapper, FailureStrategy::Warn);
         assert!(result.is_ok());
     }

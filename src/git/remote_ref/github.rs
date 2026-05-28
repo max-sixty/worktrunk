@@ -9,9 +9,9 @@ use serde::Deserialize;
 
 use super::{
     CliApiRequest, PlatformData, RemoteRefInfo, RemoteRefProvider, cli_api_error, cli_config_value,
-    run_cli_api,
+    extract_host_from_html_url, run_cli_api,
 };
-use crate::git::{self, RefType, Repository};
+use crate::git::{RefType, Repository};
 use crate::shell_exec::Cmd;
 
 /// GitHub Pull Request provider.
@@ -21,6 +21,10 @@ pub struct GitHubProvider;
 impl RemoteRefProvider for GitHubProvider {
     fn ref_type(&self) -> RefType {
         RefType::Pr
+    }
+
+    fn platform_label(&self) -> &'static str {
+        "github"
     }
 
     fn fetch_info(&self, number: u32, repo: &Repository) -> anyhow::Result<RemoteRefInfo> {
@@ -105,19 +109,18 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
     let (owner, repo_name, source) = if let Some((owner, name)) = gh_default_repo(repo_root) {
         (owner, name, "gh default".to_string())
     } else {
-        // Extract owner/repo from primary remote URL. Uses raw URL (not
-        // effective) because insteadOf may rewrite to a non-parseable path.
-        // SSH aliases only affect the host, not the path — owner/repo is always real.
-        let remote = repo.primary_remote()?;
-        let url = repo
-            .remote_url(&remote)
-            .ok_or_else(|| anyhow::anyhow!("Remote '{}' has no URL", remote))?;
-        let parsed = git::GitRemoteUrl::parse(&url)
-            .ok_or_else(|| anyhow::anyhow!("Cannot parse remote URL: {}", url))?;
+        // Extract owner/repo from the GitHub remote — which may be a
+        // non-primary remote in a mixed-remote repo (e.g. origin=GitLab,
+        // upstream=GitHub). Uses the raw URL (not effective) because insteadOf
+        // may rewrite to a non-parseable path; SSH aliases only affect the
+        // host, not the path, so owner/repo is always real.
+        let parsed = repo
+            .forge_remote_parsed_url(|u| u.is_github())
+            .ok_or_else(|| anyhow::anyhow!("No GitHub remote configured"))?;
         (
             parsed.owner().to_string(),
             parsed.repo().to_string(),
-            remote,
+            "github remote".to_string(),
         )
     };
 
@@ -212,25 +215,10 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
         .eq_ignore_ascii_case(&head_repo.owner.login)
         || !base_repo.name.eq_ignore_ascii_case(&head_repo.name);
 
-    let host = response
-        .html_url
-        .strip_prefix("https://")
-        .or_else(|| response.html_url.strip_prefix("http://"))
-        .and_then(|s| s.split('/').next())
-        .filter(|h| !h.is_empty())
-        .with_context(|| format!("Failed to parse host from PR URL: {}", response.html_url))?
-        .to_string();
+    let host = extract_host_from_html_url(&response.html_url)?;
 
-    // Compute fork push URL only for cross-repo PRs
-    let fork_push_url = if is_cross_repo {
-        Some(fork_remote_url(
-            &host,
-            &head_repo.owner.login,
-            &head_repo.name,
-        ))
-    } else {
-        None
-    };
+    let fork_push_url =
+        is_cross_repo.then(|| fork_remote_url(&host, &head_repo.owner.login, &head_repo.name));
 
     Ok(RemoteRefInfo {
         ref_type: RefType::Pr,
@@ -256,6 +244,22 @@ fn fetch_pr_info(pr_number: u32, repo: &Repository) -> anyhow::Result<RemoteRefI
 /// Get the git protocol preference from `gh` (GitHub CLI).
 fn use_ssh_protocol() -> bool {
     cli_config_value("gh", "git_protocol").as_deref() == Some("ssh")
+}
+
+/// Whether `gh` has an authentication token configured for `host`.
+///
+/// Used by the switch dispatcher to decide which provider to try when the
+/// remote URL doesn't unambiguously identify the forge (e.g. self-hosted on
+/// `git.example.com`). `gh auth token --hostname <host>` reads from
+/// `~/.config/gh/hosts.yml` and the OS keyring — no network. Returns `false`
+/// if `gh` is not installed.
+pub fn is_authed_for(host: &str) -> bool {
+    Cmd::new("gh")
+        .args(["auth", "token", "--hostname", host])
+        .env("GH_PROMPT_DISABLED", "1")
+        .run()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Construct the remote URL for a fork repository.

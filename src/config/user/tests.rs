@@ -83,11 +83,8 @@ squash = true
 [step.copy-ignored]
 exclude = [".conductor/"]
 
-[post-create]
-run = "npm install"
-
 [post-start]
-run = "npm run build"
+run = "npm install"
 
 [post-switch]
 rename-tab = "echo 'switched'"
@@ -581,7 +578,7 @@ fn test_set_project_worktree_path() {
         .set_project_worktree_path(
             "github.com/user/repo",
             "../{{ branch | sanitize }}".to_string(),
-            Some(&config_path),
+            &config_path,
         )
         .unwrap();
 
@@ -750,6 +747,7 @@ fn test_merge_commit_generation_config() {
         template_file: Some("~/.config/template.txt".to_string()),
         squash_template: None,
         squash_template_file: None,
+        template_append: None,
     };
     let override_config = CommitGenerationConfig {
         command: Some("claude -p --model=haiku".to_string()), // Override
@@ -757,6 +755,7 @@ fn test_merge_commit_generation_config() {
         template_file: None,                                  // Fall back to base
         squash_template: None,
         squash_template_file: None,
+        template_append: None,
     };
 
     let merged = base.merge_with(&override_config);
@@ -764,6 +763,28 @@ fn test_merge_commit_generation_config() {
     assert_eq!(merged.template, Some("custom".to_string()));
     // When project sets template, template_file is cleared to maintain mutual exclusivity
     assert_eq!(merged.template_file, None);
+}
+
+#[test]
+fn test_merge_commit_generation_template_append() {
+    // Override wins when set; otherwise the base value carries through.
+    let base = CommitGenerationConfig {
+        template_append: Some("base append".to_string()),
+        ..Default::default()
+    };
+    let override_config = CommitGenerationConfig {
+        template_append: Some("override append".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(
+        base.merge_with(&override_config).template_append,
+        Some("override append".to_string())
+    );
+    assert_eq!(
+        base.merge_with(&CommitGenerationConfig::default())
+            .template_append,
+        Some("base append".to_string())
+    );
 }
 
 #[test]
@@ -1875,8 +1896,8 @@ fn test_hooks_merge_append_semantics() {
     );
 
     let effective = config.hooks(Some("github.com/user/repo"));
-    let post_start = effective.post_start.unwrap();
-    let commands: Vec<_> = post_start.commands().collect();
+    let post_create = effective.post_create.unwrap();
+    let commands: Vec<_> = post_create.commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "echo global");
     assert_eq!(commands[1].template, "echo project");
@@ -1891,8 +1912,8 @@ fn test_hooks_no_project_override_uses_global() {
     };
 
     let effective = config.hooks(Some("github.com/other/repo"));
-    let post_start = effective.post_start.unwrap();
-    let commands: Vec<_> = post_start.commands().collect();
+    let post_create = effective.post_create.unwrap();
+    let commands: Vec<_> = post_create.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo global");
 }
@@ -1911,8 +1932,8 @@ fn test_hooks_project_only_no_global() {
     );
 
     let effective = config.hooks(Some("github.com/user/repo"));
-    let post_start = effective.post_start.unwrap();
-    let commands: Vec<_> = post_start.commands().collect();
+    let post_create = effective.post_create.unwrap();
+    let commands: Vec<_> = post_create.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo project");
 }
@@ -1937,8 +1958,8 @@ fn test_hooks_different_hook_types_not_merged() {
     let effective = config.hooks(Some("github.com/user/repo"));
 
     // post-start: only global
-    let post_start = effective.post_start.unwrap();
-    let start_commands: Vec<_> = post_start.commands().collect();
+    let post_create = effective.post_create.unwrap();
+    let start_commands: Vec<_> = post_create.commands().collect();
     assert_eq!(start_commands.len(), 1);
     assert_eq!(start_commands[0].template, "echo global-start");
 
@@ -1958,8 +1979,8 @@ fn test_hooks_none_project_uses_global() {
     };
 
     let effective = config.hooks(None);
-    let post_start = effective.post_start.unwrap();
-    let commands: Vec<_> = post_start.commands().collect();
+    let post_create = effective.post_create.unwrap();
+    let commands: Vec<_> = post_create.commands().collect();
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].template, "echo global");
 }
@@ -1976,7 +1997,7 @@ fn test_valid_user_config_keys_includes_all_hook_types() {
     let valid_keys = valid_user_config_keys();
 
     for hook_type in HookType::iter() {
-        let key = hook_type.to_string(); // e.g., "post-create", "pre-merge"
+        let key = hook_type.to_string(); // e.g., "post-start", "pre-merge"
         assert!(
             valid_keys.contains(&key),
             "HookType::{hook_type:?} ({key}) is missing from valid_user_config_keys()"
@@ -2000,6 +2021,9 @@ fn test_valid_user_config_keys_all_deserialize() {
     for key in &valid_keys {
         match key.as_str() {
             "projects" => continue, // Skip - table type tested separately
+            // Silent aliases for canonical `pre-start`/`post-start`; including
+            // both would produce a duplicate-field error.
+            "pre-create" | "post-create" => continue,
             "skip-shell-integration-prompt" | "skip-commit-generation-prompt" => {
                 scalar_lines.push(format!("{key} = true"));
             }
@@ -2068,7 +2092,7 @@ setup = "echo setup"
 
     // Verify merge preserves order: global first, then project
     let effective = config.hooks(Some("github.com/user/repo"));
-    let commands: Vec<_> = effective.post_start.as_ref().unwrap().commands().collect();
+    let commands: Vec<_> = effective.post_create.as_ref().unwrap().commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "npm install"); // Global first
     assert_eq!(commands[1].template, "echo setup"); // Project second
@@ -2107,7 +2131,7 @@ test = "npm test"
 
     // Both commands present, global first
     let effective = config.hooks(Some("github.com/user/repo"));
-    let commands: Vec<_> = effective.post_start.as_ref().unwrap().commands().collect();
+    let commands: Vec<_> = effective.post_create.as_ref().unwrap().commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "cargo test");
     assert_eq!(commands[1].template, "npm test");
@@ -2132,7 +2156,7 @@ fn test_reload_from_invalid_toml() {
 
     // Try to reload via a mutation — should fail with parse error
     let mut config = UserConfig::default();
-    let result = config.set_skip_shell_integration_prompt(Some(&config_path));
+    let result = config.set_skip_shell_integration_prompt(&config_path);
 
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
@@ -2255,55 +2279,16 @@ fn test_hooks_merge_trait_appends_for_global_project_merge() {
 }
 
 #[test]
-fn test_hooks_merge_folds_post_create_into_pre_start() {
-    // User config uses deprecated `post-create`, project uses `pre-start`.
-    // merge_with should combine them so the user's hook isn't silently dropped.
-    let user_hooks = parse_hooks("post-create = \"npm install\"");
-    let project_hooks = parse_hooks("pre-start = \"cargo test\"");
-
-    let merged = user_hooks.merge_with(&project_hooks);
-    let pre_start = merged
-        .get(HookType::PreStart)
-        .expect("should have pre-start");
-    let commands: Vec<_> = pre_start.commands().collect();
-    assert_eq!(commands.len(), 2, "Both hooks should be present");
-    assert_eq!(commands[0].template, "npm install"); // User's post-create first
-    assert_eq!(commands[1].template, "cargo test"); // Project's pre-start second
-}
-
-#[test]
-fn test_hooks_merge_same_source_both_pre_start_and_post_create() {
-    // Single config with both fields — merge_with folds post_create into pre_start.
-    // This is an unusual config (user wrote both), but if it goes through merge
-    // both commands should run rather than silently dropping one.
-    let both = parse_hooks("pre-start = \"npm install\"\npost-create = \"cargo build\"");
-    let empty = HooksConfig::default();
-
-    let merged = both.merge_with(&empty);
-    let pre_start = merged
-        .get(HookType::PreStart)
-        .expect("should have pre-start");
-    let commands: Vec<_> = pre_start.commands().collect();
-    assert_eq!(
-        commands.len(),
-        2,
-        "Both commands from same source should be present"
-    );
-    assert_eq!(commands[0].template, "npm install"); // pre-start first
-    assert_eq!(commands[1].template, "cargo build"); // post-create second
-}
-
-#[test]
 fn test_hooks_merge_post_create_both_sides() {
-    // Both configs use deprecated `post-create` — should still combine
-    let global = parse_hooks("post-create = \"npm install\"");
-    let project = parse_hooks("post-create = \"cargo build\"");
+    // `post-start` from global and per-project config combine (global first).
+    let global = parse_hooks("post-start = \"npm install\"");
+    let project = parse_hooks("post-start = \"cargo build\"");
 
     let merged = global.merge_with(&project);
-    let pre_start = merged
-        .get(HookType::PreStart)
-        .expect("should have pre-start");
-    let commands: Vec<_> = pre_start.commands().collect();
+    let post_create = merged
+        .get(HookType::PostCreate)
+        .expect("should have post-start");
+    let commands: Vec<_> = post_create.commands().collect();
     assert_eq!(commands.len(), 2);
     assert_eq!(commands[0].template, "npm install");
     assert_eq!(commands[1].template, "cargo build");
@@ -2387,7 +2372,7 @@ fn test_reload_from_permission_error() {
 
     // Try to reload via a mutation — should fail with read error
     let mut config = UserConfig::default();
-    let result = config.set_skip_shell_integration_prompt(Some(&config_path));
+    let result = config.set_skip_shell_integration_prompt(&config_path);
 
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
@@ -3296,7 +3281,7 @@ fn test_set_project_worktree_path_noop_when_unchanged() {
 
     let mut config = UserConfig::default();
     config
-        .set_project_worktree_path("user/repo", "../custom".to_string(), Some(&config_path))
+        .set_project_worktree_path("user/repo", "../custom".to_string(), &config_path)
         .unwrap();
 
     let after_first = std::fs::read_to_string(&config_path).unwrap();
@@ -3308,7 +3293,7 @@ fn test_set_project_worktree_path_noop_when_unchanged() {
     // false, so save is skipped.
     let mut config2 = UserConfig::default();
     config2
-        .set_project_worktree_path("user/repo", "../custom".to_string(), Some(&config_path))
+        .set_project_worktree_path("user/repo", "../custom".to_string(), &config_path)
         .unwrap();
 
     let after_second = std::fs::read_to_string(&config_path).unwrap();
@@ -3330,7 +3315,7 @@ fn test_set_skip_shell_integration_prompt_noop_on_second_call() {
 
     let mut config = UserConfig::default();
     config
-        .set_skip_shell_integration_prompt(Some(&config_path))
+        .set_skip_shell_integration_prompt(&config_path)
         .unwrap();
     let after_first = std::fs::read_to_string(&config_path).unwrap();
     assert!(after_first.contains("skip-shell-integration-prompt = true"));
@@ -3338,7 +3323,7 @@ fn test_set_skip_shell_integration_prompt_noop_on_second_call() {
     // Second call with the flag already true in-memory — mutator returns
     // false, save is skipped, file is byte-identical.
     config
-        .set_skip_shell_integration_prompt(Some(&config_path))
+        .set_skip_shell_integration_prompt(&config_path)
         .unwrap();
     let after_second = std::fs::read_to_string(&config_path).unwrap();
     assert_eq!(after_first, after_second);
@@ -3354,7 +3339,7 @@ fn test_acquire_config_lock_handles_root_path() {
     // None branch executes cleanly.
     let mut config = UserConfig::default();
     let err = config
-        .set_skip_shell_integration_prompt(Some(std::path::Path::new("/")))
+        .set_skip_shell_integration_prompt(std::path::Path::new("/"))
         .unwrap_err();
     let msg = err.to_string();
     assert!(
@@ -3380,7 +3365,7 @@ fn test_acquire_config_lock_fails_when_parent_is_file() {
 
     let mut config = UserConfig::default();
     let err = config
-        .set_skip_shell_integration_prompt(Some(&config_path))
+        .set_skip_shell_integration_prompt(&config_path)
         .unwrap_err();
     let msg = err.to_string();
     assert!(
@@ -3422,7 +3407,7 @@ fn test_with_locked_mutation_propagates_save_error() {
     let cfg_path_for_closure = config_path.clone();
     let mut config = UserConfig::default();
     let err = config
-        .with_locked_mutation(Some(&config_path), move |_config| {
+        .with_locked_mutation(&config_path, move |_config| {
             // Mid-mutation: strip read permissions from the config file.
             // reload_from already ran; save_to will try to read again and fail.
             let mut perms = std::fs::metadata(&cfg_path_for_closure)

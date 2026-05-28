@@ -1,13 +1,15 @@
 //! Diagnostic report generation for issue reporting.
 //!
-//! When unexpected warnings occur (timeouts, git errors, etc.), this module
-//! can generate a diagnostic file that users attach to GitHub issues.
+//! This module generates a markdown file users can attach to GitHub issues —
+//! command line, environment, worktree state, config, and the captured trace
+//! log.
 //!
 //! # When Diagnostics Are Generated
 //!
-//! Diagnostic files are written when `-vv` is passed. Without `-vv`, the hint
-//! simply tells users to run with `-vv`. This ensures the diagnostic file
-//! contains useful debug information.
+//! Diagnostic files are written on every `-vv` run (one file per command,
+//! overwritten each time). Without `-vv`, the hint simply tells users to
+//! rerun with `-vv`. This ensures the diagnostic file contains the trace
+//! the report inlines.
 //!
 //! # Report Format
 //!
@@ -31,7 +33,7 @@
 //! # File Location
 //!
 //! Reports are written to `<git-common-dir>/wt/logs/diagnostic.md` (typically
-//! `.git/wt/logs/diagnostic.md`). Companion log files (`trace.log`, `output.log`) live in the same directory.
+//! `.git/wt/logs/diagnostic.md`). Companion log files (`trace.log`, `subprocess.log`) live in the same directory.
 //!
 //! # Usage
 //!
@@ -51,7 +53,7 @@ use minijinja::{Environment, context};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::Cmd;
-use worktrunk::styling::{eprintln, hint_message, info_message, warning_message};
+use worktrunk::styling::{eprintln, hint_message, success_message, warning_message};
 
 use crate::cli::version_str;
 use crate::output;
@@ -103,12 +105,12 @@ Shell integration: {{ shell_integration }}
 ```
 </details>
 {%- endif %}
-{%- if output_log_path %}
+{%- if subprocess_log_path %}
 
 <details>
 <summary>Raw subprocess output</summary>
 
-Full captured stdout/stderr is in `{{ output_log_path }}` — not inlined because it can be multi-MB.
+Full captured stdout/stderr is in `{{ subprocess_log_path }}`.
 </details>
 {%- endif %}
 "#;
@@ -155,7 +157,7 @@ impl DiagnosticReport {
         // Get config show output (if available)
         let config_show = config_show_output(repo);
 
-        // Inline the trace log (bounded; mirrors stderr). The raw subprocess
+        // Inline the trace log (bounded). The raw subprocess
         // output log is only *referenced* by path — it can be multi-MB and
         // would drown out the trace records that matter in a bug report.
         let trace_log = crate::log_files::TRACE
@@ -165,7 +167,7 @@ impl DiagnosticReport {
             .filter(|s| !s.is_empty());
         // Forward slashes on both platforms so the rendered markdown reads the
         // same in bug reports regardless of where it was produced.
-        let output_log_path = crate::log_files::OUTPUT
+        let subprocess_log_path = crate::log_files::SUBPROCESS
             .path()
             .map(|p| path_slash::PathExt::to_slash_lossy(p.as_path()).into_owned());
 
@@ -184,7 +186,7 @@ impl DiagnosticReport {
             worktree_list,
             config_show,
             trace_log,
-            output_log_path,
+            subprocess_log_path,
         })
         .unwrap()
     }
@@ -254,7 +256,7 @@ pub(crate) fn write_if_verbose(verbose: u8, command_line: &str, error_msg: Optio
             let path_display = format_path_for_display(&path);
             eprintln!(
                 "{}",
-                info_message(format!("Diagnostic saved: {path_display}"))
+                success_message(format!("Diagnostic saved @ {path_display}"))
             );
 
             // Only show gh command if gh is installed

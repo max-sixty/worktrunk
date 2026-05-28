@@ -28,6 +28,11 @@ pub(super) type PreviewCacheKey = (String, PreviewMode);
 /// Shared across all WorktreeSkimItems for background pre-computation.
 pub(super) type PreviewCache = Arc<DashMap<PreviewCacheKey, String>>;
 
+/// Prefix on a worktree-backed item's `output()` token. Detached worktrees
+/// all share the `(detached)` branch label, so `output()` returns the
+/// worktree path (which is unique) behind this prefix instead.
+pub(super) const WORKTREE_OUTPUT_PREFIX: &str = "worktree-path:";
+
 /// Header item for column names (non-selectable)
 pub(super) struct HeaderSkimItem {
     pub display_text: String,
@@ -101,8 +106,7 @@ pub(super) struct WorktreeSkimItem {
     /// Current ANSI-colored display line. Starts as the skeleton render;
     /// replaced in place as data arrives.
     pub rendered: Arc<Mutex<String>>,
-    /// Branch name — also what `output()` returns when this item is
-    /// selected.
+    /// Branch name used by switch selection and preview cache keys.
     pub branch_name: String,
     /// Skeleton-snapshot of the underlying ListItem. Preview computation
     /// reads only skeleton-time fields (`branch_name`, `head`,
@@ -130,7 +134,13 @@ impl SkimItem for WorktreeSkimItem {
     }
 
     fn output(&self) -> Cow<'_, str> {
-        Cow::Borrowed(&self.branch_name)
+        match self.item.worktree_path() {
+            Some(path) => Cow::Owned(format!(
+                "{WORKTREE_OUTPUT_PREFIX}{}",
+                path.to_string_lossy()
+            )),
+            None => Cow::Borrowed(&self.branch_name),
+        }
     }
 
     fn preview(&self, context: PreviewContext<'_>) -> ItemPreview {
@@ -362,7 +372,9 @@ impl WorktreeSkimItem {
         let reset = Reset;
 
         let upstream_ref = format!("{branch}@{{u}}");
-        let Ok(upstream_sha_raw) = repo.run_command(&["rev-parse", &upstream_ref]) else {
+        let Ok(upstream_sha_raw) =
+            repo.run_command(&["rev-parse", "--verify", "--end-of-options", &upstream_ref])
+        else {
             return cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no upstream tracking branch\n"
             );
@@ -376,8 +388,13 @@ impl WorktreeSkimItem {
         }
 
         let probe_range = format!("{}...{upstream_sha}", item.head());
-        let Ok(counts) = repo.run_command(&["rev-list", "--left-right", "--count", &probe_range])
-        else {
+        let Ok(counts) = repo.run_command(&[
+            "rev-list",
+            "--left-right",
+            "--count",
+            "--end-of-options",
+            &probe_range,
+        ]) else {
             return cformat!(
                 "{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no upstream tracking branch\n"
             );
@@ -522,7 +539,9 @@ impl WorktreeSkimItem {
         // pane. Silent fallbacks beat disruptive errors during navigation;
         // the preview is supplementary, users can still select worktrees
         // even if a probe fails.
-        let Ok(merge_base_output) = repo.run_command(&["merge-base", &default_branch, head]) else {
+        let Ok(merge_base_output) =
+            repo.run_command(&["merge-base", "--end-of-options", &default_branch, head])
+        else {
             return (
                 cformat!("{INFO_SYMBOL}{reset} <bold>{branch}</>{reset} has no commits\n"),
                 false,

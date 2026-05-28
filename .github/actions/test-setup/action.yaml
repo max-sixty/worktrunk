@@ -11,16 +11,26 @@ runs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-insta
-        version: "=1.46.3"
+        version: "=1.47.2"
 
     - name: Install cargo-nextest
       uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-nextest
-        version: "=0.9.132"
+        version: "=0.9.136"
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
+      with:
+        # Don't cache ~/.cargo/bin. The runner-image rustup binary acts as
+        # the cargo/rustc/rustup proxy; restoring a stale copy on top of a
+        # new image leaves the proxy resolving as `rustup-init`, breaking
+        # `cargo install` (only exposed when the install is a cache miss).
+        # Tools we need are installed via baptiste0928/cargo-install into a
+        # separate `--root`, so nothing else in here relies on ~/.cargo/bin.
+        cache-bin: false
+        # Bumped to invalidate caches that already include the stale bin.
+        prefix-key: v1-rust
 
     - name: Install shells (zsh, fish) - Ubuntu
       if: runner.os == 'Linux'
@@ -40,4 +50,4 @@ runs:
       if: runner.os != 'Windows'
       uses: hustcer/setup-nu@v3
       with:
-        version: '0.112.2'
+        version: '0.113.0'

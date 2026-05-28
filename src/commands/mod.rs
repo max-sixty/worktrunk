@@ -1,4 +1,5 @@
 mod alias;
+pub(crate) mod backup;
 pub(crate) mod command_approval;
 pub(crate) mod command_executor;
 pub(crate) mod commit;
@@ -11,6 +12,7 @@ mod for_each;
 mod hook_announcement;
 mod hook_commands;
 mod hook_filter;
+pub(crate) mod hook_plan;
 pub(crate) mod hooks;
 pub(crate) mod init;
 pub(crate) mod list;
@@ -34,11 +36,12 @@ pub(crate) use alias::{
 };
 pub(crate) use config::{
     add_approvals, clear_approvals, handle_alias_dry_run, handle_alias_show, handle_claude_install,
-    handle_claude_install_statusline, handle_claude_uninstall, handle_config_create,
-    handle_config_show, handle_config_update, handle_hints_clear, handle_hints_get,
-    handle_logs_list, handle_opencode_install, handle_opencode_uninstall, handle_state_clear,
-    handle_state_clear_all, handle_state_get, handle_state_set, handle_state_show,
-    handle_vars_clear, handle_vars_get, handle_vars_list, handle_vars_set,
+    handle_claude_install_statusline, handle_claude_uninstall, handle_codex_install,
+    handle_codex_uninstall, handle_config_create, handle_config_show, handle_config_update,
+    handle_hints_clear, handle_hints_get, handle_logs_list, handle_opencode_install,
+    handle_opencode_uninstall, handle_state_clear, handle_state_clear_all, handle_state_get,
+    handle_state_set, handle_state_show, handle_vars_clear, handle_vars_get, handle_vars_list,
+    handle_vars_set,
 };
 pub(crate) use configure_shell::{
     handle_configure_shell, handle_show_theme, handle_unconfigure_shell,
@@ -55,9 +58,9 @@ pub(crate) use picker::handle_picker;
 pub(crate) use repository_ext::RemoveTarget;
 pub(crate) use run_pipeline::run_pipeline;
 pub(crate) use step::{
-    PromoteResult, RebaseResult, SquashResult, handle_promote, handle_rebase, handle_squash,
-    step_commit, step_copy_ignored, step_diff, step_dry_run_squash, step_prune, step_relocate,
-    step_show_squash_prompt,
+    PreApprovedGuidance, PromoteResult, RebaseResult, SquashResult, handle_promote, handle_rebase,
+    handle_squash, step_commit, step_copy_ignored, step_diff, step_dry_run_squash, step_prune,
+    step_relocate, step_show_squash_prompt, step_tether,
 };
 pub(crate) use worktree::{
     OperationMode, SwitchOptions, is_worktree_at_expected_path, resolve_worktree_arg, run_switch,

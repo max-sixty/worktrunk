@@ -14,18 +14,12 @@ metadata:
 3. **Review commits**: Check commits since last release to understand scope of changes
 4. **Check library API compatibility**: Run `cargo semver-checks check-release -p worktrunk` (install with `cargo install cargo-semver-checks --locked` if missing). If it reports breaking changes, the bump must be minor (pre-1.0) or major (post-1.0). See "Library API Compatibility" below.
 5. **Credit contributors**: Check for external PR authors and issue reporters (see "Credit External Contributors" and "Credit Issue Reporters" below)
-6. **Confirm release type with user**: Present changes summary (including semver-checks result) and ask user to confirm patch/minor/major (see below)
+6. **Determine release type**: Pick the bump from the changes (including semver-checks result). Ask the user only if the choice is genuinely ambiguous (see below).
 7. **Bump version** (must run on a clean tree — before editing CHANGELOG):
    ```bash
    cargo release X.Y.Z -p worktrunk -x --no-publish --no-push --no-tag --no-verify --no-confirm && cargo check
    ```
-   This bumps `Cargo.toml`, `Cargo.lock`, and applies `pre-release-replacements` (e.g., `SKILL.md`'s `version:` line), then auto-commits. We'll reset this commit in step 9 to fold in the CHANGELOG.
-
-   Then sync the SHA-256 digest of `SKILL.md` in `docs/static/.well-known/agent-skills/index.json` — `cargo-release` doesn't know that file derives from `SKILL.md`, so it stays stale until the docs-sync test rewrites it:
-   ```bash
-   cargo test --test integration test_docs_are_in_sync || cargo test --test integration test_docs_are_in_sync
-   ```
-   The first run rewrites the digest and exits non-zero; the second confirms sync. The regenerated `index.json` is then picked up by `git add -A` in step 9.
+   This bumps `Cargo.toml` and `Cargo.lock`, then auto-commits. We'll reset this commit in step 9 to fold in the CHANGELOG.
 8. **Update CHANGELOG**: Add `## X.Y.Z` section at top with changes (see MANDATORY verification below)
 9. **Commit**: Reset the auto-commit from step 7, stage everything, and create the final release commit:
    ```bash
@@ -212,17 +206,23 @@ Report format:
 
 **If verification finds problems:** Escalate to the user. Show them the subagent's findings and ask how to proceed. Don't attempt to resolve ambiguous changelog entries autonomously — the user knows the intent behind their changes better than you do.
 
-## Confirm Release Type
+## Determine Release Type
 
-**Before proceeding with changelog and version bump, confirm the release type with the user.**
+Pick the bump from the changes. Skip the question when only one level is plausible; ask only when the choice is genuinely ambiguous.
 
-After reviewing commits, present:
+**Proceed without asking when the answer is obvious:**
+
+- `cargo semver-checks` reports breaking changes → minor (pre-1.0; patch is disallowed, major has no basis pre-1.0 in a maturing project). Inform the user and continue: "Bumping minor — semver-checks reported N breaking changes; patch is disallowed pre-1.0."
+- Only bug fixes and internal commits since the last release, no new features, no semver breakage → patch. Inform the user with the same shape.
+
+**Ask only when genuinely ambiguous** — e.g., new features landed with no semver breakage (patch vs. minor is a judgment call), or a borderline case where the user's read of the changes may differ. Use `AskUserQuestion` with the actual choice (patch vs. minor); don't add novelty options like skipping a version number.
+
+When asking, present:
 1. Current version (e.g., `0.2.0`)
 2. Brief summary of changes (new features, bug fixes, breaking changes)
-3. Your recommendation for release type with reasoning
-4. The three options: patch, minor, major
+3. Your recommendation with reasoning
 
-Use `AskUserQuestion` to get explicit confirmation. Example:
+Example:
 
 ```
 Current version: 0.2.0
@@ -233,8 +233,6 @@ Changes since v0.2.0:
 
 Recommendation: Minor release (0.3.0) — new features, no breaking changes
 ```
-
-**Do not proceed until user confirms the release type.** The user may have context about upcoming changes or preferences that affect versioning.
 
 ## Version Guidelines
 

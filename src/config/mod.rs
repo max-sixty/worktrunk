@@ -101,7 +101,7 @@ pub(crate) fn is_default<T: Default + PartialEq>(value: &T) -> bool {
 }
 
 // Re-export public types
-pub use approvals::{Approvals, approvals_path};
+pub use approvals::{Approvals, approvals_path, require_approvals_path};
 pub use commands::{Command, CommandConfig, HookStep, append_aliases};
 pub use deprecation::CheckAndMigrateResult;
 pub use deprecation::DeprecationInfo;
@@ -118,7 +118,7 @@ pub use deprecation::normalize_template_vars;
 pub use deprecation::suppress_warnings;
 pub use deprecation::{
     DEPRECATED_SECTION_KEYS, DeprecatedSection, UnknownKeyKind, classify_unknown_key,
-    key_belongs_in, warn_unknown_fields,
+    key_belongs_in, nested_key_belongs_in, warn_unknown_fields,
 };
 pub use expansion::{
     ACTIVE_VARS, ALIAS_ARGS_KEY, DEPRECATED_TEMPLATE_VARS, EXEC_BASE_VARS, REPO_VARS,
@@ -128,7 +128,10 @@ pub use expansion::{
     validate_template_syntax, vars_available_in,
 };
 pub use hooks::HooksConfig;
-pub use project::{ProjectCiConfig, ProjectConfig, ProjectListConfig, valid_project_config_keys};
+pub use project::{
+    ProjectCiConfig, ProjectCommitConfig, ProjectCommitGenerationConfig, ProjectConfig,
+    ProjectListConfig, valid_project_config_keys,
+};
 pub use unknown_tree::{
     UnknownAnalysis, UnknownTree, UnknownWarning, collect_unknown_warnings, compute_unknown_tree,
 };
@@ -137,7 +140,7 @@ pub use user::{
     CommitConfig, CommitGenerationConfig, CopyIgnoredConfig, ListConfig, MergeConfig, RemoveConfig,
     ResolvedConfig, StageMode, StepConfig, SwitchConfig, SwitchPickerConfig, UserConfig,
     UserProjectOverrides, config_path, default_config_path, default_system_config_path,
-    set_config_path, system_config_path, valid_user_config_keys,
+    require_config_path, set_config_path, system_config_path, valid_user_config_keys,
 };
 
 #[cfg(test)]
@@ -145,6 +148,7 @@ mod tests {
     use insta::assert_snapshot;
 
     use super::*;
+    use crate::shell_exec::ShellEscapeMode;
     use crate::testing::TestRepo;
 
     fn test_repo() -> TestRepo {
@@ -294,7 +298,7 @@ mod tests {
 
     #[test]
     fn test_command_config_single() {
-        let toml = r#"post-create = "npm install""#;
+        let toml = r#"post-start = "npm install""#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let cmd_config = config.hooks.post_create.unwrap();
         let commands: Vec<_> = cmd_config.commands().collect();
@@ -310,7 +314,7 @@ mod tests {
             watch = "npm run watch"
         "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
-        let cmd_config = config.hooks.post_start.unwrap();
+        let cmd_config = config.hooks.post_create.unwrap();
         let commands: Vec<_> = cmd_config.commands().collect();
         assert_eq!(commands.len(), 2);
         // Preserves TOML insertion order
@@ -357,14 +361,14 @@ mod tests {
 
     #[test]
     fn test_command_config_task_order() {
-        // Test exact ordering as used in post_start tests
+        // Test exact ordering as used in post_create tests
         let toml = r#"
 [post-start]
 task1 = "echo 'Task 1 running' > task1.txt"
 task2 = "echo 'Task 2 running' > task2.txt"
 "#;
         let config: ProjectConfig = toml::from_str(toml).unwrap();
-        let cmd_config = config.hooks.post_start.unwrap();
+        let cmd_config = config.hooks.post_create.unwrap();
         let commands: Vec<_> = cmd_config.commands().collect();
 
         assert_eq!(commands.len(), 2);
@@ -379,19 +383,6 @@ task2 = "echo 'Task 2 running' > task2.txt"
             Some("task2"),
             "Second command should be task2"
         );
-    }
-
-    #[test]
-    fn test_project_config_both_commands() {
-        let toml = r#"
-            post-create = "npm install"
-
-            [post-start]
-            server = "npm run dev"
-        "#;
-        let config: ProjectConfig = toml::from_str(toml).unwrap();
-        assert!(config.hooks.post_create.is_some());
-        assert!(config.hooks.post_start.is_some());
     }
 
     #[test]
@@ -436,12 +427,12 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
     #[test]
     fn test_command_config_roundtrip_single() {
-        let original = r#"post-create = "npm install""#;
+        let original = r#"post-start = "npm install""#;
         let config: ProjectConfig = toml::from_str(original).unwrap();
         let serialized = toml::to_string(&config).unwrap();
         let config2: ProjectConfig = toml::from_str(&serialized).unwrap();
         assert_eq!(config, config2);
-        assert_snapshot!(serialized, @r#"post-create = "npm install""#);
+        assert_snapshot!(serialized, @r#"post-start = "npm install""#);
     }
 
     #[test]
@@ -473,7 +464,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let result = expand_template(
             "../{{ main_worktree }}.{{ branch }}",
             &vars,
-            true,
+            ShellEscapeMode::Posix,
             &test.repo,
             "test",
         )
@@ -495,7 +486,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let result = expand_template(
             "{{ main_worktree }}/{{ branch | sanitize }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -508,7 +499,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let result = expand_template(
             ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}",
             &vars,
-            false,
+            ShellEscapeMode::Literal,
             &test.repo,
             "test",
         )
@@ -527,7 +518,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let result = expand_template(
             "{{ repo_root }}/target -> {{ worktree }}/target",
             &vars,
-            true,
+            ShellEscapeMode::Posix,
             &test_repo().repo,
             "test",
         )
@@ -603,6 +594,7 @@ squash-template-file = "~/file.txt"
             template_file: None,
             squash_template: None,
             squash_template_file: None,
+            template_append: None,
         };
 
         assert_snapshot!(toml::to_string(&config).unwrap(), @r#"
@@ -685,7 +677,7 @@ squash-template-file = "~/file.txt"
         let toml_str = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
-[post-create]
+[post-start]
 log = "echo '{{ repo }}' >> ~/.log"
 
 [pre-merge]
@@ -694,11 +686,11 @@ lint = "cargo clippy"
 "#;
         let config: UserConfig = toml::from_str(toml_str).unwrap();
 
-        // Check post-create
+        // Check post-start
         let post_create = config
             .hooks
             .post_create
-            .expect("post-create should be present");
+            .expect("post-start should be present");
         let commands: Vec<_> = post_create.commands().collect();
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].name.as_deref(), Some("log"));
@@ -715,14 +707,14 @@ lint = "cargo clippy"
     fn test_user_hooks_config_single_command() {
         let toml_str = r#"
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
-post-create = "npm install"
+post-start = "npm install"
 "#;
         let config: UserConfig = toml::from_str(toml_str).unwrap();
 
         let post_create = config
             .hooks
             .post_create
-            .expect("post-create should be present");
+            .expect("post-start should be present");
         let commands: Vec<_> = post_create.commands().collect();
         assert_eq!(commands.len(), 1);
         assert!(commands[0].name.is_none()); // single command has no name
@@ -733,7 +725,7 @@ post-create = "npm install"
     fn test_user_hooks_not_reported_as_unknown() {
         let toml_str = r#"
 worktree-path = "../test"
-post-create = "npm install"
+post-start = "npm install"
 
 [pre-merge]
 test = "cargo test"
