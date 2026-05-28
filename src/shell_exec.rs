@@ -454,7 +454,7 @@ pub fn set_command_timeout(timeout: Option<Duration>) {
 
 /// Maximum lines of the bounded subprocess preview per stream. Exceeded
 /// content is elided with a `… (N more lines, M bytes elided)` marker; the
-/// full output is still written to `output.log` via
+/// full output is still written to `subprocess.log` via
 /// [`SUBPROCESS_FULL_TARGET`].
 const LOG_OUTPUT_MAX_LINES: usize = 200;
 
@@ -462,10 +462,9 @@ const LOG_OUTPUT_MAX_LINES: usize = 200;
 /// addition to [`LOG_OUTPUT_MAX_LINES`].
 const LOG_OUTPUT_MAX_BYTES: usize = 64 * 1024;
 
-/// Log target used for *full* subprocess stdout/stderr. The router in
-/// `log_files::route` sends records on this target to `output.log` only,
-/// so raw subprocess bodies (diffs, `git log -p`, patch-id pipelines)
-/// never reach stderr.
+/// Log target used for *full* subprocess stdout/stderr. The tracing-subscriber
+/// `subprocess.log` layer filters on this target, so raw subprocess bodies (diffs,
+/// `git log -p`, patch-id pipelines) never reach stderr or `trace.log`.
 pub const SUBPROCESS_FULL_TARGET: &str = "worktrunk::subprocess_full";
 
 /// Log target used for the *bounded* preview of subprocess output (capped
@@ -475,39 +474,16 @@ pub const SUBPROCESS_FULL_TARGET: &str = "worktrunk::subprocess_full";
 /// uncapped version is captured via [`SUBPROCESS_FULL_TARGET`].
 pub const SUBPROCESS_BOUNDED_TARGET: &str = "worktrunk::subprocess_bounded";
 
-/// Whether the full subprocess output is being captured to `output.log` at
-/// `-vv`. Gates the phrasing of the elision marker so it doesn't promise a
-/// file that wasn't created.
-///
-/// The two-state split (available / not) intentionally collapses two
-/// situations: (a) the user didn't run with `-vv` at all, and (b) the user
-/// did but `output.log` failed to open (rare: path-type mismatch, FD
-/// exhaustion). In (b), `announce_trace_destination` already warns at
-/// startup; the elision marker text is allowed to lag — saying "rerun with
-/// -vv" is harmless because the user's startup warning is the
-/// authoritative signal.
-///
-/// Set by the binary's log-file init; stays `false` under `RUST_LOG=debug`
-/// without `-vv`, where the full records are dropped by design.
-static OUTPUT_LOG_AVAILABLE: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// Called from the binary once `log_files::init` has attempted to open
-/// `output.log` — `yes` reflects whether that attempt succeeded.
-pub fn set_output_log_available(yes: bool) {
-    OUTPUT_LOG_AVAILABLE.store(yes, std::sync::atomic::Ordering::Relaxed);
-}
-
 /// Log captured stdout/stderr of a finished command.
 ///
-/// At `log::debug!` (`-vv`) each stream is emitted twice via separate log
-/// targets, and `log_files::route` directs them:
-///   - [`SUBPROCESS_FULL_TARGET`]: uncapped, line-per-record, `output.log` only.
+/// At `tracing::DEBUG` (`-vv`) each stream is emitted twice via separate
+/// targets, and the tracing-subscriber layers route them:
+///   - [`SUBPROCESS_FULL_TARGET`]: uncapped, line-per-record, `subprocess.log` only.
 ///   - [`SUBPROCESS_BOUNDED_TARGET`]: capped at [`LOG_OUTPUT_MAX_LINES`] and
 ///     [`LOG_OUTPUT_MAX_BYTES`] per stream with an elision marker, then
 ///     routed to `trace.log` at `-vv` or stderr otherwise.
 ///
-/// Below `log::debug!` both targets are disabled and this is a no-op.
+/// Below Debug both targets are disabled and this is a no-op.
 fn log_output(output: &std::process::Output) {
     if !log::log_enabled!(log::Level::Debug) {
         return;
@@ -540,7 +516,10 @@ fn format_stream_full(bytes: &[u8], prefix: &str) -> Vec<String> {
 /// Split captured bytes into prefixed lines with at most [`LOG_OUTPUT_MAX_LINES`]
 /// and [`LOG_OUTPUT_MAX_BYTES`] emitted; remainder replaced by a single
 /// `… (N more lines, M bytes elided — <hint>)` marker. The hint text tracks
-/// whether `output.log` was opened (see [`set_output_log_available`]).
+/// whether `subprocess.log` is collecting the full bodies, asked through
+/// `tracing::enabled!` against [`SUBPROCESS_FULL_TARGET`] — true iff the
+/// `subprocess.log` layer is registered and accepting that target (`-vv` opened
+/// the file successfully).
 fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
     if bytes.is_empty() {
         return Vec::new();
@@ -555,8 +534,8 @@ fn format_stream_bounded(bytes: &[u8], prefix: &str) -> Vec<String> {
         if lines_emitted >= LOG_OUTPUT_MAX_LINES || bytes_emitted >= LOG_OUTPUT_MAX_BYTES {
             let remaining_lines = 1 + lines.count();
             let remaining_bytes = total_bytes.saturating_sub(bytes_emitted);
-            let hint = if OUTPUT_LOG_AVAILABLE.load(std::sync::atomic::Ordering::Relaxed) {
-                "full output in output.log"
+            let hint = if tracing::enabled!(target: SUBPROCESS_FULL_TARGET, tracing::Level::DEBUG) {
+                "full output in subprocess.log"
             } else {
                 "rerun with -vv for full output"
             };
@@ -2126,8 +2105,9 @@ mod tests {
             marker.starts_with("  … (5 more lines, "),
             "marker should count the 5 lines past the cap: {marker}"
         );
-        // OUTPUT_LOG_AVAILABLE defaults to false (only the binary's
-        // log_files::init sets it true), so the marker here suggests `-vv`.
+        // No tracing subscriber is installed in unit tests, so
+        // `tracing::enabled!(SUBPROCESS_FULL_TARGET, DEBUG)` is false and the
+        // marker suggests `-vv`.
         assert!(marker.contains("rerun with -vv"));
     }
 

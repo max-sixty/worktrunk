@@ -12,7 +12,7 @@ repos:
         exclude: '.*\.(rs|snap)$|^vendor/'
   # pre-commit autoupdate reverts to mutable v1 tag; update manually
   - repo: https://github.com/crate-ci/typos
-    rev: v1.46.2
+    rev: v1.46.3
     hooks:
       - id: typos
         # https://github.com/crate-ci/typos/issues/347

@@ -1133,9 +1133,12 @@ fn prune_pre_remove_setup(repo: &mut TestRepo) -> (std::path::PathBuf, std::path
     (wt_path, marker)
 }
 
-/// `wt step prune`'s approval covers the `pre-remove` hooks the pruned worktrees
-/// will run — resolved from the invoking worktree's config. With no TTY and no
-/// prior approval, prune aborts rather than running them silently.
+/// `wt step prune` never prompts inline — streaming removals would deadlock
+/// against a prompt. Instead a candidate whose `pre-remove` (resolved from the
+/// invoking worktree's config) isn't yet approved is SKIPPED with
+/// `(approval required)`, with a hint pointing at `wt config approvals add`.
+/// Skipping is non-fatal — exit 0 — so other candidates with already-approved
+/// (or no) hooks still get pruned.
 #[rstest]
 fn test_prune_pre_remove_needs_approval(mut repo: TestRepo) {
     let (wt_path, marker) = prune_pre_remove_setup(&mut repo);
@@ -1148,16 +1151,38 @@ fn test_prune_pre_remove_needs_approval(mut repo: TestRepo) {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        !output.status.success(),
-        "prune should abort when an un-approved pre-remove is in scope; stderr:\n{stderr}"
+        output.status.success(),
+        "prune should skip the unapproved candidate, not abort; stderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("needs approval") && stderr.contains("pre-remove"),
-        "prune should surface the pre-remove for approval; stderr:\n{stderr}"
+        stderr.contains("(approval required)"),
+        "prune should report the candidate as skipped for approval; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("wt config approvals add"),
+        "prune should hint at how to pre-approve; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("pre-remove: echo ran >"),
+        "hint should list the unapproved template grouped by hook; stderr:\n{stderr}"
+    );
+    // The hint runs the path through `format_path_for_display`, so the
+    // substring lands as `~/…` rather than the raw tempdir prefix.
+    let wt_basename = wt_path.file_name().unwrap().to_string_lossy();
+    assert!(
+        stderr.contains("wt -C ~/") && stderr.contains(&format!("{wt_basename} remove")),
+        "hint should offer a per-worktree `wt -C ~/…/{wt_basename} remove` alternative; stderr:\n{stderr}"
+    );
+    // `prune_pre_remove_setup` writes `.config/wt.toml` only in the invoking
+    // worktree, so the candidate's `.config/wt.toml` doesn't exist — the
+    // byte-compare flags the candidate as having different hooks on branch.
+    assert!(
+        stderr.contains("(different hooks on branch)"),
+        "candidate without its own .config/wt.toml should be flagged as differing; stderr:\n{stderr}"
     );
     assert!(
         wt_path.exists(),
-        "the worktree must not be removed when approval fails"
+        "the worktree must not be removed when its hooks aren't approved"
     );
     assert!(
         !marker.exists(),

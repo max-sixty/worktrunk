@@ -18,7 +18,7 @@ use worktrunk::config::{
 };
 use worktrunk::git::remote_ref::{
     self, AzureDevOpsProvider, GitHubProvider, GitLabProvider, GiteaProvider, RemoteRefInfo,
-    RemoteRefProvider,
+    RemoteRefProvider, parse_ref_url,
 };
 use worktrunk::git::{
     GitError, GitRemoteUrl, RefContext, RefType, Repository, SwitchSuggestionCtx,
@@ -449,6 +449,12 @@ fn resolve_base_ref(
     repo: &Repository,
     base: &str,
 ) -> anyhow::Result<(String, Option<(String, String)>)> {
+    // Forge PR/MR web URLs (e.g. `https://github.com/owner/repo/pull/123`)
+    // normalise into the literal `pr:N` / `mr:N` shortcut so the parsing
+    // below handles both forms identically — no duplicate dispatch.
+    let normalised = parse_ref_url(base);
+    let base = normalised.as_deref().unwrap_or(base);
+
     if let Some(suffix) = base.strip_prefix("pr:")
         && let Ok(number) = suffix.parse::<u32>()
     {
@@ -527,6 +533,12 @@ fn resolve_switch_target(
     create: bool,
     base: Option<&str>,
 ) -> anyhow::Result<ResolvedTarget> {
+    // Forge PR/MR web URLs (e.g. `https://github.com/owner/repo/pull/123`)
+    // normalise into the literal `pr:N` / `mr:N` shortcut so the parsing
+    // below handles both forms identically — no duplicate dispatch.
+    let normalised = parse_ref_url(branch);
+    let branch = normalised.as_deref().unwrap_or(branch);
+
     // Handle pr:<number> syntax — dispatches to GitHub, Gitea, or Azure DevOps based on remotes.
     if let Some(suffix) = branch.strip_prefix("pr:")
         && let Ok(number) = suffix.parse::<u32>()

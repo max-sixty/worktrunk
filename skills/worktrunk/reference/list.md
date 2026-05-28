@@ -67,7 +67,7 @@ $ wt list --format=json
 | Status | Compact symbols (see below) |
 | HEAD± | Uncommitted changes: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
-| main…± | Line diffs since the merge-base with the default branch; `--full` only |
+| main…± | Line diffs since the merge-base (three-dot) with the default branch; `--full` only |
 | Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](https://worktrunk.dev/config/#commit) [experimental] |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | Pipeline status; `--full` only |
@@ -77,7 +77,7 @@ $ wt list --format=json
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
 
-Note: `main↕` and `main…±` refer to the default branch — the header label stays `main` for compactness. `main…±` uses a merge-base (three-dot) diff.
+The `main` header label is used regardless of the default branch's actual name.
 
 ### CI status
 
@@ -311,8 +311,8 @@ Global Options:
           User config file path
 
   -v, --verbose...
-          Verbose output (-v: info logs + hook/alias template variable & output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   -y, --yes
           Skip approval prompts

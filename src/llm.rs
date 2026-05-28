@@ -356,8 +356,8 @@ pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result
     // MB-scale diffs in our process memory and removes them from our logs
     // entirely. See conversation around PR #2136 for sketch.
 
-    // Log the prompt to output.log alongside captured subprocess stdout —
-    // SUBPROCESS_FULL_TARGET routes to output.log at `-vv`, never to stderr.
+    // Log the prompt to subprocess.log alongside captured subprocess stdout —
+    // SUBPROCESS_FULL_TARGET routes to subprocess.log at `-vv`, never to stderr.
     log::debug!(target: SUBPROCESS_FULL_TARGET, "  Prompt (stdin):");
     for line in prompt.lines() {
         log::debug!(target: SUBPROCESS_FULL_TARGET, "    {}", line);

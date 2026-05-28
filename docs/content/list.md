@@ -78,7 +78,7 @@ Output as JSON for scripting:
 | Status | Compact symbols (see below) |
 | HEAD± | Uncommitted changes: +added -deleted lines |
 | main↕ | Commits ahead/behind default branch |
-| main…± | Line diffs since the merge-base with the default branch; `--full` only |
+| main…± | Line diffs since the merge-base (three-dot) with the default branch; `--full` only |
 | Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](@/config.md#commit) <span class="badge-experimental"></span> |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | Pipeline status; `--full` only |
@@ -88,7 +88,7 @@ Output as JSON for scripting:
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
 
-Note: `main↕` and `main…±` refer to the default branch — the header label stays `main` for compactness. `main…±` uses a merge-base (three-dot) diff.
+The `main` header label is used regardless of the default branch's actual name.
 
 ### CI status
 
@@ -304,8 +304,8 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
           User config file path
 
   <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
-          Verbose output (-v: info logs + hook/alias template variable &amp; output; -vv: debug logs +
-          diagnostic report + trace.log/output.log under .git/wt/logs/)
+          Verbose output (-v: info logs + hook/alias template variables on stderr; -vv: also debug
+          logs and raw subprocess output written to .git/wt/logs/)
 
   <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
