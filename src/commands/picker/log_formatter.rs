@@ -271,7 +271,6 @@ where
             variant: DiffVariant::Signs,
             positive_style: ADDITION,
             negative_style: DELETION,
-            always_show_zeros: false,
         };
         let stat_str = format!(" {}", diff_config.format_aligned(insertions, deletions));
 

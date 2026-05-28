@@ -72,60 +72,6 @@ pub struct MergeProbeResult {
 const PATCH_ID_SCAN_MAX_COMMITS: usize = 500;
 
 impl Repository {
-    /// Resolve a ref, preferring branches over tags when names collide.
-    ///
-    /// Uses git to check if `refs/heads/{ref}` exists. If so, returns the
-    /// qualified form to ensure we reference the branch, not a same-named tag.
-    /// Otherwise returns the original ref unchanged (for HEAD, SHAs, remote refs).
-    /// Uncached: this is only consulted by the ref-taking convenience
-    /// wrappers; hot paths go through a [`RefSnapshot`] instead.
-    fn resolve_preferring_branch(&self, r: &str) -> String {
-        let qualified = format!("refs/heads/{r}");
-        if self
-            .run_command(&["rev-parse", "--verify", "-q", &qualified])
-            .is_ok()
-        {
-            qualified
-        } else {
-            r.to_string()
-        }
-    }
-
-    /// Resolve a ref for integration helpers — passthrough for already-qualified
-    /// refs, branch-preferring resolution for short names.
-    ///
-    /// Inputs starting with `refs/` (e.g., from `BranchRef::full_ref()`) are
-    /// returned unchanged: they're already unambiguous, and re-qualifying would
-    /// either (a) waste a `rev-parse` in the common case, or (b) pick the wrong
-    /// ref when a branch literally named e.g. `refs/heads/foo` exists — the
-    /// caller gave us `refs/heads/foo` meaning the branch `foo`, not the
-    /// pathological branch at `refs/heads/refs/heads/foo`.
-    ///
-    /// Short names go through `resolve_preferring_branch` so its
-    /// branch-over-tag disambiguation still applies to user/CLI input.
-    fn resolve_ref(&self, r: &str) -> String {
-        if r.starts_with("refs/") {
-            r.to_string()
-        } else {
-            self.resolve_preferring_branch(r)
-        }
-    }
-
-    /// Check if base is an ancestor of head (i.e., would be a fast-forward).
-    ///
-    /// See [`--is-ancestor`][1] for details.
-    ///
-    /// [1]: https://git-scm.com/docs/git-merge-base#Documentation/git-merge-base.txt---is-ancestor
-    pub fn is_ancestor(&self, base: &str, head: &str) -> anyhow::Result<bool> {
-        let base = self.resolve_ref(base);
-        let head = self.resolve_ref(head);
-
-        let base_sha = self.rev_parse_commit(&base)?;
-        let head_sha = self.rev_parse_commit(&head)?;
-
-        self.is_ancestor_by_sha(&base_sha, &head_sha)
-    }
-
     /// Check if `base_sha` is an ancestor of `head_sha`, taking commit SHAs
     /// directly. Hits the persistent SHA-keyed cache without going through
     /// the (stale-prone) ambient ref→SHA cache.
@@ -143,21 +89,6 @@ impl Repository {
         Ok(result)
     }
 
-    /// Check if two refs point to the same commit.
-    pub fn same_commit(&self, ref1: &str, ref2: &str) -> anyhow::Result<bool> {
-        let ref1 = self.resolve_ref(ref1);
-        let ref2 = self.resolve_ref(ref2);
-        // Parse both refs in a single git command
-        let output = self.run_command(&["rev-parse", &ref1, &ref2])?;
-        let mut lines = output.lines();
-        let sha1 = lines.next().context("rev-parse returned no output")?.trim();
-        let sha2 = lines
-            .next()
-            .context("rev-parse returned only one line")?
-            .trim();
-        Ok(sha1 == sha2)
-    }
-
     /// Check if a branch has file changes beyond the merge-base with target.
     ///
     /// Uses merge-base (cached) to find common ancestor, then two-dot diff to
@@ -165,17 +96,6 @@ impl Repository {
     ///
     /// For orphan branches (no common ancestor with target), returns true since all
     /// their changes are unique.
-    pub fn has_added_changes(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
-        let branch = self.resolve_ref(branch);
-        let target = self.resolve_ref(target);
-
-        let branch_sha = self.rev_parse_commit(&branch)?;
-        let target_sha = self.rev_parse_commit(&target)?;
-
-        self.has_added_changes_by_sha(&branch_sha, &target_sha)
-    }
-
-    /// SHA-keyed variant of [`Self::has_added_changes`].
     ///
     /// Bypasses the ambient ref→SHA cache so callers holding SHAs from a
     /// [`RefSnapshot`] (or `BranchRef.commit_sha`) can short-circuit to the
@@ -202,30 +122,11 @@ impl Repository {
         Ok(result)
     }
 
-    /// Check if two refs have identical tree content (same files/directories).
+    /// Check if two commits have identical tree content (same files/directories).
     /// Returns true when content is identical even if commit history differs.
     ///
     /// Useful for detecting squash merges or rebases where the content has been
     /// integrated but commit ancestry doesn't show the relationship.
-    pub fn trees_match(&self, ref1: &str, ref2: &str) -> anyhow::Result<bool> {
-        let ref1 = self.resolve_ref(ref1);
-        let ref2 = self.resolve_ref(ref2);
-        // Parse both tree refs in a single git command
-        let output = self.run_command(&[
-            "rev-parse",
-            &format!("{ref1}^{{tree}}"),
-            &format!("{ref2}^{{tree}}"),
-        ])?;
-        let mut lines = output.lines();
-        let tree1 = lines.next().context("rev-parse returned no output")?.trim();
-        let tree2 = lines
-            .next()
-            .context("rev-parse returned only one line")?
-            .trim();
-        Ok(tree1 == tree2)
-    }
-
-    /// SHA-keyed variant of [`Self::trees_match`].
     ///
     /// Resolves each commit SHA to its tree SHA in a single `git rev-parse`
     /// call and compares. The commit→tree resolution is itself uncached
@@ -246,36 +147,10 @@ impl Repository {
         Ok(tree1 == tree2)
     }
 
-    /// Check if HEAD's tree SHA matches a branch's tree SHA.
-    /// Returns true when content is identical even if commit history differs.
-    pub fn head_tree_matches_branch(&self, branch: &str) -> anyhow::Result<bool> {
-        self.trees_match("HEAD", branch)
-    }
-
-    /// Check if merging head into base would result in conflicts.
+    /// Check if merging `head_sha` into `base_sha` would result in conflicts.
     ///
     /// Uses `git merge-tree` to simulate a merge without touching the working tree.
     /// Returns true if conflicts would occur, false for a clean merge.
-    ///
-    /// # Examples
-    /// ```no_run
-    /// use worktrunk::git::Repository;
-    ///
-    /// let repo = Repository::current()?;
-    /// let has_conflicts = repo.has_merge_conflicts("main", "feature-branch")?;
-    /// # Ok::<(), anyhow::Error>(())
-    /// ```
-    pub fn has_merge_conflicts(&self, base: &str, head: &str) -> anyhow::Result<bool> {
-        let base = self.resolve_ref(base);
-        let head = self.resolve_ref(head);
-
-        let base_sha = self.rev_parse_commit(&base)?;
-        let head_sha = self.rev_parse_commit(&head)?;
-
-        self.has_merge_conflicts_by_sha(&base_sha, &head_sha)
-    }
-
-    /// SHA-keyed variant of [`Self::has_merge_conflicts`].
     pub fn has_merge_conflicts_by_sha(
         &self,
         base_sha: &str,
@@ -290,31 +165,16 @@ impl Repository {
 
     /// Check merge conflicts for a working tree represented by a tree SHA.
     ///
-    /// Unlike [`Self::has_merge_conflicts`] which takes commit refs, this accepts a
-    /// raw tree SHA (from `git write-tree`) and the branch HEAD commit SHA.
-    /// On cache miss, creates an ephemeral commit via `git commit-tree` to
-    /// feed `merge-tree` (which requires commit objects for merge-base
-    /// resolution). On cache hit, no commit is created.
+    /// Unlike [`Self::has_merge_conflicts_by_sha`] which takes commit SHAs,
+    /// this accepts a raw tree SHA (from `git write-tree`) and the branch HEAD
+    /// commit SHA. On cache miss, creates an ephemeral commit via
+    /// `git commit-tree` to feed `merge-tree` (which requires commit objects
+    /// for merge-base resolution). On cache hit, no commit is created.
     ///
     /// The cache key is `(base_commit_sha, branch_head_sha+tree_sha)` — a
     /// composite that captures all three inputs to the three-way merge:
     /// the base tree, the merge-base (via branch HEAD ancestry), and the
     /// working tree content.
-    pub fn has_merge_conflicts_by_tree(
-        &self,
-        base: &str,
-        branch_head_sha: &str,
-        tree_sha: &str,
-    ) -> anyhow::Result<bool> {
-        let base = self.resolve_ref(base);
-        let base_sha = self.rev_parse_commit(&base)?;
-
-        self.has_merge_conflicts_by_tree_with_base_sha(&base_sha, branch_head_sha, tree_sha)
-    }
-
-    /// SHA-keyed variant of [`Self::has_merge_conflicts_by_tree`] —
-    /// `base_sha` is taken as a SHA (the other two arguments are already
-    /// SHA-shaped). Same composite cache key as the ref-taking form.
     pub fn has_merge_conflicts_by_tree_with_base_sha(
         &self,
         base_sha: &str,
@@ -374,7 +234,7 @@ impl Repository {
 
     /// Check if merging a branch into target would add anything (not already integrated).
     ///
-    /// Caller must pass resolved refs (via `resolve_ref`).
+    /// Caller must pass commit SHAs for both `branch` and `target`.
     ///
     /// Returns:
     /// - `Ok(Some(true))` if merging would change the target
@@ -526,30 +386,11 @@ impl Repository {
     /// Single implementation of the merge-tree → patch-id fallback sequence,
     /// used by both `wt list` (parallel tasks) and `wt remove`/`wt merge`
     /// (sequential via [`compute_integration_lazy`]).
-    pub fn merge_integration_probe(
-        &self,
-        branch: &str,
-        target: &str,
-    ) -> anyhow::Result<MergeProbeResult> {
-        let branch = self.resolve_ref(branch);
-        let target = self.resolve_ref(target);
-
-        // Resolve refs to commit SHAs for the persistent cache key.
-        // The probe result depends only on the two committed trees (the
-        // patch-id fallback reads commits in merge_base..target, also a
-        // pure function of the two SHAs). Asymmetric key: branch first,
-        // then target, because the merge-tree result is compared against
-        // target's tree.
-        let branch_sha = self.rev_parse_commit(&branch)?;
-        let target_sha = self.rev_parse_commit(&target)?;
-
-        self.merge_integration_probe_by_sha(&branch_sha, &target_sha)
-    }
-
-    /// SHA-keyed variant of [`Self::merge_integration_probe`].
     ///
-    /// Asymmetric: branch first, then target — the merge-tree result is
-    /// compared against target's tree.
+    /// The probe result depends only on the two committed trees (the patch-id
+    /// fallback reads commits in `merge_base..target`, also a pure function of
+    /// the two SHAs). Asymmetric: branch first, then target — the merge-tree
+    /// result is compared against target's tree.
     pub fn merge_integration_probe_by_sha(
         &self,
         branch_sha: &str,

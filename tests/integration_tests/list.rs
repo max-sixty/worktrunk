@@ -538,7 +538,7 @@ fn test_list_json_with_display_fields(mut repo: TestRepo) {
         &["commit", "--allow-empty", "-m", "Feature commit 2"],
     );
 
-    // Add uncommitted changes to show working_diff_display
+    // Add uncommitted changes to populate the working-diff column
     std::fs::write(feature_path.join("uncommitted.txt"), "uncommitted").unwrap();
     std::fs::write(feature_path.join("feature.txt"), "modified content").unwrap();
 
